@@ -514,41 +514,69 @@ HNSW (Hierarchical Navigable Small Worlds) is the approximate-nearest-neighbor a
 
 The tradeoff is that HNSW returns approximate nearest neighbors, not exact ones. For semantic similarity that's fine — there's no objectively "correct" answer to "what's most similar to this query." For applications requiring exact nearest-neighbor (rare), you'd switch to IVFFlat or skip the index entirely.
 
-### Hybrid retrieval: geometric mean of vector and trigram, with recency boost
+### Two-stage retrieval: hybrid chunk scoring, then entity identification
 
-This is the most consequential design decision in the server. The `/aks/v1/context` endpoint uses this scoring formula:
+The `/aks/v1/context` endpoint runs a two-stage pipeline. Understanding both stages matters because the second stage is the whole reason AKS exists — chunks are an intermediate signal, not the final result.
+
+**Stage 1: hybrid chunk retrieval.** Find the chunks most relevant to the query using a geometric mean of vector similarity, trigram similarity, and a recency multiplier:
 
 ```
 score = sqrt(vector_similarity * trigram_similarity) * recency_multiplier
 ```
 
-**Why hybrid.** Vector similarity (semantic) and trigram similarity (textual) catch different things. Vector retrieval finds chunks that mean something similar even when wording differs ("incident escalation" matches "elevating a critical issue"). Trigram retrieval finds chunks containing the same words even when meaning differs ("rollback" matches "rollback procedure"). Used alone, each surfaces irrelevant results: vector retrieval brings back semantically adjacent fluff, trigram retrieval brings back keyword matches that aren't actually relevant.
+Vector similarity (semantic) and trigram similarity (textual) catch different things. Vector retrieval finds chunks that mean something similar even when wording differs ("incident escalation" matches "elevating a critical issue"). Trigram retrieval finds chunks containing the same words even when meaning differs ("rollback" matches "rollback procedure"). Used alone, each surfaces irrelevant results: vector retrieval brings back semantically adjacent fluff, trigram retrieval brings back keyword matches that aren't actually relevant.
 
-**Why geometric mean specifically.** A geometric mean penalizes results where one signal is weak, much more aggressively than an arithmetic mean would. If a chunk scores 0.9 on vector but 0.1 on trigram, the arithmetic mean is 0.5 (still ranks high). The geometric mean is `sqrt(0.9 * 0.1) = 0.3` (correctly demoted). This is the property you want — you want chunks that BOTH look semantically relevant AND mention the right words.
+The geometric mean penalizes results where one signal is weak, much more aggressively than an arithmetic mean would. If a chunk scores 0.9 on vector but 0.1 on trigram, the arithmetic mean is 0.5 (still ranks high). The geometric mean is `sqrt(0.9 * 0.1) = 0.3` (correctly demoted). This is the property you want — chunks that BOTH look semantically relevant AND mention the right words.
 
-**The short-query fallback.** Trigram similarity scores poorly on queries under 12 characters because there aren't enough trigrams to compare. The SQL applies a neutral 0.5 in that case rather than letting trigram drag the geometric mean to zero. Without this, all short queries would return nothing useful.
+The short-query fallback applies a neutral 0.5 trigram score when the query is under 12 characters or when trigram similarity falls below 0.05, since there aren't enough trigrams to compare meaningfully. Without this, short queries would return nothing useful.
 
-**Recency multiplier.** A soft decay from 1.0 (just-ingested) to 0.85 (one year old). Old chunks still surface; they just lose a small edge against newer ones. This is intentional — knowledge ages, but old documentation isn't worthless. A multiplicative decay rather than a hard cutoff means you can't accidentally exclude relevant older content.
+The recency multiplier decays softly from 1.0 (just-ingested) to 0.85 (one year old):
 
 ```sql
 recency_mult = 0.85 + 0.15 * exp(-age_days / 365)
 ```
 
-The whole hybrid retrieval is one SQL query against indexed columns. The geometric mean math happens in Postgres. Even at hundreds of thousands of chunks, retrieval is sub-second.
+Old chunks still surface; they just lose a small edge against newer ones. Knowledge ages, but old documentation isn't worthless.
 
-### Why /context uses only one LLM call
+The whole stage is one SQL query against indexed columns. The geometric mean math happens in Postgres. Even at hundreds of thousands of chunks, retrieval is sub-second.
 
-The `/context` endpoint receives a natural-language query and returns the relevant subgraph. Naive implementations would have the LLM read all the matching chunks and reason about them — many LLM calls, expensive at scale.
+**Stage 2: entity identification.** The retrieved chunks are not returned to the caller. Instead, the LLM is given the chunks plus the catalog of compiled entities in the Stack (top 200 by confidence) and asked one question: "given these passages and this list of known entities, which entities are relevant to the query?"
 
-The server does the expensive part (semantic search) in pure SQL via hybrid retrieval. The LLM is asked exactly one question: "given these matching chunks and this entity catalog, which entities are relevant to the query?" It returns a structured JSON list of entity names. The server then looks up those entities and their relationships from the database.
+The LLM returns a structured JSON list of entity names plus a reasoning string and a HIGH/MEDIUM/LOW confidence rating. The server looks those entities up in the database, fetches their relationships, and returns the resulting subgraph as the response. The caller gets compiled knowledge with confidence scores, typed relationships, and source attribution — not raw text passages.
 
-Total LLM cost per query: about $0.001-$0.01 with Claude Sonnet. At scale this is the difference between affordable and unaffordable.
+This is the structural difference between AKS and traditional RAG. RAG retrieves passages and asks the agent to read and reason about them. AKS retrieves *entities the system already understands* and gives the agent structured graph data. An agent consuming an AKS response does not have to parse prose to figure out what an "Incident" is or how it relates to "Rollback" — that compilation already happened.
 
-### Why traversal and entity listing have no LLM at all
+Total LLM cost per `/context` query: about $0.001-$0.01 with Claude Sonnet. One call, regardless of how many chunks were retrieved or how many entities are in the Stack.
 
-`/aks/v1/traverse` and `/aks/v1/entities` are pure SQL. The compiled ontology is structured data — walking from Incident to Rollback through typed relationships is a graph operation, not a reasoning operation.
+### Why retrieval returns compiled entities, not chunks
 
-This is the entire point of compiling. Pay the LLM cost once at ingestion. After that, queries against the compiled state should be cheap and structured. If you're tempted to add LLM reasoning to these endpoints, ask first whether the cost belongs in ingestion (where it pays off many times) instead.
+The single most important architectural choice is that retrieval surfaces *compiled knowledge* rather than *source passages*. This is what distinguishes AKS from RAG.
+
+In a traditional RAG system, the retrieval layer returns text passages. An agent reading those passages has to do the work of identifying entities, inferring relationships, and reasoning about how the passage answers the query. Every query repeats this work. The system never accumulates structure — each query is a fresh round of inference over raw text.
+
+In AKS, the compilation layer does that work once at ingestion. Entities are extracted, typed, and given confidence scores. Relationships between them are identified and labeled. Source attribution is recorded in `entity_source_documents`. From that point on, retrieval surfaces this compiled structure directly. An agent asking "what does the on-call engineer do during an incident?" doesn't get a paragraph from a runbook to read — it gets entities (`On-call Engineer`, `Incident`, `Rollback`, `Postmortem`) connected by typed relationships (`triggers`, `produces`, `requires`), each with confidence scores and pointers to the source documents that contributed to them.
+
+This has three consequences worth understanding.
+
+**Retrieval cost amortizes across queries.** The expensive LLM work happens once at ingestion. Every subsequent query reads compiled state. A Stack that gets queried a hundred times pays the compilation cost once and gets cheap structured retrieval ninety-nine times after.
+
+**Multi-hop reasoning becomes a graph walk.** Questions like "what triggers a postmortem?" require connecting Incident → Rollback → Postmortem in traditional RAG by reading multiple passages and inferring the chain. In AKS, that chain is already in the graph. The `/aks/v1/traverse` endpoint walks it directly with no LLM call at all — pure SQL over typed relationships via a recursive CTE. This is the same reason graph databases beat document stores for multi-hop questions, applied to compiled knowledge.
+
+**Source attribution is structural, not approximate.** RAG citations point at the chunks the agent happened to read. AKS attributions point at every document that contributed to an entity, recorded at compile time in `entity_source_documents`. When you retrieve an entity, you know which documents informed its description, its type, and its relationships — not just which chunk the retrieval happened to surface.
+
+### The three retrieval paths
+
+Three endpoints surface compiled structure to callers, each appropriate to a different access pattern:
+
+**`POST /aks/v1/context`** — natural-language query against the compiled graph. Hybrid chunk retrieval feeds entity identification, then returns the relevant subgraph. One LLM call. Best when the agent doesn't know what entities to ask about.
+
+**`GET /aks/v1/traverse`** — graph walk from a named entity, following typed relationships up to N hops away. Pure SQL via recursive CTE, no LLM, no embeddings. Best when the agent already knows the starting entity.
+
+**`GET /aks/v1/entities`** — direct lookup with type and confidence filters. Pure SQL. Best for inventory questions ("what does this Stack know about?") and type-filtered access ("show me all Process entities").
+
+The chunks themselves are still queryable internally — they're what makes hybrid retrieval work in `/context` — but they're never the response. The response is always compiled structure.
+
+This is the entire point of compiling. Pay the LLM cost once at ingestion. After that, queries against the compiled state should be cheap and structured. If you're tempted to add LLM reasoning to `/traverse` or `/entities`, ask first whether the cost belongs in ingestion (where it pays off many times) instead.
 
 ### Why descriptions are off by default and opt-in
 
@@ -871,7 +899,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Apache 2.0. See [LICENSE](LICENSE).
 
-The AKS spec itself is also Apache 2.0, governed by an open community process. See the [spec repository](hhttps://github.com/Agent-Knowledge-Standard/AKS-Specification) for governance details.
+The AKS spec itself is also Apache 2.0, governed by an open community process. See the [spec repository](https://github.com/Agent-Knowledge-Standard/AKS-Specification) for governance details.
 
 ---
 
