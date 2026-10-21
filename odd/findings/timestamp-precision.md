@@ -31,16 +31,46 @@ mismatch, making it look like flaky output rather than a systematic bug.
 
 ## Options for the TS serializer
 
-1. Carry the raw Postgres text and emit it unchanged. Cheapest and most faithful:
-   the oracle's string is already correct, so never parse it into a Date at all.
+1. Carry the raw Postgres text and emit it unchanged. **This does NOT work —
+   corrected in T0.4 after measuring the wire format.** See below.
 2. Parse to a Date plus keep the original string, preferring the string on
-   serialization.
-3. Format from a Date with a custom 6-digit formatter. Works, but requires a
-   Date that did not already lose precision, so the value must arrive as text
-   rather than as a JS Date.
+   serialization. Loses nothing if the string is kept, but the Date is dead
+   weight and a future refactor can start using it by mistake.
+3. Format from a Date with a custom 6-digit formatter. Broken: the Date has
+   already lost the precision by then.
+4. **Recommended, and what shipped.** Normalize the raw text into the oracle's
+   shape with a string transform that never constructs a Date.
 
-Option 1 is the recommendation: configure the driver so timestamptz columns are
-delivered as strings, not Date objects, and pass them through untouched.
+## Correction: pass-through is impossible
+
+The original recommendation in this document (option 1) was wrong. Postgres
+does not transmit the oracle's format:
+
+| Source | Value |
+|---|---|
+| Postgres wire text | `2026-10-21 04:00:16.902445+00` — space, no `T`, `+00` suffix |
+| Python oracle | `2026-10-21T04:00:16.902445Z` — `T`, `Z` suffix |
+
+Emitting the wire text untouched fails both "ends with Z" and "6 fractional
+digits". Postgres also trims trailing zeros, so `.100000` arrives as `.1` and
+`.000000` arrives with no fraction at all — the digits are not even
+fixed-width on the way in.
+
+The correct boundary is `normalizeTimestamptz()` in `ts/src/db.ts`: it rewrites
+the **string**, padding the fraction to 6 digits and substituting `T`/`Z`. The
+microsecond digits survive as characters throughout; no `Date` is ever built.
+This is not the anti-pattern the finding warns about — that anti-pattern is
+formatting a `Date` after precision is already lost.
+
+Two supporting details, both load-bearing:
+
+- `drizzle()` silently overwrites the OID 1184 parser with an identity parser,
+  so the parser must be re-installed **after** `drizzle()` runs. Otherwise the
+  fix is discarded and `Date` objects come back.
+- `DateStyle=ISO, MDY` and `TimeZone=UTC` are pinned on the connection so the
+  parser's input grammar is guaranteed. `normalizeTimestamptz` throws on
+  unrecognized text rather than falling back silently, because a silent
+  fallback would reintroduce the precision bug.
 
 ## Contract notes captured alongside this
 
