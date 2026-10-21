@@ -97,8 +97,8 @@ create table if not exists document_chunks (
     token_count integer,
 
     -- The embedding vector. Dimension must match config.EMBEDDING_DIM.
-    -- text-embedding-3-small produces 1536-dim vectors.
-    embedding vector(1536),
+    -- nomic-embed-text-v1.5 produces 768-dim vectors (gateway provider).
+    embedding vector(768),
 
     -- How this chunk was produced. Informational only.
     chunker_strategy text default 'sentence',

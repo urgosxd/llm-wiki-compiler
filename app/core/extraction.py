@@ -93,6 +93,33 @@ class ExtractionResult:
 # LLAMAINDEX GLOBAL CONFIGURATION
 # ============================================================================
 
+# Conservative default for gateway-hosted models LlamaIndex does not know.
+# Used only for local context budgeting; never sent to the provider.
+_GATEWAY_CONTEXT_WINDOW = 128_000
+
+
+def _register_gateway_model(openai_utils, model: str, context_window: int) -> None:
+    """
+    Teach LlamaIndex's OpenAI wrapper about a gateway-only model name.
+
+    `OpenAILLM` resolves the context window through
+    `openai_modelname_to_contextsize`, which raises for any model missing from
+    `ALL_AVAILABLE_MODELS`. A gateway model (`hf:deepseek-ai/...`) is never in
+    that table, so construction fails before a request can be made.
+
+    Adding the entry is the documented way through: the value is a local
+    budgeting hint only, and the model name is still what gets sent upstream,
+    so the gateway routes on the real identifier.
+
+    This is a workaround for a LlamaIndex limitation, kept in one place so the
+    rest of the module never has to know about it.
+    """
+    if model in openai_utils.ALL_AVAILABLE_MODELS:
+        return
+    openai_utils.ALL_AVAILABLE_MODELS[model] = context_window
+    openai_utils.CHAT_MODELS[model] = context_window
+
+
 def _configure_llamaindex() -> None:
     """
     Wire chosen models into LlamaIndex's global Settings.
@@ -126,7 +153,19 @@ def _configure_llamaindex() -> None:
     elif config.EXTRACTION_PROVIDER == "gateway":
         # Gateway is OpenAI-compatible. Use the LlamaIndex OpenAI wrapper
         # with api_base pointed at the gateway.
+        #
+        # LlamaIndex resolves a model's context window against its own table
+        # of OpenAI models and raises for anything it does not recognise, so a
+        # gateway model name like `hf:deepseek-ai/...` fails before the wrapper
+        # is even built. Registering the name with a context size is the
+        # supported way past that lookup; the size is only used for local
+        # budgeting and is never sent upstream.
         from llama_index.llms.openai import OpenAI as LIOpenAI
+        from llama_index.llms.openai import utils as li_openai_utils
+
+        _register_gateway_model(
+            li_openai_utils, config.EXTRACTION_MODEL, _GATEWAY_CONTEXT_WINDOW
+        )
         Settings.llm = LIOpenAI(
             model=config.EXTRACTION_MODEL,
             api_key=config.GATEWAY_API_KEY,

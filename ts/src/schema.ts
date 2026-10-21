@@ -157,7 +157,7 @@ export const documentChunks = pgTable(
     contentHash: text("content_hash").notNull(),
     tokenCount: integer("token_count"),
     // pgvector column. Dimension is fixed by the schema (config.EMBEDDING_DIM).
-    embedding: vector("embedding", { dimensions: 1536 }),
+    embedding: vector("embedding", { dimensions: 768 }),
     chunkerStrategy: text("chunker_strategy").default("sentence"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .notNull()

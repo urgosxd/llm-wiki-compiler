@@ -73,6 +73,39 @@ def complete(prompt: str, max_tokens: int = 1024) -> str:
     raise ValueError(f"Unknown EXTRACTION_PROVIDER: {provider}")
 
 
+def _embedding_kwargs_for_model(model: str, **rest) -> dict:
+    """
+    Build OpenAIEmbedding kwargs for an arbitrary model name.
+
+    `OpenAIEmbedding.__init__` validates its `model` argument against a
+    closed enum (`OpenAIEmbeddingModelType`), so a gateway model name like
+    `hf:nomic-ai/nomic-embed-text-v1.5` is rejected outright. But the same
+    constructor also accepts `model_name`, which it uses **without**
+    validating and which takes precedence when building the request.
+
+    So when the configured model is not one of OpenAI's own, we pass a
+    valid enum member as `model` to get past the constructor and the real
+    name as `model_name` for the actual API call. When it IS a known OpenAI
+    model, both are set to it and behaviour is unchanged.
+
+    This is a workaround for a LlamaIndex limitation, not a design choice —
+    it lives here so the rest of the codebase never has to know about it.
+    """
+    from llama_index.embeddings.openai import OpenAIEmbeddingModelType
+
+    known = {member.value for member in OpenAIEmbeddingModelType}
+    if model in known:
+        return {"model": model, **rest}
+
+    # Any valid enum member works to satisfy the constructor; the request
+    # carries `model_name` instead, so this value is never sent upstream.
+    return {
+        "model": OpenAIEmbeddingModelType.TEXT_EMBED_3_SMALL.value,
+        "model_name": model,
+        **rest,
+    }
+
+
 def get_embedding_provider_kwargs() -> dict:
     """
     Return the kwargs to pass into LlamaIndex's OpenAIEmbedding constructor.
@@ -85,16 +118,16 @@ def get_embedding_provider_kwargs() -> dict:
     provider = config.EMBEDDING_PROVIDER
 
     if provider == "openai":
-        return {
-            "model": config.EMBEDDING_MODEL,
-            "api_key": config.OPENAI_API_KEY,
-        }
+        return _embedding_kwargs_for_model(
+            config.EMBEDDING_MODEL,
+            api_key=config.OPENAI_API_KEY,
+        )
 
     if provider == "gateway":
-        return {
-            "model": config.EMBEDDING_MODEL,
-            "api_key": config.GATEWAY_API_KEY,
-            "api_base": config.GATEWAY_URL,
-        }
+        return _embedding_kwargs_for_model(
+            config.EMBEDDING_MODEL,
+            api_key=config.GATEWAY_API_KEY,
+            api_base=config.GATEWAY_URL,
+        )
 
     raise ValueError(f"Unknown EMBEDDING_PROVIDER: {provider}")
