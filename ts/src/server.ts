@@ -2,6 +2,8 @@ import express from "express";
 import type { Express, NextFunction, Request, Response } from "express";
 
 import { createMethodNotAllowed } from "./http-contract.js";
+import { createDocumentsRouter } from "./routes/documents.js";
+import type { DocumentsRouterDependencies } from "./routes/documents.js";
 import { createStacksRouter } from "./routes/stacks.js";
 import type { StacksRouterDependencies } from "./routes/stacks.js";
 
@@ -153,8 +155,14 @@ function sendPreflight(req: Request, res: Response): void {
  * `deps` exists for tests: an integration suite binds the router to its own
  * connection pool and its own auth config instead of the process-wide
  * singletons. Production passes nothing and gets the defaults.
+ *
+ * The intersection is deliberate rather than a union: the stacks and documents
+ * routers declare the same `wrap` / `apiKey` collaborators, so one value
+ * satisfies both and each router keeps its own parameter type.
  */
-export function createApp(deps?: StacksRouterDependencies): Express {
+export function createApp(
+  deps?: StacksRouterDependencies & DocumentsRouterDependencies,
+): Express {
   const app = express();
 
   app.use(cors);
@@ -199,6 +207,13 @@ export function createApp(deps?: StacksRouterDependencies): Express {
   // its own auth (`dependencies=[Depends(require_api_key)]` in Python), so
   // nothing is authenticated globally and `/health` above stays open.
   app.use("/stacks", createStacksRouter(deps));
+
+  // Mounted at the root, with **no** path argument: `documents.py` declares its
+  // routes on two prefixes (`/stacks/{stack_id}/documents` and
+  // `/documents/{doc_id}`), exactly as it does in Python where every route
+  // carries its own full path. Prefixing this mount would move the by-id routes
+  // to `/stacks/documents/...` and break the 405 `Allow` ordering.
+  app.use(createDocumentsRouter(deps));
 
   // 404 fallback: JSON, never Express 5's default HTML page. FastAPI's shape
   // for unmatched routes is `{"detail": "Not Found"}`.
