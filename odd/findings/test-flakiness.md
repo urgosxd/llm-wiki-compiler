@@ -1,51 +1,65 @@
-# Two unreproduced test failures across Wave 0 and Wave 1
+# Not flakiness: deterministic cross-worktree collision on a shared database
 
-Both episodes are real: I saw the red output myself. Neither reproduced.
+**Corrected.** The first version of this document called the failures
+"unreproduced". They are reproduced, and the cause is known.
 
-## Episode 1 — Wave 0 close
+## The cause
 
-Single `npm test` in the main worktree: `Failed Tests 2`, `2 failed | 6 passed (8)`.
+`ts/src/db.test.ts` creates rows with **fixed domains**:
+`t04-route-commit`, `t04-route-404`, `t04-route-boom`.
 
-Followed by 4 clean runs including one under deliberate DB contention. Never
-reproduced. The failing test names were lost because the output was piped
-through `head -2` — my mistake.
+Every Wave 1 worktree has an identical copy of that file, and every worktree
+runs its suite against the **same Postgres instance**. So two suites running
+concurrently interleave like this:
 
-## Episode 2 — Wave 1, documents worktree
+1. Suite A inserts `t04-route-commit`.
+2. Suite B's cleanup, or its own insert/delete cycle, removes it.
+3. Suite A asserts `countByDomain("t04-route-commit") === 1` and reads **0**.
 
-```
-Test Files  2 failed | 8 passed (10)
-Tests       2 failed | 303 passed (305)
-```
-
-Reported by the slice worker as 305/305 green before and after. Followed by
-five consecutive clean runs, plus a run under an injected concurrent DB churn
-loop that also passed 305/305.
-
-The first of those runs was `typecheck && build && test` in one command, while
-the mcp and consolidation workers were still active. That timing is the only
-distinguishing feature I have, and it is not a confirmed cause.
-
-## What is established
-
-- The failures are real, not misreads. Both printed a red summary.
-- Both cleared on immediate retry with no code change.
-- Both environments have exactly one shared resource that three parallel slices
-  and their test suites all touch: the Postgres instance.
-
-## What is NOT established
-
-- Which tests failed, in either episode. Lost to output truncation both times.
-- Whether it is DB contention, pool exhaustion, timing, or something else.
-  Deliberate contention did not reproduce it.
-
-## What to do next time
-
-Never pipe test output through `head`, `tail`, or `grep` during a verification
-run. Capture the whole thing:
+Reproduced directly, two `db.test.ts` runs in parallel on the same DB:
 
 ```
-npm test 2>&1 | tee /tmp/test-$(date +%s).log
+A: Tests  15 passed (15)
+B: Tests  1 failed | 14 passed (15)
+   × commits when the handler resolves
 ```
 
-Two episodes with no captured names is two episodes too many. If a third
-occurs, that log is the only thing that will make it diagnosable.
+## Why it looked like flakiness
+
+Because solo runs always pass — 5 consecutive clean runs, plus a run under an
+injected churn loop that also passed. The collision only fires when a sibling
+suite happens to touch the same fixture domain inside the window between the
+insert and the assertion, which is a narrow, timing-dependent window.
+
+It is deterministic in mechanism and nondeterministic in scheduling, which is
+exactly the shape that gets misfiled as flake.
+
+## Why the per-slice prefixes did not prevent it
+
+The slice workers were told to use unique prefixes (`w1doc-`, `w1bf-`) and did.
+But `db.test.ts` is **pre-existing**, present in every worktree before the
+slices started, and its domains were already fixed. The instruction covered new
+tests, not the inherited ones.
+
+## The three episodes
+
+| # | Where | Symptom |
+|---|---|---|
+| 1 | Wave 0 close, main worktree | `2 failed \| 6 passed (8)` — names lost to `head -2` |
+| 2 | Wave 1, documents worktree | `2 failed \| 303 passed (305)` — names lost to grep |
+| 3 | Wave 1 final sweep | `1 failed \| 304 passed (305)`, **captured**: `db.test.ts > withRequestTransaction > commits a deliberate 404` |
+
+Episode 3 is the one that made this diagnosable, because it was the first run
+captured to a full log instead of a truncated pipe.
+
+## Consequences
+
+- Slice verification must be run **sequentially**, or against **separate
+  databases**. Running three worktree suites at once against one Postgres
+  produces false red.
+- Any future parallel fan-out must namespace inherited fixtures too, not only
+  new ones. Grep the whole `*.test.ts` set for hardcoded domains before
+  splitting.
+- The rule stands from the earlier version: never truncate a verification run's
+  output. All three episodes cost extra cycles because of it, and this document
+  only exists because the third run was captured properly.
