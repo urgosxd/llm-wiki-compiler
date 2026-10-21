@@ -54,3 +54,33 @@ Wave 0 is closed as *verified*, not as *fully natively reviewed*. The unapproved
 against the oracle, but they have not had an adversarial lens over them. If
 that matters later, the honest route is a slot-by-slot capture, which degrades
 to partial success instead of all-or-nothing.
+
+## Advisory findings from the approved review
+
+Both were classified WARNING / informational with no correction transition.
+Recorded with the surrounding context so a future reader can judge them.
+
+### R3-001 — `ts/src/http-contract.ts:186-223` (`matchAndTrim`)
+
+Reads `layer.path`, a field Express writes during `Layer#match`. The 405
+resolver therefore depends on mutable internal state of the router rather than
+on a public API.
+
+This is deliberate: reproducing Starlette's mount/prefix trimming requires the
+consumed prefix, and Express only exposes it as a side effect of matching. The
+risk is a future Express upgrade changing when or whether `layer.path` is
+populated, which would silently corrupt `Allow` resolution rather than fail
+loudly. The 29 tests in `http-contract.test.ts` pin all 15 measured oracle rows,
+so an upgrade that breaks it should fail the suite — but that is the thing to
+keep in mind, not a defect to fix now.
+
+### R3-002 — `ts/src/server.ts:139-140`
+
+Rejects a preflight carrying `Access-Control-Request-Private-Network` with a
+400, matching Starlette's behaviour that we measured on the oracle.
+
+Faithful to the oracle, and obscure: private network access is a niche browser
+feature, and the port reproduces the rejection because the differential proved
+the oracle does it. Nothing here is wrong; it is flagged because the code is
+subtle enough that a later reader may be tempted to "simplify" it away and
+quietly diverge.
