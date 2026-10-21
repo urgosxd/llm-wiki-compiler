@@ -1,5 +1,21 @@
 # Wave 0 verifier findings
 
+> **STATUS: ALL FIVE MAJOR FINDINGS CLOSED.**
+>
+> M1 and M2 fixed in `8960986`. M3, M4 and M5 fixed in `be83455`.
+> Each fix was re-verified independently against the live oracle rather than
+> accepted on the implementing worker's report: 9/9 method/Allow cases match,
+> the 500 is 21 bytes text/plain on both sides, allow-methods is identical
+> including QUERY, a no-Origin GET omits allow-origin on both, and all six
+> emoji boundary cases agree. Full suite 253/253 across 8 files, oracle-diff
+> 18 passed exit 0.
+>
+> The three MINOR items (timestamp-mask fraction optional, case-insensitive
+> UUID mask, 204 content-type) remain open as coverage gaps, not live bugs.
+>
+> The findings below are kept in their original form as the record of what
+> the verifier found and how it was confirmed.
+
 Produced by an independent read-only verifier, then each MAJOR finding
 re-confirmed by hand against the live oracle before being accepted.
 
