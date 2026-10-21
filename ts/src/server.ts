@@ -1,6 +1,9 @@
 import express from "express";
 import type { Express, NextFunction, Request, Response } from "express";
 
+import { createStacksRouter } from "./routes/stacks.js";
+import type { StacksRouterDependencies } from "./routes/stacks.js";
+
 /**
  * Methods FastAPI's CORSMiddleware expands from `allow_methods=["*"]`.
  * Order matches the live Python oracle's preflight response exactly.
@@ -52,12 +55,34 @@ function cors(req: Request, res: Response, next: NextFunction): void {
 /**
  * Builds the Express application without binding a port.
  * Tests mount this directly; `index.ts` owns `listen()`.
+ *
+ * `deps` exists for tests: an integration suite binds the router to its own
+ * connection pool and its own auth config instead of the process-wide
+ * singletons. Production passes nothing and gets the defaults.
  */
-export function createApp(): Express {
+export function createApp(deps?: StacksRouterDependencies): Express {
   const app = express();
 
   app.use(cors);
-  app.use(express.json());
+
+  // `strict: false` because FastAPI's body parsing is not strict about the JSON
+  // *top-level* value. Measured on the oracle:
+  //
+  //   POST /stacks  body `null`  -> 422 model_attributes_type, input null
+  //   POST /stacks  body `5`     -> 422 model_attributes_type, input 5
+  //   POST /stacks  body `[]`    -> 422 model_attributes_type, input []
+  //
+  // body-parser's default (`strict: true`) only accepts an array or an object at
+  // the top level and rejects the rest as malformed JSON, which would answer 400
+  // instead of letting the DTO report Pydantic's 422. With `strict: false` every
+  // JSON value reaches the schema, and `StackCreate` / `StackUpdate` reject the
+  // non-objects with exactly the error the oracle emits.
+  //
+  // Known divergence, not addressed here: genuinely malformed JSON (`{bad`)
+  // still answers body-parser's 400, while the oracle answers 422 with
+  // `type: "json_invalid"` and Python's own decoder message. Reproducing that
+  // message per malformed input is a separate concern from these routes.
+  app.use(express.json({ strict: false }));
 
   // Liveness probe. No auth, and the body mirrors the Python oracle
   // byte-for-byte (field names, values, and order are contractual).
@@ -68,6 +93,11 @@ export function createApp(): Express {
       version: "0.2.0",
     });
   });
+
+  // Routers, mirroring `app.include_router(...)` in app/main.py. Each one owns
+  // its own auth (`dependencies=[Depends(require_api_key)]` in Python), so
+  // nothing is authenticated globally and `/health` above stays open.
+  app.use("/stacks", createStacksRouter(deps));
 
   // 404 fallback: JSON, never Express 5's default HTML page. FastAPI's shape
   // for unmatched routes is `{"detail": "Not Found"}`.
