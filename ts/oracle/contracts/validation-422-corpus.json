@@ -1,0 +1,61 @@
+{
+  "note": "Pydantic 422 shapes captured from the live oracle on :8000. Used by T0.6 error mapper and T0.8 harness.",
+  "cases": [
+    {
+      "id": "name_empty",
+      "body": {
+        "name": "",
+        "domain": "bad"
+      }
+    },
+    {
+      "id": "domain_pattern",
+      "body": {
+        "name": "X",
+        "domain": "NOT-A-SLUG"
+      }
+    },
+    {
+      "id": "missing_domain",
+      "body": {
+        "name": "X"
+      }
+    },
+    {
+      "id": "missing_name",
+      "body": {
+        "domain": "ok-slug"
+      }
+    },
+    {
+      "id": "name_too_long",
+      "body": {
+        "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "domain": "ok2"
+      }
+    },
+    {
+      "id": "scope_literal",
+      "body": {
+        "name": "X",
+        "domain": "ok3",
+        "scope": "INVALID"
+      }
+    },
+    {
+      "id": "name_whitespace_only",
+      "body": {
+        "name": " ",
+        "domain": "ok4"
+      }
+    },
+    {
+      "id": "unknown_field",
+      "body": {
+        "name": "X",
+        "domain": "ok5",
+        "bogus": 1
+      }
+    }
+  ]
+}
