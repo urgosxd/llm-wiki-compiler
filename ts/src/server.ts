@@ -1,20 +1,33 @@
 import express from "express";
 import type { Express, NextFunction, Request, Response } from "express";
 
+import { createMethodNotAllowed } from "./http-contract.js";
 import { createStacksRouter } from "./routes/stacks.js";
 import type { StacksRouterDependencies } from "./routes/stacks.js";
 
 /**
- * Methods FastAPI's CORSMiddleware expands from `allow_methods=["*"]`.
- * Order matches the live Python oracle's preflight response exactly.
+ * Starlette's `cors.ALL_METHODS`, verbatim, as the preflight emits it.
+ *
+ * This is the tuple FastAPI expands `allow_methods=["*"]` into. It includes
+ * `QUERY`, which is not a verb Express knows about — that is exactly why a
+ * hand-written list drifted from the oracle, and why this one is copied from
+ * Starlette's source and pinned by a test instead of being typed from memory.
  */
-const ALL_METHODS = "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT";
+const ALL_METHODS = "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT, QUERY";
 
-/** FastAPI CORSMiddleware default `preflight_max_age`. */
+/** FastAPI CORSMiddleware default `preflight_max_age` (Starlette: `max_age=600`). */
 const PREFLIGHT_MAX_AGE = "600";
 
+/** Starlette's `CORSMiddleware.preflight_headers["Vary"]`, verbatim. */
+const PREFLIGHT_VARY =
+  "Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Access-Control-Request-Private-Network";
+
+/** FastAPI answers a rejected preflight with this exact plain-text body. */
+const DISALLOWED_PREFIX = "Disallowed CORS ";
+
 /**
- * CORS middleware mirroring `app/main.py`:
+ * CORS middleware reproducing Starlette's `CORSMiddleware` under
+ * `app/main.py`'s configuration:
  *
  *   app.add_middleware(
  *       CORSMiddleware,
@@ -23,33 +36,114 @@ const PREFLIGHT_MAX_AGE = "600";
  *       allow_headers=["*"],
  *   )
  *
- * With a wildcard origin set, FastAPI echoes `Access-Control-Allow-Origin: *`,
- * adds `Vary: Origin`, and answers preflights with 200 / `text/plain` "OK".
+ * Every branch below is a measurement against the live oracle, not a reading of
+ * the docs. The two that a plausible-looking shim gets wrong:
+ *
+ * 1. **A preflight requires an `Origin` header.** Starlette's condition is
+ *    `origin is not None and method == "OPTIONS" and "access-control-request-method"
+ *    in headers`. Without `Origin` there is no preflight at all: the request
+ *    falls through to the router and is answered on the method axis (measured:
+ *    `OPTIONS /stacks` with only `Access-Control-Request-Method` answers 405).
+ * 2. **`Access-Control-Allow-Origin` is only sent when the request carries an
+ *    `Origin`.** Measured: `GET /health` with no `Origin` returns `vary: Origin`
+ *    and no allow-origin header, because Starlette's `send()` adds the simple
+ *    headers only inside `if origin is not None`.
+ *
+ * With `allow_origins=["*"]` and no credentials, the allowed value is the
+ * literal `*` — the oracle does not echo the origin back.
  */
 function cors(req: Request, res: Response, next: NextFunction): void {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Vary", "Origin");
+  const origin = req.headers.origin;
 
-  const requestedMethod = req.headers["access-control-request-method"];
-
-  if (req.method === "OPTIONS" && requestedMethod !== undefined) {
-    res.setHeader(
-      "Vary",
-      "Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Access-Control-Request-Private-Network",
-    );
-    res.setHeader("Access-Control-Allow-Methods", ALL_METHODS);
-    res.setHeader("Access-Control-Max-Age", PREFLIGHT_MAX_AGE);
-
-    const requestedHeaders = req.headers["access-control-request-headers"];
-    if (requestedHeaders !== undefined) {
-      res.setHeader("Access-Control-Allow-Headers", requestedHeaders);
-    }
-
-    res.status(200).type("text/plain").send("OK");
+  if (
+    origin !== undefined &&
+    req.method === "OPTIONS" &&
+    req.headers["access-control-request-method"] !== undefined
+  ) {
+    sendPreflight(req, res);
     return;
   }
 
+  // Non-preflight: Starlette's `send()` runs on the way out, so the headers are
+  // attached to whatever response the app produces, errors included. `res` is
+  // mutable here for the lifetime of the request, hence `on-headers`-free
+  // assignment before calling down the chain.
+  if (origin !== undefined) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
+  appendVaryOrigin(res);
+
   next();
+}
+
+/**
+ * Appends `Origin` to an existing `Vary`, as Starlette's `MutableHeaders` does.
+ *
+ * Express does not add `Vary` on its own, so in practice this writes `Origin`.
+ * The append form is kept because a future middleware that sets `Vary` must not
+ * lose its value.
+ */
+function appendVaryOrigin(res: Response): void {
+  const existing = res.getHeader("Vary");
+  const current = Array.isArray(existing)
+    ? existing.join(", ")
+    : existing === undefined
+      ? ""
+      : String(existing);
+
+  if (current === "") {
+    res.setHeader("Vary", "Origin");
+    return;
+  }
+  if (current.split(/\s*,\s*/).includes("Origin")) {
+    return;
+  }
+  res.setHeader("Vary", `${current}, Origin`);
+}
+
+/**
+ * Answers a CORS preflight exactly like `CORSMiddleware.preflight_response`.
+ *
+ * The failure conditions are reproduced because they are observable on the wire:
+ * the requested method must appear **verbatim** in {@link ALL_METHODS} —
+ * `Access-Control-Request-Method: post` is rejected while `POST` is accepted
+ * (measured) — and a requested private-network access is rejected because
+ * `allow_private_network` defaults to `False`.
+ *
+ * A failed preflight is still a `text/plain` 400 carrying the same
+ * allow-origin/allow-methods/max-age header set as a successful one, with a
+ * `Disallowed CORS …` body.
+ */
+function sendPreflight(req: Request, res: Response): void {
+  res.setHeader("Vary", PREFLIGHT_VARY);
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", ALL_METHODS);
+  res.setHeader("Access-Control-Max-Age", PREFLIGHT_MAX_AGE);
+
+  const requestedHeaders = req.headers["access-control-request-headers"];
+  if (requestedHeaders !== undefined) {
+    // Mirrored back verbatim: FastAPI runs with `allow_headers=["*"]`, so it
+    // echoes whatever the client asked for rather than validating it.
+    res.setHeader("Access-Control-Allow-Headers", requestedHeaders);
+  }
+
+  const failures: string[] = [];
+
+  const requestedMethod = req.headers["access-control-request-method"];
+  if (requestedMethod === undefined || !ALL_METHODS.split(", ").includes(requestedMethod)) {
+    failures.push("method");
+  }
+
+  if (req.headers["access-control-request-private-network"] !== undefined) {
+    failures.push("private-network");
+  }
+
+  if (failures.length > 0) {
+    res.status(400).type("text/plain").send(`${DISALLOWED_PREFIX}${failures.join(", ")}`);
+    return;
+  }
+
+  res.status(200).type("text/plain").send("OK");
 }
 
 /**
@@ -64,6 +158,13 @@ export function createApp(deps?: StacksRouterDependencies): Express {
   const app = express();
 
   app.use(cors);
+
+  // 405 for an existing path with an unsupported method, reproducing Starlette's
+  // partial-match rule. Mounted here, between CORS and body parsing: a genuine
+  // preflight is already answered above, and `express.json` must not see the
+  // body of a request that never reaches a handler (the oracle answers
+  // `PUT /stacks` with malformed JSON as 405, not 400).
+  app.use(createMethodNotAllowed(app));
 
   // `strict: false` because FastAPI's body parsing is not strict about the JSON
   // *top-level* value. Measured on the oracle:
@@ -108,23 +209,41 @@ export function createApp(deps?: StacksRouterDependencies): Express {
   // Final error handler. The four-argument signature is what marks this as an
   // Express error handler, so `next` must stay declared even though unused.
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const status =
-      typeof err === "object" &&
-      err !== null &&
-      "status" in err &&
-      typeof (err as { status?: unknown }).status === "number"
-        ? (err as { status: number }).status
-        : 500;
+    const status = errorStatus(err);
+
+    // Unhandled server errors are NOT JSON on the oracle. FastAPI's
+    // `ServerErrorMiddleware` answers a bare `PlainTextResponse("Internal Server
+    // Error", status_code=500)` — measured: `content-type: text/plain;
+    // charset=utf-8`, 21 bytes, no `detail` wrapper. Only the generic 5xx path
+    // changed shape here; every handled client error below stays JSON.
+    if (status >= 500) {
+      res.status(status).type("text/plain").send("Internal Server Error");
+      return;
+    }
 
     // Client errors (e.g. malformed JSON from express.json()) carry a safe,
     // caller-relevant message; 5xx stays opaque so internals never leak.
     const detail =
-      status >= 400 && status < 500 && err instanceof Error
-        ? err.message
-        : "Internal Server Error";
+      err instanceof Error && err.message !== "" ? err.message : "Bad Request";
 
     res.status(status).json({ detail });
   });
 
   return app;
+}
+
+/**
+ * Extracts an HTTP status from a thrown value, defaulting to 500.
+ *
+ * Kept out of the handler so the narrowing is done once, with a declared guard
+ * rather than a cast.
+ */
+function errorStatus(err: unknown): number {
+  if (typeof err === "object" && err !== null && "status" in err) {
+    const status: unknown = err.status;
+    if (typeof status === "number") {
+      return status;
+    }
+  }
+  return 500;
 }
