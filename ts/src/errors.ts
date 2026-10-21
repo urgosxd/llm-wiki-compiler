@@ -317,10 +317,17 @@ export function pydanticString(options: StringOptions = {}): z.ZodType<string> {
     if (typeof value !== "string") {
       return failHere(STRING_TYPE);
     }
-    if (options.minLength !== undefined && value.length < options.minLength) {
+    // Python's `len()` counts Unicode code points; `String.prototype.length`
+    // counts UTF-16 code units. They agree for BMP text and diverge for astral
+    // characters, where one code point (an emoji) is two units. The oracle
+    // accepts a 101-emoji name because it is 101 code points, so counting
+    // `.length` here would reject it at 202 units. `[...value].length` counts
+    // code points by iterating the string's code points, matching Python.
+    const codePointLength = [...value].length;
+    if (options.minLength !== undefined && codePointLength < options.minLength) {
       return failHere(stringTooShort(options.minLength));
     }
-    if (options.maxLength !== undefined && value.length > options.maxLength) {
+    if (options.maxLength !== undefined && codePointLength > options.maxLength) {
       return failHere(stringTooLong(options.maxLength));
     }
     if (options.pattern !== undefined && !options.pattern.regex.test(value)) {

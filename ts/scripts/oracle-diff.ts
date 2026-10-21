@@ -636,6 +636,32 @@ function parseOptions(argv: readonly string[], env: NodeJS.ProcessEnv): Options 
     booleanFlags.add(withoutPrefix);
   }
 
+  // Reject unrecognized flags instead of ignoring them. Silently accepting a
+  // typo is how a confident green run gets produced from a comparison nobody
+  // asked for: passing `--ts` where the harness expects `--ts-url` leaves the
+  // default in place, and the run then compares against whatever the default
+  // points at. That exact mistake produced a false pass during development.
+  const KNOWN_FLAGS = new Set(
+    [
+      "oracle-url",
+      "ts-url",
+      "boot",
+      "boot-port",
+      "api-key",
+      "database-url",
+    ].concat([...booleanFlags].filter((flag) => flag === "boot")),
+  );
+  const unknownFlags = [
+    ...new Set([...flags.keys(), ...booleanFlags]),
+  ].filter((flag) => !KNOWN_FLAGS.has(flag));
+  if (unknownFlags.length > 0) {
+    throw new Error(
+      `oracle-diff: unrecognized flag${unknownFlags.length === 1 ? "" : "s"} ` +
+        `${unknownFlags.map((flag) => `--${flag}`).join(", ")}. ` +
+        `Known flags: ${[...KNOWN_FLAGS].map((flag) => `--${flag}`).join(", ")}.`,
+    );
+  }
+
   const envString = (key: string): string | undefined => {
     const value = env[key];
     return value === undefined || value.trim() === "" ? undefined : value;
@@ -1108,6 +1134,20 @@ function printReport(
 
 async function main(): Promise<number> {
   const options = parseOptions(process.argv.slice(2), process.env);
+
+  // A comparison of a server against itself cannot fail, so it must never be
+  // reported as a pass. Without this guard, `--ts-url` left pointing at the
+  // oracle produces a full green run of eighteen checks that proves nothing,
+  // which is the same silent-green class as the id-binding and aborted-run
+  // bugs fixed earlier. Misconfigured CI is the realistic way to hit it.
+  if (options.oracleUrl === options.tsUrl) {
+    console.error(
+      `oracle-diff: --oracle-url and --ts-url are the same (${options.oracleUrl}).\n` +
+        "Comparing a server against itself cannot produce a meaningful result, " +
+        "so this run is refused rather than reported as a pass.",
+    );
+    return 2;
+  }
 
   console.log("oracle-diff harness");
   console.log(`  oracle:  ${options.oracleUrl}`);
