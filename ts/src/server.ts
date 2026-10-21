@@ -2,6 +2,7 @@ import express from "express";
 import type { Express, NextFunction, Request, Response } from "express";
 
 import { createMethodNotAllowed } from "./http-contract.js";
+import { createBackfeedRouter } from "./routes/backfeed.js";
 import { createStacksRouter } from "./routes/stacks.js";
 import type { StacksRouterDependencies } from "./routes/stacks.js";
 
@@ -199,6 +200,7 @@ export function createApp(deps?: StacksRouterDependencies): Express {
   // its own auth (`dependencies=[Depends(require_api_key)]` in Python), so
   // nothing is authenticated globally and `/health` above stays open.
   app.use("/stacks", createStacksRouter(deps));
+  app.use("/aks/v1/backfeed", createBackfeedRouter(deps));
 
   // 404 fallback: JSON, never Express 5's default HTML page. FastAPI's shape
   // for unmatched routes is `{"detail": "Not Found"}`.
