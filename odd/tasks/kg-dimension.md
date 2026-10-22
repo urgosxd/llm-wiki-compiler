@@ -103,14 +103,77 @@ Measured offenders (non-test): `core/extraction.ts` 1292, `mcp.ts` 1042,
 | wave 2.2 | `ffb988b` | tsc clean, 575 KG tests unchanged (verbatim move) |
 | wave 3 | `c630de6` | 25 dimension tests + 47 sdk tests pass, fallow clean |
 
-## Open decision — Wave 4
+## Wave 4 — KG under the 400-line rule (complete)
 
-Wave 4 is a refactor of vendored upstream code, not part of the feature, and it
-is large: 13 non-test files and 10 test files exceed 400 lines (24,100 lines
-moved would total roughly 60 new files), and 22 functions exceed 40 lines. It
-also severs the diff against upstream permanently.
+Measured with comments and blanks excluded (the rule says "excluding
+comments"): 11 non-test files and 12 test files were over 400, and 34 functions
+over 40. `dto.ts` (380) and `routes/ingest.ts` (377) already complied.
 
-The feature works without it, because `fallow` currently ignores
-`packages/llmwiki-kg/**`. Completing Wave 4 means removing that exemption.
+| File | Before (code) | After | Shape |
+| --- | --- | --- | --- |
+| `errors.ts` | 800 | 46 barrel | 5 modules in `src/pydantic/` |
+| `core/extraction.ts` | 1173 | 46 barrel | 9 pipeline modules, by the file's own STEP comments |
+| `mcp.ts` | 942 | 33 barrel | 10 modules in `src/mcp/` |
+| `routes/aks.ts` | 909 | 64 barrel | 6 modules by endpoint |
+| `core/page_generator.ts` | 684 | 74 barrel | 9 modules |
+| `routes/synthesize.ts` | 569 | 76 barrel | 7 modules |
+| `routes/backfeed.ts` | 538 | 55 barrel | 10 modules |
+| `core/files.ts` | 533 | 70 barrel | 8 modules |
+| `routes/pages.ts` | 483 | 51 barrel | 6 modules |
+| `core/llm_clients.ts` | 477 | 62 barrel | 7 modules |
+| `routes/documents.ts` | 471 | 52 barrel | 8 modules |
+| `routes/ingest.ts` | 377 | 34 barrel | 5 modules (grew past 400 mid-split) |
 
-Nothing in Waves 1-3 depends on Wave 4.
+Method: split along the author's own section comments, move **verbatim**, and
+leave the original file as a pure barrel so **no import path outside the new
+directory changed**. All 12 test files were split by `describe` block into 57
+files with a per-concern harness.
+
+One function deliberately remains over 40: `routes/aks/traverse.ts`
+`walkStatement` (43), a single `with recursive` CTE where the length is the
+query. Splitting it would obscure the seed/recursion/projection structure.
+
+### Defects the split surfaced (all fixed)
+
+1. **Import cycle** `routes/ingest/pipeline.ts` <-> `routes/ingest/router.ts`.
+   Broken by moving `sendValidationFailure` into `routes/ingest/response.ts`.
+2. **Dead barrel exports** `KG_TOOL` and `buildExtractionPrompt` re-exported by
+   `core/extraction.ts` but imported by nobody through it.
+3. **Test fixture collision**: the split consolidation suite shared one domain
+   prefix (`w1bf-consolidation-`), so each file's `afterAll` cleanup deleted its
+   siblings' rows. This caused an intermittent failure in a *different* test on
+   each run. Each file now claims its own suffix via `useDomainPrefix`, matching
+   every other harness.
+
+### Why `fallow` still ignores `packages/llmwiki-kg/**`
+
+Measured, not assumed. Enabling the vendored package activates fallow's
+`drizzle` plugin (the package depends on `drizzle-orm`), which drops the
+compiler's discovered plugin entry points from 1515 to 269 and reports **2014
+phantom issues** (1397 phantom "unused files") against code this change never
+touched. With the package excluded, fallow returns to exactly the `main`
+baseline: 0 issues, maintainability 89.6.
+
+Scoped to the package alone (`npx fallow --workspace aks-reference-server`) it
+reports 129 unused exports and 33 unused types. Those are upstream's public
+surface — the module exports its HTTP handlers and helpers for consumption by a
+server entry point, not by itself — plus 48 test-harness symbols fallow cannot
+resolve through glob imports. None was introduced by this refactor, and two that
+WERE introduced (the dead barrel exports above) were removed.
+
+Verify with:
+
+```
+npx fallow                    # 0 issues (KG excluded)
+npx fallow --workspace aks-reference-server
+```
+
+### Known infrastructure flake (pre-existing, not this change)
+
+`db.test.ts` uses fixed domains (`t04-route-commit`, `t04-route-404`) and cleans
+up with `like 't04-route-%'`, so its own tests can delete each other's rows under
+load. Documented upstream in `packages/llmwiki-kg/odd/findings/db-test-isolation.md`
+and `test-flakiness.md`. It appears roughly once per 6 full-suite runs, always
+with Postgres involved, and never reproduces in isolation or in small groups.
+The fix belongs in the test (unique per-test domains), not production code, and
+is upstream's debt.
