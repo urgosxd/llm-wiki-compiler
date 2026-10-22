@@ -29,3 +29,8 @@ export type {
   ExtractedRelationship,
   ExtractionResult,
 } from "./core/extraction.js";
+
+export {
+  consolidateEntityRows,
+  consolidateRelationshipRows,
+} from "./core/document-consolidation.js";
