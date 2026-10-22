@@ -41,3 +41,11 @@ Thumbs.db
 bundle.json
 *.zip
 /tmp/
+# Local Pi runtime state
+.atl/
+
+# ---- TypeScript port (ts/) ----
+ts/node_modules/
+ts/dist/
+ts/coverage/
+*.tsbuildinfo
