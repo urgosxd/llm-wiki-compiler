@@ -2,6 +2,8 @@ import express from "express";
 import type { Express, NextFunction, Request, Response } from "express";
 
 import { createMethodNotAllowed } from "./http-contract.js";
+import { createAksRouter } from "./routes/aks.js";
+import type { AksRouterDependencies } from "./routes/aks.js";
 import { createBackfeedRouter } from "./routes/backfeed.js";
 import { createDocumentsRouter } from "./routes/documents.js";
 import type { DocumentsRouterDependencies } from "./routes/documents.js";
@@ -166,7 +168,8 @@ function sendPreflight(req: Request, res: Response): void {
 export function createApp(
   deps?: StacksRouterDependencies &
     DocumentsRouterDependencies &
-    IngestRouterDependencies,
+    IngestRouterDependencies &
+    AksRouterDependencies,
 ): Express {
   const app = express();
 
@@ -212,6 +215,15 @@ export function createApp(
   // its own auth (`dependencies=[Depends(require_api_key)]` in Python), so
   // nothing is authenticated globally and `/health` above stays open.
   app.use("/stacks", createStacksRouter(deps));
+
+  // Mounted at `/aks/v1`, the router's own prefix (`APIRouter(prefix="/aks/v1")`
+  // in Python). Registered *before* `/aks/v1/backfeed` so the 405 `Allow` walk in
+  // `http-contract.ts` visits the layers in the order Starlette's flat route list
+  // would: the Python `app.include_router(aks.router)` call also precedes
+  // `backfeed.router`. The two never share a path — the query router's deepest
+  // route is `/entities/{name}` — so this ordering is about fidelity, not about
+  // which handler wins.
+  app.use("/aks/v1", createAksRouter(deps));
   app.use("/aks/v1/backfeed", createBackfeedRouter(deps));
 
   // Mounted at the root, with **no** path argument: `documents.py` declares its
