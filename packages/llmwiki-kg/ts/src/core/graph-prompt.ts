@@ -1,0 +1,154 @@
+/**
+ * @file packages/llmwiki-kg/ts/src/core/graph-prompt.ts
+ * @description The extraction prompt and its tool schema.
+ *
+ * Both are copied from the oracle rather than rewritten, because the model's
+ * output shape is a function of the prompt text and the tool definition. Changing
+ * either changes what gets extracted, which `promptVersion`-style markers cannot
+ * repair after the fact.
+ */
+
+import type { ToolDefinition } from "./llm_clients.js";
+
+// ===========================================================================
+// STEP 5: GRAPH EXTRACTION
+// ===========================================================================
+
+/**
+ * llama_index's `DEFAULT_ENTITIES`, spelled exactly as the generated tool
+ * schema spells them.
+ *
+ * The list is not used for validation (`strict=False` accepts any type), but it
+ * **is** in the schema description the model reads, and it is what the model
+ * tends to emit. Changing it changes extracted types.
+ */
+const DEFAULT_ENTITIES = [
+  "PRODUCT", "MARKET", "TECHNOLOGY", "EVENT", "CONCEPT",
+  "ORGANIZATION", "PERSON", "LOCATION", "TIME", "MISCELLANEOUS",
+] as const;
+
+/** llama_index's `DEFAULT_RELATIONS`, same reasoning as {@link DEFAULT_ENTITIES}. */
+const DEFAULT_RELATIONS = [
+  "USED_BY", "USED_FOR", "LOCATED_IN", "PART_OF", "WORKED_ON",
+  "HAS", "IS_A", "BORN_IN", "DIED_IN", "HAS_ALIAS",
+] as const;
+
+/**
+ * Renders a `Literal[...]` list the way Python's `str()` renders one.
+ *
+ * The generated schema descriptions embed `str(possible_entities)`, which
+ * produces `typing.Literal['PRODUCT', 'MARKET', ...]`. Reproducing that
+ * verbatim keeps the model's input byte-identical to the oracle's, which is the
+ * only way the same model returns the same types for the same text.
+ */
+function pythonLiteral(values: readonly string[]): string {
+  return `typing.Literal[${values.map((value) => `'${value}'`).join(", ")}]`;
+}
+
+/**
+ * The tool schema `SchemaLLMPathExtractor` generates for this configuration.
+ *
+ * Captured from the live request rather than transcribed from the class: with
+ * `strict=False` and no `possible_entity_props`, `get_entity_class` produces a
+ * bare `{type, name}` entity and a bare `{type}` relation, and the triplet
+ * model wraps them as `subject` / `relation` / `object` under a `triplets`
+ * array. The top-level `additionalProperties: false` is what LlamaIndex adds
+ * when building the function tool.
+ */
+export const KG_TOOL = {
+  name: "KGSchema",
+  description: "Knowledge Graph Schema.",
+  parameters: {
+    type: "object",
+    properties: {
+      triplets: {
+        type: "array",
+        items: { $ref: "#/$defs/Triplet" },
+      },
+    },
+    required: ["triplets"],
+    $defs: {
+      Entity: {
+        type: "object",
+        properties: {
+          type: {
+            type: "string",
+            description:
+              "Entity in a knowledge graph. Only extract entities with types that are listed as valid: " +
+              pythonLiteral(DEFAULT_ENTITIES),
+          },
+          name: { type: "string" },
+        },
+        required: ["type", "name"],
+      },
+      Relation: {
+        type: "object",
+        properties: {
+          type: {
+            type: "string",
+            description:
+              "Relation in a knowledge graph. Only extract relations with types that are listed as valid: " +
+              pythonLiteral(DEFAULT_RELATIONS),
+          },
+        },
+        required: ["type"],
+      },
+      Triplet: {
+        type: "object",
+        properties: {
+          subject: { $ref: "#/$defs/Entity" },
+          relation: { $ref: "#/$defs/Relation" },
+          object: { $ref: "#/$defs/Entity" },
+        },
+        required: ["subject", "relation", "object"],
+      },
+    },
+  },
+} as const satisfies ToolDefinition;
+
+/**
+ * `DEFAULT_SCHEMA_PATH_EXTRACT_PROMPT`, verbatim — including the typo
+ * `"extracted paths.s"`.
+ *
+ * The typo is contractual. It is in the prompt the oracle sends, and changing it
+ * changes the model's input; a faithful port keeps it and says so.
+ *
+ * `{max_triplets_per_chunk}` and `{text}` are filled by
+ * {@link buildExtractionPrompt}.
+ */
+const EXTRACTION_PROMPT =
+  "Give the following text, extract the knowledge graph according to the provided schema. " +
+  "Try to limit to the output {max_triplets_per_chunk} extracted paths.s\n" +
+  "-------\n" +
+  "{text}\n" +
+  "-------\n";
+
+/** `max_triplets_per_chunk=20` from `extract_graph_from_chunks`. */
+const MAX_TRIPLETS_PER_CHUNK = 20;
+
+/**
+ * Renders the extraction prompt for one chunk.
+ *
+ * `text` is the node's `MetadataMode.LLM` content, which is the metadata lines
+ * followed by a blank line and the chunk body. Captured example:
+ *
+ * ```
+ * chunk_index: 0
+ * stack_name: demo
+ *
+ * AKS servers run on Kubernetes.
+ * ```
+ *
+ * The metadata is visible to the model, so it is part of the prompt's meaning —
+ * it is why the model can refer to the Stack by name.
+ */
+export function buildExtractionPrompt(chunkContent: string, chunkIndex: number, stackName: string): string {
+  const nodeContent = `chunk_index: ${String(chunkIndex)}\nstack_name: ${stackName}\n\n${chunkContent}`;
+  return EXTRACTION_PROMPT.replace("{max_triplets_per_chunk}", String(MAX_TRIPLETS_PER_CHUNK)).replace(
+    "{text}",
+    nodeContent,
+  );
+}
+
+
+/** One validated triplet, flattened to names and types. */
