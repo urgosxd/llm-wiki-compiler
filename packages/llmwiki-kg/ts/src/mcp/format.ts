@@ -10,6 +10,9 @@
 import { asArray, asNumber, asRecord, asText, requireField } from "./narrow.js";
 import { formatFixed2 } from "./py-format.js";
 
+/** What an entity with no description is rendered as. */
+const NO_DESCRIPTION = "(no description)";
+
 // ============================================================
 // Response formatting
 // ============================================================
@@ -18,70 +21,91 @@ import { formatFixed2 } from "./py-format.js";
 // `_format_entities_response` and the inline Stack loop in `_list_stacks`,
 // including the bullet character (U+2022) and the exact indentation.
 
+/** The context entity's description, or the placeholder for an empty one. */
+function contextDescription(entity: Record<string, unknown>): string {
+  const raw = entity["description"];
+  return typeof raw === "string" && raw.length > 0 ? raw : NO_DESCRIPTION;
+}
+
+/** Renders the "Relevant entities" block, or the not-found marker. */
+function entityLines(entities: readonly unknown[]): string[] {
+  if (entities.length === 0) {
+    return ["No relevant entities found."];
+  }
+
+  const lines = [`Relevant entities (${entities.length}):`];
+  for (const entity of entities) {
+    const e = asRecord(entity);
+    if (e === null) throw new Error("Context entity is not an object");
+    const description = contextDescription(e);
+    const confidence = asNumber(e["confidence"], "confidence");
+    lines.push(
+      `  • ${asText(requireField(e, "name"))} [${asText(
+        requireField(e, "type"),
+      )}, conf ${formatFixed2(confidence)}]`,
+    );
+    if (description !== NO_DESCRIPTION) {
+      lines.push(`    ${description}`);
+    }
+  }
+  return lines;
+}
+
+/** Maps entity id → name, which is how relationships recover their endpoints. */
+function entityNameMap(entities: readonly unknown[]): Map<string, string> {
+  // Relationships carry IDs only; the entity list above is the name lookup.
+  const nameMap = new Map<string, string>();
+  for (const entity of entities) {
+    const e = asRecord(entity);
+    if (e === null) continue;
+    const id = requireField(e, "id");
+    if (typeof id !== "string") throw new Error("Context entity 'id' is not a string");
+    nameMap.set(id, asText(requireField(e, "name")));
+  }
+  return nameMap;
+}
+
+/** Renders the "Relationships" block, or nothing when there are none. */
+function relationshipLines(
+  record: Record<string, unknown>,
+  entities: readonly unknown[],
+): string[] {
+  const relationships = asArray(record["relationships"]);
+  if (relationships.length === 0) {
+    return [];
+  }
+
+  const lines = ["", `Relationships (${relationships.length}):`];
+  const nameMap = entityNameMap(entities);
+  for (const relationship of relationships) {
+    const r = asRecord(relationship);
+    if (r === null) throw new Error("Context relationship is not an object");
+    const fromId = asText(requireField(r, "from_entity_id"));
+    const toId = asText(requireField(r, "to_entity_id"));
+    const fromName = nameMap.get(fromId) ?? fromId;
+    const toName = nameMap.get(toId) ?? toId;
+    lines.push(`  • ${fromName} —[${asText(requireField(r, "type"))}]→ ${toName}`);
+  }
+  return lines;
+}
+
 /** Format `/aks/v1/context` output into a compact readable response. */
 export function formatContextResponse(data: unknown): string {
   const record = asRecord(data);
   if (record === null) throw new Error("Context response is not an object");
 
+  const entities = asArray(record["entities"]);
   const lines = [
     `Query: ${asText(requireField(record, "query"))}`,
     `Confidence: ${asText(requireField(record, "confidence"))}`,
     `Reasoning: ${asText(requireField(record, "reasoning"))}`,
     "",
+    ...entityLines(entities),
+    ...relationshipLines(record, entities),
   ];
-
-  const entities = asArray(record["entities"]);
-  if (entities.length > 0) {
-    lines.push(`Relevant entities (${entities.length}):`);
-    for (const entity of entities) {
-      const e = asRecord(entity);
-      if (e === null) throw new Error("Context entity is not an object");
-      const descriptionRaw = e["description"];
-      const description =
-        typeof descriptionRaw === "string" && descriptionRaw.length > 0
-          ? descriptionRaw
-          : "(no description)";
-      const confidence = asNumber(e["confidence"], "confidence");
-      lines.push(
-        `  • ${asText(requireField(e, "name"))} [${asText(
-          requireField(e, "type"),
-        )}, conf ${formatFixed2(confidence)}]`,
-      );
-      if (description !== "(no description)") {
-        lines.push(`    ${description}`);
-      }
-    }
-  } else {
-    lines.push("No relevant entities found.");
-  }
-
-  const relationships = asArray(record["relationships"]);
-  if (relationships.length > 0) {
-    lines.push("");
-    lines.push(`Relationships (${relationships.length}):`);
-    // Relationships carry IDs only; the entity list above is the name lookup.
-    const nameMap = new Map<string, string>();
-    for (const entity of entities) {
-      const e = asRecord(entity);
-      if (e === null) continue;
-      const id = requireField(e, "id");
-      if (typeof id !== "string") throw new Error("Context entity 'id' is not a string");
-      nameMap.set(id, asText(requireField(e, "name")));
-    }
-    for (const relationship of relationships) {
-      const r = asRecord(relationship);
-      if (r === null) throw new Error("Context relationship is not an object");
-      const fromId = asText(requireField(r, "from_entity_id"));
-      const toId = asText(requireField(r, "to_entity_id"));
-      const fromName = nameMap.get(fromId) ?? fromId;
-      const toName = nameMap.get(toId) ?? toId;
-      lines.push(`  • ${fromName} —[${asText(requireField(r, "type"))}]→ ${toName}`);
-    }
-  }
 
   return lines.join("\n");
 }
-
 /** Format `/aks/v1/traverse` output. */
 export function formatTraverseResponse(data: unknown): string {
   const record = asRecord(data);

@@ -146,28 +146,7 @@ function splitPhase(text: string, chunkSize: number, counter: TokenCounter): Spl
  */
 function mergePhase(splits: readonly Split[], chunkSize: number, chunkOverlap: number): string[] {
   const chunks: string[] = [];
-  let current: Array<readonly [string, number]> = [];
-  let currentLength = 0;
-  let newChunk = true;
-
-  const closeChunk = (): void => {
-    chunks.push(current.map(([text]) => text).join(""));
-    const last = current;
-    current = [];
-    currentLength = 0;
-    newChunk = true;
-
-    let index = last.length - 1;
-    while (index >= 0) {
-      const entry = last[index];
-      if (entry === undefined || currentLength + entry[1] > chunkOverlap) {
-        break;
-      }
-      currentLength += entry[1];
-      current.unshift(entry);
-      index -= 1;
-    }
-  };
+  const state: MergeState = { current: [], currentLength: 0, newChunk: true };
 
   let splitIndex = 0;
   while (splitIndex < splits.length) {
@@ -179,35 +158,87 @@ function mergePhase(splits: readonly Split[], chunkSize: number, chunkOverlap: n
       throw new Error("Single token exceeded chunk size");
     }
 
-    if (currentLength + split.tokenSize > chunkSize && !newChunk) {
-      closeChunk();
+    if (state.currentLength + split.tokenSize > chunkSize && !state.newChunk) {
+      closeChunk(chunks, state, chunkOverlap);
       continue;
     }
 
-    if (newChunk && currentLength + split.tokenSize > chunkSize) {
-      while (current.length > 0 && currentLength + split.tokenSize > chunkSize) {
-        const removed = current.shift();
-        if (removed !== undefined) {
-          currentLength -= removed[1];
-        }
-      }
+    if (state.newChunk && state.currentLength + split.tokenSize > chunkSize) {
+      dropOverflowingOverlap(state, split.tokenSize, chunkSize);
     }
 
-    if (split.isSentence || currentLength + split.tokenSize <= chunkSize || newChunk) {
-      currentLength += split.tokenSize;
-      current.push([split.text, split.tokenSize]);
+    if (split.isSentence || state.currentLength + split.tokenSize <= chunkSize || state.newChunk) {
+      state.currentLength += split.tokenSize;
+      state.current.push([split.text, split.tokenSize]);
       splitIndex += 1;
-      newChunk = false;
+      state.newChunk = false;
     } else {
-      closeChunk();
+      closeChunk(chunks, state, chunkOverlap);
     }
   }
 
-  if (!newChunk) {
-    chunks.push(current.map(([text]) => text).join(""));
+  if (!state.newChunk) {
+    chunks.push(joinTexts(state.current));
   }
 
-  // `_postprocess_chunks`: drop whitespace-only chunks, trim the rest.
+  return postprocessChunks(chunks);
+}
+/** The running chunk being assembled, and whether it is still empty. */
+interface MergeState {
+  current: Array<readonly [string, number]>;
+  currentLength: number;
+  newChunk: boolean;
+}
+
+/** Concatenates the text of a run of splits. */
+function joinTexts(entries: readonly (readonly [string, number])[]): string {
+  return entries.map(([text]) => text).join("");
+}
+
+/**
+ * Closes the current chunk, then carries its tail forward as overlap.
+ *
+ * Overlap is added by closing a chunk, in reverse order, and only while the
+ * running overlap stays within the budget — so it comes from the end of the
+ * previous chunk, not the start of the next split.
+ */
+function closeChunk(chunks: string[], state: MergeState, chunkOverlap: number): void {
+  chunks.push(joinTexts(state.current));
+  const last = state.current;
+  state.current = [];
+  state.currentLength = 0;
+  state.newChunk = true;
+
+  let index = last.length - 1;
+  while (index >= 0) {
+    const entry = last[index];
+    if (entry === undefined || state.currentLength + entry[1] > chunkOverlap) {
+      break;
+    }
+    state.currentLength += entry[1];
+    state.current.unshift(entry);
+    index -= 1;
+  }
+}
+
+/**
+ * Drops overlap from the front of a fresh chunk until the next split fits.
+ *
+ * Dropping it from the front, rather than deferring the split, is what stops a
+ * chunk that begins with overlap from immediately closing and producing an
+ * all-overlap chunk.
+ */
+function dropOverflowingOverlap(state: MergeState, tokenSize: number, chunkSize: number): void {
+  while (state.current.length > 0 && state.currentLength + tokenSize > chunkSize) {
+    const removed = state.current.shift();
+    if (removed !== undefined) {
+      state.currentLength -= removed[1];
+    }
+  }
+}
+
+/** `_postprocess_chunks`: drop whitespace-only chunks, trim the rest. */
+function postprocessChunks(chunks: readonly string[]): string[] {
   const processed: string[] = [];
   for (const chunk of chunks) {
     const trimmed = chunk.trim();

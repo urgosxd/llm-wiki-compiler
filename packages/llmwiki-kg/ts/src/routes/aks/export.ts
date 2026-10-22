@@ -38,6 +38,42 @@ type BundleDocumentRow = {
   audit: unknown;
 };
 
+/** The filters a bundle applies, already validated. */
+type ExportFilters = ReturnType<typeof ExportQuery.parse>;
+
+/** Every row one bundle is assembled from. */
+interface BundleContents {
+  readonly entityRows: readonly EntityRow[];
+  readonly relationshipRows: Awaited<ReturnType<typeof loadExportRelationships>>;
+  readonly documentRows: readonly BundleDocumentRow[];
+  readonly contributing: ReadonlyMap<string, readonly string[]>;
+}
+
+/**
+ * Loads every row a bundle needs, in the Python order.
+ *
+ * The contributing-documents read takes the entity ids from the first read, so
+ * the three loads cannot be reordered.
+ */
+async function loadBundleContents(
+  tx: Database,
+  stackId: string,
+  filters: ExportFilters,
+): Promise<BundleContents> {
+  const entityRows = await loadExportEntities(
+    tx,
+    stackId,
+    filters.min_confidence,
+    filters.verified_only,
+    filters.entity_type,
+  );
+  const entityIds = entityRows.map((row) => row.id);
+  const relationshipRows = await loadExportRelationships(tx, stackId, entityIds);
+  const documentRows = await loadExportDocuments(tx, stackId);
+  const contributing = await fetchContributingDocuments(tx, entityIds);
+  return { entityRows, relationshipRows, documentRows, contributing };
+}
+
 /**
  * `GET /aks/v1/export` — the whole Stack as an AKS Bundle.
  *
@@ -115,13 +151,7 @@ export async function exportBundle(req: Request, res: Response, tx: Database): P
     return;
   }
 
-  const {
-    stack_id: stackId,
-    domain,
-    min_confidence: minConfidence,
-    verified_only: verifiedOnly,
-    entity_type: entityType,
-  } = query.data;
+  const { stack_id: stackId, domain } = query.data;
 
   const resolved = await resolveStack(tx, stackId, domain);
   if (!resolved.ok) {
@@ -130,13 +160,7 @@ export async function exportBundle(req: Request, res: Response, tx: Database): P
   }
   const stack: StackRow = resolved.stack;
 
-  const entityRows = await loadExportEntities(
-    tx, stack.id, minConfidence, verifiedOnly, entityType,
-  );
-  const entityIds = entityRows.map((row) => row.id);
-  const relationshipRows = await loadExportRelationships(tx, stack.id, entityIds);
-  const documentRows = await loadExportDocuments(tx, stack.id);
-  const contributing = await fetchContributingDocuments(tx, entityIds);
+  const contents = await loadBundleContents(tx, stack.id, query.data);
 
   const bundle: AKSBundleDto = {
     aks_version: "0.2.0",
@@ -145,13 +169,15 @@ export async function exportBundle(req: Request, res: Response, tx: Database): P
     stack_name: stack.name,
     compiled_at: pydanticUtcNow(),
     scope: stack.scope,
-    entity_count: entityRows.length,
-    relationship_count: relationshipRows.length,
-    document_count: documentRows.length,
+    entity_count: contents.entityRows.length,
+    relationship_count: contents.relationshipRows.length,
+    document_count: contents.documentRows.length,
     compilation_strategy: stack.compilation_strategy,
-    documents: documentRows.map((row) => AKSDocumentSummary.parse(row)),
-    entities: entityRows.map((row) => rowToEntity(row, contributing.get(row.id) ?? [])),
-    relationships: relationshipRows.map(rowToRelationship),
+    documents: contents.documentRows.map((row) => AKSDocumentSummary.parse(row)),
+    entities: contents.entityRows.map((row) =>
+      rowToEntity(row, contents.contributing.get(row.id) ?? []),
+    ),
+    relationships: contents.relationshipRows.map(rowToRelationship),
   };
 
   res.json(AKSBundle.parse(bundle));

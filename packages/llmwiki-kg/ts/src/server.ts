@@ -158,6 +158,114 @@ function sendPreflight(req: Request, res: Response): void {
 }
 
 /**
+ * The middleware stack, in the order the oracle's observable behaviour implies.
+ *
+ * `createMethodNotAllowed` sits between CORS and body parsing: a genuine
+ * preflight is already answered above, and `express.json` must not see the body
+ * of a request that never reaches a handler (the oracle answers `PUT /stacks`
+ * with malformed JSON as 405, not 400).
+ *
+ * `strict: false` because FastAPI's body parsing is not strict about the JSON
+ * *top-level* value. Measured on the oracle:
+ *
+ *   POST /stacks  body `null`  -> 422 model_attributes_type, input null
+ *   POST /stacks  body `5`     -> 422 model_attributes_type, input 5
+ *   POST /stacks  body `[]`    -> 422 model_attributes_type, input []
+ *
+ * body-parser's default (`strict: true`) only accepts an array or an object at
+ * the top level and rejects the rest as malformed JSON, which would answer 400
+ * instead of letting the DTO report Pydantic's 422. With `strict: false` every
+ * JSON value reaches the schema, and `StackCreate` / `StackUpdate` reject the
+ * non-objects with exactly the error the oracle emits.
+ *
+ * Known divergence, not addressed here: genuinely malformed JSON (`{bad`) still
+ * answers body-parser's 400, while the oracle answers 422 with
+ * `type: "json_invalid"` and Python's own decoder message. Reproducing that
+ * message per malformed input is a separate concern from these routes.
+ */
+function installMiddleware(app: Express): void {
+  app.use(cors);
+  app.use(createMethodNotAllowed(app));
+  app.use(express.json({ strict: false }));
+}
+
+/** Liveness probe: no auth, and a body that mirrors the oracle byte for byte. */
+function installHealthProbe(app: Express): void {
+  app.get("/health", (_req: Request, res: Response) => {
+    res.json({
+      status: "ok",
+      service: "aks-reference-server",
+      version: "0.2.0",
+    });
+  });
+}
+
+/**
+ * Every router, mirroring `app.include_router(...)` in app/main.py.
+ *
+ * Each router owns its own auth (`dependencies=[Depends(require_api_key)]` in
+ * Python), so nothing is authenticated globally and `/health` stays open.
+ *
+ * Mount order is fidelity with `app/main.py`, not precedence. `/aks/v1` is
+ * registered before `/aks/v1/backfeed`, and `/aks/v1/pages` after the query
+ * router, exactly as the Python `include_router` calls are ordered — which is
+ * what the 405 `Allow` walk in `http-contract.ts` observes. Adjacent routers
+ * never share a path, so no handler can shadow another.
+ */
+function installRouters(
+  app: Express,
+  deps: Parameters<typeof createApp>[0],
+): void {
+  app.use("/stacks", createStacksRouter(deps));
+  app.use("/aks/v1", createAksRouter(deps));
+  app.use("/aks/v1/pages", createPagesRouter(deps));
+  app.use("/aks/v1/backfeed", createBackfeedRouter(deps));
+  // Root mounts, no prefix: these modules carry full absolute paths on their
+  // routes, so any prefix here would move their endpoints.
+  //
+  // `documents.py` declares its routes on two prefixes
+  // (`/stacks/{stack_id}/documents` and `/documents/{doc_id}`), so prefixing
+  // this mount would move the by-id routes to `/stacks/documents/...` and break
+  // the 405 `Allow` ordering. `ingest.py` and `synthesize.py` likewise declare
+  // absolute paths; `documents.ts` has no route continuing past `{doc_id}`, so
+  // none of the three can collide.
+  app.use(createDocumentsRouter(deps));
+  app.use(createIngestRouter(deps));
+  app.use(createSynthesizeRouter(deps));
+}
+
+/** The 404 fallback and the final error handler, in that order. */
+function installFallbacks(app: Express): void {
+  // JSON, never Express 5's default HTML page. FastAPI's shape for unmatched
+  // routes is `{"detail": "Not Found"}`.
+  app.use((_req: Request, res: Response) => {
+    res.status(404).json({ detail: "Not Found" });
+  });
+  app.use(handleError);
+}
+
+/**
+ * The final error handler.
+ *
+ * Unhandled server errors are NOT JSON on the oracle: FastAPI's
+ * `ServerErrorMiddleware` answers a bare `PlainTextResponse("Internal Server
+ * Error", status_code=500)` — measured: `content-type: text/plain; charset=utf-8`,
+ * 21 bytes, no `detail` wrapper. Client errors keep their JSON shape and a safe,
+ * caller-relevant message; 5xx stays opaque so internals never leak.
+ */
+function handleError(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
+  const status = errorStatus(err);
+
+  if (status >= 500) {
+    res.status(status).type("text/plain").send("Internal Server Error");
+    return;
+  }
+
+  const detail = err instanceof Error && err.message !== "" ? err.message : "Bad Request";
+  res.status(status).json({ detail });
+}
+
+/**
  * Builds the Express application without binding a port.
  * Tests mount this directly; `index.ts` owns `listen()`.
  *
@@ -179,114 +287,13 @@ export function createApp(
 ): Express {
   const app = express();
 
-  app.use(cors);
-
-  // 405 for an existing path with an unsupported method, reproducing Starlette's
-  // partial-match rule. Mounted here, between CORS and body parsing: a genuine
-  // preflight is already answered above, and `express.json` must not see the
-  // body of a request that never reaches a handler (the oracle answers
-  // `PUT /stacks` with malformed JSON as 405, not 400).
-  app.use(createMethodNotAllowed(app));
-
-  // `strict: false` because FastAPI's body parsing is not strict about the JSON
-  // *top-level* value. Measured on the oracle:
-  //
-  //   POST /stacks  body `null`  -> 422 model_attributes_type, input null
-  //   POST /stacks  body `5`     -> 422 model_attributes_type, input 5
-  //   POST /stacks  body `[]`    -> 422 model_attributes_type, input []
-  //
-  // body-parser's default (`strict: true`) only accepts an array or an object at
-  // the top level and rejects the rest as malformed JSON, which would answer 400
-  // instead of letting the DTO report Pydantic's 422. With `strict: false` every
-  // JSON value reaches the schema, and `StackCreate` / `StackUpdate` reject the
-  // non-objects with exactly the error the oracle emits.
-  //
-  // Known divergence, not addressed here: genuinely malformed JSON (`{bad`)
-  // still answers body-parser's 400, while the oracle answers 422 with
-  // `type: "json_invalid"` and Python's own decoder message. Reproducing that
-  // message per malformed input is a separate concern from these routes.
-  app.use(express.json({ strict: false }));
-
-  // Liveness probe. No auth, and the body mirrors the Python oracle
-  // byte-for-byte (field names, values, and order are contractual).
-  app.get("/health", (_req: Request, res: Response) => {
-    res.json({
-      status: "ok",
-      service: "aks-reference-server",
-      version: "0.2.0",
-    });
-  });
-
-  // Routers, mirroring `app.include_router(...)` in app/main.py. Each one owns
-  // its own auth (`dependencies=[Depends(require_api_key)]` in Python), so
-  // nothing is authenticated globally and `/health` above stays open.
-  app.use("/stacks", createStacksRouter(deps));
-
-  // Mounted at `/aks/v1`, the router's own prefix (`APIRouter(prefix="/aks/v1")`
-  // in Python). Registered *before* `/aks/v1/backfeed` so the 405 `Allow` walk in
-  // `http-contract.ts` visits the layers in the order Starlette's flat route list
-  // would: the Python `app.include_router(aks.router)` call also precedes
-  // `backfeed.router`. The two never share a path — the query router's deepest
-  // route is `/entities/{name}` — so this ordering is about fidelity, not about
-  // which handler wins.
-  app.use("/aks/v1", createAksRouter(deps));
-  // Mounted at `/aks/v1/pages`, the router's own prefix. Registered after the
-  // query router because `app.include_router(pages.router)` follows it in
-  // `app/main.py`; the two share no path, so this is fidelity, not precedence.
-  app.use("/aks/v1/pages", createPagesRouter(deps));
-  app.use("/aks/v1/backfeed", createBackfeedRouter(deps));
-
-  // Mounted at the root, with **no** path argument: `documents.py` declares its
-  // routes on two prefixes (`/stacks/{stack_id}/documents` and
-  // `/documents/{doc_id}`), exactly as it does in Python where every route
-  // carries its own full path. Prefixing this mount would move the by-id routes
-  // to `/stacks/documents/...` and break the 405 `Allow` ordering.
-  app.use(createDocumentsRouter(deps));
-
-  // Root mount, no prefix: `ingest.py` declares the absolute path
-  // `/stacks/{stack_id}/documents/{doc_id}/ingest`. Mounted after the documents
-  // router and before the 404 fallback, which is the only ordering requirement —
-  // the two never collide, because `documents.ts` has no route that continues
-  // past `{doc_id}`.
-  app.use(createIngestRouter(deps));
-
-  // Root mount, no prefix: `synthesize.py` declares `/stacks/{stack_id}/…` and
-  // `/aks/v1/entities/{name}/…` as absolute paths on one prefixless router. Any
-  // prefix here would move both endpoints.
-  app.use(createSynthesizeRouter(deps));
-
-  // 404 fallback: JSON, never Express 5's default HTML page. FastAPI's shape
-  // for unmatched routes is `{"detail": "Not Found"}`.
-  app.use((_req: Request, res: Response) => {
-    res.status(404).json({ detail: "Not Found" });
-  });
-
-  // Final error handler. The four-argument signature is what marks this as an
-  // Express error handler, so `next` must stay declared even though unused.
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const status = errorStatus(err);
-
-    // Unhandled server errors are NOT JSON on the oracle. FastAPI's
-    // `ServerErrorMiddleware` answers a bare `PlainTextResponse("Internal Server
-    // Error", status_code=500)` — measured: `content-type: text/plain;
-    // charset=utf-8`, 21 bytes, no `detail` wrapper. Only the generic 5xx path
-    // changed shape here; every handled client error below stays JSON.
-    if (status >= 500) {
-      res.status(status).type("text/plain").send("Internal Server Error");
-      return;
-    }
-
-    // Client errors (e.g. malformed JSON from express.json()) carry a safe,
-    // caller-relevant message; 5xx stays opaque so internals never leak.
-    const detail =
-      err instanceof Error && err.message !== "" ? err.message : "Bad Request";
-
-    res.status(status).json({ detail });
-  });
+  installMiddleware(app);
+  installHealthProbe(app);
+  installRouters(app, deps);
+  installFallbacks(app);
 
   return app;
 }
-
 /**
  * Extracts an HTTP status from a thrown value, defaulting to 500.
  *

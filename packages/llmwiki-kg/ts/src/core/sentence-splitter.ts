@@ -118,6 +118,81 @@ interface EndCandidate {
   readonly context: string;
 }
 
+/** A candidate end-context that is still waiting for the next one to start. */
+interface PendingCandidate {
+  readonly matchStart: number;
+  readonly matchEnd: number;
+  readonly after: string;
+  readonly nextStart: number | undefined;
+  readonly wordStart: number;
+  readonly wordEnd: number;
+}
+
+/** The half-open range of the word that precedes `matchStart`. */
+function previousWord(
+  text: string,
+  previousSliceStart: number,
+  previousSliceEnd: number,
+  matchStart: number,
+): { readonly wordStart: number; readonly wordEnd: number } {
+  // Scan back for the last NLTK whitespace.
+  const before = text.slice(previousSliceEnd, matchStart);
+  let lastSpace = 0;
+  for (let index = before.length - 1; index >= 0; index -= 1) {
+    if (NLTK_WHITESPACE.has(before[index] ?? "")) {
+      lastSpace = index;
+      break;
+    }
+  }
+  const wordStart = lastSpace === 0 ? previousSliceStart : lastSpace + previousSliceEnd + 1;
+  return { wordStart, wordEnd: matchStart };
+}
+
+/**
+ * Builds the pending candidate for one regex match.
+ *
+ * `match[0]` is only the sentence-end character: everything after it is inside
+ * the lookahead. Python reads `match.group("after_tok")` and the context string
+ * is `previous word + match.group() + after_tok`, so the looked-ahead text has to
+ * be carried here explicitly.
+ */
+function toPending(
+  match: RegExpMatchArray,
+  matchStart: number,
+  matchEnd: number,
+  wordStart: number,
+  wordEnd: number,
+): PendingCandidate {
+  const afterTok = match.groups?.["after"] ?? "";
+  const nextGroup = match.groups?.["next"];
+  const afterStart = matchStart + match[0].length;
+  // `next_tok` is the tail of `after_tok` (whitespace then the token), so its
+  // start is the end of `after_tok` minus the token's own length.
+  const nextStart =
+    nextGroup === undefined ? undefined : afterStart + afterTok.length - nextGroup.length;
+
+  return { matchStart, matchEnd, after: match[0] + afterTok, nextStart, wordStart, wordEnd };
+}
+
+/** Finalizes a pending candidate into the shape Punkt inspects. */
+function toCandidate(pending: PendingCandidate, text: string): EndCandidate {
+  return {
+    matchStart: pending.matchStart,
+    matchEnd: pending.matchEnd,
+    nextTokenStart: pending.nextStart,
+    context: text.slice(pending.wordStart, pending.wordEnd) + pending.after,
+  };
+}
+
+/**
+ * The closing punctuation `_realign_boundaries` pulls back onto a sentence.
+ *
+ * Copied verbatim from the original inline literal, including the `u` flag and
+ * the `m` flag: the `m` flag is what makes `$` match at a line end inside the
+ * sliced text.
+ */
+const CLOSING_PUNCTUATION = /^["')\]}\u2018\u2019\u201c\u201d\u00ab\u00bb]+?(?:\s+|(?=--)|$)/mu;
+
 /**
  * `PunktSentenceTokenizer._match_potential_end_contexts`.
  *
@@ -129,70 +204,72 @@ function matchPotentialEndContexts(text: string): EndCandidate[] {
   const out: EndCandidate[] = [];
   let previousSliceStart = 0;
   let previousSliceEnd = 0;
-  let previous: { readonly matchStart: number; readonly matchEnd: number; readonly after: string; readonly nextStart: number | undefined; readonly wordStart: number; readonly wordEnd: number } | undefined;
+  let previous: PendingCandidate | undefined;
 
   for (const match of text.matchAll(PERIOD_CONTEXT)) {
     const matchStart = match.index;
     const matchEnd = matchStart + match[0].length;
 
-    // Find the previous word: scan back for the last NLTK whitespace.
-    const before = text.slice(previousSliceEnd, matchStart);
-    let lastSpace = 0;
-    for (let index = before.length - 1; index >= 0; index -= 1) {
-      if (NLTK_WHITESPACE.has(before[index] ?? "")) {
-        lastSpace = index;
-        break;
-      }
-    }
-    const wordStart = lastSpace === 0 ? previousSliceStart : lastSpace + previousSliceEnd + 1;
-    const wordEnd = matchStart;
+    const { wordStart, wordEnd } = previousWord(
+      text,
+      previousSliceStart,
+      previousSliceEnd,
+      matchStart,
+    );
 
     if (previous !== undefined && previousSliceEnd <= wordStart) {
-      out.push({
-        matchStart: previous.matchStart,
-        matchEnd: previous.matchEnd,
-        nextTokenStart: previous.nextStart,
-        context: text.slice(previous.wordStart, previous.wordEnd) + previous.after,
-      });
+      out.push(toCandidate(previous, text));
     }
 
-    // `match[0]` is only the sentence-end character: everything after it is
-    // inside the lookahead. Python reads `match.group("after_tok")` and the
-    // context string is `previous word + match.group() + after_tok`, so the
-    // looked-ahead text has to be appended here explicitly.
-    const afterTok = match.groups?.["after"] ?? "";
-    const nextGroup = match.groups?.["next"];
-    const afterStart = matchStart + match[0].length;
-    // `next_tok` is the tail of `after_tok` (whitespace then the token), so its
-    // start is the end of `after_tok` minus the token's own length.
-    const nextStart =
-      nextGroup === undefined ? undefined : afterStart + afterTok.length - nextGroup.length;
-
-    previous = {
-      matchStart,
-      matchEnd,
-      after: match[0] + afterTok,
-      nextStart,
-      wordStart,
-      wordEnd,
-    };
+    previous = toPending(match, matchStart, matchEnd, wordStart, wordEnd);
     previousSliceStart = wordStart;
     previousSliceEnd = wordEnd;
   }
 
   if (previous !== undefined) {
-    out.push({
-      matchStart: previous.matchStart,
-      matchEnd: previous.matchEnd,
-      nextTokenStart: previous.nextStart,
-      context: text.slice(previous.wordStart, previous.wordEnd) + previous.after,
-    });
+    out.push(toCandidate(previous, text));
   }
   return out;
 }
 
 /** A half-open `[start, end)` range in the original text. */
 type Span = readonly [number, number];
+
+/**
+ * `_realign_boundaries` — pulls trailing closing punctuation back onto the
+ * sentence it closes, and drops empty slices.
+ */
+function realignBoundaries(raw: readonly Span[], text: string): Span[] {
+  const aligned: Span[] = [];
+  let realign = 0;
+  for (let index = 0; index < raw.length; index += 1) {
+    const current = raw[index];
+    if (current === undefined) {
+      continue;
+    }
+    const start = current[0] + realign;
+    const next = raw[index + 1];
+
+    if (next === undefined) {
+      if (text.slice(start, current[1]) !== "") {
+        aligned.push([start, current[1]]);
+      }
+      continue;
+    }
+
+    const boundary = CLOSING_PUNCTUATION.exec(text.slice(next[0], next[1]));
+    if (boundary !== null) {
+      aligned.push([start, next[0] + boundary[0].trimEnd().length]);
+      realign = boundary[0].length;
+    } else {
+      realign = 0;
+      if (text.slice(start, current[1]) !== "") {
+        aligned.push([start, current[1]]);
+      }
+    }
+  }
+  return aligned;
+}
 
 /**
  * `PunktSentenceTokenizer._slices_from_text` followed by
@@ -215,39 +292,8 @@ function sentenceSpans(text: string): Span[] {
   // The trailing slice never includes trailing whitespace.
   raw.push([lastBreak, text.trimEnd().length]);
 
-  const aligned: Span[] = [];
-  let realign = 0;
-  for (let index = 0; index < raw.length; index += 1) {
-    const current = raw[index];
-    if (current === undefined) {
-      continue;
-    }
-    const start = current[0] + realign;
-    const next = raw[index + 1];
-
-    if (next === undefined) {
-      if (text.slice(start, current[1]) !== "") {
-        aligned.push([start, current[1]]);
-      }
-      continue;
-    }
-
-    const boundary = /^["')\]}\u2018\u2019\u201c\u201d\u00ab\u00bb]+?(?:\s+|(?=--)|$)/mu.exec(
-      text.slice(next[0], next[1]),
-    );
-    if (boundary !== null) {
-      aligned.push([start, next[0] + boundary[0].trimEnd().length]);
-      realign = boundary[0].length;
-    } else {
-      realign = 0;
-      if (text.slice(start, current[1]) !== "") {
-        aligned.push([start, current[1]]);
-      }
-    }
-  }
-  return aligned;
+  return realignBoundaries(raw, text);
 }
-
 /**
  * `split_by_sentence_tokenizer_internal`: each sentence runs from its own start
  * to the **start of the next one**, so trailing whitespace stays attached.

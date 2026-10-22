@@ -98,6 +98,155 @@ async function findEntityIdByName(
 }
 
 /**
+ * The Stack's existing entity with this name, case-insensitively.
+ *
+ * `lower(name) = lower(%s)` is the Python lookup, so `Billing Service` and
+ * `billing service` are the same entity.
+ */
+async function findExistingEntity(
+  tx: Database,
+  stackId: string,
+  name: string,
+): Promise<EntityLookupRow | undefined> {
+  const rows = await tx.execute<EntityLookupRow>(sql`
+    select id, confidence, description
+    from ontology_entities
+    where stack_id = ${stackId} and lower(name) = lower(${name})
+  `);
+  return rows[0];
+}
+
+/**
+ * Rewrites the confidence, description and audit columns of an existing entity.
+ *
+ * Returns the id so the name map can be filled.
+ */
+async function updateEntity(
+  tx: Database,
+  entity: BackfeedEntityProposalDto,
+  existing: EntityLookupRow,
+): Promise<string> {
+  const nextConfidence = Math.min(
+    1.0,
+    Number(existing.confidence) + ENTITY_CONFIDENCE_BUMP,
+  );
+
+  // "meaningfully longer" per the Python rule: `if ent.get("description")`
+  // rejects both `None` and `""`, then the length comparison decides. A rejected
+  // candidate keeps the stored description — including the empty string a NULL
+  // description was just coerced into (`row["description"] or ""`).
+  const existingDescription = existing.description ?? "";
+  const candidate = entity.description;
+  const nextDescription =
+    candidate !== null && candidate !== "" && candidate.length > existingDescription.length
+      ? candidate
+      : existingDescription;
+
+  await tx.execute(sql`
+    update ontology_entities
+    set confidence = ${nextConfidence},
+        description = ${nextDescription},
+        verified = true,
+        last_seen_at = now(),
+        updated_at = now()
+    where id = ${existing.id}
+  `);
+
+  return existing.id;
+}
+
+/**
+ * Inserts a new, already-verified entity carrying the backfeed markers.
+ *
+ * `properties` is never written: the entity proposal carries it, but the Python
+ * insert statement does not reference it, so absorbed entities keep the column
+ * default `{}`. Measured on the oracle.
+ */
+async function insertEntity(
+  tx: Database,
+  stackId: string,
+  entity: BackfeedEntityProposalDto,
+): Promise<string> {
+  const inserted = await tx.execute<{ readonly id: string }>(sql`
+    insert into ontology_entities (
+      stack_id, name, type, description, confidence,
+      verified, source_kind, pipeline
+    )
+    values (${stackId}, ${entity.name}, ${entity.type},
+            ${entity.description}, ${entity.confidence},
+            true, ${BACKFEED_SOURCE_KIND}, ${HUMAN_REVIEW_PIPELINE})
+    returning id
+  `);
+
+  const created = inserted[0];
+  if (created === undefined) {
+    throw new Error("insert into ontology_entities returned no row");
+  }
+  return created.id;
+}
+
+/**
+ * Resolves one relationship endpoint to an entity id.
+ *
+ * Prefers the ids resolved from this proposal's own entities, then falls back to
+ * the existing ontology — a proposal may relate new entities to ones the Stack
+ * already knows.
+ */
+async function resolveEndpoint(
+  tx: Database,
+  stackId: string,
+  name: string,
+  nameToId: ReadonlyMap<string, string>,
+): Promise<string | undefined> {
+  return nameToId.get(name.toLowerCase()) ?? (await findEntityIdByName(tx, stackId, name));
+}
+
+/**
+ * Upserts one relationship.
+ *
+ * @returns `false` when either endpoint cannot be resolved, in which case the
+ *   relationship is skipped rather than inventing an entity for the name.
+ */
+async function absorbRelationship(
+  tx: Database,
+  stackId: string,
+  relationship: BackfeedRelationshipProposalDto,
+  nameToId: ReadonlyMap<string, string>,
+): Promise<boolean> {
+  const fromId = await resolveEndpoint(tx, stackId, relationship.from_entity, nameToId);
+  const toId = await resolveEndpoint(tx, stackId, relationship.to_entity, nameToId);
+
+  if (fromId === undefined || toId === undefined) {
+    return false;
+  }
+
+  await tx.execute(sql`
+    insert into ontology_relationships (
+      stack_id, from_entity_id, to_entity_id, type,
+      description, confidence, verified,
+      source_kind, pipeline
+    )
+    values (${stackId}, ${fromId}, ${toId}, ${relationship.type},
+            ${relationship.description}, ${relationship.confidence},
+            true, ${BACKFEED_SOURCE_KIND}, ${HUMAN_REVIEW_PIPELINE})
+    on conflict (stack_id, from_entity_id, to_entity_id, type)
+    do update set
+      confidence = greatest(
+        ontology_relationships.confidence,
+        excluded.confidence
+      ),
+      verified = true,
+      description = case
+        when excluded.confidence > ontology_relationships.confidence
+        then excluded.description
+        else ontology_relationships.description
+      end
+  `);
+
+  return true;
+}
+
+/**
  * Absorbs an approved backfeed proposal into a Stack's ontology.
  *
  * Mirrors `consolidate_backfeed_proposal(conn, stack_id, entities,
@@ -143,117 +292,22 @@ export async function consolidateBackfeedProposal(
 ): Promise<BackfeedConsolidationResult> {
   /** Lowercased name → entity id, for this proposal only. */
   const nameToId = new Map<string, string>();
-  let entitiesAbsorbed = 0;
-  let relationshipsAbsorbed = 0;
 
   for (const entity of entities) {
-    const rows = await tx.execute<EntityLookupRow>(sql`
-      select id, confidence, description
-      from ontology_entities
-      where stack_id = ${stackId} and lower(name) = lower(${entity.name})
-    `);
-    const existing = rows[0];
-
-    if (existing !== undefined) {
-      const existingConfidence = Number(existing.confidence);
-      // `row["description"] or ""` — a NULL description is treated as empty, and
-      // that empty string is what gets written back below.
-      const existingDescription = existing.description ?? "";
-
-      const nextConfidence = Math.min(
-        1.0,
-        existingConfidence + ENTITY_CONFIDENCE_BUMP,
-      );
-
-      // "meaningfully longer" per the Python rule: `if ent.get("description")`
-      // rejects both `None` and `""`, then the length comparison decides. A
-      // rejected candidate keeps the stored description — including the empty
-      // string a NULL description was just coerced into.
-      const candidate = entity.description;
-      const nextDescription =
-        candidate !== null &&
-        candidate !== "" &&
-        candidate.length > existingDescription.length
-          ? candidate
-          : existingDescription;
-
-      await tx.execute(sql`
-        update ontology_entities
-        set confidence = ${nextConfidence},
-            description = ${nextDescription},
-            verified = true,
-            last_seen_at = now(),
-            updated_at = now()
-        where id = ${existing.id}
-      `);
-
-      nameToId.set(entity.name.toLowerCase(), existing.id);
-    } else {
-      const inserted = await tx.execute<{ readonly id: string }>(sql`
-        insert into ontology_entities (
-          stack_id, name, type, description, confidence,
-          verified, source_kind, pipeline
-        )
-        values (${stackId}, ${entity.name}, ${entity.type},
-                ${entity.description}, ${entity.confidence},
-                true, ${BACKFEED_SOURCE_KIND}, ${HUMAN_REVIEW_PIPELINE})
-        returning id
-      `);
-
-      const created = inserted[0];
-      if (created === undefined) {
-        throw new Error("insert into ontology_entities returned no row");
-      }
-      nameToId.set(entity.name.toLowerCase(), created.id);
-    }
-
-    entitiesAbsorbed += 1;
+    const existing = await findExistingEntity(tx, stackId, entity.name);
+    const id =
+      existing === undefined
+        ? await insertEntity(tx, stackId, entity)
+        : await updateEntity(tx, entity, existing);
+    nameToId.set(entity.name.toLowerCase(), id);
   }
 
+  let relationshipsAbsorbed = 0;
   for (const relationship of relationships) {
-    const fromName = relationship.from_entity.toLowerCase();
-    const toName = relationship.to_entity.toLowerCase();
-
-    // Prefer the ids resolved from this proposal's own entities, then fall back
-    // to the existing ontology — a proposal may relate new entities to ones the
-    // Stack already knows.
-    const fromId =
-      nameToId.get(fromName) ??
-      (await findEntityIdByName(tx, stackId, relationship.from_entity));
-    const toId =
-      nameToId.get(toName) ??
-      (await findEntityIdByName(tx, stackId, relationship.to_entity));
-
-    if (fromId === undefined || toId === undefined) {
-      // Skip rather than invent an entity for an unresolved name.
-      continue;
+    if (await absorbRelationship(tx, stackId, relationship, nameToId)) {
+      relationshipsAbsorbed += 1;
     }
-
-    await tx.execute(sql`
-      insert into ontology_relationships (
-        stack_id, from_entity_id, to_entity_id, type,
-        description, confidence, verified,
-        source_kind, pipeline
-      )
-      values (${stackId}, ${fromId}, ${toId}, ${relationship.type},
-              ${relationship.description}, ${relationship.confidence},
-              true, ${BACKFEED_SOURCE_KIND}, ${HUMAN_REVIEW_PIPELINE})
-      on conflict (stack_id, from_entity_id, to_entity_id, type)
-      do update set
-        confidence = greatest(
-          ontology_relationships.confidence,
-          excluded.confidence
-        ),
-        verified = true,
-        description = case
-          when excluded.confidence > ontology_relationships.confidence
-          then excluded.description
-          else ontology_relationships.description
-        end
-    `);
-
-    relationshipsAbsorbed += 1;
   }
 
-  return { entitiesAbsorbed, relationshipsAbsorbed };
+  return { entitiesAbsorbed: entities.length, relationshipsAbsorbed };
 }

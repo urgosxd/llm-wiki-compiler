@@ -85,8 +85,13 @@ async function findStartEntity(
   return rows[0] ?? null;
 }
 
-/** Run the recursive walk and map rows to response steps. */
-/** Build the recursive walk statement for one anchor, depth and type filter. */
+/**
+ * The recursive walk statement for one anchor, depth and type filter.
+ *
+ * Deliberately left as one statement: it is a single `with recursive` CTE whose
+ * seed, recursion and final projection all reference `walk`, so splitting it
+ * would obscure rather than clarify the query.
+ */
 function walkStatement(
   stackId: string,
   startId: string,

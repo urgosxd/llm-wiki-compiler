@@ -109,6 +109,68 @@ function pool(): Sql {
   return state.client;
 }
 
+/**
+ * Inserts one row in a rolled-back transaction and returns its `created_at`.
+ *
+ * The rollback is what keeps the assertions from leaving a fixture row behind.
+ */
+async function probeTimestamp(): Promise<string> {
+  const domain = `t04-precision-${Date.now().toString(36)}`;
+  let captured = "";
+
+  await expect(
+    txRunner()(async (tx) => {
+      const inserted = await tx
+        .insert(schema.stacks)
+        .values({ name: "T0.4 Precision Probe", domain })
+        .returning({ createdAt: schema.stacks.createdAt });
+
+      const row = inserted[0];
+      if (row === undefined) {
+        throw new Error("insert returned no row");
+      }
+      const createdAt: unknown = row.createdAt;
+
+      // A string, not a Date.
+      expect(typeof createdAt).toBe("string");
+      expect(createdAt instanceof Date).toBe(false);
+
+      // Narrowing without a cast: `typeof` does not narrow `unknown` here, so
+      // assert the runtime type, then re-read through the narrowed value.
+      if (typeof createdAt !== "string") {
+        throw new Error(`expected string, received ${typeof createdAt}`);
+      }
+      captured = createdAt;
+
+      // Roll back now that the assertions have run, leaving no fixture row.
+      throw new Error("rollback probe");
+    }),
+  ).rejects.toThrow("rollback probe");
+
+  return captured;
+}
+
+/** Asserts the oracle's `timestamptz` text shape: 27 characters, six digits, `Z`. */
+function expectTimestampShape(text: string): void {
+  expect(text.endsWith("Z")).toBe(true);
+
+  const fraction = /\.(\d+)Z$/.exec(text);
+  expect(fraction).not.toBeNull();
+  expect(fraction?.[1]).toHaveLength(6);
+
+  expect(text).toHaveLength(27);
+  expect(text).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
+}
+
+/** Counts any leftover probe rows in the precision fixture namespace. */
+async function countPrecisionRows(): Promise<number> {
+  const leftovers = await db()
+    .select({ id: schema.stacks.id })
+    .from(schema.stacks)
+    .where(sql`${schema.stacks.domain} like ${"t04-precision-%"}`);
+  return leftovers.length;
+}
+
 describe("normalizeTimestamptz", () => {
   // Pure functions: these run with or without Docker.
 
@@ -189,59 +251,9 @@ describe.skipIf(state.skipReason !== false)("database integration", () => {
    * `typeof "object"` with 3 fractional digits instead of a string with 6.
    */
   it("returns timestamptz as a microsecond-precise string, never a Date", async () => {
-    const domain = `t04-precision-${Date.now().toString(36)}`;
-
-    await expect(
-      txRunner()(async (tx) => {
-        const inserted = await tx
-          .insert(schema.stacks)
-          .values({ name: "T0.4 Precision Probe", domain })
-          .returning({
-            createdAt: schema.stacks.createdAt,
-            updatedAt: schema.stacks.updatedAt,
-          });
-
-        const row = inserted[0];
-        if (row === undefined) {
-          throw new Error("insert returned no row");
-        }
-
-        const createdAt: unknown = row.createdAt;
-
-        // 1. A string, not a Date.
-        expect(typeof createdAt).toBe("string");
-        expect(createdAt instanceof Date).toBe(false);
-
-        // Narrowing without a cast: typeof is not a narrowing construct for
-        // `unknown`, so assert the runtime type, then re-read through a
-        // freshly typed insert result.
-        if (typeof createdAt !== "string") {
-          throw new Error(`expected string, received ${typeof createdAt}`);
-        }
-        const text: string = createdAt;
-
-        // 2. Ends with Z, like the oracle.
-        expect(text.endsWith("Z")).toBe(true);
-
-        // 3. Exactly six fractional digits.
-        const fraction = /\.(\d+)Z$/.exec(text);
-        expect(fraction).not.toBeNull();
-        expect(fraction?.[1]).toHaveLength(6);
-
-        // 4. Full oracle shape: 27 characters total.
-        expect(text).toHaveLength(27);
-        expect(text).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
-
-        // Roll back now that the assertions have run, leaving no fixture row.
-        throw new Error("rollback probe");
-      }),
-    ).rejects.toThrow("rollback probe");
-
-    const leftovers = await db()
-      .select({ id: schema.stacks.id })
-      .from(schema.stacks)
-      .where(sql`${schema.stacks.domain} = ${domain}`);
-    expect(leftovers).toHaveLength(0);
+    expectTimestampShape(await probeTimestamp());
+    // The probe's transaction rolled back, so nothing was left behind.
+    expect(await countPrecisionRows()).toBe(0);
   });
 
   it("rolls back a transaction whose body throws", async () => {

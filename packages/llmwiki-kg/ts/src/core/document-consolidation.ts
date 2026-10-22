@@ -34,6 +34,96 @@ const DOCUMENT_SOURCE_KIND = "document";
 /** `pipeline` written for every document-derived row. */
 const DOCUMENT_PIPELINE = "llamaindex-schema-extraction";
 
+/** The Stack's existing entity with this name, case-insensitively. */
+async function findExistingEntity(
+  tx: Database,
+  stackId: string,
+  name: string,
+): Promise<EntityLookupRow | undefined> {
+  const rows = await tx.execute<EntityLookupRow>(sql`
+    select id, confidence, description
+    from ontology_entities
+    where stack_id = ${stackId} and lower(name) = lower(${name})
+  `);
+  return rows[0];
+}
+
+/**
+ * Rewrites an existing entity's confidence, description and freshness.
+ *
+ * A NULL description is treated as empty and written back as `''`, and the
+ * description is replaced only when strictly longer — both measured on the
+ * oracle.
+ */
+async function updateEntity(
+  tx: Database,
+  entity: ExtractedEntity,
+  existing: EntityLookupRow,
+): Promise<string> {
+  const existingConfidence = Number(existing.confidence);
+  const existingDescription = existing.description ?? "";
+  const nextConfidence = Math.min(1.0, existingConfidence + ENTITY_CONFIDENCE_BUMP);
+  const nextDescription =
+    entity.description !== "" && entity.description.length > existingDescription.length
+      ? entity.description
+      : existingDescription;
+
+  await tx.execute(sql`
+    update ontology_entities
+    set confidence = ${nextConfidence},
+        description = ${nextDescription},
+        last_seen_at = now(),
+        updated_at = now()
+    where id = ${existing.id}
+  `);
+  return existing.id;
+}
+
+/** Inserts a new entity, populating `extracted_by_model` from config. */
+async function insertEntity(
+  tx: Database,
+  stackId: string,
+  entity: ExtractedEntity,
+): Promise<string> {
+  const inserted = await tx.execute<{ id: string }>(sql`
+    insert into ontology_entities (
+      stack_id, name, type, description, confidence,
+      extracted_by_model, source_kind, pipeline
+    )
+    values (
+      ${stackId}, ${entity.name}, ${entity.type}, ${entity.description},
+      ${entity.confidence}, ${config.EXTRACTION_MODEL},
+      ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE}
+    )
+    returning id
+  `);
+  const created = inserted[0];
+  if (created === undefined) {
+    throw new Error("insert into ontology_entities returned no row");
+  }
+  return created.id;
+}
+
+/**
+ * Records that `documentId` contributed to `entityId`.
+ *
+ * `on conflict (entity_id, document_id) do nothing` — a re-ingest does not
+ * duplicate the contribution, which is why `entity_source_documents` keeps
+ * exactly one row per entity/document pair.
+ */
+async function recordContribution(
+  tx: Database,
+  entityId: string,
+  documentId: string,
+  stackId: string,
+): Promise<void> {
+  await tx.execute(sql`
+    insert into entity_source_documents (entity_id, document_id, stack_id)
+    values (${entityId}, ${documentId}, ${stackId})
+    on conflict (entity_id, document_id) do nothing
+  `);
+}
+
 /**
  * `consolidate_entities` — insert or update entities, return the name→id map.
  *
@@ -67,69 +157,18 @@ export async function consolidateEntityRows(
   const nameToId = new Map<string, string>();
 
   for (const entity of extracted) {
-    const rows = await tx.execute<EntityLookupRow>(sql`
-      select id, confidence, description
-      from ontology_entities
-      where stack_id = ${stackId} and lower(name) = lower(${entity.name})
-    `);
-    const existing = rows[0];
-    const key = entity.name.toLowerCase();
+    const existing = await findExistingEntity(tx, stackId, entity.name);
+    const entityId =
+      existing === undefined
+        ? await insertEntity(tx, stackId, entity)
+        : await updateEntity(tx, entity, existing);
 
-    if (existing !== undefined) {
-      const existingConfidence = Number(existing.confidence);
-      const existingDescription = existing.description ?? "";
-      const nextConfidence = Math.min(1.0, existingConfidence + ENTITY_CONFIDENCE_BUMP);
-      const nextDescription =
-        entity.description !== "" && entity.description.length > existingDescription.length
-          ? entity.description
-          : existingDescription;
-
-      await tx.execute(sql`
-        update ontology_entities
-        set confidence = ${nextConfidence},
-            description = ${nextDescription},
-            last_seen_at = now(),
-            updated_at = now()
-        where id = ${existing.id}
-      `);
-      nameToId.set(key, existing.id);
-    } else {
-      const inserted = await tx.execute<{ id: string }>(sql`
-        insert into ontology_entities (
-          stack_id, name, type, description, confidence,
-          extracted_by_model, source_kind, pipeline
-        )
-        values (
-          ${stackId}, ${entity.name}, ${entity.type}, ${entity.description},
-          ${entity.confidence}, ${config.EXTRACTION_MODEL},
-          ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE}
-        )
-        returning id
-      `);
-      const created = inserted[0];
-      if (created === undefined) {
-        throw new Error("insert into ontology_entities returned no row");
-      }
-      nameToId.set(key, created.id);
-    }
-
-    // `on conflict (entity_id, document_id) do nothing` — a re-ingest does not
-    // duplicate the contribution, which is why `entity_source_documents` keeps
-    // exactly one row per entity/document pair.
-    const entityId = nameToId.get(key);
-    if (entityId === undefined) {
-      throw new Error("entity id missing immediately after consolidation");
-    }
-    await tx.execute(sql`
-      insert into entity_source_documents (entity_id, document_id, stack_id)
-      values (${entityId}, ${documentId}, ${stackId})
-      on conflict (entity_id, document_id) do nothing
-    `);
+    nameToId.set(entity.name.toLowerCase(), entityId);
+    await recordContribution(tx, entityId, documentId, stackId);
   }
 
   return nameToId;
 }
-
 /**
  * `consolidate_relationships` — upsert edges, return how many were written.
  *

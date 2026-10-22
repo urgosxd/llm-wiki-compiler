@@ -238,6 +238,123 @@ async function getStack(
   res.json(toStackResponse(row));
 }
 
+/** A parsed `StackUpdate` body. */
+type StackUpdateParse = ReturnType<typeof StackUpdate.safeParse>;
+
+/** What `updateStackRow` needs once the request has validated. */
+interface StackUpdateInput {
+  readonly stackId: string;
+  readonly present: readonly (typeof STACK_UPDATE_FIELDS)[number][];
+  readonly values: Record<string, unknown>;
+}
+
+/** Sends whichever envelope the refusal carries. */
+function refuseUpdate(res: Response, refusal: UpdateRefusal): void {
+  if ("failure" in refusal) {
+    sendValidationError(res, refusal.failure);
+  } else {
+    sendApiError(res, refusal.error);
+  }
+}
+
+/**
+ * Builds the update input from an already-validated request.
+ *
+ * Precondition: {@link validateUpdate} returned `undefined`, so both parses
+ * succeeded and the raw body is an object.
+ */
+function updateInput(
+  stackId: StackIdParse,
+  body: StackUpdateParse,
+  rawBody: unknown,
+): StackUpdateInput {
+  if (!stackId.ok || !body.success) {
+    throw new TypeError("PATCH /stacks reached the update with an invalid request");
+  }
+  const present = STACK_UPDATE_FIELDS.filter((field) =>
+    Object.hasOwn(rawBody as object, field),
+  );
+  return {
+    stackId: stackId.stackId,
+    present,
+    values: body.data as Record<string, unknown>,
+  };
+}
+
+/** Either a 422 `RequestValidationError` body or a 400 `HTTPException` body. */
+type UpdateRefusal =
+  | { readonly failure: ValidationFailure }
+  | { readonly error: ApiError };
+
+/**
+ * Validates the path parameter and the body before either error is returned.
+ *
+ * Path entries come first. Measured on the oracle: `PATCH /stacks/not-a-uuid`
+ * with `{"name": ""}` answers 422 with the `uuid_parsing` entry for
+ * `["path","stack_id"]` followed by the `string_too_short` entry for
+ * `["body","name"]`. Reporting only one of the two would be a silent contract
+ * change. `{"bogus": 1}` and `{}` are both "no updatable field supplied" — Zod
+ * strips the unknown key, so the 400 is what the oracle answers for both.
+ *
+ * @returns `undefined` when the update may proceed.
+ */
+function validateUpdate(
+  stackId: StackIdParse,
+  body: StackUpdateParse,
+  rawBody: unknown,
+): UpdateRefusal | undefined {
+  if (!stackId.ok || !body.success) {
+    const details = [
+      ...(stackId.ok ? [] : stackId.failure.body.detail),
+      ...(body.success
+        ? []
+        : toFastApiValidationError(body.error, "body", rawBody).body.detail),
+    ];
+    return { failure: { status: 422, body: { detail: details } } };
+  }
+
+  // `exclude_unset`, reproduced from the RAW body's key presence. `StackUpdate`
+  // gives every field `.default(null)`, so the parsed value cannot distinguish
+  // "absent" from "explicitly null" — both come out `null`. An absent key must
+  // leave the column untouched, while `{"description": null}` must write NULL,
+  // so `Object.hasOwn` on the raw JSON object is the only source of that
+  // information: the body is read twice, once through Zod for values and once
+  // raw for presence.
+  if (!isRecord(rawBody)) {
+    throw new TypeError("PATCH /stacks validated a body that is not an object");
+  }
+
+  if (STACK_UPDATE_FIELDS.every((field) => !Object.hasOwn(rawBody, field))) {
+    return { error: apiError(400, "At least one field must be provided") };
+  }
+  return undefined;
+}
+
+/**
+ * Applies the partial update and returns the new row, or `undefined` when no
+ * Stack has that id.
+ *
+ * `updated_at = now()` is appended by the Python handler, not by a trigger; it
+ * is what reorders the list response.
+ */
+async function updateStackRow(
+  tx: Database,
+  update: StackUpdateInput,
+): Promise<StackRow | undefined> {
+  const { stackId, present, values } = update;
+  const assignments = present.map(
+    (field) => sql`${sql.identifier(field)} = ${values[field]}`,
+  );
+
+  const rows = await tx.execute<StackRow>(sql`
+    update stacks
+    set ${sql.join(assignments, sql`, `)}, updated_at = now()
+    where id = ${stackId}
+    returning ${sql.raw(STACK_COLUMNS)}
+  `);
+  return rows[0];
+}
+
 /** `PATCH /stacks/:stack_id` — partial update with `exclude_unset` semantics. */
 async function updateStack(
   req: Request,
@@ -248,67 +365,18 @@ async function updateStack(
   const rawBody: unknown = req.body;
   const body = StackUpdate.safeParse(rawBody);
 
-  /**
-   * Both parameters are validated before either error is returned, and the path
-   * entries come first. Measured on the oracle:
-   * `PATCH /stacks/not-a-uuid` with `{"name": ""}` answers 422 with the
-   * `uuid_parsing` entry for `["path","stack_id"]` followed by the
-   * `string_too_short` entry for `["body","name"]`. Reporting only one of the
-   * two would be a silent contract change.
-   */
-  if (!stackId.ok || !body.success) {
-    const details = [
-      ...(stackId.ok ? [] : stackId.failure.body.detail),
-      ...(body.success
-        ? []
-        : toFastApiValidationError(body.error, "body", rawBody).body.detail),
-    ];
-    sendValidationError(res, { status: 422, body: { detail: details } });
+  const refusal = validateUpdate(stackId, body, rawBody);
+  if (refusal !== undefined) {
+    refuseUpdate(res, refusal);
     return;
   }
 
-  /**
-   * `exclude_unset`, reproduced from the RAW body's key presence.
-   *
-   * `StackUpdate` gives every field `.default(null)`, so the parsed value cannot
-   * distinguish "absent" from "explicitly null" — both come out `null`. The
-   * distinction is contractual: an absent key must leave the column untouched,
-   * while `{"description": null}` must write NULL. `Object.hasOwn` on the raw
-   * JSON object is the only source of that information, which is why the body is
-   * read twice: once through Zod for values, once raw for presence.
-   */
-  if (!isRecord(rawBody)) {
-    throw new TypeError("PATCH /stacks validated a body that is not an object");
-  }
-
-  const present = STACK_UPDATE_FIELDS.filter((field) => Object.hasOwn(rawBody, field));
-
-  // `{"bogus": 1}` and `{}` are both "no updatable field supplied" — Zod strips
-  // the unknown key, so the 400 below is what the oracle answers for both.
-  if (present.length === 0) {
-    sendApiError(res, apiError(400, "At least one field must be provided"));
-    return;
-  }
-
-  const assignments = present.map(
-    (field) => sql`${sql.identifier(field)} = ${body.data[field]}`,
-  );
-
-  // `updated_at = now()` is appended by the Python handler, not by a trigger;
-  // it is what reorders the list response.
-  const rows = await tx.execute<StackRow>(sql`
-    update stacks
-    set ${sql.join(assignments, sql`, `)}, updated_at = now()
-    where id = ${stackId.stackId}
-    returning ${sql.raw(STACK_COLUMNS)}
-  `);
-
-  const row = rows[0];
+  const update = updateInput(stackId, body, rawBody);
+  const row = await updateStackRow(tx, update);
   if (row === undefined) {
-    sendApiError(res, apiError(404, `Stack ${stackId.stackId} not found`));
+    sendApiError(res, apiError(404, `Stack ${update.stackId} not found`));
     return;
   }
-
   res.json(toStackResponse(row));
 }
 

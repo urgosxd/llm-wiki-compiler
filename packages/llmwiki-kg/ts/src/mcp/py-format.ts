@@ -12,6 +12,51 @@
 // Python numeric formatting
 // ============================================================
 
+/** The exact value of a double, as `mantissa * 2**exponent`. */
+interface DecodedFloat {
+  readonly sign: string;
+  readonly mantissa: bigint;
+  readonly exponent: bigint;
+}
+
+/** Decomposes a double into its sign, mantissa and binary exponent. */
+function decodeFloat(value: number): DecodedFloat {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, value);
+  const hi = view.getUint32(0);
+  const lo = view.getUint32(4);
+
+  const negative = hi >>> 31 === 1;
+  const exponentBits = (hi >>> 20) & 0x7ff;
+  let mantissa = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo);
+
+  if (exponentBits === 0) {
+    // Subnormal: no implicit leading bit.
+    return { sign: negative ? "-" : "", mantissa, exponent: -1074n };
+  }
+  mantissa |= 1n << 52n;
+  return { sign: negative ? "-" : "", mantissa, exponent: BigInt(exponentBits) - 1075n };
+}
+
+/** Round-half-even of the exact `|value| * 100`, in integer arithmetic. */
+function roundToHundredths(mantissa: bigint, exponent: bigint): bigint {
+  const numerator = mantissa * 100n;
+  if (exponent >= 0n) {
+    return numerator << exponent;
+  }
+
+  const divisor = 1n << -exponent;
+  const quotient = numerator / divisor;
+  const twiceRemainder = (numerator % divisor) * 2n;
+  if (twiceRemainder > divisor) {
+    return quotient + 1n;
+  }
+  if (twiceRemainder < divisor) {
+    return quotient;
+  }
+  return quotient % 2n === 0n ? quotient : quotient + 1n;
+}
+
 /**
  * Python's `format(value, ".2f")`, reproduced bit-exactly.
  *
@@ -38,49 +83,12 @@ export function formatFixed2(value: number): string {
   if (value === Number.POSITIVE_INFINITY) return "inf";
   if (value === Number.NEGATIVE_INFINITY) return "-inf";
 
-  const view = new DataView(new ArrayBuffer(8));
-  view.setFloat64(0, value);
-  const hi = view.getUint32(0);
-  const lo = view.getUint32(4);
-
-  const negative = hi >>> 31 === 1;
-  const sign = negative ? "-" : "";
-
-  const exponentBits = (hi >>> 20) & 0x7ff;
-  let mantissa = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo);
-  let exponent: bigint;
-
-  if (exponentBits === 0) {
-    // Subnormal: no implicit leading bit.
-    exponent = -1074n;
-  } else {
-    mantissa |= 1n << 52n;
-    exponent = BigInt(exponentBits) - 1075n;
-  }
-
+  const decoded = decodeFloat(value);
   // `format(-0.0, ".2f")` is "-0.00" in Python, so the sign is kept.
-  if (mantissa === 0n) return `${sign}0.00`;
+  if (decoded.mantissa === 0n) return `${decoded.sign}0.00`;
 
-  // Compute round-half-even(|value| * 100) in exact integer arithmetic.
-  const numerator = mantissa * 100n;
-  let units: bigint;
-  if (exponent >= 0n) {
-    units = numerator << exponent;
-  } else {
-    const divisor = 1n << -exponent;
-    const quotient = numerator / divisor;
-    const remainder = numerator % divisor;
-    const twiceRemainder = remainder * 2n;
-    if (twiceRemainder > divisor) {
-      units = quotient + 1n;
-    } else if (twiceRemainder < divisor) {
-      units = quotient;
-    } else {
-      units = quotient % 2n === 0n ? quotient : quotient + 1n;
-    }
-  }
-
+  const units = roundToHundredths(decoded.mantissa, decoded.exponent);
   const whole = units / 100n;
   const fraction = units % 100n;
-  return `${sign}${whole.toString()}.${fraction.toString().padStart(2, "0")}`;
+  return `${decoded.sign}${whole.toString()}.${fraction.toString().padStart(2, "0")}`;
 }

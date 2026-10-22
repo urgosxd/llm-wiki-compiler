@@ -8,7 +8,11 @@
  */
 
 import { complete } from "./llm_clients.js";
-import type { ChunkResult, ExtractionResult } from "./extraction-types.js";
+import type {
+  ChunkResult,
+  ExtractedEntity,
+  ExtractionResult,
+} from "./extraction-types.js";
 
 // ===========================================================================
 // STEP 6: OPTIONAL DESCRIPTION SYNTHESIS
@@ -19,6 +23,55 @@ const SYNTHESIS_MAX_TOKENS = 300;
 
 /** Maximum source passages included in one synthesis prompt. */
 const SYNTHESIS_MAX_CHUNKS = 3;
+
+/**
+ * The entity's source passages, joined the way Python joins them.
+ *
+ * @returns `undefined` when the entity has no resolvable chunk, which is the
+ *   skip condition.
+ */
+function sourceChunkText(
+  entity: ExtractedEntity,
+  chunkByIndex: ReadonlyMap<number, string>,
+): string | undefined {
+  const relevantChunks: string[] = [];
+  for (const index of entity.sourceChunkIndices) {
+    const content = chunkByIndex.get(index);
+    if (content !== undefined) {
+      relevantChunks.push(content);
+    }
+  }
+  if (relevantChunks.length === 0) {
+    return undefined;
+  }
+  return relevantChunks.slice(0, SYNTHESIS_MAX_CHUNKS).join("\n\n---\n\n");
+}
+
+/** The per-entity description prompt, verbatim. */
+function buildDescriptionPrompt(
+  entity: ExtractedEntity,
+  domainContext: string,
+  chunkText: string,
+): string {
+  return `You are writing a compiled description for one entity in a knowledge graph.
+
+ENTITY: ${entity.name}
+TYPE: ${entity.type}
+
+OTHER ENTITIES IN THIS DOMAIN (reference them naturally if relevant):
+${domainContext}
+
+SOURCE PASSAGES THAT MENTION THIS ENTITY:
+${chunkText}
+
+Write a description of this entity that:
+- Is 2-4 sentences. Not longer.
+- Reflects what the source passages say about this specific entity.
+- Naturally references other entities in the domain when relevant.
+- Is precise. No filler, no hedging, no "this entity is..." preamble.
+
+Return ONLY the description as plain prose.`;
+}
 
 /**
  * Fills `description` on every entity in `result`, in place.
@@ -54,37 +107,13 @@ export async function synthesizeEntityDescriptions(
     .join(", ");
 
   for (const entity of result.entities) {
-    const relevantChunks: string[] = [];
-    for (const index of entity.sourceChunkIndices) {
-      const content = chunkByIndex.get(index);
-      if (content !== undefined) {
-        relevantChunks.push(content);
-      }
-    }
-    if (relevantChunks.length === 0) {
+    const chunkText = sourceChunkText(entity, chunkByIndex);
+    if (chunkText === undefined) {
       continue;
     }
-
-    const chunkText = relevantChunks.slice(0, SYNTHESIS_MAX_CHUNKS).join("\n\n---\n\n");
-    const prompt = `You are writing a compiled description for one entity in a knowledge graph.
-
-ENTITY: ${entity.name}
-TYPE: ${entity.type}
-
-OTHER ENTITIES IN THIS DOMAIN (reference them naturally if relevant):
-${domainContext}
-
-SOURCE PASSAGES THAT MENTION THIS ENTITY:
-${chunkText}
-
-Write a description of this entity that:
-- Is 2-4 sentences. Not longer.
-- Reflects what the source passages say about this specific entity.
-- Naturally references other entities in the domain when relevant.
-- Is precise. No filler, no hedging, no "this entity is..." preamble.
-
-Return ONLY the description as plain prose.`;
-
-    entity.description = await complete(prompt, SYNTHESIS_MAX_TOKENS);
+    entity.description = await complete(
+      buildDescriptionPrompt(entity, domainContext, chunkText),
+      SYNTHESIS_MAX_TOKENS,
+    );
   }
 }

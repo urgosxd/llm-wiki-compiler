@@ -37,6 +37,59 @@ export function quotePlus(value: string): string {
   return out;
 }
 
+/** The shortest round-trip digits of a magnitude, and where the point goes. */
+interface LayeredDigits {
+  readonly digits: string;
+  readonly decimalExponent: number;
+}
+
+/**
+ * Reduces `String(magnitude)` to its significant digits and point position.
+ *
+ * `String()` already yields the shortest round-trip digits, which is the same
+ * digit sequence CPython's repr produces; only the layout differs.
+ */
+function layoutDigits(magnitude: number): LayeredDigits {
+  const repr = String(magnitude);
+  const match = /^(\d+)(?:\.(\d+))?(?:e([+-]\d+))?$/u.exec(repr);
+  if (match === null) throw new Error(`Unexpected number representation: ${repr}`);
+
+  const integerPart = match[1] ?? "";
+  const fractionPart = match[2] ?? "";
+  let digits = integerPart + fractionPart;
+  let decimalExponent = integerPart.length + (match[3] === undefined ? 0 : Number(match[3]));
+
+  let leadingZeros = 0;
+  while (leadingZeros < digits.length - 1 && digits[leadingZeros] === "0") {
+    leadingZeros += 1;
+    decimalExponent -= 1;
+  }
+  digits = digits.slice(leadingZeros).replace(/0+$/u, "");
+  if (digits === "") {
+    return { digits: "0", decimalExponent: 1 };
+  }
+  return { digits, decimalExponent };
+}
+
+/** `d.dddde±XX`, the exponent form CPython uses outside its window. */
+function scientificForm(digits: string, scientificExponent: number): string {
+  const mantissa = digits.length === 1 ? digits : `${digits[0]}.${digits.slice(1)}`;
+  const exponentSign = scientificExponent < 0 ? "-" : "+";
+  const exponentDigits = String(Math.abs(scientificExponent)).padStart(2, "0");
+  return `${mantissa}e${exponentSign}${exponentDigits}`;
+}
+
+/** Plain decimal notation, with an explicit `.0` for integral values. */
+function fixedForm(digits: string, decimalExponent: number): string {
+  if (decimalExponent <= 0) {
+    return `0.${"0".repeat(-decimalExponent)}${digits}`;
+  }
+  if (decimalExponent >= digits.length) {
+    return `${digits}${"0".repeat(decimalExponent - digits.length)}.0`;
+  }
+  return `${digits.slice(0, decimalExponent)}.${digits.slice(decimalExponent)}`;
+}
+
 /**
  * Python's `str(a_float)`, reproduced.
  *
@@ -61,46 +114,15 @@ export function pyFloatToString(value: number): string {
   const magnitude = Math.abs(value);
   if (magnitude === 0) return `${sign}0.0`;
 
-  // `String()` already yields the shortest round-trip digits, which is the same
-  // digit sequence CPython's repr produces; only the layout differs.
-  const repr = String(magnitude);
-  const match = /^(\d+)(?:\.(\d+))?(?:e([+-]\d+))?$/u.exec(repr);
-  if (match === null) throw new Error(`Unexpected number representation: ${repr}`);
-
-  const integerPart = match[1] ?? "";
-  const fractionPart = match[2] ?? "";
-  let digits = integerPart + fractionPart;
-  let decimalExponent = integerPart.length + (match[3] === undefined ? 0 : Number(match[3]));
-
-  let leadingZeros = 0;
-  while (leadingZeros < digits.length - 1 && digits[leadingZeros] === "0") {
-    leadingZeros += 1;
-    decimalExponent -= 1;
-  }
-  digits = digits.slice(leadingZeros).replace(/0+$/u, "");
-  if (digits === "") {
-    digits = "0";
-    decimalExponent = 1;
-  }
+  const layered = layoutDigits(magnitude);
+  const scientificExponent = layered.decimalExponent - 1;
 
   // CPython switches to exponent form outside this window.
-  const scientificExponent = decimalExponent - 1;
   if (scientificExponent < -4 || scientificExponent >= 16) {
-    const mantissa = digits.length === 1 ? digits : `${digits[0]}.${digits.slice(1)}`;
-    const exponentSign = scientificExponent < 0 ? "-" : "+";
-    const exponentDigits = String(Math.abs(scientificExponent)).padStart(2, "0");
-    return `${sign}${mantissa}e${exponentSign}${exponentDigits}`;
+    return `${sign}${scientificForm(layered.digits, scientificExponent)}`;
   }
-
-  if (decimalExponent <= 0) {
-    return `${sign}0.${"0".repeat(-decimalExponent)}${digits}`;
-  }
-  if (decimalExponent >= digits.length) {
-    return `${sign}${digits}${"0".repeat(decimalExponent - digits.length)}.0`;
-  }
-  return `${sign}${digits.slice(0, decimalExponent)}.${digits.slice(decimalExponent)}`;
+  return `${sign}${fixedForm(layered.digits, layered.decimalExponent)}`;
 }
-
 /**
  * A query parameter value, carrying the Python type it must stringify as.
  *

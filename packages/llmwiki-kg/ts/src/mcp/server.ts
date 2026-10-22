@@ -58,8 +58,8 @@ export async function runStdio(dependencies: McpDependencies = {}): Promise<void
  * Deliberately not auto-invoked on import: this module is imported by tests
  * and by any launcher that wants `createMcpServer` without stdio. The Python
  * guards its `main()` the same way, so importing `app.mcp_server` never starts
- * a server there either. See `dist/mcp.js` executed directly via
- * `node -e 'import("./dist/mcp.js").then((m) => m.main())'` or a launcher script.
+ * a server there either. See the built mcp entry executed directly
+ * (`node -e` importing it and calling `main()`) or a launcher script.
  *
  * A rejected startup is a hard exit, as in Python: a stdio MCP server that
  * fails to bind has no channel to report the failure on, only stderr and a

@@ -48,7 +48,6 @@ export type { TokenCounter } from "./chunking.js";
 
 export { chunkAndEmbed, embedQuery } from "./embedding.js";
 
-export { buildExtractionPrompt, KG_TOOL } from "./graph-prompt.js";
 export { parseTriplets } from "./graph-parse.js";
 export type { Triplet } from "./graph-parse.js";
 

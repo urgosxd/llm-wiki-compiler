@@ -21,86 +21,113 @@ import {
   type ExtractionResult,
 } from "./extraction-types.js";
 
-export async function extractGraphFromChunks(
-  chunks: readonly ChunkResult[],
+/** The result for a document that produced no chunks. */
+function emptyResult(): ExtractionResult {
+  return {
+    entities: [],
+    relationships: [],
+    model: config.EXTRACTION_MODEL,
+    pipeline: EXTRACTION_PIPELINE,
+  };
+}
+
+/**
+ * Asks the model for one chunk's triplets, never throwing.
+ *
+ * llama_index's `except (ValueError, TypeError, AttributeError)` around
+ * `astructured_predict`: a provider failure or a response with no tool call
+ * yields no triplets for this chunk, and extraction continues.
+ */
+async function chunkTriplets(
+  chunk: ChunkResult,
   stackName: string,
-): Promise<ExtractionResult> {
-  if (chunks.length === 0) {
-    return {
-      entities: [],
-      relationships: [],
-      model: config.EXTRACTION_MODEL,
-      pipeline: EXTRACTION_PIPELINE,
-    };
+): Promise<Triplet[]> {
+  const prompt = buildExtractionPrompt(chunk.content, chunk.chunkIndex, stackName);
+  try {
+    return parseTriplets(await callTool(prompt, KG_TOOL));
+  } catch {
+    return [];
   }
+}
 
-  const entityMap = new Map<string, ExtractedEntity>();
-  const relationshipList: ExtractedRelationship[] = [];
-
-  for (const chunk of chunks) {
-    const prompt = buildExtractionPrompt(chunk.content, chunk.chunkIndex, stackName);
-
-    let triplets: Triplet[];
-    try {
-      triplets = parseTriplets(await callTool(prompt, KG_TOOL));
-    } catch {
-      // llama_index's `except (ValueError, TypeError, AttributeError)` around
-      // `astructured_predict`: a provider failure or a response with no tool
-      // call yields no triplets for this chunk, and extraction continues.
-      triplets = [];
-    }
-
-    for (const triplet of triplets) {
-      // Both endpoints of a triplet become entities; the oracle does the same,
-      // which is why `entities_extracted` counts nodes, not triplet subjects.
-      for (const endpoint of [
-        { name: triplet.subjectName, type: triplet.subjectType },
-        { name: triplet.objectName, type: triplet.objectType },
-      ]) {
-        const key = endpoint.name.trim().toLowerCase();
-        const existing = entityMap.get(key);
-        if (existing === undefined) {
-          entityMap.set(key, {
-            name: endpoint.name,
-            type: endpoint.type,
-            description: "",
-            confidence: EXTRACTED_CONFIDENCE,
-            sourceChunkIndices: [chunk.chunkIndex],
-          });
-        } else {
-          if (EXTRACTED_CONFIDENCE > existing.confidence) {
-            existing.description = "";
-            existing.confidence = EXTRACTED_CONFIDENCE;
-            existing.type = endpoint.type;
-          }
-          existing.sourceChunkIndices.push(chunk.chunkIndex);
-        }
-      }
-
-      relationshipList.push({
-        fromEntityName: triplet.subjectName,
-        toEntityName: triplet.objectName,
-        // Consolidation lowercases this again; keeping the uppercase form here
-        // matches the Python value that reaches it.
-        type: triplet.relationType,
-        description: "",
-        confidence: EXTRACTED_CONFIDENCE,
-        sourceChunkIndices: [chunk.chunkIndex],
-      });
-    }
+/**
+ * Folds one endpoint into the entity map.
+ *
+ * Both endpoints of a triplet become entities; the oracle does the same, which is
+ * why `entities_extracted` counts nodes, not triplet subjects.
+ */
+function absorbEndpoint(
+  entityMap: Map<string, ExtractedEntity>,
+  name: string,
+  type: string,
+  chunkIndex: number,
+): void {
+  const key = name.trim().toLowerCase();
+  const existing = entityMap.get(key);
+  if (existing === undefined) {
+    entityMap.set(key, {
+      name,
+      type,
+      description: "",
+      confidence: EXTRACTED_CONFIDENCE,
+      sourceChunkIndices: [chunkIndex],
+    });
+    return;
   }
+  if (EXTRACTED_CONFIDENCE > existing.confidence) {
+    existing.description = "";
+    existing.confidence = EXTRACTED_CONFIDENCE;
+    existing.type = type;
+  }
+  existing.sourceChunkIndices.push(chunkIndex);
+}
 
-  const relationshipMap = new Map<string, ExtractedRelationship>();
-  for (const relationship of relationshipList) {
-    const key = [
-      relationship.fromEntityName.toLowerCase(),
-      relationship.type.toLowerCase(),
-      relationship.toEntityName.toLowerCase(),
-    ].join("\u0000");
+/** Folds both endpoints of one triplet into the entity map. */
+function absorbEndpoints(
+  entityMap: Map<string, ExtractedEntity>,
+  triplet: Triplet,
+  chunkIndex: number,
+): void {
+  absorbEndpoint(entityMap, triplet.subjectName, triplet.subjectType, chunkIndex);
+  absorbEndpoint(entityMap, triplet.objectName, triplet.objectType, chunkIndex);
+}
 
-    const existing = relationshipMap.get(key);
+/** One triplet as an extracted relationship. */
+function tripletRelationship(
+  triplet: Triplet,
+  chunkIndex: number,
+): ExtractedRelationship {
+  return {
+    fromEntityName: triplet.subjectName,
+    toEntityName: triplet.objectName,
+    // Consolidation lowercases this again; keeping the uppercase form here
+    // matches the Python value that reaches it.
+    type: triplet.relationType,
+    description: "",
+    confidence: EXTRACTED_CONFIDENCE,
+    sourceChunkIndices: [chunkIndex],
+  };
+}
+
+/** The dedupe key: endpoints and type, case-insensitively, NUL-separated. */
+function relationshipKey(relationship: ExtractedRelationship): string {
+  return [
+    relationship.fromEntityName.toLowerCase(),
+    relationship.type.toLowerCase(),
+    relationship.toEntityName.toLowerCase(),
+  ].join("\u0000");
+}
+
+/** Merges duplicate relationships, keeping the highest confidence per key. */
+function mergeRelationships(
+  relationships: readonly ExtractedRelationship[],
+): Map<string, ExtractedRelationship> {
+  const merged = new Map<string, ExtractedRelationship>();
+  for (const relationship of relationships) {
+    const key = relationshipKey(relationship);
+    const existing = merged.get(key);
     if (existing === undefined) {
-      relationshipMap.set(key, relationship);
+      merged.set(key, relationship);
       continue;
     }
     if (relationship.confidence > existing.confidence) {
@@ -109,10 +136,31 @@ export async function extractGraphFromChunks(
     }
     existing.sourceChunkIndices.push(...relationship.sourceChunkIndices);
   }
+  return merged;
+}
+
+export async function extractGraphFromChunks(
+  chunks: readonly ChunkResult[],
+  stackName: string,
+): Promise<ExtractionResult> {
+  if (chunks.length === 0) {
+    return emptyResult();
+  }
+
+  const entityMap = new Map<string, ExtractedEntity>();
+  const relationshipList: ExtractedRelationship[] = [];
+
+  for (const chunk of chunks) {
+    const triplets = await chunkTriplets(chunk, stackName);
+    for (const triplet of triplets) {
+      absorbEndpoints(entityMap, triplet, chunk.chunkIndex);
+      relationshipList.push(tripletRelationship(triplet, chunk.chunkIndex));
+    }
+  }
 
   return {
     entities: [...entityMap.values()],
-    relationships: [...relationshipMap.values()],
+    relationships: [...mergeRelationships(relationshipList).values()],
     model: config.EXTRACTION_MODEL,
     pipeline: EXTRACTION_PIPELINE,
   };
