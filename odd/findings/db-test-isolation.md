@@ -1,4 +1,13 @@
-# `db.test.ts` "commits a deliberate 404" fails in-suite, passes alone
+# `db.test.ts` failures were DB contamination, not test isolation
+
+> **CORRECTED.** An earlier version of this document concluded the test was
+> order-sensitive. That was wrong. The failures were caused by fixture rows my
+> own manual verification left in the shared database. With a clean database
+> the suite passes 575/575 three consecutive times, including the specific test
+> I had traced.
+>
+> The ruled-out list below is still accurate and worth keeping. The conclusion
+> is not.
 
 ## Symptom
 
