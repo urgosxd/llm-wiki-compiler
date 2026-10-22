@@ -1,0 +1,153 @@
+{
+  "note": "Replayed oracle responses for the validation corpus. T0.8 compares the TS server against these.",
+  "results": [
+    {
+      "id": "name_empty",
+      "status": 422,
+      "response": {
+        "detail": [
+          {
+            "type": "string_too_short",
+            "loc": [
+              "body",
+              "name"
+            ],
+            "msg": "String should have at least 1 character",
+            "input": "",
+            "ctx": {
+              "min_length": 1
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "domain_pattern",
+      "status": 422,
+      "response": {
+        "detail": [
+          {
+            "type": "string_pattern_mismatch",
+            "loc": [
+              "body",
+              "domain"
+            ],
+            "msg": "String should match pattern '^[a-z0-9-]+$'",
+            "input": "NOT-A-SLUG",
+            "ctx": {
+              "pattern": "^[a-z0-9-]+$"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "missing_domain",
+      "status": 422,
+      "response": {
+        "detail": [
+          {
+            "type": "missing",
+            "loc": [
+              "body",
+              "domain"
+            ],
+            "msg": "Field required",
+            "input": {
+              "name": "X"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "missing_name",
+      "status": 422,
+      "response": {
+        "detail": [
+          {
+            "type": "missing",
+            "loc": [
+              "body",
+              "name"
+            ],
+            "msg": "Field required",
+            "input": {
+              "domain": "ok-slug"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "name_too_long",
+      "status": 422,
+      "response": {
+        "detail": [
+          {
+            "type": "string_too_long",
+            "loc": [
+              "body",
+              "name"
+            ],
+            "msg": "String should have at most 200 characters",
+            "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "ctx": {
+              "max_length": 200
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "scope_literal",
+      "status": 422,
+      "response": {
+        "detail": [
+          {
+            "type": "literal_error",
+            "loc": [
+              "body",
+              "scope"
+            ],
+            "msg": "Input should be 'stack', 'workspace' or 'domain'",
+            "input": "INVALID",
+            "ctx": {
+              "expected": "'stack', 'workspace' or 'domain'"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "name_whitespace_only",
+      "status": 201,
+      "response": {
+        "id": "36617342-3b68-4ea7-81b9-5bc562bb81d3",
+        "name": " ",
+        "domain": "ok4",
+        "description": null,
+        "scope": "stack",
+        "compilation_strategy": "incremental",
+        "synthesize_descriptions": false,
+        "created_at": "2026-10-21T04:01:46.454886Z",
+        "updated_at": "2026-10-21T04:01:46.454886Z"
+      }
+    },
+    {
+      "id": "unknown_field",
+      "status": 201,
+      "response": {
+        "id": "ec4261d0-0541-4b37-a081-5fb4154481a6",
+        "name": "X",
+        "domain": "ok5",
+        "description": null,
+        "scope": "stack",
+        "compilation_strategy": "incremental",
+        "synthesize_descriptions": false,
+        "created_at": "2026-10-21T04:01:46.472112Z",
+        "updated_at": "2026-10-21T04:01:46.472112Z"
+      }
+    }
+  ]
+}
