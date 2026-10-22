@@ -9,8 +9,12 @@ import { createDocumentsRouter } from "./routes/documents.js";
 import type { DocumentsRouterDependencies } from "./routes/documents.js";
 import { createIngestRouter } from "./routes/ingest.js";
 import type { IngestRouterDependencies } from "./routes/ingest.js";
+import { createPagesRouter } from "./routes/pages.js";
+import type { PagesRouterDependencies } from "./routes/pages.js";
 import { createStacksRouter } from "./routes/stacks.js";
 import type { StacksRouterDependencies } from "./routes/stacks.js";
+import { createSynthesizeRouter } from "./routes/synthesize.js";
+import type { SynthesizeRouterDependencies } from "./routes/synthesize.js";
 
 /**
  * Starlette's `cors.ALL_METHODS`, verbatim, as the preflight emits it.
@@ -169,7 +173,9 @@ export function createApp(
   deps?: StacksRouterDependencies &
     DocumentsRouterDependencies &
     IngestRouterDependencies &
-    AksRouterDependencies,
+    AksRouterDependencies &
+    PagesRouterDependencies &
+    SynthesizeRouterDependencies,
 ): Express {
   const app = express();
 
@@ -224,6 +230,10 @@ export function createApp(
   // route is `/entities/{name}` — so this ordering is about fidelity, not about
   // which handler wins.
   app.use("/aks/v1", createAksRouter(deps));
+  // Mounted at `/aks/v1/pages`, the router's own prefix. Registered after the
+  // query router because `app.include_router(pages.router)` follows it in
+  // `app/main.py`; the two share no path, so this is fidelity, not precedence.
+  app.use("/aks/v1/pages", createPagesRouter(deps));
   app.use("/aks/v1/backfeed", createBackfeedRouter(deps));
 
   // Mounted at the root, with **no** path argument: `documents.py` declares its
@@ -239,6 +249,11 @@ export function createApp(
   // the two never collide, because `documents.ts` has no route that continues
   // past `{doc_id}`.
   app.use(createIngestRouter(deps));
+
+  // Root mount, no prefix: `synthesize.py` declares `/stacks/{stack_id}/…` and
+  // `/aks/v1/entities/{name}/…` as absolute paths on one prefixless router. Any
+  // prefix here would move both endpoints.
+  app.use(createSynthesizeRouter(deps));
 
   // 404 fallback: JSON, never Express 5's default HTML page. FastAPI's shape
   // for unmatched routes is `{"detail": "Not Found"}`.
