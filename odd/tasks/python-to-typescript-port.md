@@ -149,3 +149,75 @@ recorded here because the reasoning matters more than the outcome.
   servers; verified matching, so it is inherited behavior, not a regression.
 - The oracle and the TS server share one database, so differential tests must
   use distinct fixture domains per target or they self-collide.
+
+---
+
+## PORT COMPLETE — final state
+
+All 20 endpoints ported and differentially verified. Measured, not asserted.
+
+| Metric | Value |
+|---|---|
+| Endpoints | **20 / 20** |
+| Tests | **575** across 17 files |
+| TypeScript | ~22,000 lines |
+| LlamaIndex dependency in TS | **zero** — replaced by direct gateway calls |
+| Oracle | still running on :8000, untouched throughout |
+
+### Endpoints by slice
+
+| Slice | Endpoints | Verification |
+|---|---|---|
+| Wave 0 (stacks, health, auth, config, db) | 3 | 7/7 differential |
+| backfeed + consolidation | 5 | full lifecycle, 32 error probes, row-level DB compare |
+| documents | 4 | 78 differential scenarios |
+| extraction + ingest | 1 | chunk hash byte-exact |
+| retrieval + AKS query | 5 | 73 differential probes |
+| pages + synthesize | 4 | cross-server `graph_version` match |
+
+### The decisive verification
+
+With both servers on one database, the TypeScript server independently
+computed the oracle's exact `graph_version` (`fc7e773623ec9334`) and served the
+oracle's cached row byte for byte, including `generated_at`. That proves the
+hash algorithm is compatible rather than merely self-consistent — the strongest
+single check in the migration.
+
+### Process notes worth keeping
+
+**Parallelism worked, with two real limits.** Three worktrees ran concurrently
+with zero file conflicts. But `server.ts` is a convergence point every slice
+needed, and one shared Postgres produced deterministic fixture collisions in
+`db.test.ts` (fixed domains, pre-existing in every worktree). Both limits are
+recorded in `wave1-merge-order.md` and `test-flakiness.md`.
+
+**No native review authority was obtained.** Eight attempts: one transport
+abort, four declines, three expired bindings. Sizes ranged from 57 to 19,872
+lines; the small ones declined too, so size was not the cause and the decline
+envelope carries no reason. Recorded in `native-review-unavailable.md`.
+
+**The LLM is non-deterministic.** Identical input produced 5, 3 and 4 entities
+across three oracle runs. No test asserts LLM-derived text or counts; structure
+and types are pinned instead. I initially misread this as a port defect after
+two runs happened to agree — a bad sample.
+
+### Deliberate divergences from Python
+
+1. **LlamaIndex is gone.** Python needed two workarounds to satisfy its
+   constructors (enum dodge for embedding model names, context-window table
+   registration). Calling the gateway over HTTP removes both.
+2. **`countTokens` is calibrated**, not tiktoken-exact: ~2% prose error. The
+   chunker algorithm is byte-exact; only the stored `token_count` can drift by
+   one.
+3. **The reference MCP server cannot run** (mcp 2.3.0 lacks `list_tools` and
+   `call_tool`, plus a missing-argument TypeError). The port implements the
+   working intent; documented at length in `mcp-server-broken-in-reference.md`.
+4. **Float bounds render `1` where Python renders `1.0`** — a JavaScript
+   numeric-type limit, unobservable to any JSON parser. See
+   `float-bound-json-limit.md`.
+
+### Known inherited gaps
+
+- Malformed JSON: oracle 422 `json_invalid`, port 400 from body-parser.
+- Trailing slash: oracle 307, port passthrough. App-wide and pre-existing.
+- Query numeric grammar: oracle accepts `5.0`/`5_0`, port 422 `int_parsing`.
