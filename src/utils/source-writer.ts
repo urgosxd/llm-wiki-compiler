@@ -116,6 +116,21 @@ function stableContent(document: string): string {
 }
 
 /**
+ * Options for {@link saveSource}.
+ */
+export interface SaveSourceOptions {
+  /**
+   * Called with the absolute destination path after it is resolved and before
+   * anything is written. A caller uses it to record the target's pre-state so
+   * the write can be rolled back; it cannot redirect the write.
+   *
+   * Not called when the resolved write is a no-op (`"unchanged"`), because a
+   * no-op has nothing to journal.
+   */
+  beforeWrite?: (destinationPath: string) => Promise<void>;
+}
+
+/**
  * Write a markdown document into `sources/` under a slug derived from
  * the title, applying the empty-slug guard and basename-collision
  * disambiguation.
@@ -131,6 +146,12 @@ function stableContent(document: string): string {
  * @param document - Full markdown content (frontmatter + body) to write.
  * @param source - Source identity (URL, file path, etc.) used as the canonical
  *                 key for finding existing files and collision disambiguation.
+ * @param options - Optional pre-write hook. `beforeWrite` runs AFTER the
+ *                 destination has been resolved and BEFORE any byte is
+ *                 written, receiving the absolute destination path. It exists
+ *                 so a caller can journal the target's pre-state and roll the
+ *                 write back later; the hook cannot change where the write
+ *                 lands, only observe it.
  * @returns An object with the resolved destination `path` and a
  *          `writeStatus` of `"created"`, `"updated"`, or `"unchanged"`.
  */
@@ -139,6 +160,7 @@ export async function saveSource(
   title: string,
   document: string,
   source: string,
+  options: SaveSourceOptions = {},
 ): Promise<{ path: string; writeStatus: WriteStatus }> {
   const slug = slugify(title);
   // Defense in depth — even with the Unicode-aware slugifier (#35), a
@@ -172,6 +194,7 @@ export async function saveSource(
   const destPath = path.join(sourcesDir, filename);
 
   if (existingByIdentity === null) {
+    await options.beforeWrite?.(destPath);
     // New source: exclusive create — never write through a pre-existing entry
     // (e.g. a planted symlink at the slug/hash destination).
     try {
@@ -193,6 +216,7 @@ export async function saveSource(
   if (stableContent(existing) === stableContent(document)) {
     return { path: destPath, writeStatus: "unchanged" };
   }
+  await options.beforeWrite?.(destPath);
   await writeFile(destPath, document, "utf-8");
   return { path: destPath, writeStatus: "updated" };
 }

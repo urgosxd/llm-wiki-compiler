@@ -34,3 +34,8 @@ export {
   consolidateEntityRows,
   consolidateRelationshipRows,
 } from "./core/document-consolidation.js";
+
+export { createClient, createDatabase } from "./db.js";
+export type { Database } from "./db.js";
+export { config as kgConfig } from "./config.js";
+export type { Config as KgConfig } from "./config.js";
