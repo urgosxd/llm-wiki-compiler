@@ -49,3 +49,7 @@ ts/node_modules/
 ts/dist/
 ts/coverage/
 *.tsbuildinfo
+
+# ---- Python artefacts (the implementation is gone; guards leftovers) ----
+__pycache__/
+*.pyc
