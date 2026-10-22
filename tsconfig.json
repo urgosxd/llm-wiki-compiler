@@ -7,7 +7,6 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "dist",
-    "rootDir": "src",
     "declaration": true,
     "sourceMap": true,
     "resolveJsonModule": true,
@@ -22,6 +21,7 @@
       "@atomicstrata/llmwiki-core/local-workflow-contracts": ["./src/local-workflow-host/shared-contracts.ts"],
       "llm-wiki-compiler": ["./src/index.ts"],
       "llmwiki-dev-backend": ["./packages/llmwiki-dev-backend/src/index.ts"],
+      "llmwiki-kg": ["./packages/llmwiki-kg/ts/src/core-index.ts"],
       "llmwiki-limited-isolation-backend": ["./packages/llmwiki-limited-isolation-backend/src/index.ts"]
     }
   },

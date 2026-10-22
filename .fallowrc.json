@@ -29,7 +29,8 @@
     "src/viewer/assets/viewer-health.css",
     "src/viewer/assets/viewer-pipeline.css",
     "src/viewer/assets/viewer-graph.css",
-    "src/viewer/assets/viewer-material.css"
+    "src/viewer/assets/viewer-material.css",
+    "packages/llmwiki-kg/**"
   ],
   "ignoreDependencies": [
     "@fontsource/dm-sans",
@@ -38,28 +39,129 @@
     "@fontsource/jetbrains-mono"
   ],
   "ignoreExports": [
-    { "file": "src/workflows/projection.ts", "exports": ["ProjectionResult", "confineProjectionPath"] },
-    { "file": "src/local-workflows/projection.ts", "exports": ["ProjectionResult"] },
-    { "file": "src/workflows/status.ts", "exports": ["RunClassification", "RunStatus", "classifyRun", "workflowStatus", "workflowStatusForWorkflow"] },
-    { "file": "src/workflows/with-lock.ts", "exports": ["isTerminalStatus"] },
-    { "file": "src/local-workflows/with-lock.ts", "exports": ["isTerminalStatus"] },
-    { "file": "src/workflows/start.ts", "exports": ["lookupWorkflowDef"] },
-    { "file": "src/workflows/adapt.ts", "exports": ["mapStageId"] },
-    { "file": "src/local-workflows/adapt.ts", "exports": ["mapStageId"] },
-    { "file": "src/workflows/integrity.ts", "exports": ["loadRunKey", "integrityMatches"] },
-    { "file": "src/workflows/store.ts", "exports": ["WorkflowRunRead", "WorkflowRunList", "RunIdResolution"] },
-    { "file": "src/utils/output.ts", "exports": ["getQuiet"] },
-    { "file": "src/preparations/orphan-scan.ts", "exports": ["scanPreparationOrphans"] },
-    { "file": "src/capability-providers/runtime/result-admission.ts", "exports": ["EvidenceRefV1"] },
-    { "file": "src/operation-bundles/manifest-store.ts", "exports": ["ManifestCreateResult"] },
-    { "file": "src/operation-bundles/stage.ts", "exports": ["StageFaultsForTest"] },
-    { "file": "src/operation-bundles/run-store.ts", "exports": ["appendAbandonedTransitionLocked"] },
-    { "file": "test/preparation-recovery-fixture.ts", "exports": ["readRun"] },
-    { "file": "test/preparations/cancel-settlement-fixture.ts", "exports": ["readRun"] }
+    {
+      "file": "src/workflows/projection.ts",
+      "exports": [
+        "ProjectionResult",
+        "confineProjectionPath"
+      ]
+    },
+    {
+      "file": "src/local-workflows/projection.ts",
+      "exports": [
+        "ProjectionResult"
+      ]
+    },
+    {
+      "file": "src/workflows/status.ts",
+      "exports": [
+        "RunClassification",
+        "RunStatus",
+        "classifyRun",
+        "workflowStatus",
+        "workflowStatusForWorkflow"
+      ]
+    },
+    {
+      "file": "src/workflows/with-lock.ts",
+      "exports": [
+        "isTerminalStatus"
+      ]
+    },
+    {
+      "file": "src/local-workflows/with-lock.ts",
+      "exports": [
+        "isTerminalStatus"
+      ]
+    },
+    {
+      "file": "src/workflows/start.ts",
+      "exports": [
+        "lookupWorkflowDef"
+      ]
+    },
+    {
+      "file": "src/workflows/adapt.ts",
+      "exports": [
+        "mapStageId"
+      ]
+    },
+    {
+      "file": "src/local-workflows/adapt.ts",
+      "exports": [
+        "mapStageId"
+      ]
+    },
+    {
+      "file": "src/workflows/integrity.ts",
+      "exports": [
+        "loadRunKey",
+        "integrityMatches"
+      ]
+    },
+    {
+      "file": "src/workflows/store.ts",
+      "exports": [
+        "WorkflowRunRead",
+        "WorkflowRunList",
+        "RunIdResolution"
+      ]
+    },
+    {
+      "file": "src/utils/output.ts",
+      "exports": [
+        "getQuiet"
+      ]
+    },
+    {
+      "file": "src/preparations/orphan-scan.ts",
+      "exports": [
+        "scanPreparationOrphans"
+      ]
+    },
+    {
+      "file": "src/capability-providers/runtime/result-admission.ts",
+      "exports": [
+        "EvidenceRefV1"
+      ]
+    },
+    {
+      "file": "src/operation-bundles/manifest-store.ts",
+      "exports": [
+        "ManifestCreateResult"
+      ]
+    },
+    {
+      "file": "src/operation-bundles/stage.ts",
+      "exports": [
+        "StageFaultsForTest"
+      ]
+    },
+    {
+      "file": "src/operation-bundles/run-store.ts",
+      "exports": [
+        "appendAbandonedTransitionLocked"
+      ]
+    },
+    {
+      "file": "test/preparation-recovery-fixture.ts",
+      "exports": [
+        "readRun"
+      ]
+    },
+    {
+      "file": "test/preparations/cancel-settlement-fixture.ts",
+      "exports": [
+        "readRun"
+      ]
+    }
   ],
   "overrides": [
     {
-      "files": ["src/providers/*.ts", "src/utils/provider-guard.ts"],
+      "files": [
+        "src/providers/*.ts",
+        "src/utils/provider-guard.ts"
+      ],
       "rules": {
         "unused-class-members": "off"
       }
