@@ -5,6 +5,8 @@ import { createMethodNotAllowed } from "./http-contract.js";
 import { createBackfeedRouter } from "./routes/backfeed.js";
 import { createDocumentsRouter } from "./routes/documents.js";
 import type { DocumentsRouterDependencies } from "./routes/documents.js";
+import { createIngestRouter } from "./routes/ingest.js";
+import type { IngestRouterDependencies } from "./routes/ingest.js";
 import { createStacksRouter } from "./routes/stacks.js";
 import type { StacksRouterDependencies } from "./routes/stacks.js";
 
@@ -162,7 +164,9 @@ function sendPreflight(req: Request, res: Response): void {
  * satisfies both and each router keeps its own parameter type.
  */
 export function createApp(
-  deps?: StacksRouterDependencies & DocumentsRouterDependencies,
+  deps?: StacksRouterDependencies &
+    DocumentsRouterDependencies &
+    IngestRouterDependencies,
 ): Express {
   const app = express();
 
@@ -216,6 +220,13 @@ export function createApp(
   // carries its own full path. Prefixing this mount would move the by-id routes
   // to `/stacks/documents/...` and break the 405 `Allow` ordering.
   app.use(createDocumentsRouter(deps));
+
+  // Root mount, no prefix: `ingest.py` declares the absolute path
+  // `/stacks/{stack_id}/documents/{doc_id}/ingest`. Mounted after the documents
+  // router and before the 404 fallback, which is the only ordering requirement —
+  // the two never collide, because `documents.ts` has no route that continues
+  // past `{doc_id}`.
+  app.use(createIngestRouter(deps));
 
   // 404 fallback: JSON, never Express 5's default HTML page. FastAPI's shape
   // for unmatched routes is `{"detail": "Not Found"}`.
