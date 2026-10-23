@@ -38,6 +38,7 @@
     "src/dimensions/coordinator.ts",
     "src/dimensions/index.ts",
     "src/dimensions/outbox.ts",
+    "src/dimensions/read-types.ts",
     "src/dimensions/reconcile.ts",
     "src/dimensions/types.ts",
     "src/eval/**",
@@ -115,7 +116,9 @@
         "test/dimensions/kg-core-*",
         "test/dimensions/kg-dimension.test.ts",
         "test/dimensions/kg-forget.test.ts",
-        "test/dimensions/kg-postgres-integrity.test.ts"
+        "test/dimensions/kg-postgres-integrity.test.ts",
+        "test/dimensions/kg-read-service.test.ts",
+        "test/dimensions/kg-reader.test.ts"
       ],
       "forbiddenPaths": [
         ".worktrees/**",
