@@ -89,6 +89,14 @@
         "test/compiler-*/**",
         "test/context-*/**"
       ]
+    },
+    "orchestrator-z": {
+      "module": "probe",
+      "worktree": ".worktrees/orchestrator-z",
+      "ownedPaths": [
+        "src/probe/**"
+      ],
+      "forbiddenPaths": []
     }
   }
 }
