@@ -1,21 +1,36 @@
 # Multi-agent coordination contract notes
 
 Companion to `contract-cordination.json`. The contract enforces; this file
-explains why it is shaped this way. Keep them in sync — a shape change belongs
-in both.
+explains why it is shaped this way. Keep them in sync.
 
-## Shared surface
+## The shape: one role per dimension
 
-sharedPaths is READ-ONLY for every role and takes precedence over ownedPaths, so nothing here may also appear in an ownedPaths entry. It freezes the product's compiler, context, CLI, commands, linter, utils and trust trees: roles may read them and run tsc/build/test/fallow, but never edit them. Unfreezing any of these is a contract change, not a role's decision.
+A owns the wiki dimension. B and C split the KG dimension (B the core and the
+adapter, C the runtime surface). The rest of the product is frozen read-only for
+every role, so the two dimensions cannot collide with the compiler, the CLI, or
+each other.
 
-## Test policy
+Infrastructure — `contract-cordination.json`, `package.json`, `tsconfig*.json`,
+`vitest.config.ts` — belongs to no role. A feature role with veto power over
+everyone else's dependencies is a bottleneck, not an owner. Those files are
+coordinator territory: edited from the primary checkout, validated before every
+commit, and frozen for the roles.
 
-Tests live under each role's ownedPaths, never in sharedPaths: sharedPaths blocks writes even for the owning role. Every role may still read every test and execute the full suite, because the enforcement hook intercepts write/edit and orchestrator_send_message only - bash commands are never blocked, so tsc, npm run build, npm test and fallow are available to all roles.
+## Verification is not restricted
 
-## Frozen dimension surface
+Every role may read every path and run tsc, builds, the full test suite, and
+fallow, including over frozen files. The enforcement hook intercepts write, edit
+and orchestrator_send_message only, so shell commands are never blocked.
 
-src/dimensions/types.ts, coordinator.ts, outbox.ts, reconcile.ts, activation.ts and index.ts are the shared port and transaction machinery and are frozen for every role. A dimension that needs a change there sends a work_request to orchestrator-a instead of editing it.
+Tests therefore live under each role's ownedPaths, never in sharedPaths:
+sharedPaths takes precedence over ownedPaths, so a test path listed there would
+make a role unable to write its own tests.
 
+## The port is frozen at v1
+
+src/dimensions/types.ts carries DIMENSION_PORT_VERSION. Two roles develop two
+dimensions against it concurrently, so a role that needs a different shape sends
+a work_request instead of editing it.
 
 ## Roles
 
@@ -23,10 +38,6 @@ src/dimensions/types.ts, coordinator.ts, outbox.ts, reconcile.ts, activation.ts 
 
 - worktree `.worktrees/orchestrator-a`
 - owns `src/dimensions/wiki/**`
-- owns `contract-cordination.json`
-- owns `package.json`
-- owns `tsconfig*.json`
-- owns `vitest.config.ts`
 - owns `odd/**`
 - owns `test/dimensions/wiki-*`
 - owns `test/dimensions/cross-dimension-rollback.test.ts`
@@ -50,12 +61,7 @@ src/dimensions/types.ts, coordinator.ts, outbox.ts, reconcile.ts, activation.ts 
 - owns `packages/llmwiki-kg/ts/src/*.ts`
 - owns `test/dimensions/kg-runtime-*`
 
-## Frozen and read-only surface
-
-`sharedPaths` is read-only for every role **and takes precedence over
-`ownedPaths`**, so nothing below may appear in an owned list. It freezes the
-product so the two dimension roles cannot collide with the compiler, CLI, or
-each other:
+## Frozen surface
 
 - `.fallowrc.json`
 - `.github/**`
@@ -66,10 +72,12 @@ each other:
 - `CONTRIBUTING.md`
 - `README.md`
 - `SOURCES_CONTRACT.md`
+- `contract-cordination.json`
 - `docs/**`
 - `eslint.config.js`
 - `examples/**`
 - `package-lock.json`
+- `package.json`
 - `packages/llmwiki-core/**`
 - `packages/llmwiki-dev-backend/**`
 - `packages/llmwiki-limited-isolation-backend/**`
@@ -120,4 +128,6 @@ each other:
 - `src/wiki/**`
 - `src/workflows/**`
 - `test-typecheck-baseline.json`
+- `tsconfig*.json`
 - `tsup.config.ts`
+- `vitest.config.ts`

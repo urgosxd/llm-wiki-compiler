@@ -12,10 +12,12 @@
     "CONTRIBUTING.md",
     "README.md",
     "SOURCES_CONTRACT.md",
+    "contract-cordination.json",
     "docs/**",
     "eslint.config.js",
     "examples/**",
     "package-lock.json",
+    "package.json",
     "packages/llmwiki-core/**",
     "packages/llmwiki-dev-backend/**",
     "packages/llmwiki-limited-isolation-backend/**",
@@ -66,7 +68,9 @@
     "src/wiki/**",
     "src/workflows/**",
     "test-typecheck-baseline.json",
-    "tsup.config.ts"
+    "tsconfig*.json",
+    "tsup.config.ts",
+    "vitest.config.ts"
   ],
   "roles": {
     "orchestrator-a": {
@@ -74,10 +78,6 @@
       "worktree": ".worktrees/orchestrator-a",
       "ownedPaths": [
         "src/dimensions/wiki/**",
-        "contract-cordination.json",
-        "package.json",
-        "tsconfig*.json",
-        "vitest.config.ts",
         "odd/**",
         "test/dimensions/wiki-*",
         "test/dimensions/cross-dimension-rollback.test.ts"
