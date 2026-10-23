@@ -31,6 +31,7 @@ import {
   chunkAndEmbed,
   consolidateEntityRows,
   consolidateRelationshipRows,
+  registerDocumentRow,
   createClient,
   createDatabase,
   extractGraphFromChunks,
@@ -49,9 +50,37 @@ import type {
 /** Seconds to wait for the graph database before giving up. */
 const DB_CONNECT_TIMEOUT_SECONDS = 10;
 
+/** Chars of a source digest kept in an in-memory chunk label. */
+const SOURCE_LABEL_CHARS = 32;
+
+/**
+ * Stable per-source label for in-memory chunk metadata.
+ *
+ * Deliberately independent of the body: editing a source must not change which
+ * source its chunks are labelled as. This is metadata only — it never becomes a
+ * database key.
+ *
+ * @param source - Source identity (URL or path).
+ * @returns A 32-char hex digest of the source alone.
+ */
+function sourceLabel(source: string): string {
+  return createHash("sha256").update(source).digest("hex").slice(0, SOURCE_LABEL_CHARS);
+}
+
 /** Handle carried between `prepare` and `commit` for the graph dimension. */
 interface KgHandle {
-  readonly documentId: string;
+  /**
+   * Document id, assigned by Postgres during `commit`.
+   *
+   * It is NOT known at prepare time and cannot be derived: `stack_documents.id`
+   * defaults to `gen_random_uuid()` and the row does not exist yet. The earlier
+   * adapter synthesized a 32-hex id from source+body, which happened to cast to
+   * UUID but matched no row, so the `entity_source_documents.document_id`
+   * foreign key rejected every consolidation.
+   */
+  documentId: string;
+  /** Source identity and body, kept so `commit` can register the row. */
+  readonly registration: { readonly source: string; readonly body: string; readonly title: string };
   readonly chunks: readonly ChunkResult[];
   readonly entities: readonly ExtractedEntity[];
   readonly relationships: readonly ExtractedRelationship[];
@@ -73,26 +102,19 @@ export interface KgDimensionOptions {
   readonly dryRun?: boolean;
 }
 
-/** Length of the hex digest used inside the graph idempotency key. */
-const KEY_DIGEST_CHARS = 32;
-
 /**
- * Stable document id for a source, derived from its identity and content.
+ * Write the extracted graph into Postgres inside one transaction.
  *
- * The upstream server takes a UUID from its caller; the compiler has none to
- * give. A content-derived id is what makes a re-ingest idempotent: identical
- * content maps to the same document row instead of a duplicate.
+ * The document row is registered FIRST, in the same transaction as the
+ * consolidation, for two reasons: `entity_source_documents.document_id` is a
+ * foreign key onto `stack_documents`, so the parent must exist before any
+ * contribution row; and sharing the transaction means a failed consolidation
+ * leaves no orphan document behind.
+ *
+ * @param options - Stack binding and connection override.
+ * @param handle - Prepared chunks and extraction; gains the assigned document id.
+ * @returns Nothing; `handle.documentId` carries the id back to `commit`.
  */
-function deriveDocumentId(input: DimensionInput): string {
-  return createHash("sha256")
-    .update(input.source)
-    .update("\u0000")
-    .update(input.body)
-    .digest("hex")
-    .slice(0, KEY_DIGEST_CHARS);
-}
-
-/** Write the extracted graph into Postgres inside one transaction. */
 async function writeGraph(
   options: KgDimensionOptions,
   handle: KgHandle,
@@ -104,6 +126,12 @@ async function writeGraph(
   try {
     const db = createDatabase(client);
     await db.transaction(async (tx) => {
+      handle.documentId = await registerDocumentRow(tx, {
+        stackId: options.stackId,
+        source: handle.registration.source,
+        body: handle.registration.body,
+        title: handle.registration.title,
+      });
       const nameToId = await consolidateEntityRows(
         tx,
         options.stackId,
@@ -132,11 +160,15 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
     name: "kg",
 
     async prepare(input: DimensionInput): Promise<PreparedWrite> {
-      const documentId = deriveDocumentId(input);
-      const chunks = await chunkAndEmbed(input.body, options.stackId, documentId);
+      // Chunk labels carry the source identity only. The authoritative document
+      // id does not exist yet — Postgres assigns it during `commit` — and chunks
+      // stay in memory, so nothing depends on this placeholder matching a row.
+      const chunkLabel = sourceLabel(input.source);
+      const chunks = await chunkAndEmbed(input.body, options.stackId, chunkLabel);
       const extraction = await extractGraphFromChunks(chunks, options.stackName);
       const handle: KgHandle = {
-        documentId,
+        documentId: chunkLabel,
+        registration: { source: input.source, body: input.body, title: input.title },
         chunks,
         entities: extraction.entities,
         relationships: extraction.relationships,
@@ -146,16 +178,18 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
 
     async commit(prepared: PreparedWrite): Promise<CommittedWrite> {
       const handle = prepared.handle as KgHandle;
-      const idempotencyKey = `kg:${handle.documentId}`;
       if (options.dryRun === true || handle.chunks.length === 0) {
         return {
-          idempotencyKey,
+          idempotencyKey: `kg:${handle.documentId}`,
           summary: `kg:dry-run(${handle.chunks.length} chunks, ${handle.entities.length} entities)`,
         };
       }
+      // `writeGraph` replaces the placeholder with the id Postgres assigned.
       await writeGraph(options, handle);
       return {
-        idempotencyKey,
+        // Keyed on the real row id, so the outbox replay targets the same document
+        // rather than the label it was prepared under.
+        idempotencyKey: `kg:${handle.documentId}`,
         summary: `kg:${handle.chunks.length} chunks, ${handle.entities.length} entities`,
       };
     },

@@ -29,6 +29,7 @@ const createClient = vi.fn();
 const createDatabase = vi.fn();
 const consolidateEntityRows = vi.fn();
 const consolidateRelationshipRows = vi.fn();
+const registerDocumentRow = vi.fn();
 
 // The adapter imports the barrel by package name, which the vitest alias maps
 // to `core-index.ts`. Mocking that same specifier intercepts the adapter's view.
@@ -39,6 +40,7 @@ vi.mock("llmwiki-kg", () => ({
   createDatabase,
   consolidateEntityRows,
   consolidateRelationshipRows,
+  registerDocumentRow,
   kgConfig: { DATABASE_URL: "postgres://from-config" },
 }));
 
@@ -65,6 +67,8 @@ beforeEach(() => {
   createDatabase.mockReturnValue({ transaction: (fn: (tx: unknown) => Promise<void>) => fn({}) });
   consolidateEntityRows.mockResolvedValue(new Map([["Alpha", "id-alpha"]]));
   consolidateRelationshipRows.mockResolvedValue(undefined);
+  // Postgres owns the document id; the adapter must adopt it, never invent it.
+  registerDocumentRow.mockResolvedValue("row-id-from-postgres");
 });
 
 describe("the kg dimension adapter", () => {
@@ -72,17 +76,32 @@ describe("the kg dimension adapter", () => {
     expect(dimension().name).toBe("kg");
   });
 
-  it("derives a stable document id from source and body, and one that changes with content", async () => {
+  it("labels in-memory chunks by source alone, so editing a body keeps the label", async () => {
     const first = await dimension().prepare(INPUT);
-    const sameInputAgain = await dimension().prepare(INPUT);
-    const differentBody = await dimension().prepare({ ...INPUT, body: "other" });
+    const sameSourceNewBody = await dimension().prepare({ ...INPUT, body: "other" });
 
-    const idOf = (prepared: Awaited<ReturnType<ReturnType<typeof dimension>["prepare"]>>): string =>
+    const labelOf = (prepared: Awaited<ReturnType<ReturnType<typeof dimension>["prepare"]>>): string =>
       (prepared.handle as { documentId: string }).documentId;
 
-    expect(idOf(first)).toBe(idOf(sameInputAgain));
-    expect(idOf(first)).not.toBe(idOf(differentBody));
-    expect(idOf(first)).toMatch(/^[0-9a-f]{32}$/);
+    // Metadata only: the authoritative id is assigned by Postgres at commit, so a
+    // content-derived label would be a second, divergent identity for one source.
+    expect(labelOf(first)).toBe(labelOf(sameSourceNewBody));
+    expect(labelOf(first)).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("takes the document id Postgres assigns instead of inventing one", async () => {
+    const prepared = await dimension().prepare(INPUT);
+    await dimension().commit(prepared);
+
+    // The foreign key `entity_source_documents.document_id` references this row, so
+    // consolidation must receive the REAL id, not a digest that merely looks like a UUID.
+    expect(registerDocumentRow).toHaveBeenCalledWith(
+      {},
+      { stackId: "stack-1", source: INPUT.source, body: INPUT.body, title: INPUT.title },
+    );
+    expect(consolidateEntityRows).toHaveBeenCalledWith(
+      {}, "stack-1", "row-id-from-postgres", [ENTITY],
+    );
   });
 
   it("reports unchanged when extraction yields no chunks, without writing", async () => {
@@ -106,10 +125,14 @@ describe("the kg dimension adapter", () => {
     const committed = await dimension().commit(prepared);
 
     expect(createClient).toHaveBeenCalledWith("postgres://from-config", expect.any(Number));
+    // Parent row first: the FK rejects a contribution row for a missing document.
+    expect(registerDocumentRow.mock.invocationCallOrder[0]).toBeLessThan(
+      consolidateEntityRows.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
     expect(consolidateEntityRows).toHaveBeenCalledWith({}, "stack-1", expect.any(String), [ENTITY]);
     expect(consolidateRelationshipRows).toHaveBeenCalledWith({}, "stack-1", [RELATIONSHIP], expect.any(Map));
     expect(committed.summary).toBe("kg:1 chunks, 1 entities");
-    expect(committed.idempotencyKey).toMatch(/^kg:[0-9a-f]{32}$/);
+    expect(committed.idempotencyKey).toBe("kg:row-id-from-postgres");
   });
 
   it("prefers an explicit database url over the vendored config default", async () => {

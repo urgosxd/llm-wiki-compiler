@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 
 import type { Database } from "../db.js";
@@ -230,4 +231,70 @@ export async function consolidateRelationshipRows(
   }
 
   return written;
+}
+
+/** What the compiler knows about a source it wants to register as a document. */
+export interface DocumentRegistration {
+  /** Stack the document belongs to. */
+  readonly stackId: string;
+  /** Identity of the source, e.g. its URL or file path. */
+  readonly source: string;
+  /** Full text that was extracted. */
+  readonly body: string;
+  /** Human-facing title, used as the stored filename. */
+  readonly title: string;
+}
+
+/**
+ * Register a source as a document row and return its id.
+ *
+ * WHY THIS EXISTS. `consolidate_entities` writes `entity_source_documents`, whose
+ * `document_id` is a FOREIGN KEY onto `stack_documents`. The upstream server only
+ * ever inserted that parent row from its HTTP upload handler
+ * (`routes/documents/upload.ts`), so the in-process path had no way to satisfy the
+ * constraint: every consolidation failed with a foreign-key violation and the
+ * graph dimension could never write anything. This closes that gap with the same
+ * SQL shape the upload handler uses.
+ *
+ * IDEMPOTENT ON CONTENT, BY CONSTRUCTION. `stack_documents` carries
+ * `unique_hash_per_stack` on `(stack_id, source_hash)`, so re-registering identical
+ * content resolves to the SAME row via `on conflict ... do update` and `returning`.
+ * The caller therefore never invents an id — Postgres owns it — and a re-ingest
+ * cannot fork a second document for unchanged bytes.
+ *
+ * `source_hash` covers the source identity AND the body: a source whose content
+ * changed is a different document, which is what lets the graph hold the current
+ * text rather than accumulating stale chunks under one id. A soft delete keys off
+ * `source` instead, so `forget` can find every generation of a removed source.
+ *
+ * @param tx - Transaction that will also carry the consolidation writes.
+ * @param registration - Source identity, body, and title.
+ * @returns The document row's id.
+ */
+export async function registerDocumentRow(
+  tx: Database,
+  registration: DocumentRegistration,
+): Promise<string> {
+  const sourceHash = createHash("sha256")
+    .update(registration.source)
+    .update("\u0000")
+    .update(registration.body)
+    .digest("hex");
+  const rows = await tx.execute<{ id: string }>(sql`
+    insert into stack_documents (
+      stack_id, filename, storage_path, size_bytes, content_type, source_hash
+    )
+    values (
+      ${registration.stackId}, ${registration.title}, ${registration.source},
+      ${Buffer.byteLength(registration.body, "utf8")}, 'text/markdown', ${sourceHash}
+    )
+    on conflict on constraint unique_hash_per_stack
+    do update set filename = excluded.filename
+    returning id
+  `);
+  const row = rows[0];
+  if (row === undefined) {
+    throw new Error("insert into stack_documents returned no row");
+  }
+  return row.id;
 }

@@ -33,7 +33,9 @@ export type {
 export {
   consolidateEntityRows,
   consolidateRelationshipRows,
+  registerDocumentRow,
 } from "./core/document-consolidation.js";
+export type { DocumentRegistration } from "./core/document-consolidation.js";
 
 export { createClient, createDatabase } from "./db.js";
 export type { Database } from "./db.js";
