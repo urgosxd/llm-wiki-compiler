@@ -28,6 +28,23 @@ export const GENERATED_PAGE_MAX_CHARS = 5 * MAX_SOURCE_CHARS;
 export const MIN_SOURCE_CHARS = 50;
 
 /**
+ * Ceiling on how many concepts the extraction prompt may ask for from ONE
+ * source, and the exhaustiveness target it names.
+ *
+ * The extraction prompt asks for every distinct, meaningful concept a source
+ * substantiates (recall over brevity) and caps the ask here. The cap keeps a
+ * dense document from producing an unbounded concept list: every concept is a
+ * page-generation call, so page count and cost scale with it, and a merged
+ * concept page aggregates every source that claims it.
+ *
+ * This an instruction in the prompt, NOT a runtime clamp: `parseConcepts`
+ * accepts whatever the model returns and nothing truncates the array. A model
+ * that overruns this limit is not corrected downstream — the exported
+ * `promptVersion` is what distinguishes pages compiled under this wording.
+ */
+export const MAX_CONCEPTS_PER_SOURCE = 100;
+
+/**
  * Default character budget for the combined source content sent to the LLM
  * during page generation for a single concept (issue #39).
  *

@@ -14,6 +14,7 @@ import type { PageKindRule, SeedPage } from "../schema/index.js";
 import { languageDirective } from "../utils/output-language.js";
 import { activeSystemPolicy } from "./prompt-modifiers.js";
 import { sourcesSectionEnabled } from "../utils/sources-section.js";
+import { MAX_CONCEPTS_PER_SOURCE } from "../utils/constants.js";
 
 /**
  * Build a list of optional prompt lines, omitting empty entries so the
@@ -45,8 +46,11 @@ function sourcesSectionLines(): string[] {
  * (`promptVersion` in the JSON export envelope) carries this value so a
  * downstream auditor can distinguish pages produced under different prompt
  * generations even when the model id is identical. Format is `vMAJOR`.
+ *
+ * v5: extraction asks for exhaustive concept recall capped at
+ * {@link MAX_CONCEPTS_PER_SOURCE} instead of a brief 3-8 selection.
  */
-export const PROMPT_VERSION = "v4";
+export const PROMPT_VERSION = "v5";
 
 /**
  * The caller's system policy as prompt lines, or nothing when none is set.
@@ -169,9 +173,15 @@ export function buildExtractionPrompt(
   return [
     ...withLangLine(
       "You are a knowledge extraction engine. Analyze the following source document",
-      "and identify 3-8 distinct, meaningful concepts worth documenting as wiki pages.",
+      `and identify every distinct, meaningful concept it substantiates, up to a`,
+      `maximum of ${MAX_CONCEPTS_PER_SOURCE} concepts.`,
       "Each concept should be a standalone topic that someone might look up.",
-      "Focus on key ideas, techniques, patterns, or entities — not trivial details.",
+      "Be exhaustive rather than selective: a long, dense source legitimately" +
+        " yields many concepts, and omitting one loses knowledge that no later" +
+        " stage can recover. Include key ideas, techniques, patterns, and entities.",
+      "Do not pad the list. Every concept you return must be grounded in the" +
+        " source and nameable on its own — never split one topic into near-duplicate" +
+        " variants just to raise the count.",
       "Use the extract_concepts tool to return your findings.",
     ),
     "",

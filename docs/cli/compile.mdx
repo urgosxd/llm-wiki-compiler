@@ -289,8 +289,14 @@ This is not an input-context limit. `LLMWIKI_PROMPT_BUDGET_CHARS` limits combine
 source text during page generation, not the complete source passed to concept
 extraction. For textbooks, split sources into coherent chapters or sections and
 inspect the stored files under `sources/` to check what ingestion retained.
-Extraction asks for 3–8 concepts per source, not an exhaustive textbook index;
-a larger output budget alone does not guarantee more concepts or valid pages.
+
+Extraction asks for every concept a source substantiates, up to a ceiling of 100
+per source. That ceiling is an instruction, not a runtime clamp: nothing
+truncates the concept list, so a model that overruns it is not corrected
+downstream. A larger output budget does not by itself guarantee more concepts or
+valid pages — ingestion still caps a source at `MAX_SOURCE_CHARS` (100,000
+characters) and truncates the overflow with a warning, so content dropped at
+ingest can never be extracted.
 
 Changing the output budget does not invalidate successfully compiled sources.
 Failed sources remain retryable; unchanged successful sources are still skipped.

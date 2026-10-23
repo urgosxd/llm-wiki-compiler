@@ -156,7 +156,7 @@ describe("PROMPT_VERSION", () => {
   // The constant names the prompt IMPLEMENTATION, so a reordered page prompt
   // is a new generation. Pinned because nothing else in the repo asserts its
   // value, and a silent revert would mislabel every page compiled after it.
-  it("is v4, the generation with the source material before per-page parts", () => {
-    expect(PROMPT_VERSION).toBe("v4");
+  it("is v5, exhaustive concept recall in the extraction prompt", () => {
+    expect(PROMPT_VERSION).toBe("v5");
   });
 });
