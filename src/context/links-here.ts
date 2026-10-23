@@ -42,6 +42,7 @@ export interface InboundLink {
  * @param graph - The wiki graph (as served by the viewer snapshot).
  * @param targetId - The node id to find inbound links for.
  * @returns Inbound pages, sorted by id, one entry per distinct linking page.
+ * Frozen contract v1: consumed by orchestrator-c; keep this signature stable.
  */
 export function findInboundLinks(
   graph: GraphData,
