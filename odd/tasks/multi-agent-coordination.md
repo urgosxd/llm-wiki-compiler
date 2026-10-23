@@ -150,8 +150,12 @@ Failure modes that count as the test failing, not as noise:
       at `~/.agents/orchestration`; keep only the per-repo contract here.
       `src/coordination/` and its tests are deleted from this repository.
 - [ ] T10 Run the contract dependency test by hand across roles.
-- [ ] T11 Implement the enforcement hook (`tool_call` block over `write`/`edit`
-      using `isPathAllowed` from the global package); only after T10 passes.
+- [x] T13 Enforcement as a real Pi extension, plus evidence verification.
+      `~/.pi/agent/extensions/orchestrator-coord/` blocks `write`/`edit` outside a
+      role's surface, blocks malformed envelopes, and blocks `work_result` claims
+      whose evidence does not hold. Logic lives in `@local/orchestration`
+      (`evidence.ts`, `enforce.ts`, `envelope.ts`) with 92 tests; the extension is
+      wiring only, because Pi's virtual modules cannot be imported in a test.
 
 ## Evidence
 
@@ -334,3 +338,38 @@ export function findInboundLinks(graph: GraphData, targetId: GraphNodeId): Inbou
 This is a real dependency, not a rehearsal: `orchestrator-c` already imported
 that function before the contract existed, so the negotiation only made an
 implicit coupling explicit and versioned.
+
+### T13: what enforcement actually required
+
+The hook was not a matter of wiring `isPathAllowed` into `tool_call`. Two defects
+surfaced only when a real agent tried it, which is the argument for testing at the
+boundary instead of in a library.
+
+**1. The first hook silently failed open.** A live agent (`orchestrator-b`) wrote
+to `src/cli/`, which its role forbids, and the file was created. The reason was
+not the scope logic — that returned `DENY(forbidden)` when called directly. The
+hook had bound the repository to the agent's *linked worktree* via
+`git rev-parse --show-toplevel`, so the contract's relative worktree paths were
+resolved twice (`.worktrees/orchestrator-b/.worktrees/orchestrator-a`) and the
+precondition could never be satisfied. `assertCoordinationScopeUsable` threw, the
+hook failed open by design, and the write succeeded.
+
+The fix is `git rev-parse --path-format=absolute --git-common-dir`, which returns
+the same main root from every worktree of the clone. `Binding` now separates
+`repoRoot` (main worktree, where the contract and git registry live) from
+`roleWorktree` (where that role writes, used to relativise targets).
+
+**2. A valid envelope is not a true one.** B's first `work_result` passed every
+format rule and was false: `evidence` cited `be7a396`, which does not contain the
+claimed change. `evidence.ts` now resolves the citation in git and requires the
+commit to touch every path in `files_changed`. It deliberately does **not** re-run
+the `tests` string: executing a command that arrived in a peer message is remote
+code execution wearing a verification costume.
+
+Verified end to end with a fresh agent after the fix:
+
+- `write src/cli/blocked-by-hook.ts` → blocked, file absent, reason names the role
+  and says to ask the owning role.
+- `write src/compiler/allowed-by-hook.ts` → allowed, file created.
+
+Both probes were removed afterwards; the worktree is clean.
