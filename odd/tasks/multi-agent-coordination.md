@@ -373,3 +373,58 @@ Verified end to end with a fresh agent after the fix:
 - `write src/compiler/allowed-by-hook.ts` → allowed, file created.
 
 Both probes were removed afterwards; the worktree is clean.
+
+### T13 live proof: the full round trip
+
+The hook was proven with a real agent, not a fixture. `orchestrator-b` (w8:p3) was
+restarted in its own pane with `ORCHESTRATION_ROLE=orchestrator-b` so the extension
+would bind, then asked to send two `work_result` messages that differed only in
+whether their evidence was true.
+
+| Sent | `evidence` | Outcome |
+| --- | --- | --- |
+| `wr-2026-10-23-98` | `58d9754` (touches the reported file) | accepted, delivered |
+| `wr-2026-10-23-97` | `be7a396` (does not touch it) | blocked before queueing |
+
+The refusal named the fact, not a policy: `work_result claims are not verifiable
+(evidence-missing-changed-files: be7a396 does not touch
+src/context/links-here.ts)`. Nothing reached the receiver.
+
+The accepted message then completed the loop, which is the part that matters:
+A received it as `Session message from 01a16635-... (correlation
+8da63a3b05ce717885d3cbae0b2b2212)` and re-verified it independently — shape valid,
+`from` declared in the contract, evidence resolves, the cited commit really touches
+`src/context/links-here.ts`, and that commit is already an ancestor of the
+integration branch. Sender self-report and receiver verification agreed.
+
+### Open defect: `to` is a role, routing is a session ID
+
+Found by the positive test, not by any unit test, because it lives between two
+components.
+
+`orchestrator_send_message` resolves its recipient through the native transport,
+which keys on a **session UUID** from
+`~/.pi/agent/gentle-agents/transport/presence/`. The envelope's `to` field is a
+**role name**. `orchestrator-a` satisfies the envelope's own role rule and matches
+the transport's `SESSION` regex, yet no presence carries that ID, so the send
+fails as `not accepted`.
+
+First attempt failed exactly that way. It succeeded only after passing the real UUID
+`01a16538-23ed-7797-b634-cfd2b9cab9f8` as `recipient_session_id` while leaving
+`to: "orchestrator-a"` in the envelope.
+
+So the hook validated a field the transport ignores, and the transport used a value
+the envelope never carried. Consequence: **the protocol cannot address a peer from
+the envelope alone.** It works today only because the caller supplies the UUID out
+of band.
+
+Two candidate fixes, not yet chosen:
+
+1. Add `to_session` (UUID) to the envelope as the routable address, keeping `to` as
+   the role for auditing. Smallest change; callers still need a UUID from somewhere.
+2. Add `session` per role to `contract-cordination.json` and have the hook resolve
+   role → session. Cleaner for callers, but the contract changes on every agent
+   restart, which makes it a poor fit for a file meant to describe a repository.
+
+Recording it here rather than fixing it in passing: either option changes the
+envelope format, which invalidates messages already recorded under v1.
