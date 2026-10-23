@@ -19,6 +19,11 @@
  *      be retried blindly.
  *   3. `discard`  — undo a `prepare` that will not be committed.
  *
+ * Removal is a SEPARATE lifecycle step, not a fourth phase of the same write:
+ * {@link Dimension.forget} retires a source that no longer exists. It takes a
+ * source identity rather than a prepared handle because by the time a removal is
+ * detected there is nothing prepared — the bytes are already gone.
+ *
  * A dimension never decides whether the overall ingest succeeded; it reports
  * what it did and the coordinator owns the decision.
  *
@@ -51,8 +56,14 @@
  */
 export type DimensionName = "wiki" | "kg";
 
-/** The version of this port. Bumped only through an agreed contract change. */
-export const DIMENSION_PORT_VERSION = 1 as const;
+/**
+ * The version of this port. Bumped only through an agreed contract change.
+ *
+ * v2 added {@link Dimension.forget}: a source can be REMOVED, and until v2 the
+ * port could only express writes, so a deleted source left its graph document and
+ * entities behind forever.
+ */
+export const DIMENSION_PORT_VERSION = 2 as const;
 
 /**
  * Where a document comes from and what it is called. Dimensions receive the
@@ -142,4 +153,24 @@ export interface Dimension {
    * discarding an already-discarded handle is not an error.
    */
   discard(prepared: PreparedWrite): Promise<void>;
+
+  /**
+   * Retire every trace of a source that no longer exists.
+   *
+   * WHY THIS IS NOT A PHASE OF THE WRITE. `prepare`/`commit`/`discard` all take a
+   * handle produced by a write that is in flight. A removal has no such handle:
+   * the source file is already gone, so the only thing left to name it is its
+   * source identity.
+   *
+   * MUST be idempotent and MUST tolerate an unknown source. Forgetting something
+   * that was never ingested, or was already forgotten, is a SUCCESS — the desired
+   * end state ("this source is not here") already holds. A reconciler retries, and
+   * a retry of a completed removal must not fail.
+   *
+   * MUST NOT throw for a source it cannot identify. A dimension that never knew
+   * the source has nothing to retire.
+   *
+   * @param source - The source identity the dimension recorded at ingest time.
+   */
+  forget(source: string): Promise<void>;
 }

@@ -19,6 +19,7 @@ import {
   buildExtractionSourceStates,
 } from "./source-state.js";
 import {
+  parseFrontmatter,
   slugify,
 } from "../utils/markdown.js";
 import { releaseLock } from "../utils/lock.js";
@@ -87,7 +88,9 @@ import type {
   ReviewedCandidateRef,
   SourceChange,
   SourceState,
+  WikiState,
 } from "../utils/types.js";
+import { resolveDimensions } from "../dimensions/index.js";
 import { timeStage } from "../utils/stage-timing.js";
 
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
@@ -278,6 +281,7 @@ async function persistExtractionStates(
     }
     await persistSourceStateFiltered(
       draft, result.sourcePath, result.sourceFile, result.concepts, liveSlugs,
+      result.sourceContent,
     );
     draft.setSource(result.sourceFile, withExtractionSnapshot(
       draft.read().sources[result.sourceFile], result, liveSlugsForSource.get(result.sourceFile),
@@ -305,14 +309,39 @@ async function persistSourceStateFiltered(
   sourceFile: string,
   concepts: ReturnType<typeof parseConcepts>,
   liveSlugs: Set<string>,
+  sourceContent: string,
 ): Promise<void> {
   const hash = await hashFile(sourcePath);
   const entry: SourceState = {
     hash,
     concepts: concepts.map((c) => slugify(c.concept)).filter((s) => liveSlugs.has(s)),
     compiledAt: new Date().toISOString(),
+    ...sourceIdentityOf(sourceContent),
   };
   draft.setSource(sourceFile, entry);
+}
+
+/**
+ * Read the source identity out of a source file's frontmatter.
+ *
+ * Recorded so the source can still be NAMED after its file is deleted: `forget`
+ * needs the identity the graph was written under, and the file is the only other
+ * place it lives. A file with no usable `source` contributes no field at all,
+ * which reads downstream as "identity unknown" rather than as an empty string that
+ * would be matched against the graph.
+ *
+ * @param content - Full source file text, frontmatter included.
+ * @returns `{ source }` when a non-empty string is present, otherwise `{}`.
+ */
+function sourceIdentityOf(content: string): { source?: string } {
+  try {
+    const value = parseFrontmatter(content).meta["source"];
+    return typeof value === "string" && value.trim() !== "" ? { source: value } : {};
+  } catch {
+    // Malformed frontmatter is a compile-warning concern elsewhere; here it only
+    // means the identity is unknown.
+    return {};
+  }
 }
 
 /**
@@ -472,8 +501,12 @@ async function runCompilePipeline(
   // for compiled sources is also review-deferred — those entries land at
   // approve time so unapproved candidates remain re-detectable on subsequent
   // compiles.
+  const forgetErrors: string[] = [];
   if (!options.review) {
     await markDeletedAsOrphaned(root, buckets.deleted, draft);
+    // Graph retirement follows the same review rule: a held-back run must not
+    // retire documents the wiki has not stopped serving yet.
+    forgetErrors.push(...(await forgetDeletedSources(root, buckets.deleted, state)));
   }
 
   // Only extraction failures in THIS run freeze a page. Deletion and persisted
@@ -527,7 +560,7 @@ async function runCompilePipeline(
     await logCompile(root, buckets, generation, existingIds);
   }
   verbose(`compile finished in ${Date.now() - startMs} ms`);
-  return summarizeCompile(buckets, generation, extractions, options);
+  return summarizeCompile(buckets, generation, extractions, options, forgetErrors);
 }
 
 /**
@@ -594,6 +627,52 @@ async function markDeletedAsOrphaned(
   for (const del of deleted) {
     await markOrphaned(root, del.file, draft);
   }
+}
+
+/**
+ * Retire deleted sources from every registered dimension that is not the wiki.
+ *
+ * WHY THIS EXISTS. `compile` already marks a deleted source's pages orphaned, but
+ * until the port gained `forget` nothing told the GRAPH. A removed source left its
+ * document, chunks, entities, and contributions in Postgres forever, so the graph
+ * kept answering with text the project no longer had.
+ *
+ * ONLY SOURCES WITH A RECORDED IDENTITY ARE RETIRED. `SourceState.source` is absent
+ * for state written before v2 and for files whose frontmatter carried none.
+ * Guessing an identity from the filename would be worse than doing nothing: the
+ * filename is a title slug, never the identity the graph was written under, so a
+ * guess would delete either nothing or the wrong document.
+ *
+ * The wiki is skipped because it owns its own removal story (`markDeletedAsOrphaned`
+ * preserves pages other sources still support); retiring here too would duplicate
+ * that decision in a second place.
+ *
+ * @param root - Project root, for dimension resolution.
+ * @param deleted - Source changes already classified as deletions.
+ * @param state - State BEFORE this run, which still holds the missing sources.
+ * @returns One message per source that could not be retired.
+ */
+async function forgetDeletedSources(
+  root: string,
+  deleted: readonly SourceChange[],
+  state: WikiState,
+): Promise<string[]> {
+  const failures: string[] = [];
+  const dimensions = resolveDimensions({ root }).filter((entry) => entry.name !== "wiki");
+  if (dimensions.length === 0) return failures;
+  for (const change of deleted) {
+    const source = state.sources[change.file]?.source;
+    if (source === undefined) continue;
+    for (const dimension of dimensions) {
+      try {
+        await dimension.forget(source);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        failures.push(`forget(${dimension.name}) failed for ${source}: ${reason}`);
+      }
+    }
+  }
+  return failures;
 }
 
 /**

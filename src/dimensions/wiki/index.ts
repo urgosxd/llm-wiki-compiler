@@ -112,5 +112,14 @@ export function createWikiDimension(root: string): Dimension {
       }
       await commitBatch(handle.batch);
     },
+
+    async forget(): Promise<void> {
+      // DELIBERATELY A NO-OP. The wiki's removal story is already owned elsewhere:
+      // `compile` detects a vanished source file and marks the pages that only it
+      // owned as orphaned (`markDeletedAsOrphaned`), which preserves content other
+      // sources still support. Deleting here as well would duplicate that decision
+      // in a second place, and the two would disagree the moment orphan rules
+      // change — one of them would remove a page the other kept.
+    },
   };
 }

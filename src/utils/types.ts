@@ -86,6 +86,18 @@ export interface SourceState {
   hash: string;
   concepts: string[];
   compiledAt: string;
+  /**
+   * Source identity (URL or path) recorded at ingest time.
+   *
+   * Persisted so a REMOVED source can still be named. The source file is the only
+   * other place holding it, and by the time a deletion is detected that file is
+   * gone — without this, nothing could tell the graph which document to retire.
+   *
+   * Optional because state written before v2 has none. Absence degrades safely:
+   * a source whose identity is unknown is not forgotten from the graph, rather
+   * than guessed at from a filename that was never the identity.
+   */
+  source?: string;
   /** Optional committed extraction metadata; malformed or older entries are cache misses. */
   extraction?: { fingerprint: string; sourceHash: string; concepts: ExtractedConcept[] };
   /**

@@ -64,9 +64,14 @@ async function updateEntity(
   const existingConfidence = Number(existing.confidence);
   const existingDescription = existing.description ?? "";
   const nextConfidence = Math.min(1.0, existingConfidence + ENTITY_CONFIDENCE_BUMP);
+  // The docstring above promises "a NULL description is treated as empty", and the
+  // EntityLookupRow side already guards with `?? ""`. The extracted side did not,
+  // so a re-extraction whose model omitted a description crashed on
+  // `null.length` — the very case the comment says is supported.
+  const extractedDescription = entity.description ?? "";
   const nextDescription =
-    entity.description !== "" && entity.description.length > existingDescription.length
-      ? entity.description
+    extractedDescription !== "" && extractedDescription.length > existingDescription.length
+      ? extractedDescription
       : existingDescription;
 
   await tx.execute(sql`
@@ -297,4 +302,36 @@ export async function registerDocumentRow(
     throw new Error("insert into stack_documents returned no row");
   }
   return row.id;
+}
+
+/**
+ * Delete every document row a source owns, letting the foreign keys cascade.
+ *
+ * WHY `storage_path` IS THE MATCH COLUMN. The compiler has no filename to give the
+ * graph, so it registers a document with the SOURCE IDENTITY (a URL or path) in
+ * `storage_path`. That column is therefore the only link between a source string
+ * and its rows.
+ *
+ * DELETES ALL GENERATIONS, BY DESIGN. A source whose content changed produces a
+ * different `source_hash` and therefore a different row. Forgetting the source
+ * must retire every one of them, not only the newest, or the graph keeps serving
+ * text the source no longer has.
+ *
+ * Chunk and `entity_source_documents` rows cascade from `stack_documents`, so this
+ * single delete retires the whole trace. Deleting nothing is not an error: the
+ * desired end state for an unknown or already-forgotten source already holds.
+ *
+ * @param tx - Transaction carrying the deletion.
+ * @param stackId - Stack the source belongs to; scoping prevents a cross-stack delete.
+ * @param source - Source identity recorded at ingest time.
+ */
+export async function forgetDocumentRows(
+  tx: Database,
+  stackId: string,
+  source: string,
+): Promise<void> {
+  await tx.execute(sql`
+    delete from stack_documents
+    where stack_id = ${stackId} and storage_path = ${source}
+  `);
 }

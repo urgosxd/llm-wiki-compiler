@@ -36,6 +36,7 @@ import {
   createDatabase,
   extractGraphFromChunks,
   kgConfig,
+  forgetDocumentRows,
   type ChunkResult,
   type ExtractedEntity,
   type ExtractedRelationship,
@@ -151,6 +152,48 @@ async function writeGraph(
 }
 
 /**
+ * Delete every document row for a source, letting the foreign keys cascade.
+ *
+ * WHY `storage_path` AND NOT AN ID: the compiler registers a document with the
+ * SOURCE IDENTITY in `storage_path` (a URL or path), because it has no filename to
+ * give the graph. That column is therefore the only thing connecting a source
+ * string to its rows, and it is what `forget` can match on.
+ *
+ * WHY A DELETE RATHER THAN A TOMBSTONE: chunk and
+ * `entity_source_documents` rows cascade from `stack_documents`, so one delete
+ * retires the whole trace. Soft delete would require every one of the six readers
+ * of `stack_documents` to learn a new filter, and those readers are measured
+ * against the Python oracle, which has no such concept — the fidelity guarantee
+ * would stop holding for deleted documents. The crash this would have protected
+ * against is already covered: the source file is still on disk, and the outbox
+ * retains `document` and `body`, so a re-ingest reconstructs the graph.
+ *
+ * Deleting by source removes EVERY generation of that source, which is what
+ * retirement means: a source whose content changed is a different `source_hash`
+ * and therefore a different row, and forgetting the source must retire all of
+ * them, not just the newest.
+ *
+ * @param options - Stack binding and connection override.
+ * @param source - Source identity recorded at ingest time.
+ */
+async function deleteGraphRows(options: KgDimensionOptions, source: string): Promise<void> {
+  const client = createClient(
+    options.databaseUrl ?? kgConfig.DATABASE_URL,
+    DB_CONNECT_TIMEOUT_SECONDS,
+  );
+  try {
+    const db = createDatabase(client);
+    await db.transaction(async (tx) => {
+      // No row is not an error: forgetting an unknown or already-forgotten source
+      // is the desired end state, and a reconciler retry must not fail on it.
+      await forgetDocumentRows(tx, options.stackId, source);
+    });
+  } finally {
+    await client.end({ timeout: DB_CONNECT_TIMEOUT_SECONDS });
+  }
+}
+
+/**
  * Build the graph dimension.
  *
  * @param options - Stack binding and an optional database override.
@@ -198,6 +241,11 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       // `prepare` writes no graph rows, so there is nothing to undo. A `commit`
       // that fails partway is handled by the outbox replay, which re-runs the
       // consolidation under its idempotency key rather than deleting rows.
+    },
+
+    async forget(source: string): Promise<void> {
+      if (options.dryRun === true) return;
+      await deleteGraphRows(options, source);
     },
   };
 }

@@ -34,6 +34,7 @@ export {
   consolidateEntityRows,
   consolidateRelationshipRows,
   registerDocumentRow,
+  forgetDocumentRows,
 } from "./core/document-consolidation.js";
 export type { DocumentRegistration } from "./core/document-consolidation.js";
 

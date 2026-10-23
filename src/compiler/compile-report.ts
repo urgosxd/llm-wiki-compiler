@@ -54,6 +54,7 @@ export function summarizeCompile(
   generation: PageGenerationResult,
   extractions: ExtractionResult[],
   options: CompileOptions,
+  retireErrors: readonly string[] = [],
 ): CompileResult {
   output.header("Compilation complete");
   output.status("✓", output.success(
@@ -67,7 +68,10 @@ export function summarizeCompile(
     output.status("→", output.dim('Next: llmwiki query "your question here"'));
   }
 
-  const errors = [...generation.errors];
+  // Dimension-retirement failures ride along with the compile errors: the wiki
+  // write succeeded, but the graph is now behind it, and a caller has to know
+  // rather than assume the two dimensions agree.
+  const errors = [...generation.errors, ...retireErrors];
   for (const result of extractions) {
     if (result.concepts.length === 0) {
       errors.push(`No concepts extracted from ${result.sourceFile}`);

@@ -21,47 +21,15 @@
  */
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { createClient, createDatabase, registerDocumentRow } from "llmwiki-kg";
+import { registerDocumentRow } from "llmwiki-kg";
+import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { consolidateEntityRows, consolidateRelationshipRows } from "llmwiki-kg";
 
-const DATABASE_URL = process.env.LLMWIKI_TEST_DATABASE_URL ?? "postgresql://aks:aks@localhost:5434/aks";
-
-/** A stack this suite owns end to end, so cleanup cannot reach operator data. */
-const stackId = randomUUID();
-const client = createClient(DATABASE_URL, 10);
-const db = createDatabase(client);
-
-/**
- * Provision the suite's own stack, and report reachability as a REAL status.
- *
- * A swallowed error here is how this file first became a false green: the
- * provisioning insert was invalid, the catch turned it into `reachable = false`,
- * and every test returned early while vitest still reported "4 passed". A
- * database-integrity test that silently does not run is worse than no test, so
- * failure to provision is fatal and skips are declared up front.
- */
-const reachable = await (async (): Promise<boolean> => {
-  try {
-    await db.execute("select 1");
-    // `stacks.domain` is NOT NULL with no default, so it must be supplied.
-    await db.execute(
-      `insert into stacks (id, name, domain) values ('${stackId}', 'kg-integrity', 'integrity')`,
-    );
-    return true;
-  } catch (error) {
-    console.warn(
-      `kg-postgres-integrity: no usable Postgres at ${DATABASE_URL} — ${(error as Error).message}`,
-    );
-    return false;
-  }
-})();
+const harness = await createKgPostgresHarness("kg-integrity");
+const { db, stackId, reachable } = harness;
 
 afterAll(async () => {
-  if (reachable) {
-    // `stack_documents` and `entity_source_documents` cascade from `stacks`.
-    await db.execute(`delete from stacks where id = '${stackId}'`).catch(() => undefined);
-  }
-  await client.end({ timeout: 10 });
+  await harness.cleanup();
 });
 
 const REGISTRATION = {
