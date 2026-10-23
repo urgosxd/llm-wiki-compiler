@@ -14,6 +14,9 @@ import { readFile } from "fs/promises";
 import { createHash } from "node:crypto";
 import { buildFrontmatter } from "../utils/markdown.js";
 import { ingestDimensions, resolveDimensions } from "../dimensions/index.js";
+import { tryWithOrdinaryMutationLock } from "../operation-bundles/with-mutation-lock.js";
+import { LockBusyError } from "../utils/lock.js";
+
 import { appendLog } from "../utils/activity-log.js";
 import { MAX_SOURCE_CHARS, MIN_SOURCE_CHARS, SOURCES_DIR, IMAGE_EXTENSIONS, TRANSCRIPT_EXTENSIONS } from "../utils/constants.js";
 import * as output from "../utils/output.js";
@@ -297,11 +300,22 @@ async function writeToDimensions(
   document: string,
   body: string,
 ): Promise<{ savedPath: string; writeStatus: NonNullable<IngestResult["writeStatus"]> }> {
-  const outcome = await ingestDimensions(
-    root,
-    { source, title, document, body },
-    resolveDimensions({ root }),
+  // THE LOCK WRAPS THE WHOLE TRANSACTION, not the individual writes inside it.
+  //
+  // `saveSource` and the journal each take the lock around their own file operation,
+  // which is not enough: two concurrent ingests would interleave their wiki and
+  // graph commits, and a rollback triggered by one would revert the other's file.
+  // The lock has to span prepare + commit + discard for the run to be atomic against
+  // another run. It lives in `.llmwiki/`, so it also serialises against the MCP
+  // server, which is a separate process over the same project.
+  const locked = await tryWithOrdinaryMutationLock(root, () =>
+    ingestDimensions(root, { source, title, document, body }, resolveDimensions({ root })),
   );
+  if (locked.busy) {
+    // The project's existing lock error: callers already branch on it.
+    throw new LockBusyError(0);
+  }
+  const outcome = locked.value;
   if (outcome.artifactPath === undefined) {
     throw new Error(`no file-backed dimension reported a write path for ${source}`);
   }

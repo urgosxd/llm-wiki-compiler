@@ -47,12 +47,14 @@ import http from "node:http";
 import { listenOn } from "../utils/http-listen.js";
 import type { AddressInfo } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createApp } from "../../packages/llmwiki-kg/ts/src/server.js";
+import { createApp } from "llmwiki-kg/server";
 
 /** The graph sub-app type, derived so this module needs no direct express import. */
 type GraphApp = ReturnType<typeof createApp>;
 import { createViewerHandler, type ViewerRequestHandler } from "../viewer/server.js";
 import type { ViewerSnapshot } from "../viewer/types.js";
+import { reconcileOutbox, resolveDimensions, type ReconcileOutcome } from "../dimensions/index.js";
+import { tryWithOrdinaryMutationLock } from "../operation-bundles/with-mutation-lock.js";
 import type { ViewerDeps } from "../viewer/workflow-run-projection.js";
 
 /** Default port when the caller does not pin one. `0` asks the OS for a free port. */
@@ -80,6 +82,12 @@ export interface HostOptions {
    * ambient state.
    */
   readonly includeGraph?: boolean;
+  /**
+   * Project root whose pending ingests are reconciled before serving.
+   *
+   * Omitted means no reconciliation.
+   */
+  readonly projectRoot?: string;
 }
 
 /** A running host: both sub-apps behind one listener with one close path. */
@@ -183,6 +191,10 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
     options.viewerDeps ?? {},
   );
 
+  if (options.projectRoot !== undefined) {
+    await reconcilePendingIngests(options.projectRoot);
+  }
+
   return {
     host,
     port: address.port,
@@ -191,4 +203,27 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
         server.close((error) => (error === undefined ? resolve() : reject(error)));
       }),
   };
+}
+
+/**
+ * Finish any ingest that a previous process left half-committed.
+ *
+ * The reconciler was written and tested but never invoked outside tests, which made
+ * the outbox's durable trail write-only: a crash left a `pending` record nobody
+ * read, so the compensating work it described never ran. Startup is the only safe
+ * place to close that loop — a per-request call would reconcile the same record
+ * concurrently with itself.
+ *
+ * It runs under the mutation lock so two processes starting at once cannot
+ * reconcile the same record. Being busy is not an error: the holder is doing the
+ * same work and its result is equally valid.
+ *
+ * @param root - Project root whose outbox is inspected.
+ * @returns What was finished and what remains unresolved, or undefined when busy.
+ */
+async function reconcilePendingIngests(root: string): Promise<ReconcileOutcome | undefined> {
+  const locked = await tryWithOrdinaryMutationLock(root, () =>
+    reconcileOutbox(root, resolveDimensions({ root })),
+  );
+  return locked.busy ? undefined : locked.value;
 }
