@@ -5,6 +5,7 @@
 import type { Command } from "commander";
 import { nextCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { contextCommand, type ContextCommandOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { linksHereCommand, type LinksHereOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { setVerbose } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { runExitCodeCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 
@@ -18,6 +19,17 @@ export function registerContextCommands(program: Command, verboseEnabled: (flag?
       runExitCodeCommand(() => nextCommand({ json: options.json })),
     );
   
+  program
+    .command("links-here <slug>")
+    .description(
+      "List the wiki pages that link TO <slug>, so the graph can be walked backwards " +
+        "(read-only; e.g. 'concepts/foo' or a bare 'foo')",
+    )
+    .option("--json", "Emit a stable JSON envelope for agent consumption")
+    .action(async (slug: string, options: LinksHereOptions) =>
+      runExitCodeCommand(async () => linksHereCommand(slug, options)),
+    );
+
   program
     .command("context <prompt>")
     .description(

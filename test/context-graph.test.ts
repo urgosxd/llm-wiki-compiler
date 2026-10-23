@@ -19,39 +19,8 @@
 import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 import { expandGraphNeighborhood } from "../src/context/graph.js";
-import type {
-  GraphData,
-  GraphNode,
-  PageId,
-  ViewerPage,
-} from "../src/viewer/types.js";
-
-/** Build a real (non-dangling) GraphNode for `id`. */
-function realNode(id: PageId): GraphNode {
-  const slug = id.split("/")[1] ?? id;
-  return {
-    id,
-    title: slug,
-    slug,
-    directory: "concepts",
-    kind: "concept",
-    degree: 0,
-  };
-}
-
-/** Build a dangling (ghost) GraphNode for `id`. */
-function ghostNode(id: PageId): GraphNode {
-  const slug = id.split("/")[1] ?? id;
-  return {
-    id,
-    title: slug,
-    slug,
-    directory: "concepts",
-    kind: "dangling",
-    degree: 0,
-    isDangling: true,
-  };
-}
+import { realNode, syntheticGraph } from "./fixtures/graph-data.js";
+import type { PageId, ViewerPage } from "../src/viewer/types.js";
 
 /** Build a minimal ViewerPage shell good enough for gap attribution. */
 function pageShell(
@@ -74,21 +43,6 @@ function pageShell(
   };
 }
 
-/** Compose a synthetic GraphData from real ids + edge pairs + optional ghosts. */
-function buildSyntheticGraph(spec: {
-  realIds: PageId[];
-  ghostIds?: PageId[];
-  edges: [PageId, PageId][];
-}): GraphData {
-  return {
-    nodes: [
-      ...spec.realIds.map(realNode),
-      ...(spec.ghostIds ?? []).map(ghostNode),
-    ],
-    edges: spec.edges.map(([source, target]) => ({ source, target })),
-  };
-}
-
 /**
  * One-stop expansion helper used by every `expandGraphNeighborhood`
  * test. Collapses the synthetic-graph + page-shells + primary-set
@@ -106,7 +60,7 @@ function expand(spec: {
   pages?: ViewerPage[];
 }) {
   return expandGraphNeighborhood({
-    graph: buildSyntheticGraph({
+    graph: syntheticGraph({
       realIds: spec.realIds,
       ghostIds: spec.ghostIds,
       edges: spec.edges,

@@ -27,6 +27,8 @@ export { default as exportCommand } from "./commands/export.js";
 export { default as importCommand } from "./commands/import.js";
 export { default as ingestSessionCommand } from "./commands/ingest-session.js";
 export { default as ingestCommand, ingestSource } from "./commands/ingest.js";
+export { default as linksHereCommand } from "./commands/links-here.js";
+export type { LinksHereOptions } from "./commands/links-here.js";
 export { default as lintCommand } from "./commands/lint.js";
 export { default as nextCommand } from "./commands/next.js";
 export { operationCancelCommand } from "./commands/operation/cancel.js";

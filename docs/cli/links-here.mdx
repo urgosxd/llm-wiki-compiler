@@ -1,0 +1,109 @@
+---
+title: "links-here"
+sidebarTitle: "links-here"
+description: "Walk the compiled wiki backwards: list every page that links TO a given concept, so you can navigate the knowledge graph from B back to A."
+---
+
+Every compiled page records the links it casts, so the wiki can answer "where can
+I go from this concept?". `llmwiki links-here` answers the opposite question:
+**which concepts point at this one?**
+
+That second direction is what makes the graph navigable. Without it, a concept
+you landed on is a dead end: you can leave, but you cannot discover what
+references it.
+
+```bash
+llmwiki links-here knowledge-compilation
+llmwiki links-here concepts/knowledge-compilation --json
+```
+
+## What it accepts
+
+Both a namespaced page id and a bare slug:
+
+```bash
+llmwiki links-here concepts/change-detection
+llmwiki links-here change-detection
+```
+
+A bare slug is resolved against `concepts/` first — the default kind and the only
+directory a default project writes — then against any other namespace that
+matches.
+
+## Reading the output
+
+```text
+6 page(s) link to concepts/knowledge-compilation:
+
+  [[concepts/change-detection]] Change Detection (mutual)
+  [[concepts/compilation-pipeline]] Compilation Pipeline
+  [[concepts/concept-extraction]] Concept Extraction (mutual)
+```
+
+`(mutual)` means the pair is linked **both ways**: this page points at the target
+*and* the target points back. Mutual pairs are the strongest connections in the
+graph, and they are what you want when you are following a chain of ideas.
+
+An empty list is a normal answer, not an error. A freshly compiled leaf concept
+legitimately has no inbound links yet; one appears as soon as another page
+mentions it.
+
+```text
+No pages link to concepts/newly-compiled-thing.
+Nothing is broken: an inbound link appears once another page mentions this one.
+```
+
+## JSON envelope
+
+`--json` emits a stable envelope for agent and script consumption:
+
+```json
+{
+  "version": 1,
+  "target": "concepts/change-detection",
+  "requested": "change-detection",
+  "resolved": true,
+  "inboundCount": 2,
+  "inbound": [
+    { "pageId": "concepts/compilation-pipeline", "title": "Compilation Pipeline", "mutual": true },
+    { "pageId": "concepts/concept-extraction", "title": "Concept Extraction", "mutual": false }
+  ]
+}
+```
+
+`resolved` is `false` and `target` is `null` when the requested name matches no
+page, so a caller can tell "unknown concept" from "known but orphaned" without
+parsing prose. The exit code is `0` in both cases — this command inspects, it does
+not validate.
+
+## How it relates to the other reading commands
+
+| Command | Direction | Uses an LLM |
+|---|---|---|
+| `llmwiki query` | semantic search over pages | yes |
+| `llmwiki context` | outbound + inbound, ranked, budgeted, for agents | optional |
+| `llmwiki links-here` | inbound only, complete and unranked | no |
+
+`context` also traverses inbound edges, but it ranks and truncates to fit a token
+budget. Use `links-here` when you want the **complete** inbound list for one page
+rather than a ranked sample.
+
+## What it cannot do yet
+
+This command reads the graph that compile already built. Two known limits of that
+graph:
+
+- **Aliases are not indexed by the linker.** Pages carry generated aliases
+  (including acronyms), and the viewer and `query` resolve them, but
+  interlink resolution matches titles only. A page mentioning `RAG` will not be
+  linked to a page titled "Retrieval-Augmented Generation" unless the full title
+  appears.
+- **A page nothing points at has no path back to it.** `links-here` will show it
+  as empty. Nothing in the compiler creates inbound links retroactively; they
+  appear when another page mentions that title.
+
+## Read-only
+
+`links-here` writes nothing, takes no lock, and calls no LLM. It reads the same
+graph the viewer serves, so the terminal answer and the interactive graph can
+never disagree.

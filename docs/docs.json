@@ -48,6 +48,7 @@
               "cli/rm",
               "cli/query",
               "cli/view",
+              "cli/links-here",
               "cli/status",
               "cli/lint-eval",
               "cli/export",
