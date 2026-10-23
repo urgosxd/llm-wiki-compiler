@@ -464,3 +464,17 @@ Two defects were found while doing this, both in seams rather than logic:
 Also learned: an agent keeps the extension code it loaded at startup. Changing the
 hook requires restarting the agent; the session resumes with `pi --session <id>` and
 the pane keeps its cwd, but the agent name is cleared and must be re-set.
+
+### Fixed: `done` evidence is verified too
+
+Receiving a valid v2 `done` exposed a gap the tests did not cover: the hook
+verified evidence only for `work_result`, so a `done` citing `deadbeef` passed.
+
+`done` carries `evidence` without a file list and asserts "my scope is finished and
+verified". That is a weaker claim than a `work_result`, so the check is weaker —
+`verifyEvidenceResolves` requires only that the citation exists in git — but a
+citation that resolves to nothing is still a false claim. Both checks now run in
+the hook before the message is sent.
+
+This one is worth noting as a pattern: the gap existed because the two message
+types were treated as unrelated rather than as two strengths of the same claim.
