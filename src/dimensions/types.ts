@@ -21,10 +21,38 @@
  *
  * A dimension never decides whether the overall ingest succeeded; it reports
  * what it did and the coordinator owns the decision.
+ *
+ * ## This file is a frozen contract (v1)
+ *
+ * Two dimensions are developed concurrently, each by a different role, and both
+ * depend on this interface. So the interface is versioned and frozen rather than
+ * edited opportunistically:
+ *
+ *   - **v1.** `wiki` and `kg` each own a directory under `src/dimensions/` and
+ *     implement this port. Neither writes here.
+ *   - **Changing it is a contract change.** A role that needs a different shape
+ *     sends a `work_request` to the integration role; it does not edit this file.
+ *     Editing it unilaterally means the other dimension compiles against a shape
+ *     nobody agreed to.
+ *   - **Additive changes are still changes.** The two optional fields added
+ *     during Phase 0 (`writeStatus`, `artifactPath`) exist because the ingest
+ *     caller needs them and only a file-backed dimension knows them. They were
+ *     added while this surface was still being established, which is exactly the
+ *     window that closes now.
+ *
+ * Nothing here knows about any concrete dimension, which is what keeps it
+ * freezable: the port names no file path, no database, and no provider.
  */
 
-/** Stable identifier for a dimension. The env switch names these. */
+/**
+ * Stable identifier for a dimension. The env switch names these, and the
+ * coordinator uses them as ordering and outbox keys, so the domain is closed:
+ * adding a name is an interface change, not a convention.
+ */
 export type DimensionName = "wiki" | "kg";
+
+/** The version of this port. Bumped only through an agreed contract change. */
+export const DIMENSION_PORT_VERSION = 1 as const;
 
 /**
  * Where a document comes from and what it is called. Dimensions receive the

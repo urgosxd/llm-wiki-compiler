@@ -16,6 +16,8 @@ export type {
   PreparedWrite,
 } from "./types.js";
 
+export { DIMENSION_PORT_VERSION } from "./types.js";
+
 export { createWikiDimension } from "./wiki/index.js";
 export { createKgDimension } from "./kg/index.js";
 export type { KgDimensionOptions } from "./kg/index.js";
