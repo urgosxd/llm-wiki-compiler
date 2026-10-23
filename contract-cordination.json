@@ -1,0 +1,94 @@
+{
+  "_validator": "@local/orchestration (global package at ~/.agents/orchestration; contract stays per-repo)",
+  "_ratified": "human-ratified: worktree-per-role, N-role, overlap-checked",
+  "version": 1,
+  "sharedPaths": [
+    "SOURCES_CONTRACT.md",
+    "ARCHITECTURE.md",
+    "AGENTS.md",
+    "README.md"
+  ],
+  "roles": {
+    "orchestrator-a": {
+      "module": "integration-surface",
+      "worktree": ".worktrees/orchestrator-a",
+      "ownedPaths": [
+        "src/sdk/**",
+        "src/local-workflow-host/**",
+        "packages/**",
+        "scripts/**",
+        ".github/**",
+        "odd/**",
+        "package.json",
+        "tsconfig*.json",
+        "vitest.config.ts",
+        "contract-cordination.json"
+      ],
+      "forbiddenPaths": [
+        "src/compiler/**",
+        "src/context/**",
+        "src/commands/**",
+        "src/cli/**",
+        "src/linter/**",
+        "test/compiler-*/**",
+        "test/context-*/**",
+        "test/*links-here*",
+        ".worktrees/**"
+      ]
+    },
+    "orchestrator-b": {
+      "module": "compiler-domain",
+      "worktree": ".worktrees/orchestrator-b",
+      "ownedPaths": [
+        "src/compiler/**",
+        "src/context/**",
+        "test/compiler-*/**",
+        "test/context-*/**"
+      ],
+      "forbiddenPaths": [
+        "src/sdk/**",
+        "src/local-workflow-host/**",
+        "packages/**",
+        "scripts/**",
+        ".github/**",
+        "odd/**",
+        "package.json",
+        "tsconfig*.json",
+        "vitest.config.ts",
+        "contract-cordination.json",
+        "src/commands/**",
+        "src/cli/**",
+        "src/linter/**",
+        "test/cli-*/**",
+        "test/commands-*/**"
+      ]
+    },
+    "orchestrator-c": {
+      "module": "cli-and-commands",
+      "worktree": ".worktrees/orchestrator-c",
+      "ownedPaths": [
+        "src/cli/**",
+        "src/commands/**",
+        "src/linter/**",
+        "test/cli-*/**",
+        "test/commands-*/**"
+      ],
+      "forbiddenPaths": [
+        "src/sdk/**",
+        "src/local-workflow-host/**",
+        "packages/**",
+        "scripts/**",
+        ".github/**",
+        "odd/**",
+        "package.json",
+        "tsconfig*.json",
+        "vitest.config.ts",
+        "contract-cordination.json",
+        "src/compiler/**",
+        "src/context/**",
+        "test/compiler-*/**",
+        "test/context-*/**"
+      ]
+    }
+  }
+}
