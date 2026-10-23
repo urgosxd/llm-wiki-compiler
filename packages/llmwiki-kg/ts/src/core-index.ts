@@ -58,3 +58,6 @@ export type {
 
 export { retrieveRelevantChunks, toVectorLiteral } from "./core/retrieval.js";
 export type { RetrievedChunk } from "./core/retrieval.js";
+
+export { embedQuery } from "./core/extraction.js";
+export type { AKSEntityDto, AKSRelationshipDto } from "./dto.js";

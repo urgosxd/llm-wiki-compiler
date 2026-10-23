@@ -32,8 +32,11 @@ export type {
 } from "./read-types.js";
 
 export { createWikiDimension } from "./wiki/index.js";
+export { createWikiReader } from "./wiki/reader.js";
 export { createKgDimension } from "./kg/index.js";
 export type { KgDimensionOptions } from "./kg/index.js";
+export { createKgReader } from "./kg/reader.js";
+export type { KgReaderOptions } from "./kg/reader.js";
 
 export { ingestDimensions } from "./coordinator.js";
 export type { IngestOutcome } from "./coordinator.js";
