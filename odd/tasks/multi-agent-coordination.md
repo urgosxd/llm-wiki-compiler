@@ -310,3 +310,27 @@ scope claim without a fresh read as unverified, because context is not the repo.
   prefix expansion would make a typo widen a deny rule.
 - Herdr `agent read` returns rendered TUI. Any future parser over it is fragile
   by nature; that is why the structured lane is primary.
+
+## Agreed contract
+
+Recorded verbatim, as the protocol requires. The version string is the one both
+sides exchanged, not a paraphrase.
+
+| Field | Value |
+| --- | --- |
+| `contract` | `src/context/links-here.ts@1` |
+| Accepted by | `orchestrator-b` (producer) — `cd-2026-10-23-01`, `status: accepted` |
+| Consumed by | `orchestrator-c` (`src/commands/links-here.ts` imports `findInboundLinks`, `InboundLink`) |
+| Integrated by | `orchestrator-a` — merge `a8e6524` |
+| Evidence | `58d9754` (`docs(context): freeze findInboundLinks as contract v1`) |
+
+The interface this freezes:
+
+```ts
+export interface InboundLink { from: GraphNodeId; mutual: boolean }
+export function findInboundLinks(graph: GraphData, targetId: GraphNodeId): InboundLink[]
+```
+
+This is a real dependency, not a rehearsal: `orchestrator-c` already imported
+that function before the contract existed, so the negotiation only made an
+implicit coupling explicit and versioned.
