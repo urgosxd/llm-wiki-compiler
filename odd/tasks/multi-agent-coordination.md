@@ -428,3 +428,39 @@ Two candidate fixes, not yet chosen:
 
 Recording it here rather than fixing it in passing: either option changes the
 envelope format, which invalidates messages already recorded under v1.
+
+### Fixed: envelope v2 adds `to_session`
+
+Option 1 was chosen. `to` stays a role for audit; `to_session` is the routable
+address and must equal the `recipient_session_id` passed to the send tool.
+
+- The envelope delimiter is now `<<<COORD v2`. A v1 message is rejected: it carries
+  no address the transport can use, which is the defect v2 removes. Re-sending is
+  the migration path, not silent reinterpretation.
+- `to_session` is required on every message type and must match
+  `^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`, the transport's own accepted shape. A
+  narrower rule here would reject addresses the transport accepts.
+- `decideRecipient` refuses a `recipient_session_id` that differs from
+  `to_session`: the message would be delivered somewhere the envelope does not
+  describe. An omitted recipient is allowed, because the transport then selects the
+  sole peer and cannot contradict an address the sender never stated twice.
+
+Verified live, after restarting B so it loaded the new parser:
+
+| Attempt | Outcome |
+| --- | --- |
+| v2, `recipient_session_id` == `to_session` | accepted, delivered |
+| v2, `recipient_session_id` != `to_session` | blocked: `does not match the envelope's to_session` |
+| v1 (before restart) | blocked as `not a valid envelope` |
+
+Two defects were found while doing this, both in seams rather than logic:
+
+1. The spec was updated to v2 and the parser was not — `OPENING` still read
+   `<<<COORD v1`, so every documented example would have been rejected. Caught only
+   by parsing the shipped examples instead of trusting the edit.
+2. The refusal message hardcoded "envelope v1", so a v2 rejection told the sender to
+   consult the wrong contract.
+
+Also learned: an agent keeps the extension code it loaded at startup. Changing the
+hook requires restarting the agent; the session resumes with `pi --session <id>` and
+the pane keeps its cwd, but the agent name is cleared and must be re-set.
