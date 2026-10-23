@@ -52,10 +52,13 @@ const ACRONYM_EXPANSIONS: Readonly<Record<string, string>> = {
  * full plural ending instead would eat part of the word: matching "ches" against
  * "matches" leaves "mat".
  *
- * The doubled-"s" head is "ss", which only matches a token ending "sses", never the
- * "ses" of a silent-e stem such as "databases".
+ * Every head here is one whose plural DOUBLES it and then adds "-es": "classes",
+ * "boxes", "matches", "dishes". A bare "z" is deliberately ABSENT: an English
+ * z-final stem doubles to "-zzes" ("quiz" → "quizzes"), so a single "z" followed by
+ * "es" is a silent-e plural instead ("sizes" → "size", "freezes" → "freeze").
+ * Listing "z" stripped those to "siz" and "freez".
  */
-const SIBILANT_HEADS: readonly string[] = ["ss", "x", "z", "ch", "sh"];
+const SIBILANT_HEADS: readonly string[] = ["ss", "x", "ch", "sh"];
 
 /** The "-ies" plural, which also restores the "y" it replaced. */
 const IES_SUFFIX = "ies";

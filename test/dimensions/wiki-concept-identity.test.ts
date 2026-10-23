@@ -65,8 +65,19 @@ describe("canonicalConceptKey", () => {
     ["databases", "database"],
     ["notes", "note"],
     ["vectors", "vector"],
+    // -ze stems: regression for the sibilant-head list carrying a bare "z".
+    // A z-final English stem DOUBLES before "-es" ("quizzes"), so single "z"+"es"
+    // is a silent-e plural and must keep its "e".
+    ["sizes", "size"],
+    ["freezes", "freeze"],
+    ["prizes", "prize"],
   ])("folds the plural %s onto the singular %s", (plural, singular) => {
     expect(canonicalConceptKey(plural)).toBe(canonicalConceptKey(singular));
+  });
+
+  it("keeps the e of a -ze silent-e plural instead of stripping two characters", () => {
+    expect(canonicalConceptKey("sizes")).toBe("size");
+    expect(canonicalConceptKey("freezes")).toBe("freeze");
   });
 
   it("never leaves a stem shorter than the word it should have produced", () => {
