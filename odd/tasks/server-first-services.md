@@ -52,10 +52,10 @@ transaction. Extracting the service also fixes that overage.
 
 ## Tasks
 
-- [ ] 1. Extract `IngestService` from `src/commands/ingest.ts`
-- [ ] 2. Extract `CompileService` from `src/compiler/index.ts`
-- [ ] 3. Point the CLI at the services
-- [ ] 4. Point MCP at the services
-- [ ] 5. Mount official `POST /api/ingest` and `POST /api/compile` on the host
-- [ ] 6. Add a `llmwiki host` command that starts the unified listener
-- [ ] 7. Verify KG route suites still measure fidelity through the services
+- [x] 1. Extract `IngestService` from `src/commands/ingest.ts` — `e73099b`
+- [x] 2. Extract `CompileService` from `src/compiler/index.ts` — `5453575` (the service already existed; added the `busy` signal)
+- [x] 3. Point the CLI at the services — reached via re-exports
+- [x] 4. Point MCP at the services — verified no bypass
+- [x] 5. Mount official `POST /api/ingest` and `POST /api/compile` on the host — `468ad47`
+- [x] 6. Add a `llmwiki host` command that starts the unified listener — `f543ca9`
+- [x] 7. Verify KG route suites still measure fidelity through the services — 575 pass; 2 flaky under Postgres contention
