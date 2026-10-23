@@ -13,7 +13,7 @@ import {
   fetchContributingDocuments,
   rowToEntity,
 } from "../../core/aks_serializers.js";
-import { resolveStack } from "../../core/stack_resolver.js";
+import { readEntities, readEntityByName, toApiError } from "../../core/graph_read.js";
 import type { EntityRow } from "../../core/aks_serializers.js";
 import type { Database } from "../../db.js";
 import { apiError, pydanticString, toFastApiValidationError } from "../../errors.js";
@@ -46,37 +46,20 @@ export async function listEntities(req: Request, res: Response, tx: Database): P
 
   const { stack_id: stackId, domain, type, min_confidence: minConfidence, limit } = query.data;
 
-  const stack = await resolveStack(tx, stackId, domain);
-  if (!stack.ok) {
-    sendApiError(res, stack.error);
+  // The query itself lives in `core/graph_read.ts` so a non-HTTP caller (the `kg`
+  // dimension, MCP, a test) can read the graph without going through Express.
+  const result = await readEntities(tx, {
+    stackId,
+    domain,
+    type,
+    minConfidence,
+    limit,
+  });
+  if (!result.ok) {
+    sendApiError(res, toApiError(result.error));
     return;
   }
-
-  const typeClause = isFilterSet(type) ? sql`and type = ${type}` : sql.empty();
-
-  const rows = await tx.execute<EntityRow>(sql`
-    select ${sql.raw(ENTITY_COLUMNS)}
-    from ontology_entities
-    where stack_id = ${stack.stack.id}
-      and confidence >= ${minConfidence}
-      ${typeClause}
-    order by confidence desc, name
-    limit ${limit}
-  `);
-
-  if (rows.length === 0) {
-    res.json([]);
-    return;
-  }
-
-  const contributing = await fetchContributingDocuments(
-    tx,
-    rows.map((row) => row.id),
-  );
-
-  res.json(
-    rows.map((row) => rowToEntity(row, contributing.get(row.id) ?? [])),
-  );
+  res.json(result.value);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,30 +84,16 @@ export async function getEntity(req: Request, res: Response, tx: Database): Prom
     return;
   }
 
-  const stack = await resolveStack(tx, query.data.stack_id, query.data.domain);
-  if (!stack.ok) {
-    sendApiError(res, stack.error);
-    return;
-  }
-
   // A path parameter is always a string, so this parse cannot fail for a request
   // Express routed here; it exists so the value is narrowed without a cast.
   const name = EntityNameParams.parse({ name: req.params["name"] }).name;
 
-  const rows = await tx.execute<EntityRow>(sql`
-    select ${sql.raw(ENTITY_COLUMNS)}
-    from ontology_entities
-    where stack_id = ${stack.stack.id} and lower(name) = lower(${name})
-  `);
-
-  const row = rows[0];
-  if (row === undefined) {
-    sendApiError(res, apiError(404, `Entity '${name}' not found in Stack`));
+  const result = await readEntityByName(tx, query.data.stack_id, query.data.domain, name);
+  if (!result.ok) {
+    sendApiError(res, toApiError(result.error));
     return;
   }
-
-  const contributing = await fetchContributingDocuments(tx, [row.id]);
-  res.json(rowToEntity(row, contributing.get(row.id) ?? []));
+  res.json(result.value);
 }
 
 // ---------------------------------------------------------------------------

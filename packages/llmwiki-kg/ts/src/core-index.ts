@@ -42,3 +42,19 @@ export { createClient, createDatabase } from "./db.js";
 export type { Database } from "./db.js";
 export { config as kgConfig } from "./config.js";
 export type { Config as KgConfig } from "./config.js";
+
+export {
+  parseTypeFilter,
+  readEntities,
+  readEntityByName,
+  traverseGraph,
+} from "./core/graph_read.js";
+export type {
+  GraphReadResult,
+  ListEntitiesQuery,
+  TraverseAnswer,
+  TraverseQuery,
+} from "./core/graph_read.js";
+
+export { retrieveRelevantChunks, toVectorLiteral } from "./core/retrieval.js";
+export type { RetrievedChunk } from "./core/retrieval.js";

@@ -9,7 +9,7 @@ import type { Request, Response } from "express";
 import {
   toPostgresArrayLiteral,
 } from "../../core/aks_serializers.js";
-import { resolveStack } from "../../core/stack_resolver.js";
+import { parseTypeFilter, toApiError, traverseGraph } from "../../core/graph_read.js";
 import type { Database } from "../../db.js";
 import { AKSTraverseResponse } from "../../dto.js";
 import type { AKSTraverseResponseDto } from "../../dto.js";
@@ -21,16 +21,6 @@ import { TRAVERSE_QUERY_KEYS, TraverseQuery, readQuery } from "./query-params.js
 // ---------------------------------------------------------------------------
 
 /** One row of the recursive walk, after the entity-name joins. */
-type TraverseRow = {
-  from_id: string | null;
-  rel_type: string | null;
-  to_id: string | null;
-  depth: number;
-  confidence: number | null;
-  from_name: string | null;
-  to_name: string | null;
-};
-
 /**
  * `GET /aks/v1/traverse` — breadth-first walk over typed relationships.
  *
@@ -60,113 +50,6 @@ type TraverseRow = {
  * oracle answers `Entity '<name>' not found in Stack`, the same wording the
  * single-entity endpoint uses.
  */
-/** Parse `relationship_types`, returning `null` when the filter is disabled. */
-function parseTypeFilter(relationshipTypes: string | null): string[] | null {
-  // `relationship_types.split(",")` with empty segments dropped, so `","` yields
-  // an empty list — matching nothing — while an absent or empty parameter
-  // disables the filter entirely. Both measured.
-  if (!isFilterSet(relationshipTypes)) return null;
-  return relationshipTypes
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== "");
-}
-
-/** Resolve the anchor entity, or `null` when the stack has no such name. */
-async function findStartEntity(
-  tx: Database,
-  stackId: string,
-  start: string,
-): Promise<{ id: string; name: string } | null> {
-  const rows = await tx.execute<{ id: string; name: string }>(sql`
-    select id, name from ontology_entities
-    where stack_id = ${stackId} and lower(name) = lower(${start})
-  `);
-  return rows[0] ?? null;
-}
-
-/**
- * The recursive walk statement for one anchor, depth and type filter.
- *
- * Deliberately left as one statement: it is a single `with recursive` CTE whose
- * seed, recursion and final projection all reference `walk`, so splitting it
- * would obscure rather than clarify the query.
- */
-function walkStatement(
-  stackId: string,
-  startId: string,
-  maxDepth: number,
-  typeClause: ReturnType<typeof sql>,
-) {
-  return sql`
-    with recursive walk as (
-      select
-        ${startId}::uuid as current_entity_id,
-        array[${startId}::uuid] as visited,
-        null::uuid as from_id,
-        null::text as rel_type,
-        null::uuid as to_id,
-        null::real as confidence,
-        0 as depth
-      union all
-      select
-        r.to_entity_id,
-        w.visited || r.to_entity_id,
-        r.from_entity_id,
-        r.type,
-        r.to_entity_id,
-        r.confidence,
-        w.depth + 1
-      from walk w
-      join ontology_relationships r
-        on r.from_entity_id = w.current_entity_id
-      where r.stack_id = ${stackId}
-        and not r.to_entity_id = any(w.visited)
-        and w.depth < ${maxDepth}
-        ${typeClause}
-    )
-    select
-      w.from_id, w.rel_type, w.to_id, w.depth, w.confidence,
-      ef.name as from_name, et.name as to_name
-    from walk w
-    left join ontology_entities ef on ef.id = w.from_id
-    left join ontology_entities et on et.id = w.to_id
-    where w.from_id is not null
-    order by w.depth, ef.name
-  `;
-}
-
-/** Map a walk row to the response shape, insisting on the non-null columns. */
-function rowToStep(row: TraverseRow): AKSTraverseResponseDto["steps"][number] {
-  return {
-    from_entity: requireText(row.from_name, "from_name"),
-    relationship: requireText(row.rel_type, "rel_type"),
-    to_entity: requireText(row.to_name, "to_name"),
-    depth: row.depth,
-    // `real` is not null in the schema, and the anchor row is already excluded
-    // above, so a null here would mean the join dropped its row.
-    confidence: Number(requireNumber(row.confidence, "confidence")),
-  };
-}
-
-async function walkGraph(
-  tx: Database,
-  stackId: string,
-  startRow: { id: string; name: string },
-  maxDepth: number,
-  typesList: readonly string[] | null,
-): Promise<AKSTraverseResponseDto["steps"]> {
-  const typeClause =
-    typesList === null
-      ? sql.empty()
-      : sql`and r.type = any(${toPostgresArrayLiteral(typesList)}::text[])`;
-
-  const rows = await tx.execute<TraverseRow>(
-    walkStatement(stackId, startRow.id, maxDepth, typeClause),
-  );
-  return rows.map(rowToStep);
-}
-
 export async function traverse(req: Request, res: Response, tx: Database): Promise<void> {
   const raw = readQuery(req, TRAVERSE_QUERY_KEYS);
   const query = TraverseQuery.safeParse(raw);
@@ -182,31 +65,26 @@ export async function traverse(req: Request, res: Response, tx: Database): Promi
     relationship_types: relationshipTypes,
   } = query.data;
 
-  const stack = await resolveStack(tx, stackId, domain);
-  if (!stack.ok) {
-    sendApiError(res, stack.error);
+  // The walk lives in `core/graph_read.ts`, so MCP and the `kg` dimension can
+  // traverse without an Express request. This handler only encodes the answer.
+  const result = await traverseGraph(tx, {
+    start,
+    stackId,
+    domain,
+    maxDepth,
+    relationshipTypes,
+  });
+  if (!result.ok) {
+    sendApiError(res, toApiError(result.error));
     return;
   }
-
-  const startRow = await findStartEntity(tx, stack.stack.id, start);
-  if (startRow === null) {
-    sendApiError(res, apiError(404, `Entity '${start}' not found in Stack`));
-    return;
-  }
-
-  const steps = await walkGraph(
-    tx, stack.stack.id, startRow, maxDepth, parseTypeFilter(relationshipTypes),
-  );
-
 
   res.json(
     AKSTraverseResponse.parse({
-      start: startRow.name,
-      max_depth: maxDepth,
-      steps,
-      entity_count: new Set(
-        [startRow.name, ...steps.flatMap((step) => [step.from_entity, step.to_entity])],
-      ).size,
+      start: result.value.start,
+      max_depth: result.value.maxDepth,
+      steps: result.value.steps,
+      entity_count: result.value.entityCount,
     }),
   );
 }

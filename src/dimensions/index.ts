@@ -18,6 +18,19 @@ export type {
 
 export { DIMENSION_PORT_VERSION } from "./types.js";
 
+export { DIMENSION_READ_PORT_VERSION } from "./read-types.js";
+export type {
+  DimensionAnswer,
+  DimensionQuery,
+  DimensionReader,
+  GraphReadFailure,
+  GraphReadFailureCode,
+  GraphReadResult,
+  ReadChunk,
+  ReadEntity,
+  ReadRelationship,
+} from "./read-types.js";
+
 export { createWikiDimension } from "./wiki/index.js";
 export { createKgDimension } from "./kg/index.js";
 export type { KgDimensionOptions } from "./kg/index.js";
