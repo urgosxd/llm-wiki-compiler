@@ -52,6 +52,7 @@ import { createApp } from "llmwiki-kg/server";
 /** The graph sub-app type, derived so this module needs no direct express import. */
 type GraphApp = ReturnType<typeof createApp>;
 import { createViewerHandler, type ViewerRequestHandler } from "../viewer/server.js";
+import { handleApiRequest } from "./api.js";
 import type { ViewerSnapshot } from "../viewer/types.js";
 import { reconcileOutbox, resolveDimensions, type ReconcileOutcome } from "../dimensions/index.js";
 import { tryWithOrdinaryMutationLock } from "../operation-bundles/with-mutation-lock.js";
@@ -120,7 +121,11 @@ function createGraphApp(): GraphApp {
  * @param graph - Mounted graph app, or undefined when the caller omitted it.
  * @param viewer - Viewer handler, already bound to snapshot and config.
  */
-function createDispatcher(graph: GraphApp | undefined, viewer: ViewerRequestHandler) {
+function createDispatcher(
+  graph: GraphApp | undefined,
+  viewer: ViewerRequestHandler,
+  projectRoot: string | undefined,
+) {
   return (req: IncomingMessage, res: ServerResponse): void => {
     if (graph !== undefined && isGraphPath(req.url)) {
       // The graph app is a full Express app; handing it the request keeps its
@@ -128,13 +133,27 @@ function createDispatcher(graph: GraphApp | undefined, viewer: ViewerRequestHand
       graph(req, res);
       return;
     }
-    viewer(req, res).catch(() => {
-      // The viewer's own routes emit their error envelopes; reaching here means an
-      // unexpected failure and the socket may already be half-written.
-      if (!res.headersSent) res.statusCode = 500;
-      res.end();
-    });
+    // The mutation endpoints are tried BEFORE the viewer: they are POST, and the
+    // viewer registers GET only, so a fall-through would answer 404 and the request
+    // would silently never run. Without a project root there is nothing to mutate,
+    // so the mount is simply absent rather than failing at request time.
+    if (projectRoot !== undefined) {
+      handleApiRequest(projectRoot, req, res)
+        .then((handled) => {
+          if (handled) return;
+          viewer(req, res).catch(() => writeFallbackError(res));
+        })
+        .catch(() => writeFallbackError(res));
+      return;
+    }
+    viewer(req, res).catch(() => writeFallbackError(res));
   };
+}
+
+/** The socket may be half-written by the time an unexpected error surfaces. */
+function writeFallbackError(res: ServerResponse): void {
+  if (!res.headersSent) res.statusCode = 500;
+  res.end();
 }
 
 /**
@@ -179,7 +198,8 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
       res.end();
       return;
     }
-    createDispatcher(graph, handler)(req, res);
+    const dispatch = createDispatcher(graph, handler, options.projectRoot);
+    dispatch(req, res);
   });
 
   await listenOn(server, port, host);
