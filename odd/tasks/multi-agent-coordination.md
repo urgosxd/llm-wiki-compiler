@@ -149,13 +149,39 @@ Failure modes that count as the test failing, not as noise:
 - [x] T9 Extract the validator into a global package `@local/orchestration`
       at `~/.agents/orchestration`; keep only the per-repo contract here.
       `src/coordination/` and its tests are deleted from this repository.
-- [ ] T10 Run the contract dependency test by hand across roles.
+- [x] T10 Run the contract dependency test by hand across roles. Passed against
+      `src/context/links-here.ts@1`: `orchestrator-b` proposed and accepted it
+      (`cd-2026-10-23-01`, `status: accepted`), `orchestrator-c` consumed it in
+      `src/commands/links-here.ts` (imports `findInboundLinks`, `InboundLink`), and
+      `orchestrator-a` integrated it as merge `a8e6524` with evidence commit
+      `58d9754`. Both sides of the interface exist on `main`.
+      Step 3 is not executable as written: it asks both sides to record
+      `## Agreed contract` in their own feature document, but `isPathAllowed`
+      returns `forbidden` for `odd/tasks/<anything>.md` to both `orchestrator-b` and
+      `orchestrator-c` — only `orchestrator-a` may write there. B and C structurally
+      cannot perform the step, so only A recorded the contract. That is the contract
+      enforcing correctly; the procedure is what is mis-specified, and it is what
+      needs fixing if the step is kept.
+      Closed with a note instead of re-run: the test's purpose was to prove the
+      protocol end to end, and that proof already exists in `## Agreed contract` and
+      in the `### T13 live proof` section. Re-running it against an already-merged
+      interface would re-verify a settled result instead of adding evidence.
 - [x] T13 Enforcement as a real Pi extension, plus evidence verification.
       `~/.pi/agent/extensions/orchestrator-coord/` blocks `write`/`edit` outside a
       role's surface, blocks malformed envelopes, and blocks `work_result` claims
       whose evidence does not hold. Logic lives in `@local/orchestration`
       (`evidence.ts`, `enforce.ts`, `envelope.ts`) with 92 tests; the extension is
       wiring only, because Pi's virtual modules cannot be imported in a test.
+
+Note on task numbers: `T11` and `T12` have no task entries — the work they referred
+to was recorded in commit `c184e00` (`docs(coordination): record the agreed contract
+and T11/T12 evidence`). `T10` is reused in this file for three different meanings:
+the test entry above, the "T10 (skill moved to the global Pi skill directory)"
+evidence entry, and the "T10 should not widen any role's `ownedPaths`" sentence in
+"Still open". Nothing is renumbered on purpose: `c184e00`'s message and the two
+`### T13:` headings would become false, and committed references would stop
+traceable to the numbers they cite. The reuse is left visible rather than papered
+over.
 
 ## Evidence
 
@@ -338,6 +364,34 @@ export function findInboundLinks(graph: GraphData, targetId: GraphNodeId): Inbou
 This is a real dependency, not a rehearsal: `orchestrator-c` already imported
 that function before the contract existed, so the negotiation only made an
 implicit coupling explicit and versioned.
+
+### Uncovered coupling: one versioned interface out of fifteen
+
+`links-here@1` covered exactly one interface. A measured survey of cross-module
+imports from the integration surface found fifteen distinct interface files:
+fourteen with no agreed version, plus `context/links-here`, which is the one
+interface actually under contract:
+
+- From `src/commands/**` and `src/cli/**` into `compiler/`, 12 distinct files:
+  `compiler/candidates` (8 imports), `compiler/index` (4), `compiler/indexgen` (2),
+  and one import each from `compiler/rule-extractor`, `compiler/rule-candidates`,
+  `compiler/resolver`, `compiler/refresh-plan`, `compiler/obsidian`,
+  `compiler/link-repair`, `compiler/candidate-store-paths`,
+  `compiler/candidate-rejection`, `compiler/candidate-custody`.
+- From the same directories into `context/`, 3 distinct files: `context/types`
+  (2 imports), `context/build` (1), `context/links-here` (1 — this one is the
+  agreed contract).
+- The integration role crosses the boundary too: `src/sdk/core.ts` imports
+  `compileAndReport` from `../compiler/index.js` and `buildContextPack` from
+  `../context/build.js`; `src/sdk/core-types.ts` imports the type `ContextPack`
+  from `../context/types.js`.
+
+Fifteen distinct interface files, of which only `context/links-here` is versioned.
+The other fourteen are unversioned implicit couplings: real dependencies between
+modules with no `@1` anywhere, so nothing fails when one side changes shape.
+`links-here@1` proves the protocol works end to end; it does not mean the module
+boundary is covered. Versioning the remaining interfaces is future work, not done
+here.
 
 ### T13: what enforcement actually required
 
