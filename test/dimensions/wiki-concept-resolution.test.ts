@@ -135,6 +135,45 @@ describe("resolveConceptIdentity thresholds", () => {
   });
 });
 
+describe("resolveConceptIdentity per-member evidence routing", () => {
+  /**
+   * A three-member chain reproducing the finding: A-B clears the auto band and
+   * B-C only clears the review band. Three names share a token so all three
+   * pairs reach the cosine tier.
+   */
+  const chain: ConceptCandidate[] = [
+    { name: "Vector Alpha" },
+    { name: "Vector Beta" },
+    { name: "Vector Gamma" },
+  ];
+
+  it("routes each member by its own edge, not by the group's strongest edge", async () => {
+    // Alpha-Beta = 0 deg apart (score 1.0, auto), so Beta is a confident alias.
+    // Gamma only reaches 27 deg against both (0.891, review), so Gamma is pending.
+    // Before the per-member fix the whole group reported `auto` and Gamma was
+    // emitted as a confident, irreversible alias — the review band silently lost.
+    const result = await resolveConceptIdentity(chain, {
+      embed: stubPort({ "Vector Alpha": 0, "Vector Beta": 0, "Vector Gamma": 27 }),
+    });
+    expect(result.groups).toHaveLength(1);
+    expect(result.aliases.map((alias) => alias.aliasSlug)).toEqual(["vector-beta"]);
+    expect(result.aliases[0].tier).toBe("auto");
+    expect(result.pending.map((alias) => alias.aliasSlug)).toEqual(["vector-gamma"]);
+    expect(result.pending[0].tier).toBe("review");
+  });
+
+  it("still routes a member joined through the auto band to the confident aliases", async () => {
+    const result = await resolveConceptIdentity(chain, {
+      embed: stubPort({ "Vector Alpha": 0, "Vector Beta": 0, "Vector Gamma": 90 }),
+    });
+    // Only Alpha-Beta merges; Gamma stays out of the group entirely.
+    expect(result.groups).toHaveLength(2);
+    expect(result.aliases).toHaveLength(1);
+    expect(result.aliases[0].tier).toBe("auto");
+    expect(result.pending).toHaveLength(0);
+  });
+});
+
 describe("resolveConceptIdentity canonical name", () => {
   it("keeps the name of the concept already present in the wiki", async () => {
     const result = await resolveConceptIdentity(

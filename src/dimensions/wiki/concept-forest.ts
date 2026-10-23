@@ -39,6 +39,17 @@ export interface ConceptForest {
   readonly rank: number[];
   /** Strongest evidence tier seen per root, as a {@link TIER_RANK} value. */
   readonly strongest: number[];
+  /**
+   * Per-node evidence of the strongest merge that JOINED that node to another
+   * one, as a {@link TIER_RANK} value.
+   *
+   * Load-bearing for the review band. A node absorbed through a confident edge does
+   * not inherit the confidence of an unrelated edge that joined two OTHER nodes in
+   * the same group: in a group where A-B merged at `auto` and B-C at `review`, C's
+   * link is `review` and C must stay reversible even though the group's strongest
+   * evidence is `auto`.
+   */
+  readonly joinedBy: number[];
 }
 
 /** Fresh forest over `size` candidates, each in its own group. */
@@ -47,6 +58,7 @@ export function createConceptForest(size: number): ConceptForest {
     parent: Array.from({ length: size }, (_, index) => index),
     rank: Array.from({ length: size }, () => 0),
     strongest: Array.from({ length: size }, () => NO_MERGE_RANK),
+    joinedBy: Array.from({ length: size }, () => NO_MERGE_RANK),
   };
 }
 
@@ -89,6 +101,10 @@ export function unionCandidates(
   const root = forest.rank[leftRoot] < forest.rank[rightRoot] ? rightRoot : leftRoot;
   const child = root === leftRoot ? rightRoot : leftRoot;
   forest.parent[child] = root;
+  // The absorbed node's OWN linkage is this edge, whichever side it came from.
+  // Recorded per node so a review-band member never masquerades as confident.
+  forest.joinedBy[left] = Math.min(forest.joinedBy[left], rank);
+  forest.joinedBy[right] = Math.min(forest.joinedBy[right], rank);
   if (forest.rank[root] === forest.rank[child]) {
     forest.rank[root] += 1;
   }
@@ -117,14 +133,8 @@ export function groupsByRoot(
   return byRoot;
 }
 
-/**
- * The tier a group's evidence justifies.
- *
- * A single-member group reports `slug`: nothing merged it, and `slug` is the
- * weakest claim available, so it never overstates how the group was formed.
- */
-export function tierOfRoot(forest: ConceptForest, root: number): MergeTier {
-  const rank = forest.strongest[root];
+/** Maps a {@link TIER_RANK} value back to its tier name. */
+function tierForRank(rank: number): MergeTier {
   if (rank === NO_MERGE_RANK) {
     return "slug";
   }
@@ -132,4 +142,25 @@ export function tierOfRoot(forest: ConceptForest, root: number): MergeTier {
     (tier) => TIER_RANK[tier] === rank,
   );
   return match ?? "review";
+}
+
+/**
+ * The tier a group's evidence justifies.
+ *
+ * A single-member group reports `slug`: nothing merged it, and `slug` is the
+ * weakest claim available, so it never overstates how the group was formed.
+ */
+export function tierOfRoot(forest: ConceptForest, root: number): MergeTier {
+  return tierForRank(forest.strongest[root]);
+}
+
+/**
+ * The tier of the edge that actually absorbed ONE node into its group.
+ *
+ * This is the per-member truth the alias bands must be built from. A node no merge
+ * touched reports `slug`, and a node absorbed by a review-band edge reports
+ * `review` even when the rest of its group cleared the auto threshold.
+ */
+export function tierThatJoined(forest: ConceptForest, node: number): MergeTier {
+  return tierForRank(forest.joinedBy[node]);
 }

@@ -37,6 +37,7 @@ import {
   createConceptForest,
   groupsByRoot,
   tierOfRoot,
+  tierThatJoined,
   unionCandidates,
   type ConceptForest,
 } from "./concept-forest.js";
@@ -81,7 +82,11 @@ export interface ConceptGroup {
 export interface ConceptAlias {
   readonly aliasSlug: string;
   readonly canonicalSlug: string;
-  /** Evidence tier that produced this alias. */
+  /**
+   * Evidence tier of the edge that absorbed THIS alias — not the group's strongest
+   * tier. Routing an alias to the confident or the pending band by the group's best
+   * evidence would promote a review-band merge to an irreversible one.
+   */
   readonly tier: MergeTier;
   /** Cosine score, or `undefined` for a deterministic tier. */
   readonly score?: number;
@@ -315,20 +320,42 @@ function pickCanonical(
   })[0];
 }
 
-/** Emits one alias per merged-away member, routing it by its evidence tier. */
+/**
+ * Emits one alias per merged-away member, each routed by the evidence that joined
+ * THAT member.
+ *
+ * The tier is read per member rather than taken once for the group. In a group where
+ * A-B merged at `auto` and B-C only at `review`, C is held in the pending band while
+ * B stays confident; using the group's strongest tier would emit C as a confident,
+ * irreversible alias and silently collapse the review band for every member that
+ * joined through a weak edge.
+ *
+ * The canonical member is skipped: it absorbed nothing, so it owes no alias.
+ *
+ * @param members - One entry per group member, pairing the candidate with its GLOBAL
+ *   forest index. The two index spaces differ: `members` is local to the group while
+ *   the forest is addressed globally, and conflating them reads the wrong node's
+ *   evidence.
+ * @param canonicalName - Name of the member that keeps the group's identity.
+ */
 function collectAliases(
-  members: readonly ConceptCandidate[],
+  members: ReadonlyArray<{ readonly index: number; readonly candidate: ConceptCandidate }>,
   canonicalName: string,
-  tier: MergeTier,
+  forest: ConceptForest,
   aliases: ConceptAlias[],
   pending: ConceptAlias[],
 ): void {
   const canonicalSlug = slugify(canonicalName);
-  for (const member of members) {
-    if (member.name === canonicalName) {
+  for (const { index, candidate } of members) {
+    if (candidate.name === canonicalName) {
       continue;
     }
-    const alias: ConceptAlias = { aliasSlug: slugify(member.name), canonicalSlug, tier };
+    const tier = tierThatJoined(forest, index);
+    const alias: ConceptAlias = {
+      aliasSlug: slugify(candidate.name),
+      canonicalSlug,
+      tier,
+    };
     if (tier === "review") {
       pending.push(alias);
       continue;
@@ -367,11 +394,17 @@ export async function resolveConceptIdentity(
   const pending: ConceptAlias[] = [];
 
   for (const [root, indices] of groupsByRoot(forest, ordered.length)) {
-    const members = indices.map((index) => ordered[index]);
-    const canonical = pickCanonical(members, options.incumbents);
-    const tier = tierOfRoot(forest, root);
-    groups.push({ canonicalName: canonical.name, members, tier });
-    collectAliases(members, canonical.name, tier, aliases, pending);
+    const entries = indices.map((index) => ({ index, candidate: ordered[index] }));
+    const canonical = pickCanonical(
+      entries.map((entry) => entry.candidate),
+      options.incumbents,
+    );
+    groups.push({
+      canonicalName: canonical.name,
+      members: entries.map((entry) => entry.candidate),
+      tier: tierOfRoot(forest, root),
+    });
+    collectAliases(entries, canonical.name, forest, aliases, pending);
   }
 
   const resolution: ConceptResolution = { groups, aliases, pending };
