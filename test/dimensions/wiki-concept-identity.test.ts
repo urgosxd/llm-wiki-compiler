@@ -51,6 +51,28 @@ describe("canonicalConceptKey", () => {
   it("keeps genuinely different concepts apart", () => {
     expect(canonicalConceptKey("graph database")).not.toBe(canonicalConceptKey("vector database"));
   });
+
+  // Regression for R3-002: the stemmer re-ran the whole suffix list on the stem, so
+  // "-sses"/"-ches" fell through to a bare "-s" strip and "classes" became "cla"
+  // while "class" became "clas". Plural and singular did not even agree.
+  it.each([
+    ["classes", "class"],
+    ["processes", "process"],
+    ["boxes", "box"],
+    ["matches", "match"],
+    ["dishes", "dish"],
+    ["queries", "query"],
+    ["databases", "database"],
+    ["notes", "note"],
+    ["vectors", "vector"],
+  ])("folds the plural %s onto the singular %s", (plural, singular) => {
+    expect(canonicalConceptKey(plural)).toBe(canonicalConceptKey(singular));
+  });
+
+  it("never leaves a stem shorter than the word it should have produced", () => {
+    expect(canonicalConceptKey("classes")).toBe("class");
+    expect(canonicalConceptKey("matches")).toBe("match");
+  });
 });
 
 describe("canonicalSlugKey", () => {

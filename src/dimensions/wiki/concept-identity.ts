@@ -45,14 +45,33 @@ const ACRONYM_EXPANSIONS: Readonly<Record<string, string>> = {
 };
 
 /**
- * Suffixes stripped when stemming a plural, longest first so that "-ies" is
- * preferred over "-s".
+ * Heads of the sibilant singulars whose plural adds a whole "-es".
  *
- * Deliberately conservative: only forms whose singular is unambiguous are listed.
- * "databases" → "database" is safe; "analyses" → "analyse" would not be, so "ses"
- * is absent.
+ * Tested as two conditions — the token ends "es" AND its head ends in one of these
+ * — so the stemmer removes exactly the two characters the plural added. Testing the
+ * full plural ending instead would eat part of the word: matching "ches" against
+ * "matches" leaves "mat".
+ *
+ * The doubled-"s" head is "ss", which only matches a token ending "sses", never the
+ * "ses" of a silent-e stem such as "databases".
  */
-const PLURAL_SUFFIXES: readonly string[] = ["ies", "sses", "xes", "ches", "shes", "s"];
+const SIBILANT_HEADS: readonly string[] = ["ss", "x", "z", "ch", "sh"];
+
+/** The "-ies" plural, which also restores the "y" it replaced. */
+const IES_SUFFIX = "ies";
+
+/** Length of the "-es" plural marker. */
+const ES_LENGTH = 2;
+
+/** Length of the "-s" plural marker. */
+const S_LENGTH = 1;
+
+/** Doubled "s" at the end of a singular that must not be read as a plural. */
+const DOUBLE_S = "ss";
+
+/** The "-es" plural a silent-e singular takes, e.g. "buses" for "bus"+"e". */
+const SILENT_E_ES = "es";
+
 
 /** Shortest token left after plural stemming; guards "is" → "i". */
 const MIN_STEMMED_LENGTH = 3;
@@ -79,27 +98,84 @@ function nameTokens(name: string): string[] {
 }
 
 /**
+ * Returns `stem` when it is still a word, otherwise the untouched token.
+ *
+ * Guarding here rather than at each call site is what stops a short word from
+ * collapsing into a fragment when a suffix happens to match it.
+ */
+function orUnchanged(stem: string, token: string): string {
+  return stem.length < MIN_STEMMED_LENGTH ? token : stem;
+}
+
+/**
  * Stem one lowercase token to its singular form.
  *
+ * Three rules, applied in order, each removing EXACTLY the characters the plural
+ * added: "-ies" becomes "y"; a sibilant head plus "es" drops just the "-es";
+ * anything else ending in "s" drops that single "s". Getting the removed length
+ * right is the whole point — stripping a matched ending rather than the added
+ * characters turned "classes" into "cla" and "matches" into "mat".
+ *
  * @param token - A lowercase, punctuation-free token.
- * @returns The singular form, or the token unchanged when no suffix applies.
+ * @returns The singular form, or the token unchanged when no rule applies.
  */
 function stemPlural(token: string): string {
   if (token.length <= MIN_STEMMED_LENGTH) {
     return token;
   }
-  for (const suffix of PLURAL_SUFFIXES) {
-    if (!token.endsWith(suffix)) {
-      continue;
-    }
-    const stem = token.slice(0, token.length - suffix.length);
-    if (stem.length < MIN_STEMMED_LENGTH) {
-      return token;
-    }
-    // "-ies" restores the "y" it replaced: "queries" → "query".
-    return suffix === "ies" ? `${stem}y` : stem;
+  if (token.endsWith(IES_SUFFIX)) {
+    const stem = token.slice(0, token.length - IES_SUFFIX.length);
+    return stem.length < MIN_STEMMED_LENGTH ? token : `${stem}y`;
+  }
+  const sibilantStem = sibilantEsStem(token);
+  if (sibilantStem !== undefined) {
+    return sibilantStem;
+  }
+  if (token.endsWith("s")) {
+    return stemNonSibilantS(token);
   }
   return token;
+}
+
+/**
+ * The stem of an "-es" plural whose singular ends in a sibilant.
+ *
+ * Requires the token to END in "es", so a bare "-s" plural never matches here.
+ *
+ * @returns The stem with the "-es" removed, or `undefined` when this is not a
+ *   sibilant "-es" plural.
+ */
+function sibilantEsStem(token: string): string | undefined {
+  if (!token.endsWith("es")) {
+    return undefined;
+  }
+  const withoutEs = token.slice(0, token.length - ES_LENGTH);
+  if (!SIBILANT_HEADS.some((head) => withoutEs.endsWith(head))) {
+    return undefined;
+  }
+  return orUnchanged(withoutEs, token);
+}
+
+/**
+ * Resolves the trailing "-s" of a token that is not a sibilant "-es" plural.
+ *
+ * Dropping exactly one "s" is what makes a silent-e singular fold correctly:
+ * "databases" → "database", "notes" → "note", "vectors" → "vector". A doubled-"s"
+ * singular is left untouched so "class" is never read as a plural.
+ *
+ * KNOWN LIMITATION: a singular that itself ends in "s" ("bus" → "buses") yields
+ * "buse" rather than "bus". The two cases are not distinguishable — "databases" and
+ * "buses" both end in "ses", one adding "-s" to a silent-e stem and the other
+ * adding "-es" to an s-ending stem — and resolving them the other way would turn
+ * "databases" into "databas". Choosing the silent-e reading means this pair stays a
+ * false SPLIT, which is visible and recoverable; the alternative risks a false MERGE,
+ * which is silent and permanent.
+ */
+function stemNonSibilantS(token: string): string {
+  if (token.endsWith(DOUBLE_S)) {
+    return token;
+  }
+  return orUnchanged(token.slice(0, token.length - S_LENGTH), token);
 }
 
 /**
