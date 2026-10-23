@@ -10,7 +10,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { createWikiDimension } from "../../src/dimensions/wiki.js";
+import { createWikiDimension } from "../../src/dimensions/wiki/index.js";
 import type { DimensionInput } from "../../src/dimensions/types.js";
 
 /** Minimal document for one source. */

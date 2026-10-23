@@ -45,6 +45,16 @@ export interface IngestOutcome {
   readonly record: OutboxRecord;
   /** What each dimension reported, keyed by dimension name. */
   readonly summaries: ReadonlyMap<string, string>;
+  /**
+   * File-write outcome reported by a dimension, if any has one.
+   *
+   * `ingest` surfaces created / updated / unchanged to its caller, and only a
+   * file-backed dimension knows it. Kept separate from `summaries` so callers do
+   * not parse presentation text to recover a behavioural value.
+   */
+  readonly writeStatus?: "created" | "updated" | "unchanged";
+  /** Path the file-backed dimension wrote, when one did. */
+  readonly artifactPath?: string;
 }
 
 /** Build a pending outbox record for the dimensions about to run. */
@@ -152,10 +162,19 @@ export async function ingestDimensions(
   const committed: OutboxRecord = { ...record, status: "committed" };
   await saveRecord(root, committed);
   const summaries = new Map<string, string>();
+  let writeStatus: IngestOutcome["writeStatus"];
+  let artifactPath: string | undefined;
   for (const run of runs) {
-    if (run.committed !== null) {
-      summaries.set(run.dimension.name, run.committed.summary);
-    }
+    if (run.committed === null) continue;
+    summaries.set(run.dimension.name, run.committed.summary);
+    // First dimension to report wins; today only `wiki` writes files.
+    writeStatus ??= run.committed.writeStatus;
+    artifactPath ??= run.committed.artifactPath;
   }
-  return { record: committed, summaries };
+  return {
+    record: committed,
+    summaries,
+    ...(writeStatus === undefined ? {} : { writeStatus }),
+    ...(artifactPath === undefined ? {} : { artifactPath }),
+  };
 }

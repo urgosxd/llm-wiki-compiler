@@ -16,9 +16,9 @@ export type {
   PreparedWrite,
 } from "./types.js";
 
-export { createWikiDimension } from "./wiki.js";
-export { createKgDimension } from "./kg.js";
-export type { KgDimensionOptions } from "./kg.js";
+export { createWikiDimension } from "./wiki/index.js";
+export { createKgDimension } from "./kg/index.js";
+export type { KgDimensionOptions } from "./kg/index.js";
 
 export { ingestDimensions } from "./coordinator.js";
 export type { IngestOutcome } from "./coordinator.js";

@@ -44,7 +44,7 @@ import type {
   Dimension,
   DimensionInput,
   PreparedWrite,
-} from "./types.js";
+} from "../types.js";
 
 /** Seconds to wait for the graph database before giving up. */
 const DB_CONNECT_TIMEOUT_SECONDS = 10;

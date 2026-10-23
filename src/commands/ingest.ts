@@ -13,7 +13,7 @@ import path from "path";
 import { readFile } from "fs/promises";
 import { createHash } from "node:crypto";
 import { buildFrontmatter } from "../utils/markdown.js";
-import { saveSource } from "../utils/source-writer.js";
+import { ingestDimensions, resolveDimensions } from "../dimensions/index.js";
 import { appendLog } from "../utils/activity-log.js";
 import { MAX_SOURCE_CHARS, MIN_SOURCE_CHARS, SOURCES_DIR, IMAGE_EXTENSIONS, TRANSCRIPT_EXTENSIONS } from "../utils/constants.js";
 import * as output from "../utils/output.js";
@@ -278,6 +278,37 @@ export function journalSavedPath(savedPath: string, pathApi = path): string {
 }
 
 /**
+ * Write one document to every enabled dimension, atomically.
+ *
+ * Ingest is a TRANSACTION across dimensions, not a sequence of independent
+ * writes: whichever dimension commits first can be rolled back if a later one
+ * fails, so a source is never left in the wiki when the graph write threw. The
+ * coordinator owns that ordering and compensation; this helper only adapts the
+ * ingest caller's shape (title, document, body) to the dimension port and
+ * unwraps what the caller needs back.
+ *
+ * Dimensions come from `LLMWIKI_DIMENSIONS`; unset means wiki only, so this is
+ * behaviour-preserving for projects that never asked for a graph.
+ */
+async function writeToDimensions(
+  root: string,
+  title: string,
+  source: string,
+  document: string,
+  body: string,
+): Promise<{ savedPath: string; writeStatus: NonNullable<IngestResult["writeStatus"]> }> {
+  const outcome = await ingestDimensions(
+    root,
+    { source, title, document, body },
+    resolveDimensions({ root }),
+  );
+  if (outcome.artifactPath === undefined) {
+    throw new Error(`no file-backed dimension reported a write path for ${source}`);
+  }
+  return { savedPath: outcome.artifactPath, writeStatus: outcome.writeStatus ?? "created" };
+}
+
+/**
  * Programmatic ingest entry point. Identical fetch + write logic to the CLI
  * command but returns a structured IngestResult instead of writing to stdout.
  * Used by the MCP server's ingest_source tool.
@@ -296,7 +327,7 @@ export async function ingestSource(root: string, source: string): Promise<Ingest
   const result = enforceCharLimit(content);
   enforceMinContent(result.content);
   const document = buildDocument(title, source, result, sourceType);
-  const { path: savedPath, writeStatus } = await saveSource(root, title, document, source);
+  const { savedPath, writeStatus } = await writeToDimensions(root, title, source, document, result.content);
   verbose(`saved: ${savedPath} (${result.content.length} chars extracted)`);
 
   // Journal only real writes — a no-op re-ingest must not append a log line.
@@ -341,7 +372,7 @@ export async function ingestTextSource(root: string, input: IngestTextInput): Pr
   const result = enforceCharLimit(input.text);
   enforceMinContent(result.content);
   const document = buildDocument(input.title, source, result, "file");
-  const { path: savedPath, writeStatus } = await saveSource(root, input.title, document, source);
+  const { savedPath, writeStatus } = await writeToDimensions(root, input.title, source, document, result.content);
 
   // Journal only real writes — a no-op re-ingest must not append a log line.
   if (writeStatus !== "unchanged") {

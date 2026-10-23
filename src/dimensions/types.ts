@@ -62,6 +62,27 @@ export interface CommittedWrite {
   readonly idempotencyKey: string;
   /** Short human-facing description for status output. */
   readonly summary: string;
+  /**
+   * Outcome of the underlying write, when the dimension writes files.
+   *
+   * The wiki dimension distinguishes created / updated / unchanged, and callers
+   * of `ingest` report that distinction to the user. It belongs here rather than
+   * being recovered by parsing {@link summary}: `summary` is presentation text
+   * for status output and is free to change wording, so deriving a behavioural
+   * fact from it would break silently the first time someone reworded it.
+   *
+   * Optional because a dimension backed by a remote store (the graph) has no
+   * file-write status to report.
+   */
+  readonly writeStatus?: "created" | "updated" | "unchanged";
+  /**
+   * Where the dimension's output landed, for dimensions that write a file.
+   *
+   * The ingest caller builds its activity-log entry and its result filename from
+   * this path, and the file-backed dimension is the only component that knows it.
+   * Optional for the same reason as {@link writeStatus}.
+   */
+  readonly artifactPath?: string;
 }
 
 /**

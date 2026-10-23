@@ -15,8 +15,8 @@
  * never asked for one.
  */
 
-import { createKgDimension } from "./kg.js";
-import { createWikiDimension } from "./wiki.js";
+import { createKgDimension } from "./kg/index.js";
+import { createWikiDimension } from "./wiki/index.js";
 import type { Dimension, DimensionName } from "./types.js";
 
 /** Environment variable naming the enabled dimensions, comma-separated. */

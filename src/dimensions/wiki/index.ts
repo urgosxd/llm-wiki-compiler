@@ -25,26 +25,27 @@
  */
 
 import { createHash } from "node:crypto";
-import { saveSource } from "../utils/source-writer.js";
-import type { WriteStatus } from "../utils/types.js";
+import { saveSource } from "../../utils/source-writer.js";
+import type { WriteStatus } from "../../utils/types.js";
 import {
   commitBatch,
   openBatch,
   recordPreState,
   revertEntry,
   type JournalBatch,
-} from "../trust/journal.js";
+} from "../../trust/journal.js";
 import type {
   CommittedWrite,
   Dimension,
   DimensionInput,
   PreparedWrite,
-} from "./types.js";
+} from "../types.js";
 
 /** Handle carried between `prepare` and `commit` for the wiki dimension. */
 interface WikiHandle {
   readonly input: DimensionInput;
   readonly writeStatus: WriteStatus;
+  readonly savedPath: string;
   readonly batch: JournalBatch;
 }
 
@@ -82,14 +83,14 @@ export function createWikiDimension(root: string): Dimension {
       const beforeWrite = async (destinationPath: string): Promise<void> => {
         await recordPreState(batch, destinationPath);
       };
-      const { writeStatus } = await saveSource(
+      const { path: savedPath, writeStatus } = await saveSource(
         root,
         input.title,
         input.document,
         input.source,
         { beforeWrite },
       );
-      const handle: WikiHandle = { input, writeStatus, batch };
+      const handle: WikiHandle = { input, writeStatus, savedPath, batch };
       return { unchanged: writeStatus === "unchanged", handle };
     },
 
@@ -99,6 +100,8 @@ export function createWikiDimension(root: string): Dimension {
       return {
         idempotencyKey: wikiIdempotencyKey(handle.input),
         summary: `wiki:${handle.writeStatus}`,
+        writeStatus: handle.writeStatus,
+        artifactPath: handle.savedPath,
       };
     },
 
