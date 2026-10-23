@@ -34,6 +34,7 @@ import { listCandidatePage } from "../compiler/candidates.js";
 import { buildReviewsEnvelope, REVIEW_LIST_LIMIT } from "./reviews.js";
 import { tryRenderBody, writeJson, writeJsonError, writeRenderFailed } from "./respond.js";
 import type { ViewerSnapshot } from "./types.js";
+import { listenOn } from "../utils/http-listen.js";
 import { buildViewerSnapshot } from "./snapshot.js";
 import { handleApiWorkflowRun, type ViewerDeps } from "./workflow-run-projection.js";
 import { handleApiStageOutput, parseStageOutputPath } from "./workflow-artifact.js";
@@ -95,19 +96,7 @@ export async function startViewerServer(
       }
     });
   });
-  await new Promise<void>((resolve, reject) => {
-    const onError = (err: Error): void => {
-      server.off("listening", onListening);
-      reject(err);
-    };
-    const onListening = (): void => {
-      server.off("error", onError);
-      resolve();
-    };
-    server.once("error", onError);
-    server.once("listening", onListening);
-    server.listen(config.port, config.host);
-  });
+  await listenOn(server, config.port, config.host);
   const address = server.address() as AddressInfo | null;
   if (!address) throw new Error("server bound but address is null");
   boundConfig.port = address.port;
@@ -161,6 +150,33 @@ export async function startViewer(
  * That ordering closes the DNS-rebind / cross-site leakage gap the
  * naive "404 first, then security" flow would leave behind.
  */
+/** Mount point signature for a host that owns the listener. */
+export type ViewerRequestHandler = (
+  req: IncomingMessage,
+  res: ServerResponse,
+) => Promise<void>;
+
+/**
+ * Build the request handler without binding a listener.
+ *
+ * `startViewerServer` owns its own `http.Server`, which makes the viewer
+ * impossible to mount inside a larger host. Splitting the handler out lets a
+ * host share one listener and one lifecycle while this module keeps ownership
+ * of headers, origin policy and route dispatch.
+ *
+ * @param snapshot - Frozen startup snapshot the routes read from.
+ * @param config - Bound server config; `port` is unused by the handler itself.
+ * @param deps - Injected collaborators for tests and the workflow projection.
+ */
+export function createViewerHandler(
+  snapshot: ViewerSnapshot,
+  config: ViewerServerConfig,
+  deps: ViewerDeps = {},
+): ViewerRequestHandler {
+  const boundConfig: ViewerServerConfig = { ...config };
+  return (req, res) => handleRequest(req, res, snapshot, boundConfig, deps);
+}
+
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,

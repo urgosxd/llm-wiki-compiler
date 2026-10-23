@@ -1,0 +1,194 @@
+/**
+ * @file src/host/server.ts
+ * @description One HTTP listener hosting two sub-applications with deliberately
+ * different security regimes.
+ *
+ * ## Why this exists
+ *
+ * The project grew two servers that could never be one server. The viewer and the
+ * knowledge graph differ in ways that are decisions, not accidents:
+ *
+ * | | viewer | knowledge graph |
+ * | --- | --- | --- |
+ * | Trust boundary | Origin / Sec-Fetch-Site, fail-CLOSED (403) | X-API-Key, fail-OPEN when unset |
+ * | `/health` shape | rich counts (`/api/health`) | pinned `{status, service, version}` |
+ * | Error envelope | `writeJsonError(code, message)` | FastAPI `{detail}` |
+ *
+ * So this module does NOT merge them. It shares what can be shared — one
+ * listener, one lifecycle, one shutdown path — and mounts each sub-app with its
+ * own policy intact. The KG is a fidelity port measured against a live Python
+ * oracle; rewriting it inside a unified pipeline would be rewriting the port.
+ *
+ * ## The trust boundary is per-mount, not per-listener
+ *
+ * The chosen boundary is fail-open for the graph routes and fail-closed for the
+ * viewer. That is expressed by WHERE each policy runs: the viewer handler applies
+ * its origin check to every request it receives, and the graph app is mounted
+ * under a path prefix that the viewer never sees. A single listener therefore
+ * never has to pick one policy for both — the split is by mount, which is the
+ * only honest way to hold two answers at once.
+ *
+ * ## Route ownership
+ *
+ * The two sub-apps do not collide: the viewer owns `/` and `/api/**`, the graph
+ * owns `/health`, `/stacks`, `/aks/v1/**`, `/documents`, and the ingest and
+ * synthesize paths it declares absolutely. The host adds `/host/health`, which
+ * aggregates both probes, and leaves every other path to the mounted apps.
+ *
+ * ## What is deliberately NOT here
+ *
+ * No database connection of its own: the graph app already owns its pool, and a
+ * second pool for liveness would double the connections for no information.
+ * No snapshot refresh: the frozen snapshot is a security property, not a
+ * performance choice — a reloaded snapshot would authorize serving bytes that
+ * changed after startup.
+ */
+import http from "node:http";
+import { listenOn } from "../utils/http-listen.js";
+import type { AddressInfo } from "node:net";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { createApp } from "../../packages/llmwiki-kg/ts/src/server.js";
+
+/** The graph sub-app type, derived so this module needs no direct express import. */
+type GraphApp = ReturnType<typeof createApp>;
+import { createViewerHandler, type ViewerRequestHandler } from "../viewer/server.js";
+import type { ViewerSnapshot } from "../viewer/types.js";
+import type { ViewerDeps } from "../viewer/workflow-run-projection.js";
+
+/** Default port when the caller does not pin one. `0` asks the OS for a free port. */
+const DEFAULT_HOST_PORT = 4173;
+/** Default bind address: loopback, because a viewer exposes project contents. */
+const DEFAULT_HOST_ADDRESS = "127.0.0.1";
+
+/** How the host composes its two sub-apps. */
+export interface HostOptions {
+  /** Frozen viewer snapshot; built by the caller so startup cost stays explicit. */
+  readonly viewerSnapshot: ViewerSnapshot;
+  /** Bind host; loopback unless the caller opts into a wider bind. */
+  readonly host?: string;
+  /** Bind port; `0` lets the OS pick one. */
+  readonly port?: number;
+  /** Viewer collaborator overrides, passed straight through. */
+  readonly viewerDeps?: ViewerDeps;
+  /**
+   * Mount the graph sub-app.
+   *
+   * Defaults to TRUE: the graph is part of the served surface. A caller that
+   * cannot reach a database can still ask for the viewer alone, and does so
+   * explicitly rather than by leaving an environment variable unset — an
+   * implicit "no database means no mount" would make the served surface depend on
+   * ambient state.
+   */
+  readonly includeGraph?: boolean;
+}
+
+/** A running host: both sub-apps behind one listener with one close path. */
+export interface HostHandle {
+  /** Actual bound port; resolves a `port: 0` request. */
+  readonly port: number;
+  /** Actual bound host. */
+  readonly host: string;
+  /** Graceful shutdown; resolves once the listener drains. */
+  close(): Promise<void>;
+}
+
+/**
+ * The graph sub-app, mounted as an Express instance.
+ *
+ * `createApp()` builds without binding a port and keeps the router factories'
+ * dependency injection, so the fidelity-tested internals are reused unchanged.
+ */
+function createGraphApp(): GraphApp {
+  return createApp();
+}
+
+/**
+ * Dispatch one request to whichever sub-app owns it.
+ *
+ * The viewer receives everything the graph does not claim. That is what makes the
+ * viewer's origin policy apply to the paths the viewer actually serves, while the
+ * graph keeps its own fail-open authentication on its own paths.
+ *
+ * @param graph - Mounted graph app, or undefined when the caller omitted it.
+ * @param viewer - Viewer handler, already bound to snapshot and config.
+ */
+function createDispatcher(graph: GraphApp | undefined, viewer: ViewerRequestHandler) {
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    if (graph !== undefined && isGraphPath(req.url)) {
+      // The graph app is a full Express app; handing it the request keeps its
+      // middleware order (cors, 405 shim, json parser) exactly as tested.
+      graph(req, res);
+      return;
+    }
+    viewer(req, res).catch(() => {
+      // The viewer's own routes emit their error envelopes; reaching here means an
+      // unexpected failure and the socket may already be half-written.
+      if (!res.headersSent) res.statusCode = 500;
+      res.end();
+    });
+  };
+}
+
+/**
+ * Paths the graph owns.
+ *
+ * A prefix test, not a regex per route: the graph mounts routers at several
+ * depths including absolute root paths, so enumerating them here would duplicate
+ * knowledge the graph itself already encodes. Prefixes are matched on segment
+ * boundaries so `/healthz` is not mistaken for `/health`.
+ */
+const GRAPH_PATH_PREFIXES = ["/health", "/stacks", "/aks", "/documents", "/ingest", "/synthesize"] as const;
+
+/** Does the graph sub-app own this URL? */
+function isGraphPath(url: string | undefined): boolean {
+  if (url === undefined) return false;
+  const pathname = url.split("?")[0] ?? "/";
+  return GRAPH_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+/**
+ * Start the host and its listener.
+ *
+ * @param options - Snapshot, bind address, and sub-app selection.
+ */
+export async function startHost(options: HostOptions): Promise<HostHandle> {
+  const host = options.host ?? DEFAULT_HOST_ADDRESS;
+  const port = options.port ?? DEFAULT_HOST_PORT;
+
+  const graph = options.includeGraph === false ? undefined : createGraphApp();
+  // The viewer validates the incoming `Host` header against this exact value, so it
+  // must carry the port the listener ACTUALLY bound. Passing the requested port
+  // would leave `port: 0` in the config and reject every request with a 403 for a
+  // host it considers unacceptable — a bind-time detail leaking into an
+  // authentication decision, which is why the config is built after binding.
+  const viewerHolder: { handler?: ViewerRequestHandler } = {};
+  const server = http.createServer((req, res) => {
+    const handler = viewerHolder.handler;
+    if (handler === undefined) {
+      res.statusCode = 503;
+      res.end();
+      return;
+    }
+    createDispatcher(graph, handler)(req, res);
+  });
+
+  await listenOn(server, port, host);
+  const address = server.address() as AddressInfo | null;
+  if (address === null) throw new Error("host bound but address is null");
+  viewerHolder.handler = createViewerHandler(
+    options.viewerSnapshot,
+    { host, port: address.port },
+    options.viewerDeps ?? {},
+  );
+
+  return {
+    host,
+    port: address.port,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+      }),
+  };
+}
