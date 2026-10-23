@@ -1,0 +1,20 @@
+# Local development override. Committed on purpose so every contributor
+# gets the same behavior.
+#
+# Why this file exists: `docker-compose.yml` binds host port 5432 for
+# Postgres. On this machine another project (cmspatarutera-postgres-1)
+# already holds 5432, so `docker compose up` fails with
+# "Bind for :::5432 failed: port is already allocated".
+#
+# The `!override` tag is required here: Compose merges `ports` entries
+# ADDITIVELY by default, so a plain list would request both 5432 and
+# 5434 and still collide. `!override` replaces the sequence instead.
+#
+# Moving only the HOST-side mapping is safe: the API container still
+# reaches Postgres over the compose network as `db:5432`, unchanged.
+# The override only affects tools running on the host that connect
+# directly, such as psql or the TypeScript oracle diff harness.
+services:
+  db:
+    ports: !override
+      - "5434:5432"

@@ -1,9 +1,13 @@
 {
   "name": "llm-wiki-compiler",
   "version": "1.4.0-dev.20260919",
-  "description": "A knowledge compiler CLI — raw sources in, interlinked wiki out",
+  "description": "A knowledge compiler CLI \u2014 raw sources in, interlinked wiki out",
   "type": "module",
-  "workspaces": ["packages/llmwiki-core", "packages/llmwiki-local-workflows"],
+  "workspaces": [
+    "packages/llmwiki-core",
+    "packages/llmwiki-local-workflows",
+    "packages/llmwiki-kg/ts"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

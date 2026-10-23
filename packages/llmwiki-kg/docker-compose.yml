@@ -1,0 +1,46 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: aks
+      POSTGRES_PASSWORD: aks
+      POSTGRES_DB: aks
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aks"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://aks:aks@db:5432/aks
+      AKS_API_KEY: ${AKS_API_KEY:-}
+
+      # Provider selection
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
+      EXTRACTION_PROVIDER: ${EXTRACTION_PROVIDER:-anthropic}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EXTRACTION_MODEL: ${EXTRACTION_MODEL:-claude-sonnet-4-5}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
+
+      # Provider credentials
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GATEWAY_URL: ${GATEWAY_URL:-}
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/code/uploads
+
+volumes:
+  postgres_data:
