@@ -42,6 +42,7 @@
     "src/eval/**",
     "src/export/**",
     "src/freshness/**",
+    "src/host/**",
     "src/import/**",
     "src/index.ts",
     "src/ingest/**",
@@ -68,6 +69,7 @@
     "src/wiki/**",
     "src/workflows/**",
     "test-typecheck-baseline.json",
+    "test/host/**",
     "tsconfig*.json",
     "tsup.config.ts",
     "vitest.config.ts"
