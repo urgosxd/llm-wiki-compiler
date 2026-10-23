@@ -10,7 +10,7 @@ import { createRequire } from "module";
 import { Command } from "commander";
 import { ingestCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { ingestSessionCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { viewCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { hostCommand, viewCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { visualizeCommand, type VisualizeOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { compileCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { rmCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
@@ -92,6 +92,27 @@ program
     try {
       setVerbose(verboseEnabled(options.verbose));
       await ingestSessionCommand(targetPath);
+    } catch (err) {
+      console.error(`\x1b[31mError:\x1b[0m ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("host")
+  .description("Start the unified HTTP server (viewer, graph, and /api/ingest + /api/compile)")
+  .option("--port <port>", "Port to bind (default 0 — OS-assigned)")
+  .option("--host <host>", "Host to bind (requires --allow-lan; default 127.0.0.1)")
+  .option("--allow-lan", "Bind beyond loopback (requires --host); off by default for privacy")
+  .option("--no-graph", "Serve without the knowledge-graph sub-app (no database required)")
+  .action(async (options: { port?: string; host?: string; allowLan?: boolean; graph?: boolean }) => {
+    try {
+      // Commander maps `--no-graph` onto `graph: false`, so the opt-out has to be
+      // read as its negation rather than as a `noGraph` flag.
+      await hostCommand({
+        ...options,
+        ...(options.graph === false ? { noGraph: true } : {}),
+      });
     } catch (err) {
       console.error(`\x1b[31mError:\x1b[0m ${err instanceof Error ? err.message : err}`);
       process.exit(1);

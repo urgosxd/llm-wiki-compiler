@@ -13,24 +13,7 @@
 
 import { spawn } from "child_process";
 import { startViewer } from "../viewer/server.js";
-
-const LOOPBACK_HOST = "127.0.0.1";
-
-/**
- * Bind hosts that listen on every interface. We reject these in v1
- * because the Host / Origin / Sec-Fetch-Site checks in the server are
- * built around a single canonical bind address; a wildcard bind would
- * mean any reachable interface's IP serves as a valid Host, which
- * defeats the DNS-rebind protection. A future PR can add a real
- * allowed-host model; for now, fail closed with a clear CLI error.
- */
-const WILDCARD_HOSTS = new Set([
-  "0.0.0.0",
-  "::",
-  "0:0:0:0:0:0:0:0",
-  "0000:0000:0000:0000:0000:0000:0000:0000",
-  "*",
-]);
+import { buildReadyUrl, registerShutdown, resolveBindConfig } from "./serve-bind.js";
 
 /** Parsed CLI options. */
 interface ViewCommandOptions {
@@ -72,74 +55,3 @@ function openInBrowser(url: string): void {
   child.unref();
 }
 
-/**
- * Apply the spec's host/port symmetry: `--allow-lan` and `--host`
- * together unlock non-loopback bind; either alone is a fatal error.
- */
-function resolveBindConfig(options: ViewCommandOptions): { host: string; port: number } {
-  const hostFlag = typeof options.host === "string" && options.host.length > 0;
-  const allowLan = options.allowLan === true;
-  assertHostAllowLanSymmetry(hostFlag, allowLan);
-  const host = hostFlag ? (options.host as string) : LOOPBACK_HOST;
-  assertHostNotWildcard(host);
-  return { host, port: parsePort(options.port) };
-}
-
-/** Reject `--host` and `--allow-lan` being supplied independently. */
-function assertHostAllowLanSymmetry(hostFlag: boolean, allowLan: boolean): void {
-  if (hostFlag === allowLan) return;
-  throw new Error(
-    "Privacy gate: --host and --allow-lan must be supplied together. " +
-      "Use both to bind beyond loopback, or neither to keep the viewer on 127.0.0.1.",
-  );
-}
-
-/** Reject wildcard binds that would defeat DNS-rebind protection. */
-function assertHostNotWildcard(host: string): void {
-  if (!WILDCARD_HOSTS.has(host)) return;
-  throw new Error(
-    `--host ${host} is not supported: wildcard binds defeat the viewer's DNS-rebind protection. ` +
-      "Use a specific interface IP (e.g. 192.168.1.10) instead.",
-  );
-}
-
-/**
- * Build the readiness-line URL. IPv6 literal hosts must be bracketed
- * (`http://[::1]:PORT/`) per RFC 3986 — bare `http://::1:PORT/` is a
- * malformed URL and won't open in a browser. Heuristic for "literal
- * IPv6": a colon in the host portion (domain names + IPv4 dotted
- * quads never contain `:`).
- */
-function buildReadyUrl(host: string, port: number): string {
-  if (host.includes(":")) return `http://[${host}]:${port}`;
-  return `http://${host}:${port}`;
-}
-
-/** Coerce the optional --port string into a non-negative integer. */
-function parsePort(raw: string | number | undefined): number {
-  if (raw === undefined) return 0;
-  const value = typeof raw === "number" ? raw : Number(raw);
-  if (!isValidPort(value)) {
-    throw new Error(`Invalid --port value: ${raw}`);
-  }
-  return value;
-}
-
-/** True when `value` is an integer in the legal TCP port range [0, 65535]. */
-function isValidPort(value: number): boolean {
-  return Number.isInteger(value) && value >= 0 && value <= 65535;
-}
-
-/** Install SIGINT/SIGTERM handlers that close the server gracefully. */
-function registerShutdown(close: () => Promise<void>): void {
-  const shutdown = async (): Promise<void> => {
-    try {
-      await close();
-      process.exit(0);
-    } catch {
-      process.exit(1);
-    }
-  };
-  process.once("SIGINT", () => void shutdown());
-  process.once("SIGTERM", () => void shutdown());
-}

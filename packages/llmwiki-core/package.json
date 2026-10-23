@@ -3,7 +3,9 @@
   "description": "Engine-free llmwiki knowledge and domain SDK",
   "version": "1.4.0-dev.20260919",
   "type": "module",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
@@ -57,6 +59,7 @@
     "canonicalize": "^3.0.0",
     "chokidar": "^4.0.0",
     "commander": "^13.0.0",
+    "express": "^5.1.0",
     "js-yaml": "^4.3.0",
     "jsdom": "^25.0.0",
     "markdown-it": "^14.3.0",

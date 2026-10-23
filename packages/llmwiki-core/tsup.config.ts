@@ -18,6 +18,11 @@ export default defineConfig({
   outDir: "dist",
   format: ["esm"],
   target: "node24",
+  // `express` arrives through `hostCommand`, which mounts the vendored graph app.
+  // Express and its CJS transitive deps (`debug` -> `tty`) cannot be bundled into
+  // an ESM output: esbuild turns their `require` calls into a dynamic-require shim
+  // that throws at import time. External so Node resolves them at runtime.
+  external: ["express"],
   splitting: true,
   sourcemap: true,
   clean: true,
