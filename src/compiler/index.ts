@@ -127,6 +127,9 @@ export async function compileAndReport(
     return {
       ...emptyCompileResult(),
       errors: ["Could not acquire .llmwiki/lock — another compile is in progress."],
+      // Machine-readable counterpart to the message above, so transports can
+      // answer 409 without pattern-matching prose.
+      busy: true,
     };
   }
 

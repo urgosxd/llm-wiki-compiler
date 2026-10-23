@@ -169,6 +169,16 @@ export interface CompileResult {
     held: ReviewedCandidateRef[];
     forced: ReviewedCandidateRef[];
   };
+  /**
+   * Set when the run never started because another mutation held the lock.
+   *
+   * A flag rather than only an `errors` string because callers must BRANCH on it:
+   * an HTTP handler answers 409 and invites a retry, while a genuine compile
+   * failure is a different status entirely. Prose cannot be branched on reliably,
+   * and `errors` is populated for ordinary failures too, so its presence is not a
+   * discriminator.
+   */
+  busy?: true;
 }
 
 /** Candidate reference returned in CompileResult.review. */
