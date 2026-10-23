@@ -24,6 +24,8 @@
     "release:check-docs": "node scripts/check-release-docs.mjs",
     "release:check-docs:current": "node scripts/check-release-docs.mjs --current-version",
     "test": "vitest run",
+    "test:unit": "vitest run $(node scripts/test-partition.ts unit | tr '\\n' ' ')",
+    "test:integration": "vitest run $(node scripts/test-partition.ts integration | tr '\\n' ' ')",
     "test:affected": "node scripts/run-affected-tests.ts",
     "test:watch": "vitest",
     "typecheck:tests": "node scripts/typecheck-tests.ts",

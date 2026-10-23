@@ -18,3 +18,5 @@ localdocs/
 # my-wiki/wiki/ and my-wiki/sources/ would otherwise be tracked.
 *-wiki/
 docs/superpowers/
+# Local Pi runtime state
+.atl/

@@ -17,6 +17,24 @@ const exec = promisify(execFile);
 /** Absolute path to the compiled CLI entry point. */
 export const CLI = path.resolve("dist/cli.js");
 
+/**
+ * Environment that enables Node's on-disk compile cache for the subprocess.
+ *
+ * Every spawned CLI recompiles the same module graph from scratch, and this
+ * suite spawns the CLI 544 times. The cache persists V8 code-cache entries under
+ * the git-ignored `.llmwiki/`, cutting a cold `node dist/cli.js` from ~0.72s to
+ * ~0.56s on repeat runs — a saving paid back on every spawn. It is scoped to
+ * tests only: production invocations keep Node's default behaviour.
+ *
+ * A caller-supplied `NODE_COMPILE_CACHE` still wins, so a developer can point it
+ * at a shared directory (or unset it to measure a true cold start).
+ */
+function compileCacheEnv(): NodeJS.ProcessEnv {
+  if (process.env.NODE_COMPILE_CACHE) return {};
+  // Resolved against the repo root (vitest's cwd), not the per-test temp cwd.
+  return { NODE_COMPILE_CACHE: path.resolve(".llmwiki/node-compile-cache") };
+}
+
 /** Result shape returned by {@link runCLI}. */
 export interface CLIResult {
   stdout: string;
@@ -107,7 +125,7 @@ export async function runCLI(
 
     const { stdout, stderr } = await exec(process.execPath, [CLI, ...args], {
       cwd,
-      env: { ...process.env, ...envOverrides },
+      env: { ...process.env, ...envOverrides, ...compileCacheEnv() },
     });
     return {
       stdout,
