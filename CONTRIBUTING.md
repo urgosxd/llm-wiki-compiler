@@ -49,17 +49,52 @@ checks an installed consumer outside workspace aliases.
 ### Build and Test
 
 ```bash
-npm run build    # Compile TypeScript
-npm test         # Run all tests
-npm run dev      # Watch mode for development
+npm run build            # Compile TypeScript
+npm test                 # Run all tests (~10 min: use test:unit while iterating)
+npm run test:unit        # Tests that never spawn a CLI subprocess (~5 min)
+npm run test:integration # Tests that spawn `node dist/cli.js` (~5 min)
+npx vitest related <file>  # Only the tests touching one source file (seconds)
+npm run dev              # Watch mode for development
 ```
 
-**Automatic checks via git hooks:**
+**Why the suite is slow, and how to stay fast.** The suite is tail-dominated:
+the median test file finishes in 0.24s, but 131 files spawn a CLI subprocess
+(544 spawn sites total) and average 13.7s each because every `node dist/cli.js`
+costs ~1.5s of cold start. Those 131 files are 54% of all test time. The tiers
+are computed by content, not filename — `scripts/test-partition.ts` detects the
+spawn constructs, so no slow file hides in the fast tier.
+
+During development prefer `npx vitest related <file-changed>` and run
+`npm run test:unit` before pushing. `npm test` remains the pre-push and CI gate
+and runs every file.
+
+The build in `test/global-setup.ts` is cached: a content hash of `src/`,
+`packages/`, and the tsup configs in `.llmwiki/build-stamp.json` skips the ~42s
+tsup run when nothing changed, so a single-file run drops from ~48s to under a
+second. Set `LLMWIKI_TEST_FORCE_BUILD=1` to force a rebuild.
+
+**Where each gate lives:**
+
+The full suite runs in **CI**, on every push to main and every pull request
+(`.github/workflows/ci.yml`). That is the ground truth and it is not duplicated
+locally: a pre-push hook that re-ran all 1313 files added ~9 minutes to every
+push to repeat a check the push itself triggers seconds later.
 
 After `npm install`, husky wires up hooks that run automatically:
 
 - **pre-commit** — `fallow` (codebase health) and `npx tsc --noEmit` (type check)
-- **pre-push** — `npm run build` and `npm test`
+- **pre-push** — `npm run build` and `npm run test:affected`
+
+`test:affected` resolves what changed since the merge-base with the canonical
+main (`upstream/main` when a fork remote exists, else `origin/main`, matching
+`scripts/fallow-ci.sh`) and runs `vitest related` over those files, so only tests
+that import the changed code run. It escalates to the full `test:unit` tier when
+a change has suite-wide reach — `package.json`, `package-lock.json`,
+`vitest.config.ts`, `tsconfig*.json`, or anything under `scripts/` — because
+narrowing there would be a false negative.
+
+Run `npm test` locally whenever you want the exhaustive pass, for example before
+opening a PR or after a wide refactor.
 
 If a hook fails, fix the underlying issue rather than bypassing with `--no-verify`. Use `fallow fix --yes` to auto-fix unused exports, then address remaining issues manually.
 

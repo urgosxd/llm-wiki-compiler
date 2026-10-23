@@ -24,6 +24,7 @@
     "release:check-docs": "node scripts/check-release-docs.mjs",
     "release:check-docs:current": "node scripts/check-release-docs.mjs --current-version",
     "test": "vitest run",
+    "test:affected": "node scripts/run-affected-tests.ts",
     "test:watch": "vitest",
     "typecheck:tests": "node scripts/typecheck-tests.ts",
     "typecheck:tests:update": "node scripts/typecheck-tests.ts --update",

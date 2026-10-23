@@ -33,13 +33,36 @@ A knowledge compiler CLI. Raw sources in, interlinked wiki out.
 - Keep comments up-to-date with code changes
 - Document any non-obvious behavior
 
+### Test Execution Policy
+
+The full suite takes ~9 minutes across 1300+ files and belongs to CI. Run the
+tests your change can actually affect; do not wait for the whole suite while
+iterating.
+
+1. **Iterating on code** — run the tests related to what you touched:
+   `npx vitest related <changed-file>`. This selects only files that import it.
+2. **Before considering a task complete** — run `npm run test:affected`. It diffs
+   against the merge-base and runs `vitest related` over your changes. It
+   escalates to the full `test:unit` tier automatically when the change has
+   suite-wide reach (`package.json`, `package-lock.json`, `vitest.config.ts`,
+   `tsconfig*.json`, or anything under `scripts/`), because narrowing there
+   would be a false negative.
+3. **`npm test`** — the exhaustive run. Required only when your change is
+   cross-cutting, when you suspect a coupling the related-selection cannot see,
+   or before opening a pull request. CI runs it on every push and pull request,
+   and that is the gate of record.
+
+Never claim a task complete on the strength of a partial run without saying which
+scope you ran. Report the scope and the result together.
+
 ### Pre-Commit Checks
 
 Before committing any work, and before considering any task complete, you must:
 
 1. `npx tsc --noEmit` — type-check passes
 2. `npm run build` — build succeeds
-3. `npm test` — all tests pass
+3. `npm run test:affected` — tests for what you changed pass (use `npm test` when
+   the change is cross-cutting or before opening a PR; see Test Execution Policy)
 4. `fallow` — run the fallow codebase health analyzer. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit until fallow reports no issues.
 
 ## General Rules
