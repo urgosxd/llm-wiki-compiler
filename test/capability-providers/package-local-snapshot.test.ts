@@ -11,8 +11,8 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { installLocalProvider } from "../../src/capability-providers/packages/local-install.js";
 import type { LocalProviderSnapshotOptions } from "../../src/capability-providers/packages/local-snapshot.js";
-import { authorizeProviderPathsForTest } from "../../src/capability-providers/packages/paths.js";
 import { readProviderInstallState } from "../../src/capability-providers/packages/state-store.js";
+import { authorizedProviderRoots } from "./provider-roots.js";
 import {
   providerDistribution, removeProviderFixtureRoot,
 } from "../fixtures/capability-provider-package.js";
@@ -71,14 +71,11 @@ async function localFixture() {
   const fixture = providerDistribution();
   const root = await temporaryRoot();
   const sourceRoot = path.join(root, "source");
-  await mkdir(path.join(root, "config"));
-  await mkdir(path.join(root, "cache"));
   await mkdir(path.join(sourceRoot, "bin"), { recursive: true });
   await writeFile(path.join(sourceRoot, "bin/provider"), "provider-bytes");
-  const paths = await authorizeProviderPathsForTest({
-    configRoot: path.join(root, "config"), cacheRoot: path.join(root, "cache"),
-    nowForTest: () => new Date("2026-07-17T12:00:00Z"),
-  } as never);
+  // The shared helper owns the 0700 detail: a bare mkdir yields 0775 under a
+  // permissive umask and authorization correctly rejects group-writable roots.
+  const paths = await authorizedProviderRoots(root, () => new Date("2026-07-17T12:00:00Z"));
   return { fixture, paths, sourceRoot, root };
 }
 

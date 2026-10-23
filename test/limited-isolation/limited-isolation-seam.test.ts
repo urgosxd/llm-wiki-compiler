@@ -35,7 +35,7 @@ import {
   phaseStates, readPhaseOutput, resultReason, stageCompiledAction, stagedRunTracker,
 } from "../operations-packs/runtime-fixture.js";
 import {
-  countingListener, isolationToolPresent, outerCanReach, type CountingListenerV1,
+  countingListener, outerCanReach, witnessRunnable, type CountingListenerV1,
 } from "./net-probe-fixture.js";
 import {
   cleanupSeamScratch, compileProbeAction, driveSeam, drivenExtractTitles, installProbeProvider,
@@ -82,14 +82,11 @@ async function arrangeProbeRun() {
 }
 
 describe("the limited-isolation backend integrates at the standard pack seam", () => {
-  it("confines a provider run end to end: the durable output reports both controls held", async () => {
-    // On the declared matrix (linux+macos) the isolation tool MUST be present:
-    // a silent skip would let green CI witness nothing (ci.yml provisions bwrap).
-    if (!isolationToolPresent()) {
-      const declaredMatrix = process.platform === "darwin" || process.platform === "linux";
-      expect(declaredMatrix, "the isolation tool is absent on a DECLARED platform").toBe(false);
-      return;
-    }
+  it("confines a provider run end to end: the durable output reports both controls held", async (ctx) => {
+    // Runnable only where the platform can actually isolate: a missing tool on
+    // the declared Linux/macOS matrix fails here, while a host that forbids
+    // namespaces skips with its cause named. See witnessRunnable.
+    if (!witnessRunnable(ctx, expect)) return;
     const { staged, canary, myListener, myProvider } = await arrangeProbeRun();
     // The probe's report, off the run's own evidence store — not the backend's.
     const titles = await drivenExtractTitles(staged,

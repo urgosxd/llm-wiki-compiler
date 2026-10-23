@@ -22,7 +22,7 @@ import { createFrameDecoder } from "../../src/capability-providers/runtime/frami
 import {
   IsolationUnavailableError, limitedIsolationBackend,
 } from "../../packages/llmwiki-limited-isolation-backend/src/index.js";
-import { isolationToolPresent, outerCanReach } from "./net-probe-fixture.js";
+import { outerCanReach, witnessRunnable } from "./net-probe-fixture.js";
 
 const IDENTITY = {
   providerPinDigest: `sha256:${"a".repeat(64)}`, packageDigest: `sha256:${"b".repeat(64)}`,
@@ -125,16 +125,11 @@ async function probe(): Promise<ProbeResult> {
 }
 
 describe("the limited-isolation backend enforces network-deny and scratch confinement", () => {
-  it("denies network and out-of-scratch writes, allows scratch and output writes", async () => {
-    // On the declared matrix (linux+macos) the isolation tool MUST be present:
-    // a silent skip would let green CI witness nothing. macOS ships seatbelt;
-    // Linux CI must provision bwrap (see ci.yml). Any other platform is
-    // genuinely out of scope and the positive controls do not apply.
-    if (!isolationToolPresent()) {
-      const declaredMatrix = process.platform === "darwin" || process.platform === "linux";
-      expect(declaredMatrix, "the isolation tool is absent on a DECLARED platform").toBe(false);
-      return;
-    }
+  it("denies network and out-of-scratch writes, allows scratch and output writes", async (ctx) => {
+    // Runnable only where the platform can actually isolate: a missing tool on
+    // the declared Linux/macOS matrix fails here, while a host that forbids
+    // namespaces skips with its cause named. See witnessRunnable.
+    if (!witnessRunnable(ctx, expect)) return;
     const result = await probe();
     expect(result.scratchWriteOk, "scratch write was blocked").toBe(true);
     expect(result.outputWriteOk, "output-root write was blocked").toBe(true);

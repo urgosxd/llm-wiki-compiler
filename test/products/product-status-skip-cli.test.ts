@@ -27,8 +27,11 @@ async function gateState() {
   const project = await activatedProject();
   cleanup = project.cleanup;
   const root = await realpath(project.root);
+  // Owner-private roots: a permissive umask (e.g. 0002) makes a bare mkdir
+  // yield 0775, and the provider-root authorization correctly rejects
+  // group-writable config/cache ancestors.
   await Promise.all(["test-config", "test-cache"].map(directory =>
-    mkdir(path.join(root, directory, "llmwiki"), { recursive: true })));
+    mkdir(path.join(root, directory, "llmwiki"), { recursive: true, mode: 0o700 })));
   return { root, invokeEnv: {
     XDG_CONFIG_HOME: path.join(root, "test-config"),
     XDG_CACHE_HOME: path.join(root, "test-cache"),

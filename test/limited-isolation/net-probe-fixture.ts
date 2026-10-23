@@ -11,11 +11,99 @@
 import { spawnSync } from "node:child_process";
 import net from "node:net";
 
-/** Is the platform's isolation tool available here? */
-export function isolationToolPresent(): boolean {
-  const tool = process.platform === "darwin" ? "sandbox-exec" : process.platform === "linux" ? "bwrap" : "";
+/** The isolation binary this platform ships, or "" when the platform is out of scope. */
+function isolationTool(): string {
+  if (process.platform === "darwin") return "sandbox-exec";
+  return process.platform === "linux" ? "bwrap" : "";
+}
+
+/**
+ * Is the platform's isolation tool available here?
+ *
+ * Internal on purpose: presence alone proves nothing (a host can ship bwrap and
+ * still deny namespaces), so suites gate on `witnessRunnable` rather than on
+ * this predicate.
+ */
+function isolationToolPresent(): boolean {
+  const tool = isolationTool();
   if (tool === "") return false;
   return spawnSync(tool, ["--help"], { stdio: "ignore" }).error === undefined;
+}
+
+/**
+ * Why this host cannot run the confinement witness, or `null` when it can.
+ *
+ * Two failures look alike from inside the test and must not be treated alike:
+ *
+ *  - `tool-absent`   — no isolation binary. On the declared Linux/macOS matrix
+ *                      CI provisions one, so absence is a genuine FAILURE: a
+ *                      silent skip there would let green CI witness nothing.
+ *  - `namespaces-denied` — the binary exists but the HOST forbids the namespaces
+ *                      it needs (`apparmor_restrict_unprivileged_userns=1`, or a
+ *                      container without CAP_SYS_ADMIN). `bwrap --help` succeeds
+ *                      in this state, which is why presence alone proves nothing.
+ *                      CI lifts this with an AppArmor profile
+ *                      (`.github/ci/bwrap.apparmor`); a developer machine
+ *                      usually has not, so the witness is genuinely unrunnable
+ *                      and must say so instead of failing as if the product
+ *                      regressed.
+ *
+ * The distinction is decided by an actual launch, not by reading a kernel knob:
+ * a knob name differs across distros and kernel versions, while "did the launch
+ * work" is the property the witness itself depends on.
+ */
+type IsolationBlockade = "tool-absent" | "namespaces-denied" | null;
+
+/**
+ * Probe whether the confinement witness can run here at all.
+ *
+ * Internal: suites gate on `witnessRunnable`, which applies these findings to a
+ * test context. Exporting the raw predicate invites a suite to reproduce the
+ * gate and drift from it.
+ */
+function isolationBlockade(): IsolationBlockade {
+  if (!isolationToolPresent()) return "tool-absent";
+  // macOS `sandbox-exec` needs no namespace privileges; only the Linux path has
+  // a host-policy failure mode to detect.
+  if (process.platform !== "linux") return null;
+  // The exact minimal launch the witness needs: a private network namespace.
+  // A zero exit means namespaces are usable; anything else (stderr mentions
+  // RTM_NEWADDR, EPERM, or "Operation not permitted") means the host refuses.
+  const trial = spawnSync(
+    "bwrap",
+    ["--unshare-net", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--", "true"],
+    { stdio: "ignore", timeout: 10_000 },
+  );
+  return trial.status === 0 ? null : "namespaces-denied";
+}
+
+/**
+ * Apply the blockade rules to a witness, returning whether its body may run.
+ *
+ * Lives here, not in each suite, because the two witnesses must agree on when
+ * they are runnable; a drifted copy is a witness that can silently start
+ * proving nothing. `ctx` is Vitest's per-test context, used to record an
+ * explicit skip.
+ *
+ * Two rules, and the asymmetry is deliberate:
+ *
+ *  - a MISSING tool on the declared Linux/macOS matrix is a FAILURE, asserted
+ *    here so it cannot be quietly skipped into green CI;
+ *  - a host that DENIES namespaces is a skip that names its cause, because the
+ *    product is not broken and the host cannot be fixed from inside a test.
+ */
+export function witnessRunnable(ctx: { skip: (note?: string) => void }, assertDeclared: (message: string, condition: boolean) => void): boolean {
+  const blockade = isolationBlockade();
+  if (blockade === "tool-absent") {
+    const declaredMatrix = process.platform === "darwin" || process.platform === "linux";
+    assertDeclared("the isolation tool is absent on a DECLARED platform", declaredMatrix === false);
+    return false;
+  }
+  if (blockade === "namespaces-denied") {
+    ctx.skip("host denies unprivileged namespaces (bwrap cannot unshare-net); CI lifts this via an AppArmor profile");
+    return false;
+  }
+  return true;
 }
 
 /** A loopback listener that COUNTS the connections it receives. */

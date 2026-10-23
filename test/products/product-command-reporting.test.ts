@@ -24,7 +24,10 @@ async function initializedWorkspace() {
   const root = await realpath(workspace.root);
   for (const [variable, directory] of [["XDG_CONFIG_HOME", "config"], ["XDG_CACHE_HOME", "cache"]]) {
     const target = path.join(root, directory!);
-    await mkdir(path.join(target, "llmwiki"), { recursive: true });
+    // Owner-private roots: a permissive umask (e.g. 0002) makes a bare mkdir
+    // yield 0775, and the provider-root authorization correctly rejects
+    // group-writable config/cache ancestors.
+    await mkdir(path.join(target, "llmwiki"), { recursive: true, mode: 0o700 });
     vi.stubEnv(variable!, target);
   }
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);

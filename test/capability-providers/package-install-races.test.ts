@@ -181,11 +181,10 @@ describe("provider download confinement", () => {
 
 async function racePaths() {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "llmwiki-provider-parent-race-")));
-  roots.push(root); await mkdir(path.join(root, "config")); await mkdir(path.join(root, "cache"));
-  const paths = await authorizeProviderPathsForTest({
-    configRoot: path.join(root, "config"), cacheRoot: path.join(root, "cache"),
-    nowForTest: () => new Date("2026-07-17T12:00:00Z"),
-  } as never);
+  roots.push(root);
+  // The shared helper owns the 0700 detail: a bare mkdir yields 0775 under a
+  // permissive umask and authorization correctly rejects group-writable roots.
+  const paths = await authorizedProviderRoots(root, () => new Date("2026-07-17T12:00:00Z"));
   return { paths, root };
 }
 
