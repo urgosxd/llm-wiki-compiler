@@ -33,9 +33,18 @@ import type { ApiError } from "../errors.js";
  * on it first; the `domain` value is never even queried.
  */
 
-/** Columns the resolver selects, in the Python function's order. */
+/**
+ * Columns the resolver selects, in the Python function's order.
+ *
+ * `ontology` is appended AFTER the oracle's columns rather than inserted among
+ * them: the Python function this port reproduces does not know the column exists,
+ * so keeping the original order first means a byte-for-byte comparison of the
+ * oracle's projection still holds for the fields the oracle returns. Appending is
+ * what lets the port carry a field the oracle never had without perturbing the
+ * ones it did.
+ */
 export const STACK_COLUMNS =
-  "id, name, domain, description, scope, compilation_strategy, created_at, updated_at";
+  "id, name, domain, description, scope, compilation_strategy, created_at, updated_at, ontology";
 
 /**
  * A resolved `stacks` row.
@@ -55,6 +64,19 @@ export type StackRow = {
   compilation_strategy: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * The Stack's ontology declaration, or null.
+   *
+   * NULL IS MEANINGFUL: it is the oracle's behaviour — advertise the default type
+   * hints and accept whatever the model emits. It is not "empty ontology", and a
+   * caller must not coerce it to `{}`, which would silently switch the Stack into
+   * enforcement mode.
+   *
+   * Typed `unknown` rather than a shape: this module resolves a ROW, and the
+   * semantic shape is `core/ontology.ts`'s business. Validating here would put a
+   * second parser in front of the one that already exists.
+   */
+  ontology?: unknown;
 };
 
 
