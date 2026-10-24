@@ -63,12 +63,12 @@ arity. That is the existing invariant and this change does not touch it.
 ## Tasks
 
 - [x] 1. Write the ODD task document and its Engram mirror
-- [ ] 2. RED: tests for `StackResponse.ontology` exposure and the create-time 422
-- [ ] 3. Expose `ontology` in `StackResponse` and update the response-key fixtures
-- [ ] 4. Validate the declaration at `POST`/`PATCH /stacks`, refusing 422
-- [ ] 5. RED: tests for the dimension reading `stacks.ontology` at `prepare`
-- [ ] 6. Dimension reads the stored declaration and passes it to extraction
-- [ ] 7. `tsc`, `build`, `test:affected`, `fallow`
+- [x] 2. RED: tests for `StackResponse.ontology` exposure and the create-time 422
+- [x] 3. Expose `ontology` in `StackResponse` and update the response-key fixtures
+- [x] 4. Validate the declaration at `POST`/`PATCH /stacks`, refusing 422
+- [x] 5. RED: tests for the dimension reading `stacks.ontology` at `prepare`
+- [x] 6. Dimension reads the stored declaration and passes it to extraction
+- [x] 7. `tsc`, `build`, `test:affected`, `fallow`
 
 ## Scope boundary
 
@@ -78,6 +78,55 @@ Everything this change touches is inside this role's `ownedPaths`:
 shared DDL: `stacks.ontology` already exists (`db/schema.sql:266`,
 `db/migration_stack_ontology.sql:39`).
 
+## How the compiler path was wired, and why not in `activation.ts`
+
+The obvious insertion point was `src/dimensions/activation.ts`, which builds the
+dimension from the environment. It is `shared-read-only` for this role, and the
+enforcement hook refused the edit — correctly, and the refusal is what forced a
+better design rather than a workaround.
+
+`createKgDimension` now **defaults** `loadOntology` to `loadStoredOntology`
+instead. That is stronger than injecting at one call site: every consumer of the
+dimension — the compiler, the host server, the ingest service, and any future
+one — reads the Stack's declaration without having to know the column exists.
+Injection is still honoured, which is how tests state "this Stack has no
+declaration" without a database.
+
+An intermediate attempt wired it only when a caller passed `loadOntology`, and
+`fallow` caught the consequence immediately: `ontology-store.ts` was reported as
+an unused file. A dead reader was the honest signal that the guarantee was not
+actually closed.
+
 ## Evidence log
 
 - **Tasks document written** before the first source edit.
+- **Task 2 (RED).** `dto-stack-ontology.test.ts` — 8 of 10 failed before
+  `dto.ts` changed, for the right reasons (`ontology` absent from the parsed
+  response and no rejection of an empty type list).
+- **Task 4 caught a real bug in the DTO.** Returning `validateOntology`'s output
+  put `parentsOf: Map` into the value that `stacks.ts` persists with
+  `JSON.stringify`, which would have written `parentsOf: {}` into the column —
+  exactly what `stack_ontology.ts` says must never be persisted. The fix is
+  `toStoredOntology`, the function that module exists for and that until now was
+  called only from tests.
+- **Task 6 found a 500 nobody had tested.** Adding a required field to
+  `StackResponse` without adding it to `STACK_COLUMNS` made every Stack read fail
+  its schema parse inside the transaction: 13 live-database tests went red with
+  `500`. Verified as mine, not pre-existing, by stashing and re-running.
+- **Suite scope and result.** `npx vitest run packages/llmwiki-kg/ts/src`:
+  64 files, 628 passed, 0 failed, 3 skipped (gateway suites, opt-in).
+  `test/dimensions/kg-*` + `activation.test.ts`: 27 passed.
+  `npm run test:affected`: 1195 files / 10197 tests passed, 2 failed in
+  `test/connectors/legacy-capacity-parity.test.ts` under parallel load — that
+  file passes 3/3 in isolation both with and without this change, so it is
+  load-sensitivity, not a regression, and it is reported rather than hidden.
+- **`npx tsc --noEmit`** exit 0. **`npm run build`** exit 0.
+  **`npx fallow`** — no dead code, no duplication, 0 issues.
+- **Commit.** `d04fcc5` — `feat(kg): expose a Stack's ontology and enforce it at ingest`.
+
+## Open follow-ups (not in this change)
+
+- `GET /stacks/{id}/ontology` was not added: the declaration is on the response,
+  so a sibling route would be a second way to read one field.
+- The hierarchy is validated and stored but a read still does not rewrite types
+  through it; `ontology.ts` documents hierarchy-aware reads as out of scope.
