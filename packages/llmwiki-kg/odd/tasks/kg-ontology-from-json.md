@@ -116,8 +116,18 @@ types before relationship type, so the report names the most specific cause.
   `createKgDimension` end to end and asserts the ontology reaches extraction and
   that a run without one keeps the original two-argument call.
 - **Task 8.** `npx tsc --noEmit` exit 0; `npm run build` exit 0;
-  `npx fallow` — no dead code, no duplication, 0 issues. Targeted suites plus the
-  product-boundary control: 164 passed, 0 failed.
+  `npx fallow` — no dead code, no duplication, 0 issues.
+- **Exact composition of the 164 figure**, confirmed with `--reporter=json`
+  rather than counted by hand: **19 files** = 13 `core/*.test.ts` + 5 of the 6
+  `test/dimensions/kg-*` files + `test/product-boundary-genericity.test.ts`.
+  164 total, 164 passed, 0 failed.
+
+  The sixth kg file, `kg-postgres-integrity.test.ts`, is **deliberately not in
+  that run**. It requires a reachable Postgres and its own header says it "skips
+  loudly when there is none, rather than passing vacuously" — running it without
+  a database would add a file count while proving nothing. So the honest claim is
+  19 files / 164 tests, and the Postgres-backed suite is unverified here rather
+  than quietly included.
 - **Regression found and fixed while verifying.** `extractGraphFromChunks` gained
   an optional third parameter, which widened an existing call to
   `(chunks, name, undefined)` and broke `kg-dimension.test.ts`. Passing `undefined`
@@ -141,6 +151,14 @@ types before relationship type, so the report names the most specific cause.
 - **A probe defect worth recording.** A first probe written as `__probe.test.ts`
   reported success because `tsc` does not include test files; only the `.ts`
   probe surfaced TS2305. A verification that cannot fail is not a verification.
+- **`wr-2026-10-23-01` verified and superseded.** orchestrator-c re-ran all five
+  checks on `wr-2026-10-23-03` and confirmed: 12 paths byte-set-equal to the
+  commit, 0 of 12 non-owned, evidence correct, and the evidence-at-`7664e24` /
+  tests-at-tip split sound because `git diff --stat 7664e24 e06e972 -- *.ts *.json`
+  is empty, so the docs-only tip carries no code delta. It explicitly does NOT
+  adopt the 164 figure as independently verified, since the test files are absent
+  from its worktree — recorded here as this session's own result, which is the
+  correct standing for it.
 - **A false `work_result`, caught by the receiver and then by the hook.** Two
   separate defects in one report:
   1. `wr-2026-10-23-01` listed 6 of the 12 paths `7664e24` actually touches.
