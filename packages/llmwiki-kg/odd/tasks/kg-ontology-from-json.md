@@ -295,6 +295,23 @@ commit and six documentation commits recording the negotiation. Nothing in them
 touches a file orchestrator-c owns, so the fast-forward carries no surprise for
 the barrel work.
 
+## The re-export has landed
+
+Measured on `feat/orchestrator-c` at `4d05d1f`:
+
+- `7664e24` is an ancestor → the ordering clause is satisfied.
+- `core/ontology.ts` is present in that worktree.
+- `core-index.ts` carries the agreed `@2` surface: five values
+  (`validateOntology`, `isEntityTypeAllowed`, `ancestorsOf`,
+  `parseTripletsWithOntology`, `OntologyError`) and six types (`Ontology`,
+  `RejectedTriplet`, `OntologyParseResult`, `SubtypeEdge`, `RejectionReason`,
+  `Triplet`), with `Triplet` added to the existing `./core/extraction.js` type
+  block rather than to `graph-parse.ts`.
+- `npx tsc --noEmit` on that branch: exit 0.
+
+Being uncommitted on that branch at the time of measurement, it is not yet a
+published revision; the follow-up below waits for the commit.
+
 ## Follow-up owned by orchestrator-b once the re-export lands
 
 Delete the `KgOntology` derivation at `src/dimensions/kg/index.ts:61` and name
