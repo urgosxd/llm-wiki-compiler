@@ -237,6 +237,56 @@ and later re-applied to a live one. `schema.sql` still creates the 8 tables
 WITHOUT policies, so a fresh database comes up ungoverned until the migration runs.
 That is a real ordering hazard to keep in view, not a detail.
 
+### W1.4 as written is not implementable for the two by-id document routes
+
+This is the finding that changes W1.4's shape, and it is a conflict between two
+requirements that were never compared.
+
+`GET /documents/:doc_id` and `DELETE /documents/:doc_id` carry **no stack
+parameter** — verified in `oracle/contracts/openapi.json`, which defines
+`/documents/{doc_id}` with no `stack_id`. So the plan's instruction ("it must call
+`resolveStack` and filter") has nothing to resolve *from*.
+
+The obvious repair — look up the owning stack by `doc_id`, bind it, then read — is
+impossible under RLS, because the lookup that would reveal the tenant is itself
+subject to the policy. Measured on the live database as `llmwiki_app` with no
+binding:
+
+```
+select stack_id from stack_documents where id = '<a real doc id>'
+  -> NULL   (cannot be discovered)
+```
+
+That is the fail-closed direction working correctly, and it is exactly why the
+chicken-and-egg cannot be broken from inside the request.
+
+There is a second, harder constraint: the oracle **deliberately** serves a
+document of another stack by id. It is asserted, not accidental —
+`routes/documents-read.test.ts:91`, "GET /documents/:doc_id serves a document
+belonging to any stack", with the comment "measured on the oracle". This is also
+what `4b08af5` meant by "editing the query would have broken fidelity to fix a leak
+RLS already closes".
+
+So three requirements cannot all hold:
+
+| Requirement | Source |
+| --- | --- |
+| By-id routes need no stack in the path | oracle OpenAPI + parity test |
+| A tenanted query needs `app.stack_id` set | RLS policies |
+| The tenant must be discovered from the doc id | needed to set it |
+
+**What this means for W1.4.** It reduces to a decision, not a task: the by-id
+routes must either (a) accept a stack parameter — a contract change against the
+oracle, needing a version bump and a parity exception — or (b) keep working and be
+unavailable under the app role, which means `DATABASE_URL` cannot move to
+`llmwiki_app` for them. The remaining 7 unbound files do have the stack available
+(`:stack_id` in the path, or a body field) and are ordinary work:
+`documents/{list,upload}`, `backfeed/{get,approve}`, `synthesize/description`,
+`ingest/{request,pipeline}`.
+
+This is recorded rather than resolved because it needs an owner decision on oracle
+parity, and every file involved is `orchestrator-c`'s surface, not this role's.
+
 ### The one blocking decision
 
 Switching the application role is a deployment change, not a code change:
