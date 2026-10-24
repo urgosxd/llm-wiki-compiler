@@ -340,6 +340,42 @@ The two remaining edits are the whole gap between "the column exists" and "the
 column governs extraction". Requested as `wq-2026-10-24-01`, with the two exact
 call sites named so the change stays two lines plus a guard.
 
+## The write path is missing, and adding it costs oracle parity
+
+orchestrator-c wired the READ path and correctly reported that nothing writes the
+column yet: `routes/stacks.ts` has zero mentions of `ontology`, so `POST /stacks`
+and `PATCH /stacks` cannot set one and every Stack stays `null`. A wired reader
+with no producer is not a usable feature.
+
+**The obvious fix is wrong, and this is the subtlest constraint in the feature.**
+`stacks.ts` documents its `STACK_COLUMNS` as repeating Python's `_STACK_COLUMNS`
+verbatim, including order, because *response key order* is contractual. The oracle
+confirms it — measured from `oracle/contracts/openapi.json`:
+
+| Schema | Properties |
+| --- | --- |
+| `StackCreate` | `name, domain, description, scope, compilation_strategy, synthesize_descriptions` |
+| `StackUpdate` | `name, description, scope, compilation_strategy, synthesize_descriptions` |
+| `StackResponse` | the above plus `id, created_at, updated_at` |
+
+No `ontology` in any of them. And `dto.ts` states that Zod objects strip unknown
+keys, matching Pydantic — so adding the column without adding it to the DTO would
+be silently dropped rather than surfaced.
+
+So this slice cannot be finished by editing one constant. It needs `ontology`
+added deliberately to `StackCreate`, `StackUpdate` and `StackResponse` in `dto.ts`
+plus the matching `stacks.ts` handling, while `STACK_COLUMNS` keeps its documented
+order. That is a visible divergence from the Python reference, which this port has
+otherwise avoided, so it is a product decision rather than a cleanup.
+
+### A real defect c found: two diverging column lists
+
+`stack_resolver.ts` gained `synthesize_descriptions` and `ontology`; `stacks.ts`
+kept a separate, older list with `synthesize_descriptions` and no `ontology`. They
+are independent constants — `stacks.ts` does not import the resolver's — so the
+two have drifted and nothing detects it. The right fix is one exported list, not
+two that must be kept in step by hand.
+
 ## Follow-up owned by orchestrator-b once the re-export lands
 
 Delete the `KgOntology` derivation at `src/dimensions/kg/index.ts:61` and name
