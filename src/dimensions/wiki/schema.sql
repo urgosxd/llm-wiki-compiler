@@ -73,6 +73,18 @@ create table if not exists wiki.pages (
     page_directory text        not null check (page_directory in ('concepts', 'queries')),
     slug           text        not null,
     title          text        not null,
+    -- Source identity (URL, path, or digest) this page was compiled from.
+    --
+    -- A COLUMN, not something parsed out of the body, and not folded into the slug.
+    -- `saveSource` treats source identity as the KEY: re-ingesting the same source
+    -- under a changed title must update the existing page rather than fork a second
+    -- one. On the filesystem that lookup means reading every file and parsing its
+    -- frontmatter; with this column it is one indexed query.
+    --
+    -- NULL is meaningful: a page created outside an ingest (an authored page, or a
+    -- row migrated from the filesystem without frontmatter) has no known source, and
+    -- guessing one from the slug would make a later re-ingest update the wrong page.
+    source_identity text       null,
     summary        text        not null default '',
     tags           text[]      not null default '{}',
     links          text[]      not null default '{}',
@@ -93,6 +105,13 @@ create index if not exists idx_wiki_pages_listing
 -- Text search over title and summary replaces the in-memory scan
 -- `matchingPages` performs today. `pg_trgm` is already installed by the KG
 -- schema, so this adds no extension requirement of its own.
+-- The re-ingest lookup: "does this source already have a page here?".
+-- Partial, because rows with no source identity can never match the query and are
+-- the minority a full index would carry for nothing.
+create unique index if not exists idx_wiki_pages_source
+    on wiki.pages (stack_id, page_directory, source_identity)
+    where source_identity is not null;
+
 create index if not exists idx_wiki_pages_title_trgm
     on wiki.pages using gin (title gin_trgm_ops);
 

@@ -24,7 +24,6 @@
  * cannot leave a half-written source behind.
  */
 
-import { createHash } from "node:crypto";
 import { saveSource } from "../../utils/source-writer.js";
 import type { WriteStatus } from "../../utils/types.js";
 import {
@@ -40,6 +39,7 @@ import type {
   DimensionInput,
   PreparedWrite,
 } from "../types.js";
+import { wikiIdempotencyKey } from "./idempotency.js";
 
 /** Handle carried between `prepare` and `commit` for the wiki dimension. */
 interface WikiHandle {
@@ -47,24 +47,6 @@ interface WikiHandle {
   readonly writeStatus: WriteStatus;
   readonly savedPath: string;
   readonly batch: JournalBatch;
-}
-
-/** Length of the hex digest used inside the wiki idempotency key. */
-const KEY_DIGEST_CHARS = 32;
-
-/**
- * Deterministic identity of a wiki write: the source plus a digest of the
- * document. Re-ingesting identical content yields the same key, which is what
- * makes an outbox replay a no-op instead of a second write.
- */
-function wikiIdempotencyKey(input: DimensionInput): string {
-  const digest = createHash("sha256")
-    .update(input.source)
-    .update("\u0000")
-    .update(input.document)
-    .digest("hex")
-    .slice(0, KEY_DIGEST_CHARS);
-  return `wiki:${digest}`;
 }
 
 /**
