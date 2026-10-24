@@ -24,7 +24,7 @@
  * second answer to "what is relevant" that drifts from the one `query` uses.
  */
 
-import { listPages, getPage, type Page } from "../../pages/list.js";
+import { listPages, getPage } from "../../pages/list.js";
 import { pickSearchRefs } from "../../search/retrieval.js";
 import type {
   DimensionAnswer,
@@ -32,42 +32,13 @@ import type {
   DimensionReader,
   GraphReadResult,
   ReadChunk,
-  ReadEntity,
 } from "../read-types.js";
-
-/** Default cap when the caller does not set one. */
-const DEFAULT_LIMIT = 20;
-
-/** Map a compiled page onto the dimension-neutral entity shape. */
-function toReadEntity(page: Page): ReadEntity {
-  return {
-    id: page.slug,
-    name: page.title,
-    // The page's directory is its kind: the wiki has no other taxonomy.
-    kind: page.pageDirectory,
-    description: page.summary,
-  };
-}
-
-/**
- * Match pages whose title or summary contains the query text.
- *
- * A LITERAL, case-insensitive containment test, not a fuzzy match: the semantic
- * path is applied separately when the caller asks for `text`, and blending the two
- * here would make it impossible to tell which signal produced a result.
- *
- * @param pages - Pages to filter.
- * @param text - Lowercased needle.
- * @returns Pages that mention the text.
- */
-function matchingPages(pages: readonly Page[], text: string): Page[] {
-  const needle = text.toLowerCase();
-  return pages.filter(
-    (page) =>
-      page.title.toLowerCase().includes(needle) ||
-      page.summary.toLowerCase().includes(needle),
-  );
-}
+import {
+  DEFAULT_PAGE_LIMIT,
+  answerFromPages,
+  resolvePageByName,
+  scopeByKinds,
+} from "./page-answer.js";
 
 /**
  * Answer one question against the compiled wiki.
@@ -80,7 +51,7 @@ async function readWiki(
   root: string,
   query: DimensionQuery,
 ): Promise<GraphReadResult<DimensionAnswer>> {
-  const limit = query.limit ?? DEFAULT_LIMIT;
+  const limit = query.limit ?? DEFAULT_PAGE_LIMIT;
 
   // A named lookup is answered by exact-or-containing title match, because the
   // caller asked for ONE thing and paging every page to find it would be wasteful.
@@ -89,12 +60,7 @@ async function readWiki(
   }
 
   const listing = await listPages(root, { limit });
-  const scoped =
-    query.kinds === undefined || query.kinds.length === 0
-      ? listing.pages
-      : listing.pages.filter((page) => query.kinds?.includes(page.pageDirectory));
-
-  const entities = scoped.map(toReadEntity);
+  const scoped = scopeByKinds(listing.pages, query.kinds);
 
   // Text search is a SEPARATE capability: it needs the embedding store, and a
   // project without one still answers the listing.
@@ -102,7 +68,7 @@ async function readWiki(
     ? []
     : await searchChunks(root, query.text, limit);
 
-  return { ok: true, value: { entities, relationships: [], chunks } };
+  return { ok: true, value: { ...answerFromPages(scoped), chunks } };
 }
 
 /**
@@ -123,15 +89,7 @@ async function readByName(
   kinds: readonly string[] | undefined,
 ): Promise<GraphReadResult<DimensionAnswer>> {
   const listing = await listPages(root, { limit: Number.MAX_SAFE_INTEGER });
-  const scoped =
-    kinds === undefined || kinds.length === 0
-      ? listing.pages
-      : listing.pages.filter((page) => kinds.includes(page.pageDirectory));
-
-  const needle = name.toLowerCase();
-  const exact = scoped.filter((page) => page.title.toLowerCase() === needle);
-  const found = exact.length > 0 ? exact : matchingPages(scoped, needle);
-  const page = found[0];
+  const page = resolvePageByName(scopeByKinds(listing.pages, kinds), name);
 
   if (page === undefined) {
     return {
@@ -139,7 +97,7 @@ async function readByName(
       error: { code: "not_found", message: `No wiki page named '${name}'` },
     };
   }
-  return { ok: true, value: { entities: [toReadEntity(page)], relationships: [], chunks: [] } };
+  return { ok: true, value: answerFromPages([page]) };
 }
 
 /**
