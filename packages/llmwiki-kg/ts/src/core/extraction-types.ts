@@ -7,6 +7,8 @@
  * or any provider call.
  */
 
+import type { RejectedTriplet } from "./ontology.js";
+
 // ===========================================================================
 // PUBLIC TYPES
 // ===========================================================================
@@ -48,6 +50,17 @@ export interface ExtractionResult {
   readonly relationships: ExtractedRelationship[];
   readonly model: string;
   readonly pipeline: string;
+  /**
+   * Triplets dropped because they violated a caller-declared ontology.
+   *
+   * Optional, and absent on a run with no ontology, so a default extraction
+   * keeps exactly the shape the oracle produced. Present so that a caller who
+   * DID declare an ontology can tell a thin extraction from a forbidden one:
+   * without it, a document that yielded three entities because the model drifted
+   * out of the declared types is indistinguishable from a document that only had
+   * three entities in it.
+   */
+  readonly rejected?: readonly RejectedTriplet[];
 }
 
 /**

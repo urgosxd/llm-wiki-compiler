@@ -10,8 +10,9 @@
 
 import { config } from "../config.js";
 import { callTool } from "./llm_clients.js";
-import { buildExtractionPrompt, KG_TOOL } from "./graph-prompt.js";
+import { buildExtractionPrompt, buildToolSchema } from "./graph-prompt.js";
 import { parseTriplets, type Triplet } from "./graph-parse.js";
+import { parseTripletsWithOntology, type Ontology, type RejectedTriplet } from "./ontology.js";
 import {
   EXTRACTED_CONFIDENCE,
   EXTRACTION_PIPELINE,
@@ -41,12 +42,19 @@ function emptyResult(): ExtractionResult {
 async function chunkTriplets(
   chunk: ChunkResult,
   stackName: string,
-): Promise<Triplet[]> {
+  ontology: Ontology | undefined,
+): Promise<{ triplets: readonly Triplet[]; rejected: readonly RejectedTriplet[] }> {
   const prompt = buildExtractionPrompt(chunk.content, chunk.chunkIndex, stackName);
   try {
-    return parseTriplets(await callTool(prompt, KG_TOOL));
+    const argumentsJson = await callTool(prompt, buildToolSchema(ontology));
+    if (ontology === undefined) {
+      return { triplets: parseTriplets(argumentsJson), rejected: [] };
+    }
+    return parseTripletsWithOntology(argumentsJson, ontology);
   } catch {
-    return [];
+    // A provider failure yields nothing for this chunk and extraction continues,
+    // exactly as the oracle's `except (ValueError, TypeError, AttributeError)`.
+    return { triplets: [], rejected: [] };
   }
 }
 
@@ -142,6 +150,7 @@ function mergeRelationships(
 export async function extractGraphFromChunks(
   chunks: readonly ChunkResult[],
   stackName: string,
+  ontology?: Ontology,
 ): Promise<ExtractionResult> {
   if (chunks.length === 0) {
     return emptyResult();
@@ -149,10 +158,12 @@ export async function extractGraphFromChunks(
 
   const entityMap = new Map<string, ExtractedEntity>();
   const relationshipList: ExtractedRelationship[] = [];
+  const rejected: RejectedTriplet[] = [];
 
   for (const chunk of chunks) {
-    const triplets = await chunkTriplets(chunk, stackName);
-    for (const triplet of triplets) {
+    const batch = await chunkTriplets(chunk, stackName, ontology);
+    rejected.push(...batch.rejected);
+    for (const triplet of batch.triplets) {
       absorbEndpoints(entityMap, triplet, chunk.chunkIndex);
       relationshipList.push(tripletRelationship(triplet, chunk.chunkIndex));
     }
@@ -163,5 +174,8 @@ export async function extractGraphFromChunks(
     relationships: [...mergeRelationships(relationshipList).values()],
     model: config.EXTRACTION_MODEL,
     pipeline: EXTRACTION_PIPELINE,
+    // Reported only when an ontology was enforced, so a default run keeps the
+    // oracle's result shape instead of carrying a permanently empty array.
+    ...(ontology === undefined ? {} : { rejected }),
   };
 }

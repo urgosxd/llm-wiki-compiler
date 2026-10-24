@@ -41,12 +41,27 @@ import {
   type ExtractedEntity,
   type ExtractedRelationship,
 } from "llmwiki-kg";
+import type { ExtractionResult } from "llmwiki-kg";
 import type {
   CommittedWrite,
   Dimension,
   DimensionInput,
   PreparedWrite,
 } from "../types.js";
+
+/**
+ * The ontology the vendored core accepts, derived rather than restated.
+ *
+ * The ratified product boundary forbids a core module from importing anything
+ * under `packages/` (`test/product-boundary-genericity.test.ts`), so this
+ * adapter may only see the vendored core through its barrel. Deriving the type
+ * from the function it is passed to keeps a single source of truth: if the
+ * core's ontology shape changes, this alias follows it instead of drifting.
+ */
+type KgOntology = NonNullable<Parameters<typeof extractGraphFromChunks>[2]>;
+
+/** One triplet rejection, derived from the core's own result shape. */
+type KgRejection = NonNullable<ExtractionResult["rejected"]>[number];
 
 /** Seconds to wait for the graph database before giving up. */
 const DB_CONNECT_TIMEOUT_SECONDS = 10;
@@ -85,6 +100,8 @@ interface KgHandle {
   readonly chunks: readonly ChunkResult[];
   readonly entities: readonly ExtractedEntity[];
   readonly relationships: readonly ExtractedRelationship[];
+  /** Triplets the declared ontology turned away; empty when none was supplied. */
+  readonly rejected: readonly KgRejection[];
 }
 
 /** How this dimension is bound to one knowledge stack. */
@@ -101,6 +118,39 @@ export interface KgDimensionOptions {
    * and by tests that must not require Postgres.
    */
   readonly dryRun?: boolean;
+  /**
+   * Declared entity and relationship types this Stack's graph may contain.
+   *
+   * Omitted means the oracle's behaviour: the model sees the default type hints
+   * and whatever it emits is accepted, because `strict=False`. Supplied means
+   * the declaration is enforced — the types go into the tool schema and every
+   * triplet outside them is dropped and reported.
+   */
+  readonly ontology?: KgOntology;
+}
+
+/**
+ * Trailing arguments for the extraction call, omitting the ontology when absent.
+ *
+ * @param options - Stack binding, possibly carrying an ontology.
+ * @returns An empty tuple without an ontology, or the single-element tuple with it.
+ */
+function ontologyArgs(options: KgDimensionOptions): [] | [KgOntology] {
+  return options.ontology === undefined ? [] : [options.ontology];
+}
+
+/**
+ * Renders the rejection count for a commit summary, or nothing when clean.
+ *
+ * A summary is the only per-document signal a caller sees without querying the
+ * graph, so a run that silently dropped a third of its triplets must not read
+ * the same as a run that found only a third.
+ *
+ * @param rejected - Triplets the ontology turned away.
+ * @returns A leading-comma fragment, or an empty string when nothing was rejected.
+ */
+function rejectionNote(rejected: readonly KgRejection[]): string {
+  return rejected.length === 0 ? "" : `, ${rejected.length} triplets rejected by ontology`;
 }
 
 /**
@@ -208,13 +258,19 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       // stay in memory, so nothing depends on this placeholder matching a row.
       const chunkLabel = sourceLabel(input.source);
       const chunks = await chunkAndEmbed(input.body, options.stackId, chunkLabel);
-      const extraction = await extractGraphFromChunks(chunks, options.stackName);
+      // The ontology is spread rather than passed as `undefined`, so a run
+      // without one calls extraction with exactly the two arguments it always
+      // did. Call arity is observable to spies and mocks, and "no ontology
+      // changes nothing" has to hold at the call boundary, not just in the
+      // result.
+      const extraction = await extractGraphFromChunks(chunks, options.stackName, ...ontologyArgs(options));
       const handle: KgHandle = {
         documentId: chunkLabel,
         registration: { source: input.source, body: input.body, title: input.title },
         chunks,
         entities: extraction.entities,
         relationships: extraction.relationships,
+        rejected: extraction.rejected ?? [],
       };
       return { unchanged: chunks.length === 0, handle };
     },
@@ -224,7 +280,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       if (options.dryRun === true || handle.chunks.length === 0) {
         return {
           idempotencyKey: `kg:${handle.documentId}`,
-          summary: `kg:dry-run(${handle.chunks.length} chunks, ${handle.entities.length} entities)`,
+          summary: `kg:dry-run(${handle.chunks.length} chunks, ${handle.entities.length} entities)${rejectionNote(handle.rejected)}`,
         };
       }
       // `writeGraph` replaces the placeholder with the id Postgres assigned.
@@ -233,7 +289,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
         // Keyed on the real row id, so the outbox replay targets the same document
         // rather than the label it was prepared under.
         idempotencyKey: `kg:${handle.documentId}`,
-        summary: `kg:${handle.chunks.length} chunks, ${handle.entities.length} entities`,
+        summary: `kg:${handle.chunks.length} chunks, ${handle.entities.length} entities${rejectionNote(handle.rejected)}`,
       };
     },
 

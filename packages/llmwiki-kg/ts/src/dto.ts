@@ -96,6 +96,22 @@ export const STACK_SCOPES = ["stack", "workspace", "domain"] as const;
 /** `Literal["incremental", "global"]` — compilation strategy. */
 export const COMPILATION_STRATEGIES = ["incremental", "global"] as const;
 
+/**
+ * A declared ontology as it arrives in a Stack request body.
+ *
+ * Modelled as an arbitrary JSON object rather than a typed shape on purpose:
+ * the declaration's *semantic* validity is `core/ontology.ts`'s business
+ * (`validateOntology`), which rejects an empty type list, an undeclared subtype
+ * endpoint, or a cycle. Re-validating the structure here would duplicate those
+ * rules and let the two drift; rejecting a malformed declaration at the route
+ * with a 422 would also diverge from how the rest of the body is handled.
+ *
+ * Deliberately `.optional()` with NO default, unlike every other request field:
+ * omitting it must stay distinguishable from sending `null`. `null` means
+ * "clear the declaration" on PATCH; absence means "leave it alone".
+ */
+const OntologyInput = pydanticDict().nullable().optional();
+
 /** Request body for `POST /stacks`. */
 export const StackCreate = z.object({
   // Field(..., min_length=1, max_length=200) — both bounds are contractual.
@@ -108,6 +124,8 @@ export const StackCreate = z.object({
   scope: z.literal(STACK_SCOPES).default("stack"),
   compilation_strategy: z.literal(COMPILATION_STRATEGIES).default("incremental"),
   synthesize_descriptions: pydanticBoolean().default(false),
+  // Extension, not oracle: absent keeps the response byte-identical.
+  ontology: OntologyInput,
 });
 
 /** Request body for `PATCH /stacks/{id}`. Every field is optional. */
@@ -119,6 +137,9 @@ export const StackUpdate = z.object({
   scope: z.literal(STACK_SCOPES).nullable().default(null),
   compilation_strategy: z.literal(COMPILATION_STRATEGIES).nullable().default(null),
   synthesize_descriptions: pydanticBoolean().nullable().default(null),
+  // Extension, not oracle. Absence (not `null`) is what means "unchanged" here:
+  // PATCH turns `undefined` into "not present" and `null` into "write NULL".
+  ontology: OntologyInput,
 });
 
 /**

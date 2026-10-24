@@ -76,6 +76,14 @@ export type DocumentRow = {
   storage_path: string;
   stack_name: string;
   stack_synthesize_default: boolean;
+  /**
+   * The Stack's declared ontology, or null.
+   *
+   * Null is the oracle's behaviour — advertise the default type hints and accept
+   * whatever the model emits — so it must reach extraction as *absent*, never as
+   * an empty ontology that would reject every triplet.
+   */
+  stack_ontology: unknown;
 };
 
 /** A stored `ontology_entities` row this module reads back. */
@@ -181,7 +189,8 @@ export async function findDocument(
   const rows = await tx.execute<DocumentRow>(sql`
     select sd.id, sd.stack_id, sd.storage_path,
            s.name as stack_name,
-           s.synthesize_descriptions as stack_synthesize_default
+           s.synthesize_descriptions as stack_synthesize_default,
+           s.ontology as stack_ontology
     from stack_documents sd
     join stacks s on s.id = sd.stack_id
     where sd.id = ${docId} and sd.stack_id = ${stackId}
