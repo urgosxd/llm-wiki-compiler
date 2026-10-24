@@ -140,15 +140,25 @@ describe("cross-dimension failure with a database-backed wiki", () => {
     expect(outcome.wikiCommitted).toBe(true);
   });
 
-  it("leaves NO pending record, because a no-op discard reads as a clean rollback", async () => {
+  /*
+   * THE DEFECT WAS HERE, AND IS NOW CLOSED.
+   *
+   * This case used to assert `toHaveLength(0)`, which was the measured truth
+   * while `rollbackCommitted` recorded a failure only when `discard` THREW. A
+   * dimension that committed and then returned quietly counted as cleanly rolled
+   * back, so the coordinator DELETED the record for a half-applied ingest -- the
+   * wiki row stayed while the only trail to it vanished, and `reconcileOutbox`
+   * had nothing to replay.
+   *
+   * `e71da25` makes the coordinator consult `run.committed` instead of inferring
+   * success from silence, so the record survives as `pending`. It is pinned here
+   * because the guarantee is now a property of the product, not of a comment.
+   */
+  it("keeps the pending record so the ingest can be replayed", async () => {
     const outcome = await ingestUntilKgFails();
     expect(outcome.records.unreadable).toHaveLength(0);
-    // MEASURED, AND A DEFECT. `rollbackCommitted` records a failure only when
-    // `discard` THROWS. A dimension that silently does nothing counts as having
-    // rolled back, so the coordinator removes the record it should keep. The
-    // wiki row survives while this record vanishes: a half-applied ingest with
-    // nothing pointing at it. W3.1 must restore the `pending` record.
-    expect(outcome.records.records).toHaveLength(0);
+    expect(outcome.records.records).toHaveLength(1);
+    expect(outcome.records.records[0]?.status).toBe("pending");
     expect(outcome.wikiCommitted).toBe(true);
   });
 
