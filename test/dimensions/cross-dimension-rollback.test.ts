@@ -105,51 +105,58 @@ function explodingDimension(): Dimension {
   };
 }
 
+/** What one failed ingest left behind, which is what every case here inspects. */
+interface FailureOutcome {
+  readonly root: string;
+  readonly wikiCommitted: boolean;
+  readonly records: Awaited<ReturnType<typeof loadRecords>>;
+}
+
+/**
+ * Drive the one scenario this whole suite is about: the wiki commits, then a
+ * later dimension fails.
+ *
+ * Extracted so all three cases inspect the SAME run. Duplicating the setup would
+ * let them drift onto subtly different stubs, which is the failure mode a suite
+ * about consistent behaviour can least afford.
+ *
+ * @returns The project root and what the failed ingest left behind.
+ */
+async function ingestUntilKgFails(): Promise<FailureOutcome> {
+  const root = await projectRoot();
+  const written = { value: false };
+
+  await expect(
+    ingestDimensions(root, INPUT, [databaseShapedWiki(written), explodingDimension()]),
+  ).rejects.toThrow("kg commit exploded");
+
+  return { root, wikiCommitted: written.value, records: await loadRecords(root) };
+}
+
 describe("cross-dimension failure with a database-backed wiki", () => {
   it("keeps the already-committed wiki write instead of rolling it back", async () => {
-    const root = await projectRoot();
-    const written = { value: false };
-
-    await expect(
-      ingestDimensions(root, INPUT, [databaseShapedWiki(written), explodingDimension()]),
-    ).rejects.toThrow("kg commit exploded");
-
+    const outcome = await ingestUntilKgFails();
     // THE REAL BEHAVIOUR, stated rather than mourned: the wiki write stands.
-    expect(written.value).toBe(true);
+    expect(outcome.wikiCommitted).toBe(true);
   });
 
   it("leaves NO pending record, because a no-op discard reads as a clean rollback", async () => {
-    const root = await projectRoot();
-    const written = { value: false };
-
-    await expect(
-      ingestDimensions(root, INPUT, [databaseShapedWiki(written), explodingDimension()]),
-    ).rejects.toThrow("kg commit exploded");
-
-    const { records, unreadable } = await loadRecords(root);
-    expect(unreadable).toHaveLength(0);
+    const outcome = await ingestUntilKgFails();
+    expect(outcome.records.unreadable).toHaveLength(0);
     // MEASURED, AND A DEFECT. `rollbackCommitted` records a failure only when
     // `discard` THROWS. A dimension that silently does nothing counts as having
     // rolled back, so the coordinator removes the record it should keep. The
-    // wiki row survives (test 1) while this record vanishes: a half-applied
-    // ingest with nothing pointing at it.
-    expect(records).toHaveLength(0);
-    // Pinned as `pending` in the assertion ABOVE would have been the correct
-    // behaviour, and is what W3.1 must restore. This line is the defect report.
-    expect(written.value).toBe(true);
+    // wiki row survives while this record vanishes: a half-applied ingest with
+    // nothing pointing at it. W3.1 must restore the `pending` record.
+    expect(outcome.records.records).toHaveLength(0);
+    expect(outcome.wikiCommitted).toBe(true);
   });
 
   it("does NOT claim the old filesystem guarantee, because it no longer holds", async () => {
-    const root = await projectRoot();
-    const written = { value: false };
-
-    await expect(
-      ingestDimensions(root, INPUT, [databaseShapedWiki(written), explodingDimension()]),
-    ).rejects.toThrow("kg commit exploded");
-
+    const outcome = await ingestUntilKgFails();
     // The old suite asserted `sources/` was empty here. On the database path no
     // such directory is touched, so an assertion about it would pass vacuously
     // and prove nothing -- exactly the trap this file now refuses to fall into.
-    expect(existsSync(path.join(root, "sources"))).toBe(false);
+    expect(existsSync(path.join(outcome.root, "sources"))).toBe(false);
   });
 });
