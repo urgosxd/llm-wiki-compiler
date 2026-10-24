@@ -31,8 +31,20 @@ export type {
   ReadRelationship,
 } from "./read-types.js";
 
-export { createWikiDimension } from "./wiki/index.js";
-export { createWikiReader } from "./wiki/reader.js";
+/*
+ * The database-backed wiki factories are deliberately NOT re-exported here.
+ *
+ * `wiki/database.ts` pulls in `page-store.ts`, which imports `sql` from
+ * `drizzle-orm` as a VALUE. `drizzle-orm` is declared in
+ * `packages/llmwiki-kg/ts/package.json` and is absent from the root manifest, so
+ * exporting the pair from this barrel would load the query builder for every
+ * caller that only wanted `resolveDimensions` -- which includes `compile` and
+ * `ingest`, the two hottest CLI paths. `test/dimensions/wiki-database-entry.test.ts`
+ * pins that this stays true.
+ *
+ * Activation reaches the factories through `./wiki/database.js` directly, which
+ * keeps the cost where the choice is actually made.
+ */
 export { createKgDimension } from "./kg/index.js";
 export type { KgDimensionOptions } from "./kg/index.js";
 export { createKgReader } from "./kg/reader.js";
@@ -51,6 +63,7 @@ export {
   AKS_STACK_ID_ENV_VAR,
   DIMENSIONS_ENV_VAR,
   DimensionActivationError,
+  createDimensionsDatabase,
   resolveDimensions,
 } from "./activation.js";
-export type { ResolveDimensionsOptions } from "./activation.js";
+export type { DimensionsDatabase, ResolveDimensionsOptions } from "./activation.js";

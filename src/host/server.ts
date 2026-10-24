@@ -56,7 +56,12 @@ import { handleApiRequest } from "./api.js";
 import { resolveTenant, tenantSlugOf, type TenantEntry } from "./tenants.js";
 import { writeJsonError } from "../viewer/respond.js";
 import type { ViewerSnapshot } from "../viewer/types.js";
-import { reconcileOutbox, resolveDimensions, type ReconcileOutcome } from "../dimensions/index.js";
+import {
+  createDimensionsDatabase,
+  reconcileOutbox,
+  resolveDimensions,
+  type ReconcileOutcome,
+} from "../dimensions/index.js";
 import { tryWithOrdinaryMutationLock } from "../operation-bundles/with-mutation-lock.js";
 import type { ViewerDeps } from "../viewer/workflow-run-projection.js";
 
@@ -332,8 +337,13 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
  * @returns What was finished and what remains unresolved, or undefined when busy.
  */
 async function reconcilePendingIngests(root: string): Promise<ReconcileOutcome | undefined> {
-  const locked = await tryWithOrdinaryMutationLock(root, () =>
-    reconcileOutbox(root, resolveDimensions({ root })),
-  );
+  const locked = await tryWithOrdinaryMutationLock(root, async () => {
+    const dimensionsDb = createDimensionsDatabase();
+    try {
+      return await reconcileOutbox(root, resolveDimensions({ root, db: dimensionsDb.db }));
+    } finally {
+      await dimensionsDb.close();
+    }
+  });
   return locked.busy ? undefined : locked.value;
 }

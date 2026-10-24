@@ -90,7 +90,17 @@ import type {
   SourceState,
   WikiState,
 } from "../utils/types.js";
-import { resolveDimensions } from "../dimensions/index.js";
+/**
+ * The drizzle handle the dimension helpers are bound to.
+ *
+ * Derived from the helper's own return type rather than imported from
+ * `llmwiki-kg` directly: the DTS build resolves this file without the
+ * `tsconfig.paths` entry that makes that package name resolvable, so a direct
+ * import here breaks the declaration build even though `tsc` accepts it.
+ */
+type DimensionsDatabaseHandle = ReturnType<typeof createDimensionsDatabase>["db"];
+
+import { createDimensionsDatabase, resolveDimensions } from "../dimensions/index.js";
 import { timeStage } from "../utils/stage-timing.js";
 
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
@@ -124,6 +134,13 @@ export async function compileAndReport(
 ): Promise<CompileResult> {
   output.header("llmwiki compile");
 
+  // One handle for the whole run, closed in the `finally` below. Pages are rows
+  // in Postgres now, so the pipeline needs a connection; building it here rather
+  // than inside the pipeline keeps its lifetime bounded to this call. Constructing
+  // it does not connect, so a compile of a project with no dimension work never
+  // opens a socket.
+  const dimensionsDb = createDimensionsDatabase();
+
   const locked = await acquireMutationLock(root, "ordinary");
   if (!locked) {
     output.status("!", output.error("Could not acquire lock. Try again later."));
@@ -150,9 +167,10 @@ export async function compileAndReport(
     // the modifier digest it contributes is visible to the invalidation check
     // rather than only to the prompt builders further down.
     return await withRunSystemPolicy(options.systemPolicy, () =>
-      runCompilePipeline(root, options),
+      runCompilePipeline(root, options, dimensionsDb.db),
     );
   } finally {
+    await dimensionsDb.close();
     await releaseLock(root);
   }
 }
@@ -433,6 +451,7 @@ async function seedThenFinalize(
 async function runCompilePipeline(
   root: string,
   options: CompileOptions,
+  db: DimensionsDatabaseHandle,
 ): Promise<CompileResult> {
   const startMs = Date.now();
   const schema = await loadSchema(root);
@@ -506,7 +525,7 @@ async function runCompilePipeline(
     await markDeletedAsOrphaned(root, buckets.deleted, draft);
     // Graph retirement follows the same review rule: a held-back run must not
     // retire documents the wiki has not stopped serving yet.
-    forgetErrors.push(...(await forgetDeletedSources(root, buckets.deleted, state)));
+    forgetErrors.push(...(await forgetDeletedSources(root, buckets.deleted, state, db)));
   }
 
   // Only extraction failures in THIS run freeze a page. Deletion and persisted
@@ -650,15 +669,23 @@ async function markDeletedAsOrphaned(
  * @param root - Project root, for dimension resolution.
  * @param deleted - Source changes already classified as deletions.
  * @param state - State BEFORE this run, which still holds the missing sources.
+ * @param db - Database handle every dimension is backed by.
  * @returns One message per source that could not be retired.
  */
 async function forgetDeletedSources(
   root: string,
   deleted: readonly SourceChange[],
   state: WikiState,
+  db: DimensionsDatabaseHandle,
 ): Promise<string[]> {
   const failures: string[] = [];
-  const dimensions = resolveDimensions({ root }).filter((entry) => entry.name !== "wiki");
+  // Graph retirement is the ONLY concern here, so ask for the graph dimension
+  // alone (`only`) instead of building every enabled dimension and filtering the
+  // wiki out. Building and discarding was harmless while the wiki was
+  // file-backed; it is Postgres-backed now, so resolving it demands a Stack id
+  // this path never needed. `only` also respects the switch: a project that never
+  // enabled `kg` retires nothing here, exactly as before.
+  const dimensions = resolveDimensions({ root, db, only: ["kg"] });
   if (dimensions.length === 0) return failures;
   for (const change of deleted) {
     const source = state.sources[change.file]?.source;
