@@ -15,11 +15,22 @@
  * vacuously.
  */
 import { afterAll, describe, expect, it } from "vitest";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
-import { createWikiStoreDimension } from "../../src/dimensions/wiki/store-dimension.js";
+import { createWikiStoreDimension } from "../../src/dimensions/wiki/database.js";
 import { listStoredPages } from "../../src/dimensions/wiki/page-store.js";
 import type { DimensionInput } from "../../src/dimensions/types.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
+
+/**
+ * A scratch project root for the L1 bridge.
+ *
+ * The dimension writes the raw markdown to `sources/` as well as the row, so it
+ * needs a real directory. Created eagerly because the factory requires `root`.
+ */
+const bridgeRoot = await mkdtemp(path.join(tmpdir(), "wiki-store-bridge-"));
 
 const harness = await createKgPostgresHarness("wiki-store-dim");
 const other = await createKgPostgresHarness("wiki-store-dim-other");
@@ -47,8 +58,8 @@ function inputOf(title: string, source: string, body = `body for ${title}`): Dim
 }
 
 /** The dimension under test, bound to the primary tenant. */
-function dimension() {
-  return createWikiStoreDimension({ stackId: harness.stackId, db: harness.db });
+function dimension(root = bridgeRoot) {
+  return createWikiStoreDimension({ stackId: harness.stackId, db: harness.db, root });
 }
 
 /** Prepare then commit, the way the coordinator drives a dimension. */
@@ -99,7 +110,11 @@ describe("the stored wiki dimension", () => {
   }, 30_000);
 
   it.skipIf(!provisioned)("does not write into another tenant", async () => {
-    const theirs = createWikiStoreDimension({ stackId: other.stackId, db: other.db });
+    const theirs = createWikiStoreDimension({
+      stackId: other.stackId,
+      db: other.db,
+      root: bridgeRoot,
+    });
     await write(theirs, inputOf("Theirs Only", "src://theirs"));
     const mine = (await listStoredPages(harness.db, harness.stackId, 200)).map((page) => page.slug);
     expect(mine).not.toContain("theirs-only");
@@ -112,5 +127,24 @@ describe("the stored wiki dimension", () => {
     await dimension().forget({ source: "src://forget" });
     const slugs = (await listStoredPages(harness.db, harness.stackId, 200)).map((page) => page.slug);
     expect(slugs).toContain("forgotten");
+  }, 30_000);
+});
+
+describe("the L1 bridge that keeps ingest->compile alive", () => {
+  it.skipIf(!provisioned)("returns artifactPath, because ingest throws without one", async () => {
+    // services/ingest/service.ts:120 refuses an outcome with no artifactPath, so
+    // a dimension that returned none would break EVERY ingest.
+    const committed = await write(dimension(), inputOf("Bridge Artefact", "src://bridge-a"));
+    expect(committed.artifactPath).toBeDefined();
+    expect(committed.artifactPath?.endsWith(".md")).toBe(true);
+  }, 30_000);
+
+  it.skipIf(!provisioned)("actually writes the markdown under sources/", async () => {
+    // compile discovers work by hashing sources/ (compiler/hasher.ts:34-43).
+    // A row with no file is invisible to it, which is the silent death this
+    // bridge exists to prevent.
+    const committed = await write(dimension(), inputOf("Bridge On Disk", "src://bridge-b"));
+    const text = await readFile(committed.artifactPath ?? "", "utf-8");
+    expect(text).toContain("Bridge On Disk");
   }, 30_000);
 });

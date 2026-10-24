@@ -103,7 +103,22 @@ describe("ingestDimensions", () => {
     expect(records).toHaveLength(0);
   });
 
-  it("rolls the wiki back when the graph commit fails", async () => {
+  /*
+   * A COMMITTED dimension keeps its outbox record, and this replaces a test that
+   * asserted the opposite.
+   *
+   * The old expectation was that a clean-looking `discard` proved the rolled-back
+   * ingest left nothing to recover, so the record could be deleted. That held only
+   * while every dimension reverted for real. `discard` is specified as undoing a
+   * PREPARED-BUT-UNCOMMITTED write (see the port in `types.ts`), so it promises
+   * nothing once `commit` has landed -- and the database-backed wiki's is a
+   * deliberate no-op. Deleting the record then left a visible write with no
+   * recovery trail.
+   *
+   * The record is now kept `pending`, which is what lets `reconcileOutbox` finish
+   * the ingest by replaying the idempotent commit.
+   */
+  it("keeps the pending record when a committed dimension cannot prove it undid", async () => {
     const wiki = makeDimension("wiki");
     const kg = makeDimension("kg", { commitFails: true });
 
@@ -114,7 +129,8 @@ describe("ingestDimensions", () => {
     expect(wiki.committed).toBe(1);
     expect(wiki.discarded).toBe(1);
     const { records } = await loadRecords(root);
-    expect(records).toHaveLength(0);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.status).toBe("pending");
   });
 
   it("keeps the pending record when rollback itself fails", async () => {

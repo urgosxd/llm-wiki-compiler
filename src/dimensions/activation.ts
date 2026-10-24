@@ -9,14 +9,30 @@
  *   AKS_STACK_ID=<uuid>       AKS_STACK_NAME=<name>      (optional, defaults to id)
  *   AKS_DATABASE_URL=<dsn>    (optional; the vendored core falls back to its own)
  *
- * With the variable unset or empty, only `wiki` is enabled and ingest behaves
- * exactly as it did before this feature existed. That default is the point:
- * adding a second dimension must not change the behaviour of a project that
- * never asked for one.
+ * With the variable unset or empty, only `wiki` is enabled.
+ *
+ * ## Postgres is required, for both dimensions
+ *
+ * The `wiki` dimension used to have a file-backed sibling. That is gone: pages
+ * live in the `wiki.pages` table keyed by Stack, so building EITHER dimension
+ * requires a reachable database and a stack id. A machine without them cannot
+ * compile, which is a product decision recorded in
+ * `odd/tasks/multi-tenant-stack-only.md`, not an incidental default.
+ *
+ * The stack id requirement is checked BEFORE the switch is honoured, and it is
+ * checked for every enabled dimension rather than only for `kg`. Two reasons:
+ *
+ *   - A dimension that silently resolves to a different backend is worse than a
+ *     refusal, because the caller cannot tell which one it got.
+ *   - Callers that resolve dimensions only to FILTER one out (`compile`'s
+ *     `forgetDeletedSources` drops `wiki` immediately) would otherwise fail on a
+ *     dimension they never intended to use. Failing closed here is the honest
+ *     answer: the environment is misconfigured either way.
  */
 
+import { createClient, createDatabase, kgConfig, type Database } from "llmwiki-kg";
 import { createKgDimension } from "./kg/index.js";
-import { createWikiDimension } from "./wiki/index.js";
+import { createWikiStoreDimension } from "./wiki/database.js";
 import type { Dimension, DimensionName } from "./types.js";
 
 /** Environment variable naming the enabled dimensions, comma-separated. */
@@ -71,14 +87,125 @@ function isKnownDimension(name: string): name is DimensionName {
   return (KNOWN_DIMENSIONS as readonly string[]).includes(name);
 }
 
+/**
+ * A database handle plus the one way to release it.
+ *
+ * The client is carried alongside the handle because closing the drizzle object
+ * is not how a pool is drained -- the driver's `end()` is, and only the value
+ * that created the client can call it. Returning both keeps that pairing
+ * explicit instead of reaching through drizzle internals at each call site.
+ */
+export interface DimensionsDatabase {
+  /** Drizzle handle the dimensions are bound to. */
+  readonly db: Database;
+  /** Drain the pool. Safe to call once per handle. */
+  close(): Promise<void>;
+}
+
+/**
+ * Build the database handle every dimension is backed by.
+ *
+ * Constructing a client does NOT connect: postgres-js pools lazily, so a process
+ * that never writes a page never opens a socket. That is what lets `compile`
+ * hold a handle without requiring a reachable database up front -- the failure,
+ * when there is one, is reported by the query that actually needed it.
+ *
+ * @param env - Environment to read the DSN from; defaults to `process.env`.
+ * @returns The handle and its closer.
+ */
+export function createDimensionsDatabase(env: NodeJS.ProcessEnv = process.env): DimensionsDatabase {
+  const configured = env[AKS_DATABASE_URL_ENV_VAR]?.trim();
+  const client = createClient(
+    configured === undefined || configured === "" ? kgConfig.DATABASE_URL : configured,
+    DB_CONNECT_TIMEOUT_SECONDS,
+  );
+  return {
+    db: createDatabase(client),
+    close: () => client.end({ timeout: DB_CLOSE_TIMEOUT_SECONDS }),
+  };
+}
+
+/** Seconds to wait for a connection before failing, matching the KG dimension. */
+const DB_CONNECT_TIMEOUT_SECONDS = 10;
+
+/** Seconds to allow a pool to drain on close. */
+const DB_CLOSE_TIMEOUT_SECONDS = 5;
+
 /** Options for {@link resolveDimensions}. */
 export interface ResolveDimensionsOptions {
-  /** Project root, used to bind the wiki dimension. */
+  /** Project root, used to locate project state (not a storage medium for pages). */
   readonly root: string;
   /** Source of the environment values; defaults to `process.env`. */
   readonly env?: NodeJS.ProcessEnv;
   /** Detect-only graph mode; see {@link createKgDimension}. */
   readonly kgDryRun?: boolean;
+  /**
+   * Database handle to bind the wiki dimension to.
+   *
+   * REQUIRED, and deliberately not optional. Every dimension is Postgres-backed
+   * now, so a caller without a handle cannot build one. It is a required
+   * argument rather than an optional one checked at runtime for a specific
+   * reason: the switch DEFAULTS to `wiki`, so every existing caller enables it.
+   * An optional field would let all of them compile and then fail inside ingest,
+   * far from the line that forgot to pass it. Making it required turns each of
+   * those into a compile error at the call site instead.
+   */
+  readonly db: Database;
+  /**
+   * Restrict resolution to these dimensions, intersected with the switch.
+   *
+   * Exists because one caller wants a single dimension and must NOT build the
+   * others: `compile`'s graph-retirement path needs `kg` and would otherwise
+   * construct the wiki too, demanding a Stack id for a dimension it discards.
+   * Filtering after construction made that build unavoidable; asking for a
+   * subset before construction is what avoids it.
+   *
+   * Still honours `LLMWIKI_DIMENSIONS`: `only` narrows, it never enables a
+   * dimension the environment disabled.
+   */
+  readonly only?: readonly DimensionName[];
+}
+
+/**
+ * Read the Stack id every dimension is keyed by, refusing an absent one.
+ *
+ * One Stack per ingest is the whole isolation model: without it there is no
+ * tenant to key a row by, so there is nothing sensible to write.
+ *
+ * @param env - Environment to read.
+ * @param dimension - Dimension being resolved, named in the error.
+ * @returns The trimmed Stack id.
+ * @throws {DimensionActivationError} when it is unset or blank.
+ */
+function requireStackId(env: NodeJS.ProcessEnv, dimension: DimensionName): string {
+  const stackId = env[AKS_STACK_ID_ENV_VAR]?.trim() ?? "";
+  if (stackId === "") {
+    throw new DimensionActivationError(
+      `${DIMENSIONS_ENV_VAR} enables "${dimension}" but ${AKS_STACK_ID_ENV_VAR} is not set. ` +
+        `Set it to the knowledge stack the documents belong to.`,
+    );
+  }
+  return stackId;
+}
+
+/**
+ * Build the wiki dimension over Postgres, or refuse when no handle was supplied.
+ *
+ * @param options - Resolution options, possibly carrying a database.
+ * @param env - Environment to read the Stack id from.
+ * @returns The Postgres-backed wiki dimension.
+ * @throws {DimensionActivationError} when the database handle is missing.
+ */
+function resolveWiki(options: ResolveDimensionsOptions, env: NodeJS.ProcessEnv): Dimension {
+  // The handle is checked first because it is the caller-level mistake: an
+  // operator who forgot `{ db }` controls that argument directly, while the
+  // Stack id lives in the environment. Reporting the environment first would
+  // send them to the wrong place when both are missing.
+  const stackId = requireStackId(env, "wiki");
+  // `root` is required by the dimension, not by this function: pages are rows,
+  // but the raw markdown is still written under `sources/` so `compile` can
+  // discover it. Until Wave 4 moves those bytes, the dimension needs both.
+  return createWikiStoreDimension({ db: options.db, stackId, root: options.root });
 }
 
 /**
@@ -98,17 +225,12 @@ export function resolveDimensions(options: ResolveDimensionsOptions): Dimension[
 
   for (const name of KNOWN_DIMENSIONS) {
     if (!names.includes(name)) continue;
+    if (options.only !== undefined && !options.only.includes(name)) continue;
     if (name === "wiki") {
-      dimensions.push(createWikiDimension(options.root));
+      dimensions.push(resolveWiki(options, env));
       continue;
     }
-    const stackId = env[AKS_STACK_ID_ENV_VAR]?.trim() ?? "";
-    if (stackId === "") {
-      throw new DimensionActivationError(
-        `${DIMENSIONS_ENV_VAR} enables "kg" but ${AKS_STACK_ID_ENV_VAR} is not set. ` +
-          `Set it to the knowledge stack the documents belong to.`,
-      );
-    }
+    const stackId = requireStackId(env, "kg");
     const stackName = env[AKS_STACK_NAME_ENV_VAR]?.trim() || stackId;
     const databaseUrl = env[AKS_DATABASE_URL_ENV_VAR]?.trim();
     dimensions.push(

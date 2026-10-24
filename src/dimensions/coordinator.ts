@@ -94,10 +94,29 @@ function withKey(
 }
 
 /**
- * Roll back every dimension that already committed, newest first.
+ * Undo what can still be undone, newest first.
  *
- * Returns the dimensions whose rollback FAILED, so the caller can keep the
+ * Returns the dimensions whose work could NOT be undone, so the caller keeps the
  * outbox record instead of pretending the world is clean.
+ *
+ * ## Why `committed` decides, not the absence of a throw
+ *
+ * This used to report a failure only when `discard` THREW, and treated a quiet
+ * return as "successfully rolled back". That conflated two different outcomes a
+ * `discard` can mean: "I undid it" and "there was nothing I could undo". A
+ * database-backed dimension commits a row and its `discard` is deliberately a
+ * no-op -- a transaction was never held open -- so it returned quietly while the
+ * row STAYED. The caller then deleted the outbox record as if the ingest had
+ * been cleanly reversed, leaving a half-applied write with no trail for the
+ * reconciler to find. Silent data, silently unrecoverable.
+ *
+ * So a dimension that COMMITTED and cannot prove it undid anything counts as a
+ * failure. The record is kept `pending`, and `reconcileOutbox` can finish it by
+ * replaying the idempotent commit. A dimension that never committed needs no
+ * rollback at all, so it is skipped rather than asked to discard.
+ *
+ * @param runs - Every dimension this ingest touched.
+ * @returns Names of dimensions whose committed work may still be visible.
  */
 async function rollbackCommitted(
   runs: readonly DimensionRun[],
@@ -105,8 +124,13 @@ async function rollbackCommitted(
   const failures: string[] = [];
   for (const run of [...runs].reverse()) {
     if (run.prepared === null) continue;
+    const hadCommitted = run.committed !== null;
     try {
       await run.dimension.discard(run.prepared);
+      // A committed write that reported success without throwing is only
+      // trustworthy if the dimension actually reverts. Nothing in the port
+      // promises that, so it is recorded as unresolved rather than assumed.
+      if (hadCommitted) failures.push(run.dimension.name);
     } catch {
       failures.push(run.dimension.name);
     }

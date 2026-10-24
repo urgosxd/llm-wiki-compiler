@@ -25,7 +25,11 @@
 
 import path from "path";
 import { createHash } from "node:crypto";
-import { ingestDimensions, resolveDimensions } from "../../dimensions/index.js";
+import {
+  createDimensionsDatabase,
+  ingestDimensions,
+  resolveDimensions,
+} from "../../dimensions/index.js";
 import { tryWithOrdinaryMutationLock } from "../../operation-bundles/with-mutation-lock.js";
 import { LockBusyError } from "../../utils/lock.js";
 import { appendLog } from "../../utils/activity-log.js";
@@ -108,9 +112,17 @@ async function writeToDimensions(
   root: string,
   input: { title: string; source: string; document: string; body: string },
 ): Promise<{ savedPath: string; writeStatus: NonNullable<IngestResult["writeStatus"]> }> {
-  const locked = await tryWithOrdinaryMutationLock(root, () =>
-    ingestDimensions(root, input, resolveDimensions({ root })),
-  );
+  // Pages are rows in Postgres now, so the dimensions need a handle. It is built
+  // for this operation and released right after, because an unclosed pool keeps
+  // the event loop alive.
+  const dimensionsDb = createDimensionsDatabase();
+  const locked = await tryWithOrdinaryMutationLock(root, async () => {
+    try {
+      return await ingestDimensions(root, input, resolveDimensions({ root, db: dimensionsDb.db }));
+    } finally {
+      await dimensionsDb.close();
+    }
+  });
   if (locked.busy) {
     // The project's existing lock error: callers already branch on it.
     throw new LockBusyError(0);
