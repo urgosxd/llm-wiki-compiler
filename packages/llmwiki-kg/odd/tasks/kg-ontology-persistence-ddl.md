@@ -1,9 +1,27 @@
 # Proposal: persist the ontology per Stack (DDL)
 
-**Status:** BLOCKED — needs a human contract decision, not an agent one
+**Status:** IMPLEMENTED on `main` as `8165a93` — the DDL below was applied unchanged
 **Owner of this analysis:** orchestrator-b (`kg-core-dimension`)
 **File under change:** `packages/llmwiki-kg/db/schema.sql` — **writable by no role.**
-This document proposes; it cannot implement.
+This document proposed it; the coordinator executed it.
+
+## Outcome
+
+The coordinator session committed this on `main` as
+`8165a93 feat(kg): persist a Stack's ontology (writable by no role)`, applying the
+DDL unchanged, and verified it against the live database: `null` accepted, object
+accepted, array rejected by `valid_ontology_is_object`, and idempotent across two
+runs. Its commit message records the same three design arguments this document
+made — nullable because `null` means the oracle's behaviour, one `jsonb` column
+because the document is written whole, and a shape-only check because semantics
+belong in `validateOntology` where the error names the offending type.
+
+So the analysis below is preserved as the reviewed proposal that was accepted,
+not as an open blocker. The remaining gaps in the definition of done are
+orchestrator-c's routes work, tracked in
+`kg-ontology-from-json.md`.
+
+## Original proposal (unchanged, for review history)
 
 ## The blocker, measured
 
@@ -23,15 +41,19 @@ There is no role that can write this file. A shell write is possible (the hook
 guards the `write`/`edit` tools) and would be a deliberate bypass of a ratified
 control, so it is not an option to take unilaterally.
 
-**Therefore Slice 2 needs a human decision**, in one of three forms:
+**Therefore Slice 2 needed a human decision**, in one of three forms:
 
 1. a contract amendment widening one role's `ownedPaths` to cover
    `packages/llmwiki-kg/db/**` for this change, or
 2. a human-run migration, with this document as the reviewed artifact, or
 3. an explicit deferral, leaving the ontology configurable per run.
 
-Option 3 is fully functional today: the mechanism works from
-`KgDimensionOptions.ontology` or `loadOntology(path)`.
+**Option 2 was taken**, by the unbound coordinator session rather than by any
+role: it holds no `ownedPaths` and no `forbiddenPaths`, so it is the one
+participant the contract does not restrict. That is a real gap in the contract —
+the coordinator has no registrable role, so every message it sends is either an
+unregistered `from` or a false identity claim — and it is recorded here because it
+is the mechanism that unblocked a change the three-role design had frozen.
 
 ## Why this is a separate proposal from the barrel contract
 
