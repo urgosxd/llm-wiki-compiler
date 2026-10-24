@@ -362,11 +362,26 @@ No `ontology` in any of them. And `dto.ts` states that Zod objects strip unknown
 keys, matching Pydantic — so adding the column without adding it to the DTO would
 be silently dropped rather than surfaced.
 
-So this slice cannot be finished by editing one constant. It needs `ontology`
-added deliberately to `StackCreate`, `StackUpdate` and `StackResponse` in `dto.ts`
-plus the matching `stacks.ts` handling, while `STACK_COLUMNS` keeps its documented
-order. That is a visible divergence from the Python reference, which this port has
-otherwise avoided, so it is a product decision rather than a cleanup.
+**My first prescription was internally contradictory, and orchestrator-c caught
+it.** I asked for a response field while also forbidding any change to
+`STACK_COLUMNS`. Both cannot hold: the body is built from that list at
+`stacks.ts:185` and `:353` via `returning ${sql.raw(STACK_COLUMNS)}` and then
+`toStackResponse(row)`, and `stacks-create.test.ts:44` plus
+`stacks-read.test.ts:78` assert `Object.keys(body)` equals exactly the nine oracle
+keys. A response field therefore requires entering that select, or a second query.
+
+The agreed split is narrower and is a genuine parity-preserving superset:
+
+| Piece | Decision | Parity cost |
+| --- | --- | --- |
+| `ontology` on `StackCreate` | accepted | additive request tolerance; unknown keys were already stripped, so an oracle client never sends it |
+| `ontology` on `StackUpdate` | accepted | same |
+| `ontology` in `StackResponse` | **held** | changes response bytes on a frozen product surface; needs orchestrator-a |
+
+So `POST /stacks` with an ontology answers 201 with the standard nine-key body.
+The column is written, `findDocument` already reads it for ingest, and no existing
+response byte moves. Exposing it in the response is a separate decision, not a
+follow-on edit.
 
 ### A boundary defect in the branch, invisible to the hook
 
@@ -386,13 +401,24 @@ branch.
 Recorded rather than fixed: resolving it means deciding how the branches combine,
 which is the integration owner's call, not this role's.
 
-### A real defect c found: two diverging column lists
+### The two column lists are not duplicates, and my dedupe request was wrong
 
-`stack_resolver.ts` gained `synthesize_descriptions` and `ontology`; `stacks.ts`
-kept a separate, older list with `synthesize_descriptions` and no `ontology`. They
-are independent constants — `stacks.ts` does not import the resolver's — so the
-two have drifted and nothing detects it. The right fix is one exported list, not
-two that must be kept in step by hand.
+I asked orchestrator-c to re-export one list from the other. That was wrong twice
+over, and it was told to me plainly:
+
+1. `stack_resolver.ts` is in `packages/llmwiki-kg/ts/src/core/**` — **owned by this
+   role and in orchestrator-c's forbiddenPaths**, so I asked it to edit a file the
+   hook refuses. Verified against the contract, not assumed.
+2. The lists are not the same thing. The resolver's omits
+   `synthesize_descriptions` and appends `ontology`; the route's has
+   `synthesize_descriptions` and no `ontology`. Re-exporting one from the other
+   **changes what the other caller selects** — a behaviour change dressed as a
+   cleanup.
+
+The residue is real: two list constants that must be kept in step by hand, with
+nothing detecting drift. But fixing it is this role's work on this role's file, not
+a request to the other role, and it is not urgent enough to justify widening a
+mutable select during a parity-sensitive feature.
 
 ## Follow-up owned by orchestrator-b once the re-export lands
 
