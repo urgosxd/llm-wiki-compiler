@@ -20,3 +20,10 @@ localdocs/
 docs/superpowers/
 # Local Pi runtime state
 .atl/
+
+# Document upload scratch space. The KG package's suites write real files here
+# through `createDocument`, and its own .gitignore covers them only under
+# packages/llmwiki-kg/. This root entry is what stops one from being committed
+# from the repo root — which is exactly how a 9-byte fixture ended up in
+# d04fcc5 and had to be removed afterwards.
+/uploads/
