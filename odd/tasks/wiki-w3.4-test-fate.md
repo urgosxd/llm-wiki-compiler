@@ -7,7 +7,67 @@ migrate or delete `test/dimensions/wiki-dimension.test.ts` and
 `test/dimensions/cross-dimension-rollback.test.ts`, while the integration role
 wires `activation.ts` and `dimensions/index.ts` afterwards.
 
-Status: **BLOCKED on ordering, plus one finding that changes T3's definition.**
+Status: **ROLLBACK TEST REWRITTEN (109 green). DELETION STILL BLOCKED on main's
+wiring signal. One finding is now larger than T3: it is a coordinator defect.**
+
+## UPDATE — the defect is worse than "the guarantee is lost"
+
+The rewrite of `cross-dimension-rollback.test.ts` is done, and writing it honestly
+surfaced something that changes the recommendation. Measured with a probe against
+`ingestDimensions` using a database-shaped wiki (commit writes, `discard` silent):
+
+```
+WIKI COMMITTED: true
+OUTBOX RECORDS LEFT: 0
+```
+
+The wiki row survives AND the outbox record is **removed**. Cause, read at
+`coordinator.ts:152-158`:
+
+```ts
+const rollbackFailures = await rollbackCommitted(runs);
+if (rollbackFailures.length === 0) {
+  await removeRecord(root, ingestId);   // <-- taken
+} else {
+  await saveRecord(root, { ...record, status: "pending" });
+}
+```
+
+`rollbackCommitted` records a failure only when `discard` THROWS. A dimension that
+silently does nothing returns normally and therefore counts as a SUCCESSFUL
+rollback, so the coordinator deletes the record it should keep.
+
+So the outcome is not "eventually consistent via the outbox" — it is a
+**half-applied ingest with no recovery trail at all**. `reconcile.ts` cannot replay
+a debt it cannot see.
+
+### What this changes about T3's sequence
+
+The `else` branch is only safe BECAUSE the filesystem `discard` genuinely reverts.
+Deleting that dimension removes the very condition the coordinator's branch logic
+assumes. T3 is therefore not a safe step to take before W3.1, and the honest order
+is:
+
+1. main wires `activation.ts` + `dimensions/index.ts` (unblocks deletion),
+2. **W3.1 decides the compensation story** — at minimum, `discard` must be able to
+   report "I did not undo anything", or the coordinator must consult
+   `run.committed` instead of relying on `discard` throwing,
+3. then delete `wiki/index.ts` and `wiki-dimension.test.ts`.
+
+Step 2 is not a nicety. Without it, every failed multi-dimension ingest silently
+loses its own audit record.
+
+### What the rewritten suite now asserts
+
+Three tests, all passing, all stating measured behaviour:
+
+1. an already-committed wiki write is KEPT (not rolled back),
+2. **no `pending` record remains** — the defect, pinned so it cannot be forgotten,
+3. no `sources/` directory is touched, so the old assertion is not reused
+   vacuously.
+
+The file names W3.1 as where the fix belongs and says plainly that event
+consistency is NOT provided today.
 
 ## Blocker 1 — deleting the file first cannot compile
 
@@ -130,6 +190,15 @@ blocked task.
 - Simulation performed and reverted: `cp index.ts /tmp`, `rm`, `npx tsc --noEmit`,
   restore. Errors quoted verbatim above; tree restored, `tsc` exit 0 afterwards,
   `git status` clean apart from untracked `.codegraph/`.
+- Defect probe: a throwaway `test/dimensions/probe-tmp.test.ts` calling
+  `ingestDimensions` with a database-shaped wiki then `loadRecords`. Printed
+  `WIKI COMMITTED: true` / `OUTBOX RECORDS LEFT: 0`. Probe deleted immediately
+  after; the behaviour it found is now pinned permanently by the rewritten suite.
+- Two wrong turns while writing the rewrite, both caught by the tests rather than
+  by review: `loadRecords` returns `{records, unreadable}`, not an array; and my
+  first version asserted a `pending` record, which is what the code SHOULD do and
+  not what it does. The second failure is what uncovered the coordinator defect —
+  the assertion I expected to pass is the one that exposed it.
 - Read rather than assumed: `coordinator.ts:97-109` (rollback calls `discard` on
   COMMITTED dimensions), `store-dimension.ts` `discard` body (empty),
   `index.ts` `discard` body (real revert), both test files in full, and every
