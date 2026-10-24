@@ -39,37 +39,48 @@ Three properties keep that honest:
   directory; the session starts at the repository root with
   `ORCHESTRATION_ROLE=orchestrator-main`.
 
-## The coordinator is read-only on purpose
+## The coordinator writes everything except other roles' checkouts
 
-`ownedPaths` is a prefix no real file uses, so the role can write nothing in the
-product. That is not a limitation to work around; it is the boundary that makes
-the coordinator's reports trustworthy:
+`orchestrator-main` declares `unrestrictedWrite: true` with `ownedPaths: ["**"]`,
+so it may write any path in the repository. Its only limit is `forbiddenPaths`,
+which keeps `.worktrees/**`: writing inside another role's checkout corrupts a
+tree git is tracking for a different branch.
 
-- It may send `work_request`, `contract_proposal`, `contract_decision`, `blocked`
-  and `done` to any role.
-- A `work_result` from it claiming product files is refused as
-  `files-changed-out-of-scope`, because a session that cannot write a path cannot
-  have implemented it.
-- `forbiddenPaths` lists the product surfaces explicitly, so a write attempt gets
-  the honest `forbidden` reason; shared paths such as `package.json` and `docs/**`
-  keep the honest `shared-read-only` one.
+Why a flag instead of simply owning `**`: `sharedPaths` outranks `ownedPaths` in
+the predicate, and this contract lists 79 shared paths. A role that must repair
+`package.json` or `docs/**` has to step past that rule explicitly rather than
+having it silently removed for everyone. Emptying `sharedPaths` would widen every
+other role at the same time.
 
-Every role may still send to it and receive from it: the message check validates
-the envelope and the truth of its claims, never the sender's identity. `from`
-equals `to` remains refused, so the coordinator cannot address itself.
+At most one role may set it. Two unrestricted roles are two writers on every
+file, which is the condition the contract exists to prevent, arriving through a
+boolean instead of an overlap.
+
+### What the grant costs, stated plainly
+
+1. **It writes on the shared branch.** The role has no branch of its own, so a
+   change lands on `main` directly instead of arriving through a merge review.
+2. **It can collide with a, b and c.** They write `src/dimensions/**` and
+   `packages/llmwiki-kg/ts/src/**` in their own worktrees; `orchestrator-main`
+   can write the same paths in the primary checkout. Git sees nothing until merge
+   time. This risk was accepted deliberately when the grant was ratified.
+3. **It can edit this contract.** `contract-cordination.json` is a shared path, so
+   the grant covers it, and the hook re-reads the contract on every tool call. The
+   role could therefore widen its own scope. Nothing in the mechanism prevents
+   that; only the protocol does, so a contract edit by the coordinator must be
+   reviewed by the human as if it were a privileged operation.
+4. **The hook guards `write` and `edit`, not `bash`.** A shell command can write
+   any path regardless of scope. The contract is a signal plus a tool boundary,
+   not a filesystem sandbox. This was true before the grant and is unchanged.
 
 Infrastructure — `contract-cordination.json`, `package.json`, `tsconfig*.json`,
-`vitest.config.ts` — belongs to no role. A feature role with veto power over
-everyone else's dependencies is a bottleneck, not an owner. Those files are
-human territory: edited from the primary checkout by the human, validated before
-every commit, and frozen for every role including `orchestrator-main`.
+`vitest.config.ts` — is still human territory by convention: ratified by a human,
+validated before every commit. The grant makes it *writable* by the coordinator,
+not *owned* by it. Keep that distinction when judging a diff.
 
-That last word is the important one. Running in the primary checkout is not the
-same as owning it. `orchestrator-main` lives there because it needs the whole
-repository visible in one place, not because it may edit the infrastructure; its
-`ownedPaths` grants it nothing. Infrastructure changes stay with the human, which
-is the only arrangement where the file that defines everyone's boundary is not
-written by one of the parties it binds.
+Every role may still send to the coordinator and receive from it: the message
+check validates the envelope and the truth of its claims, never the sender's
+identity. `from` equals `to` remains refused, so it cannot address itself.
 
 ## Verification is not restricted
 
@@ -84,7 +95,8 @@ other roles' reports needs to be able to do.
 
 Tests therefore live under each role's ownedPaths, never in sharedPaths:
 sharedPaths takes precedence over ownedPaths, so a test path listed there would
-make a role unable to write its own tests.
+make a role unable to write its own tests. The one exception is a role with
+`unrestrictedWrite`, which skips the shared check entirely.
 
 ## The port is frozen at v1
 
@@ -96,9 +108,11 @@ a work_request instead of editing it.
 
 ### `orchestrator-main` — coordination-and-integration
 
-- worktree: none — runs in the primary checkout
-- owns nothing in the product: `.orchestration-main-readonly/**` only
-- dispatches work and reports; never implements
+- worktree: none — runs in the primary checkout, on `main`
+- `unrestrictedWrite: true` with `ownedPaths: ["**"]`: writes any path except
+  `forbiddenPaths`
+- forbidden: `.worktrees/**` — another role's checkout
+- dispatches work, judges reports, and repairs infrastructure
 
 ### `orchestrator-a` — wiki-dimension-and-integration
 
