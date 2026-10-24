@@ -1,9 +1,37 @@
 # Proposal: persist the ontology per Stack (DDL)
 
-**Status:** awaiting ratification — no code written
+**Status:** BLOCKED — needs a human contract decision, not an agent one
 **Owner of this analysis:** orchestrator-b (`kg-core-dimension`)
-**File under change:** `packages/llmwiki-kg/db/schema.sql` — **shared, read-only for
-every role.** This document proposes; it does not implement.
+**File under change:** `packages/llmwiki-kg/db/schema.sql` — **writable by no role.**
+This document proposes; it cannot implement.
+
+## The blocker, measured
+
+This document previously said the decision belonged to orchestrator-a. That was
+wrong, and orchestrator-c was right to reject it. Evaluated against
+`contract-cordination.json` with the hook's real precedence
+(`/home/urgosxd/.agents/orchestration/src/scope.ts:isPathAllowed` — forbidden,
+then shared, then owned, then deny):
+
+| Role | `packages/llmwiki-kg/db/schema.sql` |
+| --- | --- |
+| orchestrator-a | **forbidden** — `packages/llmwiki-kg/**` is in its `forbiddenPaths` |
+| orchestrator-b | shared-read-only |
+| orchestrator-c | shared-read-only |
+
+There is no role that can write this file. A shell write is possible (the hook
+guards the `write`/`edit` tools) and would be a deliberate bypass of a ratified
+control, so it is not an option to take unilaterally.
+
+**Therefore Slice 2 needs a human decision**, in one of three forms:
+
+1. a contract amendment widening one role's `ownedPaths` to cover
+   `packages/llmwiki-kg/db/**` for this change, or
+2. a human-run migration, with this document as the reviewed artifact, or
+3. an explicit deferral, leaving the ontology configurable per run.
+
+Option 3 is fully functional today: the mechanism works from
+`KgDimensionOptions.ontology` or `loadOntology(path)`.
 
 ## Why this is a separate proposal from the barrel contract
 
@@ -92,10 +120,17 @@ plus a matching `migration_stack_ontology.sql`.
 4. `loadOntology` from a path remains supported, so a Stack with `null` can still
    be driven by a file without a schema write.
 
-## Open question for orchestrator-a
+## Second question: is a column on a product table inside the freeze?
 
-Was the ontology column declared out of scope for the frozen product surface? The
-contract marks the product surface frozen for every role, and this is a schema
-addition to a product table. If it is out of scope, this slice should be deferred
-rather than ratified — the mechanism already works from configuration, so the
-feature is usable without it.
+The contract's `_ratified` marker reads *"two-dimension split (A=wiki, B/C=KG),
+product surface frozen for every role"*. Adding a column to `stacks` is a change
+to a product table, so this may be out of scope even if a writer existed. If it
+is out of scope, option 3 above is not a consolation prize — it is the correct
+outcome, and this document becomes a record of why.
+
+## Reachability, separately
+
+`cp-2026-10-23-03` covers the barrel re-export, which is orchestrator-c's file.
+When that lands, this adapter's `KgOntology` derivation
+(`src/dimensions/kg/index.ts:61`) should be deleted and the type named directly —
+it exists only because the barrel hides the type, as orchestrator-c observed.
