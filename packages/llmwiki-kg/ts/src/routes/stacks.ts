@@ -40,9 +40,22 @@ import type { ApiError, ValidationFailure } from "../errors.js";
  * `sql.identifier`, so they are never caller-controlled.
  */
 
-/** Oracle column list, in oracle order. Mirrors `_STACK_COLUMNS`. */
+/**
+ * Column list, in oracle order, with the ontology extension appended.
+ *
+ * The first nine are `_STACK_COLUMNS` from the Python module verbatim, including
+ * order, because response key order is contractual. `ontology` is APPENDED rather
+ * than inserted among them, for the same reason `core/stack_resolver.ts` appends
+ * it: a projection compared against the oracle still holds for the fields the
+ * oracle returns, and the extension cannot perturb them.
+ *
+ * It has to be selected at all because `StackResponse` now requires the key. A
+ * response field added to the DTO without being selected here turns every Stack
+ * read into a 500 — the schema parse fails on the absent key, inside the same
+ * transaction, before anything can name the cause.
+ */
 const STACK_COLUMNS =
-  "id, name, domain, description, scope, compilation_strategy, synthesize_descriptions, created_at, updated_at";
+  "id, name, domain, description, scope, compilation_strategy, synthesize_descriptions, created_at, updated_at, ontology";
 
 /** A `stacks` row as selected by {@link STACK_COLUMNS}. */
 type StackRow = {
@@ -55,6 +68,8 @@ type StackRow = {
   synthesize_descriptions: boolean;
   created_at: string;
   updated_at: string;
+  /** The stored declaration, `null` when unconfigured. Raw: the DTO validates. */
+  ontology: unknown;
 };
 
 /**

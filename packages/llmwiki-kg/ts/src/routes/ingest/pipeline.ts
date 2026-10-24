@@ -61,11 +61,55 @@ function ontologyArgument(stored: unknown): [] | [Ontology] {
   return [validateOntology(stored)];
 }
 
+/**
+ * What the ontology did to this document, in the shape stored in `audit`.
+ *
+ * ## Why this is recorded at all
+ *
+ * `IngestionResult` is nine fixed keys, byte-identical to the oracle, so the
+ * rejection report cannot travel on the wire. Without a record, a document that
+ * yielded three entities because the model drifted out of the declared types is
+ * indistinguishable from one that only had three entities in it — which makes a
+ * tight ontology look like a thin extraction, and vice versa.
+ *
+ * ## Why `enforced` is explicit rather than implied by `rejected: 0`
+ *
+ * "No declaration, so nothing could be rejected" and "a declaration rejected
+ * nothing" are different facts with the same count. Collapsing them would make a
+ * misconfigured Stack look like a clean run.
+ */
+export interface OntologyAudit {
+  readonly enforced: boolean;
+  readonly rejected: number;
+  /** Distinct reason codes, sorted, so the blob is comparable across runs. */
+  readonly reason_codes: readonly string[];
+}
+
 /** What steps 5 and 6 produced, plus the synthesis decision. */
 export interface ProcessedIngest {
   readonly chunks: readonly ChunkResult[];
   readonly extraction: ExtractionResult;
   readonly shouldSynthesize: boolean;
+  readonly ontologyAudit: OntologyAudit;
+}
+
+/**
+ * Summarises what the ontology rejected, for the document's audit record.
+ *
+ * Reason codes are deduplicated and sorted: the useful question is *which kinds*
+ * of violation occurred, and a stable order means two documents with the same
+ * problem produce the same blob.
+ *
+ * @param enforced - Whether a declaration was in force for this run.
+ * @param rejected - The triplets the declaration turned away.
+ * @returns The audit blob's `ontology` object.
+ */
+function ontologyAudit(
+  enforced: boolean,
+  rejected: readonly { readonly reason: string }[],
+): OntologyAudit {
+  const codes = [...new Set(rejected.map((entry) => entry.reason))].sort();
+  return { enforced, rejected: rejected.length, reason_codes: codes };
 }
 
 /**
@@ -84,17 +128,21 @@ export async function chunkAndExtract(
   },
 ): Promise<ProcessedIngest> {
   const chunks = await persistChunks(tx, params, text);
+  const ontologyArgs = ontologyArgument(document.stack_ontology);
   const extraction = await extractGraphFromChunks(
     chunks,
     document.stack_name,
-    ...ontologyArgument(document.stack_ontology),
+    ...ontologyArgs,
   );
   const shouldSynthesize =
     params.synthesizeDescriptions ?? document.stack_synthesize_default;
   if (shouldSynthesize) {
     await synthesizeEntityDescriptions(extraction, chunks);
   }
-  return { chunks, extraction, shouldSynthesize };
+  // `extraction.rejected` is populated only when an ontology was supplied, so the
+  // presence of the argument is the same fact as `enforced`.
+  const audit = ontologyAudit(ontologyArgs.length > 0, extraction.rejected ?? []);
+  return { chunks, extraction, shouldSynthesize, ontologyAudit: audit };
 }
 
 /**
@@ -130,10 +178,15 @@ export async function ingestDocument(
 
   // Steps 5 and 6: chunk, embed, persist, extract, optionally synthesize.
   const processed = await chunkAndExtract(tx, params, loaded.text, document);
-  const { chunks, extraction, shouldSynthesize } = processed;
+  const { chunks, extraction, shouldSynthesize, ontologyAudit: audit } = processed;
 
   // Step 7: consolidate. Entities first — the relationship pass needs the map.
   const written = await consolidateExtraction(tx, params, extraction);
+
+  // Step 7b: record what the ontology did, in the same transaction as the write
+  // it describes. A separate transaction could land the graph rows and lose the
+  // audit, leaving an ingested document nobody can explain.
+  await recordOntologyAudit(tx, params.docId, audit);
 
   // Step 8: totals for the Stack, after consolidation so they include this run.
   const payload = await buildIngestionResult(tx, {
@@ -211,6 +264,37 @@ export async function consolidateExtraction(
     extraction.relationships,
     nameToId,
   );
+}
+
+/**
+ * Writes the ontology audit onto the document row.
+ *
+ * `audit` is the column `db/schema.sql` reserved for exactly this — "structured
+ * audit results here later without a schema change" — and nothing wrote it
+ * before, so `GET /documents/:id` reported `null` for every ingested document.
+ *
+ * `jsonb_set` with `create_missing = true` merges into whatever is already
+ * there rather than replacing the column, because later audit producers should be
+ * able to add their own keys without erasing this one. Stringified before binding
+ * and cast once, the same way `routes/stacks.ts` binds its ontology: handing
+ * drizzle a bare object produces a parameter Postgres refuses.
+ *
+ * @param tx - The ingest transaction.
+ * @param docId - Document the audit describes.
+ * @param audit - What the ontology rejected.
+ */
+async function recordOntologyAudit(
+  tx: Database,
+  docId: string,
+  audit: OntologyAudit,
+): Promise<void> {
+  await tx.execute(sql`
+    update stack_documents
+    set audit = jsonb_set(
+      coalesce(audit, '{}'::jsonb), '{ontology}', ${JSON.stringify(audit)}::jsonb, true
+    )
+    where id = ${docId}
+  `);
 }
 
 /** Everything the response payload is assembled from. */

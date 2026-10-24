@@ -150,6 +150,7 @@ describe("required-nullable versus optional", () => {
         synthesize_descriptions: false,
         created_at: TS,
         updated_at: TS,
+        ontology: null,
       },
     },
     {
@@ -333,6 +334,7 @@ describe("timestamps", () => {
       synthesize_descriptions: false,
       created_at: TS,
       updated_at: TS,
+      ontology: null,
     });
     expect(typeof parsed.created_at).toBe("string");
     expect(parsed.created_at).not.toBeInstanceOf(Date);
