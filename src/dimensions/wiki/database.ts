@@ -27,23 +27,26 @@
  *
  * A separate entry point keeps the cost where the choice is made: a consumer that
  * wants the database-backed wiki imports this module, and one that does not never
- * sees `drizzle-orm` at all. W3.4 requires the file-backed implementation to stay
- * selectable, and this is what makes "selectable" mean a real import decision
- * rather than a runtime flag over one already-loaded module graph.
+ * sees `drizzle-orm` at all. The dimension barrel is still not allowed to carry
+ * these factories, and `test/dimensions/wiki-database-entry.test.ts` exists to
+ * keep it that way.
  *
- * ## What is NOT decided here
+ * ## This is now the ONLY wiki backend
  *
- * The choice between the backends is a caller decision and this module asserts
- * nothing about it. `createWikiDimension(root)` and `createWikiStoreDimension({
- * db, stackId })` both satisfy the same `Dimension` port; likewise
- * `createWikiReader(root)` and `createWikiPageReader({ db, stackId })` both
- * satisfy `DimensionReader`. Neither the activation switch
- * (`src/dimensions/activation.ts`) nor the top-level dimension barrel is touched
- * here: both are `sharedPaths`, so wiring the database path into the product's
- * startup belongs to the integration role, not to the wiki dimension.
+ * It used to be one of two: `src/dimensions/wiki/index.ts` held a file-backed
+ * sibling and W3.4 required both to stay selectable. That requirement was
+ * superseded when the human decided Postgres is the only backend, so the sibling
+ * is deleted and `createWikiDimension` no longer exists. `activation.ts` builds
+ * this dimension directly.
+ *
+ * What did NOT move is L1. The raw markdown still lands in `sources/` through
+ * `saveSource`, inside this dimension's `commit`, because `compile` discovers
+ * work by hashing that directory. Moving it is Wave 4's job; until then this is
+ * L2-in-Postgres with L1-on-disk by design, not a half-finished migration.
  */
 
 export { createWikiStoreDimension } from "./store-dimension.js";
 export type { WikiStoreDimensionOptions } from "./store-dimension.js";
 export { createWikiPageReader } from "./page-reader.js";
 export type { WikiPageReaderOptions } from "./page-reader.js";
+
