@@ -129,8 +129,18 @@ types before relationship type, so the report names the most specific cause.
   type is now derived from the barrel: `Parameters<typeof extractGraphFromChunks>[2]`.
 - **Commit.** `7664e24` — `feat(kg): enforce a declared ontology during graph extraction`.
 - **Slice 2.** `contract_proposal` `cp-2026-10-23-01` sent to orchestrator-c for
-  `packages/llmwiki-kg/ts/src/core/ontology.ts@1`. Acceptance is pending; the
-  envelope was enqueued, which is not a read receipt.
+  `packages/llmwiki-kg/ts/src/core/ontology.ts@1`. Answer: `cd-2026-10-23-01`,
+  `status: changes`. A `contract_decision` may not carry `reason` (the spec
+  forbids it on that type), so the decision arrived without its rationale.
+- **Root cause of the rejection, verified not assumed.** A consumer cannot reach
+  the `Ontology` type: `import type { Ontology } from "llmwiki-kg"` fails with
+  `TS2305: Module '"llmwiki-kg"' has no exported member 'Ontology'`, and a
+  relative import into `packages/` is forbidden by the ratified product-boundary
+  control. The interface was published at a path only its own package can reach.
+  Version `@2` adds the barrel re-export that closes that gap.
+- **A probe defect worth recording.** A first probe written as `__probe.test.ts`
+  reported success because `tsc` does not include test files; only the `.ts`
+  probe surfaced TS2305. A verification that cannot fail is not a verification.
 
 ## Known pre-existing failures (not caused by this change)
 
