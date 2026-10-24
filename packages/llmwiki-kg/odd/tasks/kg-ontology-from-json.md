@@ -383,23 +383,48 @@ The column is written, `findDocument` already reads it for ingest, and no existi
 response byte moves. Exposing it in the response is a separate decision, not a
 follow-on edit.
 
-### A boundary defect in the branch, invisible to the hook
+### A claim I made that was false, and the distinction behind it
 
-`feat/orchestrator-c` carries a stale copy of `src/dimensions/kg/index.ts`
-including the `KgOntology` alias (lines 61, 129, 138). That file is owned by this
-role and is in orchestrator-c's `forbiddenPaths`, so its branch should never have
-contained it.
+I asserted that `src/dimensions/kg/index.ts` "should never have been on
+orchestrator-c's branch at all". That is wrong, and it was refuted with git rather
+than opinion:
 
-The hook could not catch this: it guards `write`/`edit` calls, so it stops a role
-from *modifying* another role's file during a session, but nothing detects a file
-that arrives in a branch by merge from a shared ancestor and then diverges. That
-is why c reported the alias as something it would inherit rather than something it
-should not have. The correct resolution is not for c to merge this branch to pick
-up the cleanup — it is for that path to be nobody's but its owner's on that
-branch.
+```
+git cat-file -e 2e418ad:src/dimensions/kg/index.ts   -> exists
+dc7c245  2026-10-23 10:45   introduced the file
+2e418ad  2026-10-23 18:31   c's branch base, eight hours later
+```
 
-Recorded rather than fixed: resolving it means deciding how the branches combine,
-which is the integration owner's call, not this role's.
+The file predates the contract split, so every branch inherits it by construction.
+**Being in `forbiddenPaths` means a role may not EDIT a path; it does not mean the
+path is absent from that role's tree.** I conflated the two. c did the right thing:
+it neither edited the file nor merged this branch to inherit the cleanup.
+
+There is still a real residue — a file owned by one role sits in another's tree and
+will drift — but it is an integration question, not a violation to report.
+
+### The jsonb binding trap, which I had backwards
+
+My instructed insert shape would have thrown. Under drizzle's raw `sql` path,
+binding a plain JS object into `::jsonb` fails (`Failed query: select
+jsonb_typeof($1::jsonb)`) while `JSON.stringify(x)::jsonb` stores a genuine jsonb
+OBJECT and satisfies `valid_ontology_is_object`. Raw `node-postgres` behaves the
+opposite way, so `backfeed/flag.ts:40` stringifying is correct for a reason its
+appearance does not reveal — I had copied that line without understanding which
+driver made it necessary.
+
+The assertion that catches this is a **shape** check, not a round-trip:
+
+```ts
+expect(stored).toEqual(DECLARATION);
+expect(typeof stored).toBe("object");
+expect(Array.isArray(stored)).toBe(false);
+```
+
+A round-trip assertion alone passes against a double-encoded string, because
+`JSON.parse` of the stored string yields the original object. c pinned the
+wire-level shape the check constraint actually cares about, which is the difference
+between a test that proves storage and one that proves the value survived a trip.
 
 ### The two column lists are not duplicates, and my dedupe request was wrong
 
