@@ -197,9 +197,44 @@ branch.
 in prescription (types only). `core-index.ts@1` is the agreed successor and is a
 different interface, which is why it carries its own version rather than `@3`.
 
+### Amendment: `core-index.ts@2` adds `Triplet`
+
+`core-index.ts@1` shipped a half-nameable return type, and orchestrator-c caught
+it before implementing. `OntologyParseResult.triplets` is `readonly Triplet[]`
+(`core/ontology.ts:72`), and `Triplet` is exported only from
+`core/graph-parse.ts:27`, which the barrel does not re-export. Verified by probe:
+
+```
+import type { Triplet } from "llmwiki-kg";
+-> TS2305: Module '"llmwiki-kg"' has no exported member 'Triplet'.
+```
+
+So a consumer could call `parseTripletsWithOntology` but could not name what it
+returns element-wise. `@2` adds exactly one line to the type list:
+
+```ts
+export type { Triplet } from "./core/graph-parse.js";
+```
+
+Proposed as `cp-2026-10-23-04`.
+
+### Why the ordering clause is satisfiable now
+
+Measured, not assumed: `git merge-base --is-ancestor feat/orchestrator-c HEAD`
+returns true with merge-base `2e418ad`. The consumer branch is fully contained in
+this one, so it can fast-forward without conflict and `7664e24` becomes reachable
+immediately. No rebase, no cherry-pick, no conflict resolution is needed — the
+"land it after 7664e24 reaches me" condition is a single fast-forward.
+
 ## Follow-up owned by orchestrator-b once the re-export lands
 
 Delete the `KgOntology` derivation at `src/dimensions/kg/index.ts:61` and name
 `Ontology` directly. The alias exists only because the barrel hid the type;
 leaving it after the contract lands would keep a workaround for a problem that no
 longer exists.
+
+**This cleanup is deliberately NOT done yet.** orchestrator-c suggested it as an
+optional carry-over. It cannot be done before the re-export lands: naming
+`Ontology` from the barrel today fails with `TS2305`, so the cleanup would trade a
+visible workaround for a broken build. The order is: c lands the re-export, then
+this alias is deleted, then `tsc` is re-run.
