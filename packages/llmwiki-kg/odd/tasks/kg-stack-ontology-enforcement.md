@@ -158,10 +158,58 @@ the survivor is the "no declaration" case, which correctly must not enforce.
 That is the check that the suite measures enforcement rather than the shape of a
 successful response.
 
+## Decision: the supported ontology shape is FLAT
+
+The human settled the hierarchy question by choosing the flat shape —
+`entityTypes` plus `relationshipTypes`, no `subtypes` — "para no complicarnos".
+
+This is not a reduction: it is what the code already does. `readSubtypes` returns
+`[]` when the field is absent, so a flat declaration and an absent hierarchy are
+the same ontology, and `ontology-flat.test.ts` pins that equivalence.
+
+### What was measured before deciding
+
+With no hierarchy the feature rests entirely on **one** thing: the declaration and
+the model agreeing on a spelling. Both sides normalise with
+`replaceAll(" ", "_").toUpperCase()`, one in `ontology.ts` and one in
+`graph-parse.ts`. `ontology-flat.test.ts` states that agreement from both
+directions — a model emitting `company`, a declaration written
+`ORGANIC ORGANIZATION` — because breaking either side rejects every triplet while
+the declaration still looks correct.
+
+### Why the hierarchy was not the answer
+
+Measured, not assumed: with a hierarchy declared and the same model output, the
+admission result is identical to the flat shape, in all six cases tried. Two
+independent reasons, each sufficient:
+
+1. `graph-prompt.ts` interpolates only `entityTypes` and `relationshipTypes` into
+   the tool schema. The model is never told the hierarchy exists.
+2. `rejectTriplet` calls `isEntityTypeAllowed(ontology, endpointType,
+   ontology.entityTypes)` — passing the declared type list as the *required* set.
+   `validateOntology` already forces every subtype endpoint into that list, so the
+   question reduces to "is this declared type in the declared types".
+
+`isEntityTypeAllowed` is correct and tested in isolation; it simply cannot change
+an admission decision on the path that matters. Making it matter would require
+allowing a child to be declared by its ancestor only, which is a semantic change —
+and one that would retroactively reject triplets for Stacks already storing a
+hierarchy.
+
+### Falsifiability check
+
+Removing entity normalisation from `graph-parse.ts` turns 2 of the 12 flat tests
+red and leaves the other 10 green, which is the correct split: only the
+spelling-agreement cases depend on it.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,
   so a sibling route would be a second way to read one field.
+- `subtypes` remains accepted and validated (endpoints declared, no cycles) but
+  does not affect admission. It is decoration with a validation cost. Removing it
+  from the accepted shape is a contract change, and leaving it documented-but-inert
+  is the smaller lie only because this file now says so.
 - The hierarchy is validated and stored but a read still does not rewrite types
   through it; `ontology.ts` documents hierarchy-aware reads as out of scope.
 - The ingest response cannot report how many triplets were dropped: it is nine
