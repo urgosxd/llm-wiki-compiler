@@ -53,6 +53,8 @@ import { createApp } from "llmwiki-kg/server";
 type GraphApp = ReturnType<typeof createApp>;
 import { createViewerHandler, type ViewerRequestHandler } from "../viewer/server.js";
 import { handleApiRequest } from "./api.js";
+import { resolveTenant, tenantSlugOf, type TenantEntry } from "./tenants.js";
+import { writeJsonError } from "../viewer/respond.js";
 import type { ViewerSnapshot } from "../viewer/types.js";
 import { reconcileOutbox, resolveDimensions, type ReconcileOutcome } from "../dimensions/index.js";
 import { tryWithOrdinaryMutationLock } from "../operation-bundles/with-mutation-lock.js";
@@ -89,6 +91,18 @@ export interface HostOptions {
    * Omitted means no reconciliation.
    */
   readonly projectRoot?: string;
+  /**
+   * Additional projects served under `/p/<slug>/...`.
+   *
+   * The single `viewerSnapshot` above remains the DEFAULT surface: a host with no
+   * tenants behaves exactly as before. Tenants exist because one frozen snapshot
+   * cannot describe two projects — serving it to a second one returns 200 with the
+   * first project's content, which fails silently rather than loudly.
+   *
+   * Snapshots are built lazily per tenant, so boot cost does not scale with tenant
+   * count and one unreadable project does not prevent the others from serving.
+   */
+  readonly tenants?: readonly TenantEntry[];
 }
 
 /** A running host: both sub-apps behind one listener with one close path. */
@@ -125,8 +139,34 @@ function createDispatcher(
   graph: GraphApp | undefined,
   viewer: ViewerRequestHandler,
   projectRoot: string | undefined,
+  tenants: ReadonlyMap<string, TenantEntry>,
+  tenantViewer: (snapshot: ViewerSnapshot) => ViewerRequestHandler,
 ) {
   return (req: IncomingMessage, res: ServerResponse): void => {
+    // A tenant-scoped path is resolved BEFORE anything else: the whole point is
+    // that its request must never be served from the default project's snapshot.
+    const slug = tenantSlugOf(new URL(req.url ?? "/", "http://localhost").pathname);
+    if (slug !== undefined) {
+      const entry = tenants.get(slug);
+      if (entry === undefined) {
+        writeJsonError(res, 404, "unknown_tenant", `no tenant '${slug}'`);
+        return;
+      }
+      void resolveTenant(entry)
+        .then((resolved) => {
+          if (!resolved.ok) {
+            writeJsonError(res, 503, "tenant_unavailable", resolved.error.slug);
+            return;
+          }
+          // The viewer's route table knows nothing about the tenant prefix, so the
+          // request is REWRITTEN to the unprefixed path before dispatch. Without
+          // this every tenant path 404s: the prefix is routing, not content.
+          req.url = stripTenantPrefix(req.url, slug);
+          return tenantViewer(resolved.tenant.snapshot)(req, res).catch(() => writeFallbackError(res));
+        })
+        .catch(() => writeFallbackError(res));
+      return;
+    }
     if (graph !== undefined && isGraphPath(req.url)) {
       // The graph app is a full Express app; handing it the request keeps its
       // middleware order (cors, 405 shim, json parser) exactly as tested.
@@ -148,6 +188,49 @@ function createDispatcher(
     }
     viewer(req, res).catch(() => writeFallbackError(res));
   };
+}
+
+/**
+ * Build a viewer handler for a tenant snapshot, on demand.
+ *
+ * The port is read from the holder because binding resolves it: a `port: 0` request
+ * only becomes a number after `listen`, and the viewer compares the incoming Host
+ * against that number. Building tenants before binding would bake in `0` and reject
+ * every tenant request with 403.
+ *
+ * @param host - Bound host.
+ * @param portHolder - Filled in once the listener is bound.
+ */
+function tenantViewerFactory(
+  host: string,
+  portHolder: { port?: number },
+  deps: ViewerDeps,
+) {
+  // `deps` is threaded through for the same reason as the default viewer: a product
+  // operator injects one, and a tenant silently losing it would serve a different
+  // surface than the default project.
+  return (snapshot: ViewerSnapshot): ViewerRequestHandler =>
+    createViewerHandler(snapshot, { host, port: portHolder.port ?? 0 }, deps);
+}
+
+/**
+ * Remove a `/p/<slug>` prefix, keeping the query string.
+ *
+ * `req.url` is rewritten in place because every downstream handler reads it: the
+ * viewer routes on the path, and passing the prefixed form through would make a
+ * registered tenant 404 on its own content.
+ *
+ * @param url - Original request URL, possibly with a query string.
+ * @param slug - Tenant segment already extracted from it.
+ * @returns The same request without the tenant prefix.
+ */
+function stripTenantPrefix(url: string | undefined, slug: string): string {
+  const raw = url ?? "/";
+  const queryIndex = raw.indexOf("?");
+  const pathname = queryIndex === -1 ? raw : raw.slice(0, queryIndex);
+  const query = queryIndex === -1 ? "" : raw.slice(queryIndex);
+  const remainder = pathname.slice(`/p/${slug}`.length);
+  return `${remainder === "" ? "/" : remainder}${query}`;
 }
 
 /** The socket may be half-written by the time an unexpected error surfaces. */
@@ -191,6 +274,10 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // host it considers unacceptable — a bind-time detail leaking into an
   // authentication decision, which is why the config is built after binding.
   const viewerHolder: { handler?: ViewerRequestHandler } = {};
+  // The viewer validates the incoming Host against the port the listener ACTUALLY
+  // bound, so a tenant viewer cannot be built before binding resolves `port: 0`.
+  const boundPortHolder: { port?: number } = {};
+  const tenantMap = new Map((options.tenants ?? []).map((entry) => [entry.slug, entry]));
   const server = http.createServer((req, res) => {
     const handler = viewerHolder.handler;
     if (handler === undefined) {
@@ -198,13 +285,16 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
       res.end();
       return;
     }
-    const dispatch = createDispatcher(graph, handler, options.projectRoot);
+    const dispatch = createDispatcher(
+      graph, handler, options.projectRoot, tenantMap, tenantViewerFactory(host, boundPortHolder, options.viewerDeps ?? {}),
+    );
     dispatch(req, res);
   });
 
   await listenOn(server, port, host);
   const address = server.address() as AddressInfo | null;
   if (address === null) throw new Error("host bound but address is null");
+  boundPortHolder.port = address.port;
   viewerHolder.handler = createViewerHandler(
     options.viewerSnapshot,
     { host, port: address.port },

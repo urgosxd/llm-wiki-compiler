@@ -57,6 +57,49 @@ export type StackRow = {
   updated_at: string;
 };
 
+
+/**
+ * Establishment of tenant context for the rest of one transaction.
+ *
+ * ## Why the GUC and not a per-query parameter
+ *
+ * Row-level security reads `current_setting('app.stack_id')`, so the tenant must
+ * be established ONCE per transaction, before any tenanted query runs. Passing the
+ * stack id to every statement instead would leave RLS with nothing to compare
+ * against and push the whole burden back onto each query's author — which is
+ * exactly the failure the 15 unfiltered statements already demonstrate.
+ *
+ * ## Why there are TWO settings
+ *
+ * Resolving a stack is itself a read of `stacks`, but the caller may identify the
+ * stack by `domain` rather than by id — and at that moment `app.stack_id` is not
+ * known yet. A policy that accepted only `id = current_setting('app.stack_id')`
+ * would make domain-based resolution impossible, so `app.stack_domain` carries
+ * the other half of the caller's claim. `stacks` policies therefore accept either
+ * match; every OTHER table accepts only the id, because by the time content is
+ * touched the stack is resolved.
+ *
+ * The suffix `,true` makes the setting return NULL instead of raising when it was
+ * never set, so a missing binding fails CLOSED (matches nothing) rather than
+ * erroring in a way a caller might be tempted to swallow.
+ *
+ * @param tx - Transaction that will carry the tenanted queries.
+ * @param stackId - Resolved stack UUID.
+ * @param stackDomain - Domain the caller used, when resolution used it.
+ */
+export async function bindTenant(
+  tx: Database,
+  stackId: string,
+  stackDomain: string | null,
+): Promise<void> {
+  // `set_config` with `is_local = true` scopes both settings to this transaction,
+  // which is the SQL form of SET LOCAL and accepts parameters (SET does not).
+  await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+  if (stackDomain !== null && stackDomain !== "") {
+    await tx.execute(sql`select set_config('app.stack_domain', ${stackDomain}, true)`);
+  }
+}
+
 /** A resolved Stack, or the error to answer with instead. */
 export type StackResolution =
   | { readonly ok: true; readonly stack: StackRow }
@@ -102,6 +145,8 @@ export async function resolveStack(
     const ident = stackId !== null ? stackId : domain;
     return { ok: false, error: apiError(404, `Stack '${String(ident)}' not found`) };
   }
+
+  await bindTenant(tx, stack.id, domain);
 
   return { ok: true, stack };
 }
