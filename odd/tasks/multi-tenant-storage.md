@@ -386,6 +386,45 @@ start Wave 4: it is the most visible and the least load-bearing.
 | 3 — L2 product | 4 | not started; needs DDL that does not exist | **`orchestrator-main`** for DDL, then `orchestrator-a` |
 | 4 — L1 object storage | 3 | not started, last by design | **only `orchestrator-main`** |
 
+## Decisions taken by the human (this session)
+
+Recorded before any code, because all three change the plan's shape.
+
+1. **W1.4 → add `:stack_id` to the by-id routes.** `GET`/`DELETE
+   `/stacks/:stack_id/documents/:doc_id`. Tenancy becomes real rather than
+   partial, at the cost of oracle parity: the OpenAPI contract gains a version and
+   `documents-read.test.ts:91` ("serves a document belonging to any stack") must be
+   INVERTED, not deleted. Owned by `orchestrator-c`.
+2. **Waves 2 and 4 → `orchestrator-main` executes them** under
+   `unrestrictedWrite`, in the primary checkout on the shared branch. Accepted
+   cost: no role branch, no per-wave native review, everything lands directly.
+3. **W3's wiki table → a separate `wiki` schema in the same database**, reached
+   through the existing KG client/pool rather than a second driver. Rationale
+   accepted: no root-level `postgres` dependency (it is absent today), one pool,
+   and the wiki does not gain a hard dependency on the vendored AKS package's
+   schema file — only on the pooled client it already consumes in process.
+
+### The third blocker: neither dimension port can carry a tenant
+
+Found while preparing W3.2/W3.3. `DimensionInput` is
+`{source, title, document, body}` and `DimensionQuery` is
+`{name?, text?, depth?, kinds?, limit?}`. **Neither has a stack/tenant field**, and
+both are frozen contracts (`DIMENSION_PORT_VERSION = 2`,
+`DIMENSION_READ_PORT_VERSION = 1`).
+
+A database-backed wiki dimension cannot be written without knowing WHICH tenant it
+is writing for, so W3.2 and W3.3 both require a port change:
+
+| Port | File | Field needed | Version today |
+| --- | --- | --- | --- |
+| `DimensionInput` | `src/dimensions/types.ts` | `stack` (required) | 2 |
+| `DimensionQuery` | `src/dimensions/read-types.ts` | `stack` (required) | 1 |
+
+`src/dimensions/types.ts` and `read-types.ts` are `sharedPaths` — read-only for
+this role. So the port bump is `orchestrator-main`'s to make, and it must land
+before W3.2/W3.3 can start. The plan's "Not changing `DIMENSION_PORT_VERSION`"
+non-goal is now void: it was written when the wiki was staying on the filesystem.
+
 ### The two blockers are not the same kind
 
 Wave 1's remainder is a **decision** (oracle parity on the by-id routes). Waves
@@ -397,18 +436,30 @@ That leaves exactly two honest routes for Waves 2 and 4, and the human should
 pick, not the agent:
 
 - **`orchestrator-main` executes them** under `unrestrictedWrite`, in the primary
-  checkout on the shared branch. Fastest, and consistent with why the grant
-  exists — but it puts all four L3 migrations on one session and they cannot be
-  reviewed as role branches.
-- **Widen the contract** so one dimension role owns the L3 files. That is a
-  contract edit with live peers, and the skill is explicit: scope is re-read on
-  every tool call, so editing it unenforces every session at once. It would need
-  a stop/edit/commit/relaunch cycle.
+  checkout on the shared branch. **DECIDED.**
+- **Widen the contract** so one dimension role owns the L3 files. Rejected: scope
+  is re-read on every tool call, so editing it with live peers unenforces every
+  session at once; it would need a stop/edit/commit/relaunch cycle.
 
-**Next actionable task for this role: none of Waves 2–4.** `orchestrator-a`'s
-surface holds W3.2/W3.3/W3.4, which need the DDL decision first. Until that is
-answered the honest state is that this plan is waiting on two owner decisions,
-not on effort.
+### Execution order now that the decisions are in
+
+Three of the five prerequisites are `orchestrator-main`'s, so they serialise:
+
+| # | Work | Owner | Unblocks |
+| --- | --- | --- | --- |
+| 1 | Port bump: `stack` on `DimensionInput` + `DimensionQuery` | main | W3.2, W3.3 |
+| 2 | `wiki` schema migration, outside `packages/llmwiki-kg/db/` | main | W3.2, W3.3 |
+| 3 | W1.4: 7 unbound routes + `:stack_id` on the 2 by-id routes + OpenAPI bump | orchestrator-c | moving `DATABASE_URL` to `llmwiki_app` |
+| 4 | W3.2/W3.3 database-backed wiki dimension + reader | orchestrator-a | W3.4 |
+| 5 | W2.1–W2.4, W4.x | main | — |
+
+Steps 1–2 are small and independent of 3. Step 4 is this role's only remaining
+work and it becomes startable the moment 1 and 2 land.
+
+**Honest state of this role: blocked, with a named dependency.** Everything in
+`orchestrator-a`'s surface for this plan needs the port and the schema first.
+There is no product code here that can be written before then without inventing
+the shape `orchestrator-main` is about to freeze.
 
 ## Scope constraint for this role
 
