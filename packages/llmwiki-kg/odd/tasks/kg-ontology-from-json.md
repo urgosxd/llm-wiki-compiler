@@ -93,15 +93,52 @@ types before relationship type, so the report names the most specific cause.
 
 ## Tasks
 
-- [ ] 1. Write ODD feature tasks doc and Engram mirror
-- [ ] 2. TDD: failing tests for ontology load/validate (cycles, unknown parent, empty)
-- [ ] 3. TDD: failing tests for allowlist rejection and reason codes
-- [ ] 4. TDD: failing tests for subtype-aware allowlist
-- [ ] 5. Implement `core/ontology.ts`
-- [ ] 6. Thread ontology through prompt, parse, and extraction (opt-in)
-- [ ] 7. Wire ontology into `KgDimensionOptions`
-- [ ] 8. Run `tsc`, `test:affected`, `fallow`
-- [ ] 9. Open `contract_proposal` to orchestrator-c for Slice 2
+- [x] 1. Write ODD feature tasks doc and Engram mirror
+- [x] 2. TDD: failing tests for ontology load/validate (cycles, unknown parent, empty)
+- [x] 3. TDD: failing tests for allowlist rejection and reason codes
+- [x] 4. TDD: failing tests for subtype-aware allowlist
+- [x] 5. Implement `core/ontology.ts`
+- [x] 6. Thread ontology through prompt, parse, and extraction (opt-in)
+- [x] 7. Wire ontology into `KgDimensionOptions`
+- [x] 8. Run `tsc`, `test:affected`, `fallow`
+- [x] 9. Open `contract_proposal` to orchestrator-c for Slice 2
+
+## Evidence log
+
+- **Tasks 2-4 (RED).** `npx vitest run` over the three new suites failed with
+  `Cannot find module './ontology.js'` — a real red, not a shape error.
+- **Tasks 2-5 (GREEN).** 21 passed across `ontology.test.ts` (9),
+  `ontology-enforcement.test.ts` (5), `ontology-hierarchy.test.ts` (7).
+- **Task 6.** `ontology-prompt.test.ts` (8) pins the default against the oracle's
+  literal prompt string and both `typing.Literal[...]` descriptions;
+  `extraction-graph.test.ts` (15) still passes untouched.
+- **Task 7.** `test/dimensions/kg-core-ontology-flow.test.ts` (4) drives
+  `createKgDimension` end to end and asserts the ontology reaches extraction and
+  that a run without one keeps the original two-argument call.
+- **Task 8.** `npx tsc --noEmit` exit 0; `npm run build` exit 0;
+  `npx fallow` — no dead code, no duplication, 0 issues. Targeted suites plus the
+  product-boundary control: 164 passed, 0 failed.
+- **Regression found and fixed while verifying.** `extractGraphFromChunks` gained
+  an optional third parameter, which widened an existing call to
+  `(chunks, name, undefined)` and broke `kg-dimension.test.ts`. Passing `undefined`
+  explicitly is not the same observable call as omitting it, so
+  `ontologyArgs()` now spreads the argument only when an ontology exists.
+- **Boundary violation found and fixed.** The first wiring imported
+  `Ontology` by relative path into `packages/`, which the ratified
+  `test/product-boundary-genericity.test.ts` forbids for any `src/` module. The
+  type is now derived from the barrel: `Parameters<typeof extractGraphFromChunks>[2]`.
+- **Commit.** `7664e24` — `feat(kg): enforce a declared ontology during graph extraction`.
+- **Slice 2.** `contract_proposal` `cp-2026-10-23-01` sent to orchestrator-c for
+  `packages/llmwiki-kg/ts/src/core/ontology.ts@1`. Acceptance is pending; the
+  envelope was enqueued, which is not a read receipt.
+
+## Known pre-existing failures (not caused by this change)
+
+`test/connectors/legacy-capacity-parity.test.ts` fails intermittently under full
+parallel load (two cases exceed their timeout at ~34s). Verified pre-existing: the
+file passes in isolation both with and without this change, and the base tree
+without this change failed MORE files (5 files, 6 tests) than the tree with it.
+Recorded rather than fixed — it is outside this role's surface.
 
 ## Non-goals
 
