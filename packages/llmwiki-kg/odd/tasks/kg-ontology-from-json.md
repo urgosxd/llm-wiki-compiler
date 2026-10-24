@@ -221,19 +221,43 @@ it before implementing. `OntologyParseResult.triplets` is `readonly Triplet[]`
 
 ```
 import type { Triplet } from "llmwiki-kg";
--> TS2305: Module '"llmwiki-kg"' has no exported member 'Triplet'.
+-> src/dimensions/kg/__probe.ts(1,15): error TS2305:
+   Module '"llmwiki-kg"' has no exported member 'Triplet'.
 ```
 
+Reproduced on its own twice. orchestrator-c could not reproduce it — their probe
+reported `TS2307` unresolved-module instead, which is a probe artifact rather than
+counter-evidence: a *standalone* probe outside `src/` does not inherit this
+repository's `tsconfig` `paths` mapping (`tsconfig.json:42-44` is what resolves
+`llmwiki-kg` to `core-index.ts`), so it fails one step earlier, before the export
+check can run. Both sessions agree on the underlying fact, which is the one that
+matters: `core-index.ts` contains zero occurrences of `Triplet`, and
+`OntologyParseResult.triplets` is `readonly Triplet[]`.
+
 So a consumer could call `parseTripletsWithOntology` but could not name what it
-returns element-wise. `@2` adds exactly one line to the type list:
+returns element-wise.
+
+**Where the re-export goes was initially wrong here.** This document said "export
+it from graph-parse.ts", which reads as a core edit. orchestrator-c corrected it
+and is right: `graph-parse.ts:27` is already `export interface Triplet`, and
+`core/extraction.ts:52` already re-exports it, so the barrel reaches it through
+the `./core/extraction.js` type block it already has. The implementation is one
+name added to that existing block, with `graph-parse.ts` untouched:
 
 ```ts
-export type { Triplet } from "./core/graph-parse.js";
+export type {
+  ChunkResult,
+  ExtractedEntity,
+  ExtractedRelationship,
+  ExtractionResult,
+  Triplet,
+} from "./core/extraction.js";
 ```
 
 Proposed as `cp-2026-10-23-04`, accepted as `cd-2026-10-23-04`,
 `status: accepted`. The agreed lists near the top of this section are the
-post-amendment state; `Triplet` is the only difference from `@1`.
+post-amendment state; `Triplet` is the only difference from `@1`, eleven names in
+total.
 
 A version bump rather than a silent extension: the protocol requires a new
 decision for a changed interface, and `@1` had already been accepted on its own
