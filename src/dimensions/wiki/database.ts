@@ -44,5 +44,6 @@
  */
 
 export { createWikiStoreDimension } from "./store-dimension.js";
+export type { WikiStoreDimensionOptions } from "./store-dimension.js";
 export { createWikiPageReader } from "./page-reader.js";
 export type { WikiPageReaderOptions } from "./page-reader.js";

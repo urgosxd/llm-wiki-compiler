@@ -31,6 +31,24 @@
  * slug: with it, "does this source already have a page?" is one indexed lookup
  * instead of reading every page and parsing its frontmatter.
  *
+ * ## Why this ALSO writes the source markdown (the L1 bridge)
+ *
+ * The page goes to Postgres; the raw markdown still goes to `sources/` through
+ * `saveSource`, and its path is returned as `artifactPath`. That looks like the
+ * migration failing halfway, and for now it is exactly that -- deliberately.
+ *
+ * `compile` is not migrated. It discovers work by hashing `sources/`
+ * (`compiler/hasher.ts:34-43`), so a dimension that wrote only a row would be
+ * invisible to it and the ingest -> compile path would silently die. And the
+ * ingest caller refuses an outcome without an `artifactPath`
+ * (`services/ingest/service.ts:120`), so a dimension that returns none breaks
+ * every ingest outright.
+ *
+ * The split is therefore the plan's own layering, not an oversight: L2 (compiled
+ * pages) is in the database from here on, and L1 (raw bytes) stays on disk until
+ * Wave 4 moves it. `schema.sql` already says the same thing about why `body` is
+ * stored inline while L1 waits.
+ *
  * ## Why prepare/commit is still two steps even though a transaction is atomic
  *
  * The coordinator's contract is prepare-then-commit across EVERY dimension, and
@@ -45,6 +63,7 @@
 import { sql } from "drizzle-orm";
 
 import { slugify } from "../../utils/markdown.js";
+import { saveSource } from "../../utils/source-writer.js";
 import type { WriteStatus } from "../../utils/types.js";
 import type {
   CommittedWrite,
@@ -164,16 +183,31 @@ async function resolveFreeSlug(
   }
 }
 
+/** What the database-backed wiki dimension needs to exist. */
+export interface WikiStoreDimensionOptions {
+  /** The tenant whose pages this dimension writes. */
+  readonly stackId: string;
+  /** Database handle; the pooled one in production, a test's own in tests. */
+  readonly db: Database;
+  /**
+   * Project root whose `sources/` the raw markdown is ALSO written to.
+   *
+   * Required rather than optional, for the reason in the file header: an
+   * `IngestOutcome` without an `artifactPath` throws at
+   * `services/ingest/service.ts:120`, so a dimension that cannot produce one
+   * makes every ingest fail. Making this optional would move that failure from
+   * the constructor, where it is visible, to the first ingest, where it is not.
+   */
+  readonly root: string;
+}
+
 /**
  * Build the wiki dimension backed by Postgres for one tenant.
  *
- * @param options - Tenant binding and database handle.
+ * @param options - Tenant binding, database handle, and the root for `sources/`.
  * @returns The dimension.
  */
-export function createWikiStoreDimension(options: {
-  readonly stackId: string;
-  readonly db: Database;
-}): Dimension {
+export function createWikiStoreDimension(options: WikiStoreDimensionOptions): Dimension {
   return {
     name: "wiki",
 
@@ -201,6 +235,27 @@ export function createWikiStoreDimension(options: {
     async commit(prepared: PreparedWrite): Promise<CommittedWrite> {
       const handle = prepared.handle as StoredWriteHandle;
 
+      // THE SOURCE MARKDOWN FIRST, and always -- not only when the page changed.
+      //
+      // Two reasons, both load-bearing while L1 is still on disk. The ingest
+      // caller throws when `artifactPath` is undefined
+      // (`services/ingest/service.ts:120`), so this dimension MUST return one.
+      // And `compile` discovers work by hashing `sources/`
+      // (`compiler/hasher.ts:34-43`), so an ingest that only wrote a row would be
+      // invisible to the compiler and the ingest->compile path would be dead.
+      //
+      // Deliberately before the row insert: `saveSource` owns the empty-slug and
+      // basename-collision guards and can throw, and a throw here must not leave a
+      // page row pointing at a source file that does not exist. `saveSource` is
+      // itself idempotent, so re-writing identical bytes reports "unchanged"
+      // rather than touching the file.
+      const saved = await saveSource(
+        options.root,
+        handle.input.title,
+        handle.input.document,
+        handle.input.source,
+      );
+
       // An unchanged page still commits, but writes nothing: reporting `unchanged`
       // is what tells the coordinator this dimension was a no-op.
       if (handle.writeStatus !== "unchanged") {
@@ -225,6 +280,7 @@ export function createWikiStoreDimension(options: {
         idempotencyKey: wikiIdempotencyKey(handle.input),
         summary: `wiki:${handle.writeStatus}`,
         writeStatus: handle.writeStatus,
+        artifactPath: saved.path,
       };
     },
 
