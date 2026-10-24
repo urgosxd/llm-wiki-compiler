@@ -1,4 +1,28 @@
-# Feature: Multi-tenant storage — off the local filesystem
+# Feature: Stack-scoped storage — off the local filesystem
+
+## Vocabulary: the product says "Stack", the design says "tenant"
+
+Human decision, 2026-10-24: the isolation unit is **called a Stack**. That is not a
+rename of anything in the implementation, because the code never used "tenant" as
+an identifier in the first place — the table is `public.stacks`, the code threads
+`stackId`, the env var is `AKS_STACK_ID`, and `grep -rn "tenant_id" src/` returns
+nothing. The only outlier was this document's prose.
+
+So both words stay, and this is the rule that keeps them from drifting:
+
+- **Stack** names the THING: the row in `stacks`, the value of `stackId`, what a
+  user picks. It is the product-facing word, and docs and UI should use it.
+- **tenant** names the RELATIONSHIP: the role a Stack plays as an isolation
+  boundary in a shared-database design (RLS, the `app.stack_id` GUC, "cross-tenant
+  read"). It is a design word, not a second entity.
+
+Read this as "a Stack is the tenant", never as "a tenant owns Stacks" — W1.1 below
+settles that direction, and it is the reason a blind search-and-replace across this
+file would produce nonsense sentences like "a stack is the Stack".
+
+Any document in `odd/tasks/` that predates this decision and still titles the work
+"multi-tenant" means the same thing this file means; the name changed, the work
+did not.
 
 ## Goal
 
@@ -22,7 +46,7 @@ rather than quietly rewritten.
 
 | Decision | Value | Consequence |
 | --- | --- | --- |
-| Deployment model | **Multi-tenant**, many projects per server | Tenancy is a hard prerequisite, not a later refinement |
+| Deployment model | **Many Stacks per server**, one shared database | Stack isolation is a hard prerequisite, not a later refinement |
 | S3/MinIO | **An option, not a constraint** | Backend is chosen per layer on merit, not because infra exists |
 
 ## The question this document rejects
@@ -475,7 +499,7 @@ captured at construction cannot be omitted later, because there is no later plac
 to omit it. `DIMENSION_PORT_VERSION` and `DIMENSION_READ_PORT_VERSION` are
 unchanged, which also keeps the frozen-port non-goal above intact.
 
-What this costs: one instance per tenant, so a long-lived multi-tenant server
+What this costs: one instance per Stack, so a long-lived multi-Stack server
 keeps a dimension per stack instead of one. That is the honest trade, and it is
 the one the KG dimension already pays.
 
