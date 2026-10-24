@@ -41,24 +41,13 @@ import {
   type ExtractedEntity,
   type ExtractedRelationship,
 } from "llmwiki-kg";
-import type { ExtractionResult } from "llmwiki-kg";
+import type { ExtractionResult, Ontology } from "llmwiki-kg";
 import type {
   CommittedWrite,
   Dimension,
   DimensionInput,
   PreparedWrite,
 } from "../types.js";
-
-/**
- * The ontology the vendored core accepts, derived rather than restated.
- *
- * The ratified product boundary forbids a core module from importing anything
- * under `packages/` (`test/product-boundary-genericity.test.ts`), so this
- * adapter may only see the vendored core through its barrel. Deriving the type
- * from the function it is passed to keeps a single source of truth: if the
- * core's ontology shape changes, this alias follows it instead of drifting.
- */
-type KgOntology = NonNullable<Parameters<typeof extractGraphFromChunks>[2]>;
 
 /** One triplet rejection, derived from the core's own result shape. */
 type KgRejection = NonNullable<ExtractionResult["rejected"]>[number];
@@ -126,7 +115,7 @@ export interface KgDimensionOptions {
    * the declaration is enforced — the types go into the tool schema and every
    * triplet outside them is dropped and reported.
    */
-  readonly ontology?: KgOntology;
+  readonly ontology?: Ontology;
 }
 
 /**
@@ -135,7 +124,7 @@ export interface KgDimensionOptions {
  * @param options - Stack binding, possibly carrying an ontology.
  * @returns An empty tuple without an ontology, or the single-element tuple with it.
  */
-function ontologyArgs(options: KgDimensionOptions): [] | [KgOntology] {
+function ontologyArgs(options: KgDimensionOptions): [] | [Ontology] {
   return options.ontology === undefined ? [] : [options.ontology];
 }
 

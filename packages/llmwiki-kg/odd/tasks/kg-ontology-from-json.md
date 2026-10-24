@@ -116,8 +116,18 @@ types before relationship type, so the report names the most specific cause.
   `createKgDimension` end to end and asserts the ontology reaches extraction and
   that a run without one keeps the original two-argument call.
 - **Task 8.** `npx tsc --noEmit` exit 0; `npm run build` exit 0;
-  `npx fallow` — no dead code, no duplication, 0 issues. Targeted suites plus the
-  product-boundary control: 164 passed, 0 failed.
+  `npx fallow` — no dead code, no duplication, 0 issues.
+- **Exact composition of the 164 figure**, confirmed with `--reporter=json`
+  rather than counted by hand: **19 files** = 13 `core/*.test.ts` + 5 of the 6
+  `test/dimensions/kg-*` files + `test/product-boundary-genericity.test.ts`.
+  164 total, 164 passed, 0 failed.
+
+  The sixth kg file, `kg-postgres-integrity.test.ts`, is **deliberately not in
+  that run**. It requires a reachable Postgres and its own header says it "skips
+  loudly when there is none, rather than passing vacuously" — running it without
+  a database would add a file count while proving nothing. So the honest claim is
+  19 files / 164 tests, and the Postgres-backed suite is unverified here rather
+  than quietly included.
 - **Regression found and fixed while verifying.** `extractGraphFromChunks` gained
   an optional third parameter, which widened an existing call to
   `(chunks, name, undefined)` and broke `kg-dimension.test.ts`. Passing `undefined`
@@ -141,6 +151,14 @@ types before relationship type, so the report names the most specific cause.
 - **A probe defect worth recording.** A first probe written as `__probe.test.ts`
   reported success because `tsc` does not include test files; only the `.ts`
   probe surfaced TS2305. A verification that cannot fail is not a verification.
+- **`wr-2026-10-23-01` verified and superseded.** orchestrator-c re-ran all five
+  checks on `wr-2026-10-23-03` and confirmed: 12 paths byte-set-equal to the
+  commit, 0 of 12 non-owned, evidence correct, and the evidence-at-`7664e24` /
+  tests-at-tip split sound because `git diff --stat 7664e24 e06e972 -- *.ts *.json`
+  is empty, so the docs-only tip carries no code delta. It explicitly does NOT
+  adopt the 164 figure as independently verified, since the test files are absent
+  from its worktree — recorded here as this session's own result, which is the
+  correct standing for it.
 - **A false `work_result`, caught by the receiver and then by the hook.** Two
   separate defects in one report:
   1. `wr-2026-10-23-01` listed 6 of the 12 paths `7664e24` actually touches.
@@ -276,6 +294,156 @@ Exactly 7 commits sit between `feat/orchestrator-c` and this tip: the feature
 commit and six documentation commits recording the negotiation. Nothing in them
 touches a file orchestrator-c owns, so the fast-forward carries no surprise for
 the barrel work.
+
+## The re-export has landed
+
+Measured on `feat/orchestrator-c` at `4d05d1f`:
+
+- `7664e24` is an ancestor → the ordering clause is satisfied.
+- `core/ontology.ts` is present in that worktree.
+- `core-index.ts` carries the agreed `@2` surface: five values
+  (`validateOntology`, `isEntityTypeAllowed`, `ancestorsOf`,
+  `parseTripletsWithOntology`, `OntologyError`) and six types (`Ontology`,
+  `RejectedTriplet`, `OntologyParseResult`, `SubtypeEdge`, `RejectionReason`,
+  `Triplet`), with `Triplet` added to the existing `./core/extraction.js` type
+  block rather than to `graph-parse.ts`.
+- `npx tsc --noEmit` on that branch: exit 0.
+
+Being uncommitted on that branch at the time of measurement, it is not yet a
+published revision; the follow-up below waits for the commit.
+
+## State of slice 2 (measured, not reported)
+
+`main` was merged into this branch as `204b018`, so the schema change is present
+here without this role having written it:
+
+- `db/schema.sql:266` — `add column if not exists ontology jsonb`
+- `db/schema.sql:272` — `valid_ontology_is_object` (object-or-null)
+- Source: `8165a93` on `main`, authored by the coordinator, applied to the live
+  database and verified null-accepted / object-accepted / array-rejected /
+  idempotent.
+
+`git diff --name-only main...HEAD` lists **13 files, every one `owned`** by this
+role. No boundary breach, and the schema file arrived by merge rather than by a
+write this role is not permitted.
+
+Still open, all on orchestrator-c's surface:
+
+| Piece | File | State |
+| --- | --- | --- |
+| Barrel re-export `@2` | `ts/src/core-index.ts` | staged in c's worktree, **uncommitted** |
+| Resolve `ontology` on the Stack row | `ts/src/core/stack_resolver.ts` | committed — `5a3b8bb` |
+| Select it in the ingest query | `ts/src/routes/ingest/request.ts` | **not done** |
+| Pass it into extraction | `ts/src/routes/ingest/pipeline.ts` | **not done** |
+
+The two remaining edits are the whole gap between "the column exists" and "the
+column governs extraction". Requested as `wq-2026-10-24-01`, with the two exact
+call sites named so the change stays two lines plus a guard.
+
+## The write path is missing, and adding it costs oracle parity
+
+orchestrator-c wired the READ path and correctly reported that nothing writes the
+column yet: `routes/stacks.ts` has zero mentions of `ontology`, so `POST /stacks`
+and `PATCH /stacks` cannot set one and every Stack stays `null`. A wired reader
+with no producer is not a usable feature.
+
+**The obvious fix is wrong, and this is the subtlest constraint in the feature.**
+`stacks.ts` documents its `STACK_COLUMNS` as repeating Python's `_STACK_COLUMNS`
+verbatim, including order, because *response key order* is contractual. The oracle
+confirms it — measured from `oracle/contracts/openapi.json`:
+
+| Schema | Properties |
+| --- | --- |
+| `StackCreate` | `name, domain, description, scope, compilation_strategy, synthesize_descriptions` |
+| `StackUpdate` | `name, description, scope, compilation_strategy, synthesize_descriptions` |
+| `StackResponse` | the above plus `id, created_at, updated_at` |
+
+No `ontology` in any of them. And `dto.ts` states that Zod objects strip unknown
+keys, matching Pydantic — so adding the column without adding it to the DTO would
+be silently dropped rather than surfaced.
+
+**My first prescription was internally contradictory, and orchestrator-c caught
+it.** I asked for a response field while also forbidding any change to
+`STACK_COLUMNS`. Both cannot hold: the body is built from that list at
+`stacks.ts:185` and `:353` via `returning ${sql.raw(STACK_COLUMNS)}` and then
+`toStackResponse(row)`, and `stacks-create.test.ts:44` plus
+`stacks-read.test.ts:78` assert `Object.keys(body)` equals exactly the nine oracle
+keys. A response field therefore requires entering that select, or a second query.
+
+The agreed split is narrower and is a genuine parity-preserving superset:
+
+| Piece | Decision | Parity cost |
+| --- | --- | --- |
+| `ontology` on `StackCreate` | accepted | additive request tolerance; unknown keys were already stripped, so an oracle client never sends it |
+| `ontology` on `StackUpdate` | accepted | same |
+| `ontology` in `StackResponse` | **held** | changes response bytes on a frozen product surface; needs orchestrator-a |
+
+So `POST /stacks` with an ontology answers 201 with the standard nine-key body.
+The column is written, `findDocument` already reads it for ingest, and no existing
+response byte moves. Exposing it in the response is a separate decision, not a
+follow-on edit.
+
+### A claim I made that was false, and the distinction behind it
+
+I asserted that `src/dimensions/kg/index.ts` "should never have been on
+orchestrator-c's branch at all". That is wrong, and it was refuted with git rather
+than opinion:
+
+```
+git cat-file -e 2e418ad:src/dimensions/kg/index.ts   -> exists
+dc7c245  2026-10-23 10:45   introduced the file
+2e418ad  2026-10-23 18:31   c's branch base, eight hours later
+```
+
+The file predates the contract split, so every branch inherits it by construction.
+**Being in `forbiddenPaths` means a role may not EDIT a path; it does not mean the
+path is absent from that role's tree.** I conflated the two. c did the right thing:
+it neither edited the file nor merged this branch to inherit the cleanup.
+
+There is still a real residue — a file owned by one role sits in another's tree and
+will drift — but it is an integration question, not a violation to report.
+
+### The jsonb binding trap, which I had backwards
+
+My instructed insert shape would have thrown. Under drizzle's raw `sql` path,
+binding a plain JS object into `::jsonb` fails (`Failed query: select
+jsonb_typeof($1::jsonb)`) while `JSON.stringify(x)::jsonb` stores a genuine jsonb
+OBJECT and satisfies `valid_ontology_is_object`. Raw `node-postgres` behaves the
+opposite way, so `backfeed/flag.ts:40` stringifying is correct for a reason its
+appearance does not reveal — I had copied that line without understanding which
+driver made it necessary.
+
+The assertion that catches this is a **shape** check, not a round-trip:
+
+```ts
+expect(stored).toEqual(DECLARATION);
+expect(typeof stored).toBe("object");
+expect(Array.isArray(stored)).toBe(false);
+```
+
+A round-trip assertion alone passes against a double-encoded string, because
+`JSON.parse` of the stored string yields the original object. c pinned the
+wire-level shape the check constraint actually cares about, which is the difference
+between a test that proves storage and one that proves the value survived a trip.
+
+### The two column lists are not duplicates, and my dedupe request was wrong
+
+I asked orchestrator-c to re-export one list from the other. That was wrong twice
+over, and it was told to me plainly:
+
+1. `stack_resolver.ts` is in `packages/llmwiki-kg/ts/src/core/**` — **owned by this
+   role and in orchestrator-c's forbiddenPaths**, so I asked it to edit a file the
+   hook refuses. Verified against the contract, not assumed.
+2. The lists are not the same thing. The resolver's omits
+   `synthesize_descriptions` and appends `ontology`; the route's has
+   `synthesize_descriptions` and no `ontology`. Re-exporting one from the other
+   **changes what the other caller selects** — a behaviour change dressed as a
+   cleanup.
+
+The residue is real: two list constants that must be kept in step by hand, with
+nothing detecting drift. But fixing it is this role's work on this role's file, not
+a request to the other role, and it is not urgent enough to justify widening a
+mutable select during a parity-sensitive feature.
 
 ## Follow-up owned by orchestrator-b once the re-export lands
 
