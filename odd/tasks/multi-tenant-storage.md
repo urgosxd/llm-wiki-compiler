@@ -301,16 +301,25 @@ ingest routes to zero rows. That is why the order is not negotiable.
 
 ## Wave 2 — L3 control state into the database
 
+**Blocked on surface, not on design.** All four targets are `sharedPaths`, i.e.
+read-only for every feature role (verified for a, b and c). Only
+`orchestrator-main` (`unrestrictedWrite`) can write them. So Wave 2 cannot be
+delegated to a dimension role under the current contract, no matter who is free.
+
 - [ ] **W2.1** Replace the PID lockfile (`src/utils/lock.ts`, ~two-lock
       reclamation) with a Postgres advisory lock or `SELECT ... FOR UPDATE` row.
       This is what currently forbids a second process.
+      → `src/utils/lock.ts` is shared-read-only. Needs `orchestrator-main`.
 - [ ] **W2.2** Replace the file WAL in `src/trust/journal.ts` with a table.
       Keep the pre-state recording contract identical.
+      → shared-read-only. Needs `orchestrator-main`.
 - [ ] **W2.3** Move the outbox (`.llmwiki/dimensions/outbox/*.json`) to a table;
       keep `atomicWrite`-equivalent durability semantics via transaction commit.
+      → shared-read-only. Needs `orchestrator-main`.
 - [ ] **W2.4** Move `embeddings.json` (currently whole-file, 64 MiB cap at
       `MAX_EMBEDDING_STORE_BYTES`) to a vector table. The cap exists only because
       the whole file is read into memory.
+      → shared-read-only. Needs `orchestrator-main`.
 
 ## Wave 3 — L2 compiled product behind the port
 
@@ -325,6 +334,34 @@ ingest routes to zero rows. That is why the order is not negotiable.
 - [ ] **W3.4** Keep a file-backed implementation selectable behind the same port,
       so local-first stays possible and the server path is not the only one.
 
+### W3 needs a table that does not exist, and no feature role may create it
+
+This is a prerequisite the plan never stated, found by looking for the table W3.2
+and W3.3 assume.
+
+**There is no wiki table.** `schema.sql` has 8 tables and every one is KG-side.
+`grep -icE "create table.*(concept|wiki_page|pages)"` → 0 (the single hit for
+"concept" is a column comment). `entity_pages` cannot stand in: its primary key
+is `entity_id uuid references ontology_entities(id)`, so a row requires an
+extracted entity, and a compiled wiki concept has none.
+
+W3.2 and W3.3 therefore begin with new DDL under
+`packages/llmwiki-kg/db/`, which is `forbidden` to `orchestrator-a` and
+shared-read-only to b and c. Again only `orchestrator-main` can write it.
+
+There is a scope question hidden here that the plan should not decide by
+accident: **the wiki's storage should arguably not live in the KG package's
+schema at all.** Putting compiled wiki pages in `packages/llmwiki-kg/db/` makes
+the wiki depend on the vendored AKS package for its persistence, which inverts
+the dimension boundary the whole contract is built around. The honest options are
+(a) a separate wiki schema/migration outside the KG package, or (b) accept the
+coupling and document why. W3.1's ordering decision and this one are the same
+decision seen from two sides.
+
+`src/dimensions/wiki/{index,reader}.ts` themselves are `orchestrator-a`'s. The
+work is real and belongs to this role once the DDL question is answered; it is
+not startable before that.
+
 ## Wave 4 — L1 raw bytes to object storage
 
 - [ ] **W4.1** Introduce a blob abstraction for `sources/` and `dist/exports` only.
@@ -333,21 +370,45 @@ ingest routes to zero rows. That is why the order is not negotiable.
       (`sha256` in `.llmwiki/state.json`), so blob keys can be content-addressed
       without new identity machinery.
 
+Still last by design, and still blocked by the same surface problem as Wave 2:
+the seam is `src/utils/constants.ts` (`SOURCES_DIR`, `EXPORT_DIR`), which is
+shared-read-only for every feature role.
+
 ## Task count
 
 **16 tasks across 4 waves.** Wave 1 is 5 tasks and blocks everything else. Do not
 start Wave 4: it is the most visible and the least load-bearing.
 
-| Wave | Tasks | State |
-| --- | --- | --- |
-| 1 — Tenancy foundation | 5 | **4 done, W1.4 open.** RLS + policies applied and verified; 9 route files still query tenanted tables without binding a tenant |
-| 2 — L3 control state | 4 | not started |
-| 3 — L2 product behind port | 4 | not started |
-| 4 — L1 object storage | 3 | not started, and last by design |
+| Wave | Tasks | State | Writable by |
+| --- | --- | --- | --- |
+| 1 — Tenancy | 5 | **4 done; W1.4 open (2 of its 9 files are blocked by a contract conflict)** | partly `orchestrator-c` |
+| 2 — L3 control state | 4 | not started | **only `orchestrator-main`** |
+| 3 — L2 product | 4 | not started; needs DDL that does not exist | **`orchestrator-main`** for DDL, then `orchestrator-a` |
+| 4 — L1 object storage | 3 | not started, last by design | **only `orchestrator-main`** |
 
-**Next task: W1.4**, for the 9 unbound route files. It is not cosmetic: until it
-lands, pointing `DATABASE_URL` at `llmwiki_app` takes documents, backfeed,
-synthesize and ingest to zero rows. Waves 2–4 stay blocked behind that order.
+### The two blockers are not the same kind
+
+Wave 1's remainder is a **decision** (oracle parity on the by-id routes). Waves
+2–4 are a **surface** problem: their targets are shared-read-only, so no feature
+role can execute them under the current contract. Delegating W2.1 to
+`orchestrator-b` would simply be refused by the enforcement hook.
+
+That leaves exactly two honest routes for Waves 2 and 4, and the human should
+pick, not the agent:
+
+- **`orchestrator-main` executes them** under `unrestrictedWrite`, in the primary
+  checkout on the shared branch. Fastest, and consistent with why the grant
+  exists — but it puts all four L3 migrations on one session and they cannot be
+  reviewed as role branches.
+- **Widen the contract** so one dimension role owns the L3 files. That is a
+  contract edit with live peers, and the skill is explicit: scope is re-read on
+  every tool call, so editing it unenforces every session at once. It would need
+  a stop/edit/commit/relaunch cycle.
+
+**Next actionable task for this role: none of Waves 2–4.** `orchestrator-a`'s
+surface holds W3.2/W3.3/W3.4, which need the DDL decision first. Until that is
+answered the honest state is that this plan is waiting on two owner decisions,
+not on effort.
 
 ## Scope constraint for this role
 
