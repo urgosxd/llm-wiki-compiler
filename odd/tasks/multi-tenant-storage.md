@@ -30,13 +30,20 @@ Make llmwiki stop treating one local directory as its storage medium, so a singl
 server process can serve **many projects**. Today every command resolves its root
 from `process.cwd()` and every artifact is a file under that root.
 
-Status: **WAVE 1 LANDED AND MEASURED; WAVE 3 CODE LANDED (W3.2–W3.4); WAVES 2 AND 4
-NOT STARTED.** The plan is no longer analysis-only: Wave 1 shipped as `4b08af5` and
-the live database carries its policies. See `## Wave 1 — measured state` for what is
-really done, what the commit overstated, and the one deployment step that still
-makes RLS inert. See `## Wave 3 — reconciled state` for what the database-backed
-wiki actually delivers, the one plan claim it refutes, and the wiring that is still
-not done.
+Status: **WAVE 1 LANDED AND MEASURED; WAVE 3 CODE LANDED (W3.2, W3.3); W3.4
+SUPERSEDED; WAVES 2 AND 4 NOT STARTED.** The plan is no longer analysis-only: Wave 1
+shipped as `4b08af5` and the live database carries its policies. See
+`## Wave 1 — measured state` for what is really done, what the commit overstated,
+and the one deployment step that still makes RLS inert. See
+`## Wave 3 — reconciled state` for what the database-backed wiki actually delivers,
+the one plan claim it refutes, and the wiring that is still not done.
+
+**Direction change, human-ratified on both orchestrator sessions:** Postgres becomes
+the only storage backend, so the file-backed wiki dimension is removed rather than
+kept selectable. W3.4 is therefore SUPERSEDED, and the roadmap that replaces this
+document's Wave 3–4 ordering lives in `odd/tasks/multi-tenant-stack-only.md`. This
+file remains the record of WHAT was measured about Wave 1 and Wave 3; it is no
+longer the current plan for where storage goes next.
 
 The analysis below was read from the repository, not recalled. Where the shipped
 work contradicts the plan text, the measurement wins and the deviation is recorded
@@ -358,21 +365,32 @@ delegated to a dimension role under the current contract, no matter who is free.
       match). Write through the port, not through `collectPages`.
       → `9cda76a`, `src/dimensions/wiki/store-dimension.ts`. Named
       `createWikiStoreDimension` and kept as a SIBLING of the filesystem factory
-      rather than replacing it — W3.4 requires both. All three protections are
-      asserted against a real database in `test/dimensions/wiki-store-dimension.test.ts`
-      (7 tests).
+      rather than replacing it, because the-then-current W3.4 required both (that
+      requirement is now SUPERSEDED; the sibling shape it produced is what the
+      Stack-only migration replaces). All three protections are asserted against a
+      real database in `test/dimensions/wiki-store-dimension.test.ts` (7 tests).
 - [x] **W3.3** Implement `createWikiReader` over SQL so listing is one SELECT
       instead of `readdir` + N body reads.
       → `c6e0781`, `src/dimensions/wiki/page-reader.ts`. Named
       `createWikiPageReader`, sibling of `createWikiReader`. Listing is one
       `select … from wiki.pages` (`page-store.ts:200`), not `readdir` + N reads.
-- [x] **W3.4** Keep a file-backed implementation selectable behind the same port,
-      so local-first stays possible and the server path is not the only one.
-      → Delivered twice over: the file-backed pair is untouched and still what
-      `src/dimensions/activation.ts` builds, and the database pair is now reachable
+- [~] **W3.4** ~~Keep a file-backed implementation selectable behind the same port,
+      so local-first stays possible and the server path is not the only one.~~
+      **SUPERSEDED — see `odd/tasks/multi-tenant-stack-only.md`.**
+      → It WAS delivered: the file-backed pair was untouched and still what
+      `src/dimensions/activation.ts` built, and the database pair became reachable
       from outside the wiki directory through `src/dimensions/wiki/database.ts`.
-      Both factories were written and tested before that entry point existed and
-      nothing could import them — see the corrected blocker below.
+      That delivery is what made the choice visible enough for the human to retire
+      it.
+
+      The human then decided Postgres becomes the ONLY backend, which deletes the
+      file-backed implementation instead of keeping it selectable. W3.4 and that
+      decision cannot both hold, so this requirement is retired rather than
+      quietly left ticked: a reader who found `[x]` here would conclude local-first
+      is still supported, which is the opposite of the ratified direction. The
+      superseding document owns the consequences — accepted cost is that
+      `llmwiki compile` now requires a reachable Postgres, recorded there as a
+      release-note item rather than a hedge.
 
 ### W3 needs a table that does not exist, and no feature role may create it
 
@@ -435,7 +453,7 @@ start Wave 4: it is the most visible and the least load-bearing.
 | --- | --- | --- | --- |
 | 1 — Tenancy | 5 | **4 done; W1.4 open (2 of its 9 files are blocked by a contract conflict)** | partly `orchestrator-c` |
 | 2 — L3 control state | 4 | not started | **only `orchestrator-main`** |
-| 3 — L2 product | 4 | **3 done (W3.2, W3.3, W3.4); W3.1 open** | `orchestrator-a` |
+| 3 — L2 product | 4 | **W3.2, W3.3 done; W3.4 SUPERSEDED; W3.1 open** | `orchestrator-a` |
 | 4 — L1 object storage | 3 | not started, last by design | **only `orchestrator-main`** |
 
 ## Decisions taken by the human (this session)
@@ -528,25 +546,34 @@ Three of the five prerequisites are `orchestrator-main`'s, so they serialise:
 | 1 | ~~Port bump: `stack` on `DimensionInput` + `DimensionQuery`~~ **not needed** | ~~main~~ | nothing — see the refutation above |
 | 2 | `wiki` schema migration, outside `packages/llmwiki-kg/db/` | shipped as `src/dimensions/wiki/schema.sql` | W3.2, W3.3 |
 | 3 | W1.4: 7 unbound routes + `:stack_id` on the 2 by-id routes + OpenAPI bump | orchestrator-c | moving `DATABASE_URL` to `llmwiki_app` |
-| 4 | ~~W3.2/W3.3 database-backed wiki dimension + reader~~ **done** | orchestrator-a | W3.4, done |
+| 4 | ~~W3.2/W3.3 database-backed wiki dimension + reader~~ **done** | orchestrator-a | W3.4, done — and W3.4 is now SUPERSEDED |
 | 5 | Wire the database backend into activation, and W3.1's commit ordering | main | the server actually using it |
 | 6 | W2.1–W2.4, W4.x | main | — |
 
 Steps 1–2 were small and independent of 3; step 1 turned out not to exist at all.
 Step 4 is finished.
 
-**Honest state of this role: W3.2–W3.4 are done and unblocked nobody.** The earlier
-"blocked, with a named dependency" claim in this document was accurate about the
-missing schema and wrong about the port. What remains is not this role's: both
-`src/dimensions/activation.ts` and the `src/dimensions/index.ts` barrel are
-`sharedPaths`, so making the product select the database backend belongs to
+**This table is no longer the forward plan.** It stops at "wire the DB backend in",
+because that is where this document's scope ended. The ratified direction goes
+further — the file-backed path is deleted, not kept selectable — and the ordering
+for that is in `odd/tasks/multi-tenant-stack-only.md`, which also REVERSES this
+document's wave sequence (L2 → L3 → L1 rather than Waves 2–4 in numeric order) for
+reasons measured there.
+
+**Honest state of this role: W3.2 and W3.3 are done; W3.4 is superseded; none of it
+was ever mine to wire.** The earlier "blocked, with a named dependency" claim in
+this document was accurate about the missing schema and wrong about the port. What
+remains is not this role's: `src/dimensions/activation.ts`, the
+`src/dimensions/index.ts` barrel, `lock.ts`, `journal.ts` and `atomic-write.ts` are
+all `sharedPaths`, so both wiring the backend AND the Stack-only migration belong to
 `orchestrator-main`.
 
 ## Wave 3 — reconciled state
 
-W3.2, W3.3 and W3.4 are landed, tested, and reachable. This section records what
-the code actually delivers, measured against the plan text above rather than
-against the commits' own summaries.
+W3.2 and W3.3 are landed, tested, and reachable. W3.4 was landed too and is now
+SUPERSEDED by the Stack-only decision. This section records what the code actually
+delivers, measured against the plan text above rather than against the commits' own
+summaries.
 
 ### What is delivered
 
@@ -554,7 +581,13 @@ against the commits' own summaries.
 | --- | --- | --- | --- |
 | W3.2 | `store-dimension.ts` — `createWikiStoreDimension({db, stackId})` | `src/dimensions/wiki/database.ts` | 7, real Postgres |
 | W3.3 | `page-reader.ts` — `createWikiPageReader({db, stackId})` | `src/dimensions/wiki/database.ts` | 7, real Postgres |
-| W3.4 | filesystem pair untouched; both pairs satisfy the same ports | `index.ts` (filesystem), `database.ts` (database) | 2, entry-point guards |
+| ~~W3.4~~ SUPERSEDED | filesystem pair untouched at the time; both pairs satisfied the same ports | `index.ts` (filesystem), `database.ts` (database) | 2, entry-point guards |
+
+W3.4's artifact is kept in this table rather than deleted because it is what
+`test/dimensions/wiki-database-entry.test.ts` still asserts today — including the
+assertion that the filesystem barrel does NOT export the database pair. Under the
+Stack-only direction that second assertion stops being an import-cost guard and
+becomes obsolete, which is a change `orchestrator-main` owns, not this role.
 
 `saveSource`'s three protections are each asserted, and each assertion is a
 property a fake store could not show: the empty-slug guard rejects a title of
