@@ -1,6 +1,6 @@
 {
   "_validator": "@local/orchestration (global package at ~/.agents/orchestration; contract stays per-repo)",
-  "_ratified": "human-ratified: two-dimension split (A=wiki, B/C=KG), plus a coordinator in the primary checkout granted unrestrictedWrite so it can repair any surface; product surface frozen for every feature role",
+  "_ratified": "human-ratified: two-dimension split (A=wiki, B=KG), with integration authority and the coordination docs held by orchestrator-main in the primary checkout, which alone holds unrestrictedWrite so it can repair any surface; orchestrator-c was merged into orchestrator-b and retired; product surface frozen for every feature role",
   "version": 1,
   "sharedPaths": [
     ".fallowrc.json",
@@ -96,11 +96,12 @@
       ]
     },
     "orchestrator-a": {
-      "module": "wiki-dimension-and-integration",
+      "module": "wiki-dimension",
       "worktree": ".worktrees/orchestrator-a",
       "ownedPaths": [
         "src/dimensions/wiki/**",
-        "odd/**",
+        "odd/tasks/wiki-*",
+        "odd/tasks/multi-tenant-*",
         "test/dimensions/wiki-*",
         "test/dimensions/cross-dimension-rollback.test.ts"
       ],
@@ -116,56 +117,31 @@
       ]
     },
     "orchestrator-b": {
-      "module": "kg-core-dimension",
+      "module": "kg-dimension",
       "worktree": ".worktrees/orchestrator-b",
       "ownedPaths": [
         "packages/llmwiki-kg/odd/**",
         "packages/llmwiki-kg/ts/oracle/**",
+        "packages/llmwiki-kg/ts/src/*.ts",
+        "odd/tasks/kg-*",
         "packages/llmwiki-kg/ts/src/core/**",
+        "packages/llmwiki-kg/ts/src/mcp/**",
         "packages/llmwiki-kg/ts/src/pydantic/**",
+        "packages/llmwiki-kg/ts/src/routes/**",
         "src/dimensions/kg/**",
         "test/dimensions/kg-core-*",
         "test/dimensions/kg-dimension.test.ts",
         "test/dimensions/kg-forget.test.ts",
         "test/dimensions/kg-postgres-integrity.test.ts",
         "test/dimensions/kg-read-service.test.ts",
-        "test/dimensions/kg-reader.test.ts"
-      ],
-      "forbiddenPaths": [
-        ".worktrees/**",
-        "contract-cordination.json",
-        "odd/**",
-        "package.json",
-        "packages/llmwiki-kg/ts/src/*.ts",
-        "packages/llmwiki-kg/ts/src/mcp/**",
-        "packages/llmwiki-kg/ts/src/routes/**",
-        "src/dimensions/wiki/**",
-        "test/dimensions/wiki-*",
-        "tsconfig*.json",
-        "vitest.config.ts"
-      ]
-    },
-    "orchestrator-c": {
-      "module": "kg-runtime-dimension",
-      "worktree": ".worktrees/orchestrator-c",
-      "ownedPaths": [
-        "packages/llmwiki-kg/ts/src/routes/**",
-        "packages/llmwiki-kg/ts/src/mcp/**",
-        "packages/llmwiki-kg/ts/src/*.ts",
+        "test/dimensions/kg-reader.test.ts",
         "test/dimensions/kg-runtime-*"
       ],
       "forbiddenPaths": [
         ".worktrees/**",
         "contract-cordination.json",
-        "odd/**",
         "package.json",
-        "packages/llmwiki-kg/odd/**",
-        "packages/llmwiki-kg/ts/oracle/**",
-        "packages/llmwiki-kg/ts/src/core/**",
-        "packages/llmwiki-kg/ts/src/pydantic/**",
-        "src/dimensions/kg/**",
         "src/dimensions/wiki/**",
-        "test/dimensions/kg-*",
         "test/dimensions/wiki-*",
         "tsconfig*.json",
         "vitest.config.ts"

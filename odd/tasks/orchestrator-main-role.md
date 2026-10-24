@@ -147,7 +147,36 @@ corregidos:
 ## Known limitation
 
 El contrato está sin commitear. El hook lee el contrato del **main root**, así que
-el enforcement ya es correcto para los cuatro roles; pero los checkouts enlazados
+el enforcement ya es correcto para los tres roles; pero los checkouts enlazados
 `.worktrees/orchestrator-{a,b,c}` tienen el contrato *commiteado* en su rama, que
-todavía declara tres roles. Commitear el contrato antes de lanzar es lo que
-sincroniza ambas vistas. No se creó ni modificó ningún worktree.
+todavía declara cuatro roles — incluido el ya retirado `orchestrator-c`. Commitear
+el contrato antes de lanzar es lo que sincroniza ambas vistas. No se creó ni se
+modificó ningún worktree; el de `orchestrator-c` quedó intacto, porque borrar un
+worktree es una operación git destructiva y le corresponde al humano.
+
+## Amendment: integration authority moved, C retired
+
+Revisión posterior, ratificada por el humano. La forma del reparto cambió:
+
+- **`orchestrator-main` es el único que integra.** `orchestrator-a` perdió el
+  sufijo de integración en su `module` y ya no mergea. El autor de una rama nunca
+  mergea su propio trabajo, así que A y B entregan y `orchestrator-main` revisa y
+  mergea.
+- **`odd/**` raíz es de `orchestrator-main`.** A lo perdió y ahora la tiene
+  prohibida: el registro de decisiones del repositorio lo escribe quien integra,
+  que es el que puede leer la rama y dejarla asentada.
+- **`orchestrator-c` se retiró y se fusionó en `orchestrator-b`.** B ahora posee
+  toda la dimensión KG: core, pydantic, oracle, routes, mcp y los módulos
+  `ts/src/*.ts`, más el adaptador `src/dimensions/kg`. Su `forbiddenPaths` perdió
+  `ts/src/*.ts`, `mcp/**`, `routes/**` y `test/dimensions/kg-*`, porque con C
+  fuera esas prohibiciones habrían bloqueado a B sobre sus propios archivos.
+- **El contrato no gana ningún campo nuevo.** `scope.ts` valida cada rol con
+  `z.strictObject`: una clave desconocida invalida el contrato entero y, como el
+  hook falla abierto, desenforcaría a todas las sesiones vivas a la vez. La
+  autoridad de integración se expresa en `module`, en este documento y en la regla
+  de que nadie mergea su propia rama — no en un booleano inventado.
+
+Un detalle del merge que una unión ingenua de paths habría roto: `test/dimensions/kg-*`
+estaba en el `ownedPaths` de C y en el `forbiddenPaths` de B. Copiar ambos habría
+dejado `forbidden` ganando sobre `owned` y B sin poder escribir ninguno de sus
+propios tests. Se quitó de las prohibiciones de B al eliminar el rol dueño.

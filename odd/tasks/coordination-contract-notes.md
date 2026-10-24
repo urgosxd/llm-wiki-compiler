@@ -5,14 +5,31 @@ explains why it is shaped this way. Keep them in sync.
 
 ## The shape: one role per dimension, plus one coordinator
 
-A owns the wiki dimension. B and C split the KG dimension (B the core and the
-adapter, C the runtime surface). The rest of the product is frozen read-only for
-every role, so the two dimensions cannot collide with the compiler, the CLI, or
-each other.
+A owns the wiki dimension. B owns the entire KG dimension — the vendored core, the
+pydantic wire layer, the oracle contracts, the runtime surface (routes, MCP, the
+`ts/src/*.ts` modules) and the `src/dimensions/kg` adapter. The rest of the
+product is frozen read-only for every feature role, so the two dimensions cannot
+collide with the compiler, the CLI, or each other.
 
-`orchestrator-main` is not a fourth dimension. It is the coordinating session that
-dispatches work and reports, so it owns no product surface at all and runs in the
-primary checkout: no worktree is created for it.
+`orchestrator-main` is not a third dimension. It is the coordinating session: it
+dispatches work, judges reports, holds integration authority for `main`, and owns
+the repository-level `odd/**` decision record. It runs in the primary checkout, so
+no worktree is created for it.
+
+### Why B and C were merged
+
+The original split gave B the KG core and C the KG runtime surface. In practice
+the two could not work independently: almost every KG change crossed that line,
+so B and C spent their traffic on `contract_proposal`/`contract_decision`
+envelopes about one package's internal wiring rather than on the dimension itself.
+The `kg-ontology-from-json` record is the clearest case — its slices 1 and 2 are
+one feature separated only by which side of `ts/src/core-index.ts` they touch.
+
+One role per *dimension* is the rule the contract is expressing; splitting a
+dimension by layer inside it was the mistake. `orchestrator-c` is retired and its
+paths moved to `orchestrator-b`. The agreements already recorded between them
+(`cp-2026-10-23-01/03/04`) stay valid as history; they are simply intra-role now,
+so they no longer need an envelope.
 
 ## One role runs in the primary checkout
 
@@ -22,8 +39,9 @@ The contract encodes that with an empty `worktree`:
 "orchestrator-main": {
   "module": "coordination-and-integration",
   "worktree": "",
-  "ownedPaths": [".orchestration-main-readonly/**"],
-  "forbiddenPaths": [".worktrees/**", "packages/llmwiki-kg/**", "scripts/**", "src/**", "test/**"]
+  "unrestrictedWrite": true,
+  "ownedPaths": ["**"],
+  "forbiddenPaths": [".worktrees/**"]
 }
 ```
 
@@ -60,7 +78,7 @@ boolean instead of an overlap.
 
 1. **It writes on the shared branch.** The role has no branch of its own, so a
    change lands on `main` directly instead of arriving through a merge review.
-2. **It can collide with a, b and c.** They write `src/dimensions/**` and
+2. **It can collide with a and b.** They write `src/dimensions/**` and
    `packages/llmwiki-kg/ts/src/**` in their own worktrees; `orchestrator-main`
    can write the same paths in the primary checkout. Git sees nothing until merge
    time. This risk was accepted deliberately when the grant was ratified.
@@ -93,6 +111,51 @@ writes, not verification. `orchestrator-main` can run `tsc`, the tests and fallo
 over every surface it does not own — which is exactly what a session that judges
 other roles' reports needs to be able to do.
 
+## Every role records its own tasks in `odd/`
+
+A role that cannot write its own feature document cannot close its own work: it
+can implement and verify, and then have no way to check a box. So `odd/tasks/**`
+is partitioned by feature prefix, one disjoint slice per role:
+
+| Slice | Role |
+| --- | --- |
+| `odd/tasks/wiki-*` | `orchestrator-a` |
+| `odd/tasks/multi-tenant-*` | `orchestrator-a` |
+| `odd/tasks/kg-*` | `orchestrator-b` |
+| everything else | `orchestrator-main` |
+
+Two constraints shaped that partition, and guessing either of them wrong produces
+a contract that looks fine and is not:
+
+1. **`odd/**` cannot be shared by two roles.** `findOwnershipOverlaps` rejects an
+   identical pattern in two roles and a directory glob that contains another
+   role's pattern, so a common `odd/**` is a contract error, not a convenience.
+   There is also no shared-writable tier — `sharedPaths` is read-only by
+   definition. A disjoint split is the only shape available.
+2. **A broad `forbiddenPaths` silently cancels a narrow `ownedPaths`.**
+   `forbidden` outranks `owned`, so leaving `odd/**` in a role's prohibitions while
+   granting it `odd/tasks/kg-*` yields `forbidden`, not a narrower grant. Both
+   role entries had exactly that bug at one point and it read as "the role was
+   never granted anything". When adding a narrow grant, remove the broad
+   prohibition in the same edit.
+
+`odd/tasks/kg-dimension.md` is the one two-dimensional document: it describes the
+split of ingest across both dimensions. It stays with `orchestrator-b` because its
+subject is the KG side of that split, and `orchestrator-a`'s half of the same work
+is recorded in `multi-tenant-storage.md`, which A owns. A role that needs a change
+in another role's document requests it; it does not take the file.
+
+## Integration authority is a protocol fact, not a schema field
+
+`scope.ts` validates each role with `z.strictObject`, so an unknown key fails the
+whole contract and — because the hook fails open on an unusable contract — would
+unenforce every live session at once. There is therefore no `integration: true`
+field to add, and none was invented. Integration authority lives where the
+protocol puts it: in the `module` label, in this memo, and in the rule that the
+author of a branch never merges their own work. The mechanical consequence is
+simply that `orchestrator-a` and `orchestrator-b` hold no merge step and
+`orchestrator-main` holds the only one.
+
 Tests therefore live under each role's ownedPaths, never in sharedPaths:
 sharedPaths takes precedence over ownedPaths, so a test path listed there would
 make a role unable to write its own tests. The one exception is a role with
@@ -113,33 +176,39 @@ a work_request instead of editing it.
   `forbiddenPaths`
 - forbidden: `.worktrees/**` — another role's checkout
 - dispatches work, judges reports, and repairs infrastructure
+- **holds integration authority**: it is the only session that merges a feature
+  branch into `main`, and the author of a branch never merges their own work
+- owns `odd/**`, the repository-level decision record
 
-### `orchestrator-a` — wiki-dimension-and-integration
+### `orchestrator-a` — wiki-dimension
 
 - worktree `.worktrees/orchestrator-a`
 - owns `src/dimensions/wiki/**`
-- owns `odd/**`
 - owns `test/dimensions/wiki-*`
 - owns `test/dimensions/cross-dimension-rollback.test.ts`
+- owns `odd/tasks/wiki-*` and `odd/tasks/multi-tenant-*`
 
-### `orchestrator-b` — kg-core-dimension
+### `orchestrator-b` — kg-dimension
 
 - worktree `.worktrees/orchestrator-b`
 - owns `src/dimensions/kg/**`
+- owns `odd/tasks/kg-*`
 - owns `packages/llmwiki-kg/ts/src/core/**`
 - owns `packages/llmwiki-kg/ts/src/pydantic/**`
-- owns `packages/llmwiki-kg/ts/oracle/**`
-- owns `packages/llmwiki-kg/odd/**`
-- owns `test/dimensions/kg-dimension.test.ts`
-- owns `test/dimensions/kg-core-*`
-
-### `orchestrator-c` — kg-runtime-dimension
-
-- worktree `.worktrees/orchestrator-c`
 - owns `packages/llmwiki-kg/ts/src/routes/**`
 - owns `packages/llmwiki-kg/ts/src/mcp/**`
 - owns `packages/llmwiki-kg/ts/src/*.ts`
-- owns `test/dimensions/kg-runtime-*`
+- owns `packages/llmwiki-kg/ts/oracle/**`
+- owns `packages/llmwiki-kg/odd/**`
+- owns `test/dimensions/kg-core-*`, `kg-runtime-*`, `kg-dimension`, `kg-forget`,
+  `kg-postgres-integrity`, `kg-read-service`, `kg-reader`
+
+### `orchestrator-c` — retired
+
+Merged into `orchestrator-b`. Its paths, its worktree and its test glob moved
+with it, and the role key is gone from the contract: an undeclared role is
+refused by `resolveRole`, so a session still launched with
+`ORCHESTRATION_ROLE=orchestrator-c` fails closed instead of writing unenforced.
 
 ## Frozen surface
 
