@@ -28,7 +28,30 @@ export type {
   ExtractedEntity,
   ExtractedRelationship,
   ExtractionResult,
+  Triplet,
 } from "./core/extraction.js";
+
+// Declared ontology and its enforcement (contract core-index.ts@2).
+//
+// The values matter as much as the types: an ingest path handed a stored JSON
+// declaration has to *call* `validateOntology` to turn it into an `Ontology`,
+// and a hierarchy-aware read has to call `isEntityTypeAllowed`. Re-exporting
+// only the interfaces would compile and do nothing.
+export {
+  validateOntology,
+  isEntityTypeAllowed,
+  ancestorsOf,
+  parseTripletsWithOntology,
+  OntologyError,
+} from "./core/ontology.js";
+
+export type {
+  Ontology,
+  RejectedTriplet,
+  OntologyParseResult,
+  SubtypeEdge,
+  RejectionReason,
+} from "./core/ontology.js";
 
 export {
   consolidateEntityRows,
