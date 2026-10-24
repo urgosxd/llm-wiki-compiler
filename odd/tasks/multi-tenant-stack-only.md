@@ -221,6 +221,40 @@ executor does not widen scope by improvisation. Ordered by the sequence above.
   manifests, state and embeddings — almost none of which are page writes), and do
   not attempt to change `page-id.ts` identity in the same task.
 
+##### Two gaps found in T2 before it starts
+
+Both were found by reading the two shapes against each other, and both are pinned
+by tests in `test/dimensions/wiki-page-store.test.ts` so a later schema or store
+change cannot quietly reopen them.
+
+**Gap 1 — `index.md` and `MOC.md` are not pages.** `CompilePageWrite.namespace` is
+exactly `"concepts" | "queries"` (`src/compiler/compile-write.ts:55`), which matches
+the `wiki.pages` CHECK (`schema.sql:73`), so every PLANNED page fits. But the
+compiler also writes two artifacts that are not pages at all:
+`INDEX_FILE = "wiki/index.md"` (`src/utils/constants.ts:387`) via
+`indexgen.ts:45`, and `MOC_FILE = "wiki/MOC.md"` (`:388`) via `obsidian.ts:117`.
+Neither has a `slug` in a page directory, so **neither can be a `wiki.pages` row**
+without inventing a fake namespace — and widening the CHECK to allow one would
+corrupt the meaning of the column. T2 must decide explicitly: generate them from
+rows on read, keep them as the last files, or give them their own table. Silence
+here would produce a half-migrated wiki where the index is a file and the pages
+are rows.
+
+**Gap 2 — the body shapes differ.** `CompilePageWrite.body` is **frontmatter +
+prose** (`compile-write.ts:63`), while `Page.body` is **prose only**, with `title`
+and `summary` as separate fields (`src/pages/list.ts:43-59`). So T2 must split on
+the way in via `parseFrontmatter` (`src/utils/markdown.ts:101`) and take `title`
+and `summary` from it. Both halves are now asserted against a real database.
+
+**One thing that is NOT a gap, measured rather than assumed.** After a compile
+upsert, a page keeps the `source_identity` that `store-dimension.ts` wrote, because
+`upsertStoredPage` simply omits the column from `do update set` — Postgres
+preserves it. So the two writers do not fight over the column and the next
+re-ingest still finds its page. This mattered because the dimension looks pages up
+BY `source_identity` (`store-dimension.ts:120`) while the compiler path never sets
+it; had the upsert nulled it, every compile would detach a page from its source and
+fork a duplicate on the next ingest. It does not, and there is now a test saying so.
+
 #### T3 — Retire the file-backed wiki dimension (the W3.4 reversal)
 
 - **Seams**: `src/dimensions/activation.ts:102`, `src/dimensions/wiki/index.ts`,
