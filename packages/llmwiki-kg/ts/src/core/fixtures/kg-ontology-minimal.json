@@ -1,0 +1,5 @@
+{
+  "entityTypes": ["ORGANIZATION", "COMPANY"],
+  "relationshipTypes": ["SUPPLIES"],
+  "subtypes": [{ "child": "COMPANY", "parent": "ORGANIZATION" }]
+}
