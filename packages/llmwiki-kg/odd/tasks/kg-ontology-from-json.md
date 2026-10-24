@@ -160,6 +160,46 @@ Recorded rather than fixed — it is outside this role's surface.
 - Changing the `strict=False` behaviour when no ontology is supplied. The
   oracle accepts any type; so do we, in default mode.
 
-## Evidence log
+## Agreed contract
 
-Recorded as each task closes. A task is not closed without an observed result.
+Recorded verbatim, as the protocol requires. The version string is the one both
+sides exchanged, not a paraphrase.
+
+| Field | Value |
+| --- | --- |
+| `contract` | `packages/llmwiki-kg/ts/src/core-index.ts@1` |
+| Proposed by | `orchestrator-b` — `cp-2026-10-23-03` |
+| Accepted by | `orchestrator-c` — `cd-2026-10-23-03`, `status: accepted` |
+| Implemented by | `orchestrator-c` (owner of `ts/src/core-index.ts`) |
+| Consumed by | `orchestrator-b` (`src/dimensions/kg/index.ts`) and `orchestrator-c` (ingest) |
+| Integrated by | `orchestrator-a` |
+
+What the agreed version requires `ts/src/core-index.ts` to re-export:
+
+- **values** — `validateOntology`, `isEntityTypeAllowed`, `ancestorsOf`,
+  `parseTripletsWithOntology`, `OntologyError`
+- **types** — `Ontology`, `RejectedTriplet`, `OntologyParseResult`, `SubtypeEdge`,
+  `RejectionReason`
+
+Values are the substance of v3. Re-exporting only the three interfaces was the
+`changes` verdict on `@1`: an ingest route handed a stored JSON document needs
+`validateOntology` as a callable, and a hierarchy check needs
+`isEntityTypeAllowed`. Names without the callables would have compiled and done
+nothing.
+
+**Ordering is part of the agreement.** The re-export may only land after `7664e24`
+is reachable from `feat/orchestrator-c`, because `ts/src/core/ontology.ts` does
+not exist there yet and a re-export would break `npx tsc --noEmit` on that
+branch.
+
+**Superseded versions:** `ontology.ts@1` and `ontology.ts@2` were answered
+`changes`. `@2` was correct in diagnosis (the barrel hid the type) but incomplete
+in prescription (types only). `core-index.ts@1` is the agreed successor and is a
+different interface, which is why it carries its own version rather than `@3`.
+
+## Follow-up owned by orchestrator-b once the re-export lands
+
+Delete the `KgOntology` derivation at `src/dimensions/kg/index.ts:61` and name
+`Ontology` directly. The alias exists only because the barrel hid the type;
+leaving it after the contract lands would keep a workaround for a problem that no
+longer exists.
