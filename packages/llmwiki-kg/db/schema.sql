@@ -239,6 +239,39 @@ create index if not exists idx_pages_stack on entity_pages(stack_id);
 
 alter table stacks add column if not exists synthesize_descriptions boolean not null default false;
 
+-- ------------------------------------------------------------
+-- Ontology, per Stack (nullable, and that is load-bearing)
+-- ------------------------------------------------------------
+-- A Stack's ontology is the declaration that constrains extraction: entity types,
+-- relationship types, and the IS-A hierarchy between them.
+--
+-- NULL IS MEANINGFUL, NOT "EMPTY". `ontology is null` is the ORACLE's behaviour:
+-- advertise the default type hints and accept whatever the model emits. That is
+-- what every existing Stack does today, so a nullable column means existing rows
+-- keep working with no backfill. A NOT NULL column with a `{}` default would
+-- silently switch every existing Stack into enforcement mode and start rejecting
+-- triplets it currently accepts.
+--
+-- ONE COLUMN, NOT A TABLE. The document is read and written whole, and an entity
+-- type and the subtypes referencing it are only meaningful together; a half-applied
+-- edit would leave a hierarchy pointing at types that no longer exist. A jsonb
+-- column makes the write atomic. A `stack_entity_types` table would spread that
+-- invariant across rows with no natural transaction boundary.
+--
+-- THE CHECK VALIDATES SHAPE ONLY. Cycles, undeclared parents and duplicate types
+-- are enforced by `validateOntology` at load time, where the error can name the
+-- offending type. Duplicating those rules in SQL would name nothing useful and the
+-- two implementations would drift.
+alter table stacks
+    add column if not exists ontology jsonb;
+
+alter table stacks
+    drop constraint if exists valid_ontology_is_object;
+
+alter table stacks
+    add constraint valid_ontology_is_object
+    check (ontology is null or jsonb_typeof(ontology) = 'object');
+
 -- ============================================================
 -- GROUP 6: Backfeed Queue
 -- ============================================================
