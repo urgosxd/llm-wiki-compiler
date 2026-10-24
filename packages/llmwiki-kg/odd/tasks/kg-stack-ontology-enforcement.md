@@ -280,6 +280,44 @@ three attempts — a triplet with no relation, a self-reference, and a top-level
 says "Acme exists" contributes no node. This is inherited path-based design, not a
 consequence of the ontology.
 
+## End-to-end integration: ingest to query
+
+`ts/src/routes/ingest-ontology-e2e.test.ts` (8 tests) closes the gap the unit and
+route suites left. Every other suite stops at its own boundary: the `aks-*`
+suites seed `ontology_entities` with direct `insert` statements, so they prove the
+query layer works on rows a test placed there, and the `ingest-*` suites prove
+rows are written but never ask the query surface what it can see. **No test in
+this package mounted the ingest router and the AKS router together.**
+
+The file writes no graph rows itself. All three routers are mounted over one
+transaction wrapper, and every assertion is an HTTP read:
+
+| Test | What it proves |
+| --- | --- |
+| only declared types via AKS | `GET /aks/v1/entities` returns Acme/Ada/Grace, never Globex/Initech |
+| declared edge is traversable | `GET /aks/v1/traverse` returns both `Acme -[EMPLOYS]-> …` edges and no `ACQUIRED` |
+| single-entity read | `GET /aks/v1/entities/Acme` agrees with the list |
+| no declaration stores everything | the same document yields all four entities (control) |
+| Stack totals count admitted knowledge | `entities_extracted` 3 / `entities_in_stack` 3, not what the model produced |
+| rejection survives the request | `GET /documents/{id}` audit reports 1 `UNKNOWN_RELATIONSHIP_TYPE` |
+| re-ingest is idempotent | a second ingest of the same content does not grow the graph |
+| all-rejected writes nothing | 200 with an empty graph, not an error |
+
+Falsifiability measured by bypassing `ontologyArgument`: **4 of 8 turn red**, and
+the four that stay green are the controls that must not depend on enforcement.
+Stable across three consecutive runs, because an integration test that flickers is
+not evidence.
+
+### Two mistakes the file caught in itself
+
+- Missing the documents router and an error handler made a Stack create return a
+  bare 500. Without the handler the assertion reads "expected 201, got 500" and
+  names the symptom while hiding the cause; the handler turns it into the actual
+  message. Both are now in the harness of this file.
+- The first traverse assertion pinned the order of two edges at the same depth.
+  The endpoint promises BFS depth order, not an order between siblings, so the
+  comparison is now a set plus an explicit length.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,
