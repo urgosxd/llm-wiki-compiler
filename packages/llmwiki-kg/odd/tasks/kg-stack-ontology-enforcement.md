@@ -124,9 +124,48 @@ actually closed.
   **`npx fallow`** — no dead code, no duplication, 0 issues.
 - **Commit.** `d04fcc5` — `feat(kg): expose a Stack's ontology and enforce it at ingest`.
 
+## The end-to-end ingest test, and the two things it caught
+
+`ts/src/routes/ingest-ontology.test.ts` creates a Stack through `POST /stacks`
+with a declaration, ingests a document through
+`POST /stacks/:id/documents/:doc/ingest`, and asserts against the graph tables
+which types actually reached them.
+
+It had to be written because **no existing suite executed this path**. The
+contract suites ingest a whitespace-only document so no provider call happens,
+and the gateway suite creates its Stack with a direct `insert` that carries no
+declaration. The property the feature exists for had unit coverage at both ends
+and no test across the middle.
+
+### The provider config trap
+
+The first run passed structurally but wrote nothing: `installFetchStub` recorded
+calls to `api.openai.com` and `api.anthropic.com` instead of the stub. The cause
+is that `config` parses `process.env` once at module load, and the pipeline
+reaches it through `../config.js` — so the `vi.hoisted` block in
+`ingest-harness.ts` runs too late, because a helper module is imported after the
+test file's own imports begin resolving. The block has to live in the test file
+itself; `core/extraction-graph.test.ts` documents the same constraint.
+
+What makes this worth recording is the failure mode: no error, no exception, a
+200 with `entities_extracted: 0`. A test asserting only the response envelope
+would have passed while never exercising enforcement at all.
+
+### The test is falsifiable
+
+Bypassing `ontologyArgument` to always return `[]` turns 3 of the 4 tests red;
+the survivor is the "no declaration" case, which correctly must not enforce.
+That is the check that the suite measures enforcement rather than the shape of a
+successful response.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,
   so a sibling route would be a second way to read one field.
 - The hierarchy is validated and stored but a read still does not rewrite types
   through it; `ontology.ts` documents hierarchy-aware reads as out of scope.
+- The ingest response cannot report how many triplets were dropped: it is nine
+  fixed keys, byte-identical to the oracle. So a caller cannot tell a tight
+  ontology from a thin extraction over HTTP. `ExtractionResult.rejected` exists
+  and is populated, but nothing surfaces it — a candidate for its own change,
+  and one that needs a contract decision because it touches the response shape.
