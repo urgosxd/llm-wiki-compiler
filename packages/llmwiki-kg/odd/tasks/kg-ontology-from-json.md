@@ -181,23 +181,24 @@ sides exchanged, not a paraphrase.
 
 | Field | Value |
 | --- | --- |
-| `contract` | `packages/llmwiki-kg/ts/src/core-index.ts@1` |
-| Proposed by | `orchestrator-b` — `cp-2026-10-23-03` |
-| Accepted by | `orchestrator-c` — `cd-2026-10-23-03`, `status: accepted` |
+| `contract` | `packages/llmwiki-kg/ts/src/core-index.ts@2` (supersedes `@1`, which was also accepted — see the amendment below) |
+| Proposed by | `orchestrator-b` — `cp-2026-10-23-03` (`@1`), `cp-2026-10-23-04` (`@2`) |
+| Accepted by | `orchestrator-c` — `cd-2026-10-23-03` (`@1`) and `cd-2026-10-23-04` (`@2`), both `status: accepted` |
 | Implemented by | `orchestrator-c` (owner of `ts/src/core-index.ts`) |
 | Consumed by | `orchestrator-b` (`src/dimensions/kg/index.ts`) and `orchestrator-c` (ingest) |
 | Integrated by | `orchestrator-a` |
 
-What the agreed version requires `ts/src/core-index.ts` to re-export:
+What the agreed version requires `ts/src/core-index.ts` to re-export — the full
+list, after both the `@1` acceptance and the `@2` amendment below:
 
 - **values** — `validateOntology`, `isEntityTypeAllowed`, `ancestorsOf`,
   `parseTripletsWithOntology`, `OntologyError`
 - **types** — `Ontology`, `RejectedTriplet`, `OntologyParseResult`, `SubtypeEdge`,
-  `RejectionReason`
+  `RejectionReason`, `Triplet`
 
-Values are the substance of v3. Re-exporting only the three interfaces was the
-`changes` verdict on `@1`: an ingest route handed a stored JSON document needs
-`validateOntology` as a callable, and a hierarchy check needs
+Values are the substance of `@1`. Re-exporting only the three interfaces was the
+`changes` verdict on `ontology.ts@2`: an ingest route handed a stored JSON
+document needs `validateOntology` as a callable, and a hierarchy check needs
 `isEntityTypeAllowed`. Names without the callables would have compiled and done
 nothing.
 
@@ -230,7 +231,14 @@ returns element-wise. `@2` adds exactly one line to the type list:
 export type { Triplet } from "./core/graph-parse.js";
 ```
 
-Proposed as `cp-2026-10-23-04`.
+Proposed as `cp-2026-10-23-04`, accepted as `cd-2026-10-23-04`,
+`status: accepted`. The agreed lists near the top of this section are the
+post-amendment state; `Triplet` is the only difference from `@1`.
+
+A version bump rather than a silent extension: the protocol requires a new
+decision for a changed interface, and `@1` had already been accepted on its own
+terms. Editing the accepted version in place would have meant two sessions
+implementing different barrels under one version string.
 
 ### Why the ordering clause is satisfiable now
 
