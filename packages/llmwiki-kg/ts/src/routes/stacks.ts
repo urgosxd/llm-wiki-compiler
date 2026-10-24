@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { Router } from "express";
 import type { Request, RequestHandler, Response } from "express";
 import { z } from "zod";
@@ -70,7 +70,65 @@ const STACK_UPDATE_FIELDS = [
   "scope",
   "compilation_strategy",
   "synthesize_descriptions",
+  "ontology",
 ] as const;
+
+/**
+ * The one updatable field stored as `jsonb`, and therefore bound differently.
+ *
+ * Kept out of the generic assignment path rather than special-casing inside it:
+ * a bare object parameter would be sent untyped, and `JSON.stringify(null)` is
+ * the four bytes `null` rather than SQL NULL, which would store the JSON value
+ * `null` instead of clearing the column.
+ */
+const JSONB_FIELD = "ontology";
+
+/**
+ * Renders one `column = value` assignment for the dynamic `set` clause.
+ *
+ * Every caller-supplied object goes through here, so the only names reaching
+ * `sql.identifier` are the fixed allowlist entries in
+ * {@link STACK_UPDATE_FIELDS}.
+ *
+ * @param field - A field from {@link STACK_UPDATE_FIELDS}.
+ * @param value - The value to write, already validated for that field.
+ * @returns The assignment fragment, with an explicit `jsonb` cast when needed.
+ */
+function assignmentFor(field: string, value: unknown): SQL {
+  if (field !== JSONB_FIELD) {
+    return sql`${sql.identifier(field)} = ${value}`;
+  }
+  // `null` clears the declaration; anything else is serialised so Postgres
+  // receives a jsonb document rather than an untyped parameter.
+  return value === null
+    ? sql`${sql.identifier(field)} = null`
+    : sql`${sql.identifier(field)} = ${JSON.stringify(value)}::jsonb`;
+}
+
+/**
+ * Renders a Stack's ontology as the jsonb value an insert should store.
+ *
+ * Stringified BEFORE binding, then cast once. This is driver-specific and was
+ * measured, not assumed: drizzle hands a JS object to its parameter binder in a
+ * form Postgres refuses (the query throws outright), while a JSON string cast to
+ * `jsonb` arrives as a jsonb *object* — which is what `valid_ontology_is_object`
+ * requires. Binding the raw object therefore fails every create that supplies a
+ * declaration, and the failure is a 500 rather than a 422, because it happens
+ * inside the query rather than in validation.
+ *
+ * `undefined` and `null` both mean "no declaration" and must become SQL NULL,
+ * never the JSON document `null` — otherwise "unconfigured" would be
+ * indistinguishable from "configured to a JSON null" and the null semantics the
+ * ingest path depends on would be quietly defeated.
+ *
+ * @param ontology - The parsed request field; absent and null are equivalent.
+ * @returns A `jsonb`-cast fragment, or SQL NULL when there is no declaration.
+ */
+function ontologyLiteral(ontology: unknown): SQL | null {
+  return ontology === undefined || ontology === null
+    ? null
+    : sql`${JSON.stringify(ontology)}::jsonb`;
+}
 
 /**
  * Path-parameter validator for `:stack_id`.
@@ -178,10 +236,10 @@ async function createStack(
 
   const rows = await tx.execute<StackRow>(sql`
     insert into stacks (name, domain, description, scope,
-                        compilation_strategy, synthesize_descriptions)
+                        compilation_strategy, synthesize_descriptions, ontology)
     values (${payload.name}, ${payload.domain}, ${payload.description},
             ${payload.scope}, ${payload.compilation_strategy},
-            ${payload.synthesize_descriptions})
+            ${payload.synthesize_descriptions}, ${ontologyLiteral(payload.ontology)})
     returning ${sql.raw(STACK_COLUMNS)}
   `);
 
@@ -342,9 +400,7 @@ async function updateStackRow(
   update: StackUpdateInput,
 ): Promise<StackRow | undefined> {
   const { stackId, present, values } = update;
-  const assignments = present.map(
-    (field) => sql`${sql.identifier(field)} = ${values[field]}`,
-  );
+  const assignments = present.map((field) => assignmentFor(field, values[field]));
 
   const rows = await tx.execute<StackRow>(sql`
     update stacks
