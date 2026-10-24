@@ -1,6 +1,6 @@
 {
   "_validator": "@local/orchestration (global package at ~/.agents/orchestration; contract stays per-repo)",
-  "_ratified": "human-ratified: two-dimension split (A=wiki, B/C=KG), product surface frozen for every role",
+  "_ratified": "human-ratified: two-dimension split (A=wiki, B/C=KG), plus a read-only coordinator in the primary checkout; product surface frozen for every role",
   "version": 1,
   "sharedPaths": [
     ".fallowrc.json",
@@ -84,6 +84,20 @@
     "vitest.config.ts"
   ],
   "roles": {
+    "orchestrator-main": {
+      "module": "coordination-and-integration",
+      "worktree": "",
+      "ownedPaths": [
+        ".orchestration-main-readonly/**"
+      ],
+      "forbiddenPaths": [
+        ".worktrees/**",
+        "packages/llmwiki-kg/**",
+        "scripts/**",
+        "src/**",
+        "test/**"
+      ]
+    },
     "orchestrator-a": {
       "module": "wiki-dimension-and-integration",
       "worktree": ".worktrees/orchestrator-a",

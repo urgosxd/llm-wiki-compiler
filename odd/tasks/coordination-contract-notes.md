@@ -3,24 +3,84 @@
 Companion to `contract-cordination.json`. The contract enforces; this file
 explains why it is shaped this way. Keep them in sync.
 
-## The shape: one role per dimension
+## The shape: one role per dimension, plus one coordinator
 
 A owns the wiki dimension. B and C split the KG dimension (B the core and the
 adapter, C the runtime surface). The rest of the product is frozen read-only for
 every role, so the two dimensions cannot collide with the compiler, the CLI, or
 each other.
 
+`orchestrator-main` is not a fourth dimension. It is the coordinating session that
+dispatches work and reports, so it owns no product surface at all and runs in the
+primary checkout: no worktree is created for it.
+
+## One role runs in the primary checkout
+
+The contract encodes that with an empty `worktree`:
+
+```json
+"orchestrator-main": {
+  "module": "coordination-and-integration",
+  "worktree": "",
+  "ownedPaths": [".orchestration-main-readonly/**"],
+  "forbiddenPaths": [".worktrees/**", "packages/llmwiki-kg/**", "scripts/**", "src/**", "test/**"]
+}
+```
+
+Three properties keep that honest:
+
+- **At most one role may declare it.** Two roles with `worktree: ""` is a
+  rejection, because two writers in one checkout is the defect the whole contract
+  exists to prevent.
+- **Only `""` reaches the primary.** A role spelling `.` or `..` still fails, even
+  when it is the sole claimant: a relative path that happens to resolve to the
+  primary is an accident, not a declaration.
+- **The launcher creates nothing for it.** No branch, no `.worktrees/<role>`
+  directory; the session starts at the repository root with
+  `ORCHESTRATION_ROLE=orchestrator-main`.
+
+## The coordinator is read-only on purpose
+
+`ownedPaths` is a prefix no real file uses, so the role can write nothing in the
+product. That is not a limitation to work around; it is the boundary that makes
+the coordinator's reports trustworthy:
+
+- It may send `work_request`, `contract_proposal`, `contract_decision`, `blocked`
+  and `done` to any role.
+- A `work_result` from it claiming product files is refused as
+  `files-changed-out-of-scope`, because a session that cannot write a path cannot
+  have implemented it.
+- `forbiddenPaths` lists the product surfaces explicitly, so a write attempt gets
+  the honest `forbidden` reason; shared paths such as `package.json` and `docs/**`
+  keep the honest `shared-read-only` one.
+
+Every role may still send to it and receive from it: the message check validates
+the envelope and the truth of its claims, never the sender's identity. `from`
+equals `to` remains refused, so the coordinator cannot address itself.
+
 Infrastructure — `contract-cordination.json`, `package.json`, `tsconfig*.json`,
 `vitest.config.ts` — belongs to no role. A feature role with veto power over
 everyone else's dependencies is a bottleneck, not an owner. Those files are
-coordinator territory: edited from the primary checkout, validated before every
-commit, and frozen for the roles.
+human territory: edited from the primary checkout by the human, validated before
+every commit, and frozen for every role including `orchestrator-main`.
+
+That last word is the important one. Running in the primary checkout is not the
+same as owning it. `orchestrator-main` lives there because it needs the whole
+repository visible in one place, not because it may edit the infrastructure; its
+`ownedPaths` grants it nothing. Infrastructure changes stay with the human, which
+is the only arrangement where the file that defines everyone's boundary is not
+written by one of the parties it binds.
 
 ## Verification is not restricted
 
 Every role may read every path and run tsc, builds, the full test suite, and
 fallow, including over frozen files. The enforcement hook intercepts write, edit
 and orchestrator_send_message only, so shell commands are never blocked.
+
+One consequence matters for the coordinator: "read-only in the contract" bounds
+writes, not verification. `orchestrator-main` can run `tsc`, the tests and fallow
+over every surface it does not own — which is exactly what a session that judges
+other roles' reports needs to be able to do.
 
 Tests therefore live under each role's ownedPaths, never in sharedPaths:
 sharedPaths takes precedence over ownedPaths, so a test path listed there would
@@ -33,6 +93,12 @@ dimensions against it concurrently, so a role that needs a different shape sends
 a work_request instead of editing it.
 
 ## Roles
+
+### `orchestrator-main` — coordination-and-integration
+
+- worktree: none — runs in the primary checkout
+- owns nothing in the product: `.orchestration-main-readonly/**` only
+- dispatches work and reports; never implements
 
 ### `orchestrator-a` — wiki-dimension-and-integration
 
