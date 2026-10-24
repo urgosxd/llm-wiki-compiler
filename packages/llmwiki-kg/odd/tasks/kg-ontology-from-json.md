@@ -312,6 +312,34 @@ Measured on `feat/orchestrator-c` at `4d05d1f`:
 Being uncommitted on that branch at the time of measurement, it is not yet a
 published revision; the follow-up below waits for the commit.
 
+## State of slice 2 (measured, not reported)
+
+`main` was merged into this branch as `204b018`, so the schema change is present
+here without this role having written it:
+
+- `db/schema.sql:266` — `add column if not exists ontology jsonb`
+- `db/schema.sql:272` — `valid_ontology_is_object` (object-or-null)
+- Source: `8165a93` on `main`, authored by the coordinator, applied to the live
+  database and verified null-accepted / object-accepted / array-rejected /
+  idempotent.
+
+`git diff --name-only main...HEAD` lists **13 files, every one `owned`** by this
+role. No boundary breach, and the schema file arrived by merge rather than by a
+write this role is not permitted.
+
+Still open, all on orchestrator-c's surface:
+
+| Piece | File | State |
+| --- | --- | --- |
+| Barrel re-export `@2` | `ts/src/core-index.ts` | staged in c's worktree, **uncommitted** |
+| Resolve `ontology` on the Stack row | `ts/src/core/stack_resolver.ts` | committed — `5a3b8bb` |
+| Select it in the ingest query | `ts/src/routes/ingest/request.ts` | **not done** |
+| Pass it into extraction | `ts/src/routes/ingest/pipeline.ts` | **not done** |
+
+The two remaining edits are the whole gap between "the column exists" and "the
+column governs extraction". Requested as `wq-2026-10-24-01`, with the two exact
+call sites named so the change stays two lines plus a guard.
+
 ## Follow-up owned by orchestrator-b once the re-export lands
 
 Delete the `KgOntology` derivation at `src/dimensions/kg/index.ts:61` and name
