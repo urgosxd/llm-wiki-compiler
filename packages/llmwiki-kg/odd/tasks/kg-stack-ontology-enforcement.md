@@ -254,6 +254,32 @@ tests fail: removing the audit write turns 3 of 8 ingest-ontology tests red;
 disabling the gate turns 2 of 5 backfeed-ontology tests red, leaving the
 no-declaration control green in both cases.
 
+## The model is told about entities AND relations — and why both come from one triplet
+
+`ontology-prompt-wiring.test.ts` pins this, because enforcement is two-sided and
+one side is easy to lose silently: the parser drops out-of-ontology triplets, so
+every enforcement test would still pass while the model was being shown the
+default hints. An operator whose declaration stopped reaching the prompt would see
+a graph full of rejections instead of the types they asked for, with no error.
+
+The subtle failure worth a dedicated assertion is *which* description carries
+*which* list. Writing `entityTypes` into the relation description — or the
+reverse — leaves every asserted string present, so a containment test passes.
+Swapping the two was measured to turn 2 of the 10 tests red; a containment test
+would have stayed green.
+
+### Entities and relations cannot be created independently
+
+The tool schema's only property is `triplets`, so there is no place for a
+standalone entity, and every kept triplet yields both endpoints plus the edge in
+one step (`absorbEndpoints` then `tripletRelationship`, same loop iteration).
+
+That is also the ceiling: **an isolated entity is unextractable.** Measured with
+three attempts — a triplet with no relation, a self-reference, and a top-level
+`entities` array outside the schema — all yield `0` kept. A document that only
+says "Acme exists" contributes no node. This is inherited path-based design, not a
+consequence of the ontology.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,
@@ -264,6 +290,10 @@ no-declaration control green in both cases.
   is the smaller lie only because this file now says so.
 - The hierarchy is validated and stored but a read still does not rewrite types
   through it; `ontology.ts` documents hierarchy-aware reads as out of scope.
+- An entity that appears in no relation never reaches the graph. Adding an
+  `entities` array to the tool schema would allow it, but it changes what the
+  model is asked to emit and therefore what it extracts — a fidelity break with
+  the oracle, and a decision, not a fix.
 - Backfeed `flag` still accepts a proposal naming undeclared types; only
   `approve` refuses it. Validating at flag time would tell the human sooner, but
   it also freezes the ontology at flag time, and the decision taken was that
