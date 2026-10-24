@@ -6,8 +6,14 @@ Make llmwiki stop treating one local directory as its storage medium, so a singl
 server process can serve **many projects**. Today every command resolves its root
 from `process.cwd()` and every artifact is a file under that root.
 
-Status: **PLAN. ANALYSIS COMPLETE. NO IMPLEMENTATION.** Every claim below was read
-from the repository in this session, not recalled.
+Status: **WAVE 1 LANDED AND MEASURED; WAVES 2–4 NOT STARTED.** The plan is no longer
+analysis-only: Wave 1 shipped as `4b08af5` and the live database carries its
+policies. See `## Wave 1 — measured state` for what is really done, what the
+commit overstated, and the one deployment step that still makes RLS inert.
+
+The analysis below was read from the repository, not recalled. Where the shipped
+work contradicts the plan text, the measurement wins and the deviation is recorded
+rather than quietly rewritten.
 
 ## Decisions (human-selected)
 
@@ -167,30 +173,153 @@ guarantee it. This must be decided explicitly in Wave 3, before code moves.
 
 ## Wave 1 — Tenancy foundation (no storage moved)
 
-- [ ] **W1.1** Add `tenant_id` semantics: decide whether `stacks.id` IS the tenant
+- [x] **W1.1** Add `tenant_id` semantics: decide whether `stacks.id` IS the tenant
       or a tenant owns stacks. Write the answer down before writing SQL.
-- [ ] **W1.2** Add `SET LOCAL app.stack_id` to `withRequestTransaction`
+      → `odd/tasks/multi-tenant-w1-tenancy.md`. Answer: `stacks.id` IS the tenant.
+- [x] **W1.2** Add `SET LOCAL app.stack_id` to `withRequestTransaction`
       (`db.ts:313`) so tenant context is established once per transaction.
-- [ ] **W1.3** Enable RLS + `FORCE ROW LEVEL SECURITY` + policies on all 8 tables
+      → `bindTenant` (`core/stack_resolver.ts:112`), called from `resolveStack`
+      (`:171`). Deviation from plan text below.
+- [x] **W1.3** Enable RLS + `FORCE ROW LEVEL SECURITY` + policies on all 8 tables
       in `packages/llmwiki-kg/db/schema.sql`.
+      → shipped as `db/migration_rls_tenancy.sql`, not an edit to `schema.sql`.
 - [ ] **W1.4** Fix the 15 unfiltered statements. Start with
       `routes/documents/get.ts:28` — it must call `resolveStack` and filter.
-- [ ] **W1.5** Cross-tenant test: a transaction scoped to stack A reading stack B's
+      → **NOT DONE as written, and deliberately so; see the measured gap.**
+- [x] **W1.5** Cross-tenant test: a transaction scoped to stack A reading stack B's
       document, entity, and chunk rows must return **zero rows**. Mutation-verify
       it by removing the RLS policy and watching it go red.
+      → `test/dimensions/kg-rls-tenancy.test.ts`, 4 tests, 4 passed (re-run).
+
+## Wave 1 — measured state
+
+Wave 1 is PARTIALLY landed, and the gap is narrow enough to state precisely.
+Everything here was executed against the live database in this session.
+
+### What is genuinely in place
+
+| Fact | Evidence |
+| --- | --- |
+| RLS enabled AND forced on all 8 tables | `pg_class`: `relrowsecurity=t`, `relforcerowsecurity=t` for all 8 |
+| 8 policies exist | `pg_policies where policyname='tenant_isolation'` → 8 |
+| `llmwiki_app` exists and cannot bypass | `rolsuper=f`, `rolbypassrls=f` (contrast `aks`: `t`,`t`) |
+| Tenant binding exists and is used | `bindTenant` called by `resolveStack`, reached by 7 route files |
+| The cross-tenant leak is closed under the app role | `documents/get.ts` query, unbound as `llmwiki_app` → **0 rows**; as `aks` → **1 row** |
+
+### Three claims in `4b08af5` that measurement corrects
+
+1. **"`withRequestTransaction` establishes tenant context once per transaction" is
+   not true.** `bindTenant` hangs off `resolveStack`, so the binding exists only on
+   the 7 route files that call it. `withRequestTransaction` (`db.ts`) is unchanged.
+   This matters because the plan's rationale was "every tenanted query runs under
+   RLS without its author remembering to" — that guarantee does not exist.
+2. **"RLS covers the 15 unfiltered statements WITHOUT editing any" closes the leak
+   but breaks legitimate access.** Measured: with `llmwiki_app` bound to the
+   *owner's own* stack, `documents/list.ts`'s manually-filtered query returns 0
+   rows, because the route never sets the GUC. The leak is gone and so is the
+   feature. 7 of the 16 route files that query a tenanted table call
+   `resolveStack`; **9 do not** (`documents/{get,list,upload,delete}`,
+   `backfeed/{get,approve}`, `synthesize/description`, `ingest/{request,pipeline}`).
+   W1.4 is therefore still open, and it is the blocker on switching the role.
+3. **RLS is inert in production today.** `DATABASE_URL` names `aks` in the
+   default (`config.ts:67`), `docker-compose.yml:24`, `.env.example:4`, and in the
+   live API container (`printenv DATABASE_URL`). Since `aks` is SUPERUSER +
+   BYPASSRLS, every policy currently evaluates to "allow everything". The schema
+   is in place; the isolation is not in force.
+
+### Why W1.3 moved out of `schema.sql`
+
+The plan said to edit `packages/llmwiki-kg/db/schema.sql`. That file is
+`sharedPaths`, i.e. writable by no feature role, and `forbidden` to A and B. A
+separate migration is the only shape that could land at all, and it is also the
+correct one: `schema.sql` builds a fresh database, while tenancy has to be applied
+and later re-applied to a live one. `schema.sql` still creates the 8 tables
+WITHOUT policies, so a fresh database comes up ungoverned until the migration runs.
+That is a real ordering hazard to keep in view, not a detail.
+
+### W1.4 as written is not implementable for the two by-id document routes
+
+This is the finding that changes W1.4's shape, and it is a conflict between two
+requirements that were never compared.
+
+`GET /documents/:doc_id` and `DELETE /documents/:doc_id` carry **no stack
+parameter** — verified in `oracle/contracts/openapi.json`, which defines
+`/documents/{doc_id}` with no `stack_id`. So the plan's instruction ("it must call
+`resolveStack` and filter") has nothing to resolve *from*.
+
+The obvious repair — look up the owning stack by `doc_id`, bind it, then read — is
+impossible under RLS, because the lookup that would reveal the tenant is itself
+subject to the policy. Measured on the live database as `llmwiki_app` with no
+binding:
+
+```
+select stack_id from stack_documents where id = '<a real doc id>'
+  -> NULL   (cannot be discovered)
+```
+
+That is the fail-closed direction working correctly, and it is exactly why the
+chicken-and-egg cannot be broken from inside the request.
+
+There is a second, harder constraint: the oracle **deliberately** serves a
+document of another stack by id. It is asserted, not accidental —
+`routes/documents-read.test.ts:91`, "GET /documents/:doc_id serves a document
+belonging to any stack", with the comment "measured on the oracle". This is also
+what `4b08af5` meant by "editing the query would have broken fidelity to fix a leak
+RLS already closes".
+
+So three requirements cannot all hold:
+
+| Requirement | Source |
+| --- | --- |
+| By-id routes need no stack in the path | oracle OpenAPI + parity test |
+| A tenanted query needs `app.stack_id` set | RLS policies |
+| The tenant must be discovered from the doc id | needed to set it |
+
+**What this means for W1.4.** It reduces to a decision, not a task: the by-id
+routes must either (a) accept a stack parameter — a contract change against the
+oracle, needing a version bump and a parity exception — or (b) keep working and be
+unavailable under the app role, which means `DATABASE_URL` cannot move to
+`llmwiki_app` for them. The remaining 7 unbound files do have the stack available
+(`:stack_id` in the path, or a body field) and are ordinary work:
+`documents/{list,upload}`, `backfeed/{get,approve}`, `synthesize/description`,
+`ingest/{request,pipeline}`.
+
+This is recorded rather than resolved because it needs an owner decision on oracle
+parity, and every file involved is `orchestrator-c`'s surface, not this role's.
+
+### The one blocking decision
+
+Switching the application role is a deployment change, not a code change:
+
+1. Land W1.4 for the 9 unbound route files.
+2. Set a password for `llmwiki_app` out of band (it is `nologin` on purpose).
+3. Point `DATABASE_URL` at `llmwiki_app`.
+4. Add the migration to the fresh-database path so a new deploy is not born ungoverned.
+
+Until step 1 lands, step 3 would take the documents, backfeed, synthesize and
+ingest routes to zero rows. That is why the order is not negotiable.
 
 ## Wave 2 — L3 control state into the database
+
+**Blocked on surface, not on design.** All four targets are `sharedPaths`, i.e.
+read-only for every feature role (verified for a, b and c). Only
+`orchestrator-main` (`unrestrictedWrite`) can write them. So Wave 2 cannot be
+delegated to a dimension role under the current contract, no matter who is free.
 
 - [ ] **W2.1** Replace the PID lockfile (`src/utils/lock.ts`, ~two-lock
       reclamation) with a Postgres advisory lock or `SELECT ... FOR UPDATE` row.
       This is what currently forbids a second process.
+      → `src/utils/lock.ts` is shared-read-only. Needs `orchestrator-main`.
 - [ ] **W2.2** Replace the file WAL in `src/trust/journal.ts` with a table.
       Keep the pre-state recording contract identical.
+      → shared-read-only. Needs `orchestrator-main`.
 - [ ] **W2.3** Move the outbox (`.llmwiki/dimensions/outbox/*.json`) to a table;
       keep `atomicWrite`-equivalent durability semantics via transaction commit.
+      → shared-read-only. Needs `orchestrator-main`.
 - [ ] **W2.4** Move `embeddings.json` (currently whole-file, 64 MiB cap at
       `MAX_EMBEDDING_STORE_BYTES`) to a vector table. The cap exists only because
       the whole file is read into memory.
+      → shared-read-only. Needs `orchestrator-main`.
 
 ## Wave 3 — L2 compiled product behind the port
 
@@ -205,6 +334,34 @@ guarantee it. This must be decided explicitly in Wave 3, before code moves.
 - [ ] **W3.4** Keep a file-backed implementation selectable behind the same port,
       so local-first stays possible and the server path is not the only one.
 
+### W3 needs a table that does not exist, and no feature role may create it
+
+This is a prerequisite the plan never stated, found by looking for the table W3.2
+and W3.3 assume.
+
+**There is no wiki table.** `schema.sql` has 8 tables and every one is KG-side.
+`grep -icE "create table.*(concept|wiki_page|pages)"` → 0 (the single hit for
+"concept" is a column comment). `entity_pages` cannot stand in: its primary key
+is `entity_id uuid references ontology_entities(id)`, so a row requires an
+extracted entity, and a compiled wiki concept has none.
+
+W3.2 and W3.3 therefore begin with new DDL under
+`packages/llmwiki-kg/db/`, which is `forbidden` to `orchestrator-a` and
+shared-read-only to b and c. Again only `orchestrator-main` can write it.
+
+There is a scope question hidden here that the plan should not decide by
+accident: **the wiki's storage should arguably not live in the KG package's
+schema at all.** Putting compiled wiki pages in `packages/llmwiki-kg/db/` makes
+the wiki depend on the vendored AKS package for its persistence, which inverts
+the dimension boundary the whole contract is built around. The honest options are
+(a) a separate wiki schema/migration outside the KG package, or (b) accept the
+coupling and document why. W3.1's ordering decision and this one are the same
+decision seen from two sides.
+
+`src/dimensions/wiki/{index,reader}.ts` themselves are `orchestrator-a`'s. The
+work is real and belongs to this role once the DDL question is answered; it is
+not startable before that.
+
 ## Wave 4 — L1 raw bytes to object storage
 
 - [ ] **W4.1** Introduce a blob abstraction for `sources/` and `dist/exports` only.
@@ -213,10 +370,96 @@ guarantee it. This must be decided explicitly in Wave 3, before code moves.
       (`sha256` in `.llmwiki/state.json`), so blob keys can be content-addressed
       without new identity machinery.
 
+Still last by design, and still blocked by the same surface problem as Wave 2:
+the seam is `src/utils/constants.ts` (`SOURCES_DIR`, `EXPORT_DIR`), which is
+shared-read-only for every feature role.
+
 ## Task count
 
 **16 tasks across 4 waves.** Wave 1 is 5 tasks and blocks everything else. Do not
 start Wave 4: it is the most visible and the least load-bearing.
+
+| Wave | Tasks | State | Writable by |
+| --- | --- | --- | --- |
+| 1 — Tenancy | 5 | **4 done; W1.4 open (2 of its 9 files are blocked by a contract conflict)** | partly `orchestrator-c` |
+| 2 — L3 control state | 4 | not started | **only `orchestrator-main`** |
+| 3 — L2 product | 4 | not started; needs DDL that does not exist | **`orchestrator-main`** for DDL, then `orchestrator-a` |
+| 4 — L1 object storage | 3 | not started, last by design | **only `orchestrator-main`** |
+
+## Decisions taken by the human (this session)
+
+Recorded before any code, because all three change the plan's shape.
+
+1. **W1.4 → add `:stack_id` to the by-id routes.** `GET`/`DELETE
+   `/stacks/:stack_id/documents/:doc_id`. Tenancy becomes real rather than
+   partial, at the cost of oracle parity: the OpenAPI contract gains a version and
+   `documents-read.test.ts:91` ("serves a document belonging to any stack") must be
+   INVERTED, not deleted. Owned by `orchestrator-c`.
+2. **Waves 2 and 4 → `orchestrator-main` executes them** under
+   `unrestrictedWrite`, in the primary checkout on the shared branch. Accepted
+   cost: no role branch, no per-wave native review, everything lands directly.
+3. **W3's wiki table → a separate `wiki` schema in the same database**, reached
+   through the existing KG client/pool rather than a second driver. Rationale
+   accepted: no root-level `postgres` dependency (it is absent today), one pool,
+   and the wiki does not gain a hard dependency on the vendored AKS package's
+   schema file — only on the pooled client it already consumes in process.
+
+### The third blocker: neither dimension port can carry a tenant
+
+Found while preparing W3.2/W3.3. `DimensionInput` is
+`{source, title, document, body}` and `DimensionQuery` is
+`{name?, text?, depth?, kinds?, limit?}`. **Neither has a stack/tenant field**, and
+both are frozen contracts (`DIMENSION_PORT_VERSION = 2`,
+`DIMENSION_READ_PORT_VERSION = 1`).
+
+A database-backed wiki dimension cannot be written without knowing WHICH tenant it
+is writing for, so W3.2 and W3.3 both require a port change:
+
+| Port | File | Field needed | Version today |
+| --- | --- | --- | --- |
+| `DimensionInput` | `src/dimensions/types.ts` | `stack` (required) | 2 |
+| `DimensionQuery` | `src/dimensions/read-types.ts` | `stack` (required) | 1 |
+
+`src/dimensions/types.ts` and `read-types.ts` are `sharedPaths` — read-only for
+this role. So the port bump is `orchestrator-main`'s to make, and it must land
+before W3.2/W3.3 can start. The plan's "Not changing `DIMENSION_PORT_VERSION`"
+non-goal is now void: it was written when the wiki was staying on the filesystem.
+
+### The two blockers are not the same kind
+
+Wave 1's remainder is a **decision** (oracle parity on the by-id routes). Waves
+2–4 are a **surface** problem: their targets are shared-read-only, so no feature
+role can execute them under the current contract. Delegating W2.1 to
+`orchestrator-b` would simply be refused by the enforcement hook.
+
+That leaves exactly two honest routes for Waves 2 and 4, and the human should
+pick, not the agent:
+
+- **`orchestrator-main` executes them** under `unrestrictedWrite`, in the primary
+  checkout on the shared branch. **DECIDED.**
+- **Widen the contract** so one dimension role owns the L3 files. Rejected: scope
+  is re-read on every tool call, so editing it with live peers unenforces every
+  session at once; it would need a stop/edit/commit/relaunch cycle.
+
+### Execution order now that the decisions are in
+
+Three of the five prerequisites are `orchestrator-main`'s, so they serialise:
+
+| # | Work | Owner | Unblocks |
+| --- | --- | --- | --- |
+| 1 | Port bump: `stack` on `DimensionInput` + `DimensionQuery` | main | W3.2, W3.3 |
+| 2 | `wiki` schema migration, outside `packages/llmwiki-kg/db/` | main | W3.2, W3.3 |
+| 3 | W1.4: 7 unbound routes + `:stack_id` on the 2 by-id routes + OpenAPI bump | orchestrator-c | moving `DATABASE_URL` to `llmwiki_app` |
+| 4 | W3.2/W3.3 database-backed wiki dimension + reader | orchestrator-a | W3.4 |
+| 5 | W2.1–W2.4, W4.x | main | — |
+
+Steps 1–2 are small and independent of 3. Step 4 is this role's only remaining
+work and it becomes startable the moment 1 and 2 land.
+
+**Honest state of this role: blocked, with a named dependency.** Everything in
+`orchestrator-a`'s surface for this plan needs the port and the schema first.
+There is no product code here that can be written before then without inventing
+the shape `orchestrator-main` is about to freeze.
 
 ## Scope constraint for this role
 
@@ -250,3 +493,13 @@ unenforces every session at once, because scope is re-read on every tool call.
   another cited a nonexistent `github/trust/journal.ts`). Every load-bearing claim
   in this document was re-verified by the parent. Delegated reports were not
   trusted as evidence.
+- **Wave 1 reconciliation** (`4b08af5`, re-measured in this session): `pg_class`
+  RLS flags, `pg_policies` count, `pg_roles` superuser/bypass flags, the live API
+  container's `DATABASE_URL`, `bindTenant` call graph, and the 7-bound/9-unbound
+  route split. Isolation proven by direct query: the same `documents/get.ts`
+  statement returns 0 rows unbound as `llmwiki_app`, 1 row as `aks`, and 1 row as
+  `llmwiki_app` bound to the owning tenant. Test suite re-run: 4 passed.
+- A first version of that probe silently proved nothing — the fixture insert used
+  the wrong column names, so both sides counted 0 and "agreed". Re-run against the
+  real schema (`information_schema.columns`) is what the numbers above report.
+  Treat any probe whose two sides both return zero as unexecuted, not as evidence.
