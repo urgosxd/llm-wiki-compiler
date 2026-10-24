@@ -24,19 +24,26 @@ const consolidateEntityRows = vi.fn();
 const consolidateRelationshipRows = vi.fn();
 const forgetDocumentRows = vi.fn();
 
-vi.mock("llmwiki-kg", () => ({
-  chunkAndEmbed,
-  extractGraphFromChunks,
-  registerDocumentRow,
-  consolidateEntityRows,
-  consolidateRelationshipRows,
-  forgetDocumentRows,
-  createClient: vi.fn(() => ({ end: vi.fn() })),
-  createDatabase: vi.fn(() => ({
-    transaction: async (run: (tx: unknown) => Promise<void>) => run({}),
-  })),
-  kgConfig: { DATABASE_URL: "postgres://invalid/none" },
-}));
+vi.mock("llmwiki-kg", async () => {
+  // The ontology reader is the REAL one: the dimension's default `loadOntology`
+  // routes through it, and a stub would make the import fail rather than let the
+  // suite state its own `loadOntology`. Tests may import packages freely.
+  const core = await import("../../packages/llmwiki-kg/ts/src/core-index.js");
+  return {
+    chunkAndEmbed,
+    extractGraphFromChunks,
+    registerDocumentRow,
+    consolidateEntityRows,
+    consolidateRelationshipRows,
+    forgetDocumentRows,
+    createClient: vi.fn(() => ({ end: vi.fn() })),
+    createDatabase: vi.fn(() => ({
+      transaction: async (run: (tx: unknown) => Promise<void>) => run({}),
+    })),
+    kgConfig: { DATABASE_URL: "postgres://invalid/none" },
+    readStackOntology: core.readStackOntology,
+  };
+});
 
 const { createKgDimension } = await import("../../src/dimensions/kg/index.js");
 
@@ -65,7 +72,12 @@ const INPUT = { source: "src/a.md", title: "A", body: "body" };
 async function commitWith(extraction: Record<string, unknown>) {
   chunkAndEmbed.mockResolvedValue([CHUNK]);
   extractGraphFromChunks.mockResolvedValue({ model: "m", pipeline: "p", ...extraction });
-  const dimension = createKgDimension({ stackId: "s", stackName: "demo", ontology: ONTOLOGY });
+  const dimension = createKgDimension({
+    stackId: "s",
+    stackName: "demo",
+    ontology: ONTOLOGY,
+    loadOntology: async () => undefined,
+  });
   return dimension.commit(await dimension.prepare(INPUT));
 }
 
@@ -122,7 +134,12 @@ describe("kg dimension without an ontology", () => {
       pipeline: "p",
     });
 
-    await createKgDimension({ stackId: "s", stackName: "demo", dryRun: true }).prepare(INPUT);
+    await createKgDimension({
+      stackId: "s",
+      stackName: "demo",
+      dryRun: true,
+      loadOntology: async () => undefined,
+    }).prepare(INPUT);
 
     // Exactly two arguments: a run with no ontology must not widen the call at
     // all, so nothing downstream sees a trailing `undefined` where the oracle

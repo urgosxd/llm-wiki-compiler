@@ -53,6 +53,14 @@ export function currentDomainPrefix(): string {
   return domainPrefix;
 }
 
+/**
+ * The response keys every Stack row carries, in order.
+ *
+ * The first nine are the Python oracle's, unchanged. `ontology` is appended last
+ * because that is also where `STACK_COLUMNS` selects it: an addition to the end
+ * of a response is a different, smaller contract change than a reshuffle, and one
+ * order is not two that can drift.
+ */
 export const RESPONSE_KEYS = [
   "id",
   "name",
@@ -63,6 +71,7 @@ export const RESPONSE_KEYS = [
   "synthesize_descriptions",
   "created_at",
   "updated_at",
+  "ontology",
 ] as const;
 
 export const state: {

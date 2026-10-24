@@ -33,16 +33,23 @@ const registerDocumentRow = vi.fn();
 
 // The adapter imports the barrel by package name, which the vitest alias maps
 // to `core-index.ts`. Mocking that same specifier intercepts the adapter's view.
-vi.mock("llmwiki-kg", () => ({
-  chunkAndEmbed,
-  extractGraphFromChunks,
-  createClient,
-  createDatabase,
-  consolidateEntityRows,
-  consolidateRelationshipRows,
-  registerDocumentRow,
-  kgConfig: { DATABASE_URL: "postgres://from-config" },
-}));
+vi.mock("llmwiki-kg", async () => {
+  // The ontology reader is the REAL one: the dimension's default `loadOntology`
+  // routes through it, and a stub would make the import fail rather than let the
+  // suite state its own `loadOntology`. Tests may import packages freely.
+  const core = await import("../../packages/llmwiki-kg/ts/src/core-index.js");
+  return {
+    chunkAndEmbed,
+    extractGraphFromChunks,
+    createClient,
+    createDatabase,
+    consolidateEntityRows,
+    consolidateRelationshipRows,
+    registerDocumentRow,
+    kgConfig: { DATABASE_URL: "postgres://from-config" },
+    readStackOntology: core.readStackOntology,
+  };
+});
 
 const { createKgDimension } = await import("../../src/dimensions/kg/index.js");
 
@@ -53,6 +60,10 @@ function dimension(options: { dryRun?: boolean; databaseUrl?: string } = {}) {
     stackName: "Stack One",
     ...(options.databaseUrl === undefined ? {} : { databaseUrl: options.databaseUrl }),
     ...(options.dryRun === true ? { dryRun: true } : {}),
+    // This suite is about sequencing, not the ontology read. Stating "no stored
+    // declaration" keeps it free of a database without pretending the default
+    // reader does not exist — the default is what a real run uses.
+    loadOntology: async () => undefined,
   }) as unknown as ReturnType<typeof createKgDimension>;
 }
 

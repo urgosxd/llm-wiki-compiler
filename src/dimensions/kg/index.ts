@@ -37,11 +37,14 @@ import {
   extractGraphFromChunks,
   kgConfig,
   forgetDocumentRows,
+  readStackOntology,
   type ChunkResult,
   type ExtractedEntity,
   type ExtractedRelationship,
 } from "llmwiki-kg";
 import type { ExtractionResult, Ontology } from "llmwiki-kg";
+
+import { loadStoredOntology } from "./ontology-store.js";
 import type {
   CommittedWrite,
   Dimension,
@@ -114,18 +117,59 @@ export interface KgDimensionOptions {
    * and whatever it emits is accepted, because `strict=False`. Supplied means
    * the declaration is enforced — the types go into the tool schema and every
    * triplet outside them is dropped and reported.
+   *
+   * An explicit value takes precedence over {@link loadOntology} and stops it
+   * from being called at all, which is what lets a caller override the database
+   * without editing it.
    */
   readonly ontology?: Ontology;
+  /**
+   * Reads this Stack's stored declaration, called once per `prepare`.
+   *
+   * Injected rather than imported so the two consumers can differ: the compiler
+   * supplies the Postgres reader, while tests and detect-only runs supply a stub
+   * and stay free of a database. Omitted means "no stored declaration", which is
+   * the oracle's behaviour — NOT a silent default, because there is nothing to
+   * read.
+   */
+  readonly loadOntology?: (stackId: string, databaseUrl?: string) => Promise<unknown>;
+}
+
+/**
+ * Resolves the ontology this run must enforce, reading the Stack if needed.
+ *
+ * ## Why an unreadable declaration fails the run
+ *
+ * A malformed declaration could be swallowed into `undefined`, and the run would
+ * proceed with the oracle's permissive behaviour. That is the one outcome this
+ * feature must never produce: an operator who declared a schema and silently got
+ * default extraction would believe the graph is constrained when it is not. The
+ * error propagates, and `prepare` fails before a single triplet is extracted.
+ *
+ * ## Why the explicit option short-circuits
+ *
+ * Reading the database to discard the answer would make an override depend on a
+ * reachable database it does not actually need.
+ *
+ * @param options - Stack binding, optional override, optional loader.
+ * @returns The ontology to enforce, or `undefined` for the oracle's behaviour.
+ * @throws {OntologyError} When the stored declaration is present but invalid.
+ */
+async function resolveOntology(options: KgDimensionOptions): Promise<Ontology | undefined> {
+  if (options.ontology !== undefined) return options.ontology;
+  const load = options.loadOntology ?? loadStoredOntology;
+  const stored = await load(options.stackId, options.databaseUrl);
+  return readStackOntology(stored);
 }
 
 /**
  * Trailing arguments for the extraction call, omitting the ontology when absent.
  *
- * @param options - Stack binding, possibly carrying an ontology.
+ * @param ontology - The ontology to enforce, or `undefined` for none.
  * @returns An empty tuple without an ontology, or the single-element tuple with it.
  */
-function ontologyArgs(options: KgDimensionOptions): [] | [Ontology] {
-  return options.ontology === undefined ? [] : [options.ontology];
+function ontologyArgs(ontology: Ontology | undefined): [] | [Ontology] {
+  return ontology === undefined ? [] : [ontology];
 }
 
 /**
@@ -246,13 +290,17 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       // id does not exist yet — Postgres assigns it during `commit` — and chunks
       // stay in memory, so nothing depends on this placeholder matching a row.
       const chunkLabel = sourceLabel(input.source);
+      // Resolved BEFORE embedding: a malformed declaration should fail the run
+      // before the expensive half spends a provider call, and it must fail rather
+      // than degrade to permissive extraction.
+      const ontology = await resolveOntology(options);
       const chunks = await chunkAndEmbed(input.body, options.stackId, chunkLabel);
       // The ontology is spread rather than passed as `undefined`, so a run
       // without one calls extraction with exactly the two arguments it always
       // did. Call arity is observable to spies and mocks, and "no ontology
       // changes nothing" has to hold at the call boundary, not just in the
       // result.
-      const extraction = await extractGraphFromChunks(chunks, options.stackName, ...ontologyArgs(options));
+      const extraction = await extractGraphFromChunks(chunks, options.stackName, ...ontologyArgs(ontology));
       const handle: KgHandle = {
         documentId: chunkLabel,
         registration: { source: input.source, body: input.body, title: input.title },

@@ -53,6 +53,15 @@ export type {
   RejectionReason,
 } from "./core/ontology.js";
 
+// The stored-column round trip (contract core-index.ts@3).
+//
+// A consumer that holds the raw `stacks.ontology` value has to turn it into an
+// `Ontology`, and the null-versus-absent rule that decides whether enforcement
+// applies at all lives in that function, not in the consumer. `toStoredOntology`
+// is what strips the derived index before anything is persisted.
+export { readStackOntology, toStoredOntology } from "./core/stack_ontology.js";
+export type { StoredOntology } from "./core/stack_ontology.js";
+
 export {
   consolidateEntityRows,
   consolidateRelationshipRows,

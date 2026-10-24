@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { OntologyError } from "./core/ontology.js";
+import { toStoredOntology } from "./core/stack_ontology.js";
 import {
   pydanticBoolean,
   pydanticDict,
@@ -97,20 +99,76 @@ export const STACK_SCOPES = ["stack", "workspace", "domain"] as const;
 export const COMPILATION_STRATEGIES = ["incremental", "global"] as const;
 
 /**
+ * A declared ontology as it appears inside a Stack request body.
+ *
+ * Deliberately UNVALIDATED: the response must stay total, because one malformed
+ * row written before write-time validation existed would otherwise make every
+ * `GET /stacks` throw for the whole tenant. {@link OntologyInput} is what keeps
+ * new rows valid, so the read path never has to be the validator.
+ */
+const OntologyDocument = pydanticDict();
+
+/**
  * A declared ontology as it arrives in a Stack request body.
  *
- * Modelled as an arbitrary JSON object rather than a typed shape on purpose:
- * the declaration's *semantic* validity is `core/ontology.ts`'s business
- * (`validateOntology`), which rejects an empty type list, an undeclared subtype
- * endpoint, or a cycle. Re-validating the structure here would duplicate those
- * rules and let the two drift; rejecting a malformed declaration at the route
- * with a 422 would also diverge from how the rest of the body is handled.
+ * ## Why this rejects at the boundary
+ *
+ * Accepting any object here used to push every semantic failure to ingest time:
+ * a declaration with a cycle or an undeclared subtype endpoint was stored
+ * happily, then threw inside the ingest transaction — a 500 on every later
+ * ingest of that Stack, at the one moment the caller can no longer fix it by
+ * editing the config. Validation runs here so a declaration that cannot be
+ * enforced is refused while the caller still holds the request.
+ *
+ * ## Why the error is `value_error`
+ *
+ * This field is an extension over the Python oracle, so there is no measured
+ * Python behaviour to reproduce, and inventing a dedicated code would be a
+ * contract this package owns alone. `value_error` is exactly what Pydantic emits
+ * for a validator that raised, and the message keeps Python's
+ * `"Value error, " + str(exc)` convention.
+ *
+ * The object-ness check stays `pydanticDict`'s, so a string or an array where a
+ * declaration belongs is still rejected with Pydantic's `dict_type` exactly as
+ * before. Only what happens *after* the shape is right changes, which is why this
+ * is a transform on the existing primitive rather than a second schema that could
+ * disagree with it.
+ *
+ * ## Why the output is normalised, and stored-shaped
+ *
+ * `validateOntology` upper-cases and underscore-joins every type name. Returning
+ * its output is what makes "stored at creation" and "compared at ingest" agree:
+ * the ingest path validates the same column with the same function, so a caller
+ * who wrote `organic organization` is not silently left with a declaration that
+ * never matches the `ORGANIC_ORGANIZATION` the extractor emits.
+ *
+ * `toStoredOntology` rather than a bare `validateOntology` call, because the
+ * validated value carries a derived `parentsOf` index that must never reach the
+ * column: it is a cache over `subtypes`, and a `Map` stringifies to `{}`, so
+ * persisting it would write `parentsOf: {}` and let a stale copy outlive an edit
+ * to the list it summarises. This is the one place that module was written for.
  *
  * Deliberately `.optional()` with NO default, unlike every other request field:
  * omitting it must stay distinguishable from sending `null`. `null` means
  * "clear the declaration" on PATCH; absence means "leave it alone".
  */
-const OntologyInput = pydanticDict().nullable().optional();
+const OntologyInput = OntologyDocument.transform((declaration, ctx) => {
+  try {
+    return toStoredOntology(declaration);
+  } catch (error) {
+    if (!(error instanceof OntologyError)) throw error;
+    ctx.addIssue({
+      code: "custom",
+      message: error.message,
+      params: {
+        pydantic: { type: "value_error", msg: `Value error, ${error.message}` },
+      },
+    });
+    return z.NEVER;
+  }
+})
+  .nullable()
+  .optional();
 
 /** Request body for `POST /stacks`. */
 export const StackCreate = z.object({
@@ -158,6 +216,25 @@ export const StackResponse = z.object({
   synthesize_descriptions: pydanticBoolean(),
   created_at: Timestamp,
   updated_at: Timestamp,
+  /**
+   * The Stack's ontology declaration, or `null` when unconfigured.
+   *
+   * APPENDED LAST, matching `STACK_COLUMNS`: the oracle's nine keys keep their
+   * exact order and positions, so a consumer diffing against a Python response
+   * sees an addition rather than a reshuffle, and there is one order rather than
+   * two that can drift.
+   *
+   * Required and nullable, so the key is always emitted. Omitting it would make
+   * "unconfigured" indistinguishable from "this server predates the field", and
+   * `null` is the state that means the oracle's permissive extraction.
+   *
+   * The value is what the column holds, unchanged. Normalising it here was
+   * rejected: the response would then disagree with what the caller sent, and
+   * because this schema runs on every read, a single malformed stored row would
+   * turn `GET /stacks` into a 500 for the whole tenant. `OntologyInput` is what
+   * guarantees new rows are valid.
+   */
+  ontology: OntologyDocument.nullable(),
 });
 
 // ============================================================
