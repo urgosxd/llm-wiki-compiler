@@ -151,6 +151,23 @@ export interface Dimension {
    *
    * Called by the coordinator when a later dimension fails. Must be idempotent:
    * discarding an already-discarded handle is not an error.
+   *
+   * ## What this does NOT promise, and why the coordinator stopped assuming it
+   *
+   * A returned promise means "I did what I could", not "the write is gone". A
+   * database-backed dimension commits inside its own transaction, so its
+   * `discard` is a no-op by design: there is no open transaction to abandon and
+   * nothing it can undo after `commit`. The coordinator therefore treats a
+   * dimension that COMMITTED as unresolved even when `discard` returns quietly,
+   * keeps the outbox record `pending`, and lets `reconcileOutbox` finish the
+   * ingest by replaying the idempotent `commit`.
+   *
+   * That distinction is load-bearing: reading a quiet return as "rolled back"
+   * once caused the coordinator to delete the only record of a half-applied
+   * ingest, leaving unrecoverable data and no trail. A dimension that can truly
+   * compensate (the file-backed writer reverts its journal batch) is still safe,
+   * because keeping a `pending` record only costs a replay that its idempotency
+   * key collapses.
    */
   discard(prepared: PreparedWrite): Promise<void>;
 
