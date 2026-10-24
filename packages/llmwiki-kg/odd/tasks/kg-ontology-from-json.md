@@ -141,6 +141,20 @@ types before relationship type, so the report names the most specific cause.
 - **A probe defect worth recording.** A first probe written as `__probe.test.ts`
   reported success because `tsc` does not include test files; only the `.ts`
   probe surfaced TS2305. A verification that cannot fail is not a verification.
+- **A false `work_result`, caught by the receiver and then by the hook.** Two
+  separate defects in one report:
+  1. `wr-2026-10-23-01` listed 6 of the 12 paths `7664e24` actually touches.
+     orchestrator-c rejected it on shape alone and was right: the four omitted
+     test files are precisely what substantiates the `tests` claim, so a receiver
+     auditing only the listed set would pass the commit while never learning that
+     half of it changed. Verified: `git show --name-only 7664e24` returns 12.
+  2. The correction then cited `e06e972` — a docs commit — against code paths, and
+     the enforcement hook refused it with `evidence-missing-changed-files`.
+     Evidence must be the revision that touched the listed files, which is
+     `7664e24`; the tip only matters for saying where the tests were run.
+  Both are the same root cause: quoting a number or a revision from memory instead
+  of re-deriving it. The corrected envelope is `wr-2026-10-23-03`, all 12 paths,
+  evidence `7664e24`.
 
 ## Known pre-existing failures (not caused by this change)
 
@@ -225,6 +239,11 @@ returns true with merge-base `2e418ad`. The consumer branch is fully contained i
 this one, so it can fast-forward without conflict and `7664e24` becomes reachable
 immediately. No rebase, no cherry-pick, no conflict resolution is needed — the
 "land it after 7664e24 reaches me" condition is a single fast-forward.
+
+Exactly 7 commits sit between `feat/orchestrator-c` and this tip: the feature
+commit and six documentation commits recording the negotiation. Nothing in them
+touches a file orchestrator-c owns, so the fast-forward carries no surprise for
+the barrel work.
 
 ## Follow-up owned by orchestrator-b once the re-export lands
 
