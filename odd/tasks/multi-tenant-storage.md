@@ -6,8 +6,14 @@ Make llmwiki stop treating one local directory as its storage medium, so a singl
 server process can serve **many projects**. Today every command resolves its root
 from `process.cwd()` and every artifact is a file under that root.
 
-Status: **PLAN. ANALYSIS COMPLETE. NO IMPLEMENTATION.** Every claim below was read
-from the repository in this session, not recalled.
+Status: **WAVE 1 LANDED AND MEASURED; WAVES 2–4 NOT STARTED.** The plan is no longer
+analysis-only: Wave 1 shipped as `4b08af5` and the live database carries its
+policies. See `## Wave 1 — measured state` for what is really done, what the
+commit overstated, and the one deployment step that still makes RLS inert.
+
+The analysis below was read from the repository, not recalled. Where the shipped
+work contradicts the plan text, the measurement wins and the deviation is recorded
+rather than quietly rewritten.
 
 ## Decisions (human-selected)
 
@@ -167,17 +173,81 @@ guarantee it. This must be decided explicitly in Wave 3, before code moves.
 
 ## Wave 1 — Tenancy foundation (no storage moved)
 
-- [ ] **W1.1** Add `tenant_id` semantics: decide whether `stacks.id` IS the tenant
+- [x] **W1.1** Add `tenant_id` semantics: decide whether `stacks.id` IS the tenant
       or a tenant owns stacks. Write the answer down before writing SQL.
-- [ ] **W1.2** Add `SET LOCAL app.stack_id` to `withRequestTransaction`
+      → `odd/tasks/multi-tenant-w1-tenancy.md`. Answer: `stacks.id` IS the tenant.
+- [x] **W1.2** Add `SET LOCAL app.stack_id` to `withRequestTransaction`
       (`db.ts:313`) so tenant context is established once per transaction.
-- [ ] **W1.3** Enable RLS + `FORCE ROW LEVEL SECURITY` + policies on all 8 tables
+      → `bindTenant` (`core/stack_resolver.ts:112`), called from `resolveStack`
+      (`:171`). Deviation from plan text below.
+- [x] **W1.3** Enable RLS + `FORCE ROW LEVEL SECURITY` + policies on all 8 tables
       in `packages/llmwiki-kg/db/schema.sql`.
+      → shipped as `db/migration_rls_tenancy.sql`, not an edit to `schema.sql`.
 - [ ] **W1.4** Fix the 15 unfiltered statements. Start with
       `routes/documents/get.ts:28` — it must call `resolveStack` and filter.
-- [ ] **W1.5** Cross-tenant test: a transaction scoped to stack A reading stack B's
+      → **NOT DONE as written, and deliberately so; see the measured gap.**
+- [x] **W1.5** Cross-tenant test: a transaction scoped to stack A reading stack B's
       document, entity, and chunk rows must return **zero rows**. Mutation-verify
       it by removing the RLS policy and watching it go red.
+      → `test/dimensions/kg-rls-tenancy.test.ts`, 4 tests, 4 passed (re-run).
+
+## Wave 1 — measured state
+
+Wave 1 is PARTIALLY landed, and the gap is narrow enough to state precisely.
+Everything here was executed against the live database in this session.
+
+### What is genuinely in place
+
+| Fact | Evidence |
+| --- | --- |
+| RLS enabled AND forced on all 8 tables | `pg_class`: `relrowsecurity=t`, `relforcerowsecurity=t` for all 8 |
+| 8 policies exist | `pg_policies where policyname='tenant_isolation'` → 8 |
+| `llmwiki_app` exists and cannot bypass | `rolsuper=f`, `rolbypassrls=f` (contrast `aks`: `t`,`t`) |
+| Tenant binding exists and is used | `bindTenant` called by `resolveStack`, reached by 7 route files |
+| The cross-tenant leak is closed under the app role | `documents/get.ts` query, unbound as `llmwiki_app` → **0 rows**; as `aks` → **1 row** |
+
+### Three claims in `4b08af5` that measurement corrects
+
+1. **"`withRequestTransaction` establishes tenant context once per transaction" is
+   not true.** `bindTenant` hangs off `resolveStack`, so the binding exists only on
+   the 7 route files that call it. `withRequestTransaction` (`db.ts`) is unchanged.
+   This matters because the plan's rationale was "every tenanted query runs under
+   RLS without its author remembering to" — that guarantee does not exist.
+2. **"RLS covers the 15 unfiltered statements WITHOUT editing any" closes the leak
+   but breaks legitimate access.** Measured: with `llmwiki_app` bound to the
+   *owner's own* stack, `documents/list.ts`'s manually-filtered query returns 0
+   rows, because the route never sets the GUC. The leak is gone and so is the
+   feature. 7 of the 16 route files that query a tenanted table call
+   `resolveStack`; **9 do not** (`documents/{get,list,upload,delete}`,
+   `backfeed/{get,approve}`, `synthesize/description`, `ingest/{request,pipeline}`).
+   W1.4 is therefore still open, and it is the blocker on switching the role.
+3. **RLS is inert in production today.** `DATABASE_URL` names `aks` in the
+   default (`config.ts:67`), `docker-compose.yml:24`, `.env.example:4`, and in the
+   live API container (`printenv DATABASE_URL`). Since `aks` is SUPERUSER +
+   BYPASSRLS, every policy currently evaluates to "allow everything". The schema
+   is in place; the isolation is not in force.
+
+### Why W1.3 moved out of `schema.sql`
+
+The plan said to edit `packages/llmwiki-kg/db/schema.sql`. That file is
+`sharedPaths`, i.e. writable by no feature role, and `forbidden` to A and B. A
+separate migration is the only shape that could land at all, and it is also the
+correct one: `schema.sql` builds a fresh database, while tenancy has to be applied
+and later re-applied to a live one. `schema.sql` still creates the 8 tables
+WITHOUT policies, so a fresh database comes up ungoverned until the migration runs.
+That is a real ordering hazard to keep in view, not a detail.
+
+### The one blocking decision
+
+Switching the application role is a deployment change, not a code change:
+
+1. Land W1.4 for the 9 unbound route files.
+2. Set a password for `llmwiki_app` out of band (it is `nologin` on purpose).
+3. Point `DATABASE_URL` at `llmwiki_app`.
+4. Add the migration to the fresh-database path so a new deploy is not born ungoverned.
+
+Until step 1 lands, step 3 would take the documents, backfeed, synthesize and
+ingest routes to zero rows. That is why the order is not negotiable.
 
 ## Wave 2 — L3 control state into the database
 
@@ -218,6 +288,17 @@ guarantee it. This must be decided explicitly in Wave 3, before code moves.
 **16 tasks across 4 waves.** Wave 1 is 5 tasks and blocks everything else. Do not
 start Wave 4: it is the most visible and the least load-bearing.
 
+| Wave | Tasks | State |
+| --- | --- | --- |
+| 1 — Tenancy foundation | 5 | **4 done, W1.4 open.** RLS + policies applied and verified; 9 route files still query tenanted tables without binding a tenant |
+| 2 — L3 control state | 4 | not started |
+| 3 — L2 product behind port | 4 | not started |
+| 4 — L1 object storage | 3 | not started, and last by design |
+
+**Next task: W1.4**, for the 9 unbound route files. It is not cosmetic: until it
+lands, pointing `DATABASE_URL` at `llmwiki_app` takes documents, backfeed,
+synthesize and ingest to zero rows. Waves 2–4 stay blocked behind that order.
+
 ## Scope constraint for this role
 
 Contract precedence computed in this session over the seams this work touches:
@@ -250,3 +331,13 @@ unenforces every session at once, because scope is re-read on every tool call.
   another cited a nonexistent `github/trust/journal.ts`). Every load-bearing claim
   in this document was re-verified by the parent. Delegated reports were not
   trusted as evidence.
+- **Wave 1 reconciliation** (`4b08af5`, re-measured in this session): `pg_class`
+  RLS flags, `pg_policies` count, `pg_roles` superuser/bypass flags, the live API
+  container's `DATABASE_URL`, `bindTenant` call graph, and the 7-bound/9-unbound
+  route split. Isolation proven by direct query: the same `documents/get.ts`
+  statement returns 0 rows unbound as `llmwiki_app`, 1 row as `aks`, and 1 row as
+  `llmwiki_app` bound to the owning tenant. Test suite re-run: 4 passed.
+- A first version of that probe silently proved nothing — the fixture insert used
+  the wrong column names, so both sides counted 0 and "agreed". Re-run against the
+  real schema (`information_schema.columns`) is what the numbers above report.
+  Treat any probe whose two sides both return zero as unexecuted, not as evidence.
