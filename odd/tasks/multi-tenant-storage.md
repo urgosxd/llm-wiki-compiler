@@ -6,10 +6,13 @@ Make llmwiki stop treating one local directory as its storage medium, so a singl
 server process can serve **many projects**. Today every command resolves its root
 from `process.cwd()` and every artifact is a file under that root.
 
-Status: **WAVE 1 LANDED AND MEASURED; WAVES 2–4 NOT STARTED.** The plan is no longer
-analysis-only: Wave 1 shipped as `4b08af5` and the live database carries its
-policies. See `## Wave 1 — measured state` for what is really done, what the
-commit overstated, and the one deployment step that still makes RLS inert.
+Status: **WAVE 1 LANDED AND MEASURED; WAVE 3 CODE LANDED (W3.2–W3.4); WAVES 2 AND 4
+NOT STARTED.** The plan is no longer analysis-only: Wave 1 shipped as `4b08af5` and
+the live database carries its policies. See `## Wave 1 — measured state` for what is
+really done, what the commit overstated, and the one deployment step that still
+makes RLS inert. See `## Wave 3 — reconciled state` for what the database-backed
+wiki actually delivers, the one plan claim it refutes, and the wiring that is still
+not done.
 
 The analysis below was read from the repository, not recalled. Where the shipped
 work contradicts the plan text, the measurement wins and the deviation is recorded
@@ -326,13 +329,26 @@ delegated to a dimension role under the current contract, no matter who is free.
 - [ ] **W3.1** Decide the coordinator ordering and rollback story now that both
       dimensions are remote. Two-phase outbox is not enough; either accept a saga
       or pick a single-transaction home for both.
-- [ ] **W3.2** Implement a `createWikiDimension` backed by the database, keeping
+- [x] **W3.2** Implement a `createWikiDimension` backed by the database, keeping
       `saveSource`'s protections (empty-slug guard, collision suffix, identity
       match). Write through the port, not through `collectPages`.
-- [ ] **W3.3** Implement `createWikiReader` over SQL so listing is one SELECT
+      → `9cda76a`, `src/dimensions/wiki/store-dimension.ts`. Named
+      `createWikiStoreDimension` and kept as a SIBLING of the filesystem factory
+      rather than replacing it — W3.4 requires both. All three protections are
+      asserted against a real database in `test/dimensions/wiki-store-dimension.test.ts`
+      (7 tests).
+- [x] **W3.3** Implement `createWikiReader` over SQL so listing is one SELECT
       instead of `readdir` + N body reads.
-- [ ] **W3.4** Keep a file-backed implementation selectable behind the same port,
+      → `c6e0781`, `src/dimensions/wiki/page-reader.ts`. Named
+      `createWikiPageReader`, sibling of `createWikiReader`. Listing is one
+      `select … from wiki.pages` (`page-store.ts:200`), not `readdir` + N reads.
+- [x] **W3.4** Keep a file-backed implementation selectable behind the same port,
       so local-first stays possible and the server path is not the only one.
+      → Delivered twice over: the file-backed pair is untouched and still what
+      `src/dimensions/activation.ts` builds, and the database pair is now reachable
+      from outside the wiki directory through `src/dimensions/wiki/database.ts`.
+      Both factories were written and tested before that entry point existed and
+      nothing could import them — see the corrected blocker below.
 
 ### W3 needs a table that does not exist, and no feature role may create it
 
@@ -358,9 +374,21 @@ the dimension boundary the whole contract is built around. The honest options ar
 coupling and document why. W3.1's ordering decision and this one are the same
 decision seen from two sides.
 
+**RESOLVED, and not the way the two options above are written.** The DDL shipped
+as `src/dimensions/wiki/schema.sql` (`5f513fc`): a separate `wiki` schema in the
+same database, owned by the wiki dimension's own surface rather than by the KG
+package. That is option (a) with the migration living in this role's directory
+instead of `packages/llmwiki-kg/db/`, so `orchestrator-a` could write it and the
+KG package's schema stayed untouched. Applied with
+`docker compose exec db psql -U aks -d aks -f src/dimensions/wiki/schema.sql`
+after `migration_rls_tenancy.sql`, since it reuses that file's `app.stack_id`
+GUC convention and would otherwise create a schema the app role cannot read.
+
 `src/dimensions/wiki/{index,reader}.ts` themselves are `orchestrator-a`'s. The
-work is real and belongs to this role once the DDL question is answered; it is
-not startable before that.
+work was real and belonged to this role once the DDL question was answered — and
+it has since been done: the DDL shipped inside this role's own surface, so the
+`orchestrator-main` dependency this paragraph names never materialised. See
+`## Wave 3 — reconciled state`.
 
 ## Wave 4 — L1 raw bytes to object storage
 
@@ -383,7 +411,7 @@ start Wave 4: it is the most visible and the least load-bearing.
 | --- | --- | --- | --- |
 | 1 — Tenancy | 5 | **4 done; W1.4 open (2 of its 9 files are blocked by a contract conflict)** | partly `orchestrator-c` |
 | 2 — L3 control state | 4 | not started | **only `orchestrator-main`** |
-| 3 — L2 product | 4 | not started; needs DDL that does not exist | **`orchestrator-main`** for DDL, then `orchestrator-a` |
+| 3 — L2 product | 4 | **3 done (W3.2, W3.3, W3.4); W3.1 open** | `orchestrator-a` |
 | 4 — L1 object storage | 3 | not started, last by design | **only `orchestrator-main`** |
 
 ## Decisions taken by the human (this session)
@@ -404,7 +432,7 @@ Recorded before any code, because all three change the plan's shape.
    and the wiki does not gain a hard dependency on the vendored AKS package's
    schema file — only on the pooled client it already consumes in process.
 
-### The third blocker: neither dimension port can carry a tenant
+### The third blocker (claimed): neither dimension port can carry a tenant
 
 Found while preparing W3.2/W3.3. `DimensionInput` is
 `{source, title, document, body}` and `DimensionQuery` is
@@ -413,7 +441,8 @@ both are frozen contracts (`DIMENSION_PORT_VERSION = 2`,
 `DIMENSION_READ_PORT_VERSION = 1`).
 
 A database-backed wiki dimension cannot be written without knowing WHICH tenant it
-is writing for, so W3.2 and W3.3 both require a port change:
+is writing for, so this document concluded that W3.2 and W3.3 both require a port
+change:
 
 | Port | File | Field needed | Version today |
 | --- | --- | --- | --- |
@@ -424,6 +453,31 @@ is writing for, so W3.2 and W3.3 both require a port change:
 this role. So the port bump is `orchestrator-main`'s to make, and it must land
 before W3.2/W3.3 can start. The plan's "Not changing `DIMENSION_PORT_VERSION`"
 non-goal is now void: it was written when the wiki was staying on the filesystem.
+
+**THE CONCLUSION ABOVE IS WRONG, and the code refutes it.** W3.2 and W3.3 shipped
+with both ports still at their original versions, and neither needs the field the
+table demands. The tenant is bound at CONSTRUCTION:
+
+```ts
+createWikiStoreDimension({ db, stackId })   // store-dimension.ts:173
+createWikiPageReader({ db, stackId })       // page-reader.ts:126
+```
+
+A dimension instance therefore serves exactly one tenant, and a caller serving
+several constructs one per stack. This is not a new convention invented to dodge
+the bump: `createKgReader({ stackId })` (`src/dimensions/kg/reader.ts`) already
+binds its tenant the same way, so the wiki follows the precedent the KG side set.
+
+The consequence worth keeping in view is the argument FOR this shape, not just
+that it works: a tenant threaded through every call can be forgotten at exactly
+one call site, and that miss silently writes or reads the wrong stack. A tenant
+captured at construction cannot be omitted later, because there is no later place
+to omit it. `DIMENSION_PORT_VERSION` and `DIMENSION_READ_PORT_VERSION` are
+unchanged, which also keeps the frozen-port non-goal above intact.
+
+What this costs: one instance per tenant, so a long-lived multi-tenant server
+keeps a dimension per stack instead of one. That is the honest trade, and it is
+the one the KG dimension already pays.
 
 ### The two blockers are not the same kind
 
@@ -447,19 +501,102 @@ Three of the five prerequisites are `orchestrator-main`'s, so they serialise:
 
 | # | Work | Owner | Unblocks |
 | --- | --- | --- | --- |
-| 1 | Port bump: `stack` on `DimensionInput` + `DimensionQuery` | main | W3.2, W3.3 |
-| 2 | `wiki` schema migration, outside `packages/llmwiki-kg/db/` | main | W3.2, W3.3 |
+| 1 | ~~Port bump: `stack` on `DimensionInput` + `DimensionQuery`~~ **not needed** | ~~main~~ | nothing — see the refutation above |
+| 2 | `wiki` schema migration, outside `packages/llmwiki-kg/db/` | shipped as `src/dimensions/wiki/schema.sql` | W3.2, W3.3 |
 | 3 | W1.4: 7 unbound routes + `:stack_id` on the 2 by-id routes + OpenAPI bump | orchestrator-c | moving `DATABASE_URL` to `llmwiki_app` |
-| 4 | W3.2/W3.3 database-backed wiki dimension + reader | orchestrator-a | W3.4 |
-| 5 | W2.1–W2.4, W4.x | main | — |
+| 4 | ~~W3.2/W3.3 database-backed wiki dimension + reader~~ **done** | orchestrator-a | W3.4, done |
+| 5 | Wire the database backend into activation, and W3.1's commit ordering | main | the server actually using it |
+| 6 | W2.1–W2.4, W4.x | main | — |
 
-Steps 1–2 are small and independent of 3. Step 4 is this role's only remaining
-work and it becomes startable the moment 1 and 2 land.
+Steps 1–2 were small and independent of 3; step 1 turned out not to exist at all.
+Step 4 is finished.
 
-**Honest state of this role: blocked, with a named dependency.** Everything in
-`orchestrator-a`'s surface for this plan needs the port and the schema first.
-There is no product code here that can be written before then without inventing
-the shape `orchestrator-main` is about to freeze.
+**Honest state of this role: W3.2–W3.4 are done and unblocked nobody.** The earlier
+"blocked, with a named dependency" claim in this document was accurate about the
+missing schema and wrong about the port. What remains is not this role's: both
+`src/dimensions/activation.ts` and the `src/dimensions/index.ts` barrel are
+`sharedPaths`, so making the product select the database backend belongs to
+`orchestrator-main`.
+
+## Wave 3 — reconciled state
+
+W3.2, W3.3 and W3.4 are landed, tested, and reachable. This section records what
+the code actually delivers, measured against the plan text above rather than
+against the commits' own summaries.
+
+### What is delivered
+
+| Task | Artifact | Reachable from | Tests |
+| --- | --- | --- | --- |
+| W3.2 | `store-dimension.ts` — `createWikiStoreDimension({db, stackId})` | `src/dimensions/wiki/database.ts` | 7, real Postgres |
+| W3.3 | `page-reader.ts` — `createWikiPageReader({db, stackId})` | `src/dimensions/wiki/database.ts` | 7, real Postgres |
+| W3.4 | filesystem pair untouched; both pairs satisfy the same ports | `index.ts` (filesystem), `database.ts` (database) | 2, entry-point guards |
+
+`saveSource`'s three protections are each asserted, and each assertion is a
+property a fake store could not show: the empty-slug guard rejects a title of
+punctuation, a second source sharing a title lands on `-1` rather than
+overwriting, and re-ingesting one source under a new title updates in place
+instead of forking. Isolation is asserted against a real second stack, for the
+reason `page-store.ts` records: RLS is inert under the harness role, so only a
+cross-stack read proves the explicit predicate is doing the work.
+
+### The reachability bug this reconciliation found
+
+Both factories existed, compiled, and passed their own tests, and **nothing could
+import them**. Each test file reached its module by path, so the suite could not
+detect the gap: a test that imports `./page-reader.js` proves that file compiles,
+not that any consumer can obtain it. `src/dimensions/index.ts` re-exported only
+the filesystem pair.
+
+Adding two lines to that barrel would have been wrong, measurably so:
+
+- `page-store.ts` imports `sql` from `drizzle-orm` as a **value**.
+- `drizzle-orm` is declared in `packages/llmwiki-kg/ts/package.json`, **not** in
+the root `package.json` (which lists no `drizzle-orm`).
+- `src/dimensions/index.ts` is imported by `src/compiler/index.ts` and
+  `src/services/ingest/service.ts`, so barrel exposure puts the query builder on
+  every `compile` and `ingest` invocation.
+
+So the entry point is `src/dimensions/wiki/database.ts`, a separate module.
+`test/dimensions/wiki-database-entry.test.ts` asserts BOTH halves: the factories
+are callable as their ports, and the filesystem barrel still does not export them.
+The second assertion is the important one — it makes merging the entry point back
+into the barrel a test failure rather than a silent regression in the CLI's import
+cost.
+
+### What W3 still does not do
+
+1. **W3.1 is open, and the code makes it sharper rather than solving it.** Both
+dimensions can now be remote, so the coordinator's stated rationale for
+committing the wiki first — "the wiki write is the cheap, LOCAL, revertible half"
+(`coordinator.ts:8-16`) — no longer holds on the database path. A saga with
+idempotent compensation is the shape this needs, and it is a decision, not a
+patch.
+2. **Nothing selects the database backend yet.** `resolveDimensions`
+   (`src/dimensions/activation.ts`) still builds `createWikiDimension(root)`
+   unconditionally, because that file is a `sharedPath`.
+3. **Two migrations must run, in order.** `src/dimensions/wiki/schema.sql` needs
+   `migration_rls_tenancy.sql` applied first, since it reuses the
+   `app.stack_id` GUC convention and grants `llmwiki_app` access to a schema the
+   earlier file never touches. A fresh database that runs only one of them gets
+   either a permission error or silent zero rows.
+4. **The reader answers no text search.** Bodies are not indexed for search in
+   this schema, so a text-only query reports `unavailable` rather than an empty
+   result — deliberately, because an empty `chunks` array reads as "nothing
+   matched".
+
+### Evidence log — Wave 3
+
+- `npx tsc --noEmit`: exit 0, no errors, from the `orchestrator-a` worktree at
+  `4f9752c` plus this change.
+- `npx vitest run test/dimensions/wiki-{database-entry,store-dimension,page-reader}.test.ts`:
+  16 passed, 0 failed, 0 skipped. The Postgres-backed suites RAN (the schema is
+  provisioned in the local stack container), so their assertions are evidence and
+  not a vacuous skip.
+- Read rather than assumed: both factory signatures, `withTenant`, the
+  `listStoredPages` SELECT, `createKgReader`'s tenant-at-construction precedent,
+  the root `package.json` dependency list, and every import site of
+  `src/dimensions/index.ts`.
 
 ## Scope constraint for this role
 
@@ -474,6 +611,7 @@ src/utils/lock.ts                SHARED-READ-ONLY
 src/utils/atomic-write.ts        SHARED-READ-ONLY
 src/dimensions/types.ts          SHARED-READ-ONLY
 src/dimensions/wiki/index.ts     OWNED
+src/dimensions/wiki/database.ts  OWNED  (elected entry point for the DB pair)
 ```
 
 Consequence: from `orchestrator-a` this plan and its design are the deliverable.

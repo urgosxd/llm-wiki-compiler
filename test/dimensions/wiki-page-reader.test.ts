@@ -15,7 +15,7 @@
  */
 import { afterAll, describe, expect, it } from "vitest";
 
-import { createWikiPageReader } from "../../src/dimensions/wiki/page-reader.js";
+import { createWikiPageReader } from "../../src/dimensions/wiki/database.js";
 import { upsertStoredPage } from "../../src/dimensions/wiki/page-store.js";
 import type { Page } from "../../src/pages/list.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";

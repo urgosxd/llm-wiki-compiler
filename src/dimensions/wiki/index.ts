@@ -22,6 +22,15 @@
  * A crash between `prepare` and `commit` leaves a `pending` journal that the
  * existing `replayJournal` startup path reverts, so an interrupted ingest
  * cannot leave a half-written source behind.
+ *
+ * ## This is the FILE-BACKED half, and the barrel for it only
+ *
+ * The database-backed pair — `createWikiStoreDimension` and
+ * `createWikiPageReader` — is published from `./database.js`, deliberately NOT
+ * re-exported here. Re-exporting it would load `drizzle-orm` (a dependency of the
+ * KG workspace package, absent from the root manifest) for every caller that only
+ * wanted the filesystem wiki. A consumer choosing the database backend imports
+ * that entry point; see its file header for the full reasoning.
  */
 
 import { saveSource } from "../../utils/source-writer.js";
