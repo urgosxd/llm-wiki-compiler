@@ -1,48 +1,67 @@
 /**
  * @file test/dimensions/wiki-database-entry.test.ts
- * @description The database-backed wiki factories are reachable from outside the
- * wiki directory — and the filesystem barrel still does not carry them.
+ * @description The database-backed wiki has ONE entry point, and the dimension
+ * barrel does not become a second one.
  *
- * WHY THIS IS A TEST AND NOT A COMMENT. `store-dimension.ts` and `page-reader.ts`
- * were written and tested, and nothing in the product could import them: their own
- * test files reached them by path, which proves the module compiles and proves
- * nothing about reachability. The bug was invisible because every existing test
- * imported the exact file it was testing.
+ * ## Why the first case exists
  *
- * So the first assertion is about the ENTRY POINT a consumer would use. The second
- * records the reason the entry point is separate rather than being two lines in
- * `index.ts`: pulling `page-store.ts` into the wiki barrel would load
- * `drizzle-orm` — a dependency of the KG workspace package, absent from the root
- * manifest — on every `compile` and `ingest` path. Both assertions are here so a
- * future "simplification" that merges the entry point into the barrel fails.
+ * `store-dimension.ts` and `page-reader.ts` were written, tested, and completely
+ * unreachable: their own test files imported them by path, which proves a module
+ * compiles and proves nothing about whether a consumer can obtain it. So the
+ * first case exercises the entry point a consumer would actually use.
+ *
+ * ## Why the second case exists, and what it is NOT about
+ *
+ * `page-store.ts` imports `sql` from `drizzle-orm` as a VALUE, and `drizzle-orm`
+ * is declared in `packages/llmwiki-kg/ts/package.json`, not in the root manifest.
+ * `src/dimensions/index.ts` sits on the `compile` and `ingest` paths, so exporting
+ * the database pair from there would load a query builder for every caller that
+ * never touches a database.
+ *
+ * The guard therefore names `src/dimensions/index.ts` — the barrel that matters —
+ * and not the wiki's own barrel. It used to name `src/dimensions/wiki/index.ts`,
+ * which was the right guard against the wrong file: that module is the
+ * FILE-BACKED dimension and exports no database factory, so the old assertion
+ * could only ever pass by accident of the barrel being narrow. Retargeting it is
+ * what keeps the guard honest once the file-backed dimension is deleted, and it
+ * is deliberately KEPT rather than dropped: without it, nothing prevents the
+ * regression it was written for.
  */
 import { describe, expect, it } from "vitest";
 
 import * as databaseEntry from "../../src/dimensions/wiki/database.js";
-import type { WikiPageReaderOptions } from "../../src/dimensions/wiki/database.js";
-import * as filesystemBarrel from "../../src/dimensions/wiki/index.js";
+import type {
+  WikiPageReaderOptions,
+  WikiStoreDimensionOptions,
+} from "../../src/dimensions/wiki/database.js";
+import * as dimensionBarrel from "../../src/dimensions/index.js";
 import type { Dimension } from "../../src/dimensions/types.js";
 import type { DimensionReader } from "../../src/dimensions/read-types.js";
 
 /** A database handle is never touched by construction, so a cast is honest here. */
-const unusedDatabase = {} as Parameters<typeof databaseEntry.createWikiStoreDimension>[0]["db"];
+const unusedDatabase = {} as WikiStoreDimensionOptions["db"];
 
 /** Somewhere no pages exist; construction still does no I/O. */
 const EMPTY_STACK_ID = "00000000-0000-0000-0000-000000000000";
 
 describe("the database-backed wiki entry point", () => {
   it("publishes both factories callable as their ports", () => {
-    const options: WikiPageReaderOptions = { stackId: EMPTY_STACK_ID, db: unusedDatabase };
+    const options: WikiPageReaderOptions = {
+      stackId: EMPTY_STACK_ID,
+      db: unusedDatabase,
+      root: "/tmp/wiki-entry-guard",
+    };
     const dimension: Dimension = databaseEntry.createWikiStoreDimension(options);
     const reader: DimensionReader = databaseEntry.createWikiPageReader(options);
     expect(dimension.name).toBe("wiki");
     expect(reader.name).toBe("wiki");
   });
 
-  it("keeps them out of the filesystem barrel", () => {
-    // Not an oversight: exporting these from `index.ts` would load the query
-    // builder for every caller that only wanted the file-backed wiki.
-    expect(Object.keys(filesystemBarrel)).not.toContain("createWikiStoreDimension");
-    expect(Object.keys(filesystemBarrel)).not.toContain("createWikiPageReader");
+  it("does not leak the database pair into the dimension barrel", () => {
+    // Not an oversight: this barrel is imported by the compiler and the ingest
+    // service, so a database export here costs every CLI invocation a query
+    // builder it does not use.
+    expect(Object.keys(dimensionBarrel)).not.toContain("createWikiStoreDimension");
+    expect(Object.keys(dimensionBarrel)).not.toContain("createWikiPageReader");
   });
 });
