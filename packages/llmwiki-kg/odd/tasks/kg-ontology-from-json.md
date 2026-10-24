@@ -368,6 +368,24 @@ plus the matching `stacks.ts` handling, while `STACK_COLUMNS` keeps its document
 order. That is a visible divergence from the Python reference, which this port has
 otherwise avoided, so it is a product decision rather than a cleanup.
 
+### A boundary defect in the branch, invisible to the hook
+
+`feat/orchestrator-c` carries a stale copy of `src/dimensions/kg/index.ts`
+including the `KgOntology` alias (lines 61, 129, 138). That file is owned by this
+role and is in orchestrator-c's `forbiddenPaths`, so its branch should never have
+contained it.
+
+The hook could not catch this: it guards `write`/`edit` calls, so it stops a role
+from *modifying* another role's file during a session, but nothing detects a file
+that arrives in a branch by merge from a shared ancestor and then diverges. That
+is why c reported the alias as something it would inherit rather than something it
+should not have. The correct resolution is not for c to merge this branch to pick
+up the cleanup — it is for that path to be nobody's but its owner's on that
+branch.
+
+Recorded rather than fixed: resolving it means deciding how the branches combine,
+which is the integration owner's call, not this role's.
+
 ### A real defect c found: two diverging column lists
 
 `stack_resolver.ts` gained `synthesize_descriptions` and `ontology`; `stacks.ts`
