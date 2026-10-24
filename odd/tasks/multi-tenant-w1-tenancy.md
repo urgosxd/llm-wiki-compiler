@@ -2,6 +2,13 @@
 
 Status: **DECIDED.** This is the answer the plan demanded be written down first.
 
+> **Vocabulary note (2026-10-24, human decision).** The product word for the
+> isolation unit is **Stack**; "tenant" here names the ROLE a Stack plays in a
+> shared database, not a second entity. This document is the reason that
+> distinction exists — its own answer is "a stack is the tenant" — so it is
+> deliberately not rewritten to say "Stack" everywhere. See the vocabulary
+> section in `multi-tenant-storage.md`.
+
 ## The question
 
 `stacks` is the only candidate tenant today. Does `stacks.id` IS the tenant, or does

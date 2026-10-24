@@ -126,3 +126,46 @@ describe("the wiki page store", () => {
     expect(bound).toBe(1);
   }, 30_000);
 });
+
+describe("the store contract T2 depends on", () => {
+  it.skipIf(!provisioned)("accepts a compile-shaped write: namespace, slug, full markdown body", async () => {
+    // CompilePageWrite carries {namespace, slug, body} where body is
+    // frontmatter + prose. Page wants those split. This pins that the split is
+    // representable, so T2 does not discover it needs a schema change mid-task.
+    const full = `---\ntitle: Split Me\nsummary: from frontmatter\n---\n\nThe prose.`;
+    const { parseFrontmatter } = await import("../../src/utils/markdown.js");
+    const { meta, body } = parseFrontmatter(full);
+    await upsertStoredPage(harness.db, harness.stackId, {
+      slug: "split-me",
+      pageDirectory: "concepts",
+      title: String(meta.title ?? ""),
+      summary: String(meta.summary ?? ""),
+      tags: [],
+      links: [],
+      orphaned: false,
+      archived: false,
+      body,
+    });
+    const stored = await getStoredPage(harness.db, harness.stackId, "concepts", "split-me");
+    expect(stored?.title).toBe("Split Me");
+    expect(stored?.summary).toBe("from frontmatter");
+    expect(stored?.body).toBe("\nThe prose.");
+  }, 30_000);
+
+  it.skipIf(!provisioned)("keeps source_identity intact across a plain upsert", async () => {
+    // The dimension looks a page up by source_identity; the compiler path does not
+    // write that column. Verified here so T2 can rely on it: leaving a column out
+    // of `do update set` PRESERVES it rather than nulling it.
+    const slug = "identity-survives-upsert";
+    await harness.db.execute(
+      `insert into wiki.pages (stack_id, page_directory, slug, title, summary, body, source_identity)
+       values ('${harness.stackId}', 'concepts', '${slug}', 'Kept', '', 'body', 'src://kept')`,
+    );
+    await upsertStoredPage(harness.db, harness.stackId, pageOf(slug, { body: "rewritten" }));
+    const rows = await harness.db.execute<{ source_identity: string | null }>(
+      `select source_identity from wiki.pages
+       where stack_id = '${harness.stackId}' and page_directory = 'concepts' and slug = '${slug}'`,
+    );
+    expect(rows[0]?.source_identity).toBe("src://kept");
+  }, 30_000);
+});
