@@ -19,6 +19,8 @@ import {
   synthesizeEntityDescriptions,
 } from "../../core/extraction.js";
 import type { ChunkResult, ExtractionResult } from "../../core/extraction-types.js";
+import { validateOntology } from "../../core/ontology.js";
+import type { Ontology } from "../../core/ontology.js";
 import {
   consolidateEntityRows,
   consolidateRelationshipRows,
@@ -37,6 +39,28 @@ import type { IngestParams } from "./request.js";
 import { sendValidationFailure } from "./response.js";
 
 
+/**
+ * Trailing arguments for the extraction call, given a Stack's stored ontology.
+ *
+ * Spreading an empty array keeps the call at its original arity, which is the
+ * point: with no ontology the parser must behave exactly as the oracle does.
+ * Passing `undefined` explicitly would work for the current signature but a
+ * future defaulted or overloaded parameter would silently pick up a value that a
+ * two-argument call never passed.
+ *
+ * A null column is the oracle behaviour, not an empty ontology — `validateOntology`
+ * rejects an empty declaration, and enforcing one would drop every triplet of
+ * every document on an unconfigured Stack.
+ *
+ * @param stored - The Stack's `ontology` column, or null/undefined when unset.
+ * @returns No arguments when unset, otherwise the one validated ontology.
+ * @throws {OntologyError} When the stored value is present but not a valid declaration.
+ */
+function ontologyArgument(stored: unknown): [] | [Ontology] {
+  if (stored === null || stored === undefined) return [];
+  return [validateOntology(stored)];
+}
+
 /** What steps 5 and 6 produced, plus the synthesis decision. */
 export interface ProcessedIngest {
   readonly chunks: readonly ChunkResult[];
@@ -53,10 +77,18 @@ export async function chunkAndExtract(
   tx: Database,
   params: IngestParams,
   text: string,
-  document: { readonly stack_name: string; readonly stack_synthesize_default: boolean },
+  document: {
+    readonly stack_name: string;
+    readonly stack_synthesize_default: boolean;
+    readonly stack_ontology?: unknown;
+  },
 ): Promise<ProcessedIngest> {
   const chunks = await persistChunks(tx, params, text);
-  const extraction = await extractGraphFromChunks(chunks, document.stack_name);
+  const extraction = await extractGraphFromChunks(
+    chunks,
+    document.stack_name,
+    ...ontologyArgument(document.stack_ontology),
+  );
   const shouldSynthesize =
     params.synthesizeDescriptions ?? document.stack_synthesize_default;
   if (shouldSynthesize) {
