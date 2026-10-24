@@ -241,3 +241,90 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
     expect(await writtenRelationTypes(stackId)).toEqual([]);
   });
 });
+
+/** The audit blob recorded for one document, or null when none was written. */
+async function documentAudit(documentId: string): Promise<unknown> {
+  const rows = await database().execute<{ audit: unknown }>(
+    sql`select audit from stack_documents where id = ${documentId}`,
+  );
+  return rows[0]?.audit ?? null;
+}
+
+describe.skipIf(skipReason !== false)("ingest records what the ontology rejected", () => {
+  let app: Express;
+  let sequence = 0;
+
+  function domain(label: string): string {
+    sequence += 1;
+    return `w2ex-ingest-ontology-${label}-aud-${Date.now().toString(36)}-${String(sequence)}`;
+  }
+
+  beforeEach(async () => {
+    await deleteFixtureRows();
+    app = buildApp();
+    installFetchStub();
+  });
+
+  afterEach(async () => {
+    uninstallFetchStub();
+    await deleteFixtureRows();
+  });
+
+  it("records the rejection count and reason codes in the document's audit", async () => {
+    setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION, BAD_ENTITY] }]);
+    const stackId = await createStackWith(app, domain("mixed"), DECLARATION);
+    const documentId = await createDocument(stackId, BODY);
+
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    // The response cannot carry this — IngestionResult is nine fixed oracle keys —
+    // so the audit column is where it lands, readable via GET /documents/:id.
+    expect(await documentAudit(documentId)).toEqual({
+      ontology: {
+        enforced: true,
+        rejected: 2,
+        reason_codes: ["UNKNOWN_ENTITY_TYPE", "UNKNOWN_RELATIONSHIP_TYPE"],
+      },
+    });
+  });
+
+  it("records that no ontology was enforced when the Stack declares none", async () => {
+    // `enforced: false` rather than an absent key: a document with no rejection
+    // report must be distinguishable from one ingested before this existed.
+    setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION] }]);
+    const stackId = await createStackWith(app, domain("plain"), undefined);
+    const documentId = await createDocument(stackId, BODY);
+
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    expect(await documentAudit(documentId)).toEqual({
+      ontology: { enforced: false, rejected: 0, reason_codes: [] },
+    });
+  });
+
+  it("records a clean run as zero rejections rather than omitting the report", async () => {
+    setToolResponse([{ triplets: [IN_ONTOLOGY] }]);
+    const stackId = await createStackWith(app, domain("clean"), DECLARATION);
+    const documentId = await createDocument(stackId, BODY);
+
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    expect(await documentAudit(documentId)).toEqual({
+      ontology: { enforced: true, rejected: 0, reason_codes: [] },
+    });
+  });
+
+  it("keeps the ingest response at the oracle's nine keys", async () => {
+    // The audit is deliberately NOT on the wire: this pins that the extension
+    // did not leak into the response envelope.
+    setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_ENTITY] }]);
+    const stackId = await createStackWith(app, domain("keys"), DECLARATION);
+    const documentId = await createDocument(stackId, BODY);
+
+    const response = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    expect(Object.keys(response.body)).toHaveLength(9);
+    expect(response.body).not.toHaveProperty("ontology");
+    expect(response.body).not.toHaveProperty("ontology_rejections");
+  });
+});

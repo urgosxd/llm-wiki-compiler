@@ -202,6 +202,58 @@ Removing entity normalisation from `graph-parse.ts` turns 2 of the 12 flat tests
 red and leaves the other 10 green, which is the correct split: only the
 spelling-agreement cases depend on it.
 
+## Follow-up 1: what the ontology rejected is now recorded
+
+Decided by the human: record it in `stack_documents.audit`, not on the response.
+
+That column was already reserved for exactly this — `db/schema.sql` calls it
+"Placeholder for the Group 3 quality audit. Stored as JSONB so we can put
+structured audit results here later without a schema change" — and nothing wrote
+it, so `GET /documents/:id` reported `null` for every ingested document.
+
+```json
+"audit": { "ontology": { "enforced": true, "rejected": 2,
+                         "reason_codes": ["UNKNOWN_ENTITY_TYPE", "UNKNOWN_RELATIONSHIP_TYPE"] } }
+```
+
+Three properties that are decisions, not consequences:
+
+- **`enforced` is explicit.** "No declaration, so nothing could be rejected" and
+  "a declaration rejected nothing" are different facts with the same count.
+  Collapsing them would make a misconfigured Stack look like a clean run.
+- **Written in the ingest transaction.** A separate transaction could land the
+  graph rows and lose the audit, leaving an ingested document nobody can explain.
+- **`jsonb_set(..., create_missing => true)`** merges rather than replaces, so a
+  later audit producer can add its own keys without erasing this one.
+
+`IngestionResult` is still the oracle's nine keys — a test pins that the audit did
+not leak onto the wire.
+
+## Follow-up 2: approval now refuses out-of-ontology proposals
+
+Decided by the human: refuse with 422, do not filter.
+
+Approval was the one path into the graph that ignored the declaration. A human
+could approve an item naming `ALIEN_CONSTRUCT` and it landed beside the declared
+types, silently, which made the ontology a promise about extraction while reading
+like a promise about the Stack's graph.
+
+Refusing rather than filtering is the deliberate choice: a partial approval
+reports `entities_absorbed: 2` for three contained items, which reads as success.
+The refusal leaves the item `pending`, so a human can fix the ontology, edit the
+item, or reject it — the gate must not consume it.
+
+The declaration is read at approval time, not carried on the queue row: it can
+change between flagging and approving, and approval is when the write happens.
+A Stack with no declaration stays total, the same `null` rule ingest uses.
+
+## Falsifiability checks
+
+Both follow-ups verified by breaking the implementation and watching the right
+tests fail: removing the audit write turns 3 of 8 ingest-ontology tests red;
+disabling the gate turns 2 of 5 backfeed-ontology tests red, leaving the
+no-declaration control green in both cases.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,
@@ -212,8 +264,7 @@ spelling-agreement cases depend on it.
   is the smaller lie only because this file now says so.
 - The hierarchy is validated and stored but a read still does not rewrite types
   through it; `ontology.ts` documents hierarchy-aware reads as out of scope.
-- The ingest response cannot report how many triplets were dropped: it is nine
-  fixed keys, byte-identical to the oracle. So a caller cannot tell a tight
-  ontology from a thin extraction over HTTP. `ExtractionResult.rejected` exists
-  and is populated, but nothing surfaces it — a candidate for its own change,
-  and one that needs a contract decision because it touches the response shape.
+- Backfeed `flag` still accepts a proposal naming undeclared types; only
+  `approve` refuses it. Validating at flag time would tell the human sooner, but
+  it also freezes the ontology at flag time, and the decision taken was that
+  approval is when it must hold.
