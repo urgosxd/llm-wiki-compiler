@@ -64,6 +64,7 @@ import { sql } from "drizzle-orm";
 
 import { slugify } from "../../utils/markdown.js";
 import { saveSource } from "../../utils/source-writer.js";
+import { saveSourceDocument } from "./source-documents-store.js";
 import type { WriteStatus } from "../../utils/types.js";
 import type {
   CommittedWrite,
@@ -255,6 +256,19 @@ export function createWikiStoreDimension(options: WikiStoreDimensionOptions): Di
         handle.input.document,
         handle.input.source,
       );
+
+      // Write the row on EVERY ingest, including one the file writer called
+      // unchanged. The two stores start empty relative to each other: a project
+      // migrating in has files but no rows, so skipping the row because the FILE
+      // was unchanged would leave the compiler seeing a Stack with zero documents
+      // and retiring every one of them. `saveSourceDocument` is idempotent and
+      // reports `unchanged` on identical bytes, so this costs one query, not a
+      // rewrite.
+      await saveSourceDocument(options.db, options.stackId, {
+        title: handle.input.title,
+        document: handle.input.document,
+        source: handle.input.source,
+      });
 
       // An unchanged page still commits, but writes nothing: reporting `unchanged`
       // is what tells the coordinator this dimension was a no-op.

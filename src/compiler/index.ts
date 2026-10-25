@@ -8,6 +8,7 @@
  * sources are processed through the LLM pipeline.
  */
 
+import { createHash } from "node:crypto";
 import { readdir } from "fs/promises";
 import path from "path";
 import { CompileStateDraft } from "./compile-state-draft.js";
@@ -103,8 +104,11 @@ type DimensionsDatabaseHandle = ReturnType<typeof createDimensionsDatabase>["db"
 import { createDimensionsDatabase, resolveDimensions, AKS_STACK_ID_ENV_VAR } from "../dimensions/index.js";
 import type { EmbeddingStoreLocation } from "../utils/embeddings.js";
 import { databaseEmbeddingLocation } from "../utils/embeddings-database.js";
-import { sourceDocumentsChangeSource } from "../dimensions/wiki/source-documents-store.js";
-import type { ChangeDetectionSource } from "./hasher.js";
+import {
+  sourceDocumentsChangeSource,
+  sourceDocumentsContentSource,
+} from "../dimensions/wiki/source-documents-store.js";
+import type { ChangeDetectionSource, SourceContentSource } from "./hasher.js";
 import { timeStage } from "../utils/stage-timing.js";
 
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
@@ -302,8 +306,7 @@ async function persistExtractionStates(
       if (retained.has(slug)) liveSlugs.add(slug);
     }
     await persistSourceStateFiltered(
-      draft, result.sourcePath, result.sourceFile, result.concepts, liveSlugs,
-      result.sourceContent,
+      draft, result.sourceFile, result.concepts, liveSlugs, result.sourceContent,
     );
     draft.setSource(result.sourceFile, withExtractionSnapshot(
       draft.read().sources[result.sourceFile], result, liveSlugsForSource.get(result.sourceFile),
@@ -327,13 +330,15 @@ function buildLiveSlugsForSource(writtenPages: MergedConcept[]): Map<string, str
 /** Persist source state, filtering concepts to only those in the live set. */
 async function persistSourceStateFiltered(
   draft: CompileStateDraft,
-  sourcePath: string,
   sourceFile: string,
   concepts: ReturnType<typeof parseConcepts>,
   liveSlugs: Set<string>,
   sourceContent: string,
 ): Promise<void> {
-  const hash = await hashFile(sourcePath);
+  // Hash the content already in memory instead of re-reading the file. Same digest
+  // -- `hashFile` is sha256 of the same bytes -- and it removes a disk read that
+  // would fail outright for a document whose bytes live only in a table.
+  const hash = createHash("sha256").update(sourceContent, "utf-8").digest("hex");
   const entry: SourceState = {
     hash,
     concepts: concepts.map((c) => slugify(c.concept)).filter((s) => liveSlugs.has(s)),
@@ -474,7 +479,7 @@ async function runCompilePipeline(
     applyChangeFilter(detected, options.changeFilter),
     state,
   );
-  await markUnchangedPendingSources(root, changes);
+  await markUnchangedPendingSources(root, changes, sourceContentReading(db, process.env));
   const reusableSources = reusableSourceFiles(state, changes, detected, Boolean(options.review));
   augmentWithAffectedSources(changes, findAffectedSources(state, changes, detected));
   const reconciliationSlugs = findReconciliationSlugs(state, changes);
@@ -545,6 +550,7 @@ async function runCompilePipeline(
   const concurrency = resolveCompileConcurrency(options.concurrency);
   const extractions = await timeStage("compile.extraction", () => runExtractionPhases(
     root, buckets.toCompile, state, { scoped: changes, detected }, concurrency, reusableSources,
+    sourceContentReading(db, process.env),
   ));
   if (!options.review) {
     freezeFailedExtractions(draft, extractions, frozenSlugs);
@@ -607,7 +613,11 @@ async function runCompilePipeline(
  * clearing a modifier look like no change, because "none selected" is exactly
  * what an absent digest means.
  */
-async function markUnchangedPendingSources(root: string, changes: SourceChange[]): Promise<void> {
+async function markUnchangedPendingSources(
+  root: string,
+  changes: SourceChange[],
+  contentSource?: SourceContentSource,
+): Promise<void> {
   const pending = await collectPendingSourceStates(root);
   if (pending.size === 0) return;
   const requested = promptModifiersDigest();
@@ -615,7 +625,9 @@ async function markUnchangedPendingSources(root: string, changes: SourceChange[]
     if (change.status !== "new" && change.status !== "changed") continue;
     const entry = pending.get(change.file);
     if (!entry || entry.modifiers !== requested) continue;
-    const currentHash = await hashFile(path.join(root, SOURCES_DIR, change.file));
+    const currentHash = contentSource === undefined
+      ? await hashFile(path.join(root, SOURCES_DIR, change.file))
+      : await currentContentHash(contentSource, change.file);
     if (currentHash === entry.hash) change.status = "unchanged";
   }
 }
@@ -856,6 +868,47 @@ async function finalizeWiki(
  * @param db - The run's database handle.
  * @returns The location, or undefined to keep using the file.
  */
+/**
+ * Hash a document's current text, reading it by identity when rows are the corpus.
+ *
+ * Extracted so the pending-candidate check never builds a path out of a key that may
+ * be a URL. A missing document yields an empty hash, which never equals a recorded
+ * one and so leaves the change marked as real work.
+ *
+ * @param contentSource - Row reader.
+ * @param sourceIdentity - Identity of the document to hash.
+ * @returns Its current content hash.
+ */
+async function currentContentHash(
+  contentSource: SourceContentSource,
+  sourceIdentity: string,
+): Promise<string> {
+  const document = await contentSource.read(sourceIdentity);
+  return document === undefined
+    ? ""
+    : createHash("sha256").update(document.content, "utf-8").digest("hex");
+}
+
+/**
+ * Where this compile should read document text from.
+ *
+ * Paired with {@link sourceChangeDetection} and gated on the same variable, because
+ * the two must agree: reading rows that were discovered in a directory -- or the
+ * reverse -- would leave every document unreadable.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The content source, or undefined to keep reading `sources/`.
+ */
+function sourceContentReading(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): SourceContentSource | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return sourceDocumentsContentSource(db, stackId);
+}
+
 /**
  * Where this compile should read its source corpus from.
  *

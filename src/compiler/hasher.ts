@@ -86,6 +86,23 @@ export interface ChangeDetectionSource {
 }
 
 /**
+ * Where the compiler reads a document's text from.
+ *
+ * Mirrors {@link ChangeDetectionSource} so a Stack-backed run never mixes a
+ * table-discovered key with a directory read -- the mismatch that would make
+ * compile find documents it cannot open.
+ */
+export interface SourceContentSource {
+  /**
+   * Read one document by identity.
+   *
+   * @param sourceIdentity - Unique identity of the document.
+   * @returns Its text and stored hash, or undefined when it no longer exists.
+   */
+  read(sourceIdentity: string): Promise<{ content: string; hash: string } | undefined>;
+}
+
+/**
  * Classify a document whose hash came from the table.
  *
  * Same four outcomes as the file path, and the same reasoning: an unknown identity

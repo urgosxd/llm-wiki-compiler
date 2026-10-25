@@ -39,7 +39,7 @@ import type { Database } from "llmwiki-kg";
 import { createHash } from "node:crypto";
 import { slugify } from "../../utils/markdown.js";
 import { stableContent } from "../../utils/source-writer.js";
-import type { ChangeDetectionSource } from "../../compiler/hasher.js";
+import type { ChangeDetectionSource, SourceContentSource } from "../../compiler/hasher.js";
 
 /** Outcome of writing one document, matching the file writer's vocabulary. */
 export type SourceWriteStatus = "created" | "updated" | "unchanged";
@@ -195,6 +195,41 @@ export async function saveSourceDocument(
  * @param stackId - Stack whose corpus to read.
  * @returns Documents ordered by filename.
  */
+/**
+ * Read one document by its identity.
+ *
+ * Returns `undefined` rather than throwing when the row is absent: compile asks for
+ * content by a key it just discovered, and a document deleted between detection and
+ * extraction is a race the caller can report as a finding, not a crash.
+ *
+ * @param db - Database handle.
+ * @param stackId - Stack the document belongs to.
+ * @param sourceIdentity - Unique identity of the document.
+ * @returns The document, or undefined when the Stack no longer holds it.
+ */
+async function readSourceDocument(
+  db: Database,
+  stackId: string,
+  sourceIdentity: string,
+): Promise<StoredSourceDocument | undefined> {
+  await bindStack(db, stackId);
+  const rows = await db.execute<SourceDocumentRow>(
+    sql`select source_identity, title, filename, content, content_hash, size_bytes
+        from wiki.source_documents
+        where stack_id = ${stackId} and source_identity = ${sourceIdentity}`,
+  );
+  const row = rows[0];
+  if (row === undefined) return undefined;
+  return {
+    sourceIdentity: row.source_identity,
+    title: row.title,
+    filename: row.filename,
+    content: row.content,
+    contentHash: row.content_hash,
+    sizeBytes: row.size_bytes,
+  };
+}
+
 export async function listSourceDocuments(db: Database, stackId: string): Promise<StoredSourceDocument[]> {
   await bindStack(db, stackId);
   // Both the binding and an explicit predicate: under a superuser owner the policy
@@ -237,6 +272,32 @@ export function sourceDocumentsChangeSource(
         sourceIdentity: doc.sourceIdentity,
         contentHash: doc.contentHash,
       }));
+    },
+  };
+}
+
+/**
+ * Adapt the document table to the compiler's content-read seam.
+ *
+ * Separate from {@link sourceDocumentsChangeSource} because the two questions are
+ * asked at different times and only the second is expensive: change detection needs
+ * every hash on every run, while content is read only for the documents that
+ * actually get extracted.
+ *
+ * @param db - Database handle.
+ * @param stackId - Stack whose corpus to read.
+ * @returns A reader the compiler can use instead of `readFile`.
+ */
+export function sourceDocumentsContentSource(
+  db: Database,
+  stackId: string,
+): SourceContentSource {
+  return {
+    read: async (sourceIdentity: string) => {
+      const document = await readSourceDocument(db, stackId, sourceIdentity);
+      return document === undefined
+        ? undefined
+        : { content: document.content, hash: document.contentHash };
     },
   };
 }

@@ -14,10 +14,8 @@
  * be flushed to `.llmwiki/state.json` at approval time.
  */
 
-import path from "path";
-import { hashFile } from "./hasher.js";
+import { createHash } from "node:crypto";
 import { slugify } from "../utils/markdown.js";
-import { SOURCES_DIR } from "../utils/constants.js";
 import type { ExtractionResult } from "./deps.js";
 import type { SourceState } from "../utils/types.js";
 
@@ -43,20 +41,24 @@ export async function buildExtractionSourceStates(
 
   for (const result of extractions) {
     if (result.concepts.length === 0) continue;
-    snapshot[result.sourceFile] = await buildEntry(root, result, compiledAt);
+    snapshot[result.sourceFile] = await buildEntry(result, compiledAt);
   }
 
   return snapshot;
 }
 
-/** Build a single SourceState entry for one extraction result. */
+/**
+ * Build a single SourceState entry for one extraction result.
+ *
+ * Hashes the content the extraction already carries rather than re-reading the
+ * file: `hashFile` is sha256 of those same bytes, and a document whose text lives
+ * only in a table has no path to read.
+ */
 async function buildEntry(
-  root: string,
   result: ExtractionResult,
   compiledAt: string,
 ): Promise<SourceState> {
-  const filePath = path.join(root, SOURCES_DIR, result.sourceFile);
-  const hash = await hashFile(filePath);
+  const hash = createHash("sha256").update(result.sourceContent, "utf-8").digest("hex");
   return {
     hash,
     concepts: result.concepts.map((concept) => slugify(concept.concept)),

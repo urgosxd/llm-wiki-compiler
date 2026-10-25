@@ -26,6 +26,7 @@ import {
   listSourceDocuments,
   saveSourceDocument,
   sourceDocumentsChangeSource,
+  sourceDocumentsContentSource,
   sourceFilename,
   stableSourceContent,
 } from "../../src/dimensions/wiki/source-documents-store.js";
@@ -227,3 +228,50 @@ describe.skipIf(!harnessReachable)("the compiler's change detection reads rows",
 function emptyState() {
   return { version: 2 as const, indexHash: "", sources: {} };
 }
+
+describe.skipIf(!harnessReachable)("the two ends agree", () => {
+  let harness: KgPostgresHarness;
+
+  beforeEach(async () => {
+    harness = await createKgPostgresHarness(`ends-${randomUUID().slice(0, 8)}`);
+  });
+
+  afterEach(async () => {
+    await harness.cleanup();
+  });
+
+  it("content read by identity returns exactly what detection hashed", async () => {
+    // The pairing that matters: detection reports a key, extraction reads by that
+    // same key. If these disagreed, compile would discover documents it cannot open.
+    await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/1", "Alpha", "body"));
+    const [stored] = await listSourceDocuments(harness.db, harness.stackId);
+    const read = await sourceDocumentsContentSource(harness.db, harness.stackId)
+      .read("https://a.test/1");
+
+    // Frontmatter included: the stored content is the same full document the file
+    // writer produced, so extraction sees exactly the bytes it used to read.
+    expect(read?.content).toContain("body");
+    expect(read?.content).toContain("title: Alpha");
+    expect(read?.hash).toBe(stored!.contentHash);
+  });
+
+  it("reading an identity the Stack does not hold returns undefined, not a throw", async () => {
+    const read = await sourceDocumentsContentSource(harness.db, harness.stackId)
+      .read("https://never.test/1");
+
+    expect(read).toBeUndefined();
+  });
+
+  it("saving the same bytes twice writes no row change but still yields a readable document", async () => {
+    // The migration case: a project whose files predate the rows. The row must
+    // exist even when the file writer reported unchanged, or the first Stack-backed
+    // compile sees an empty corpus and retires everything.
+    const first = await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/1", "A", "b"));
+    const second = await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/1", "A", "b"));
+    const [stored] = await listSourceDocuments(harness.db, harness.stackId);
+
+    expect(first.writeStatus).toBe("created");
+    expect(second.writeStatus).toBe("unchanged");
+    expect(stored?.content).toContain("b");
+  });
+});

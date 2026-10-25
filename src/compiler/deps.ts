@@ -19,7 +19,13 @@ import type { CompileStateDraft } from "./compile-state-draft.js";
 
 export interface ExtractionResult {
   sourceFile: string;
-  sourcePath: string;
+  /**
+   * Path the content was read from, when it came from a file.
+   *
+   * Absent for a document read from a table: there is no path to report, and
+   * inventing one would invite a later stage to read a file that does not exist.
+   */
+  sourcePath?: string;
   sourceContent: string;
   concepts: ExtractedConcept[];
   /** Committed metadata reused for an unchanged contributor, not new work. */

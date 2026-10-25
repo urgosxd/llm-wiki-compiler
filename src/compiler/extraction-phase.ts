@@ -17,6 +17,7 @@ import {
   warnDroppedWikiReadIfPresent,
 } from "./confined-wiki-read.js";
 import { callClaude } from "../utils/llm.js";
+import type { SourceContentSource } from "./hasher.js";
 import {
   CONCEPT_EXTRACTION_TOOL,
   buildExtractionPrompt,
@@ -53,12 +54,13 @@ async function extractSourcesLimited(
   files: string[],
   limit: ReturnType<typeof pLimit>,
   reuse: ExtractionReuse,
+  contentSource?: SourceContentSource,
 ): Promise<ExtractionResult[]> {
   let aborted = false;
   return Promise.all(files.map((file) => limit(async () => {
     if (aborted) throw new Error(`extraction skipped for ${file}: a prior source failed`);
     try {
-      return await extractForSource(root, file, reuse);
+      return await extractForSource(root, file, reuse, contentSource);
     } catch (err) {
       aborted = true;
       throw err;
@@ -98,10 +100,13 @@ export async function runExtractionPhases(
   changeSets: ChangeSets,
   concurrency: number,
   reusableSources: ReadonlySet<string> = new Set(),
+  contentSource?: SourceContentSource,
 ): Promise<ExtractionResult[]> {
   const limit = pLimit(concurrency);
   const reuse = { state, eligible: reusableSources };
-  const extractions = await extractSourcesLimited(root, toCompile.map((c) => c.file), limit, reuse);
+  const extractions = await extractSourcesLimited(
+    root, toCompile.map((c) => c.file), limit, reuse, contentSource,
+  );
 
   while (true) {
     const extracted = new Set(extractions.map((result) => result.sourceFile));
@@ -112,11 +117,45 @@ export async function runExtractionPhases(
     for (const file of lateAffected) {
       output.status("~", output.info(`${file} [shares concept with new source]`));
     }
-    const batch = await extractSourcesLimited(root, lateAffected, limit, reuse);
+    const batch = await extractSourcesLimited(root, lateAffected, limit, reuse, contentSource);
     extractions.push(...batch);
   }
 
   return extractions;
+}
+
+/**
+ * Obtain a document's text, from the table when the run is Stack-backed.
+ *
+ * Keyed by source identity here, not by filename, because that is what change
+ * detection now returns. A run that discovered rows and then read a directory would
+ * look for a file named after a URL -- and fail on every document.
+ *
+ * `sourcePath` is reported only when a file was read. A caller that receives none
+ * knows there is no path to re-read, which is what stops a later stage from
+ * guessing one.
+ *
+ * @param root - Project root, used only by the file path.
+ * @param sourceFile - Source identity, or filename when no Stack is configured.
+ * @param contentSource - Row reader, or undefined to read the file.
+ * @returns The text and, when it came from disk, its path.
+ */
+async function loadSourceText(
+  root: string,
+  sourceFile: string,
+  contentSource: SourceContentSource | undefined,
+): Promise<{ sourcePath?: { sourcePath: string }; sourceContent: string }> {
+  if (contentSource !== undefined) {
+    const document = await contentSource.read(sourceFile);
+    // A row that vanished between detection and extraction is a race worth naming;
+    // silently skipping it would retire the document without recording why.
+    if (document === undefined) {
+      throw new Error(`source document ${sourceFile} disappeared before extraction`);
+    }
+    return { sourceContent: document.content };
+  }
+  const sourcePath = path.join(root, SOURCES_DIR, sourceFile);
+  return { sourcePath: { sourcePath }, sourceContent: await readFile(sourcePath, "utf-8") };
 }
 
 /**
@@ -127,14 +166,14 @@ async function extractForSource(
   root: string,
   sourceFile: string,
   reuse: ExtractionReuse,
+  contentSource?: SourceContentSource,
 ): Promise<ExtractionResult> {
-  const sourcePath = path.join(root, SOURCES_DIR, sourceFile);
-  const sourceContent = await readFile(sourcePath, "utf-8");
+  const { sourcePath, sourceContent } = await loadSourceText(root, sourceFile, contentSource);
   const cached = reuse.eligible.has(sourceFile)
     ? reusableExtraction(reuse.state.sources[sourceFile], sourceContent) : undefined;
   if (cached) {
     output.status("~", output.dim(`Reusing extraction: ${sourceFile}`));
-    return { sourceFile, sourcePath, sourceContent, concepts: cached, reused: true };
+    return { sourceFile, ...sourcePath, sourceContent, concepts: cached, reused: true };
   }
   output.status("*", output.info(`Extracting: ${sourceFile}`));
   const lines = sourceContent.split("\n").length;
@@ -147,7 +186,7 @@ async function extractForSource(
     const names = concepts.map((c) => c.concept).join(", ");
     output.status("*", output.dim(`  Found ${concepts.length} concepts: ${names}`));
   }
-  return { sourceFile, sourcePath, sourceContent, concepts,
+  return { sourceFile, ...sourcePath, sourceContent, concepts,
     previousConcepts: reuse.state.sources[sourceFile]?.concepts ?? [] };
 }
 
