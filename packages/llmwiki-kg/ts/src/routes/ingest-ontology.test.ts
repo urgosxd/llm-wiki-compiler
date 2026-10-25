@@ -250,8 +250,10 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    // `EMPLOYS` is no longer declared, so the triplet that used it is dropped.
-    expect(await writtenEntityTypes(stackId)).toEqual([]);
+    // `EMPLOYS` is no longer declared, so the edge is dropped. The endpoints keep
+    // their rows: `COMPANY` and `PERSON` are still declared, so only the verb is
+    // what the narrowed ontology refuses.
+    expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
     expect(await writtenRelationTypes(stackId)).toEqual([]);
   });
 });

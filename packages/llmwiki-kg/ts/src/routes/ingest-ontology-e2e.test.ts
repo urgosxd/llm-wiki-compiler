@@ -191,11 +191,15 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     const ingested = await ingest(stackId, [ACME_ADA, ACME_GRACE, GLOBEX_INITECH]);
     expect(ingested.status).toBe(200);
 
-    // Globex/Initech were dropped with their triplet, so neither reaches AKS.
+    // Globex and Initech keep their nodes even though `ACQUIRED` was rejected:
+    // their types are declared, so only the edge is refused. Their absence used to
+    // be asserted here, which documented the cost rather than a requirement.
     expect(await queriedEntities()).toEqual([
       { name: "Acme", type: "COMPANY" },
       { name: "Ada Lovelace", type: "PERSON" },
+      { name: "Globex", type: "COMPANY" },
       { name: "Grace Hopper", type: "PERSON" },
+      { name: "Initech", type: "COMPANY" },
     ]);
   });
 
@@ -278,17 +282,22 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     expect(names).toEqual(["Globex", "Initech"].sort());
   });
 
-  it("counts only the admitted knowledge in the Stack totals", async () => {
+  it("counts the rescued nodes but not the rejected edge", async () => {
     // `entities_in_stack` is what a caller reads to decide whether a document
-    // contributed. It must count what survived enforcement, not what the model
-    // produced — otherwise a rejected document looks productive.
+    // contributed. It must count what actually became a row — which now includes
+    // the endpoints of a relationship-only rejection, because those DO become
+    // rows. The edge is the only thing the declaration refuses, so
+    // `relationships_in_stack` stays at 2 while the entity count grows from 3 to
+    // 5: Globex and Initech exist, and nothing joins them.
     const stackId = await createStack(DECLARATION);
 
     const response = await ingest(stackId, [ACME_ADA, ACME_GRACE, GLOBEX_INITECH]);
 
     expect(response.body).toMatchObject({
-      entities_extracted: 3,
-      entities_in_stack: 3,
+      entities_extracted: 5,
+      entities_in_stack: 5,
+      // Both relationship counters stay at 2: they count admitted edges, and the
+      // rejected one never became an edge. Only the entity counters move.
       relationships_extracted: 2,
       relationships_in_stack: 2,
     });
@@ -330,13 +339,19 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     expect(before).toHaveLength(2);
   });
 
-  it("writes no graph rows at all when every triplet is rejected", async () => {
+  it("writes nodes but no edges when every triplet fails on its relationship", async () => {
+    // The case that isolates the change. Every triplet here is rejected, so no
+    // edge exists — but both entity types are declared, so the nodes are real and
+    // are kept. Before this, the document contributed nothing at all.
     const stackId = await createStack(DECLARATION);
 
     const response = await ingest(stackId, [GLOBEX_INITECH]);
 
     expect(response.status).toBe(200);
-    expect(await queriedEntities()).toEqual([]);
-    expect(response.body).toMatchObject({ entities_extracted: 0, relationships_in_stack: 0 });
+    expect(await queriedEntities()).toEqual([
+      { name: "Globex", type: "COMPANY" },
+      { name: "Initech", type: "COMPANY" },
+    ]);
+    expect(response.body).toMatchObject({ entities_extracted: 2, relationships_in_stack: 0 });
   });
 });

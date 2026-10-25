@@ -759,6 +759,71 @@ people, and refusing that sentence loses the people too.
 Both are pinned, so neither the too-loose nor the too-tight version can return
 silently.
 
+## Follow-up 10: a rejected relationship keeps its entities
+
+The last piece of the cost problem, and the one with the largest effect on real
+documents.
+
+### What it was
+
+Nodes existed only as admitted triplet endpoints, so a rejected triplet took both
+its entities with it. Measured:
+
+```
+in:   [Acme EMPLOYS Ada]   [Globex PARTNERS_WITH Initech]
+out:  Acme, Ada             ← rows
+      Globex, Initech       ← NO rows at all
+```
+
+One unrecognised verb silently deleted two entities the document really named,
+even though both types were declared. With entity types that never appear in an
+edge — `DECISION`, `REQUIREMENT`, `DOCUMENT` — this was the difference between a
+useful graph and an empty one.
+
+### The rule
+
+`parseTripletsWithOntology` now returns `rescued`: the endpoints of a triplet whose
+rejection was **caused by the relationship**, not by an endpoint.
+
+| reason | endpoints kept |
+| --- | --- |
+| `UNKNOWN_RELATIONSHIP_TYPE` | yes |
+| `SUBJECT_TYPE_NOT_IN_DOMAIN` | yes |
+| `OBJECT_TYPE_NOT_IN_RANGE` | yes |
+| `UNKNOWN_ENTITY_TYPE` | **no** |
+
+The boundary is deliberate. An undeclared entity type means the model produced
+something the ontology does not have, so there is nothing to keep — and keeping it
+would make the allowlist optional, which is the one thing this feature must never
+allow.
+
+### What they are not
+
+They are not admitted triplets: the graph gains nodes and **no edge**, so nothing
+implies the two are related. They are also not a judgement that the pair belongs
+together — the pair is exactly what was refused. The recovery is only "this name
+was in the document and its type is declared".
+
+### Counters
+
+`entities_extracted` and `entities_in_stack` move (they count rows, and these now
+become rows). Both relationship counters stay put, because they count admitted
+edges and the refused one never became one.
+
+### Falsifiability, both directions
+
+- Removing the absorption of `batch.rescued` → 3 tests red, including the measured
+  `Globex`/`Initech` case.
+- Removing the `UNKNOWN_ENTITY_TYPE` guard (rescuing on EVERY rejection) → 2 tests
+  red, which is the allowlist bypass the boundary exists to prevent.
+
+### Tests that had to change, and why that is the point
+
+Five assertions encoded the old cost as if it were a requirement — literal comments
+like *"Globex/Initech were dropped with their triplet, so neither reaches AKS"*.
+They now assert the opposite. A test that documents a cost will happily defend it
+forever; only reading the comment shows it was never the intent.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,

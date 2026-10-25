@@ -169,6 +169,66 @@ describe("a relationship without a constraint keeps its old behaviour", () => {
   });
 });
 
+describe("a relationship-only rejection keeps the entities", () => {
+  it("returns both endpoints when only the relation is wrong", () => {
+    // Measured before this: `[Globex PARTNERS_WITH Initech]` left neither name as
+    // a row, even though the document named both and the ontology declares
+    // COMPANY. One unrecognised verb deleted two real entities.
+    const { rejected, rescued } = parseTripletsWithOntology(
+      payload("COMPANY", "PARTNERS_WITH", "COMPANY"),
+      CONSTRAINED,
+    );
+
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toBe("UNKNOWN_RELATIONSHIP_TYPE");
+    expect(rescued).toEqual([
+      { name: "Acme", type: "COMPANY" },
+      { name: "Ada", type: "COMPANY" },
+    ]);
+  });
+
+  it("returns both endpoints when the pair violates a domain or range", () => {
+    // Same reasoning: the verb is declared, the types are declared, only the
+    // combination is impossible. The nodes are real; the edge is not.
+    const personEmploys = parseTripletsWithOntology(
+      payload("PERSON", "EMPLOYS", "PERSON"),
+      CONSTRAINED,
+    );
+    expect(personEmploys.rejected[0]?.reason).toBe("SUBJECT_TYPE_NOT_IN_DOMAIN");
+    expect(personEmploys.rescued.map((entity) => entity.type)).toEqual(["PERSON", "PERSON"]);
+
+    const companyEmploysCompany = parseTripletsWithOntology(
+      payload("COMPANY", "EMPLOYS", "COMPANY"),
+      CONSTRAINED,
+    );
+    expect(companyEmploysCompany.rejected[0]?.reason).toBe("OBJECT_TYPE_NOT_IN_RANGE");
+    expect(companyEmploysCompany.rescued).toHaveLength(2);
+  });
+
+  it("does NOT rescue anything when an entity type is undeclared", () => {
+    // The boundary of the recovery. An undeclared entity type means the model
+    // produced something the ontology does not have, so there is nothing to keep —
+    // and keeping it would defeat the allowlist this feature exists to enforce.
+    const { rejected, rescued } = parseTripletsWithOntology(
+      payload("ALIEN_CONSTRUCT", "EMPLOYS", "PERSON"),
+      CONSTRAINED,
+    );
+
+    expect(rejected[0]?.reason).toBe("UNKNOWN_ENTITY_TYPE");
+    expect(rescued).toEqual([]);
+  });
+
+  it("rescues nothing when every triplet is admitted", () => {
+    const { rejected, rescued } = parseTripletsWithOntology(
+      payload("COMPANY", "EMPLOYS", "PERSON"),
+      CONSTRAINED,
+    );
+
+    expect(rejected).toEqual([]);
+    expect(rescued).toEqual([]);
+  });
+});
+
 describe("a constraint that could never fire is refused at load", () => {
   it("rejects a constraint on an undeclared relationship", () => {
     expect(() =>

@@ -243,7 +243,14 @@ describe.skipIf(skipReason !== false)("entities and relationships are formed", (
     }
   });
 
-  it("forms nothing but the declared side when part of the extraction is rejected", async () => {
+  it("keeps both nodes but drops the edge when a relationship is undeclared", async () => {
+    // This test used to assert the opposite — that Globex and Initech had no row
+    // at all — which documented the cost rather than a requirement: one
+    // unrecognised verb deleted two entities the document really named. The edge
+    // is what the ontology refused, so the edge is what is lost.
+    //
+    // `ACQUIRES` IS in the default vocabulary; it is not in this Stack's
+    // declaration, which is the rejection being exercised.
     const { stackId } = await ingestOnce("partial", [
       TRIPLET,
       {
@@ -253,13 +260,13 @@ describe.skipIf(skipReason !== false)("entities and relationships are formed", (
       },
     ]);
 
-    // Globex and Initech were only ever endpoints of a rejected triplet, so they
-    // have no row at all — not a row with an empty description, and not a
-    // dangling edge.
-    expect((await entityRows(stackId)).map((row) => row.name)).toEqual([
+    expect((await entityRows(stackId)).map((row) => row.name).sort()).toEqual([
       "Acme",
       "Ada Lovelace",
-    ]);
+      "Globex",
+      "Initech",
+    ].sort());
+    // One edge: the declared one. The rejected pair contributes nodes only.
     expect(await relationshipRows(stackId)).toHaveLength(1);
   });
 
@@ -295,6 +302,124 @@ describe.skipIf(skipReason !== false)("entities and relationships are formed", (
     `);
 
     expect(mismatched[0]?.n).toBe(0);
+  });
+});
+
+describe("endpoints recovered from a rejected relationship", () => {
+  let app: Express;
+  let sequence = 0;
+
+  function domain(label: string): string {
+    sequence += 1;
+    return `w2ex-ingest-rescue-${label}-${Date.now().toString(36)}-${String(sequence)}`;
+  }
+
+  beforeEach(async () => {
+    await deleteFixtureRows();
+    app = buildApp();
+    installFetchStub();
+  });
+
+  afterEach(async () => {
+    uninstallFetchStub();
+    await deleteFixtureRows();
+  });
+
+  it("keeps both entities when only the relationship is undeclared", async () => {
+    // The cost this fixes. Before: `Globex PARTNERS_WITH Initech` left neither
+    // name as a row. Now the edge is lost and the nodes remain.
+    const stackId = await createStack(app, domain("relation"));
+    const documentId = await createDocument(stackId, "Globex partners with Initech.");
+    setToolResponse([
+      {
+        triplets: [
+          {
+            subject: { type: "COMPANY", name: "Globex" },
+            relation: { type: "PARTNERS_WITH" },
+            object: { type: "COMPANY", name: "Initech" },
+          },
+        ],
+      },
+    ]);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    const rows = await entityRows(stackId);
+
+    expect(rows.map((row) => row.name).sort()).toEqual(["Globex", "Initech"]);
+  });
+
+  it("forms no relationship row for a rescued pair", async () => {
+    // A recovered node carries no evidence that the two are related, so the graph
+    // must gain nodes and no edge.
+    const stackId = await createStack(app, domain("no-edge"));
+    const documentId = await createDocument(stackId, "Globex partners with Initech.");
+    setToolResponse([
+      {
+        triplets: [
+          {
+            subject: { type: "COMPANY", name: "Globex" },
+            relation: { type: "PARTNERS_WITH" },
+            object: { type: "COMPANY", name: "Initech" },
+          },
+        ],
+      },
+    ]);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    const edges = await database().execute<{ n: number }>(sql`
+      select count(*)::int as n from ontology_relationships where stack_id = ${stackId}
+    `);
+
+    expect(edges[0]?.n).toBe(0);
+  });
+
+  it("does not rescue the endpoints of a triplet with an undeclared entity type", async () => {
+    // The allowlist still wins: an undeclared entity type means there is nothing
+    // to keep, and keeping it would make the ontology optional.
+    const stackId = await createStack(app, domain("alien"));
+    const documentId = await createDocument(stackId, BODY);
+    setToolResponse([
+      {
+        triplets: [
+          {
+            subject: { type: "ALIEN_CONSTRUCT", name: "Vex" },
+            relation: { type: "EMPLOYS" },
+            object: { type: "PERSON", name: "Nobody" },
+          },
+        ],
+      },
+    ]);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    expect(await entityRows(stackId)).toEqual([]);
+  });
+
+  it("keeps an admitted triplet as an edge while rescuing a sibling's endpoints", async () => {
+    // Both in one chunk: the declared sentence keeps its edge, the undeclared one
+    // keeps its nodes.
+    const stackId = await createStack(app, domain("mixed"));
+    const documentId = await createDocument(stackId, BODY);
+    setToolResponse([
+      {
+        triplets: [
+          TRIPLET,
+          {
+            subject: { type: "COMPANY", name: "Globex" },
+            relation: { type: "PARTNERS_WITH" },
+            object: { type: "COMPANY", name: "Initech" },
+          },
+        ],
+      },
+    ]);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    const names = (await entityRows(stackId)).map((row) => row.name).sort();
+    const edges = await database().execute<{ n: number }>(sql`
+      select count(*)::int as n from ontology_relationships where stack_id = ${stackId}
+    `);
+
+    expect(names).toEqual(["Acme", "Ada Lovelace", "Globex", "Initech"].sort());
+    expect(edges[0]?.n).toBe(1);
   });
 });
 

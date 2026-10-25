@@ -108,6 +108,14 @@ export interface RejectedTriplet {
 export interface OntologyParseResult {
   readonly triplets: readonly Triplet[];
   readonly rejected: readonly RejectedTriplet[];
+  /**
+   * Endpoints recovered from triplets the RELATIONSHIP cost, not the entities.
+   *
+   * Empty when no rejection was relationship-only. See
+   * {@link rescueEndpoints} for why these exist and why they are not the same
+   * thing as an admitted triplet.
+   */
+  readonly rescued: readonly StandaloneEntity[];
 }
 
 /** Raised for every way an ontology declaration can be wrong. */
@@ -532,15 +540,66 @@ export function parseTripletsWithOntology(
 ): OntologyParseResult {
   const triplets: Triplet[] = [];
   const rejected: RejectedTriplet[] = [];
+  const rescued: StandaloneEntity[] = [];
   for (const triplet of parseTriplets(argumentsJson)) {
     const rejection = rejectTriplet(triplet, ontology);
     if (rejection === undefined) {
       triplets.push(triplet);
     } else {
       rejected.push(rejection);
+      rescued.push(...rescueEndpoints(triplet, rejection));
     }
   }
-  return { triplets, rejected };
+  return { triplets, rejected, rescued };
+}
+
+/**
+ * Whether a rejection was caused by the relationship rather than an endpoint.
+ *
+ * The distinction decides whether the triplet's nodes survive. A rejection that
+ * names an entity type means the model produced something the ontology does not
+ * have at all, so there is nothing to keep. A rejection that names only the
+ * relation means both endpoints were declared and real — only the verb misfired.
+ */
+function rejectionSparksEndpoints(reason: RejectionReason): boolean {
+  return reason !== "UNKNOWN_ENTITY_TYPE";
+}
+
+/**
+ * Keeps the endpoints of a triplet whose only fault was the relationship.
+ *
+ * ## Why this exists
+ *
+ * Nodes used to exist only as admitted triplet endpoints, so a rejected triplet
+ * took both its entities with it. Measured: `[Acme EMPLOYS Ada]` plus
+ * `[Globex PARTNERS_WITH Initech]` left `Globex` and `Initech` as no rows at all,
+ * even though the document named both and the ontology declares `COMPANY`. A
+ * single unrecognised verb silently deleted two real entities.
+ *
+ * Recovering them makes the cost of a bad relation what it should be: the EDGE is
+ * lost, and the nodes remain. That matters most for exactly the case that
+ * produces these rejections — a model reaching for a verb phrase nobody declared.
+ *
+ * ## What they are not
+ *
+ * They are not admitted triplets, so they carry no evidence of a relationship
+ * between them: the graph gains two nodes and no edge. They are also not a
+ * judgement that the pair belongs together — it does not. The recovery is purely
+ * "this name was in the document and its type is declared".
+ *
+ * @param triplet - The triplet that was rejected.
+ * @param rejection - Why it was rejected.
+ * @returns Both endpoints as standalone entities, or nothing.
+ */
+function rescueEndpoints(
+  triplet: Triplet,
+  rejection: RejectedTriplet,
+): readonly StandaloneEntity[] {
+  if (!rejectionSparksEndpoints(rejection.reason)) return [];
+  return [
+    { name: triplet.subjectName, type: triplet.subjectType },
+    { name: triplet.objectName, type: triplet.objectType },
+  ];
 }
 
 /**

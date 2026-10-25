@@ -47,6 +47,14 @@ interface ChunkOutput {
   readonly triplets: readonly Triplet[];
   readonly rejected: readonly RejectedTriplet[];
   readonly standalone: readonly StandaloneEntity[];
+  /**
+   * Endpoints of triplets whose only fault was the relationship.
+   *
+   * Kept apart from `standalone` because the two arrive from different places —
+   * the model's `entities` array versus a rejected triplet — and because the
+   * audit report counts them separately.
+   */
+  readonly rescued: readonly StandaloneEntity[];
 }
 
 /**
@@ -66,13 +74,13 @@ async function chunkTriplets(
     const argumentsJson = await callTool(prompt, buildToolSchema(ontology));
     const standalone = standaloneFor(argumentsJson, ontology);
     if (ontology === undefined) {
-      return { triplets: parseTriplets(argumentsJson), rejected: [], standalone };
+      return { triplets: parseTriplets(argumentsJson), rejected: [], standalone, rescued: [] };
     }
     return { ...parseTripletsWithOntology(argumentsJson, ontology), standalone };
   } catch {
     // A provider failure yields nothing for this chunk and extraction continues,
     // exactly as the oracle's `except (ValueError, TypeError, AttributeError)`.
-    return { triplets: [], rejected: [], standalone: [] };
+    return { triplets: [], rejected: [], standalone: [], rescued: [] };
   }
 }
 
@@ -206,6 +214,12 @@ export async function extractGraphFromChunks(
     // which it never does here — so the triplet's type wins, and it is the one a
     // relationship already constrains.
     for (const entity of batch.standalone) {
+      absorbEndpoint(entityMap, entity.name, entity.type, chunk.chunkIndex);
+    }
+    // Endpoints of relationship-only rejections. Both types were already checked
+    // by the ontology, so nothing here needs filtering again; what they must NOT
+    // do is produce a relationship, which is why they join the entity map only.
+    for (const entity of batch.rescued) {
       absorbEndpoint(entityMap, entity.name, entity.type, chunk.chunkIndex);
     }
   }
