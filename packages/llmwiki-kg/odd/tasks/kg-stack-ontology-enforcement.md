@@ -957,6 +957,61 @@ policies have `WITH CHECK`. Neither is true today, so the explicit `where stack_
 ...` filters remain the actual barrier. Recorded here rather than left as an
 assumption.
 
+## Follow-up 14: the write half of the RLS policies, verified on a scratch database
+
+`db/migration_rls_write_policies.sql` adds the `WITH CHECK` clauses
+`migration_rls_tenancy.sql` was missing. Written and verified here; applying it to
+the live database is an operator action.
+
+### The bootstrap problem, and why `stacks` is not like the others
+
+Seven tables take `stack_id = app.stack_id` on both sides. `stacks` cannot: the row
+being written IS the tenant, and `app.stack_id` does not exist yet when
+`POST /stacks` inserts. A uniform predicate there would make Stack creation
+impossible for every caller, forever.
+
+So `stacks` write-checks against the domain instead:
+
+```sql
+with check (domain = nullif(current_setting('app.stack_domain', true), '')::uuid)
+```
+
+which means `routes/stacks.ts` must bind the domain it is about to create BEFORE
+inserting. It does not today. That is a code change that belongs with the
+migration: applying the SQL alone makes `POST /stacks` fail closed, which is the
+correct failure but would take the endpoint down.
+
+### Verified on a scratch database, not assumed
+
+Created `rls_probe` from `db/schema.sql`, applied both migrations, connected as
+`llmwiki_app` (nosuperuser, nobypassrls, login enabled temporarily):
+
+| probe | result |
+| --- | --- |
+| unbound `insert into stacks` | **ERROR: new row violates row-level security policy** |
+| bound `app.stack_domain`, insert that domain | **succeeded**, row created |
+| bound to alpha, insert `stack_documents` into **beta** | **ERROR: violates row-level security policy** |
+| bound to alpha, insert `stack_documents` into alpha | **succeeded** |
+| bound to alpha, `select count(*) from stack_documents` | **1** — beta's rows invisible |
+
+The cross-tenant write is the case that did not exist before this file: `USING`
+filtered reads, and nothing filtered writes.
+
+Scratch database dropped, role returned to `nologin` with no password, temp files
+removed.
+
+### Order of operations
+
+1. Apply the migration while `DATABASE_URL` still names `aks` — it bypasses RLS, so
+   nothing changes yet.
+2. Land the `routes/stacks.ts` domain binding.
+3. Run the suite with `AKS_TEST_DATABASE_URL` on `llmwiki_app`.
+4. Only then point `DATABASE_URL` at `llmwiki_app`.
+
+Steps 1 and 2 are independent. Step 3 is the gate for step 4: the earlier
+measurement was 195 of 743 failing, and it has not been re-run against these
+policies.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,
