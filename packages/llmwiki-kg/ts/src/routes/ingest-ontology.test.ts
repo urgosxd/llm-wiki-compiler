@@ -293,14 +293,78 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
 
     // The response cannot carry this — IngestionResult is nine fixed oracle keys —
     // so the audit column is where it lands, readable via GET /documents/:id.
+    // `samples` names the triplets, in the order the model emitted them, because
+    // `rejected: 2` cannot tell an operator whether they forgot a type or the
+    // model invented a relationship. `BAD_RELATION` comes first: it is the
+    // fixture order, and the sample list preserves it rather than sorting.
     expect(await documentAudit(documentId)).toEqual({
       ontology: {
         enforced: true,
         declared: true,
         rejected: 2,
         reason_codes: ["UNKNOWN_ENTITY_TYPE", "UNKNOWN_RELATIONSHIP_TYPE"],
+        samples: [
+          {
+            subject: "Globex",
+            relation: "ACQUIRED",
+            object: "Nobody",
+            reason: "UNKNOWN_RELATIONSHIP_TYPE",
+            offending_type: "ACQUIRED",
+          },
+          {
+            subject: "Vex",
+            relation: "EMPLOYS",
+            object: "Nobody",
+            reason: "UNKNOWN_ENTITY_TYPE",
+            offending_type: "ALIEN_CONSTRUCT",
+          },
+        ],
       },
     });
+  });
+
+  it("reports which triplets a rejected relation cost, entities included", async () => {
+    // The measured cost of dropping a triplet: its endpoints never become rows
+    // either, because an entity exists only as a triplet endpoint. Naming them
+    // here is what makes that loss diagnosable instead of merely countable.
+    setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION] }]);
+    const stackId = await createStackWith(app, domain("cost"), DECLARATION);
+    const documentId = await createDocument(stackId, BODY);
+
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    const audit = await documentAudit(documentId);
+    const samples = (audit["ontology"] as { samples: Array<{ subject: string; object: string }> })
+      .samples;
+    expect(samples.map((sample) => [sample.subject, sample.object])).toEqual([
+      ["Globex", "Nobody"],
+    ]);
+    // And they really are absent from the graph, not merely reported.
+    expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
+  });
+
+  it("caps the samples while still reporting the true rejection count", async () => {
+    // `audit` is a jsonb column read on every GET /documents/:id, and
+    // MAX_TRIPLETS_PER_CHUNK is 20, so a many-chunk document can reject hundreds.
+    // Eight rejected triplets must yield five samples and `rejected: 8`, so a
+    // truncated report reads as truncated rather than as complete.
+    const many = Array.from({ length: 8 }, (_, index) => ({
+      subject: { type: "ALIEN_CONSTRUCT", name: `Vex ${String(index)}` },
+      relation: { type: "EMPLOYS" },
+      object: { type: "PERSON", name: "Nobody" },
+    }));
+    setToolResponse([{ triplets: many }]);
+    const stackId = await createStackWith(app, domain("cap"), DECLARATION);
+    const documentId = await createDocument(stackId, BODY);
+
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    const ontology = (await documentAudit(documentId))["ontology"] as {
+      rejected: number;
+      samples: unknown[];
+    };
+    expect(ontology.rejected).toBe(8);
+    expect(ontology.samples).toHaveLength(5);
   });
 
   it("records that the default was in force when the Stack declares none", async () => {
@@ -320,6 +384,15 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
         declared: false,
         rejected: 1,
         reason_codes: ["UNKNOWN_RELATIONSHIP_TYPE"],
+        samples: [
+          {
+            subject: "Globex",
+            relation: "ACQUIRED",
+            object: "Nobody",
+            reason: "UNKNOWN_RELATIONSHIP_TYPE",
+            offending_type: "ACQUIRED",
+          },
+        ],
       },
     });
   });
@@ -332,7 +405,13 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
     expect(await documentAudit(documentId)).toEqual({
-      ontology: { enforced: true, declared: true, rejected: 0, reason_codes: [] },
+      ontology: {
+        enforced: true,
+        declared: true,
+        rejected: 0,
+        reason_codes: [],
+        samples: [],
+      },
     });
   });
 

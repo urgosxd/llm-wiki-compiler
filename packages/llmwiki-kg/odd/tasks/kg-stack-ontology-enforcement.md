@@ -79,6 +79,8 @@ it meant "nobody is checking", and `type text not null` with no CHECK accepted
 - [x] 9. `default_ontology.ts` with the domain vocabulary, exported through core-index
 - [x] 10. Wire the default into ingest, backfeed approval and the KG dimension
 - [x] 11. Add `declared` to the audit and rewrite the tests pinning "null = free field"
+- [x] 12. RED: tests that the audit names the dropped triplets, bounded and ordered
+- [x] 13. `samples` in `OntologyAudit`: name, relation, object, reason, offending type
 
 ## Scope boundary
 
@@ -422,6 +424,62 @@ default declares `ACQUIRES` — present tense, verb phrase, per `SCHEMA.json:582
 not the fixture's past-tense `ACQUIRED`. The test now uses its own
 `GLOBEX_INITECH_ACQUIRES` fixture and says so. A test that had been written to
 pass would have hidden this.
+
+## Follow-up 3: what a rejection cost is now named, not just counted
+
+`rejected: 2` could not answer the question an operator actually asks: *which*
+triplets went missing, and therefore whether they forgot a type or the model
+invented a relationship. The audit blob now carries `samples`.
+
+### The measured cost this makes visible
+
+A rejected triplet takes its endpoints with it. Entities exist only as triplet
+endpoints (`absorbEndpoint`), so dropping a relation drops both nodes:
+
+```
+in:   [Acme EMPLOYS Ada]   [Globex BOGUS_REL Bob]
+out:  admitted 1, rejected 1, survivors [["Acme","Ada"]]
+```
+
+`Globex` and `Bob` never become rows. A document with three companies and one
+bad relation can leave two companies. That is now diagnosable from
+`GET /documents/:id` instead of only countable.
+
+### Shape
+
+```jsonc
+"ontology": {
+  "enforced": true, "declared": true, "rejected": 2,
+  "reason_codes": ["UNKNOWN_ENTITY_TYPE", "UNKNOWN_RELATIONSHIP_TYPE"],
+  "samples": [
+    { "subject": "Globex", "relation": "ACQUIRED", "object": "Nobody",
+      "reason": "UNKNOWN_RELATIONSHIP_TYPE", "offending_type": "ACQUIRED" }
+  ]
+}
+```
+
+### Why it is bounded
+
+`audit` is a `jsonb` column read on every `GET /documents/:id`, and
+`MAX_TRIPLETS_PER_CHUNK` is 20, so a many-chunk document can reject hundreds.
+Samples are capped at 5 and each name at 120 characters (elided with `…`).
+`rejected` stays the true total, so a truncated report reads as truncated rather
+than as complete.
+
+Order is the model's emission order, not sorted: the first rejections are the
+representative ones, and sorting by name would bury them.
+
+### Falsifiability
+
+- Cap removed (`rejected.map` instead of `rejected.slice(0, 5)`) -> 1 test red.
+- Samples emptied (`samples: []`) -> 4 tests red.
+
+### What this does NOT fix
+
+It reports the loss; it does not prevent it. Keeping the endpoints of a dropped
+triplet would create standalone entities, which is the change that has to come
+before entity types like `DECISION` or `REQUIREMENT` — things that usually exist
+without a relationship — can survive extraction at all.
 
 ## Open follow-ups (not in this change)
 
