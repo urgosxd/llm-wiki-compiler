@@ -60,6 +60,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { ingestDimensions } from "../../src/dimensions/coordinator.js";
 import { loadRecords } from "../../src/dimensions/outbox.js";
+import { reconcileOutbox } from "../../src/dimensions/reconcile.js";
 import type { Dimension } from "../../src/dimensions/types.js";
 
 /** One document, as an ingest would hand it to the coordinator. */
@@ -168,5 +169,114 @@ describe("cross-dimension failure with a database-backed wiki", () => {
     // such directory is touched, so an assertion about it would pass vacuously
     // and prove nothing -- exactly the trap this file now refuses to fall into.
     expect(existsSync(path.join(outcome.root, "sources"))).toBe(false);
+  });
+});
+
+/**
+ * A dimension that records what the coordinator asked of it.
+ *
+ * Used by the three cases below because each one is about WHICH lifecycle steps
+ * the coordinator invokes, not about what a dimension does with them.
+ */
+function recordingDimension(
+  name: "wiki" | "kg",
+  events: string[],
+  behaviour: { failCommit?: boolean; failPrepare?: boolean } = {},
+): Dimension {
+  return {
+    name,
+    prepare: async () => {
+      events.push(`${name}:prepare`);
+      if (behaviour.failPrepare === true) throw new Error(`${name} prepare exploded`);
+      return { unchanged: false, handle: {} };
+    },
+    commit: async () => {
+      events.push(`${name}:commit`);
+      if (behaviour.failCommit === true) throw new Error(`${name} commit exploded`);
+      return { idempotencyKey: `${name}:key`, summary: `${name}:created` };
+    },
+    discard: async () => {
+      events.push(`${name}:discard`);
+    },
+  };
+}
+
+describe("the lifecycle the coordinator actually invokes", () => {
+  it("asks EVERY prepared dimension to discard after an earlier failure", async () => {
+    // MEASURED, AND WORTH STATING PRECISELY: `rollbackCommitted` filters on
+    // `run.prepared !== null`, NOT on `run.committed !== null`. So the wiki --
+    // which prepared but never committed -- still receives `discard`. The name
+    // says "Committed" and the guard says "prepared"; they disagree.
+    //
+    // This is safe today only because a prepared-but-uncommitted write has
+    // nothing to undo (both dimension implementations are no-ops in discard). It
+    // is pinned here so a future dimension whose discard is NOT a no-op cannot
+    // silently start reverting work that was never done.
+    const root = await projectRoot();
+    const events: string[] = [];
+
+    await expect(
+      ingestDimensions(root, INPUT, [
+        recordingDimension("wiki", events),
+        recordingDimension("kg", events, { failPrepare: true }),
+      ]),
+    ).rejects.toThrow("kg prepare exploded");
+
+    expect(events).toEqual(["wiki:prepare", "kg:prepare", "wiki:discard"]);
+    // And nothing is left pending, because the quiet discard reads as a clean
+    // rollback -- correct here, since nothing was ever committed.
+    const { records } = await loadRecords(root);
+    expect(records).toHaveLength(0);
+  });
+
+  it("does NOT ask a dimension that never prepared to discard", async () => {
+    // The other half of the guard: a dimension whose `prepare` threw before
+    // assigning has `prepared === null`, so the loop skips it entirely.
+    const root = await projectRoot();
+    const events: string[] = [];
+
+    await expect(
+      ingestDimensions(root, INPUT, [recordingDimension("wiki", events, { failPrepare: true })]),
+    ).rejects.toThrow("wiki prepare exploded");
+
+    expect(events).toEqual(["wiki:prepare"]);
+  });
+
+  it("replays only the dimensions that never landed, and does so once", async () => {
+    // Idempotence of reconciliation, stated as the code actually behaves. The
+    // wiki committed before kg failed, so its key is already in the record and
+    // the replay SKIPS it -- "skipping is strictly cheaper" per reconcile.ts.
+    // Only kg, which has no key, is retried. A second pass finds no record at
+    // all, so neither dimension can be committed a third time.
+    const root = await projectRoot();
+    const events: string[] = [];
+    const healthyWiki = recordingDimension("wiki", events);
+
+    await expect(
+      ingestDimensions(root, INPUT, [healthyWiki, recordingDimension("kg", events, { failCommit: true })]),
+    ).rejects.toThrow("kg commit exploded");
+
+    // The failure run, measured: BOTH prepares run first, then commits in order,
+    // then discards. `ingestDimensions` has two separate loops, not one.
+    expect(events).toEqual([
+      "wiki:prepare",
+      "kg:prepare",
+      "wiki:commit",
+      "kg:commit",
+      "kg:discard",
+      "wiki:discard",
+    ]);
+
+    const first = await reconcileOutbox(root, [recordingDimension("wiki", events), recordingDimension("kg", events)]);
+    expect(first.finished).toHaveLength(1);
+    // wiki:commit is NOT repeated -- its key was already recorded.
+    expect(events.filter((entry) => entry === "wiki:commit")).toHaveLength(1);
+    // kg IS retried, exactly once.
+    expect(events.filter((entry) => entry === "kg:commit")).toHaveLength(2);
+
+    const second = await reconcileOutbox(root, [recordingDimension("wiki", events), recordingDimension("kg", events)]);
+    expect(second.finished).toHaveLength(0);
+    // Nothing runs a third time: the record is gone.
+    expect(events.filter((entry) => entry === "kg:commit")).toHaveLength(2);
   });
 });
