@@ -11,6 +11,11 @@ import { readdir } from "fs/promises";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CONCEPTS_DIR, INDEX_FILE, QUERIES_DIR, SOURCES_DIR, STATE_FILE } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { safeReadFile, parseFrontmatter } from "@atomicstrata/llmwiki-core/compiler-cli";
+import {
+  withPageScan,
+  withPageSource,
+} from "@atomicstrata/llmwiki-core/compiler-cli";
+import type { PageDirectory } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { readStateClassified } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { loadPreviousReport, loadHistory } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { listSelectedSourceFiles } from "@atomicstrata/llmwiki-core/compiler-cli";
@@ -46,6 +51,10 @@ export function registerWikiResources(server: McpServer, root: string): void {
   registerIndexResource(server, root);
   registerSourcesResource(server, root);
   registerStateResource(server, root);
+  // Page READS resolve their backend lazily, per request. Registration happens once
+  // at server start, but a Stack is an environment fact that can differ between
+  // invocations -- and opening a pool at registration would hold one for the life of
+  // the server even when no page is ever read.
   registerConceptResource(server, root);
   registerQueryResource(server, root);
   registerEvalReportResource(server, root);
@@ -117,7 +126,7 @@ function registerConceptResource(server: McpServer, root: string): void {
   server.registerResource(
     "wiki-concept",
     new ResourceTemplate("llmwiki://concept/{slug}", {
-      list: async () => listPagesUnder(root, CONCEPTS_DIR, "concept"),
+      list: async () => listPagesUnder(root, CONCEPTS_DIR, "concept", "concepts"),
     }),
     {
       title: "Wiki Concept",
@@ -125,7 +134,7 @@ function registerConceptResource(server: McpServer, root: string): void {
       mimeType: "application/json",
     },
     async (uri, { slug }) => ({
-      contents: [jsonContent(uri, await loadPageWithMeta(root, CONCEPTS_DIR, String(slug)))],
+      contents: [jsonContent(uri, await loadPageWithMeta(root, CONCEPTS_DIR, String(slug), "concepts"))],
     }),
   );
 }
@@ -134,7 +143,7 @@ function registerQueryResource(server: McpServer, root: string): void {
   server.registerResource(
     "wiki-query",
     new ResourceTemplate("llmwiki://query/{slug}", {
-      list: async () => listPagesUnder(root, QUERIES_DIR, "query"),
+      list: async () => listPagesUnder(root, QUERIES_DIR, "query", "queries"),
     }),
     {
       title: "Wiki Query",
@@ -142,7 +151,7 @@ function registerQueryResource(server: McpServer, root: string): void {
       mimeType: "application/json",
     },
     async (uri, { slug }) => ({
-      contents: [jsonContent(uri, await loadPageWithMeta(root, QUERIES_DIR, String(slug)))],
+      contents: [jsonContent(uri, await loadPageWithMeta(root, QUERIES_DIR, String(slug), "queries"))],
     }),
   );
 }
@@ -166,7 +175,24 @@ async function loadPageWithMeta(
   root: string,
   dir: string,
   slug: string,
+  directory?: PageDirectory,
 ): Promise<{ slug: string; meta: Record<string, unknown>; body: string }> {
+  if (directory !== undefined) {
+    // The LISTING source, not the scan source: a body is a column here, and the
+    // scan shape carries only frontmatter. Reading it from `meta` would have been
+    // reading a key that does not exist.
+    const fromRows = await withPageSource(process.env, (source) =>
+      source === undefined
+        ? Promise.resolve(null)
+        : source.get(directory, slug));
+    if (fromRows !== null) {
+      return {
+        slug,
+        meta: { title: fromRows.title, summary: fromRows.summary, tags: fromRows.tags },
+        body: (fromRows.body ?? "").trim(),
+      };
+    }
+  }
   const filePath = path.join(root, dir, `${slug}.md`);
   const content = await safeReadFile(filePath);
   if (!content) {
@@ -214,7 +240,20 @@ async function listPagesUnder(
   root: string,
   dir: string,
   scheme: "concept" | "query",
+  directory?: PageDirectory,
 ): Promise<{ resources: Array<{ uri: string; name: string }> }> {
+  if (directory !== undefined) {
+    const fromRows = await withPageScan(process.env, (scan) =>
+      scan === undefined ? Promise.resolve(undefined) : scan.scan(directory));
+    if (fromRows !== undefined) {
+      return {
+        resources: fromRows.map((page) => ({
+          uri: `llmwiki://${scheme}/${page.slug}`,
+          name: typeof page.meta.title === "string" ? page.meta.title : page.slug,
+        })),
+      };
+    }
+  }
   const pagesPath = path.join(root, dir);
   let files: string[];
   try {
