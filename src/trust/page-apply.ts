@@ -269,12 +269,13 @@ export async function applyPageMutationLocked(
   // The floor still runs for a row write: it validates the BYTES (size, frontmatter
   // shape), which is a property of the content rather than of where it lands.
   await assertFloorAtApply(root, mutation, abs);
+  // DUAL WRITE, deliberately. The sink stores the row; the file write below still
+  // runs. Reads have not moved yet -- `listPages` and every consumer of it still
+  // open `wiki/concepts/*.md` -- so writing only the row would publish pages that
+  // nothing can find, which is worse than not migrating at all. The file is removed
+  // in a later step, once reads come from rows.
   if (pageSink !== undefined) {
-    // No conflict check and no pre-state: a row is upserted by identity, so a
-    // "create" colliding with an existing row is an update, and there are no bytes
-    // on disk to snapshot for a rollback that will not happen.
     await pageSink(pageWriteRequest(mutation));
-    return;
   }
   if (mutation.operation === "create" && (await targetExists(abs))) {
     throw new CreateCollisionError(abs);
