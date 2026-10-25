@@ -25,9 +25,11 @@
  * making every consumer know both vocabularies.
  */
 
-import { listStoredPages } from "./page-store.js";
+import { listStoredPages, listStoredPagesUnfiltered } from "./page-store.js";
 import type { Page, PageDirectory } from "../../pages/list.js";
 import type { ResolverPageSource } from "../../compiler/resolver.js";
+import type { RawWikiPage } from "../../wiki/collect.js";
+import path from "node:path";
 
 /** A page as `scanWikiPages` reports it: identity plus parsed frontmatter. */
 export interface ScannedPageShape {
@@ -78,7 +80,11 @@ export function createPageScanSource(
 ): PageScanSource {
   return {
     scan: async (directory) => {
-      const pages = await listStoredPages(db as never, stackId, Number.MAX_SAFE_INTEGER);
+      // UNFILTERED, and this is load-bearing: `scanWikiPages` does not filter either,
+      // and its consumers classify orphaned pages rather than hiding them. Filtering
+      // here would report `orphaned: false` for every page while also dropping the
+      // real orphans -- a stale/orphaned count that is silently always zero.
+      const pages = await listStoredPagesUnfiltered(db as never, stackId);
       return pages
         .filter((page) => page.pageDirectory === directory)
         .map(toScannedShape);
@@ -149,7 +155,9 @@ export function createResolverPageSource(
 ): ResolverPageSource {
   return {
     listConcepts: async () => {
-      const pages = await listStoredPages(db as never, stackId, Number.MAX_SAFE_INTEGER);
+      // Unfiltered then filtered here, so the eligibility rule lives in ONE place
+      // rather than being split between this query and `indexFromSource`.
+      const pages = await listStoredPagesUnfiltered(db as never, stackId);
       return pages
         .filter((page) => page.pageDirectory === "concepts" && !page.orphaned)
         .map((page) => ({
@@ -179,4 +187,70 @@ function renderPageMarkdown(page: Page): string {
   if (page.orphaned) lines.push("orphaned: true");
   if (page.archived) lines.push("archived: true");
   return `---\n${lines.join("\n")}\n---\n\n${page.body ?? ""}`;
+}
+
+/**
+ * Serve the `RawWikiPage` shape from rows, for the export and viewer collectors.
+ *
+ * ## Why the parse flags are constants here
+ *
+ * `RawPageParseStatus` describes how well a FILE parsed. A row could not have been
+ * written without valid metadata, so by construction it has a frontmatter block, has
+ * no malformed YAML, and carries a title unless the column is empty. Reporting `true`
+ * for `hasFrontmatterBlock` is therefore not a shortcut -- it is the only value a row
+ * can have.
+ *
+ * @param db - Database handle.
+ * @param stackId - Stack whose pages to read.
+ * @param root - Project root, used only to synthesize a diagnostic path per page.
+ * @returns Both wiki directories as one list, concepts first, matching the scan order.
+ */
+export function createRawPageSource(
+  db: PageStoreHandle,
+  stackId: string,
+  root: string,
+): RawPageSource {
+  return {
+    collect: async () => {
+      // UNFILTERED: the collectors classify orphaned pages themselves, and the
+      // listing query would have dropped them before they could be counted.
+      const pages = await listStoredPagesUnfiltered(db as never, stackId);
+      const toRaw = (page: Page): RawWikiPage => ({
+        slug: page.slug,
+        pageDirectory: page.pageDirectory,
+        // Synthesized for diagnostics only: a row has no file, but every consumer
+        // treats this as a label rather than opening it.
+        filePath: path.join(root, "wiki", page.pageDirectory, `${page.slug}.md`),
+        title: page.title === "" ? undefined : page.title,
+        frontmatter: {
+          title: page.title,
+          summary: page.summary,
+          tags: page.tags,
+          ...(page.orphaned ? { orphaned: true } : {}),
+          ...(page.archived ? { archived: true } : {}),
+        },
+        body: page.body ?? "",
+        parseStatus: {
+          hasFrontmatterBlock: true,
+          malformedFrontmatter: false,
+          hasTitle: page.title !== "",
+          orphaned: page.orphaned,
+        },
+      });
+      const inDir = (dir: PageDirectory) =>
+        pages.filter((page) => page.pageDirectory === dir).map(toRaw);
+      // Concepts before queries, matching `collectRawWikiPages`.
+      return [...inDir("concepts"), ...inDir("queries")];
+    },
+  };
+}
+
+/** Where the raw page list comes from. */
+export interface RawPageSource {
+  /**
+   * Every page in both wiki directories, concepts first.
+   *
+   * @returns Untitled and orphaned pages INCLUDED -- the collectors filter.
+   */
+  collect(): Promise<RawWikiPage[]>;
 }

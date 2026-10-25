@@ -20,6 +20,7 @@
  */
 
 import { collectRawWikiPages, extractWikilinkSlugs, extractWikilinkTargets } from "../wiki/collect.js";
+import type { RawPageSource } from "../dimensions/wiki/page-scan-source.js";
 import type { RawWikiPage } from "../wiki/collect.js";
 import { extractClaimCitations, slugify } from "../utils/markdown.js";
 import type { DefaultViewerPage, PageId, ViewerPage, ViewerPageId, ViewerWarning } from "./types.js";
@@ -47,8 +48,11 @@ type PageIndexEntry = {
  * `ViewerWarning` objects derived from the underlying `parseStatus` flags.
  * Returns pages in collector order (concepts then queries).
  */
-export async function collectViewerPages(root: string): Promise<DefaultViewerPage[]> {
-  const raw = await collectRawWikiPages(root);
+export async function collectViewerPages(
+  root: string,
+  source?: RawPageSource,
+): Promise<DefaultViewerPage[]> {
+  const raw = source === undefined ? await collectRawWikiPages(root) : await source.collect();
   return decoratePages(raw);
 }
 

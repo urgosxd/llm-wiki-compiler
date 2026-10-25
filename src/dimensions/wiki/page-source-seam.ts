@@ -22,7 +22,12 @@ import path from "node:path";
 import type { PageListingSource } from "../../pages/list.js";
 import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js";
 import { createPageListingSource } from "./page-write-sink.js";
-import { createPageScanSource, type PageScanSource } from "./page-scan-source.js";
+import {
+  createPageScanSource,
+  createRawPageSource,
+  type PageScanSource,
+  type RawPageSource,
+} from "./page-scan-source.js";
 
 /**
  * Run `fn` against the page source for this environment, or against the file path.
@@ -94,4 +99,31 @@ export async function hasCompiledPages(
     const entries = await readdir(conceptsDir).catch(() => [] as string[]);
     return entries.some((entry) => entry.endsWith(".md"));
   });
+}
+
+/**
+ * Run `fn` with the raw-page source, or `undefined` for the on-disk scan.
+ *
+ * The third shape this seam carries. `RawWikiPage` is what the export and viewer
+ * collectors consume, and it differs from both the listing (`Page`) and the scan
+ * (`{ slug, meta }`) by including the parse-status flags those collectors filter on.
+ *
+ * @param root - Project root, used only to synthesize a diagnostic path per page.
+ * @param env - Environment to read the Stack from.
+ * @param fn - Receives the raw source, or `undefined` to read `wiki/` from disk.
+ * @returns Whatever `fn` returns.
+ */
+export async function withRawPageSource<T>(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  fn: (source: RawPageSource | undefined) => Promise<T>,
+): Promise<T> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return fn(undefined);
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    return await fn(createRawPageSource(dimensionsDb.db, stackId, root));
+  } finally {
+    await dimensionsDb.close();
+  }
 }

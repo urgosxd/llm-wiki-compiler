@@ -215,6 +215,34 @@ export async function listStoredPages(
 }
 
 /**
+ * Every page of one tenant, archived and orphaned ones INCLUDED.
+ *
+ * `listStoredPages` deliberately excludes those, which is right for a listing that
+ * presents a wiki. A collector that classifies them -- the export and viewer paths
+ * filter on `parseStatus.orphaned` themselves -- needs to see them, and re-filtering
+ * after the fact cannot recover a row the query never returned.
+ *
+ * @param db - Database handle.
+ * @param stackId - The tenant that owns the pages.
+ * @returns All pages, body included, newest first.
+ */
+export async function listStoredPagesUnfiltered(
+  db: Database,
+  stackId: string,
+): Promise<Page[]> {
+  return withTenant(db, stackId, async (tx) => {
+    const rows = await tx.execute<WikiPageRow>(sql`
+      select page_directory, slug, title, summary, tags, links,
+             orphaned, archived, body, created_at, updated_at
+      from wiki.pages
+      where stack_id = ${stackId}
+      order by updated_at desc
+    `);
+    return rows.map(toPage).filter((page): page is Page => page !== undefined);
+  });
+}
+
+/**
  * One page of one tenant by directory and slug, body included.
  *
  * @param db - Database handle.

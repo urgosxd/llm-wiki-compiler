@@ -49,6 +49,7 @@ import type {
   ViewerSnapshot,
   ViewerWarning,
 } from "./types.js";
+import { withRawPageSource } from "../dimensions/wiki/page-source-seam.js";
 
 const RECENT_PAGES_LIMIT = 8;
 const INDEX_HREF = "/#/index";
@@ -63,7 +64,7 @@ const INDEX_HREF = "/#/index";
 export async function buildViewerSnapshot(root: string): Promise<ViewerSnapshot> {
   const [defaultPages, classified, pendingReviews, sourceFilenames, index, typed] =
     await Promise.all([
-      collectViewerPages(root),
+      withRawPageSource(root, process.env, (source) => collectViewerPages(root, source)),
       readStateClassified(root),
       countCandidates(root),
       listSelectedSourceEntries(root),
