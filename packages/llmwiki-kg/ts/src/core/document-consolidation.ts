@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 
 import type { Database } from "../db.js";
+import { bindCallerStack } from "./stack_resolver.js";
 import { config } from "../config.js";
 import type { ExtractedEntity, ExtractedRelationship } from "./extraction.js";
 
@@ -160,6 +161,10 @@ export async function consolidateEntityRows(
   documentId: string,
   extracted: readonly ExtractedEntity[],
 ): Promise<Map<string, string>> {
+  // Bind the tenant before any write: every statement below is tenant-scoped, so under
+  // RLS an unbound insert is refused. `stackId` is already this call's own filter.
+  await bindCallerStack(tx, stackId, null);
+
   const nameToId = new Map<string, string>();
 
   for (const entity of extracted) {
@@ -201,6 +206,7 @@ export async function consolidateRelationshipRows(
   extracted: readonly ExtractedRelationship[],
   nameToId: ReadonlyMap<string, string>,
 ): Promise<number> {
+  await bindCallerStack(tx, stackId, null);
   let written = 0;
 
   for (const relationship of extracted) {

@@ -9,6 +9,7 @@
 
 import { sql } from "drizzle-orm";
 
+import { bindCallerStack } from "../../core/stack_resolver.js";
 import type { Database } from "../../db.js";
 import { apiError } from "../../errors.js";
 import type { ApiError } from "../../errors.js";
@@ -45,6 +46,12 @@ export async function resolveStack(
       error: apiError(422, "Either stack_id (UUID) or domain (slug) must be provided"),
     };
   }
+
+  // Bind the tenant named by the caller BEFORE reading. The `stacks` read policy
+  // matches only the bound tenant, so an unbound lookup answers 404 for a Stack that
+  // exists. `stack_id`/`domain` are the caller's own reference and this query's own
+  // filter, so binding them grants nothing extra.
+  await bindCallerStack(tx, stackId, domain);
 
   const rows =
     stackId !== null

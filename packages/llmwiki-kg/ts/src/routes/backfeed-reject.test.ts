@@ -7,7 +7,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { sql } from "drizzle-orm";
 import type { Express } from "express";
 import request from "supertest";
-import { ABSENT_UUID, ITEM_KEYS, asRecord, buildApp, counts, currentDomainPrefix, database, deleteFixtureRows, expectOracleTimestamp, skipReason, useDomainPrefix } from "./backfeed-harness.js";
+import { ABSENT_UUID, ITEM_KEYS, asRecord, buildApp, counts, currentDomainPrefix, database, deleteFixtureRows, expectOracleTimestamp, skipReason, useDomainPrefix, trackFixtureStack } from "./backfeed-harness.js";
 import { withFixtureTenant } from "./fixture-tenant.js";
 
 // This file owns its own domain namespace: the split suites run in parallel
@@ -37,6 +37,7 @@ describe.skipIf(skipReason !== false)("backfeed reject (live database)", () => {
         if (row === undefined) {
           throw new Error("insert into stacks returned no row");
         }
+        trackFixtureStack(row.id);
         stackDomain = domain;
         return row.id;
       }

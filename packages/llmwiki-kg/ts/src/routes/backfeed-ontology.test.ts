@@ -35,6 +35,7 @@
 
 import { describe, expect, it, beforeEach } from "vitest";
 import { sql } from "drizzle-orm";
+import { withFixtureTenant } from "./fixture-tenant.js";
 import type { Express } from "express";
 import request from "supertest";
 
@@ -45,8 +46,7 @@ import {
   database,
   deleteFixtureRows,
   skipReason,
-  useDomainPrefix,
-} from "./backfeed-harness.js";
+  useDomainPrefix, trackFixtureStack } from "./backfeed-harness.js";
 
 useDomainPrefix("ontology");
 
@@ -69,16 +69,17 @@ describe.skipIf(skipReason !== false)("backfeed approve respects the Stack ontol
   /** Create a Stack, optionally with a declaration, returning its id. */
   async function createStack(ontology?: unknown): Promise<string> {
     stackDomain = uniqueDomain("case");
-    const rows = await database().execute<{ id: string }>(sql`
+    const rows = await withFixtureTenant(database(), { domain: stackDomain }, (tx) => tx.execute<{ id: string }>(sql`
       insert into stacks (name, domain, ontology)
       values (
         ${"Backfeed ontology fixture"}, ${stackDomain},
         ${ontology === undefined ? null : JSON.stringify(ontology)}::jsonb
       )
       returning id
-    `);
+    `));
     const row = rows[0];
     if (row === undefined) throw new Error("insert into stacks returned no row");
+    trackFixtureStack(row.id);
     return row.id;
   }
 

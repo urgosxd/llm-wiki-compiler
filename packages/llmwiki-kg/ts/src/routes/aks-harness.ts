@@ -18,7 +18,7 @@ import { parseConfig } from "../config.js";
 import { createClient, createDatabase, createRequestTransactionWrapper } from "../db.js";
 import { createApp } from "../server.js";
 import type { Database } from "../db.js";
-import { withFixtureTenant } from "./fixture-tenant.js";
+import { FixtureStacks, withFixtureTenant } from "./fixture-tenant.js";
 
 import type { AksRouterDependencies } from "./aks.js";
 
@@ -157,53 +157,28 @@ export function database(): Database {
 }
 
 export async function deleteFixtureRows(): Promise<void> {
-  const prefixed = sql`select id from stacks where domain like ${`${domainPrefix}%`}`;
-
-  await database().execute(
-    sql`delete from entity_source_documents where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from ontology_relationships where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from ontology_entities where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from document_chunks where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from stack_documents where stack_id in (${prefixed})`,
-  );
-  await database().execute(sql`delete from stacks where domain like ${`${domainPrefix}%`}`);
+  // One bound delete per Stack; the seven child tables follow through
+  // `on delete cascade`, verified to fire under RLS.
+  await fixtureStacks.deleteAll(database());
 }
 
 export async function countFixtureRows(): Promise<number> {
-  const rows = await database().execute<{ total: number }>(sql`
-    select
-      (select count(*) from ontology_entities
-        where stack_id in (select id from stacks where domain like ${`${domainPrefix}%`}))
-      + (select count(*) from ontology_relationships
-        where stack_id in (select id from stacks where domain like ${`${domainPrefix}%`}))
-      + (select count(*) from document_chunks
-        where stack_id in (select id from stacks where domain like ${`${domainPrefix}%`}))
-      + (select count(*) from stack_documents
-        where stack_id in (select id from stacks where domain like ${`${domainPrefix}%`}))
-      as total
-  `);
-  // The sum of `count(*)` values is `numeric`, which postgres-js delivers as a
-  // string; `Number` is the narrowing. A missing row means "cleanup did not run".
-  const total = rows[0]?.total;
-  return total === undefined ? -1 : Number(total);
+  // Summed per tracked Stack: a count across several Stacks has no single tenant to
+  // bind, so the old prefix query cannot see them under RLS. Callers get the same
+  // number.
+  return fixtureStacks.sum(database(), async (tx, stackId) => {
+    const rows = await tx.execute<{ total: number }>(sql`
+      select
+        (select count(*) from ontology_entities where stack_id = ${stackId})
+        + (select count(*) from ontology_relationships where stack_id = ${stackId})
+        + (select count(*) from document_chunks where stack_id = ${stackId})
+        + (select count(*) from stack_documents where stack_id = ${stackId})
+        as total
+    `);
+    const counted = rows[0]?.total;
+    return counted === undefined ? -1 : Number(counted);
+  });
 }
-
-afterAll(async () => {
-  await deleteFixtureRows();
-  expect(await countFixtureRows()).toBe(0);
-
-  if (state.client !== undefined) {
-    await state.client.end({ timeout: 5 });
-  }
-});
 
 export function createTestApp(): Express {
   const deps: AksRouterDependencies = {
@@ -221,6 +196,9 @@ export interface Fixture {
   readonly relationshipIds: { readonly uses: string; readonly has: string };
   readonly documentId: string;
 }
+
+/** Fixture Stacks this file created, for per-tenant cleanup and counting. */
+const fixtureStacks = new FixtureStacks();
 
 export async function createFixture(options: { withDocument?: boolean } = {}): Promise<Fixture> {
   const ids = fixtureIds();
@@ -240,6 +218,7 @@ export async function createFixture(options: { withDocument?: boolean } = {}): P
       await linkFixtureDocument(ids, tx);
     }
   });
+  fixtureStacks.add(ids.stackId);
 
   return {
     stackId: ids.stackId,

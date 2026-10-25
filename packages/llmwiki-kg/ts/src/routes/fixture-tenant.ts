@@ -55,3 +55,68 @@ export async function withFixtureTenant<T>(
     return write(tx);
   });
 }
+
+/**
+ * A set of fixture Stacks, cleaned and counted one at a time.
+ *
+ * ## Why a registry instead of the domain prefix
+ *
+ * Harnesses used to clean up with `delete by domain like '<prefix>%'`, and to count
+ * the same way. Both are cross-tenant cursors: no single `app.stack_id` describes
+ * them. Measured under RLS, such a delete bound to one domain removes that domain's
+ * row and **silently leaves its siblings behind**, so it reports success while
+ * cleaning part of what it selected.
+ *
+ * Collecting ids makes every statement single-tenant. The deletion needs one bound
+ * `delete from stacks where id = $1` — the seven child tables follow through
+ * `on delete cascade`, which was verified to fire under RLS, so no child delete is
+ * needed. Counting loops the ids because a count across several Stacks has no single
+ * tenant either; summing per-tenant answers gives callers the same number the old
+ * prefix query did.
+ */
+export class FixtureStacks {
+  readonly #ids = new Set<string>();
+
+  /** Remembers a Stack so cleanup can target it. */
+  add(stackId: string): void {
+    this.#ids.add(stackId);
+  }
+
+  /** The tracked ids, oldest first. */
+  ids(): readonly string[] {
+    return [...this.#ids];
+  }
+
+  /**
+   * Deletes every tracked Stack with its tenant bound, then forgets them.
+   *
+   * One transaction per Stack. The children go with the parent through the cascade,
+   * so nothing else needs deleting — and the cascade cannot reach another tenant
+   * because the parent row is already scoped by the policy.
+   */
+  async deleteAll(db: Database): Promise<void> {
+    for (const stackId of this.#ids) {
+      await withFixtureTenant(db, { stackId }, (tx) =>
+        tx.execute(sql`delete from stacks where id = ${stackId}`),
+      );
+    }
+    this.#ids.clear();
+  }
+
+  /**
+   * Sums `count` over the tracked Stacks, one bound transaction at a time.
+   *
+   * `count` receives the transaction to query through, so the caller cannot
+   * accidentally run its query unbound, and it already knows the Stack id.
+   */
+  async sum(
+    db: Database,
+    count: (tx: Database, stackId: string) => Promise<number>,
+  ): Promise<number> {
+    let total = 0;
+    for (const stackId of this.#ids) {
+      total += await withFixtureTenant(db, { stackId }, (tx) => count(tx, stackId));
+    }
+    return total;
+  }
+}

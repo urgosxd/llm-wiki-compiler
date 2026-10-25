@@ -17,6 +17,7 @@ import {
   createTransactionRunner,
 } from "../db.js";
 import type { Database, TransactionRunner } from "../db.js";
+import { FixtureStacks } from "../routes/fixture-tenant.js";
 import type {
   BackfeedEntityProposalDto,
   BackfeedRelationshipProposalDto,
@@ -96,27 +97,29 @@ export function runner(): TransactionRunner {
   return state.runner;
 }
 
-export async function deleteFixtureRows(): Promise<void> {
-  const prefixed = sql`select id from stacks where domain like ${`${currentDomainPrefix()}%`}`;
+/** Fixture Stacks created by the consolidation suites. */
+const fixtureStacks = new FixtureStacks();
 
-  await database().execute(
-    sql`delete from ontology_relationships where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from ontology_entities where stack_id in (${prefixed})`,
-  );
-  await database().execute(sql`delete from stacks where domain like ${`${currentDomainPrefix()}%`}`);
+/** Remembers a Stack so cleanup can target it by id. */
+export function trackFixtureStack(stackId: string): void {
+  fixtureStacks.add(stackId);
+}
+
+export async function deleteFixtureRows(): Promise<void> {
+  // One bound delete per Stack; the child tables follow through
+  // `on delete cascade`, verified to fire under RLS.
+  await fixtureStacks.deleteAll(database());
 }
 
 export async function countFixtureEntities(): Promise<number> {
-  const rows = await database().execute<{ total: number }>(sql`
-    select count(*)::int as total
-    from ontology_entities
-    where stack_id in (
-      select id from stacks where domain like ${`${currentDomainPrefix()}%`}
-    )
-  `);
-  return rows[0]?.total ?? -1;
+  // Summed per tracked Stack: a count across several Stacks has no single tenant to
+  // bind, so the old prefix query cannot see them under RLS.
+  return fixtureStacks.sum(database(), async (tx, stackId) => {
+    const rows = await tx.execute<{ total: number }>(
+      sql`select count(*)::int as total from ontology_entities where stack_id = ${stackId}`,
+    );
+    return rows[0]?.total ?? -1;
+  });
 }
 
 afterAll(async () => {
