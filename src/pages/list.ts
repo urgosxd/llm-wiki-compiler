@@ -173,7 +173,7 @@ const PAGE_DIRECTORIES: PageDirectory[] = ["concepts", "queries"];
  * Links are always extracted from the body so they reflect real wikilinks,
  * not any frontmatter list.
  */
-function buildPage(
+export function buildPage(
   dir: PageDirectory,
   slug: string,
   meta: Record<string, unknown>,

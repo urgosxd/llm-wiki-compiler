@@ -41,6 +41,21 @@ const APPLY_ALLOWED_DECISIONS = new Set(["allow", "allow-with-warning"]);
 export type WriteOne = (filePath: string, content: string) => Promise<void>;
 
 /**
+ * Store one page without touching the filesystem.
+ *
+ * Declared HERE rather than in the executor because the executor depends on this
+ * module and not the reverse (see the file header) -- the lifecycle handler imports
+ * this primitive too, and a type living on the other side would drag the executor
+ * into that import graph. Structural on purpose: the trust path stays usable with no
+ * database and no Stack, which is how every current caller runs.
+ */
+export type PageSink = (request: {
+  directory: string;
+  slug: string;
+  body: string;
+}) => Promise<void>;
+
+/**
  * Thrown when a `create` target — free at plan time — has appeared on disk by
  * the time the batch runs under the lock. Aborting before any write closes the
  * plan→apply TOCTOU so a create never clobbers a concurrently-created file.
@@ -247,13 +262,46 @@ export async function applyPageMutationLocked(
   mutation: PagePlannedMutation,
   batch: JournalBatch,
   writeOne: WriteOne = atomicWrite,
+  pageSink?: PageSink,
 ): Promise<void> {
   const abs = await confineUnderRoot(pageRelPath(mutation), root, { mustExist: false });
   if (mutation.operation === "delete") return deletePageLocked(abs, batch);
+  // The floor still runs for a row write: it validates the BYTES (size, frontmatter
+  // shape), which is a property of the content rather than of where it lands.
+  await assertFloorAtApply(root, mutation, abs);
+  if (pageSink !== undefined) {
+    // No conflict check and no pre-state: a row is upserted by identity, so a
+    // "create" colliding with an existing row is an update, and there are no bytes
+    // on disk to snapshot for a rollback that will not happen.
+    await pageSink(pageWriteRequest(mutation));
+    return;
+  }
   if (mutation.operation === "create" && (await targetExists(abs))) {
     throw new CreateCollisionError(abs);
   }
-  await assertFloorAtApply(root, mutation, abs);
   await recordPreState(batch, abs);
   await writeOne(abs, mutation.body);
+}
+
+/**
+ * The identity and markdown a sink needs, taken from the mutation's own target.
+ *
+ * Read from the structured target rather than re-parsed from the path: the planner
+ * already validated it, and splitting a path back apart would re-introduce exactly
+ * the escaping concerns `confineUnderRoot` exists to settle.
+ *
+ * @param mutation - The page mutation being stored.
+ * @returns Directory, slug and rendered markdown.
+ */
+function pageWriteRequest(mutation: PagePlannedMutation): {
+  directory: string;
+  slug: string;
+  body: string;
+} {
+  const target = mutation.target;
+  if ("id" in target) {
+    const { entityType, slug } = parseEntityId(target.id);
+    return { directory: entityType, slug, body: mutation.body };
+  }
+  return { directory: target.directory, slug: target.slug, body: mutation.body };
 }

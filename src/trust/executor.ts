@@ -63,7 +63,7 @@ import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
 import { atomicWrite } from "../utils/markdown.js";
 import { openBatch, commitBatch, replayJournal, type JournalBatch } from "./journal.js";
 import { type ApplyResult, CrossStoreBatchUnsupportedError } from "./apply-result.js";
-import { applyPageMutationLocked, type WriteOne } from "./page-apply.js";
+import { applyPageMutationLocked, type PageSink, type WriteOne } from "./page-apply.js";
 import { applyRelationLocked } from "./relation-apply.js";
 import { applyLifecycleLocked } from "./lifecycle-apply.js";
 import { applyArtifactLocked } from "../artifacts/apply.js";
@@ -75,7 +75,22 @@ export type { WriteOne } from "./page-apply.js";
 export interface ApplyOptions {
   /** Per-target write primitive (defaults to {@link atomicWrite}). */
   writeOne?: WriteOne;
+  /**
+   * Store a page as a row instead of writing a file.
+   *
+   * Optional and absent by default, so every existing caller keeps the file path.
+   * When present, a page mutation is stored through it AND no file is written for
+   * it: writing both would let the two copies drift, and the point of the row is to
+   * be the page.
+   *
+   * The journal is skipped for these writes. `recordPreState` reads the target's
+   * current BYTES so a rollback can restore them; a row has no such pre-state to
+   * capture, and recording a path that the write never touches would make the
+   * journal claim a revert capability it does not have.
+   */
+  pageSink?: PageSink;
 }
+
 
 /**
  * Error thrown when a mutation targets a store the executor does not handle.
@@ -129,9 +144,10 @@ async function applyBatch(
   planned: PagePlannedMutation[],
   batch: JournalBatch,
   writeOne: WriteOne,
+  pageSink: PageSink | undefined,
 ): Promise<void> {
   for (const mutation of planned) {
-    await applyPageMutationLocked(root, mutation, batch, writeOne);
+    await applyPageMutationLocked(root, mutation, batch, writeOne, pageSink);
   }
 }
 
@@ -172,7 +188,7 @@ export async function applyApprovedMutationsLocked(
   if (planned.every((m) => m.kind === "page")) {
     const writeOne = opts.writeOne ?? atomicWrite;
     const batch = await openBatch(root);
-    await applyBatch(root, planned as PagePlannedMutation[], batch, writeOne);
+    await applyBatch(root, planned as PagePlannedMutation[], batch, writeOne, opts.pageSink);
     await commitBatch(batch);
     return planned.map(() => ({ kind: "page" as const }));
   }

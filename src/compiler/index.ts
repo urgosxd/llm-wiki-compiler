@@ -109,6 +109,8 @@ import {
   sourceDocumentsContentSource,
 } from "../dimensions/wiki/source-documents-store.js";
 import type { ChangeDetectionSource, SourceContentSource } from "./hasher.js";
+import type { PageSink } from "../trust/page-apply.js";
+import { createPageWriteSink } from "../dimensions/wiki/page-write-sink.js";
 import { timeStage } from "../utils/stage-timing.js";
 
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
@@ -202,6 +204,7 @@ async function generatePagesPhase(
   options: CompileOptions,
   policy: ReviewPolicy,
   concurrency: number,
+  pageSink: PageSink | undefined,
 ): Promise<PageGenerationResult> {
   const merged = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs);
   // Build the per-source state snapshot once so each candidate can carry the
@@ -234,7 +237,7 @@ async function generatePagesPhase(
   // Apply every live page as ONE journalled executor batch under the held lock,
   // then derive writtenPages from what ACTUALLY committed (skipped pages folded
   // into errors), so finalizeWiki never resolves/embeds an uncommitted page.
-  const { writtenPages, batchErrors } = await commitLivePageWrites(root, outcomes);
+  const { writtenPages, batchErrors } = await commitLivePageWrites(root, outcomes, pageSink);
   errors.push(...batchErrors);
   return { pages, writtenPages, errors, candidates, review, seedSlugs: [] };
 }
@@ -259,11 +262,13 @@ interface GeneratedOutcome {
 async function commitLivePageWrites(
   root: string,
   outcomes: GeneratedOutcome[],
+  pageSink: PageSink | undefined,
 ): Promise<{ writtenPages: MergedConcept[]; batchErrors: string[] }> {
   const live = outcomes.filter((o) => o.result.liveWrite);
   const { skipped } = await applyCompilePageWritesLocked(
     root,
     live.map((o) => o.result.liveWrite!),
+    pageSink === undefined ? {} : { pageSink },
   );
   const skippedKeys = new Set(skipped.map((s) => `${s.item.namespace}/${s.item.slug}`));
   const writtenPages = live
@@ -569,6 +574,7 @@ async function runCompilePipeline(
     options,
     reviewPolicy,
     concurrency,
+    sourcePageSink(db, process.env),
   ));
 
   if (!options.review) {
@@ -887,6 +893,26 @@ async function currentContentHash(
   return document === undefined
     ? ""
     : createHash("sha256").update(document.content, "utf-8").digest("hex");
+}
+
+/**
+ * Where this compile should WRITE the pages it generates.
+ *
+ * Returns `undefined` when no Stack is configured, which keeps the on-disk write.
+ * Paired with {@link sourceChangeDetection} on the same variable because a run that
+ * read rows and wrote files would be reading one corpus and publishing another.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The row sink, or undefined to keep writing `wiki/concepts/*.md`.
+ */
+function sourcePageSink(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): PageSink | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return createPageWriteSink(db, stackId);
 }
 
 /**
