@@ -13,6 +13,7 @@ import { ANTHROPIC_VERSION, EXTRACTION_MAX_TOKENS, EXTRACTION_TEMPERATURE } from
 import { extractionEndpoint } from "./endpoints.js";
 import { LlmError } from "./errors.js";
 import { asArray, asRecord, asString, postJson } from "./json.js";
+import { strictSchemaEnabled } from "./strict-policy.js";
 
 /** A tool the model is required to call. */
 export interface ToolDefinition {
@@ -39,27 +40,16 @@ function anthropicToolPayload(prompt: string, tool: ToolDefinition, maxTokens: n
 /**
  * The OpenAI-compatible request body: `tool_choice: "required"`, no streaming.
  *
- * ## Why `strict` is conditional on the provider
+ * ## Why `strict` comes from a policy
  *
- * `strict: true` is what makes the schema binding rather than advisory: without
- * it, an `enum` on a field is a hint the model can ignore, and structured outputs
- * are not enforced. It is set only for `openai` because the flag is an OpenAI
- * extension to the chat-completions format, and the two other backends differ:
- *
- * - `gateway` is any OpenAI-compatible server. A server that does not implement
- *   the flag may reject the whole request, and this package cannot verify every
- *   gateway's support. Sending it unconditionally would trade a schema hint for
- *   an outage on an unknown backend.
- * - `anthropic` has no such field at all; its tool schema is always enforced, so
- *   there is nothing to opt into.
- *
- * The cost of the conditional is that `gateway` still gets advisory-only typing.
- * That is the honest position: the schema constraints in `graph-prompt.ts` are
- * shaped to satisfy strict mode, so enabling it on a gateway that supports the
- * flag is a config change rather than a code change.
+ * `strict: true` is what makes the schema binding rather than advisory. It cannot
+ * be decided from the provider name alone, because `gateway` covers every
+ * OpenAI-compatible endpoint and they disagree about the flag. The decision lives
+ * in `strict-policy.ts`, and `EXTRACTION_STRICT_SCHEMA` lets the operator declare
+ * that their gateway does support it.
  */
 function openAiToolPayload(prompt: string, tool: ToolDefinition, maxTokens: number): unknown {
-  const strictSchema = config.EXTRACTION_PROVIDER === "openai";
+  const strictSchema = strictSchemaEnabled();
   return {
     messages: [{ role: "user", content: prompt }],
     stream: false,

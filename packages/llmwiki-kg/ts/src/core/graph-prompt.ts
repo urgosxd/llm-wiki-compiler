@@ -59,7 +59,47 @@ function pythonLiteral(values: readonly string[]): string {
  * so the default is not merely equal to the oracle's schema but is the same
  * value.
  */
-export function buildToolSchema(ontology?: Ontology): typeof KG_TOOL {
+/**
+ * A tool definition after an ontology may have narrowed its type lists.
+ *
+ * `typeof KG_TOOL` was the return type here, and it is a lie once an ontology is
+ * supplied: the narrowed `type` fields carry an `enum` the constant does not have.
+ * Callers and tests that read `.enum` were rejected by the compiler even though
+ * the value was there at runtime, which is how a type annotation hides a feature.
+ *
+ * Modelled as `KG_TOOL` with the narrowed fields widened, rather than as a fully
+ * generic schema type, so the object literal below stays checked against the real
+ * shape.
+ */
+export type ToolSchema = Omit<typeof KG_TOOL, "parameters"> & {
+  readonly parameters: Omit<(typeof KG_TOOL)["parameters"], "$defs"> & {
+    readonly $defs:
+      & Omit<(typeof KG_TOOL)["parameters"]["$defs"], "Entity" | "Relation">
+      & {
+        readonly Entity: {
+          readonly type: "object";
+          readonly properties: { readonly type: TypeField; readonly name: { readonly type: "string" } };
+          readonly required: readonly string[];
+          readonly additionalProperties: false;
+        };
+        readonly Relation: {
+          readonly type: "object";
+          readonly properties: { readonly type: TypeField };
+          readonly required: readonly string[];
+          readonly additionalProperties: false;
+        };
+      };
+  };
+};
+
+/** The `type` field of an entity or relation: a string, described and enumerated. */
+interface TypeField {
+  readonly type: "string";
+  readonly description: string;
+  readonly enum?: readonly string[];
+}
+
+export function buildToolSchema(ontology?: Ontology): ToolSchema {
   if (ontology === undefined) {
     return KG_TOOL;
   }
@@ -115,10 +155,9 @@ export function buildToolSchema(ontology?: Ontology): typeof KG_TOOL {
  * @param kind - Which list this is, for the description sentence.
  * @returns The field definition, carrying both `description` and `enum`.
  */
-function constrainedTypeField(
-  allowed: readonly string[],
-  kind: "entity" | "relation",
-): { type: "string"; description: string; enum: readonly string[] } {
+function constrainedTypeField(allowed: readonly string[], kind: "entity" | "relation"): TypeField & {
+  readonly enum: readonly string[];
+} {
   const noun = kind === "entity" ? "entities" : "relations";
   return {
     type: "string",

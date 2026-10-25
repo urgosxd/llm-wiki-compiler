@@ -54,7 +54,10 @@ function firstFunction(body: Record<string, unknown> | undefined): Record<string
 }
 
 /** Points config at one extraction provider without touching the environment. */
-async function useProvider(provider: "openai" | "gateway" | "anthropic"): Promise<void> {
+async function useProvider(
+  provider: "openai" | "gateway" | "anthropic",
+  override: "auto" | "true" | "false" = "auto",
+): Promise<void> {
   vi.resetModules();
   vi.doMock("../../config.js", async () => {
     const actual = await vi.importActual<typeof import("../../config.js")>("../../config.js");
@@ -67,6 +70,7 @@ async function useProvider(provider: "openai" | "gateway" | "anthropic"): Promis
         ANTHROPIC_API_KEY: "test-key",
         GATEWAY_URL: "https://gateway.example/v1",
         GATEWAY_API_KEY: "gateway-key",
+        EXTRACTION_STRICT_SCHEMA: override,
       },
     };
   });
@@ -113,6 +117,74 @@ describe("strict mode on the wire", () => {
     await freshCallTool("prompt", TOOL);
 
     expect(JSON.stringify(capture.body())).not.toContain('"strict"');
+  });
+});
+
+describe("EXTRACTION_STRICT_SCHEMA lets an OpenAI-like gateway opt in", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.doUnmock("../../config.js");
+    vi.resetModules();
+  });
+
+  it("sends strict to a gateway when the operator declares support", async () => {
+    // The case this override exists for: a provider that is not OpenAI but
+    // exposes an OpenAI-compatible endpoint which does honour `strict`. Without
+    // the override that deployment would be stuck with advisory typing forever,
+    // because the provider name alone cannot distinguish it from a gateway that
+    // rejects the field.
+    const capture = captureRequest();
+    await useProvider("gateway", "true");
+    const { callTool: freshCallTool } = await import("./tool-call.js");
+
+    await freshCallTool("prompt", TOOL);
+
+    expect(firstFunction(capture.body())["strict"]).toBe(true);
+  });
+
+  it("lets an openai deployment turn it off when a proxy would choke on it", async () => {
+    const capture = captureRequest();
+    await useProvider("openai", "false");
+    const { callTool: freshCallTool } = await import("./tool-call.js");
+
+    await freshCallTool("prompt", TOOL);
+
+    expect(firstFunction(capture.body())).not.toHaveProperty("strict");
+  });
+
+  it("still sends nothing to Anthropic even when the override says true", async () => {
+    // Anthropic's body has no `function` object at all; the flag would have
+    // nowhere to go, and adding it would be inventing a field the API rejects.
+    const capture = captureRequest();
+    await useProvider("anthropic", "true");
+    const { callTool: freshCallTool } = await import("./tool-call.js");
+
+    await freshCallTool("prompt", TOOL);
+
+    expect(JSON.stringify(capture.body())).not.toContain('"strict"');
+  });
+});
+
+describe("the strict policy itself", () => {
+  it("follows the provider by default and the override when set", async () => {
+    const { resolveStrictPolicy } = await import("./strict-policy.js");
+
+    expect(resolveStrictPolicy("openai", "auto")).toEqual({
+      enabled: true,
+      source: "provider-default",
+    });
+    expect(resolveStrictPolicy("gateway", "auto")).toEqual({
+      enabled: false,
+      source: "provider-default",
+    });
+    expect(resolveStrictPolicy("anthropic", "auto")).toEqual({
+      enabled: false,
+      source: "provider-default",
+    });
+    expect(resolveStrictPolicy("gateway", "true")).toEqual({
+      enabled: true,
+      source: "override",
+    });
   });
 });
 

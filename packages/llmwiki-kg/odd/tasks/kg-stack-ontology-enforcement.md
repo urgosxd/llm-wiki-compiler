@@ -628,17 +628,35 @@ this change exists to make impossible to reintroduce silently.
 The `enum` from follow-up 6 only binds if the request tells the provider to
 enforce the schema. On OpenAI that is `strict`.
 
-### Sent conditionally, and why
+### Sent by a policy the operator can override
 
-| provider | `strict` | reason |
+The first version decided from the provider name alone, which left every
+`gateway` deployment with advisory typing forever. That is wrong for the case
+that matters most here: a provider that is **not** OpenAI but exposes an
+OpenAI-compatible endpoint that does honour `strict`. The provider name cannot
+distinguish that from a gateway that rejects the field, and only the operator
+knows which one they run.
+
+`EXTRACTION_STRICT_SCHEMA` (`auto` | `true` | `false`, default `auto`) resolves it:
+
+| provider | `auto` | reason |
 | --- | --- | --- |
-| `openai` | yes | this is what turns the schema from advisory into enforced |
-| `gateway` | no | any OpenAI-compatible server; one that does not implement the extension may reject the whole request, and support cannot be verified per gateway |
-| `anthropic` | no | the field does not exist; its tool schemas are always enforced |
+| `openai` | on | structured outputs are guaranteed |
+| `gateway` | off | unknown backend; a strict parser may reject the request |
+| `anthropic` | off | no such field; always enforced |
 
-The gateway gap is the honest cost: a gateway gets advisory typing until someone
-confirms support. The schema is already shaped for strict mode, so enabling it
-there is a config change rather than a code change.
+An explicit `true` opts a capable gateway in. An explicit `false` downgrades
+`openai` deliberately, which is legitimate behind a proxy that drops unknown
+fields in the function object — a lesser configuration, but better than a request
+that fails.
+
+`anthropic` ignores the override entirely: its body has no `function` object, so
+the flag would have nowhere to go and adding it would invent a field the API
+rejects.
+
+The decision lives in `core/llm/strict-policy.ts`, returning both the answer and
+its provenance (`provider-default` or `override`), so a deployment can be
+diagnosed without guessing.
 
 ### What strict mode forced in the schema
 
