@@ -163,6 +163,111 @@ create policy tenant_isolation on wiki.concept_aliases
     using (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);
 
 -- ------------------------------------------------------------
+-- Raw wiki documents, replacing `sources/`
+-- ------------------------------------------------------------
+-- The directory held both the raw markdown and the answer to "what still needs
+-- compiling", so neither could move alone. With work discoverable from rows, the
+-- directory has no remaining job.
+--
+-- Deliberately NOT `stack_documents`: that one belongs to the knowledge-graph
+-- dimension (`uploads/`), and the two dimensions compile their own corpora.
+
+create table if not exists wiki.source_documents (
+    stack_id uuid not null references stacks(id) on delete cascade,
+
+    -- The ingest identity. Unique per Stack because the same URL ingested into two
+    -- Stacks is two documents that must compile independently.
+    source_identity text not null,
+
+    -- Title and filename the ingest derived. `filename` is kept because existing
+    -- compiler state keys documents by filename, and a migration must be able to
+    -- recognize a document it already knows.
+    title text not null,
+    filename text not null,
+
+    -- The raw markdown: frontmatter plus body, byte-for-byte what `saveSource`
+    -- wrote. Retained whole because the compiler feeds it to the model and the
+    -- provenance surfaces quote line ranges out of it.
+    content text not null,
+
+    -- SHA-256 (hex) of `content`. This is what makes incremental compilation
+    -- correct, so it is stored rather than recomputed on read.
+    content_hash text not null,
+
+    -- Byte length of `content`, so a reader can size a document without loading it.
+    size_bytes integer not null,
+
+    -- When this document last CHANGED. Not "when the row was written": a re-ingest
+    -- of identical bytes is a no-op, and a compile must not treat it as new work.
+    changed_at timestamptz not null default now(),
+    created_at timestamptz not null default now(),
+
+    primary key (stack_id, source_identity)
+);
+
+-- The compiler's discovery query: every document in this Stack, ordered so a
+-- compile is reproducible. Without this the scan is a sequential read of the
+-- whole corpus on every run.
+create index if not exists idx_source_documents_scan
+    on wiki.source_documents (stack_id, filename);
+
+-- Lookup by content, used when a re-ingest asks "do these exact bytes already
+-- exist under another identity?".
+create index if not exists idx_source_documents_hash
+    on wiki.source_documents (stack_id, content_hash);
+
+-- ============================================================
+-- The compile state that used to be `.llmwiki/state.json`
+-- ============================================================
+-- Per-document compilation outcome. `wiki.source_documents` says what exists;
+-- this says what has been done with it. Split in two because they change on
+-- different schedules: an ingest touches the first, a compile touches the second,
+-- and keeping them together would make every ingest rewrite compile bookkeeping.
+create table if not exists wiki.source_compile_state (
+    stack_id uuid not null references stacks(id) on delete cascade,
+    source_identity text not null,
+
+    -- Hash of the content that was actually compiled. Compared against
+    -- `source_documents.content_hash` to decide whether recompilation is needed;
+    -- a mismatch IS the "changed" signal.
+    compiled_hash text not null,
+
+    -- Concept slugs this document produced, so deleting the document can retire
+    -- exactly its pages rather than scanning for orphans.
+    concept_slugs text[] not null default '{}',
+
+    compiled_at timestamptz not null default now(),
+
+    primary key (stack_id, source_identity),
+    constraint source_compile_state_document_fkey
+        foreign key (stack_id, source_identity)
+        references wiki.source_documents (stack_id, source_identity)
+        on delete cascade
+);
+
+-- ============================================================
+-- Row-level security
+-- ============================================================
+-- Same shape as every other wiki table: enabled AND forced, policy reading
+-- `app.stack_id` through `nullif` so an unset or empty GUC matches nothing
+-- instead of raising on a malformed uuid cast.
+alter table wiki.source_documents enable row level security;
+alter table wiki.source_documents force row level security;
+alter table wiki.source_compile_state enable row level security;
+alter table wiki.source_compile_state force row level security;
+
+drop policy if exists tenant_isolation on wiki.source_documents;
+create policy tenant_isolation on wiki.source_documents
+    using (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid)
+    with check (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);
+
+drop policy if exists tenant_isolation on wiki.source_compile_state;
+create policy tenant_isolation on wiki.source_compile_state
+    using (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid)
+    with check (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);
+
+
+-- ------------------------------------------------------------
 -- Page and chunk embedding vectors
 -- ------------------------------------------------------------
 -- Moved out of `.llmwiki/embeddings.json`, where the whole corpus lived in one
