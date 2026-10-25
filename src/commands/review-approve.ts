@@ -51,8 +51,6 @@ import {
 import { UnsafeCandidateDirError } from "../compiler/candidate-store-paths.js";
 import { sha256Text } from "../connectors/hash.js";
 import { isConnectorCandidate } from "../connectors/origin.js";
-import { generateIndex } from "../compiler/indexgen.js";
-import { generateMOC } from "../compiler/obsidian.js";
 import { resolveAndApplyLinks } from "../compiler/resolver.js";
 import { repairAndApplyLinks } from "../compiler/link-repair.js";
 import { qualifiedPageId, type PageId } from "../utils/page-id.js";
@@ -63,6 +61,7 @@ import * as output from "../utils/output.js";
 import type { ReviewCandidate } from "../utils/types.js";
 import { runReviewUnderLock, readCandidateUnderLock } from "./review-helpers.js";
 import { checkCandidatePublication, checkAnswerPlan, isValidatedAnswer } from "./review-publication.js";
+import { regenerateIndices } from "../dimensions/wiki/page-source-seam.js";
 
 /** CLI/API options accepted by `review approve`. */
 export interface ReviewApproveOptions {
@@ -404,8 +403,7 @@ async function refreshWikiAfterApproval(root: string, candidate: ReviewCandidate
     await resolveAndApplyLinks(root, [slug], [slug]);
     await repairAndApplyLinks(root);
   }
-  await generateIndex(root);
-  await generateMOC(root);
+  await regenerateIndices(root, process.env);
   await safelyUpdateEmbeddings(root, candidatePageId(candidate));
 }
 

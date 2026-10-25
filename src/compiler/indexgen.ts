@@ -12,6 +12,10 @@ import { atomicWrite, parseFrontmatter } from "../utils/markdown.js";
 import { readWikiPageInDirOrWarn } from "./confined-wiki-read.js";
 import { toPosixPath } from "../utils/path-confine.js";
 import { CONCEPTS_DIR, QUERIES_DIR, INDEX_FILE } from "../utils/constants.js";
+import {
+  summarizeScanned,
+  type PageScanSource,
+} from "../dimensions/wiki/page-scan-source.js";
 import * as output from "../utils/output.js";
 import type { PageSummary } from "../utils/types.js";
 import { loadNonDefaultProfile, collectEntityPagesWithMessages } from "../profile/block.js";
@@ -28,13 +32,23 @@ import type { EntityPage } from "../profile/types.js";
  *
  * @param root - Project root directory.
  */
-export async function generateIndex(root: string): Promise<void> {
+export async function generateIndex(
+  root: string,
+  scanSource?: PageScanSource,
+): Promise<void> {
   output.status("*", output.info("Generating index..."));
 
-  const conceptsPath = path.join(root, CONCEPTS_DIR);
-  const queriesPath = path.join(root, QUERIES_DIR);
-  const concepts = await collectPageSummaries(conceptsPath);
-  const queries = await collectPageSummaries(queriesPath);
+  const [concepts, queries] = scanSource === undefined
+    ? await Promise.all([
+      collectPageSummaries(path.join(root, CONCEPTS_DIR)),
+      collectPageSummaries(path.join(root, QUERIES_DIR)),
+    ])
+    // Rows when they are the corpus: the file path would summarize an empty
+    // directory and write an index listing nothing.
+    : await Promise.all([
+      scanSource.scan("concepts").then(summarizeScanned),
+      scanSource.scan("queries").then(summarizeScanned),
+    ]);
 
   concepts.sort((a, b) => a.title.localeCompare(b.title));
   queries.sort((a, b) => a.title.localeCompare(b.title));

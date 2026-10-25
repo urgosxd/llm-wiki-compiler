@@ -62,12 +62,11 @@ import {
 } from "../utils/state.js";
 import { collectAllPages } from "../linter/rules.js";
 import { listCandidates } from "../compiler/candidate-read.js";
-import { generateIndex } from "../compiler/indexgen.js";
-import { generateMOC } from "../compiler/obsidian.js";
 import { updateEmbeddingsLockedCore } from "../utils/embeddings.js";
 import { handleSafeEmbeddingFailure } from "../utils/embeddings-batch.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
 import type { WikiState } from "../utils/types.js";
+import { regenerateIndices } from "../dimensions/wiki/page-source-seam.js";
 
 export type { RemovalPlan } from "./removal-plan.js";
 
@@ -412,8 +411,7 @@ function sameSlugs(left: string[], right: string[]): boolean {
  * @param root - Absolute project root.
  */
 export async function regenerateDerivedLocked(root: string): Promise<void> {
-  await generateIndex(root);
-  await generateMOC(root);
+  await regenerateIndices(root, process.env);
   try {
     await updateEmbeddingsLockedCore(root, []);
   } catch (err) {

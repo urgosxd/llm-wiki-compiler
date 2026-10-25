@@ -45,8 +45,6 @@ import {
 import { markOrphaned, orphanUnownedFrozenPages } from "./orphan.js";
 import { resolveAndApplyLinks } from "./resolver.js";
 import { repairAndApplyLinks } from "./link-repair.js";
-import { generateIndex } from "./indexgen.js";
-import { generateMOC } from "./obsidian.js";
 import { qualifiedPageId } from "../utils/page-id.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
 import { listCandidates } from "./candidates.js";
@@ -118,6 +116,7 @@ import {
 } from "../dimensions/wiki/page-scan-source.js";
 import type { ResolverPageSource } from "./resolver.js";
 import { timeStage } from "../utils/stage-timing.js";
+import { regenerateIndices } from "../dimensions/wiki/page-source-seam.js";
 
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
 function emptyCompileResult(): CompileResult {
@@ -848,8 +847,7 @@ async function finalizeWiki(
     await draft.flush(root);
   }
 
-  await generateIndex(root);
-  await generateMOC(root);
+  await regenerateIndices(root, process.env);
   if (embeddings) await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(root, allChangedSlugs, embeddingStore));
 }
 

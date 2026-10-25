@@ -21,6 +21,8 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import type { PageListingSource } from "../../pages/list.js";
 import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js";
+import { generateIndex } from "../../compiler/indexgen.js";
+import { generateMOC } from "../../compiler/obsidian.js";
 import { createPageListingSource } from "./page-write-sink.js";
 import {
   createPageScanSource,
@@ -126,4 +128,28 @@ export async function withRawPageSource<T>(
   } finally {
     await dimensionsDb.close();
   }
+}
+
+/**
+ * Regenerate the derived navigational artifacts — `index.md` and `MOC.md`.
+ *
+ * They are called together everywhere except `query-save`, which writes only the
+ * index. Bundling them here means the backend is resolved ONCE for the pair instead
+ * of twice, and a caller cannot regenerate one while leaving the other summarizing a
+ * directory the run no longer writes.
+ *
+ * @param root - Project root.
+ * @param env - Environment to read the Stack from.
+ * @param options - `skipMoc` for the index-only caller.
+ * @returns Resolves when both artifacts are written.
+ */
+export async function regenerateIndices(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  options: { skipMoc?: boolean } = {},
+): Promise<void> {
+  await withPageScan(env, async (source) => {
+    await generateIndex(root, source);
+    if (options.skipMoc !== true) await generateMOC(root, source);
+  });
 }

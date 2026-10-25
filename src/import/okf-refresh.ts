@@ -1,9 +1,8 @@
 /** @file Post-write refresh for trusted OKF imports (links, index, MOC, embeddings). */
 import { resolveAndApplyLinks } from "../compiler/resolver.js";
-import { generateIndex } from "../compiler/indexgen.js";
-import { generateMOC } from "../compiler/obsidian.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
 import { slugFromPageId, type PageId } from "../utils/page-id.js";
+import { regenerateIndices } from "../dimensions/wiki/page-source-seam.js";
 
 /**
  * Rebuild derived artifacts after writing imported pages live.
@@ -28,8 +27,7 @@ export async function refreshAfterImport(root: string, pageIds: PageId[]): Promi
   // this routes through the lock-free resolution seam.
   const slugs = pageIds.map(slugFromPageId);
   await resolveAndApplyLinks(root, slugs, slugs);
-  await generateIndex(root);
-  await generateMOC(root);
+  await regenerateIndices(root, process.env);
   // Union the imported page-ids into the shared pending-marker drain (preserves
   // the existing changed-id set; the drain adds prior-pending ids on top).
   await refreshEmbeddingsDrainingPending(root, pageIds);

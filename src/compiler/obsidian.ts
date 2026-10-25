@@ -13,6 +13,7 @@ import path from "path";
 import { slugify, atomicWrite, parseFrontmatter } from "../utils/markdown.js";
 import { readWikiPageInDirOrWarn } from "./confined-wiki-read.js";
 import { CONCEPTS_DIR, MOC_FILE } from "../utils/constants.js";
+import type { PageScanSource, ScannedPageShape } from "../dimensions/wiki/page-scan-source.js";
 
 /** Minimum word count to generate an abbreviation alias. */
 const ABBREVIATION_MIN_WORDS = 3;
@@ -107,14 +108,39 @@ function generateAbbreviation(title: string): string | null {
  * a structured MOC.md with sections per tag and an Uncategorized section.
  * @param root - Project root directory.
  */
-export async function generateMOC(root: string): Promise<void> {
+export async function generateMOC(
+  root: string,
+  scanSource?: PageScanSource,
+): Promise<void> {
   const conceptsPath = path.join(root, CONCEPTS_DIR);
-  const pages = await loadConceptPages(conceptsPath);
+  const pages = scanSource === undefined
+    ? await loadConceptPages(conceptsPath)
+    // Rows when they are the corpus: the directory read would return nothing and
+    // the MOC would be written empty.
+    : (await scanSource.scan("concepts")).map(toMocPage);
 
   const tagGroups = groupPagesByTag(pages);
   const content = buildMOCContent(tagGroups);
 
   await atomicWrite(path.join(root, MOC_FILE), content, { confineRoot: root });
+}
+
+/**
+ * Map one scanned page onto the MOC's minimal view.
+ *
+ * `tags` is defaulted to an empty array rather than trusted as-is: the disk path
+ * accepts a page with no tags, and a group-less page must not crash the grouping.
+ *
+ * @param page - A page in the scan shape.
+ * @returns Its slug, title and tags.
+ */
+function toMocPage(page: ScannedPageShape): PageInfo {
+  const tags = page.meta.tags;
+  return {
+    slug: page.slug,
+    title: typeof page.meta.title === "string" ? page.meta.title : page.slug,
+    tags: Array.isArray(tags) ? tags.map(String) : [],
+  };
 }
 
 /** Minimal page info needed for MOC generation. */
