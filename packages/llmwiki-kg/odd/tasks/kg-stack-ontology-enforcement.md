@@ -679,6 +679,47 @@ Parsing is unchanged: an empty array contributes nothing.
   which exists precisely because a schema can look compliant at the top level and
   still be refused for an open nested object.
 
+## Follow-up 8: flag refuses what approve would refuse
+
+The asymmetry this closes: `POST /backfeed/flag` answered `201 Created` for a
+proposal `POST /backfeed/approve` then refused with `422`. A caller learned their
+type was undeclared only after a human had spent attention reviewing it, and from
+a different endpoint than the one that had said the proposal was fine.
+
+### What changed
+
+`flag` now runs the same `checkProposalAgainstOntology` and returns the same 422,
+before writing anything. The reader moved into the gate as `loadStackOntology` so
+both endpoints consult one function and one row; a duplicate reader is how two
+gates drift into disagreeing about the same Stack.
+
+The approval gate was **kept**, not deleted. It is defence in depth: the
+declaration can change between flagging and approving, and approval is the moment
+a write happens. A test flags while `EMPLOYS` is declared, narrows the Stack's
+`relationshipTypes` to `SUPPLIES`, and asserts approval still refuses.
+
+### What it gives up, deliberately
+
+An undeclared type can no longer be queued as a proposal. The queue is a review
+surface for viable work, not an inbox for vocabulary changes; proposing a new type
+means amending the Stack's declaration, which `PATCH /stacks` already does.
+
+This is the option chosen over marking the item `unapprovable_reason` and letting
+it sit in the queue, which would have kept the staging behaviour at the cost of a
+new response key and a human reading items that cannot succeed.
+
+### Falsifiability
+
+Removing the flag gate turns **4 of 8** backfeed-ontology tests red, including the
+one asserting nothing reached the queue.
+
+### Fixture fallout
+
+Four suites flagged `Thing`, `T`, `knows` and `links` — all outside the default
+vocabulary, and all previously fine because `flag` did not check. They now use
+`PRODUCT` and `IS_A`. None of them asserted on those strings; they test
+persistence, pagination and envelope shape, so the substitution preserves intent.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,

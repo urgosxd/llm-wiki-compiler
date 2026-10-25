@@ -14,11 +14,23 @@
  * your items was silently dropped". Refusing keeps the invariant that anything in
  * the graph was declared, and puts the correction where the human can act on it.
  *
+ * REFUSAL NOW HAPPENS AT BOTH ENDS. It used to happen only at approval, which
+ * made `flag`'s `201 Created` a lie: the queue accepted an item that could never
+ * be approved, and the caller learned their type was undeclared only after a human
+ * had spent attention on it — from a different endpoint than the one that said the
+ * proposal was fine. `flag` now refuses with the same 422, and the approval gate is
+ * kept as defence in depth because the declaration can change between the two
+ * calls and approval is the moment a write happens. Both are pinned below.
+ *
  * A Stack with no declaration is enforced against the documented default, not
  * left total. `null` used to mean the oracle's behaviour, and that was reversed
  * together with ingest: the graph a Stack accumulates must have one vocabulary
  * whether or not the caller wrote one down. Both halves are pinned below — the
  * default admits `COMPANY`, and it refuses `ALIEN_CONSTRUCT`.
+ *
+ * What this gives up: an undeclared type can no longer be queued as a proposal.
+ * The queue is a review surface for viable work, not an inbox for vocabulary
+ * changes; proposing a new type means amending the Stack's declaration.
  */
 
 import { describe, expect, it, beforeEach } from "vitest";
@@ -54,16 +66,20 @@ describe.skipIf(skipReason !== false)("backfeed approve respects the Stack ontol
     return `${currentDomainPrefix()}${label}-${Date.now().toString(36)}-${String(sequence)}`;
   }
 
-  /** Create a Stack, optionally with a declaration, returning its domain. */
-  async function createStack(ontology?: unknown): Promise<void> {
+  /** Create a Stack, optionally with a declaration, returning its id. */
+  async function createStack(ontology?: unknown): Promise<string> {
     stackDomain = uniqueDomain("case");
-    await database().execute(sql`
+    const rows = await database().execute<{ id: string }>(sql`
       insert into stacks (name, domain, ontology)
       values (
         ${"Backfeed ontology fixture"}, ${stackDomain},
         ${ontology === undefined ? null : JSON.stringify(ontology)}::jsonb
       )
+      returning id
     `);
+    const row = rows[0];
+    if (row === undefined) throw new Error("insert into stacks returned no row");
+    return row.id;
   }
 
   /** Flags one item against the current Stack and returns its id. */
@@ -73,6 +89,14 @@ describe.skipIf(skipReason !== false)("backfeed approve respects the Stack ontol
       .send({ domain: stackDomain, proposal });
     expect(response.status).toBe(201);
     return String(asRecord(response.body)["id"]);
+  }
+
+  /**
+   * Flags a proposal without asserting the status, for the cases where the
+   * refusal IS the assertion.
+   */
+  async function flagRaw(app: Express, proposal: Record<string, unknown>) {
+    return request(app).post("/aks/v1/backfeed/flag").send({ domain: stackDomain, proposal });
   }
 
   /** Approves one item, returning the response. */
@@ -96,29 +120,45 @@ describe.skipIf(skipReason !== false)("backfeed approve respects the Stack ontol
     await deleteFixtureRows();
   });
 
-  it("refuses an entity type the Stack never declared", async () => {
+  it("refuses an undeclared entity type at flag, before it reaches the queue", async () => {
+    // The asymmetry this closes: `flag` used to answer 201 for a type `approve`
+    // would refuse, so a caller learned their proposal was impossible only after a
+    // human had reviewed it. Now both endpoints refuse with the same 422.
     await createStack(DECLARATION);
     const app = buildApp();
-    const id = await flag(app, { entities: [{ name: "Vex", type: "ALIEN_CONSTRUCT" }] });
 
-    const response = await approve(app, id);
+    const response = await flagRaw(app, {
+      entities: [{ name: "Vex", type: "ALIEN_CONSTRUCT" }],
+    });
 
     expect(response.status).toBe(422);
     const detail = response.body.detail as Array<{ type: string; loc: string[]; msg: string }>;
     expect(detail[0]).toMatchObject({ type: "value_error", loc: ["body", "proposal"] });
     expect(detail[0]?.msg).toContain("ALIEN_CONSTRUCT");
-
-    // Nothing was written, and the item stays pending so a human can fix the
-    // ontology or reject it — the refusal must not consume the item.
-    expect(await entityTypes()).toEqual([]);
-    const stored = await request(app).get(`/aks/v1/backfeed/${id}`);
-    expect(asRecord(stored.body)["status"]).toBe("pending");
   });
 
-  it("refuses a relationship type the Stack never declared", async () => {
+  it("writes nothing to the queue when flag refuses", async () => {
+    // A refusal must not leave a row behind: the queue is a review surface for
+    // viable work, not an inbox for vocabulary changes.
     await createStack(DECLARATION);
     const app = buildApp();
-    const id = await flag(app, {
+
+    await flagRaw(app, { entities: [{ name: "Vex", type: "ALIEN_CONSTRUCT" }] }).catch(
+      () => undefined,
+    );
+
+    const rows = await database().execute<{ n: number }>(sql`
+      select count(*)::int as n from backfeed_queue
+      where stack_id in (select id from stacks where domain = ${stackDomain})
+    `);
+    expect(rows[0]?.n).toBe(0);
+  });
+
+  it("refuses an undeclared relationship type at flag", async () => {
+    await createStack(DECLARATION);
+    const app = buildApp();
+
+    const response = await flagRaw(app, {
       entities: [
         { name: "Acme", type: "COMPANY" },
         { name: "Ada", type: "PERSON" },
@@ -126,11 +166,38 @@ describe.skipIf(skipReason !== false)("backfeed approve respects the Stack ontol
       relationships: [{ from_entity: "Acme", to_entity: "Ada", type: "ACQUIRES" }],
     });
 
+    expect(response.status).toBe(422);
+    expect((response.body.detail as Array<{ msg: string }>)[0]?.msg).toContain("ACQUIRES");
+  });
+
+  it("still refuses at approve, so a declaration changed after flagging is enforced", async () => {
+    // Defence in depth, and the reason the approve gate was not deleted: the
+    // declaration can change between flagging and approval, and approval is the
+    // moment a write happens. Flagging while EMPLOYS is declared, then narrowing
+    // the Stack, must not let the item through.
+    const stackId = await createStack(DECLARATION);
+    const app = buildApp();
+    const id = await flag(app, {
+      entities: [
+        { name: "Acme", type: "COMPANY" },
+        { name: "Ada", type: "PERSON" },
+      ],
+      relationships: [{ from_entity: "Acme", to_entity: "Ada", type: "EMPLOYS" }],
+    });
+
+    // Narrowed directly: this harness mounts only the backfeed router, and what
+    // matters is that `approve` re-reads the column rather than trusting the state
+    // that existed when the item was flagged.
+    await database().execute(sql`
+      update stacks
+      set ontology = ${JSON.stringify({ entityTypes: ["COMPANY", "PERSON"], relationshipTypes: ["SUPPLIES"] })}::jsonb
+      where id = ${stackId}
+    `);
+
     const response = await approve(app, id);
 
     expect(response.status).toBe(422);
-    expect((response.body.detail as Array<{ msg: string }>)[0]?.msg).toContain("ACQUIRES");
-    expect(await entityTypes()).toEqual([]);
+    expect((response.body.detail as Array<{ msg: string }>)[0]?.msg).toContain("EMPLOYS");
   });
 
   it("absorbs a proposal that stays inside the declaration", async () => {
@@ -183,15 +250,16 @@ describe.skipIf(skipReason !== false)("backfeed approve respects the Stack ontol
     expect(await entityTypes()).toEqual(["COMPANY"]);
   });
 
-  it("refuses a type outside the default for a Stack with no declaration", async () => {
+  it("refuses a type outside the default at flag, for a Stack with no declaration", async () => {
     // The other half of the same contract: the default is a real allowlist, not a
     // suggestion. Without this test the previous one would also pass if the gate
     // had silently gone back to being total.
     await createStack(undefined);
     const app = buildApp();
-    const id = await flag(app, { entities: [{ name: "Vex", type: "ALIEN_CONSTRUCT" }] });
 
-    const response = await approve(app, id);
+    const response = await flagRaw(app, {
+      entities: [{ name: "Vex", type: "ALIEN_CONSTRUCT" }],
+    });
 
     expect(response.status).toBe(422);
     expect(asRecord(response.body)).toMatchObject({

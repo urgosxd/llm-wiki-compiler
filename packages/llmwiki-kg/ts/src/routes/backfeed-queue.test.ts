@@ -47,7 +47,7 @@ describe.skipIf(skipReason !== false)("backfeed queue (live database)", () => {
       function flagBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
         return {
           domain: stackDomain,
-          proposal: { entities: [{ name: "Widget", type: "Thing" }] },
+          proposal: { entities: [{ name: "Widget", type: "PRODUCT" }] },
           ...overrides,
         };
       }

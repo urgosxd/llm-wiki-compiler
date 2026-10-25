@@ -13,7 +13,7 @@ import type { BackfeedApprovalResultDto } from "../../dto.js";
 import { apiError, toFastApiValidationError } from "../../errors.js";
 import { readStoredProposal } from "./row.js";
 import { sendApiError, sendValidationError } from "./query.js";
-import { checkProposalAgainstOntology, stackOntology } from "./ontology-gate.js";
+import { checkProposalAgainstOntology, loadStackOntology } from "./ontology-gate.js";
 
 /** The queue row an approval needs: what it points at and what it holds. */
 type ApprovalItem = {
@@ -48,27 +48,6 @@ async function readApprovalItem(
     where id = ${itemId}
   `);
   return rows[0];
-}
-
-/**
- * Reads the Stack's stored ontology declaration, if it has one.
- *
- * Read here rather than carried on the queue row: the declaration can change
- * between flagging and approval, and approval is the moment a write happens, so
- * the gate must consult what the Stack declares NOW.
- *
- * @param tx - The approval transaction.
- * @param stackId - Stack the item belongs to.
- * @returns The raw `stacks.ontology` value, `null` when unconfigured.
- */
-async function readStackOntologyColumn(
-  tx: Database,
-  stackId: string,
-): Promise<unknown> {
-  const rows = await tx.execute<{ ontology: unknown }>(
-    sql`select ontology from stacks where id = ${stackId}`,
-  );
-  return rows[0]?.ontology ?? null;
 }
 
 /** Absorbs the stored proposal into the ontology, returning what it wrote. */
@@ -151,7 +130,7 @@ export async function approveItem(
   // Refuse before writing anything: a partial approval would report a count the
   // human reads as success while an item was silently dropped.
   const proposal = readStoredProposal(item.proposal);
-  const ontology = stackOntology(await readStackOntologyColumn(tx, item.stack_id));
+  const ontology = await loadStackOntology(tx, item.stack_id);
   const refusal = checkProposalAgainstOntology(ontology, proposal);
   if (refusal !== undefined) {
     res.status(refusal.status).json(refusal.body);

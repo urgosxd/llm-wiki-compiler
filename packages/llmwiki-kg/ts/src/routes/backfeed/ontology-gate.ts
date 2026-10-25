@@ -35,9 +35,12 @@
  * type so the human can fix the item or declare the ontology.
  */
 
+import { sql } from "drizzle-orm";
+
 import { defaultOntology } from "../../core/default_ontology.js";
 import { OntologyError, validateOntology } from "../../core/ontology.js";
 import type { Ontology } from "../../core/ontology.js";
+import type { Database } from "../../db.js";
 import type { BackfeedProposalDto } from "../../dto.js";
 import type { PydanticErrorDetail } from "../../errors.js";
 
@@ -84,6 +87,31 @@ function refuse(
 export function stackOntology(stored: unknown): Ontology {
   if (stored === null || stored === undefined) return defaultOntology();
   return validateOntology(stored);
+}
+
+/**
+ * Reads a Stack's declaration and resolves it, in one step.
+ *
+ * Lives here rather than in either route because BOTH endpoints need it and they
+ * must consult the same row: flag and approve each enforce the ontology, and a
+ * duplicate reader is how they drift into disagreeing about the same Stack.
+ *
+ * Read at request time rather than carried on the queue row, because the
+ * declaration can change between flagging and approval. Approval is the moment a
+ * write happens, so it must consult what the Stack declares NOW; flag is the
+ * moment a caller is told whether their proposal is viable, so it must consult
+ * the same thing.
+ *
+ * @param tx - The request transaction.
+ * @param stackId - Stack the item belongs to.
+ * @returns The ontology in force for that Stack.
+ * @throws {OntologyError} When the stored declaration is present but invalid.
+ */
+export async function loadStackOntology(tx: Database, stackId: string): Promise<Ontology> {
+  const rows = await tx.execute<{ ontology: unknown }>(
+    sql`select ontology from stacks where id = ${stackId}`,
+  );
+  return stackOntology(rows[0]?.ontology ?? null);
 }
 
 /**

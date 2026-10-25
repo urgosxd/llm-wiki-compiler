@@ -46,7 +46,7 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
       function flagBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
         return {
           domain: stackDomain,
-          proposal: { entities: [{ name: "Widget", type: "Thing" }] },
+          proposal: { entities: [{ name: "Widget", type: "PRODUCT" }] },
           ...overrides,
         };
       }
@@ -84,7 +84,7 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
         // The proposal round-trips through validation, defaults included.
         expect(body["proposal"]).toEqual({
           entities: [
-            { name: "Widget", type: "Thing", description: null, confidence: 0.7, properties: {} },
+            { name: "Widget", type: "PRODUCT", description: null, confidence: 0.7, properties: {} },
           ],
           relationships: [],
         });
@@ -100,8 +100,8 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
           .send(
             flagBody({
               proposal: {
-                entities: [{ name: "A", type: "T" }],
-                relationships: [{ from_entity: "A", to_entity: "B", type: "knows" }],
+                entities: [{ name: "A", type: "PRODUCT" }],
+                relationships: [{ from_entity: "A", to_entity: "B", type: "IS_A" }],
               },
             }),
           );
@@ -120,7 +120,7 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
 
         const byId = await request(app)
           .post("/aks/v1/backfeed/flag")
-          .send({ stack_id: stackId, proposal: { entities: [{ name: "ById", type: "T" }] } });
+          .send({ stack_id: stackId, proposal: { entities: [{ name: "ById", type: "PRODUCT" }] } });
 
         expect(byId.status).toBe(201);
         expect(asRecord(byId.body)["stack_id"]).toBe(stackId);
@@ -135,7 +135,7 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
           .send({
             stack_id: stackId,
             domain: "definitely-not-a-domain",
-            proposal: { entities: [{ name: "Both", type: "T" }] },
+            proposal: { entities: [{ name: "Both", type: "PRODUCT" }] },
           });
 
         expect(response.status).toBe(201);
@@ -189,7 +189,7 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
 
         const response = await request(app)
           .post("/aks/v1/backfeed/flag")
-          .send({ proposal: { entities: [{ name: "A", type: "T" }] } });
+          .send({ proposal: { entities: [{ name: "A", type: "PRODUCT" }] } });
 
         // A plain-string detail, not the 422 error array — FastAPI raised it from
         // the handler, not from request validation.
@@ -205,7 +205,7 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
         // Python's guard is a truthiness test, so "" falls through to the 422.
         const response = await request(app)
           .post("/aks/v1/backfeed/flag")
-          .send({ domain: "", proposal: { entities: [{ name: "A", type: "T" }] } });
+          .send({ domain: "", proposal: { entities: [{ name: "A", type: "PRODUCT" }] } });
 
         expect(response.status).toBe(422);
         expect(response.body).toEqual({
@@ -218,13 +218,13 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
 
         const byDomain = await request(app)
           .post("/aks/v1/backfeed/flag")
-          .send({ domain: "no-such-domain", proposal: { entities: [{ name: "A", type: "T" }] } });
+          .send({ domain: "no-such-domain", proposal: { entities: [{ name: "A", type: "PRODUCT" }] } });
         expect(byDomain.status).toBe(404);
         expect(byDomain.body).toEqual({ detail: "Stack 'no-such-domain' not found" });
 
         const byId = await request(app)
           .post("/aks/v1/backfeed/flag")
-          .send({ stack_id: ABSENT_UUID, proposal: { entities: [{ name: "A", type: "T" }] } });
+          .send({ stack_id: ABSENT_UUID, proposal: { entities: [{ name: "A", type: "PRODUCT" }] } });
         expect(byId.status).toBe(404);
         expect(byId.body).toEqual({ detail: `Stack '${ABSENT_UUID}' not found` });
       });

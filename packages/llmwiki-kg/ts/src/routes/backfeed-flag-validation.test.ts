@@ -43,7 +43,7 @@ describe.skipIf(skipReason !== false)("backfeed flag validation (live database)"
       function flagBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
         return {
           domain: stackDomain,
-          proposal: { entities: [{ name: "Widget", type: "Thing" }] },
+          proposal: { entities: [{ name: "Widget", type: "PRODUCT" }] },
           ...overrides,
         };
       }
@@ -102,7 +102,7 @@ describe.skipIf(skipReason !== false)("backfeed flag validation (live database)"
 
         const tooHigh = await request(app)
           .post("/aks/v1/backfeed/flag")
-          .send(flagBody({ proposal: { entities: [{ name: "A", type: "T", confidence: 1.5 }] } }));
+          .send(flagBody({ proposal: { entities: [{ name: "A", type: "PRODUCT", confidence: 1.5 }] } }));
         expect(tooHigh.status).toBe(422);
         expect(tooHigh.body).toEqual({
           detail: [
@@ -118,7 +118,7 @@ describe.skipIf(skipReason !== false)("backfeed flag validation (live database)"
 
         const tooLow = await request(app)
           .post("/aks/v1/backfeed/flag")
-          .send(flagBody({ proposal: { entities: [{ name: "A", type: "T", confidence: -0.1 }] } }));
+          .send(flagBody({ proposal: { entities: [{ name: "A", type: "PRODUCT", confidence: -0.1 }] } }));
         expect(tooLow.status).toBe(422);
 
         // Both bounds are inclusive, so the endpoints are accepted.
@@ -128,8 +128,8 @@ describe.skipIf(skipReason !== false)("backfeed flag validation (live database)"
             flagBody({
               proposal: {
                 entities: [
-                  { name: "Low", type: "T", confidence: 0 },
-                  { name: "High", type: "T", confidence: 1 },
+                  { name: "Low", type: "PRODUCT", confidence: 0 },
+                  { name: "High", type: "PRODUCT", confidence: 1 },
                 ],
               },
             }),
