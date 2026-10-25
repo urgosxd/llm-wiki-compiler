@@ -60,7 +60,12 @@ describe("toStoredOntology", () => {
       entityTypes: ["organization"],
       relationshipTypes: ["supplies"],
     });
-    expect(stored).toEqual({ entityTypes: ["ORGANIZATION"], relationshipTypes: ["SUPPLIES"], subtypes: [] });
+    expect(stored).toEqual({
+      entityTypes: ["ORGANIZATION"],
+      relationshipTypes: ["SUPPLIES"],
+      subtypes: [],
+      relationships: [],
+    });
   });
 
   it("refuses to produce a declaration the reader would reject", () => {

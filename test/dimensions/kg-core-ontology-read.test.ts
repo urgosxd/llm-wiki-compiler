@@ -65,7 +65,7 @@ const DECLARATION = {
 };
 
 /** A validated ontology, in the shape `readStackOntology` returns. */
-const ONTOLOGY = { ...DECLARATION, parentsOf: new Map() };
+const ONTOLOGY = { ...DECLARATION, parentsOf: new Map(), constraintsOf: new Map() };
 
 const INPUT = { source: "src/a.md", title: "A", body: "body" };
 
@@ -156,7 +156,7 @@ describe("kg dimension ontology wiring", () => {
 
   it("prefers an explicitly supplied ontology over the stored one", async () => {
     const loadOntology = vi.fn(async () => undefined);
-    const explicit = { ...DECLARATION, parentsOf: new Map() };
+    const explicit = { ...DECLARATION, parentsOf: new Map(), constraintsOf: new Map() };
 
     await createKgDimension({
       stackId: "s",

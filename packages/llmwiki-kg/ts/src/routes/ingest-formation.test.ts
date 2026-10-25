@@ -297,3 +297,121 @@ describe.skipIf(skipReason !== false)("entities and relationships are formed", (
     expect(mismatched[0]?.n).toBe(0);
   });
 });
+
+describe("standalone entities", () => {
+  let app: Express;
+  let sequence = 0;
+
+  function domain(label: string): string {
+    sequence += 1;
+    return `w2ex-ingest-standalone-${label}-${Date.now().toString(36)}-${String(sequence)}`;
+  }
+
+  /** Ingests a payload carrying `entities` and no triplets at all. */
+  async function ingestEntities(label: string, entities: readonly unknown[]) {
+    const stackId = await createStack(app, domain(label));
+    const documentId = await createDocument(stackId, "We decided to use Postgres.");
+    setToolResponse([{ triplets: [], entities }]);
+    const response = await request(app).post(ingestUrl(stackId, documentId));
+    expect(response.status).toBe(200);
+    return { stackId, documentId, response };
+  }
+
+  /** Creates a Stack whose declaration admits a type that rarely has edges. */
+  async function createWideStack(label: string): Promise<string> {
+    const created = await request(app).post("/stacks").send({
+      name: "Wide Stack",
+      domain: domain(label),
+      // PERSON is required here: TRIPLET is COMPANY EMPLOYS PERSON, and a
+      // declaration without it would drop the triplet and take its endpoints too.
+      ontology: { entityTypes: ["DECISION", "COMPANY", "PERSON"], relationshipTypes: ["EMPLOYS"] },
+    });
+    expect(created.status).toBe(201);
+    return String(created.body.id);
+  }
+
+  beforeEach(async () => {
+    await deleteFixtureRows();
+    app = buildApp();
+    installFetchStub();
+  });
+
+  afterEach(async () => {
+    uninstallFetchStub();
+    await deleteFixtureRows();
+  });
+
+  it("stores an entity that takes part in no relationship", async () => {
+    // The whole point of `entities` in the schema. Before it, a document saying
+    // "we decided to use Postgres" produced no rows, because the only place a
+    // node could live was inside a triplet.
+    const stackId = await createWideStack("one");
+    const documentId = await createDocument(stackId, "We decided to use Postgres.");
+    setToolResponse([{ triplets: [], entities: [{ type: "DECISION", name: "Use Postgres" }] }]);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    const rows = await entityRows(stackId);
+
+    expect(rows.map((row) => ({ name: row.name, type: row.type }))).toEqual([
+      { name: "Use Postgres", type: "DECISION" },
+    ]);
+  });
+
+  it("forms no relationship row for a standalone entity", async () => {
+    const stackId = await createWideStack("no-edge");
+    const documentId = await createDocument(stackId, "We decided to use Postgres.");
+    setToolResponse([{ triplets: [], entities: [{ type: "DECISION", name: "Use Postgres" }] }]);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    const edges = await database().execute<{ n: number }>(sql`
+      select count(*)::int as n from ontology_relationships where stack_id = ${stackId}
+    `);
+
+    expect(edges[0]?.n).toBe(0);
+  });
+
+  it("drops a standalone entity whose type is undeclared", async () => {
+    const { stackId } = await ingestEntities("undeclared", [
+      { type: "ALIEN_CONSTRUCT", name: "Vex" },
+    ]);
+
+    expect(await entityRows(stackId)).toEqual([]);
+  });
+
+  it("keeps a standalone entity beside triplet endpoints from the same chunk", async () => {
+    // Both shapes in one payload. `Acme` and `Ada` come from the triplet, the
+    // decision from `entities`; all three must be rows.
+    const stackId = await createWideStack("mixed");
+    const documentId = await createDocument(stackId, BODY);
+    setToolResponse([
+      {
+        triplets: [TRIPLET],
+        entities: [{ type: "DECISION", name: "Use Postgres" }],
+      },
+    ]);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    const names = (await entityRows(stackId)).map((row) => row.name).sort();
+
+    expect(names).toEqual(["Acme", "Ada Lovelace", "Use Postgres"].sort());
+  });
+
+  it("keeps one row when a node is reported as both an endpoint and an entity", async () => {
+    // The type from the triplet wins, because that is the one a relationship
+    // already constrains. Two rows for one name would split the graph.
+    const { stackId } = await ingestEntities("both", [
+      { type: "COMPANY", name: "Acme" },
+    ]);
+    const documentId = await createDocument(stackId, BODY);
+    setToolResponse([
+      { triplets: [TRIPLET], entities: [{ type: "COMPANY", name: "Acme" }] },
+    ]);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    const rows = await entityRows(stackId);
+    const acme = rows.filter((row) => row.name === "Acme");
+
+    expect(acme).toHaveLength(1);
+    expect(acme[0]?.type).toBe("COMPANY");
+  });
+});

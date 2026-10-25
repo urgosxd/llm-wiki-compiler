@@ -105,13 +105,27 @@ describe("a declaration changes the type lists and nothing else", () => {
     expect(buildToolSchema()).toBe(buildToolSchema(undefined));
   });
 
-  it("offers only triplets, so a standalone entity has no representation", () => {
+  it("offers triplets and a separate entities array", () => {
     const schema = buildToolSchema(ONTOLOGY);
     const properties = Object.keys(schema.parameters.properties as Record<string, unknown>);
 
-    // This is WHY an entity cannot be extracted on its own: the model has no
-    // place to put one.
-    expect(properties).toEqual(["triplets"]);
+    // `entities` is the deliberate divergence from the oracle. Without it a
+    // DECISION or a REQUIREMENT cannot be extracted at all, because the only
+    // place a node could live was inside a triplet.
+    expect(properties).toEqual(["triplets", "entities"]);
+  });
+
+  it("still requires triplets, so a model that ignores entities is valid", () => {
+    // The addition is additive at the payload level: the old shape stays legal.
+    // If `entities` were required, every provider that ignores an unfamiliar field
+    // would return an invalid payload and a document would extract to nothing.
+    const schema = buildToolSchema(ONTOLOGY);
+
+    expect(schema.parameters.required).toEqual(["triplets"]);
+    expect({
+      type: schema.parameters.properties.entities.type,
+      $ref: schema.parameters.properties.entities.items.$ref,
+    }).toEqual({ type: "array", $ref: "#/$defs/Entity" });
   });
 });
 

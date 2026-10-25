@@ -81,6 +81,10 @@ it meant "nobody is checking", and `type text not null` with no CHECK accepted
 - [x] 11. Add `declared` to the audit and rewrite the tests pinning "null = free field"
 - [x] 12. RED: tests that the audit names the dropped triplets, bounded and ordered
 - [x] 13. `samples` in `OntologyAudit`: name, relation, object, reason, offending type
+- [x] 14. RED: domain/range tests — `PERSON EMPLOYS PERSON` must be refused
+- [x] 15. Additive `relationships` field with `domains`/`ranges`, validated at load
+- [x] 16. Enforce pairs after the allowlists; hierarchy now decides admission
+- [x] 17. RED: standalone-entity tests, then `entities` in `KG_TOOL` and the flow
 
 ## Scope boundary
 
@@ -480,6 +484,81 @@ It reports the loss; it does not prevent it. Keeping the endpoints of a dropped
 triplet would create standalone entities, which is the change that has to come
 before entity types like `DECISION` or `REQUIREMENT` — things that usually exist
 without a relationship — can survive extraction at all.
+
+## Follow-up 4: relationships declare a domain and a range
+
+Measured before this existed: all four combinations of `COMPANY`/`PERSON` with
+`EMPLOYS` were admitted, including `PERSON EMPLOYS PERSON`, because
+`rejectTriplet` checked subject type, object type and relation type as three
+independent allowlist lookups and never as a pair.
+
+### Shape, and why it is additive
+
+```jsonc
+{
+  "entityTypes": ["COMPANY", "PERSON"],
+  "relationshipTypes": ["EMPLOYS"],
+  "relationships": [
+    { "type": "EMPLOYS", "domains": ["COMPANY"], "ranges": ["PERSON"] }
+  ]
+}
+```
+
+A relationship left out of `relationships` keeps exactly the behaviour it had.
+An empty `domains` or `ranges` means "any declared type", not "permit nothing" —
+the latter would silently drop every triplet of that relationship and read as a
+thin extraction. An ontology written before the field existed loads unchanged.
+
+New reason codes: `SUBJECT_TYPE_NOT_IN_DOMAIN`, `OBJECT_TYPE_NOT_IN_RANGE`.
+Checked after the allowlists so the reported reason is the more specific cause.
+
+A constraint that could never fire is refused at load: a constraint on an
+undeclared relationship, or a domain/range naming an undeclared entity type.
+
+### The hierarchy finally does work
+
+`isEntityTypeAllowed` was decorative before this: `rejectTriplet` passed the full
+allowlist as the required set, so every declared type matched by identity and the
+ancestor walk never decided anything. A domain of `ORGANIZATION` now admits
+`COMPANY` when `COMPANY IS_A ORGANIZATION` is declared, and that is pinned.
+
+### Falsifiability
+
+Neutralising the constraint lookup turns **5 of 14** domain/range tests red.
+
+## Follow-up 5: the tool schema asks for standalone entities
+
+**This breaks oracle parity deliberately** — see `aks-spec-conformance.md`
+section 2b.
+
+`KG_TOOL` gained an `entities` array of `{type, name}`. `triplets` stays the only
+required property, so a model that ignores `entities` returns a valid payload.
+
+### The measurement that forced it
+
+A document saying *"we decided to use Postgres"* contributed **no rows**. Entities
+existed only as triplet endpoints (`absorbEndpoint`, called from the triplet
+loop), so `DECISION`, `REQUIREMENT` and `TEAM` — most of what this compiler is fed
+— were unrepresentable.
+
+### Admission
+
+Standalone entities go through the same allowlist as triplet endpoints, so the
+addition cannot smuggle an undeclared type into the graph. A node reported in both
+shapes stays one row, and the triplet's type wins because that is the one a
+relationship already constrains.
+
+### Falsifiability
+
+Removing the standalone absorption turns **2** of the 12 formation tests red.
+Emptying `samples` earlier turned 4. Removing the domain/range lookup turns 5.
+
+### What this does NOT do
+
+It does not give the model an explicit slot for standalone entity *properties*;
+`ontology_entities.properties` is still always `{}`. And a standalone entity is
+still dropped silently rather than reported: it carries no pair information, so
+filtering it is not a rejection the caller needs a record of.
 
 ## Open follow-ups (not in this change)
 

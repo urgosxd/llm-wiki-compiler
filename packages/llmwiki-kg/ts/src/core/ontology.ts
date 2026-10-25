@@ -38,12 +38,37 @@
 
 import { readFile } from "node:fs/promises";
 
-import { parseTriplets, type Triplet } from "./graph-parse.js";
+import { parseTriplets, type StandaloneEntity, type Triplet } from "./graph-parse.js";
 
 /** One `child IS_A parent` edge between two declared entity types. */
 export interface SubtypeEdge {
   readonly child: string;
   readonly parent: string;
+}
+
+/**
+ * Which entity types one relationship may connect.
+ *
+ * ## Why this is separate from `relationshipTypes`
+ *
+ * `relationshipTypes` answers "may the model emit `EMPLOYS` at all". It cannot
+ * answer "may a PERSON employ a PERSON", because the type allowlists are checked
+ * endpoint by endpoint and never as a pair. Measured before this existed: all
+ * four combinations of `COMPANY`/`PERSON` with `EMPLOYS` were admitted, including
+ * `PERSON EMPLOYS PERSON`.
+ *
+ * Declaring a relationship here adds the pair constraint for that relationship
+ * only. A relationship left out of this list stays pair-unconstrained, so an
+ * existing declaration keeps exactly the behaviour it had — the constraints are
+ * additive, not a replacement for `relationshipTypes`.
+ */
+export interface RelationshipConstraint {
+  /** The relationship type this constraint applies to, normalised. */
+  readonly type: string;
+  /** Entity types that may appear as the subject. Empty means any declared type. */
+  readonly domains: readonly string[];
+  /** Entity types that may appear as the object. Empty means any declared type. */
+  readonly ranges: readonly string[];
 }
 
 /** A validated ontology: the type allowlists plus the validated hierarchy. */
@@ -53,10 +78,22 @@ export interface Ontology {
   readonly subtypes: readonly SubtypeEdge[];
   /** Direct parents per entity type, for ancestor walks. */
   readonly parentsOf: ReadonlyMap<string, readonly string[]>;
+  /**
+   * Pair constraints by relationship type, for relationships that declare them.
+   *
+   * A relationship absent from this map is unconstrained as a pair, which is why
+   * the field is a map and not an array: the question asked at enforcement time is
+   * "what does `EMPLOYS` require", not "walk every constraint".
+   */
+  readonly constraintsOf: ReadonlyMap<string, RelationshipConstraint>;
 }
 
 /** Why a triplet was turned away. */
-export type RejectionReason = "UNKNOWN_ENTITY_TYPE" | "UNKNOWN_RELATIONSHIP_TYPE";
+export type RejectionReason =
+  | "UNKNOWN_ENTITY_TYPE"
+  | "UNKNOWN_RELATIONSHIP_TYPE"
+  | "SUBJECT_TYPE_NOT_IN_DOMAIN"
+  | "OBJECT_TYPE_NOT_IN_RANGE";
 
 /** One rejected triplet, flattened to names so it can be reported verbatim. */
 export interface RejectedTriplet {
@@ -141,6 +178,104 @@ function readSubtypes(source: Record<string, unknown>): readonly SubtypeEdge[] {
   });
 }
 
+/**
+ * Reads the optional `relationships` list of pair constraints.
+ *
+ * Absent means no relationship is pair-constrained, which is what keeps an
+ * ontology written before this field existed loading unchanged. An empty `domains`
+ * or `ranges` list is treated the same as omitting it: it cannot mean "permit
+ * nothing", because that would silently drop every triplet of that relationship
+ * and read as a thin extraction.
+ */
+function readConstraints(source: Record<string, unknown>): readonly RelationshipConstraint[] {
+  const raw = source["relationships"];
+  if (raw === undefined) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new OntologyError('ontology field "relationships" must be an array');
+  }
+  return raw.map((entry) => {
+    const record = asRecord(entry);
+    const type = record?.["type"];
+    if (typeof type !== "string" || type.trim() === "") {
+      throw new OntologyError('each entry of "relationships" must have a non-empty string "type"');
+    }
+    return {
+      type: normalizeType(type.trim()),
+      domains: readTypeNameArray(record?.["domains"], "domains"),
+      ranges: readTypeNameArray(record?.["ranges"], "ranges"),
+    };
+  });
+}
+
+/** Reads an optional list of normalised type names, where absent means "any". */
+function readTypeNameArray(raw: unknown, field: string): readonly string[] {
+  if (raw === undefined) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new OntologyError(`ontology "relationships" field "${field}" must be an array`);
+  }
+  return raw.map((entry) => {
+    if (typeof entry !== "string" || entry.trim() === "") {
+      throw new OntologyError(
+        `ontology "relationships" field "${field}" contains a non-string or empty type name`,
+      );
+    }
+    return normalizeType(entry.trim());
+  });
+}
+
+/**
+ * Rejects a constraint that could never be satisfied.
+ *
+ * A constraint naming a relationship outside `relationshipTypes`, or a domain or
+ * range outside `entityTypes`, is a declaration mistake: `EMPLOYS` bounded by
+ * `COMPANY` does nothing if `EMPLOYS` was never declared admissible, and it would
+ * look like the constraint was being enforced when it never could be.
+ */
+function assertConstraintsDeclared(
+  constraints: readonly RelationshipConstraint[],
+  entityTypes: readonly string[],
+  relationshipTypes: readonly string[],
+): void {
+  for (const constraint of constraints) {
+    if (!relationshipTypes.includes(constraint.type)) {
+      throw new OntologyError(
+        `ontology "relationships" constrains "${constraint.type}", which is not declared in "relationshipTypes"`,
+      );
+    }
+    for (const [field, names] of [
+      ["domains", constraint.domains],
+      ["ranges", constraint.ranges],
+    ] as const) {
+      for (const name of names) {
+        if (!entityTypes.includes(name)) {
+          throw new OntologyError(
+            `ontology "relationships" ${field} references "${name}", which is not declared in "entityTypes"`,
+          );
+        }
+      }
+    }
+  }
+  const duplicate = constraints.find(
+    (entry, index) => constraints.findIndex((other) => other.type === entry.type) !== index,
+  );
+  if (duplicate !== undefined) {
+    throw new OntologyError(
+      `ontology "relationships" constrains "${duplicate.type}" more than once`,
+    );
+  }
+}
+
+/** Indexes constraints by relationship type for enforcement-time lookups. */
+function buildConstraintIndex(
+  constraints: readonly RelationshipConstraint[],
+): ReadonlyMap<string, RelationshipConstraint> {
+  return new Map(constraints.map((constraint) => [constraint.type, constraint]));
+}
+
 /** Rejects a hierarchy that references a type the ontology never declared. */
 function assertSubtypesDeclared(
   subtypes: readonly SubtypeEdge[],
@@ -219,9 +354,17 @@ export function validateOntology(input: unknown): Ontology {
   const entityTypes = readTypeList(source, "entityTypes");
   const relationshipTypes = readTypeList(source, "relationshipTypes");
   const subtypes = readSubtypes(source);
+  const constraints = readConstraints(source);
   assertSubtypesDeclared(subtypes, entityTypes);
   assertNoCycle(subtypes);
-  return { entityTypes, relationshipTypes, subtypes, parentsOf: buildParentIndex(subtypes) };
+  assertConstraintsDeclared(constraints, entityTypes, relationshipTypes);
+  return {
+    entityTypes,
+    relationshipTypes,
+    subtypes,
+    parentsOf: buildParentIndex(subtypes),
+    constraintsOf: buildConstraintIndex(constraints),
+  };
 }
 
 /**
@@ -301,11 +444,32 @@ export function isEntityTypeAllowed(
 }
 
 /**
+ * Checks one endpoint against a declared domain or range list.
+ *
+ * An empty list means "any declared type", so an unconstrained side passes
+ * without a lookup. A constrained side is checked through
+ * {@link isEntityTypeAllowed}, which is where the subtype hierarchy finally earns
+ * its keep: a domain of `ORGANIZATION` admits a `COMPANY` when `COMPANY` is
+ * declared a subtype of it. Before pair constraints existed the hierarchy was
+ * decorative, because every declared type satisfied the full allowlist by
+ * identity.
+ */
+function endpointViolates(
+  ontology: Ontology,
+  endpointType: string,
+  allowed: readonly string[],
+): boolean {
+  if (allowed.length === 0) return false;
+  return !isEntityTypeAllowed(ontology, endpointType, allowed);
+}
+
+/**
  * Decides whether one triplet is admissible, returning why it is not.
  *
- * Entity types are checked before the relationship type so the report names the
- * more specific cause: when a triplet has both problems, the endpoint is the one
- * that also costs the entity.
+ * Checks run in a fixed order — entity allowlist, relationship allowlist, then the
+ * pair — so the reported reason is the most specific cause that applies. The pair
+ * comes last because a triplet whose relationship is not declared at all is better
+ * explained by that than by a domain it also violates.
  *
  * @param triplet - A parsed triplet.
  * @param ontology - The ontology to enforce.
@@ -327,6 +491,24 @@ function rejectTriplet(triplet: Triplet, ontology: Ontology): RejectedTriplet | 
       ...base,
       reason: "UNKNOWN_RELATIONSHIP_TYPE",
       offendingType: triplet.relationType,
+    };
+  }
+  const constraint = ontology.constraintsOf.get(triplet.relationType);
+  if (constraint === undefined) {
+    return undefined;
+  }
+  if (endpointViolates(ontology, triplet.subjectType, constraint.domains)) {
+    return {
+      ...base,
+      reason: "SUBJECT_TYPE_NOT_IN_DOMAIN",
+      offendingType: triplet.subjectType,
+    };
+  }
+  if (endpointViolates(ontology, triplet.objectType, constraint.ranges)) {
+    return {
+      ...base,
+      reason: "OBJECT_TYPE_NOT_IN_RANGE",
+      offendingType: triplet.objectType,
     };
   }
   return undefined;
@@ -359,4 +541,29 @@ export function parseTripletsWithOntology(
     }
   }
   return { triplets, rejected };
+}
+
+/**
+ * Admits standalone entities whose type the ontology declares.
+ *
+ * A standalone entity has no relationship to check, so the only question is its
+ * own type. It is filtered rather than refused: an entity carries no pair
+ * information, so an out-of-ontology one is simply not admitted, and the caller
+ * needs no rejection record to understand a missing node.
+ *
+ * The subtype hierarchy applies here too, through
+ * {@link isEntityTypeAllowed}, so a `COMPANY` reported standalone is admitted by
+ * an ontology that declares `ORGANIZATION` and `COMPANY IS_A ORGANIZATION`.
+ *
+ * @param entities - Entities the model reported outside any triplet.
+ * @param ontology - The ontology to enforce.
+ * @returns The entities whose type is declared.
+ */
+export function admitStandaloneEntities(
+  entities: readonly StandaloneEntity[],
+  ontology: Ontology,
+): StandaloneEntity[] {
+  return entities.filter((entity) =>
+    isEntityTypeAllowed(ontology, entity.type, ontology.entityTypes),
+  );
 }

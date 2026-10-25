@@ -53,7 +53,7 @@ describe("OntologyInput", () => {
     // missing key would make the same declaration mean two things depending on
     // which path read it.
     const parsed = parseOk(StackCreate, { ...CREATE_BODY, ontology: DECLARATION });
-    expect(parsed.ontology).toEqual({ ...DECLARATION, subtypes: [] });
+    expect(parsed.ontology).toEqual({ ...DECLARATION, subtypes: [], relationships: [] });
   });
 
   it("keeps absence distinct from an explicit null", () => {
@@ -115,6 +115,7 @@ describe("OntologyInput", () => {
       entityTypes: ["ORGANIC_ORGANIZATION"],
       relationshipTypes: ["WORKS_AT"],
       subtypes: [],
+      relationships: [],
     });
   });
 
@@ -127,6 +128,7 @@ describe("OntologyInput", () => {
     expect(JSON.parse(JSON.stringify(parsed.ontology))).toEqual({
       ...DECLARATION,
       subtypes: [],
+      relationships: [],
     });
   });
 });

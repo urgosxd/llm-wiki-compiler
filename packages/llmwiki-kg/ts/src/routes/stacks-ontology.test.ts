@@ -38,7 +38,7 @@ const DECLARATION = {
 };
 
 /** The stored form of {@link DECLARATION}: `subtypes` is always present. */
-const STORED_DECLARATION = { ...DECLARATION, subtypes: [] };
+const STORED_DECLARATION = { ...DECLARATION, subtypes: [], relationships: [] };
 
 describe.skipIf(skipReason !== false)("/stacks ontology (live database)", () => {
   let sequence = 0;

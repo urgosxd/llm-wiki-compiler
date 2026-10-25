@@ -98,14 +98,27 @@ export function buildToolSchema(ontology?: Ontology): typeof KG_TOOL {
 }
 
 /**
- * The tool schema `SchemaLLMPathExtractor` generates for this configuration.
+ * The tool schema the extractor asks the model to fill.
  *
- * Captured from the live request rather than transcribed from the class: with
- * `strict=False` and no `possible_entity_props`, `get_entity_class` produces a
- * bare `{type, name}` entity and a bare `{type}` relation, and the triplet
- * model wraps them as `subject` / `relation` / `object` under a `triplets`
- * array. The top-level `additionalProperties: false` is what LlamaIndex adds
- * when building the function tool.
+ * ## Provenance, and where this deliberately departs from it
+ *
+ * Captured from the live request `SchemaLLMPathExtractor` produces: with
+ * `strict=False` and no `possible_entity_props`, `get_entity_class` yields a bare
+ * `{type, name}` entity and a bare `{type}` relation, and the triplet model wraps
+ * them as `subject` / `relation` / `object` under a `triplets` array.
+ *
+ * **This is no longer byte-identical to the oracle's schema, on purpose.**
+ * `entities` is an addition the oracle does not have. The reason is structural
+ * rather than cosmetic: the oracle can only ever produce an entity that is an
+ * endpoint of a triplet, so a type like `DECISION` or `REQUIREMENT` — the things
+ * this compiler is fed documents about, which usually exist without a
+ * relationship — cannot survive extraction at all. A document that says "we
+ * decided to use Postgres" yields nothing, because there is no edge to hang the
+ * decision on.
+ *
+ * The divergence is registered in `odd/findings/aks-spec-conformance.md`. It is
+ * additive at the schema level: `triplets` is still required, so a model that
+ * ignores `entities` produces exactly the old payload and is still valid.
  */
 export const KG_TOOL = {
   name: "KGSchema",
@@ -116,6 +129,13 @@ export const KG_TOOL = {
       triplets: {
         type: "array",
         items: { $ref: "#/$defs/Triplet" },
+      },
+      entities: {
+        type: "array",
+        items: { $ref: "#/$defs/Entity" },
+        description:
+          "Entities that matter in this text but take part in no relationship. " +
+          "Report a subject or object here only when it belongs to no triplet.",
       },
     },
     required: ["triplets"],
