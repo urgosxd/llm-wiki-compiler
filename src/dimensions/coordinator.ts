@@ -99,38 +99,51 @@ function withKey(
  * Returns the dimensions whose work could NOT be undone, so the caller keeps the
  * outbox record instead of pretending the world is clean.
  *
- * ## Why `committed` decides, not the absence of a throw
+ * ## Two questions, and they are not the same one
  *
- * This used to report a failure only when `discard` THREW, and treated a quiet
- * return as "successfully rolled back". That conflated two different outcomes a
- * `discard` can mean: "I undid it" and "there was nothing I could undo". A
- * database-backed dimension commits a row and its `discard` is deliberately a
- * no-op -- a transaction was never held open -- so it returned quietly while the
- * row STAYED. The caller then deleted the outbox record as if the ingest had
- * been cleanly reversed, leaving a half-applied write with no trail for the
- * reconciler to find. Silent data, silently unrecoverable.
+ * which dimensions to ASK, and which answers to BELIEVE. This function used to
+ * answer both with one condition, and the name it kept -- `rollbackCommitted` --
+ * described only the second.
  *
- * So a dimension that COMMITTED and cannot prove it undid anything counts as a
- * failure. The record is kept `pending`, and `reconcileOutbox` can finish it by
- * replaying the idempotent commit. A dimension that never committed needs no
- * rollback at all, so it is skipped rather than asked to discard.
+ * **Who is asked: everything that PREPARED.** `discard` undoes a prepared write,
+ * and that is what `Dimension.discard` is documented to do. A dimension that
+ * prepared may have left something behind on the way (`wiki` writes its source
+ * markdown inside `commit`, but a future dimension could allocate in `prepare`),
+ * so it is always given the chance. A dimension that never prepared has nothing
+ * to undo and is skipped.
+ *
+ * **Whose silence is believed: only the uncommitted ones.** A quiet return means
+ * "I did what I could", not "the write is gone". A database-backed dimension
+ * commits inside its own transaction, so there is nothing left to abandon and its
+ * `discard` is a no-op by design -- it returned quietly while the row STAYED. This
+ * used to count as a clean rollback, so the caller deleted the only record of a
+ * half-applied ingest: silent data, silently unrecoverable.
+ *
+ * So a dimension that COMMITTED and cannot prove it undid anything is a failure:
+ * the record stays `pending` and `reconcileOutbox` finishes it by replaying the
+ * idempotent commit. A dimension that never committed is trusted to have cleaned
+ * up after itself, because there was never anything visible.
+ *
+ * The two conditions were split rather than merged into `committed !== null`
+ * because merging them would skip `discard` for a prepared-but-uncommitted
+ * dimension, silently discarding the one compensation the port does promise.
  *
  * @param runs - Every dimension this ingest touched.
  * @returns Names of dimensions whose committed work may still be visible.
  */
-async function rollbackCommitted(
+async function undoPreparedWrites(
   runs: readonly DimensionRun[],
 ): Promise<string[]> {
   const failures: string[] = [];
   for (const run of [...runs].reverse()) {
     if (run.prepared === null) continue;
-    const hadCommitted = run.committed !== null;
+    const isVisibleToReaders = run.committed !== null;
     try {
       await run.dimension.discard(run.prepared);
       // A committed write that reported success without throwing is only
       // trustworthy if the dimension actually reverts. Nothing in the port
       // promises that, so it is recorded as unresolved rather than assumed.
-      if (hadCommitted) failures.push(run.dimension.name);
+      if (isVisibleToReaders) failures.push(run.dimension.name);
     } catch {
       failures.push(run.dimension.name);
     }
@@ -172,7 +185,7 @@ export async function ingestDimensions(
       await saveRecord(root, record);
     }
   } catch (error) {
-    const rollbackFailures = await rollbackCommitted(runs);
+    const rollbackFailures = await undoPreparedWrites(runs);
     // Keep the record ONLY when the rollback is incomplete: it is then the
     // trail the reconciler needs. A clean rollback leaves nothing to recover.
     if (rollbackFailures.length === 0) {
