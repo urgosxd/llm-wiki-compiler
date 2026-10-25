@@ -149,9 +149,20 @@ function constrainedTypeField(
  * decided to use Postgres" yields nothing, because there is no edge to hang the
  * decision on.
  *
- * The divergence is registered in `odd/findings/aks-spec-conformance.md`. It is
- * additive at the schema level: `triplets` is still required, so a model that
- * ignores `entities` produces exactly the old payload and is still valid.
+ * The divergence is registered in `odd/findings/aks-spec-conformance.md`.
+ *
+ * ## Shaped for OpenAI's strict mode
+ *
+ * Every object below carries `additionalProperties: false` and lists all of its
+ * properties as required. That is not stylistic: OpenAI rejects a tool schema in
+ * strict mode unless every object satisfies both rules, so a schema that omits
+ * them cannot be sent with `strict: true` at all.
+ *
+ * `entities` is therefore **required** rather than optional, which is the one
+ * behavioural cost of strict mode: a model can no longer omit the key, so it
+ * emits `entities: []` when a chunk has none. Parsing is unchanged — an empty
+ * array contributes nothing — and the payload is still the same shape for a chunk
+ * with no standalone nodes.
  */
 export const KG_TOOL = {
   name: "KGSchema",
@@ -168,10 +179,12 @@ export const KG_TOOL = {
         items: { $ref: "#/$defs/Entity" },
         description:
           "Entities that matter in this text but take part in no relationship. " +
-          "Report a subject or object here only when it belongs to no triplet.",
+          "Report a subject or object here only when it belongs to no triplet. " +
+          "Use an empty array when every entity takes part in one.",
       },
     },
-    required: ["triplets"],
+    required: ["triplets", "entities"],
+    additionalProperties: false,
     $defs: {
       Entity: {
         type: "object",
@@ -185,6 +198,7 @@ export const KG_TOOL = {
           name: { type: "string" },
         },
         required: ["type", "name"],
+        additionalProperties: false,
       },
       Relation: {
         type: "object",
@@ -197,6 +211,7 @@ export const KG_TOOL = {
           },
         },
         required: ["type"],
+        additionalProperties: false,
       },
       Triplet: {
         type: "object",
@@ -206,6 +221,7 @@ export const KG_TOOL = {
           object: { $ref: "#/$defs/Entity" },
         },
         required: ["subject", "relation", "object"],
+        additionalProperties: false,
       },
     },
   },

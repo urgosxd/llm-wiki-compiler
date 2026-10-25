@@ -623,6 +623,44 @@ Removing `enum: allowed` from `constrainedTypeField` turns the `enum` test red
 while every description assertion stays green — which is exactly the failure mode
 this change exists to make impossible to reintroduce silently.
 
+## Follow-up 7: `strict: true` on the wire, and the schema it forces
+
+The `enum` from follow-up 6 only binds if the request tells the provider to
+enforce the schema. On OpenAI that is `strict`.
+
+### Sent conditionally, and why
+
+| provider | `strict` | reason |
+| --- | --- | --- |
+| `openai` | yes | this is what turns the schema from advisory into enforced |
+| `gateway` | no | any OpenAI-compatible server; one that does not implement the extension may reject the whole request, and support cannot be verified per gateway |
+| `anthropic` | no | the field does not exist; its tool schemas are always enforced |
+
+The gateway gap is the honest cost: a gateway gets advisory typing until someone
+confirms support. The schema is already shaped for strict mode, so enabling it
+there is a config change rather than a code change.
+
+### What strict mode forced in the schema
+
+OpenAI rejects a strict-mode tool schema unless **every** object has
+`additionalProperties: false` and lists **all** its properties as required. The
+shipped schema had neither, so `strict: true` would have failed outright.
+
+Both are now present at every level: top level, `Entity`, `Relation`, `Triplet`.
+
+**`entities` became required**, which is the one behavioural cost. An optional
+field is illegal under strict mode, so the model must now always send it and the
+description tells it to use `[]` when every entity takes part in a triplet.
+Parsing is unchanged: an empty array contributes nothing.
+
+### Falsifiability
+
+- Removing the `strict` flag from the payload → 1 test red, and only that one,
+  because the gateway and Anthropic tests assert its *absence*.
+- Removing `additionalProperties: false` from `Entity` alone → 2 tests red, one of
+  which exists precisely because a schema can look compliant at the top level and
+  still be refused for an open nested object.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,

@@ -36,8 +36,30 @@ function anthropicToolPayload(prompt: string, tool: ToolDefinition, maxTokens: n
   };
 }
 
-/** The OpenAI-compatible request body: `tool_choice: "required"`, no streaming. */
+/**
+ * The OpenAI-compatible request body: `tool_choice: "required"`, no streaming.
+ *
+ * ## Why `strict` is conditional on the provider
+ *
+ * `strict: true` is what makes the schema binding rather than advisory: without
+ * it, an `enum` on a field is a hint the model can ignore, and structured outputs
+ * are not enforced. It is set only for `openai` because the flag is an OpenAI
+ * extension to the chat-completions format, and the two other backends differ:
+ *
+ * - `gateway` is any OpenAI-compatible server. A server that does not implement
+ *   the flag may reject the whole request, and this package cannot verify every
+ *   gateway's support. Sending it unconditionally would trade a schema hint for
+ *   an outage on an unknown backend.
+ * - `anthropic` has no such field at all; its tool schema is always enforced, so
+ *   there is nothing to opt into.
+ *
+ * The cost of the conditional is that `gateway` still gets advisory-only typing.
+ * That is the honest position: the schema constraints in `graph-prompt.ts` are
+ * shaped to satisfy strict mode, so enabling it on a gateway that supports the
+ * flag is a config change rather than a code change.
+ */
 function openAiToolPayload(prompt: string, tool: ToolDefinition, maxTokens: number): unknown {
+  const strictSchema = config.EXTRACTION_PROVIDER === "openai";
   return {
     messages: [{ role: "user", content: prompt }],
     stream: false,
@@ -46,7 +68,12 @@ function openAiToolPayload(prompt: string, tool: ToolDefinition, maxTokens: numb
     tools: [
       {
         type: "function",
-        function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+          ...(strictSchema ? { strict: true } : {}),
+        },
       },
     ],
     tool_choice: "required",
