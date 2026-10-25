@@ -29,6 +29,7 @@
  * makes the last case recoverable at all.
  */
 
+import type { Database } from "llmwiki-kg";
 import { mintIngestId, removeRecord, saveRecord, type OutboxDimensionEntry, type OutboxRecord } from "./outbox.js";
 import type { CommittedWrite, Dimension, DimensionInput, PreparedWrite } from "./types.js";
 
@@ -154,13 +155,19 @@ async function undoPreparedWrites(
 /**
  * Run one ingest across the supplied dimensions.
  *
- * @param root - Project root, where the outbox lives.
+ * @param db - Tenant-bound database handle; RLS decides which records are visible.
+ * @param stackId - Stack this ingest belongs to, written onto every record.
  * @param input - Source identity, title, and document.
  * @param dimensions - Dimensions to write, in commit order.
  * @throws When any dimension fails; committed dimensions are rolled back first.
+ *
+ * The outbox takes a Stack rather than a project root because an ingest belongs to
+ * a Stack: both dimensions are bound to it, and a record scoped to a checkout would
+ * let two projects sharing one database reconcile each other's interrupted runs.
  */
 export async function ingestDimensions(
-  root: string,
+  db: Database,
+  stackId: string,
   input: DimensionInput,
   dimensions: readonly Dimension[],
 ): Promise<IngestOutcome> {
@@ -173,7 +180,7 @@ export async function ingestDimensions(
   let record = buildRecord(ingestId, input, runs);
 
   try {
-    await saveRecord(root, record);
+    await saveRecord(db, stackId, record);
     for (const run of runs) {
       run.prepared = await run.dimension.prepare(input);
     }
@@ -182,22 +189,22 @@ export async function ingestDimensions(
       if (run.prepared === null) continue;
       run.committed = await run.dimension.commit(run.prepared);
       record = withKey(record, run.dimension.name, run.committed.idempotencyKey);
-      await saveRecord(root, record);
+      await saveRecord(db, stackId, record);
     }
   } catch (error) {
     const rollbackFailures = await undoPreparedWrites(runs);
     // Keep the record ONLY when the rollback is incomplete: it is then the
     // trail the reconciler needs. A clean rollback leaves nothing to recover.
     if (rollbackFailures.length === 0) {
-      await removeRecord(root, ingestId);
+      await removeRecord(db, stackId, ingestId);
     } else {
-      await saveRecord(root, { ...record, status: "pending" });
+      await saveRecord(db, stackId, { ...record, status: "pending" });
     }
     throw error;
   }
 
   const committed: OutboxRecord = { ...record, status: "committed" };
-  await saveRecord(root, committed);
+  await saveRecord(db, stackId, committed);
   const summaries = new Map<string, string>();
   let writeStatus: IngestOutcome["writeStatus"];
   let artifactPath: string | undefined;

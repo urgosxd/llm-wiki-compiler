@@ -16,6 +16,9 @@ import path from "node:path";
 import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
 import { startHost } from "../../src/host/server.js";
 import { saveRecord, type OutboxRecord } from "../../src/dimensions/outbox.js";
+import { outboxReachable, provisionOutboxStack, type OutboxSetup } from "../dimensions/outbox-harness.js";
+
+const harnessReachable = await outboxReachable("host-reconcile");
 
 /** A project root with the private dir the outbox needs. */
 async function projectRoot(): Promise<string> {
@@ -42,51 +45,77 @@ function pendingRecord(ingestId: string): OutboxRecord {
   };
 }
 
-/** How many outbox records remain on disk. */
-async function outboxCount(root: string): Promise<number> {
-  const dir = path.join(root, ".llmwiki", "dimensions", "outbox");
-  return (await readdir(dir).catch(() => [] as string[])).length;
+/**
+ * How many outbox records remain for this Stack.
+ *
+ * Records are rows now, so this counts them rather than listing a directory: the
+ * question the suite asks -- "was the pending work resolved and removed" -- is the
+ * same, only the storage moved.
+ */
+async function outboxCount(harness: KgPostgresHarness): Promise<number> {
+  const rows = await harness.db.execute<{ n: number }>(
+    `select count(*)::int as n from ingest_outbox where stack_id = '${harness.stackId}'`,
+  );
+  return (rows[0] as { n: number } | undefined)?.n ?? 0;
 }
 
-describe("the host reconciles pending ingests at startup", () => {
+describe.skipIf(!harnessReachable)("the host reconciles pending ingests at startup", () => {
   it("finishes a pending record left by a crashed run", async () => {
     const root = await projectRoot();
-    await saveRecord(root, pendingRecord("ing-2026-10-23-01"));
-    expect(await outboxCount(root)).toBe(1);
-
-    const snapshot = await buildViewerSnapshot(root);
-    const handle = await startHost({ viewerSnapshot: snapshot, port: 0, projectRoot: root });
+    const setup = await provisionOutboxStack("host-reconcile");
+    const harness = setup.harness;
     try {
-      // Reconciled means the record was resolved and removed, not merely observed.
-      expect(await outboxCount(root)).toBe(0);
+      await saveRecord(harness.db, harness.stackId, pendingRecord("ing-2026-10-23-01"));
+      expect(await outboxCount(harness)).toBe(1);
+
+      const snapshot = await buildViewerSnapshot(root);
+      const handle = await startHost({ viewerSnapshot: snapshot, port: 0, projectRoot: root });
+      try {
+        // Reconciled means the record was resolved and removed, not merely observed.
+        expect(await outboxCount(harness)).toBe(0);
+      } finally {
+        await handle.close();
+      }
     } finally {
-      await handle.close();
+      await setup.release();
     }
   }, 30_000);
 
   it("serves normally when the outbox is empty", async () => {
     const root = await projectRoot();
-    const snapshot = await buildViewerSnapshot(root);
-    const handle = await startHost({ viewerSnapshot: snapshot, port: 0, projectRoot: root });
+    const setup = await provisionOutboxStack("host-empty");
+    const harness = setup.harness;
     try {
-      expect((await fetch(`http://${handle.host}:${handle.port}/api/health`)).status).toBe(200);
-      expect(await outboxCount(root)).toBe(0);
+      const snapshot = await buildViewerSnapshot(root);
+      const handle = await startHost({ viewerSnapshot: snapshot, port: 0, projectRoot: root });
+      try {
+        expect((await fetch(`http://${handle.host}:${handle.port}/api/health`)).status).toBe(200);
+        expect(await outboxCount(harness)).toBe(0);
+      } finally {
+        await handle.close();
+      }
     } finally {
-      await handle.close();
+      await setup.release();
     }
   }, 30_000);
 
   it("does not touch an outbox when no project root is given", async () => {
     const root = await projectRoot();
-    await saveRecord(root, pendingRecord("ing-2026-10-23-02"));
-
-    const snapshot = await buildViewerSnapshot(root);
-    const handle = await startHost({ viewerSnapshot: snapshot, port: 0 });
+    const setup = await provisionOutboxStack("host-optout");
+    const harness = setup.harness;
     try {
-      // Opting out is explicit: without projectRoot the record is left alone.
-      expect(await outboxCount(root)).toBe(1);
+      await saveRecord(harness.db, harness.stackId, pendingRecord("ing-2026-10-23-02"));
+
+      const snapshot = await buildViewerSnapshot(root);
+      const handle = await startHost({ viewerSnapshot: snapshot, port: 0 });
+      try {
+        // Opting out is explicit: without projectRoot the record is left alone.
+        expect(await outboxCount(harness)).toBe(1);
+      } finally {
+        await handle.close();
+      }
     } finally {
-      await handle.close();
+      await setup.release();
     }
   }, 30_000);
 });

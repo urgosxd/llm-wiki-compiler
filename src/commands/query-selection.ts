@@ -103,7 +103,7 @@ export async function selectRelevantPages(
   options: RetrievalOptions = {},
 ): Promise<SelectedPages> {
   const profile = await loadProfile(root);
-  const outcome = narrowToScope(await loadEmbeddingsForSearch(root), pageScope);
+  const outcome = narrowToScope(await loadEmbeddingsForSearch(root, options.embeddingStoreSource), pageScope);
   // A pending/unavailable compile journal applies to the whole answer regardless
   // of which retrieval branch wins, so fold it into the base warnings ONCE. An
   // ok journal contributes nothing, so a healthy query's warnings are unchanged.

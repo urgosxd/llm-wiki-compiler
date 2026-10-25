@@ -60,6 +60,7 @@ import {
   createDimensionsDatabase,
   reconcileOutbox,
   resolveDimensions,
+  resolveStackId,
   type ReconcileOutcome,
 } from "../dimensions/index.js";
 import { tryWithOrdinaryMutationLock } from "../operation-bundles/with-mutation-lock.js";
@@ -340,7 +341,11 @@ async function reconcilePendingIngests(root: string): Promise<ReconcileOutcome |
   const locked = await tryWithOrdinaryMutationLock(root, async () => {
     const dimensionsDb = createDimensionsDatabase();
     try {
-      return await reconcileOutbox(root, resolveDimensions({ root, db: dimensionsDb.db }));
+      return await reconcileOutbox(
+        dimensionsDb.db,
+        resolveStackId(),
+        resolveDimensions({ root, db: dimensionsDb.db }),
+      );
     } finally {
       await dimensionsDb.close();
     }

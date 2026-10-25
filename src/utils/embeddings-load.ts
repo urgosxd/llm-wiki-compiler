@@ -34,7 +34,7 @@ import {
   type PageEmbeddingV3,
   type ChunkEmbeddingV3,
 } from "./embeddings-store.js";
-import { readStoredEmbeddings } from "./embeddings-storage.js";
+import { readStoredEmbeddings, type StoredEmbeddingRead } from "./embeddings-storage.js";
 import { cosineSimilarity } from "./embeddings-search.js";
 import {
   buildLiveIdSet,
@@ -76,6 +76,37 @@ export interface EmbeddingLoadOutcome {
   stalePageIds: PageId[];
 }
 
+/**
+ * Where a load reads its store from.
+ *
+ * ## Why this seam exists
+ *
+ * The store used to have exactly one home -- a file under `.llmwiki` -- so the
+ * loaders took a `root` and read it. It now has two possible homes, and which one
+ * is authoritative is the CALLER's business: a serving process holds a database
+ * handle, while a one-shot compile reads whatever is on disk. Threading that choice
+ * as a parameter keeps the decision visible at each call site instead of burying a
+ * default that silently reads the wrong place.
+ *
+ * ## Why the file is still the default
+ *
+ * Retiring the file outright would make every read depend on a live database before
+ * the write path is converted, and a query would start failing for a reason that has
+ * nothing to do with the query. The default is therefore the existing behaviour, and
+ * a caller opts into the database explicitly. When the write path moves over, this
+ * default moves with it, and the seam disappears.
+ */
+export interface EmbeddingStoreSource {
+  /**
+   * Read the raw parsed store.
+   *
+   * Returns the same discriminated result the file reader returns: the gate above
+   * needs to tell "absent" from "unavailable" from "parsed", because each degrades
+   * with a different warning.
+   */
+  read(): Promise<StoredEmbeddingRead>;
+}
+
 /** A live-rehydrated page hit carrying its qualified id (spec §4.7). */
 export interface PageHitV3 {
   pageId: PageId;
@@ -100,16 +131,22 @@ export interface ChunkHitV3 {
  * by `includeInSearch` later, in {@link findRelevantPagesV3}/{@link findRelevantChunksV3}
  * — the load itself only version/integrity/model-gates (degrade-on-read).
  */
-export async function loadEmbeddingsForSearch(root: string): Promise<EmbeddingLoadOutcome> {
-  return gateActiveStore(root);
+export async function loadEmbeddingsForSearch(
+  root: string,
+  source?: EmbeddingStoreSource,
+): Promise<EmbeddingLoadOutcome> {
+  return gateActiveStore(root, source);
 }
 
 /**
  * Load the active store for the CONTEXT surface. Filtering by `includeInContext`
  * happens in the pipeline functions; the load is surface-agnostic gating only.
  */
-export async function loadEmbeddingsForContext(root: string): Promise<EmbeddingLoadOutcome> {
-  return gateActiveStore(root);
+export async function loadEmbeddingsForContext(
+  root: string,
+  source?: EmbeddingStoreSource,
+): Promise<EmbeddingLoadOutcome> {
+  return gateActiveStore(root, source);
 }
 
 /**
@@ -119,8 +156,11 @@ export async function loadEmbeddingsForContext(root: string): Promise<EmbeddingL
  * gate (corrupt vectors / over-cap), was built by a different embedding
  * configuration (provider, endpoint, or model), or is absent.
  */
-async function gateActiveStore(root: string): Promise<EmbeddingLoadOutcome> {
-  const result = await readStoredEmbeddings(root);
+async function gateActiveStore(
+  root: string,
+  source?: EmbeddingStoreSource,
+): Promise<EmbeddingLoadOutcome> {
+  const result = source === undefined ? await readStoredEmbeddings(root) : await source.read();
   if (result.kind === "absent") return degraded("embedding-index-outdated", "No embedding index found.");
   if (result.kind === "unavailable") return degraded("embedding-store-unavailable", result.reason);
   const parsed = result.parsed;

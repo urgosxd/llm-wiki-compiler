@@ -107,7 +107,9 @@ describe("LLMWIKI_EMBEDDINGS", () => {
 
     await refreshEmbeddingsDrainingPending(root, []);
 
-    expect(provider).toHaveBeenCalledWith(root, [], expect.any(Function));
+    // The fourth argument is the store location, and it is UNDEFINED here: this
+    // caller holds no database handle, so the refresh must keep using the file.
+    expect(provider).toHaveBeenCalledWith(root, [], expect.any(Function), undefined);
     expect(existsSync(pendingPath())).toBe(false);
   });
 

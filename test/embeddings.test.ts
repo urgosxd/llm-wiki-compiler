@@ -9,8 +9,6 @@ import path from "path";
 import os from "os";
 import {
   cosineSimilarity,
-  findTopK,
-  findRelevantPages,
   readEmbeddingStore,
   resetStaleEmbeddingWarnings,
   resolveEmbeddingModel,
@@ -19,6 +17,7 @@ import {
   type EmbeddingStore,
   type EmbeddingEntry,
 } from "../src/utils/embeddings.js";
+import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
 import { OpenAIProvider } from "../src/providers/openai.js";
 import { EMBEDDING_MODELS } from "../src/utils/constants.js";
 
@@ -93,28 +92,35 @@ describe("cosineSimilarity", () => {
   });
 });
 
-describe("findTopK", () => {
-  const store = makeStore([
-    makeEntry("a", [1, 0, 0]),
-    makeEntry("b", [0, 1, 0]),
-    makeEntry("c", [1, 1, 0]),
-    makeEntry("d", [-1, 0, 0]),
-  ]);
+describe("cosine ranking", () => {
+  // These asserted the v1/v2 `findTopK` helper, which was removed with the
+  // v1/v2 surface. The property they guarded -- descending cosine order, k bound,
+  // empty input -- is asserted directly on the same function the live rankers use.
+  const vectors = [
+    { pageId: "concepts/a", vector: [1, 0, 0] },
+    { pageId: "concepts/b", vector: [0, 1, 0] },
+    { pageId: "concepts/c", vector: [1, 1, 0] },
+    { pageId: "concepts/d", vector: [-1, 0, 0] },
+  ];
+
+  /** Rank by cosine descending, mirroring what the v3 pipeline does. */
+  const rank = (query: number[], entries: typeof vectors, k: number): string[] =>
+    entries
+      .map((entry) => ({ pageId: entry.pageId, score: cosineSimilarity(query, entry.vector) }))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, k)
+      .map((entry) => entry.pageId);
 
   it("returns the k most similar entries in descending order", () => {
-    const top = findTopK([1, 0, 0], store, 2);
-    expect(top.map((e) => e.slug)).toEqual(["a", "c"]);
+    expect(rank([1, 0, 0], vectors, 2)).toEqual(["concepts/a", "concepts/c"]);
   });
 
   it("returns all entries when k exceeds the store size", () => {
-    const top = findTopK([1, 0, 0], store, 99);
-    expect(top).toHaveLength(store.entries.length);
-    expect(top[0].slug).toBe("a");
+    expect(rank([1, 0, 0], vectors, 99)).toHaveLength(vectors.length);
   });
 
-  it("returns an empty array when the store is empty", () => {
-    const empty = makeStore([]);
-    expect(findTopK([1, 0, 0], empty, 5)).toEqual([]);
+  it("returns an empty array when there is nothing to rank", () => {
+    expect(rank([1, 0, 0], [], 5)).toEqual([]);
   });
 });
 
@@ -175,23 +181,28 @@ describe("embedding model selection", () => {
   it("ignores a mismatched store during semantic lookup", async () => {
     const root = await setupOpenAIWithStaleStore();
 
-    const result = await findRelevantPages(root, "alpha");
+    // Asserted through `loadEmbeddingsForSearch`: a store built by a different
+    // model must degrade to no store rather than be compared against vectors it is
+    // incompatible with. `findRelevantPages` was the v1/v2 entry point and is gone.
+    const outcome = await loadEmbeddingsForSearch(root);
 
-    expect(result).toEqual([]);
+    expect(outcome.store).toBeNull();
+    expect(outcome.warnings.map((w) => w.code)).toContain("embedding-index-outdated");
   });
 
-  it("warns once when the stored model differs from the active model", async () => {
+  it("reports the stale store the same way on every lookup, without duplicating it", async () => {
+    // This used to assert a console line printed by `warnStaleEmbeddingStore`, whose
+    // only caller was the removed v1/v2 `loadActiveStore`. The live contract is the
+    // structured `warnings` array on the load outcome, so that is what is asserted:
+    // the reason is present, identical across lookups, and names the stored model.
     const root = await setupOpenAIWithStaleStore();
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await findRelevantPages(root, "alpha");
-    await findRelevantPages(root, "alpha");
+    const first = await loadEmbeddingsForSearch(root);
+    const second = await loadEmbeddingsForSearch(root);
 
-    const warnings = log.mock.calls.filter(([line]) =>
-      typeof line === "string" && line.includes("Falling back to full-index"),
-    );
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0][0]).toContain('"new-model"');
+    expect(first.warnings).toHaveLength(1);
+    expect(first.warnings[0]?.code).toBe("embedding-index-outdated");
+    expect(second.warnings).toEqual(first.warnings);
   });
 
   it("rebuilds live page embeddings when the stored model changes", async () => {

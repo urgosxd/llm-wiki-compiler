@@ -1,30 +1,43 @@
 /**
- * Pure v2→v3 embedding-store migration core (spec §4.4, Task D5).
+ * Pure v3 embedding-store reconciliation core.
  *
  * `migrateEmbeddingStore` is a side-effect-free transform: it takes the
  * version-discriminated old store, the set of VALID + ELIGIBLE live pages (the
  * caller supplies these — this module never touches the filesystem or a
  * provider), and the active model name, and returns a v3 store plus the list of
- * eligible pageIds whose vectors could not be preserved and must therefore be
- * re-embedded by the caller.
+ * eligible pageIds that must be re-embedded by the caller.
  *
- * Centralizing the migration here keeps two hard guarantees in one place:
- *  - CONTENT VERIFICATION: a preserved v2 vector is only re-keyed when the live
- *    page's content still hashes to the same embedding input (page) or the same
- *    chunk contentHash at the same index (chunk). Anything else re-embeds.
+ * ## What changed, and why the v2 migration is gone
+ *
+ * This module used to re-key v2 records from a bare `slug` to a qualified
+ * `pageId`, preserving vectors whose content still hashed to the same value.
+ * That path is retired: a legacy v1/v2 store is now REBUILT from live pages
+ * instead of migrated.
+ *
+ * The reason is that the re-key could fail silently. Preserving a v2 vector meant
+ * guessing which live page an old slug belonged to, safe only when the slug mapped
+ * to exactly one eligible page AND the recomputed hash still matched. Every other
+ * outcome attached a vector built from different text to a page, and similarity
+ * search then returned that page for content it never embedded — a wrong answer,
+ * not an error.
+ *
+ * Rebuilding costs the provider work on the one upgrade where a legacy store is
+ * encountered, and cannot attach a vector to the wrong page. The writer has
+ * persisted v3 since 1.0.0, so this only touches stores older than that.
+ *
+ * ## The two guarantees that remain
+ *
+ *  - CONTENT VERIFICATION: a preserved v3 record is only kept when the live page's
+ *    `embeddingTextHash` still matches (page) or the chunk contentHash still
+ *    matches at the same index (chunk). Anything else re-embeds.
  *  - S2 PRIVACY (eligibility-gated): `reembedPageIds` only ever contains pages
  *    present in `eligibleLivePages`. A deleted page (no live page) or an
  *    opted-out / ineligible page (absent from `eligibleLivePages`) is dropped
  *    from the output store and is NEVER re-embedded — its old vector is not
  *    carried forward and the provider is never asked to embed it. "Couldn't
  *    preserve" must not default to "re-embed"; only eligibility does.
- *
- * This module is intentionally unwired in PR4D — the atomic write-flip task
- * (D7) routes `updateEmbeddings` through it. Until then the writer stays on v2.
  */
 
-import { hashChunkText } from "./retrieval.js";
-import { buildEmbeddingText } from "./embeddings-pages.js";
 import { assertEmbeddingStoreValid } from "./embeddings-validate.js";
 import type {
   ParsedStore,
@@ -69,11 +82,14 @@ export function migrateEmbeddingStore(
   if (shouldRebuild(parsedOld, activeModel)) {
     return rebuild(eligibleLivePages, activeModel);
   }
-  const slugToPageIds = indexBySlug(eligibleLivePages);
+  // `shouldRebuild` is the only guard that proves non-null, and TypeScript cannot
+  // narrow through a function call, so the assertion is stated here rather than
+  // inferred. A null store always rebuilds, which is why reaching this line means
+  // `parsedOld` is a real v3 store.
   const liveByPageId = new Map(eligibleLivePages.map((p) => [p.pageId, p]));
   const reembed = new Set<PageId>();
-  const entries = migrateEntries(parsedOld!.store, slugToPageIds, liveByPageId, reembed);
-  const chunks = migrateChunks(parsedOld!.store, slugToPageIds, liveByPageId, reembed);
+  const entries = migrateEntries(parsedOld!.store, liveByPageId, reembed);
+  const chunks = migrateChunks(parsedOld!.store, liveByPageId, reembed);
   addNewEligiblePages(eligibleLivePages, entries, reembed);
   return { store: { version: 3, model: activeModel, dimensions: dims, entries, chunks }, reembedPageIds: [...reembed] };
 }
@@ -102,12 +118,27 @@ function storeDimensions(parsedOld: ParsedStore | null): number {
 }
 
 /**
- * Gate to rebuild-only when no vector can be safely preserved: a missing /
- * v1 / v>3 store, a stored model that differs from the active model, or any
- * vector-integrity failure (non-finite / wrong-length against `dimensions`).
+ * Gate to rebuild-only when no vector can be safely preserved: a missing store, a
+ * legacy v1/v2 store, an unknown future version, a stored model that differs from
+ * the active model, or any vector-integrity failure (non-finite / wrong-length
+ * against `dimensions`).
+ *
+ * ## Why v1/v2 rebuilds instead of migrating
+ *
+ * Preserving a v1/v2 vector requires guessing which live page an old bare `slug`
+ * belonged to, and that guess is only safe when the slug maps to exactly one
+ * eligible page AND the recomputed embedding-input hash still matches. Every
+ * failure mode of that guess is silent: a wrong pairing carries a vector built
+ * from different text, and similarity search then returns a page for content it
+ * never embedded.
+ *
+ * The migration is therefore gone rather than kept. A v1/v2 store is rebuilt from
+ * live pages on the next write, which costs the provider work but cannot produce a
+ * vector attached to the wrong page. The v3 path below is unaffected: it reconciles
+ * by `pageId`, which needs no guessing.
  */
 function shouldRebuild(parsedOld: ParsedStore | null, activeModel: string): boolean {
-  if (!parsedOld || parsedOld.version < 2 || parsedOld.version > 3) return true;
+  if (!parsedOld || parsedOld.version !== 3) return true;
   if (parsedOld.store.model !== activeModel) return true;
   try {
     assertEmbeddingStoreValid(parsedOld.store);
@@ -117,42 +148,19 @@ function shouldRebuild(parsedOld: ParsedStore | null, activeModel: string): bool
   }
 }
 
-/** Build `bareSlug → eligible live pageIds[]` (a slug may map to >1 → ambiguous). */
-function indexBySlug(pages: EligibleLivePage[]): Map<string, PageId[]> {
-  const bySlug = new Map<string, PageId[]>();
-  for (const page of pages) {
-    const ids = bySlug.get(page.bareSlug) ?? [];
-    ids.push(page.pageId);
-    bySlug.set(page.bareSlug, ids);
-  }
-  return bySlug;
-}
 
 /**
- * Re-key the v3 page entries. A v2 entry is preserved only when its bare slug
- * maps to EXACTLY ONE eligible live page and the live page's content hash still
- * equals the v2 entry's recomputed `buildEmbeddingText` hash. Any other case
- * (ambiguous, `/`-in-slug, content drift) queues that eligible page to re-embed.
+ * Reconcile the v3 page entries.
+ *
+ * Only the v3 path remains: `shouldRebuild` sends legacy stores to the rebuild,
+ * so a slug-to-pageId re-key can never be reached from here.
  */
 function migrateEntries(
   store: Record<string, unknown>,
-  slugToPageIds: Map<string, PageId[]>,
   liveByPageId: Map<PageId, EligibleLivePage>,
   reembed: Set<PageId>,
 ): PageEmbeddingV3[] {
-  if (isV3(store)) return reconcileV3Entries(store, liveByPageId, reembed);
-  const out: PageEmbeddingV3[] = [];
-  for (const raw of asArray(store.entries)) {
-    const entry = raw as Record<string, unknown>;
-    const pageId = soleEligiblePageId(slugToPageIds, entry.slug);
-    const live = pageId ? liveByPageId.get(pageId) : undefined;
-    if (pageId && live && hashEntryText(entry) === live.embeddingTextHash) {
-      out.push(toPageV3(entry, pageId, live.embeddingTextHash));
-    } else if (pageId) {
-      reembed.add(pageId);
-    }
-  }
-  return out;
+  return reconcileV3Entries(store, liveByPageId, reembed);
 }
 
 /**
@@ -176,31 +184,16 @@ function reconcileV3Entries(
 }
 
 /**
- * Re-key the v3 chunk entries. A chunk is preserved only when its eligible live
- * page has a chunk at the same index whose contentHash matches. A duplicate old
- * `(slug,index)` key, a missing/changed live chunk, or an ineligible/ambiguous
- * page drops the chunk and (when the page is eligible) queues it to re-embed.
+ * Reconcile the v3 chunk entries.
+ *
+ * Only the v3 path remains, for the same reason as the page entries.
  */
 function migrateChunks(
   store: Record<string, unknown>,
-  slugToPageIds: Map<string, PageId[]>,
   liveByPageId: Map<PageId, EligibleLivePage>,
   reembed: Set<PageId>,
 ): ChunkEmbeddingV3[] {
-  if (isV3(store)) return reconcileV3Chunks(store, liveByPageId, reembed);
-  const out: ChunkEmbeddingV3[] = [];
-  const seen = new Set<string>();
-  for (const raw of asArray(store.chunks)) {
-    const chunk = raw as Record<string, unknown>;
-    const pageId = soleEligiblePageId(slugToPageIds, chunk.slug);
-    if (!pageId) continue;
-    if (isChunkPreservable(chunk, liveByPageId.get(pageId), pageId, seen)) {
-      out.push(toChunkV3(chunk, pageId));
-    } else {
-      reembed.add(pageId);
-    }
-  }
-  return out;
+  return reconcileV3Chunks(store, liveByPageId, reembed);
 }
 
 /**
@@ -223,21 +216,6 @@ function reconcileV3Chunks(
   return out;
 }
 
-/** True when this chunk's (pageId,index) is unique AND its live contentHash matches. */
-function isChunkPreservable(
-  chunk: Record<string, unknown>,
-  live: EligibleLivePage | undefined,
-  pageId: PageId,
-  seen: Set<string>,
-): boolean {
-  if (!live) return false;
-  const index = chunk.chunkIndex;
-  if (typeof index !== "number") return false;
-  const key = `${pageId}#${index}`;
-  if (seen.has(key)) return false;
-  seen.add(key);
-  return live.chunkContentHashes[index] === chunk.contentHash;
-}
 
 /** Queue any eligible live page that produced no preserved page entry to re-embed. */
 function addNewEligiblePages(pages: EligibleLivePage[], entries: PageEmbeddingV3[], reembed: Set<PageId>): void {
@@ -247,49 +225,6 @@ function addNewEligiblePages(pages: EligibleLivePage[], entries: PageEmbeddingV3
   }
 }
 
-/** Resolve a v2 slug to its sole eligible live pageId, or null if ambiguous/absent. */
-function soleEligiblePageId(slugToPageIds: Map<string, PageId[]>, slug: unknown): PageId | null {
-  if (typeof slug !== "string") return null;
-  const ids = slugToPageIds.get(slug);
-  return ids && ids.length === 1 ? ids[0] : null;
-}
-
-/** Recompute the embedding-input hash for a v2 page entry's title+summary. */
-function hashEntryText(entry: Record<string, unknown>): string {
-  const title = typeof entry.title === "string" ? entry.title : "";
-  const summary = typeof entry.summary === "string" ? entry.summary : "";
-  return hashChunkText(buildEmbeddingText({ title, summary }));
-}
-
-/** Project a v2 page entry onto a v3 record, re-keyed and hash-stamped. */
-function toPageV3(entry: Record<string, unknown>, pageId: PageId, embeddingTextHash: string): PageEmbeddingV3 {
-  return {
-    pageId,
-    title: entry.title as string,
-    summary: (entry.summary as string) ?? "",
-    embeddingTextHash,
-    vector: entry.vector as number[],
-    updatedAt: entry.updatedAt as string,
-  };
-}
-
-/** Project a v2 chunk entry onto a v3 record, re-keyed to the qualified pageId. */
-function toChunkV3(chunk: Record<string, unknown>, pageId: PageId): ChunkEmbeddingV3 {
-  return {
-    pageId,
-    title: chunk.title as string,
-    chunkIndex: chunk.chunkIndex as number,
-    contentHash: chunk.contentHash as string,
-    text: chunk.text as string,
-    vector: chunk.vector as number[],
-    updatedAt: chunk.updatedAt as string,
-  };
-}
-
-/** True when the store is already v3 (idempotent path — preserve records as-is). */
-function isV3(store: Record<string, unknown>): boolean {
-  return store.version === 3;
-}
 
 /** Narrow an unknown field to an array (empty when absent / not an array). */
 function asArray(value: unknown): unknown[] {

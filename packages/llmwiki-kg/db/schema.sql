@@ -334,3 +334,30 @@ create table if not exists backfeed_queue (
 create index if not exists idx_backfeed_stack on backfeed_queue(stack_id);
 create index if not exists idx_backfeed_status on backfeed_queue(status);
 create index if not exists idx_backfeed_created on backfeed_queue(created_at desc);
+-- ------------------------------------------------------------
+-- ingest_outbox: durable recovery record for a two-dimension ingest
+-- ------------------------------------------------------------
+-- Belongs to a STACK, not a project: an ingest is identified by the Stack both
+-- dimensions are bound to, so two projects sharing this database cannot reconcile
+-- each other's interrupted runs. See migration_ingest_outbox.sql for the RLS
+-- policy and the grant, which are applied by the tenancy migration rather than
+-- here -- the same split every other table uses.
+--
+-- The payload is stored rather than re-fetched because a reconciler that runs on
+-- the next boot has no network and no caller to ask.
+create table if not exists ingest_outbox (
+    ingest_id    text primary key,
+    stack_id     uuid not null references stacks (id) on delete cascade,
+    source       text not null,
+    title        text not null,
+    document     text not null,
+    body         text not null,
+    status       text not null check (status in ('pending', 'committed')),
+    dimensions   jsonb not null,
+    created_at   timestamptz not null default now(),
+    updated_at   timestamptz not null default now()
+);
+
+create index if not exists idx_ingest_outbox_pending
+    on ingest_outbox (stack_id)
+    where status = 'pending';

@@ -14,6 +14,7 @@ import { evaluatePageHealthDistribution } from "./page-health-distribution.js";
 import { evaluateGraphHealth } from "./graph-health.js";
 import { evaluateCitationSupport } from "./citation-support.js";
 import { collectStats, appendHistory, loadPreviousReport, loadLastFullReport } from "./stats.js";
+import type { EmbeddingStoreSource } from "../utils/embeddings-load.js";
 import { computeDelta } from "./delta.js";
 import { checkThresholds } from "./thresholds.js";
 import { ensureProviderAvailable } from "../utils/provider-guard.js";
@@ -53,7 +54,13 @@ async function buildReport(root: string, components: EvalComponents, suite: "fas
 }
 
 /** Run the full eval pipeline, optionally append to history, and return the report. */
-export async function runEval(root: string, suite: "fast" | "full", sampleSize: number, record = true): Promise<EvalReport> {
+export async function runEval(
+  root: string,
+  suite: "fast" | "full",
+  sampleSize: number,
+  record = true,
+  embeddingStoreSource?: EmbeddingStoreSource,
+): Promise<EvalReport> {
   if (suite === "full") ensureProviderAvailable();
   const [health, citationCoverage, sourceUtilization, citationDepth, pageHealthDistribution, graphHealth, stats, previousReport, previousFullReport] = await Promise.all([
     evaluateHealth(root),
@@ -62,7 +69,7 @@ export async function runEval(root: string, suite: "fast" | "full", sampleSize: 
     evaluateCitationDepth(root),
     evaluatePageHealthDistribution(root),
     evaluateGraphHealth(root),
-    collectStats(root),
+    collectStats(root, embeddingStoreSource),
     loadPreviousReport(root),
     suite === "full" ? loadLastFullReport(root) : Promise.resolve(null),
   ]);

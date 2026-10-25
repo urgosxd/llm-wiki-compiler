@@ -20,6 +20,7 @@ import {
   findRelevantChunksV3,
   findRelevantPagesV3,
   type EmbeddingWarning,
+  type EmbeddingStoreSource,
 } from "../utils/embeddings-load.js";
 import type { EmbeddingStoreV3 } from "../utils/embeddings-store.js";
 import {
@@ -65,6 +66,14 @@ export interface SearchSelection {
 /** Opt-in recovery from embedder failures; omitted preserves public error semantics. */
 export interface RetrievalOptions {
   embeddingFailure?: "throw" | "fallback";
+  /**
+   * Where to read the embedding store from.
+   *
+   * Omitted reads the on-disk store, which is the existing behaviour. A caller that
+   * holds a database handle passes one here, so the choice of authoritative store is
+   * made by the process that knows it rather than guessed inside the loader.
+   */
+  embeddingStoreSource?: EmbeddingStoreSource;
 }
 
 /** Deduplicate refs by pageId, preserving first-seen ordering. */
@@ -90,7 +99,7 @@ function dedupeRefs(refs: SelectedPageRef[]): SelectedPageRef[] {
  */
 export async function pickSearchRefs(root: string, question: string, options: RetrievalOptions = {}): Promise<SearchSelection> {
   const profile = await loadProfile(root);
-  const outcome = await loadEmbeddingsForSearch(root);
+  const outcome = await loadEmbeddingsForSearch(root, options.embeddingStoreSource);
   // A pending/unavailable compile journal applies to the whole result regardless
   // of which retrieval branch wins, so prepend it to the base warnings ONCE. An
   // ok journal contributes nothing, so the default warnings list is unchanged.

@@ -1,215 +1,190 @@
 /**
  * @file test/embeddings-migrate.test.ts
- * @description TDD tests for Task D5: the pure `migrateEmbeddingStore` core
- * (spec §4.4). Exercised with synthetic inputs only — the function never reads
- * the filesystem; the caller supplies `eligibleLivePages`.
+ * @description The pure `migrateEmbeddingStore` reconciliation core.
  *
- * Invariants under test:
- *  - unambiguous + content-unchanged v2 page → vector preserved, re-keyed to the
- *    qualified pageId, `embeddingTextHash` stamped; NOT re-embedded.
- *  - changed content (recomputed hash differs) → re-embed.
- *  - a bare slug mapping to TWO eligible live pageIds (concept+query collision)
- *    → both discarded → both re-embed.
- *  - a v2 slug containing "/" → invalid → re-embed.
- *  - chunk preserved only on (contentHash, index) match; mismatch → re-embed.
- *  - S2 PRIVACY: an ineligible/opted-out page (bareSlug absent from
- *    `eligibleLivePages`) → dropped from the store AND never in `reembedPageIds`.
- *  - a deleted page (v2 entry, no eligible live page) → dropped, not re-embedded.
- *  - S5: stored model ≠ activeModel → rebuild-only; wrong-length vector → rebuild-only.
- *  - a rebuild returns `dimensions: 0`, never the old store's dimension. This is
- *    not cosmetic: a rebuild discards every old vector, so the old dimension
- *    describes nothing, and carrying a stale nonzero value forward would make
- *    the writer validate freshly-embedded vectors of a new model's length
- *    against the wrong expected size and reject them — wedging embeddings
- *    permanently, since every later compile would repeat the same failure.
- *  - idempotent on a healthy v3 input.
+ * ## What this suite used to assert, and why it changed
+ *
+ * It used to prove that a v2 record could be PRESERVED: re-keyed from a bare
+ * `slug` to a qualified `pageId`, with its vector carried forward whenever the
+ * content still hashed the same. That path is retired, so those cases are gone
+ * rather than adjusted.
+ *
+ * The reason is worth recording, because the code looked careful. Preserving a v2
+ * vector required guessing which live page an old slug belonged to. The guess was
+ * guarded -- a slug mapping to two pages was discarded, a changed hash triggered a
+ * re-embed -- but every failure mode that slipped through was SILENT: the store
+ * ended up holding a vector built from one page's text under another page's
+ * identity, and similarity search then answered with that page for content it never
+ * embedded. A wrong answer, not an error, and nothing downstream could detect it.
+ *
+ * Rebuilding costs provider work on the one upgrade where a legacy store appears,
+ * and cannot attach a vector to the wrong page.
+ *
+ * ## Invariants under test
+ *
+ *  - a v1 or v2 store is REBUILT: empty entries/chunks, every eligible page queued.
+ *  - a missing store rebuilds too (a clean project), never an error.
+ *  - a healthy v3 store is RECONCILED by `pageId`: unchanged records survive,
+ *    drifted ones re-embed, deleted ones are pruned without re-embedding.
+ *  - a stored model different from the active one rebuilds; so does a corrupt store.
+ *  - a rebuild returns `dimensions: 0`, never the old store's dimension. A stale
+ *    nonzero value would make the writer validate freshly-embedded vectors of a new
+ *    model's length against the wrong expected size and reject them, wedging
+ *    embeddings permanently.
+ *  - S2 privacy: `reembedPageIds` only ever names pages present in
+ *    `eligibleLivePages`.
  */
-
 import { describe, it, expect } from "vitest";
 import { migrateEmbeddingStore } from "../src/utils/embeddings-migrate.js";
 import type { EligibleLivePage } from "../src/utils/embeddings-migrate.js";
-import { buildEmbeddingText } from "../src/utils/embeddings-pages.js";
-import { hashChunkText } from "../src/utils/retrieval.js";
-import type { ParsedStore, EmbeddingStoreV3 } from "../src/utils/embeddings-store.js";
-import type { PageId } from "../src/utils/page-id.js";
+import type { ParsedStore, PageEmbeddingV3, ChunkEmbeddingV3 } from "../src/utils/embeddings-store.js";
 
 const MODEL = "voyage-3";
-const VEC = [0.5, 0.5];
 
-/** Build a parsed v2 store from raw entry/chunk arrays. */
-function v2(entries: unknown[], chunks: unknown[] = []): ParsedStore {
-  return { version: 2, store: { version: 2, model: MODEL, dimensions: 2, entries, chunks } };
+/** A parsed legacy store, shaped the way a v1/v2 file would parse. */
+function legacy(version: 1 | 2, entries: unknown[], chunks?: unknown[]): ParsedStore {
+  return { version, store: { version, model: MODEL, dimensions: 2, entries, chunks } };
 }
 
-/** A v2 page entry whose embedding text is `title`/`summary`. */
-function v2Entry(slug: string, title: string, summary: string): Record<string, unknown> {
-  return { slug, title, summary, vector: VEC, updatedAt: "2026-01-01T00:00:00.000Z" };
+/** A parsed v3 store. */
+function v3(entries: PageEmbeddingV3[], chunks: ChunkEmbeddingV3[] = []): ParsedStore {
+  return { version: 3, store: { version: 3, model: MODEL, dimensions: 2, entries, chunks } };
 }
 
-/** An eligible live page; hash defaults to the buildEmbeddingText hash of title/summary. */
-function live(pageId: string, bareSlug: string, title: string, summary: string, chunks: string[] = []): EligibleLivePage {
-  return {
-    pageId,
-    bareSlug,
-    embeddingTextHash: hashText(buildEmbeddingText({ title, summary })),
-    chunkContentHashes: chunks,
-  };
+/** An eligible live page with the hashes a v3 record must match to survive. */
+function live(pageId: string, textHash: string, chunkHashes: string[] = []): EligibleLivePage {
+  return { pageId, bareSlug: pageId.split("/")[1] ?? pageId, embeddingTextHash: textHash, chunkContentHashes: chunkHashes };
 }
 
-/** Mirror the production hash (live registry uses hashChunkText) so inputs line up. */
-function hashText(text: string): string {
-  return hashChunkText(text);
+/** A v3 page record. */
+function pageRecord(pageId: string, textHash: string): PageEmbeddingV3 {
+  return { pageId, title: "T", summary: "S", embeddingTextHash: textHash, vector: [0.5, 0.5], updatedAt: "2026-01-01T00:00:00.000Z" };
 }
 
-/** Assert the migration preserved no page entries and re-embeds exactly `ids`. */
-function expectReembedOnly(old: ParsedStore, pages: EligibleLivePage[], ids: PageId[]): void {
-  const { store, reembedPageIds } = migrateEmbeddingStore(old, pages, MODEL);
-  expect(store.entries).toHaveLength(0);
-  expect(reembedPageIds.sort()).toEqual([...ids].sort());
+/** A v3 chunk record. */
+function chunkRecord(pageId: string, index: number, contentHash: string): ChunkEmbeddingV3 {
+  return { pageId, title: "T", chunkIndex: index, contentHash, text: "body", vector: [0.5, 0.5], updatedAt: "2026-01-01T00:00:00.000Z" };
 }
 
-describe("migrateEmbeddingStore — page preservation", () => {
-  it("preserves + re-keys + stamps an unambiguous unchanged page; not re-embedded", () => {
-    const old = v2([v2Entry("foo", "Foo", "A summary")]);
-    const pages = [live("concepts/foo", "foo", "Foo", "A summary")];
-    const { store, reembedPageIds } = migrateEmbeddingStore(old, pages, MODEL);
-    expect(store.version).toBe(3);
-    expect(store.entries).toHaveLength(1);
-    const entry = store.entries[0];
-    expect(entry.pageId).toBe("concepts/foo");
-    expect(entry.vector).toEqual(VEC);
-    expect(entry.embeddingTextHash).toBe(hashChunkText("Foo\n\nA summary"));
-    expect(reembedPageIds).toHaveLength(0);
+describe("migrateEmbeddingStore — legacy stores rebuild", () => {
+  it("rebuilds a v1 store instead of guessing which page its slug belonged to", () => {
+    const result = migrateEmbeddingStore(
+      legacy(1, [{ slug: "alpha", title: "T", summary: "S", vector: [0.5, 0.5], updatedAt: "x" }]),
+      [live("concepts/alpha", "hash-a")],
+      MODEL,
+    );
+
+    // Nothing is preserved: a bare slug cannot prove it addresses concepts/alpha
+    // rather than queries/alpha, and a wrong pairing is undetectable later.
+    expect(result.store.entries).toEqual([]);
+    expect(result.reembedPageIds).toEqual(["concepts/alpha"]);
   });
 
-  it("re-embeds a page whose content changed (recomputed hash differs)", () => {
-    const old = v2([v2Entry("foo", "Foo", "OLD summary")]);
-    expectReembedOnly(old, [live("concepts/foo", "foo", "Foo", "NEW summary")], ["concepts/foo"]);
+  it("rebuilds a v2 store that also carried chunks", () => {
+    const result = migrateEmbeddingStore(
+      legacy(
+        2,
+        [{ slug: "alpha", title: "T", summary: "S", vector: [0.5, 0.5], updatedAt: "x" }],
+        [{ slug: "alpha", title: "T", chunkIndex: 0, contentHash: "c", text: "b", vector: [0.5, 0.5], updatedAt: "x" }],
+      ),
+      [live("concepts/alpha", "hash-a", ["c"])],
+      MODEL,
+    );
+
+    expect(result.store.chunks).toEqual([]);
+    expect(result.reembedPageIds).toEqual(["concepts/alpha"]);
   });
 
-  it("discards a vector when a bare slug maps to TWO eligible live pageIds → both re-embed", () => {
-    const old = v2([v2Entry("foo", "Foo", "S")]);
-    const pages = [live("concepts/foo", "foo", "Foo", "S"), live("queries/foo", "foo", "Foo", "S")];
-    expectReembedOnly(old, pages, ["concepts/foo", "queries/foo"]);
+  it("rebuilds when there is no store at all, which is the clean-project case", () => {
+    const result = migrateEmbeddingStore(null, [live("concepts/alpha", "hash-a")], MODEL);
+
+    expect(result.store.entries).toEqual([]);
+    expect(result.reembedPageIds).toEqual(["concepts/alpha"]);
   });
 
-  it("treats a v2 slug containing '/' as invalid → the live page re-embeds", () => {
-    const old = v2([v2Entry("concepts/foo", "Foo", "S")]);
-    expectReembedOnly(old, [live("concepts/foo", "foo", "Foo", "S")], ["concepts/foo"]);
+  it("reports dimensions 0 on a rebuild, never the discarded store's dimension", () => {
+    // A stale nonzero dimension makes the writer reject every fresh vector of a new
+    // model's length, and every later compile repeats the same rejection.
+    const result = migrateEmbeddingStore(
+      legacy(2, [{ slug: "a", title: "T", summary: "S", vector: [0.5, 0.5], updatedAt: "x" }]),
+      [live("concepts/a", "h")],
+      MODEL,
+    );
+
+    expect(result.store.dimensions).toBe(0);
   });
 
-  it("embeds an eligible live page that has no v2 entry (new page)", () => {
-    expectReembedOnly(v2([]), [live("concepts/new", "new", "New", "S")], ["concepts/new"]);
+  it("rebuilds when the stored model differs from the active one", () => {
+    const stored = v3([pageRecord("concepts/alpha", "hash-a")]);
+    stored.store.model = "some-other-model";
+
+    const result = migrateEmbeddingStore(stored, [live("concepts/alpha", "hash-a")], MODEL);
+
+    expect(result.store.entries).toEqual([]);
+    expect(result.reembedPageIds).toEqual(["concepts/alpha"]);
   });
 });
 
-describe("migrateEmbeddingStore — chunk preservation", () => {
-  function v2Chunk(slug: string, idx: number, hash: string): Record<string, unknown> {
-    return { slug, title: "T", chunkIndex: idx, contentHash: hash, text: "t", vector: VEC, updatedAt: "2026-01-01T00:00:00.000Z" };
-  }
+describe("migrateEmbeddingStore — v3 reconciliation", () => {
+  it("keeps a record whose embedding text is unchanged, and does not re-embed it", () => {
+    const result = migrateEmbeddingStore(
+      v3([pageRecord("concepts/alpha", "hash-a")]),
+      [live("concepts/alpha", "hash-a")],
+      MODEL,
+    );
 
-  it("preserves a chunk only on a (contentHash, index) match, re-keyed to the pageId", () => {
-    const old = v2([v2Entry("foo", "Foo", "S")], [v2Chunk("foo", 0, "c0"), v2Chunk("foo", 1, "c1")]);
-    const pages = [live("concepts/foo", "foo", "Foo", "S", ["c0", "c1"])];
-    const { store, reembedPageIds } = migrateEmbeddingStore(old, pages, MODEL);
-    expect(store.chunks).toHaveLength(2);
-    expect(store.chunks?.every((c) => c.pageId === "concepts/foo")).toBe(true);
-    expect(reembedPageIds).toHaveLength(0);
+    expect(result.store.entries).toHaveLength(1);
+    expect(result.store.entries[0]?.pageId).toBe("concepts/alpha");
+    expect(result.reembedPageIds).toEqual([]);
   });
 
-  it("drops a chunk whose stored contentHash differs → its page re-embeds", () => {
-    const old = v2([v2Entry("foo", "Foo", "S")], [v2Chunk("foo", 0, "STALE")]);
-    const pages = [live("concepts/foo", "foo", "Foo", "S", ["c0-fresh"])];
-    const { store, reembedPageIds } = migrateEmbeddingStore(old, pages, MODEL);
-    expect(store.chunks).toHaveLength(0);
-    expect(reembedPageIds).toEqual(["concepts/foo"]);
+  it("re-embeds a record whose embedding text drifted", () => {
+    const result = migrateEmbeddingStore(
+      v3([pageRecord("concepts/alpha", "old-hash")]),
+      [live("concepts/alpha", "new-hash")],
+      MODEL,
+    );
+
+    expect(result.store.entries).toEqual([]);
+    expect(result.reembedPageIds).toEqual(["concepts/alpha"]);
   });
 
-  it("re-embeds on duplicate old chunk keys (same pageId+index)", () => {
-    const old = v2([v2Entry("foo", "Foo", "S")], [v2Chunk("foo", 0, "c0"), v2Chunk("foo", 0, "c0")]);
-    const pages = [live("concepts/foo", "foo", "Foo", "S", ["c0"])];
-    const { store, reembedPageIds } = migrateEmbeddingStore(old, pages, MODEL);
-    expect(reembedPageIds).toEqual(["concepts/foo"]);
-  });
-});
+  it("prunes a deleted page without re-embedding it", () => {
+    // S2 privacy: the page no longer exists, so asking the provider to embed it
+    // would be work for content that is gone.
+    const result = migrateEmbeddingStore(v3([pageRecord("concepts/gone", "h")]), [], MODEL);
 
-describe("migrateEmbeddingStore — S2 eligibility-gated privacy", () => {
-  it("drops an ineligible/opted-out page (bareSlug not in eligibleLivePages) and NEVER re-embeds it", () => {
-    const old = v2([v2Entry("secret", "Secret", "private")]);
-    const { store, reembedPageIds } = migrateEmbeddingStore(old, [], MODEL);
-    expect(store.entries).toHaveLength(0);
-    expect(reembedPageIds).toHaveLength(0);
+    expect(result.store.entries).toEqual([]);
+    expect(result.reembedPageIds).toEqual([]);
   });
 
-  it("drops a deleted page (v2 entry, no eligible live page) without re-embedding", () => {
-    const old = v2([v2Entry("gone", "Gone", "S"), v2Entry("foo", "Foo", "S")]);
-    const pages = [live("concepts/foo", "foo", "Foo", "S")];
-    const { store, reembedPageIds } = migrateEmbeddingStore(old, pages, MODEL);
-    expect(store.entries.map((e) => e.pageId)).toEqual(["concepts/foo"]);
-    expect(reembedPageIds).toHaveLength(0);
-  });
-});
+  it("keeps a chunk whose content hash matches at the same index", () => {
+    const result = migrateEmbeddingStore(
+      v3([pageRecord("concepts/a", "h")], [chunkRecord("concepts/a", 0, "c0"), chunkRecord("concepts/a", 1, "c1")]),
+      [live("concepts/a", "h", ["c0", "c1"])],
+      MODEL,
+    );
 
-describe("migrateEmbeddingStore — S5 rebuild-only gates", () => {
-  it("rebuilds (empty store + all eligible in reembed) when stored model ≠ activeModel", () => {
-    const old = v2([v2Entry("foo", "Foo", "S")]);
-    const pages = [live("concepts/foo", "foo", "Foo", "S"), live("queries/bar", "bar", "Bar", "S")];
-    const { store, reembedPageIds } = migrateEmbeddingStore(old, pages, "a-different-model");
-    expect(store.entries).toHaveLength(0);
-    expect(store.chunks ?? []).toHaveLength(0);
-    expect(reembedPageIds.sort()).toEqual(["concepts/foo", "queries/bar"]);
+    expect(result.store.chunks).toHaveLength(2);
+    expect(result.reembedPageIds).toEqual([]);
   });
 
-  it("rebuilds when a vector has the wrong length (integrity failure)", () => {
-    const bad = { slug: "foo", title: "Foo", summary: "S", vector: [0.5], updatedAt: "2026-01-01T00:00:00.000Z" };
-    expectReembedOnly(v2([bad]), [live("concepts/foo", "foo", "Foo", "S")], ["concepts/foo"]);
+  it("re-embeds a page whose chunk hash changed at the same index", () => {
+    const result = migrateEmbeddingStore(
+      v3([pageRecord("concepts/a", "h")], [chunkRecord("concepts/a", 0, "stale")]),
+      [live("concepts/a", "h", ["fresh"])],
+      MODEL,
+    );
+
+    expect(result.store.chunks).toEqual([]);
+    expect(result.reembedPageIds).toEqual(["concepts/a"]);
   });
 
-  it("rebuilds on a v1 store (no preservation possible)", () => {
-    const old: ParsedStore = { version: 1, store: { version: 1, model: MODEL, dimensions: 2, entries: [] } };
-    const pages = [live("concepts/foo", "foo", "Foo", "S")];
-    const { store, reembedPageIds } = migrateEmbeddingStore(old, pages, MODEL);
-    expect(store.version).toBe(3);
-    expect(reembedPageIds).toEqual(["concepts/foo"]);
-  });
+  it("is idempotent on a healthy v3 store", () => {
+    const healthy = v3([pageRecord("concepts/a", "h")]);
+    const first = migrateEmbeddingStore(healthy, [live("concepts/a", "h")], MODEL);
+    const second = migrateEmbeddingStore(healthy, [live("concepts/a", "h")], MODEL);
 
-  it("rebuilds on a null/corrupt parsedOld", () => {
-    const pages = [live("concepts/foo", "foo", "Foo", "S")];
-    const { reembedPageIds } = migrateEmbeddingStore(null, pages, MODEL);
-    expect(reembedPageIds).toEqual(["concepts/foo"]);
-  });
-
-  it("returns dimensions: 0 on a rebuild, not the old store's dimension", () => {
-    // The old store below declares dimensions: 2 (see v2()). A model change
-    // forces a rebuild; asserting 0 here pins the fix — the previous bug carried
-    // the stale "2" forward, which would fail validation on every vector from a
-    // differently-sized model (e.g. voyage-3-lite's 512 vs. text-embedding-3
-    // -small's 1536) and wedge the store permanently.
-    const old = v2([v2Entry("foo", "Foo", "S")]);
-    const pages = [live("concepts/foo", "foo", "Foo", "S")];
-    const { store } = migrateEmbeddingStore(old, pages, "a-different-model");
-    expect(store.dimensions).toBe(0);
-  });
-});
-
-describe("migrateEmbeddingStore — idempotent on v3", () => {
-  it("returns a healthy v3 store unchanged with no spurious re-embed", () => {
-    // The v3 idempotent path content-verifies against the live page, so the
-    // entry's embeddingTextHash must equal the live page's computed hash to be
-    // preserved unchanged (a drifted hash would re-embed — covered separately).
-    const liveFoo = live("concepts/foo", "foo", "Foo", "S");
-    const v3Store: EmbeddingStoreV3 = {
-      version: 3,
-      model: MODEL,
-      dimensions: 2,
-      entries: [
-        { pageId: "concepts/foo", title: "Foo", summary: "S", embeddingTextHash: liveFoo.embeddingTextHash, vector: VEC, updatedAt: "2026-01-01T00:00:00.000Z" },
-      ],
-      chunks: [],
-    };
-    const parsed: ParsedStore = { version: 3, store: v3Store as unknown as Record<string, unknown> };
-    const { store, reembedPageIds } = migrateEmbeddingStore(parsed, [liveFoo], MODEL);
-    expect(store.entries).toEqual(v3Store.entries);
-    expect(reembedPageIds).toHaveLength(0);
+    expect(second).toEqual(first);
   });
 });

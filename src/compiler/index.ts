@@ -100,7 +100,9 @@ import type {
  */
 type DimensionsDatabaseHandle = ReturnType<typeof createDimensionsDatabase>["db"];
 
-import { createDimensionsDatabase, resolveDimensions } from "../dimensions/index.js";
+import { createDimensionsDatabase, resolveDimensions, AKS_STACK_ID_ENV_VAR } from "../dimensions/index.js";
+import type { EmbeddingStoreLocation } from "../utils/embeddings.js";
+import { databaseEmbeddingLocation } from "../utils/embeddings-database.js";
 import { timeStage } from "../utils/stage-timing.js";
 
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
@@ -439,11 +441,13 @@ async function seedThenFinalize(
   generation: PageGenerationResult,
   options: CompileOptions,
   draft: CompileStateDraft | null,
+  embeddingStore?: EmbeddingStoreLocation,
 ): Promise<void> {
   await maybeSeedPages(root, schema, generation, options);
   await finalizeWiki(root, draft, generation.writtenPages, generation.seedSlugs, {
     scoped: options.changeFilter !== undefined,
     embeddings: options.embeddings !== false,
+    embeddingStore,
   });
 }
 
@@ -498,6 +502,7 @@ async function runCompilePipeline(
         emptyGeneration,
         options,
         hasOwnerlessFrozen ? draft : null,
+        embeddingStoreLocation(db),
       ));
       return {
         ...emptyCompileResult(),
@@ -575,7 +580,9 @@ async function runCompilePipeline(
     // no-source-changes branch (see seedThenFinalize). The draft flush is the
     // single durable state write, done inside finalizeWiki after resolution
     // commits.
-    await timeStage("compile.finalize", () => seedThenFinalize(root, schema, generation, options, draft));
+    await timeStage("compile.finalize", () => seedThenFinalize(
+      root, schema, generation, options, draft, embeddingStoreLocation(db),
+    ));
     await logCompile(root, buckets, generation, existingIds);
   }
   verbose(`compile finished in ${Date.now() - startMs} ms`);
@@ -729,6 +736,15 @@ interface FinalizeFlags {
    * true of the whole project — see the flush below.
    */
   scoped?: boolean;
+  /**
+   * Where the embedding store lives, when the caller holds a database handle.
+   *
+   * Omitted keeps the on-disk store, which is what every existing caller wants.
+   * Supplied makes the compile write vectors into the tables, matching where a
+   * serving process reads them -- without it, a compile would keep filling a file
+   * that no longer feeds retrieval.
+   */
+  embeddingStore?: EmbeddingStoreLocation;
 }
 
 /**
@@ -746,7 +762,7 @@ async function finalizeWiki(
   seedSlugs: string[] = [],
   flags: FinalizeFlags = {},
 ): Promise<void> {
-  const { scoped = false, embeddings = true } = flags;
+  const { scoped = false, embeddings = true, embeddingStore } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
   const conceptNewSlugs = pages
     .filter((entry) => entry.concept.is_new)
@@ -790,7 +806,7 @@ async function finalizeWiki(
 
   await generateIndex(root);
   await generateMOC(root);
-  if (embeddings) await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(root, allChangedSlugs));
+  if (embeddings) await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(root, allChangedSlugs, embeddingStore));
 }
 
 /**
@@ -825,8 +841,33 @@ async function finalizeWiki(
  * project lock → the shared drain calls the reentrancy-safe Core (the
  * self-locking wrapper would deadlock here).
  */
-async function safelyUpdateEmbeddings(root: string, changedSlugs: string[]): Promise<void> {
+/**
+ * Where this compile should persist embedding vectors.
+ *
+ * Returns `undefined` when no Stack is configured, which keeps the on-disk store:
+ * a project that never opted into the knowledge backend must not start requiring a
+ * database to compile. When a Stack IS configured, both halves of the
+ * read-modify-write point at the same place, so the compile cannot read one store
+ * and write another.
+ *
+ * @param db - The run's database handle.
+ * @returns The location, or undefined to keep using the file.
+ */
+function embeddingStoreLocation(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): EmbeddingStoreLocation | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return databaseEmbeddingLocation(db, stackId);
+}
+
+async function safelyUpdateEmbeddings(
+  root: string,
+  changedSlugs: string[],
+  embeddingStore?: EmbeddingStoreLocation,
+): Promise<void> {
   const conceptsNamespace = path.basename(CONCEPTS_DIR);
   const changedPageIds = changedSlugs.map((slug) => qualifiedPageId(conceptsNamespace, slug));
-  await refreshEmbeddingsDrainingPending(root, changedPageIds);
+  await refreshEmbeddingsDrainingPending(root, changedPageIds, embeddingStore);
 }

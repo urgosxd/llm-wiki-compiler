@@ -20,6 +20,7 @@ import {
   loadEmbeddingsForContext,
   findRelevantChunksV3,
   type ChunkHitV3,
+  type EmbeddingStoreSource,
 } from "../utils/embeddings-load.js";
 import { loadProfile } from "../profile/load.js";
 import { CHUNK_TOP_K } from "../utils/constants.js";
@@ -78,9 +79,10 @@ export async function retrieveSemanticChunks(
   root: string,
   prompt: string,
   topChunks: number,
+  embeddingStoreSource?: EmbeddingStoreSource,
 ): Promise<SemanticRetrievalOutcome> {
   if (topChunks <= 0) return emptyOutcome(null);
-  const outcome = await loadEmbeddingsForContext(root);
+  const outcome = await loadEmbeddingsForContext(root, embeddingStoreSource);
   if (!outcome.store) return emptyOutcome(mapLoadWarning(outcome.warnings[0]?.code));
 
   try {

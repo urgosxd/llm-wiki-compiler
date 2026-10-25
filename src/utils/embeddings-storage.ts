@@ -111,3 +111,31 @@ export async function persistEmbeddingStore(root: string, store: EmbeddingStore 
     note("Embedding index exceeded the JSON limit; saved embeddings.bin. Future updates remain binary.");
   }
 }
+
+/**
+ * Where a persist writes its store.
+ *
+ * The mirror of `EmbeddingStoreSource`: the read seam says where the store comes
+ * from, this one says where it goes. Both are optional and both default to the
+ * on-disk file, so a caller that holds a database handle opts in explicitly while
+ * every existing path keeps writing what it wrote before.
+ *
+ * ## Why write goes through the same seam shape as read
+ *
+ * A read-modify-write has to agree with itself. If the writer persisted to a
+ * database while the reader still read the file, every compile would update rows
+ * nothing consults and every query would rank stale vectors. Keeping one seam per
+ * direction, defaulted the same way, means a caller either moves both or neither.
+ */
+export interface EmbeddingStoreSink {
+  /**
+   * Persist the complete store.
+   *
+   * Takes the whole store rather than a delta because both implementations replace
+   * the corpus: the file is rewritten, and the table deletes what the new store no
+   * longer covers. A delta would need a second contract to say what removal means.
+   *
+   * @param store - The complete store to persist.
+   */
+  write(store: EmbeddingStore | EmbeddingStoreV3): Promise<void>;
+}

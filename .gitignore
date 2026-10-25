@@ -27,3 +27,6 @@ docs/superpowers/
 # from the repo root — which is exactly how a 9-byte fixture ended up in
 # d04fcc5 and had to be removed afterwards.
 /uploads/
+
+# CodeGraph index — a local analysis cache, regenerated on demand.
+.codegraph/

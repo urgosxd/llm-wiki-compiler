@@ -8,9 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { outboxReachable, provisionOutboxStack, type OutboxSetup } from "./outbox-harness.js";
 
 import { ingestDimensions } from "../../src/dimensions/coordinator.js";
 import { loadRecords, removeRecord, saveRecord } from "../../src/dimensions/outbox.js";
@@ -65,26 +63,30 @@ function makeDimension(
   };
 }
 
-describe("ingestDimensions", () => {
-  let root: string;
+const harnessReachable = await outboxReachable("coordinator");
+
+describe.skipIf(!harnessReachable)("ingestDimensions", () => {
+  let setup: OutboxSetup;
+  let harness: OutboxSetup["harness"];
 
   beforeEach(async () => {
-    root = await mkdtemp(path.join(tmpdir(), "llmwiki-dim-"));
+    setup = await provisionOutboxStack("coordinator");
+    harness = setup.harness;
   });
 
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
+    await setup.release();
   });
 
   it("commits both dimensions and leaves no pending record", async () => {
     const wiki = makeDimension("wiki");
     const kg = makeDimension("kg");
 
-    const outcome = await ingestDimensions(root, INPUT, [wiki, kg]);
+    const outcome = await ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg]);
 
     expect(outcome.summaries.get("wiki")).toBe("wiki:ok");
     expect(outcome.summaries.get("kg")).toBe("kg:ok");
-    const { records } = await loadRecords(root);
+    const { records } = await loadRecords(harness.db, harness.stackId);
     expect(records).toHaveLength(1);
     expect(records[0]?.status).toBe("committed");
   });
@@ -93,13 +95,13 @@ describe("ingestDimensions", () => {
     const wiki = makeDimension("wiki");
     const kg = makeDimension("kg", { prepareFails: true });
 
-    await expect(ingestDimensions(root, INPUT, [wiki, kg])).rejects.toThrow(
+    await expect(ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg])).rejects.toThrow(
       "kg prepare failed",
     );
 
     expect(wiki.committed).toBe(0);
     expect(kg.committed).toBe(0);
-    const { records } = await loadRecords(root);
+    const { records } = await loadRecords(harness.db, harness.stackId);
     expect(records).toHaveLength(0);
   });
 
@@ -122,13 +124,13 @@ describe("ingestDimensions", () => {
     const wiki = makeDimension("wiki");
     const kg = makeDimension("kg", { commitFails: true });
 
-    await expect(ingestDimensions(root, INPUT, [wiki, kg])).rejects.toThrow(
+    await expect(ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg])).rejects.toThrow(
       "kg commit failed",
     );
 
     expect(wiki.committed).toBe(1);
     expect(wiki.discarded).toBe(1);
-    const { records } = await loadRecords(root);
+    const { records } = await loadRecords(harness.db, harness.stackId);
     expect(records).toHaveLength(1);
     expect(records[0]?.status).toBe("pending");
   });
@@ -137,11 +139,11 @@ describe("ingestDimensions", () => {
     const wiki = makeDimension("wiki", { discardFails: true });
     const kg = makeDimension("kg", { commitFails: true });
 
-    await expect(ingestDimensions(root, INPUT, [wiki, kg])).rejects.toThrow(
+    await expect(ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg])).rejects.toThrow(
       "kg commit failed",
     );
 
-    const { records } = await loadRecords(root);
+    const { records } = await loadRecords(harness.db, harness.stackId);
     expect(records).toHaveLength(1);
     expect(records[0]?.status).toBe("pending");
   });
@@ -150,17 +152,21 @@ describe("ingestDimensions", () => {
     const wiki = makeDimension("wiki");
     const kg = makeDimension("kg");
 
-    const outcome = await ingestDimensions(root, INPUT, [wiki, kg]);
+    const outcome = await ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg]);
 
     expect(outcome.record.dimensions).toEqual([
       { name: "wiki", idempotencyKey: "wiki:key" },
       { name: "kg", idempotencyKey: "kg:key" },
     ]);
-    await removeRecord(root, outcome.record.ingestId);
+    await removeRecord(harness.db, harness.stackId, outcome.record.ingestId);
   });
 
-  it("surfaces an unreadable outbox file instead of hiding it", async () => {
-    await saveRecord(root, {
+  it("surfaces a corrupt dimensions payload instead of hiding it", async () => {
+    // The file version could be corrupted by a torn write. A row cannot tear -- but
+    // `dimensions` is jsonb, so Postgres guarantees valid JSON and says nothing about
+    // the shape this module wrote. A payload that does not parse is unfinished work
+    // with no usable description, which must be surfaced rather than treated as absent.
+    await saveRecord(harness.db, harness.stackId, {
       version: 1,
       ingestId: "ok",
       source: "s",
@@ -171,13 +177,14 @@ describe("ingestDimensions", () => {
       dimensions: [],
       createdAt: new Date().toISOString(),
     });
-    const { writeFile, mkdir } = await import("node:fs/promises");
-    await mkdir(path.join(root, ".llmwiki/dimensions/outbox"), { recursive: true });
-    await writeFile(path.join(root, ".llmwiki/dimensions/outbox/broken.json"), "{");
+    await harness.db.execute(
+      `insert into ingest_outbox (ingest_id, stack_id, source, title, document, body, status, dimensions)
+       values ('broken', '${harness.stackId}', 's', 't', 'd', 'b', 'pending', '{"not":"an array"}'::jsonb)`,
+    );
 
-    const { records, unreadable } = await loadRecords(root);
+    const { records, unreadable } = await loadRecords(harness.db, harness.stackId);
 
     expect(records).toHaveLength(1);
-    expect(unreadable).toEqual(["broken.json"]);
+    expect(unreadable).toEqual(["broken"]);
   });
 });

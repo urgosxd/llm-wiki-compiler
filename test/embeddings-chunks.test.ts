@@ -9,14 +9,10 @@ import { mkdtemp, mkdir, writeFile } from "fs/promises";
 import path from "path";
 import os from "os";
 import {
-  findRelevantChunks,
-  findTopKChunks,
-  readEmbeddingStore,
   resetStaleEmbeddingWarnings,
   updateEmbeddings,
   writeEmbeddingStore,
   type ChunkEmbeddingEntry,
-  type EmbeddingStore,
 } from "../src/utils/embeddings.js";
 import { refreshChunkEmbeddings } from "../src/utils/embeddings-chunks.js";
 import { readV3Store, conceptId } from "./fixtures/v3-store.js";
@@ -56,33 +52,6 @@ afterEach(() => {
   delete process.env.OPENAI_API_KEY;
   resetStaleEmbeddingWarnings();
   vi.restoreAllMocks();
-});
-
-describe("findTopKChunks", () => {
-  const chunk = (slug: string, idx: number, vector: number[]): ChunkEmbeddingEntry => ({
-    slug,
-    title: slug,
-    chunkIndex: idx,
-    contentHash: "hash",
-    text: `${slug}-${idx}`,
-    vector,
-    updatedAt: "2026-01-01T00:00:00.000Z",
-  });
-
-  it("ranks chunks by cosine similarity descending", () => {
-    const chunks = [
-      chunk("a", 0, [1, 0]),
-      chunk("a", 1, [0, 1]),
-      chunk("b", 0, [0.9, 0.1]),
-    ];
-    const top = findTopKChunks([1, 0], chunks, 2);
-    expect(top.map((c) => c.chunk.slug)).toEqual(["a", "b"]);
-  });
-
-  it("returns at most k chunks", () => {
-    const chunks = [chunk("a", 0, [1, 0]), chunk("b", 0, [0.8, 0])];
-    expect(findTopKChunks([1, 0], chunks, 1)).toHaveLength(1);
-  });
 });
 
 describe("updateEmbeddings (chunk path)", () => {
@@ -169,7 +138,10 @@ describe("updateEmbeddings (chunk path)", () => {
     const root = await makeRoot();
     setupOpenAI([0.7, 0.3]);
     await writeConcept(root, "alpha", "Body for chunking");
-    const v1Store: EmbeddingStore = {
+    // Typed structurally rather than with the removed `EmbeddingStore` v1/v2
+    // interface: this is deliberately a legacy SHAPE written to disk, and the
+    // assertion below is that the writer replaces it with v3.
+    const v1Store = {
       version: 1,
       model: "test-embed",
       dimensions: 2,
@@ -196,88 +168,7 @@ describe("updateEmbeddings (chunk path)", () => {
   });
 });
 
-describe("findRelevantChunks", () => {
-  it("returns [] when the store has no chunks", async () => {
-    const root = await makeRoot();
-    process.env.LLMWIKI_PROVIDER = "openai";
-    process.env.LLMWIKI_EMBEDDING_MODEL = "test-embed";
-    await writeEmbeddingStore(root, {
-      version: 2,
-      model: "test-embed",
-      dimensions: 2,
-      entries: [],
-      chunks: [],
-    });
-    expect(await findRelevantChunks(root, "anything", 5)).toEqual([]);
-  });
-
-  it("ranks chunks by similarity to the query", async () => {
-    const root = await makeRoot();
-    setupOpenAI([1, 0]);
-    await writeEmbeddingStore(root, {
-      version: 2,
-      model: "test-embed",
-      dimensions: 2,
-      entries: [],
-      chunks: [
-        {
-          slug: "a", title: "a", chunkIndex: 0, contentHash: "h1",
-          text: "alpha", vector: [1, 0], updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-        {
-          slug: "b", title: "b", chunkIndex: 0, contentHash: "h2",
-          text: "beta", vector: [0, 1], updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
-    });
-
-    const top = await findRelevantChunks(root, "alpha", 1);
-    expect(top).toHaveLength(1);
-    expect(top[0].chunk.slug).toBe("a");
-  });
-
-  it("falls back when the stored model is stale", async () => {
-    const root = await makeRoot();
-    setupOpenAI([0.5, 0.5]);
-    await writeEmbeddingStore(root, {
-      version: 2,
-      model: "old-model",
-      dimensions: 2,
-      entries: [],
-      chunks: [
-        {
-          slug: "a", title: "a", chunkIndex: 0, contentHash: "h1",
-          text: "alpha", vector: [1, 0], updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
-    });
-
-    const top = await findRelevantChunks(root, "alpha", 5);
-    expect(top).toEqual([]);
-  });
-});
-
-describe("backwards compatibility", () => {
-  it("v1 store still loads correctly for findRelevantPages flow", async () => {
-    const root = await makeRoot();
-    const v1Store: EmbeddingStore = {
-      version: 1,
-      model: "test-embed",
-      dimensions: 2,
-      entries: [
-        {
-          slug: "alpha", title: "Alpha", summary: "Sum",
-          vector: [1, 0], updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
-    };
-    await writeEmbeddingStore(root, v1Store);
-    const loaded = await readEmbeddingStore(root);
-    expect(loaded?.version).toBe(1);
-    expect(loaded?.chunks).toBeUndefined();
-    expect(loaded?.entries).toHaveLength(1);
-  });
-
+describe("chunking guards", () => {
   it("a sufficiently long body produces multiple chunks", () => {
     // sanity: ensures CHUNK_TARGET_CHARS isn't accidentally large enough that
     // the chunking tests above would silently degrade to single-chunk output.

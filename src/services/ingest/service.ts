@@ -29,6 +29,7 @@ import {
   createDimensionsDatabase,
   ingestDimensions,
   resolveDimensions,
+  resolveStackId,
 } from "../../dimensions/index.js";
 import { tryWithOrdinaryMutationLock } from "../../operation-bundles/with-mutation-lock.js";
 import { LockBusyError } from "../../utils/lock.js";
@@ -118,7 +119,12 @@ async function writeToDimensions(
   const dimensionsDb = createDimensionsDatabase();
   const locked = await tryWithOrdinaryMutationLock(root, async () => {
     try {
-      return await ingestDimensions(root, input, resolveDimensions({ root, db: dimensionsDb.db }));
+      return await ingestDimensions(
+        dimensionsDb.db,
+        resolveStackId(),
+        input,
+        resolveDimensions({ root, db: dimensionsDb.db }),
+      );
     } finally {
       await dimensionsDb.close();
     }

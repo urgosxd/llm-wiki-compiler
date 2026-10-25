@@ -65,5 +65,6 @@ export {
   DimensionActivationError,
   createDimensionsDatabase,
   resolveDimensions,
+  resolveStackId,
 } from "./activation.js";
 export type { DimensionsDatabase, ResolveDimensionsOptions } from "./activation.js";

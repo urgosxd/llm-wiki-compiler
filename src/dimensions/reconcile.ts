@@ -24,6 +24,7 @@ import {
   saveRecord,
   type OutboxRecord,
 } from "./outbox.js";
+import type { Database } from "llmwiki-kg";
 import type { Dimension, DimensionInput } from "./types.js";
 
 /** One record the reconciler could not resolve. */
@@ -59,7 +60,8 @@ function inputOf(record: OutboxRecord): DimensionInput {
  * harmless, but skipping it is strictly cheaper, so only missing keys are run.
  */
 async function finishRecord(
-  root: string,
+  db: Database,
+  stackId: string,
   record: OutboxRecord,
   dimensions: readonly Dimension[],
 ): Promise<void> {
@@ -79,11 +81,11 @@ async function finishRecord(
           : item,
       ),
     };
-    await saveRecord(root, updated);
+    await saveRecord(db, stackId, updated);
   }
 
-  await saveRecord(root, { ...updated, status: "committed" });
-  await removeRecord(root, record.ingestId);
+  await saveRecord(db, stackId, { ...updated, status: "committed" });
+  await removeRecord(db, stackId, record.ingestId);
 }
 
 /**
@@ -92,25 +94,27 @@ async function finishRecord(
  * Committed records are also removed: they describe a finished ingest, so
  * keeping them would grow the outbox without bound.
  *
- * @param root - Project root.
+ * @param db - Tenant-bound database handle; RLS decides which records are visible.
+ * @param stackId - Stack whose pending ingests are being finished.
  * @param dimensions - Dimensions available to finish pending work.
  */
 export async function reconcileOutbox(
-  root: string,
+  db: Database,
+  stackId: string,
   dimensions: readonly Dimension[],
 ): Promise<ReconcileOutcome> {
-  const { records, unreadable } = await loadRecords(root);
+  const { records, unreadable } = await loadRecords(db, stackId);
   const finished: string[] = [];
   const unresolved: UnresolvedIngest[] = [];
 
   for (const record of records) {
     if (record.status === "committed") {
-      await removeRecord(root, record.ingestId);
+      await removeRecord(db, stackId, record.ingestId);
       finished.push(record.ingestId);
       continue;
     }
     try {
-      await finishRecord(root, record, dimensions);
+      await finishRecord(db, stackId, record, dimensions);
       finished.push(record.ingestId);
     } catch (error) {
       unresolved.push({

@@ -9,12 +9,12 @@ import { mkdtemp, mkdir, writeFile } from "fs/promises";
 import path from "path";
 import os from "os";
 import {
-  findRelevantPages,
   readEmbeddingStore,
   updateEmbeddings,
   writeEmbeddingStore,
-  type EmbeddingStore,
+  type EmbeddingStoreV3,
 } from "../src/utils/embeddings.js";
+import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
 import { EmbeddingIntegrityError } from "../src/utils/embeddings-batch.js";
 import { OpenAIProvider } from "../src/providers/openai.js";
 import * as providerMod from "../src/utils/provider.js";
@@ -30,16 +30,23 @@ async function writeConcept(root: string, slug: string): Promise<void> {
   await writeFile(path.join(root, "wiki/concepts", `${slug}.md`), `---\ntitle: ${slug}\nsummary: Sum\n---\n\nBody`);
 }
 
-async function writeRawStore(root: string, store: EmbeddingStore): Promise<void> {
+async function writeRawStore(root: string, store: EmbeddingStoreV3): Promise<void> {
   await writeFile(path.join(root, ".llmwiki/embeddings.json"), JSON.stringify(store, null, 2));
 }
 
-function pageStore(vector: number[], dimensions = 2): EmbeddingStore {
+function pageStore(vector: number[], dimensions = 2): EmbeddingStoreV3 {
   return {
-    version: 2,
+    version: 3,
     model: "test-embed",
     dimensions,
-    entries: [{ slug: "alpha", title: "Alpha", summary: "Sum", vector, updatedAt: "2026-01-01T00:00:00.000Z" }],
+    entries: [{
+      pageId: "concepts/alpha",
+      title: "Alpha",
+      summary: "Sum",
+      embeddingTextHash: "hash-alpha",
+      vector,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }],
     chunks: [],
   };
 }
@@ -70,41 +77,44 @@ afterEach(() => {
 });
 
 describe("read-side embedding validation", () => {
-  it("rejects a query vector whose dimension does not match the active store", async () => {
-    const root = await makeRoot();
-    setupOpenAI([1, 0, 0]);
-    await writeEmbeddingStore(root, pageStore([1, 0]));
-
-    await expect(findRelevantPages(root, "alpha")).rejects.toBeInstanceOf(EmbeddingIntegrityError);
-  });
-
-  it("treats a corrupted active store as unusable instead of ranking poisoned vectors", async () => {
+  // These assert on `loadEmbeddingsForSearch`, which is the function production
+  // actually calls. They used to go through `findRelevantPages`, a v1/v2 helper
+  // keyed by bare `slug` that had no production caller and has been removed. The
+  // gate itself is unchanged: a store whose vectors cannot be trusted must degrade
+  // retrieval rather than rank poisoned data.
+  it("degrades instead of ranking a store whose vectors fail integrity validation", async () => {
     const root = await makeRoot();
     setupOpenAI([1, 0]);
-    await writeRawStore(root, pageStore([]));
+    await writeRawStore(root, pageStore([])); // empty vector: fails the gate
 
-    await expect(findRelevantPages(root, "alpha")).resolves.toEqual([]);
+    const outcome = await loadEmbeddingsForSearch(root);
+
+    expect(outcome.store).toBeNull();
+    expect(outcome.warnings.map((w) => w.code)).toContain("embedding-store-unavailable");
   });
 
-  it("passes query input type through the provider embed seam", async () => {
+  it("degrades instead of ranking a store built by a different embedding model", async () => {
     const root = await makeRoot();
-    let seenInputType: string | undefined;
-    process.env.LLMWIKI_PROVIDER = "openai";
-    process.env.LLMWIKI_EMBEDDING_MODEL = "test-embed";
-    vi.spyOn(providerMod, "getProvider").mockReturnValue({
-      complete: async () => "",
-      stream: async () => "",
-      toolCall: async () => "",
-      embed: async (_text: string, inputType?: "document" | "query") => {
-        seenInputType = inputType;
-        return [1, 0];
-      },
-    });
+    setupOpenAI([1, 0]);
+    const stale = pageStore([1, 0]);
+    stale.model = "some-other-model";
+    await writeRawStore(root, stale);
+
+    const outcome = await loadEmbeddingsForSearch(root);
+
+    expect(outcome.store).toBeNull();
+    expect(outcome.warnings.map((w) => w.code)).toContain("embedding-index-outdated");
+  });
+
+  it("loads a healthy v3 store without warnings", async () => {
+    const root = await makeRoot();
+    setupOpenAI([1, 0]);
     await writeEmbeddingStore(root, pageStore([1, 0]));
 
-    await findRelevantPages(root, "alpha");
+    const outcome = await loadEmbeddingsForSearch(root);
 
-    expect(seenInputType).toBe("query");
+    expect(outcome.store?.entries).toHaveLength(1);
+    expect(outcome.warnings).toEqual([]);
   });
 });
 

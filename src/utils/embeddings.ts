@@ -23,6 +23,9 @@ import {
   STORE_VERSION,
   writeEmbeddingStore,
   readStoreForUpdate,
+  readStoreForUpdateFrom,
+  type EmbeddingStoreLocation,
+  type EmbeddingStoreSink,
   resolveEmbeddingModel,
   resolveEmbeddingFingerprint,
   storeMatchesActiveEmbedding,
@@ -88,6 +91,7 @@ export async function updateEmbeddingsLockedCore(
   root: string,
   changedPageIds: PageId[],
   prepare?: (pageIds: PageId[]) => Promise<PageId[]>,
+  store?: EmbeddingStoreLocation,
 ): Promise<{ embedded: PageId[]; eligible: PageId[]; pruned: PageId[] }> {
   if (embeddingsDisabled()) {
     output.verbose(`embeddings: skipped because ${ENV_EMBEDDINGS} disables refreshes`);
@@ -97,7 +101,11 @@ export async function updateEmbeddingsLockedCore(
   const profile = await loadProfile(root);
   const collected = await collectEligibleLivePages(root, profile);
   const eligible = collected.map((p) => p.pageId);
-  const parsedOld = await readStoreForUpdate(root);
+  // Read and write must go through the SAME location: reading rows while writing
+  // the file would make every compile update a store nothing consults, and reading
+  // the file while writing rows would rank vectors that no longer describe the
+  // corpus. `store` supplies both or neither.
+  const parsedOld = store === undefined ? await readStoreForUpdate(root) : await readStoreForUpdateFrom(store.source);
   const onDiskVersion = parsedOld?.version ?? 0;
 
   // A store whose vectors came from a DIFFERENT embedding configuration — other
@@ -120,7 +128,7 @@ export async function updateEmbeddingsLockedCore(
   // with nothing eligible stays clean — never materialize an empty store.
   if (!shouldPersist(parsedOld, migrated, reembed, onDiskVersion)) return { embedded: [], eligible, pruned };
 
-  await embedAndPersist(root, migrated, collected, reembed, onDiskVersion);
+  await embedAndPersist(root, migrated, collected, reembed, onDiskVersion, store?.sink);
   // The re-embed INTENT set (what we attempted). It may over-include an id the
   // writer skips — see the @returns note; the marker lifecycle tolerates that.
   return { embedded: [...reembed], eligible, pruned };
@@ -187,6 +195,7 @@ async function embedAndPersist(
   collected: CollectedPage[],
   reembed: Set<PageId>,
   onDiskVersion: number,
+  sink?: EmbeddingStoreSink,
 ): Promise<void> {
   const batchSize = resolveEmbedBatchSize(getActiveEmbeddingProviderName());
   const expectedDim = migrated.dimensions > 0 ? migrated.dimensions : undefined;
@@ -195,7 +204,7 @@ async function embedAndPersist(
   // Done here, at the single write boundary, so no path can persist a store whose
   // provenance is unrecorded — that is what the next read gates preservation on.
   const stamped: EmbeddingStoreV3 = { ...store, fingerprint: resolveEmbeddingFingerprint() };
-  await writeEmbeddingStore(root, stamped);
+  await writeEmbeddingStore(root, stamped, sink);
   reportPersist(stamped, report, onDiskVersion);
 }
 
@@ -223,15 +232,9 @@ export {
   readEmbeddingStore,
   writeEmbeddingStore,
   resolveEmbeddingModel,
-  type EmbeddingEntry,
   type ChunkEmbeddingEntry,
-  type EmbeddingStore,
+  type EmbeddingStoreV3,
+  type ChunkEmbeddingV3,
+  type EmbeddingStoreLocation,
 } from "./embeddings-store.js";
-export {
-  cosineSimilarity,
-  findTopK,
-  findTopKChunks,
-  findRelevantPages,
-  findRelevantChunks,
-  resetStaleEmbeddingWarnings,
-} from "./embeddings-search.js";
+export { cosineSimilarity, resetStaleEmbeddingWarnings } from "./embeddings-search.js";

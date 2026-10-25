@@ -9,7 +9,6 @@ import path from "path";
 import { getEmbeddingProvider } from "./embedding-provider.js";
 import { parseFrontmatter } from "./markdown.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "./constants.js";
-import { type EmbeddingEntry } from "./embeddings-store.js";
 import { embedTextBatch, enrichEmbedError, makeCountingProvider } from "./embeddings-batch.js";
 import { safeRealpath, isInsideDir } from "./path-confine.js";
 import { readConfinedPage } from "./confined-read.js";
@@ -89,35 +88,4 @@ export function buildEmbeddingText(record: Pick<PageRecord, "title" | "summary">
   return record.summary
     ? `${record.title}\n\n${record.summary}`
     : record.title;
-}
-
-/**
- * Embed every page in `records` whose slug is in `slugsToEmbed`, batched.
- * Vectors come back in input order, so zip them onto the selected records.
- */
-export async function embedPages(
-  records: PageRecord[],
-  slugsToEmbed: Set<string>,
-  batchSize: number,
-  expectedDim?: number,
-): Promise<{ entries: EmbeddingEntry[]; requests: number }> {
-  const { provider, requestCount } = makeCountingProvider(getEmbeddingProvider());
-  const now = new Date().toISOString();
-  const selected = records.filter((r) => slugsToEmbed.has(r.slug));
-  if (selected.length === 0) return { entries: [], requests: 0 };
-
-  let vectors: number[][];
-  try {
-    vectors = await embedTextBatch(provider, selected.map(buildEmbeddingText), batchSize, expectedDim);
-  } catch (err) {
-    throw enrichEmbedError(err, "page", (i) => selected[i]?.slug);
-  }
-  const entries = selected.map((record, i) => ({
-    slug: record.slug,
-    title: record.title,
-    summary: record.summary,
-    vector: vectors[i],
-    updatedAt: now,
-  }));
-  return { entries, requests: requestCount() };
 }

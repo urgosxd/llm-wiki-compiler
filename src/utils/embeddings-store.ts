@@ -39,6 +39,11 @@ import { assertEmbeddingStoreValid, filterMalformedIdentities, assertFieldCaps }
 import { resolveExistingConfinedPrivateDir } from "./private-dir.js";
 import { parseQualifiedPageId, type PageId } from "./page-id.js";
 import { readStoredEmbeddings, persistEmbeddingStore, type ParsedStore } from "./embeddings-storage.js";
+import type { EmbeddingStoreSink } from "./embeddings-storage.js";
+
+export type { EmbeddingStoreSink };
+
+import type { EmbeddingStoreSource } from "./embeddings-load.js";
 export { parseEmbeddingStore, type ParsedStore } from "./embeddings-storage.js";
 export { EmbeddingStoreFullError } from "./embeddings-errors.js";
 
@@ -183,6 +188,22 @@ export async function readEmbeddingStore(root: string): Promise<EmbeddingStore |
 }
 
 /**
+ * Both directions of a read-modify-write, so they cannot disagree.
+ *
+ * A compile reads the store, reconciles it, and writes it back. If the two halves
+ * resolved their location independently, a caller could read rows and write the
+ * file: every compile would then update a store nothing consults, and every query
+ * would rank vectors that no longer describe the corpus. Bundling them makes that
+ * mismatch unrepresentable.
+ */
+export interface EmbeddingStoreLocation {
+  /** Where the reconcile reads the current store. */
+  readonly source: EmbeddingStoreSource;
+  /** Where the write persists the reconciled store. */
+  readonly sink: EmbeddingStoreSink;
+}
+
+/**
  * Validate and atomically persist through the format-aware confined writer.
  * JSON overflow selects binary without repeating provider work; exceeding binary
  * limits throws EmbeddingStoreFullError. Creates `.llmwiki` only for a write.
@@ -190,9 +211,17 @@ export async function readEmbeddingStore(root: string): Promise<EmbeddingStore |
 export async function writeEmbeddingStore(
   root: string,
   store: EmbeddingStore | EmbeddingStoreV3,
+  sink?: EmbeddingStoreSink,
 ): Promise<void> {
+  // Validation runs for BOTH destinations. A database write bypassing the caps
+  // would make the file and the table disagree about what a legal store is, and
+  // the file is still the source a compile reads.
   assertEmbeddingStoreValid(store);
   assertFieldCaps(store as unknown as Record<string, unknown>);
+  if (sink !== undefined) {
+    await sink.write(store);
+    return;
+  }
   await persistEmbeddingStore(root, store);
 }
 
@@ -255,6 +284,22 @@ function filterMalformedPageIds(store: Record<string, unknown>): string[] {
  */
 export async function readStoreForUpdate(root: string): Promise<ParsedStore | null> {
   const result = await readStoredEmbeddings(root);
+  return result.kind === "parsed" ? result.parsed : null;
+}
+
+/**
+ * Read the store a read-modify-write is about to replace.
+ *
+ * Takes the source rather than a root so the caller that chose where to read from
+ * uses the same answer here. Returns null for absent or unreadable, matching
+ * {@link readStoreForUpdate}: a store that cannot be read is treated as absent by
+ * the migration, which rebuilds instead of guessing what it held.
+ *
+ * @param source - Where the store lives.
+ * @returns The parsed store, or null when absent or unreadable.
+ */
+export async function readStoreForUpdateFrom(source: EmbeddingStoreSource): Promise<ParsedStore | null> {
+  const result = await source.read();
   return result.kind === "parsed" ? result.parsed : null;
 }
 

@@ -4,12 +4,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { outboxReachable, provisionOutboxStack, type OutboxSetup } from "./outbox-harness.js";
 
 import { reconcileOutbox } from "../../src/dimensions/reconcile.js";
 import { loadRecords, saveRecord, type OutboxRecord } from "../../src/dimensions/outbox.js";
+import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import type {
   CommittedWrite,
   Dimension,
@@ -18,8 +17,11 @@ import type {
 } from "../../src/dimensions/types.js";
 
 /** A pending record with one dimension already committed. */
-async function savePending(root: string, dimensions: OutboxRecord["dimensions"]): Promise<void> {
-  await saveRecord(root, {
+async function savePending(
+  harness: OutboxSetup["harness"],
+  dimensions: OutboxRecord["dimensions"],
+): Promise<void> {
+  await saveRecord(harness.db, harness.stackId, {
     version: 1,
     ingestId: "ingest-1",
     source: "https://example.test/a",
@@ -57,63 +59,67 @@ function makeDimension(
   };
 }
 
-describe("reconcileOutbox", () => {
-  let root: string;
+const harnessReachable = await outboxReachable("reconcile");
+
+describe.skipIf(!harnessReachable)("reconcileOutbox", () => {
+  let setup: OutboxSetup;
+  let harness: OutboxSetup["harness"];
 
   beforeEach(async () => {
-    root = await mkdtemp(path.join(tmpdir(), "llmwiki-reconcile-"));
+    setup = await provisionOutboxStack("reconcile");
+    harness = setup.harness;
   });
 
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
+    await setup.release();
   });
 
   it("finishes a pending record and removes it", async () => {
-    await savePending(root, [
+    await savePending(harness, [
       { name: "wiki", idempotencyKey: "wiki:done" },
       { name: "kg", idempotencyKey: null },
     ]);
     const wiki = makeDimension("wiki");
     const kg = makeDimension("kg");
 
-    const outcome = await reconcileOutbox(root, [wiki, kg]);
+    const outcome = await reconcileOutbox(harness.db, harness.stackId, [wiki, kg]);
 
     expect(outcome.finished).toEqual(["ingest-1"]);
     expect(wiki.commits).toBe(0);
     expect(kg.commits).toBe(1);
-    const { records } = await loadRecords(root);
+    const { records } = await loadRecords(harness.db, harness.stackId);
     expect(records).toHaveLength(0);
   });
 
   it("skips a dimension that already recorded a key", async () => {
-    await savePending(root, [
+    await savePending(harness, [
       { name: "wiki", idempotencyKey: "wiki:done" },
       { name: "kg", idempotencyKey: "kg:done" },
     ]);
     const wiki = makeDimension("wiki");
     const kg = makeDimension("kg");
 
-    await reconcileOutbox(root, [wiki, kg]);
+    await reconcileOutbox(harness.db, harness.stackId, [wiki, kg]);
 
     expect(wiki.commits).toBe(0);
     expect(kg.commits).toBe(0);
   });
 
   it("reports an unresolved record instead of dropping it", async () => {
-    await savePending(root, [{ name: "kg", idempotencyKey: null }]);
+    await savePending(harness, [{ name: "kg", idempotencyKey: null }]);
     const kg = makeDimension("kg", true);
 
-    const outcome = await reconcileOutbox(root, [kg]);
+    const outcome = await reconcileOutbox(harness.db, harness.stackId, [kg]);
 
     expect(outcome.unresolved).toHaveLength(1);
     expect(outcome.unresolved[0]?.reason).toContain("unavailable");
-    const { records } = await loadRecords(root);
+    const { records } = await loadRecords(harness.db, harness.stackId);
     expect(records).toHaveLength(1);
     expect(records[0]?.status).toBe("pending");
   });
 
   it("removes a committed record", async () => {
-    await saveRecord(root, {
+    await saveRecord(harness.db, harness.stackId, {
       version: 1,
       ingestId: "done",
       source: "s",
@@ -125,19 +131,23 @@ describe("reconcileOutbox", () => {
       createdAt: new Date().toISOString(),
     });
 
-    const outcome = await reconcileOutbox(root, []);
+    const outcome = await reconcileOutbox(harness.db, harness.stackId, []);
 
     expect(outcome.finished).toEqual(["done"]);
-    expect((await loadRecords(root)).records).toHaveLength(0);
+    expect((await loadRecords(harness.db, harness.stackId)).records).toHaveLength(0);
   });
 
-  it("surfaces an unreadable record file", async () => {
-    const dir = path.join(root, ".llmwiki/dimensions/outbox");
-    await mkdir(dir, { recursive: true });
-    await writeFile(path.join(dir, "bad.json"), "{not json", "utf-8");
+  it("surfaces a record whose dimensions payload cannot be trusted", async () => {
+    // A row cannot tear the way a file could, but `dimensions` is jsonb: Postgres
+    // guarantees valid JSON, not the shape this module wrote. A payload that is not
+    // an array of entries is unfinished work with no usable description.
+    await harness.db.execute(
+      `insert into ingest_outbox (ingest_id, stack_id, source, title, document, body, status, dimensions)
+       values ('bad', '${harness.stackId}', 's', 't', 'd', 'b', 'pending', '"not-an-array"'::jsonb)`,
+    );
 
-    const outcome = await reconcileOutbox(root, []);
+    const outcome = await reconcileOutbox(harness.db, harness.stackId, []);
 
-    expect(outcome.unreadable).toEqual(["bad.json"]);
+    expect(outcome.unreadable).toEqual(["bad"]);
   });
 });

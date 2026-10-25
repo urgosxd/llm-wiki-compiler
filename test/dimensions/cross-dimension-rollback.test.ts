@@ -54,10 +54,12 @@
  * statement about lost atomicity would be verified only sometimes.
  */
 import { describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { ingestDimensions } from "../../src/dimensions/coordinator.js";
 import { loadRecords } from "../../src/dimensions/outbox.js";
 import { reconcileOutbox } from "../../src/dimensions/reconcile.js";
@@ -66,9 +68,15 @@ import type { Dimension } from "../../src/dimensions/types.js";
 /** One document, as an ingest would hand it to the coordinator. */
 const INPUT = { source: "https://example.test/a", title: "A", document: "# A\nbody", body: "body" };
 
-/** A fresh project root for the outbox. */
-async function projectRoot(): Promise<string> {
-  return realpath(await mkdtemp(path.join(tmpdir(), "dim-rollback-")));
+/**
+ * A fresh Stack for the outbox.
+ *
+ * Records are rows now and belong to a Stack, so each case gets its own harness:
+ * the outbox is tenanted, and a shared Stack would let one case see another's
+ * pending work.
+ */
+async function newHarness(): Promise<KgPostgresHarness> {
+  return createKgPostgresHarness(`dim-rollback-${randomUUID().slice(0, 8)}`);
 }
 
 /**
@@ -108,6 +116,7 @@ function explodingDimension(): Dimension {
 
 /** What one failed ingest left behind, which is what every case here inspects. */
 interface FailureOutcome {
+  /** Project root, still needed because `wiki` writes source markdown to disk. */
   readonly root: string;
   readonly wikiCommitted: boolean;
   readonly records: Awaited<ReturnType<typeof loadRecords>>;
@@ -124,14 +133,18 @@ interface FailureOutcome {
  * @returns The project root and what the failed ingest left behind.
  */
 async function ingestUntilKgFails(): Promise<FailureOutcome> {
-  const root = await projectRoot();
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "dim-rollback-")));
+  const harness = await newHarness();
   const written = { value: false };
 
   await expect(
-    ingestDimensions(root, INPUT, [databaseShapedWiki(written), explodingDimension()]),
+    ingestDimensions(harness.db, harness.stackId, INPUT, [
+      databaseShapedWiki(written),
+      explodingDimension(),
+    ]),
   ).rejects.toThrow("kg commit exploded");
 
-  return { root, wikiCommitted: written.value, records: await loadRecords(root) };
+  return { root, wikiCommitted: written.value, records: await loadRecords(harness.db, harness.stackId) };
 }
 
 describe("cross-dimension failure with a database-backed wiki", () => {
@@ -212,11 +225,11 @@ describe("the lifecycle the coordinator actually invokes", () => {
     // nothing to undo (both dimension implementations are no-ops in discard). It
     // is pinned here so a future dimension whose discard is NOT a no-op cannot
     // silently start reverting work that was never done.
-    const root = await projectRoot();
+    const harness = await newHarness();
     const events: string[] = [];
 
     await expect(
-      ingestDimensions(root, INPUT, [
+      ingestDimensions(harness.db, harness.stackId, INPUT, [
         recordingDimension("wiki", events),
         recordingDimension("kg", events, { failPrepare: true }),
       ]),
@@ -225,18 +238,20 @@ describe("the lifecycle the coordinator actually invokes", () => {
     expect(events).toEqual(["wiki:prepare", "kg:prepare", "wiki:discard"]);
     // And nothing is left pending, because the quiet discard reads as a clean
     // rollback -- correct here, since nothing was ever committed.
-    const { records } = await loadRecords(root);
+    const { records } = await loadRecords(harness.db, harness.stackId);
     expect(records).toHaveLength(0);
   });
 
   it("does NOT ask a dimension that never prepared to discard", async () => {
     // The other half of the guard: a dimension whose `prepare` threw before
     // assigning has `prepared === null`, so the loop skips it entirely.
-    const root = await projectRoot();
+    const harness = await newHarness();
     const events: string[] = [];
 
     await expect(
-      ingestDimensions(root, INPUT, [recordingDimension("wiki", events, { failPrepare: true })]),
+      ingestDimensions(harness.db, harness.stackId, INPUT, [
+        recordingDimension("wiki", events, { failPrepare: true }),
+      ]),
     ).rejects.toThrow("wiki prepare exploded");
 
     expect(events).toEqual(["wiki:prepare"]);
@@ -248,12 +263,15 @@ describe("the lifecycle the coordinator actually invokes", () => {
     // the replay SKIPS it -- "skipping is strictly cheaper" per reconcile.ts.
     // Only kg, which has no key, is retried. A second pass finds no record at
     // all, so neither dimension can be committed a third time.
-    const root = await projectRoot();
+    const harness = await newHarness();
     const events: string[] = [];
     const healthyWiki = recordingDimension("wiki", events);
 
     await expect(
-      ingestDimensions(root, INPUT, [healthyWiki, recordingDimension("kg", events, { failCommit: true })]),
+      ingestDimensions(harness.db, harness.stackId, INPUT, [
+        healthyWiki,
+        recordingDimension("kg", events, { failCommit: true }),
+      ]),
     ).rejects.toThrow("kg commit exploded");
 
     // The failure run, measured: BOTH prepares run first, then commits in order,
@@ -267,14 +285,14 @@ describe("the lifecycle the coordinator actually invokes", () => {
       "wiki:discard",
     ]);
 
-    const first = await reconcileOutbox(root, [recordingDimension("wiki", events), recordingDimension("kg", events)]);
+    const first = await reconcileOutbox(harness.db, harness.stackId, [recordingDimension("wiki", events), recordingDimension("kg", events)]);
     expect(first.finished).toHaveLength(1);
     // wiki:commit is NOT repeated -- its key was already recorded.
     expect(events.filter((entry) => entry === "wiki:commit")).toHaveLength(1);
     // kg IS retried, exactly once.
     expect(events.filter((entry) => entry === "kg:commit")).toHaveLength(2);
 
-    const second = await reconcileOutbox(root, [recordingDimension("wiki", events), recordingDimension("kg", events)]);
+    const second = await reconcileOutbox(harness.db, harness.stackId, [recordingDimension("wiki", events), recordingDimension("kg", events)]);
     expect(second.finished).toHaveLength(0);
     // Nothing runs a third time: the record is gone.
     expect(events.filter((entry) => entry === "kg:commit")).toHaveLength(2);
