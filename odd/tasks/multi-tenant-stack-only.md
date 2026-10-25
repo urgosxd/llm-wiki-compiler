@@ -593,3 +593,50 @@ To activate:
 3. Verify RLS is no longer inert: `aks` is `rolsuper=t` AND the table owner, so it
    bypasses every policy. Confirmed working under `set local role llmwiki_app` in
    `e3e3c0c`.
+
+### Search chain wired to rows — `48c5d24` (2026-02)
+
+The blocker recorded above under T6 was the `page-registry`: six disk readers, two
+I/O classes (single-record hydration and directory scans), ~1,650 code lines across
+seven call sites. It is now wired.
+
+**What was built.** `src/dimensions/wiki/page-registry-source.ts` answers all five
+registry questions from `wiki.pages` and takes no root at all, so a passing
+assertion cannot be the directory having been found. Eligibility is *not*
+reimplemented: rows are projected onto the same `RawEntityScan` shape the disk
+walker produces and handed to the exported predicates, so the read gate cannot drift
+from the write gate.
+
+**How it threads.** Additive only — every registry function gained an optional
+trailing `source`, `undefined` means files. Retrieval carries it in `RetrievalOptions`
+beside the existing embedding-store source; `GenerateAnswerOptions` carries it to
+hydration; one `withRegistrySource` seam resolves it per answer so ranking,
+hydration and citation checks cannot disagree about the backend. Four entry points
+wired: SDK `search`, SDK `query`, MCP `search_pages`, MCP `query_wiki`, CLI `query`.
+
+**Red-then-green.** Disabling the seam makes the new test fail with
+`expected [] to include 'concepts/alpha'` — the right reason. Restored by checksum.
+
+**Three row limits, documented not papered over:**
+1. Typed namespaces are unanswerable from rows — `page_directory` is `CHECK`
+   constrained to `('concepts','queries')`, so typed entity pages have no rows.
+   Fails closed.
+2. Orphan exclusion here matches the embedding collector (`readConfinedPageRecord`)
+   and is stricter than the registry's own disk loader (`resolvePageRecord`, which
+   does not test orphaned).
+3. `title: ""` is indistinguishable from an absent title in a row; falls back to the
+   slug, which is what `buildPage` already stamps.
+
+**A correction to `7370f09`.** That commit's message claims an untrimmed body
+produces different chunk hashes. It does not: `extractParagraphs` trims every
+paragraph and drops whitespace-only ones, so edge whitespace never reaches a chunk.
+The trim is still correct, for a different reason — it protects the body text answer
+grounding renders. The code comment now says the true reason; the commit message
+remains as historical record.
+
+**Also fixed:** `test/mcp-server.test.ts` expected `/index not found/`, a message
+that no longer exists since `888fe7f` changed the precondition from "`index.md`
+exists" to "pages exist". The test was stale, not the code.
+
+**Still open before paso 4:** the file write in `applyPageMutationLocked`
+(`src/trust/page-apply.ts`) is untouched, so writes remain dual.
