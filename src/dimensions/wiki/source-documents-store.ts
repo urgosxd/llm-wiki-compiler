@@ -134,6 +134,43 @@ export function sourceFilename(title: string): string {
 }
 
 /**
+ * A filename no OTHER document in this Stack already holds.
+ *
+ * `saveSource` disambiguated basename collisions with a stable hash suffix (#36),
+ * and a row store needs the same guarantee: `alpha` and `Alpha!` both slugify to
+ * `alpha.md`, and citations address a source by filename. Without the suffix two
+ * documents would share a name and every citation naming it would be ambiguous --
+ * the file writer's suffix was the only thing preventing that, and rows have no
+ * directory to fall back on.
+ *
+ * A document keeping its OWN filename is not a collision, so the lookup excludes it
+ * by identity: otherwise re-ingesting under an unchanged title would suffix its own
+ * name on every run.
+ *
+ * @param tx - Transaction handle.
+ * @param stackId - Stack that owns the document.
+ * @param candidate - Filename derived from the title.
+ * @param sourceIdentity - Identity of the document being written.
+ * @returns The candidate, or a hash-suffixed variant already free.
+ */
+async function uniqueFilename(
+  tx: Database,
+  stackId: string,
+  candidate: string,
+  sourceIdentity: string,
+): Promise<string> {
+  const taken = await tx.execute<{ one: number }>(
+    sql`select 1 as one from wiki.source_documents
+        where stack_id = ${stackId} and filename = ${candidate}
+          and source_identity <> ${sourceIdentity}
+        limit 1`,
+  );
+  if (taken.length === 0) return candidate;
+  const stem = candidate.replace(/\.md$/, "");
+  return `${stem}-${createHash("sha256").update(sourceIdentity).digest("hex").slice(0, 8)}.md`;
+}
+
+/**
  * Write one wiki document, creating or updating by source identity.
  *
  * Runs inside a transaction so the "did it change" read and the write cannot be
@@ -149,7 +186,7 @@ export async function saveSourceDocument(
   stackId: string,
   document: { title: string; document: string; source: string },
 ): Promise<{ filename: string; writeStatus: SourceWriteStatus }> {
-  const filename = sourceFilename(document.title);
+  const baseFilename = sourceFilename(document.title);
   const contentHash = hashSourceContent(stableSourceContent(document.document));
   const sizeBytes = Buffer.byteLength(document.document, "utf-8");
 
@@ -160,6 +197,7 @@ export async function saveSourceDocument(
           where stack_id = ${stackId} and source_identity = ${document.source}`,
     );
     const prior = existing[0]?.content_hash;
+    const filename = await uniqueFilename(tx, stackId, baseFilename, document.source);
 
     // Identical bytes: report it and write nothing, so the coordinator sees a
     // no-op rather than work that did not happen. `changed_at` therefore only

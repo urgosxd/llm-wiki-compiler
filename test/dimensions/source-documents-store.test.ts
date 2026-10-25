@@ -302,3 +302,44 @@ describe.skipIf(!harnessReachable)("rule extraction reads the same corpus", () =
     expect(read?.hash).toBe(detected?.contentHash);
   });
 });
+
+describe.skipIf(!harnessReachable)("filename collisions are disambiguated", () => {
+  let harness: KgPostgresHarness;
+
+  beforeEach(async () => {
+    harness = await createKgPostgresHarness(`col-${randomUUID().slice(0, 8)}`);
+  });
+
+  afterEach(async () => {
+    await harness.cleanup();
+  });
+
+  it("gives two sources that slugify alike distinct filenames", async () => {
+    // Citations address a source by filename, so a shared name would make every
+    // citation naming it ambiguous. The file writer suffixed for this reason.
+    await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/1", "alpha", "one"));
+    await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/2", "Alpha!", "two"));
+
+    const stored = await listSourceDocuments(harness.db, harness.stackId);
+    const filenames = stored.map((row) => row.filename);
+
+    expect(new Set(filenames).size).toBe(2);
+  });
+
+  it("keeps the plain filename when nothing else holds it", async () => {
+    const saved = await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/1", "alpha", "one"));
+
+    expect(saved.filename).toBe("alpha.md");
+  });
+
+  it("does not suffix a document against its own filename on re-ingest", async () => {
+    // Excluding self is what stops every re-ingest under an unchanged title from
+    // appending a new suffix.
+    await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/1", "alpha", "one"));
+    await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/1", "alpha", "two"));
+
+    const [stored] = await listSourceDocuments(harness.db, harness.stackId);
+
+    expect(stored?.filename).toBe("alpha.md");
+  });
+});
