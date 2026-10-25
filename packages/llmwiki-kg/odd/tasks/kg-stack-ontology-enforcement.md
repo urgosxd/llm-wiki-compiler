@@ -720,6 +720,45 @@ vocabulary, and all previously fine because `flag` did not check. They now use
 `PRODUCT` and `IS_A`. None of them asserted on those strings; they test
 persistence, pagination and envelope shape, so the substitution preserves intent.
 
+## Follow-up 9: the default relationships carry semantics for the unambiguous ones
+
+The default vocabulary declared 20 relationships and **zero constraints**, which
+was measured to mean nothing: with it, `TIME EMPLOYS PERSON` and
+`LOCATION ACQUIRES DECISION` were both admitted. A list of verbs with no
+semantics is not a vocabulary.
+
+### Three constrained, five deliberately not
+
+| relationship | domain | range |
+| --- | --- | --- |
+| `EMPLOYS` | `COMPANY`, `ORGANIZATION`, `TEAM` | `PERSON` |
+| `WORKS_AT` | `PERSON` | `COMPANY`, `ORGANIZATION`, `TEAM` |
+| `OWNS` | `COMPANY`, `ORGANIZATION`, `PERSON`, `TEAM` | `PRODUCT`, `SYSTEM`, `DOCUMENT` |
+
+`PART_OF`, `HAS`, `IS_A`, `USED_BY` and `USED_FOR` are left unconstrained on
+purpose. Almost any pair can legitimately stand in those relations — a
+requirement is part of a process, a document is part of a decision — so a guess
+about which combination is impossible would be wrong often enough to hurt.
+
+### Why the line is drawn at "unambiguous misuse only"
+
+A rejected triplet takes its **two endpoints** with it (measured: `[Globex
+PARTNERS_WITH Initech]` leaves neither entity as a row). So an over-tight default
+does not merely drop an edge, it deletes entities the document really named. That
+asymmetry is why the constraint list is short and why `TEAM` is admitted as an
+`EMPLOYS` domain even though `COMPANY` alone would be tidier: a team does employ
+people, and refusing that sentence loses the people too.
+
+### Falsifiability, both directions
+
+- Over-tightening `EMPLOYS` to `domains: ["COMPANY"]` turns the
+  "admits the true sentences" test red on `TEAM EMPLOYS PERSON`.
+- Relaxing the domains back to unconstrained turns the nonsense-pair test red on
+  `TIME EMPLOYS PERSON`.
+
+Both are pinned, so neither the too-loose nor the too-tight version can return
+silently.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,

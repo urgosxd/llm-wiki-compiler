@@ -156,9 +156,75 @@ export const DEFAULT_RELATIONSHIP_TYPES = [
  *
  * @returns A fresh, validated ontology with no subtype edges.
  */
+/**
+ * Pair constraints for the default relationships whose misuse is unambiguous.
+ *
+ * ## Why only three
+ *
+ * `relationshipTypes` alone says a verb is *allowed*; it cannot say a year
+ * cannot employ a person. Measured before these existed: with the 20-relationship
+ * vocabulary and zero constraints, `TIME EMPLOYS PERSON` and
+ * `LOCATION ACQUIRES DECISION` were both admitted, so the default was a list of
+ * verbs with no semantics at all.
+ *
+ * The line drawn here is **unambiguous misuse only**. A constraint that refuses a
+ * defensible sentence is worse than a missing one: a rejected triplet also costs
+ * its two endpoints, so an over-tight default silently deletes entities a
+ * document really named. `PART_OF`, `HAS`, `IS_A`, `USED_BY` and `USED_FOR` are
+ * deliberately left unconstrained because almost any pair can legitimately stand
+ * in those relations — a requirement is part of a process, a document is part of
+ * a decision, and a guess about which is impossible would be wrong often enough
+ * to hurt.
+ *
+ * ## The three that are safe
+ *
+ * - `EMPLOYS`: only an organisation-shaped thing employs; only a person is
+ *   employed. `TIME EMPLOYS PERSON` is the nonsense this refuses.
+ * - `WORKS_AT`: only a person works at a place. The inverse of `EMPLOYS`, and
+ *   constrained for the same reason.
+ * - `OWNS`: ownership needs an owner that can hold title and a thing that can be
+ *   held. `DECISION OWNS PERSON` is the nonsense this refuses.
+ *
+ * `TEAM` is admitted as a domain for `EMPLOYS` and `WORKS_AT` because a team does
+ * employ people and a person does work in one; excluding it would refuse a true
+ * sentence. Ranges are single where the language is single.
+ */
+const DEFAULT_CONSTRAINTS = [
+  { type: "EMPLOYS", domains: ["COMPANY", "ORGANIZATION", "TEAM"], ranges: ["PERSON"] },
+  { type: "WORKS_AT", domains: ["PERSON"], ranges: ["COMPANY", "ORGANIZATION", "TEAM"] },
+  {
+    type: "OWNS",
+    domains: ["COMPANY", "ORGANIZATION", "PERSON", "TEAM"],
+    ranges: ["PRODUCT", "SYSTEM", "DOCUMENT"],
+  },
+] as const;
+
+/**
+ * The ontology an unconfigured Stack is enforced against.
+ *
+ * Validated through the same {@link validateOntology} as a caller's declaration,
+ * so the default cannot be a shape the rest of the code would reject. It is flat
+ * — no `subtypes` — because the hierarchy was measured to change nothing for
+ * endpoint admission, and a default should not assert structure nobody asked for.
+ *
+ * It DOES carry pair constraints, but only for the three relationships where a
+ * wrong pair is nonsense rather than unusual. See {@link DEFAULT_CONSTRAINTS}.
+ *
+ * Exposed as a function rather than a frozen constant because `Ontology` carries
+ * derived `parentsOf` and `constraintsOf` maps. Sharing one instance across
+ * concurrent ingests would be safe today, but a function makes it impossible to
+ * mutate a graph-wide singleton by holding a reference.
+ *
+ * @returns A fresh, validated ontology with no subtype edges.
+ */
 export function defaultOntology(): Ontology {
   return validateOntology({
     entityTypes: [...DEFAULT_ENTITY_TYPES],
     relationshipTypes: [...DEFAULT_RELATIONSHIP_TYPES],
+    relationships: DEFAULT_CONSTRAINTS.map((constraint) => ({
+      type: constraint.type,
+      domains: [...constraint.domains],
+      ranges: [...constraint.ranges],
+    })),
   });
 }

@@ -69,12 +69,21 @@ describe("the default ontology", () => {
     expect(rejected[0]?.reason).toBe("UNKNOWN_ENTITY_TYPE");
   });
 
-  it("admits every relationship type it declares and rejects one it does not", () => {
+  it("admits every relationship type on a pair its constraint allows", () => {
+    // The vocabulary test, independent of the pair constraints: each relationship
+    // is exercised on a pair that is valid for it, so this fails only when a
+    // declared relationship is missing from enforcement.
     const ontology = defaultOntology();
+    const validPair: Record<string, readonly [string, string]> = {
+      EMPLOYS: ["COMPANY", "PERSON"],
+      WORKS_AT: ["PERSON", "COMPANY"],
+      OWNS: ["COMPANY", "PRODUCT"],
+    };
 
     for (const relationshipType of DEFAULT_RELATIONSHIP_TYPES) {
+      const [subject, object] = validPair[relationshipType] ?? ["COMPANY", "PERSON"];
       const { rejected } = parseTripletsWithOntology(
-        payload("COMPANY", relationshipType, "PERSON"),
+        payload(subject, relationshipType, object),
         ontology,
       );
       expect(rejected, `${relationshipType} should be admitted`).toEqual([]);
@@ -93,6 +102,71 @@ describe("the default ontology", () => {
     // replaces. Keeping it would let the model route every unknown thing into
     // one bucket and look compliant.
     expect(DEFAULT_ENTITY_TYPES as readonly string[]).not.toContain("MISCELLANEOUS");
+  });
+
+  it("refuses the nonsense pairs the unconstrained default used to admit", () => {
+    // Measured before constraints existed: `TIME EMPLOYS PERSON` and
+    // `LOCATION ACQUIRES DECISION` were both admitted, so the default was 20
+    // verbs with no semantics. These two are the ones that made that visible.
+    const ontology = defaultOntology();
+
+    const timeEmploys = parseTripletsWithOntology(payload("TIME", "EMPLOYS", "PERSON"), ontology);
+    expect(timeEmploys.rejected[0]?.reason).toBe("SUBJECT_TYPE_NOT_IN_DOMAIN");
+
+    const decisionOwns = parseTripletsWithOntology(payload("DECISION", "OWNS", "PERSON"), ontology);
+    expect(decisionOwns.rejected[0]?.reason).toBe("SUBJECT_TYPE_NOT_IN_DOMAIN");
+  });
+
+  it("refuses a person employing a person and a company employing a company", () => {
+    const ontology = defaultOntology();
+
+    expect(
+      parseTripletsWithOntology(payload("PERSON", "EMPLOYS", "PERSON"), ontology).rejected[0]?.reason,
+    ).toBe("SUBJECT_TYPE_NOT_IN_DOMAIN");
+    expect(
+      parseTripletsWithOntology(payload("COMPANY", "EMPLOYS", "COMPANY"), ontology).rejected[0]?.reason,
+    ).toBe("OBJECT_TYPE_NOT_IN_RANGE");
+  });
+
+  it("admits the true sentences the constraints must not refuse", () => {
+    // The cost side of the trade: a rejected triplet takes its endpoints with it,
+    // so an over-tight default deletes entities a document really named. Each of
+    // these is a sentence a real document contains.
+    const ontology = defaultOntology();
+    const trueSentences: ReadonlyArray<readonly [string, string, string]> = [
+      ["COMPANY", "EMPLOYS", "PERSON"],
+      ["TEAM", "EMPLOYS", "PERSON"],
+      ["ORGANIZATION", "EMPLOYS", "PERSON"],
+      ["PERSON", "WORKS_AT", "COMPANY"],
+      ["PERSON", "WORKS_AT", "TEAM"],
+      ["COMPANY", "OWNS", "PRODUCT"],
+      ["PERSON", "OWNS", "DOCUMENT"],
+      ["ORGANIZATION", "OWNS", "SYSTEM"],
+    ];
+
+    for (const [subject, relation, object] of trueSentences) {
+      expect(
+        parseTripletsWithOntology(payload(subject, relation, object), ontology).rejected,
+        `${subject} ${relation} ${object} must be admitted`,
+      ).toEqual([]);
+    }
+  });
+
+  it("leaves the ubiquitous relationships unconstrained on purpose", () => {
+    // `PART_OF`, `HAS` and `IS_A` can legitimately connect almost any pair, so a
+    // guess about which combination is impossible would be wrong often enough to
+    // hurt. This pins the decision rather than leaving it implicit.
+    const ontology = defaultOntology();
+    const ubiquitous = ["PART_OF", "HAS", "IS_A"];
+
+    for (const relation of ubiquitous) {
+      expect(ontology.constraintsOf.has(relation), `${relation} must stay unconstrained`).toBe(false);
+    }
+
+    expect(parseTripletsWithOntology(payload("REQUIREMENT", "PART_OF", "PROCESS"), ontology).rejected)
+      .toEqual([]);
+    expect(parseTripletsWithOntology(payload("DOCUMENT", "PART_OF", "DECISION"), ontology).rejected)
+      .toEqual([]);
   });
 
   it("is flat, asserting no subtype structure nobody declared", () => {
