@@ -148,3 +148,73 @@ describe("the L1 bridge that keeps ingest->compile alive", () => {
     expect(text).toContain("Bridge On Disk");
   }, 30_000);
 });
+
+describe("commit idempotency, which the port now REQUIRES", () => {
+  // `reconcileOutbox` finishes a committed-but-unpaired ingest by replaying it,
+  // so a second commit with the same input must not duplicate a row and must not
+  // fork the slug. Measured with a probe before these assertions were written:
+  // the second commit reports `unchanged` and the row count stays 1, because
+  // `prepare` finds the page by `source_identity` and the insert is
+  // `on conflict (stack_id, page_directory, slug) do update`.
+  it.skipIf(!provisioned)("a second commit of the same input keeps one row and one slug", async () => {
+    const dim = dimension(bridgeRoot);
+    const input = inputOf("Idempotent Twice", "src://idem-twice");
+
+    const first = await write(dim, input);
+    const second = await write(dim, input);
+
+    expect(first.writeStatus).toBe("created");
+    // The second run finds the page by source identity, so it is a no-op rather
+    // than an update or a new row.
+    expect(second.writeStatus).toBe("unchanged");
+
+    const pages = await listStoredPages(harness.db, harness.stackId, 200);
+    const matching = pages.filter((page) => page.title === "Idempotent Twice");
+    expect(matching).toHaveLength(1);
+    // And no `-1` suffix: the slug did not fork.
+    expect(matching[0]?.slug).toBe("idempotent-twice");
+  }, 30_000);
+
+  it.skipIf(!provisioned)("a replayed commit after forget does not duplicate the page", async () => {
+    // `forget` is deliberately a NO-OP for the wiki (compile owns removal via
+    // orphan marking), so it does not delete the row. What this asserts is the
+    // narrower true statement: forget followed by a replay leaves ONE row, and
+    // the replay reports `unchanged` rather than writing again.
+    const dim = dimension(bridgeRoot);
+    const input = inputOf("Forgotten Then Replayed", "src://forget-replay");
+
+    await write(dim, input);
+    await dim.forget({ source: "src://forget-replay" });
+    const replayed = await write(dim, input);
+
+    expect(replayed.writeStatus).toBe("unchanged");
+    const pages = await listStoredPages(harness.db, harness.stackId, 200);
+    expect(pages.filter((page) => page.title === "Forgotten Then Replayed")).toHaveLength(1);
+  }, 30_000);
+
+  it.skipIf(!provisioned)("a replay DOES recreate a row that something else deleted", async () => {
+    // THIS IS NOT RESURRECTION OF FORGOTTEN WORK, and the distinction matters
+    // for the port's promise. `forget` never removes the row, so nothing here
+    // undoes a removal the dimension performed. When the row is gone because a
+    // DIFFERENT actor deleted it, a replay re-creates it -- which is correct for
+    // reconciliation (the record says the ingest committed) but would be wrong if
+    // it re-created a page a real forget had retired.
+    //
+    // Pinned so that when W3.1 gives `forget` teeth, whoever does it sees this
+    // case go red rather than discovering the interaction in production.
+    const dim = dimension(bridgeRoot);
+    const input = inputOf("Deleted Behind Our Back", "src://deleted");
+    await write(dim, input);
+
+    await harness.db.execute(
+      `delete from wiki.pages where stack_id = '${harness.stackId}' and title = 'Deleted Behind Our Back'`,
+    );
+    const before = await listStoredPages(harness.db, harness.stackId, 200);
+    expect(before.filter((page) => page.title === "Deleted Behind Our Back")).toHaveLength(0);
+
+    const replayed = await write(dim, input);
+    expect(replayed.writeStatus).toBe("created");
+    const after = await listStoredPages(harness.db, harness.stackId, 200);
+    expect(after.filter((page) => page.title === "Deleted Behind Our Back")).toHaveLength(1);
+  }, 30_000);
+});
