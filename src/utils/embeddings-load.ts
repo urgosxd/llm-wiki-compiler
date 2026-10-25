@@ -47,9 +47,26 @@ import { splitIntoChunks } from "./retrieval.js";
 import { parseQualifiedPageId, type PageId } from "./page-id.js";
 import type { LoadedProfile } from "../profile/types.js";
 import type { PageRecord } from "../pages/read.js";
+import type { RegistryPageSource } from "./page-registry.js";
 
 /** Namespace→directory map resolved from the active profile (or reserved-only). */
 type NamespaceDirs = Map<string, string>;
+
+/**
+ * The three things every freshness walk needs to resolve a page.
+ *
+ * Bundled because threading `root`, `namespaceDirs` and `source` separately put
+ * five positional arguments on every rehydrator, and an argument added later
+ * would sit in the same shape as one already there -- the kind of mistake the
+ * compiler cannot catch.
+ */
+interface PageReader {
+  root: string;
+  namespaceDirs: NamespaceDirs;
+  source?: RegistryPageSource;
+}
+
+
 
 /** Which surface flag a load filters by (each surface filters independently). */
 export type RetrievalSurface = "search" | "context";
@@ -216,16 +233,20 @@ export async function findRelevantPagesV3(
   question: string,
   k: number,
   profile?: LoadedProfile,
+  source?: RegistryPageSource,
 ): Promise<{ hits: PageHitV3[]; stalePageIds: PageId[] }> {
   const namespaceDirs = buildNamespaceDirs(profile?.profile);
-  const liveIds = await buildLiveIdSet(root, await activeNamespaces(root, profile), namespaceDirs, profile);
+  const reader: PageReader = { root, namespaceDirs, source };
+  const liveIds = await buildLiveIdSet(
+    root, await activeNamespaces(root, profile), namespaceDirs, profile, source,
+  );
   const eligible = store.entries.filter((e) => passesPrefilter(e.pageId, liveIds, surface, profile));
   // Nothing to rank against — return before embedding. Skips a billed provider
   // round-trip whose result could only be scored against an empty pool.
   if (eligible.length === 0) return { hits: [], stalePageIds: [] };
   const queryVec = await embedQuery(question, store.dimensions);
   const ranked = scorePageEntries(queryVec, eligible);
-  return walkFreshPages(root, ranked, k, namespaceDirs);
+  return walkFreshPages(reader, ranked, k);
 }
 
 /**
@@ -240,16 +261,20 @@ export async function findRelevantChunksV3(
   question: string,
   k: number,
   profile?: LoadedProfile,
+  source?: RegistryPageSource,
 ): Promise<{ hits: ChunkHitV3[]; stalePageIds: PageId[] }> {
   const chunks = store.chunks ?? [];
   const namespaceDirs = buildNamespaceDirs(profile?.profile);
-  const liveIds = await buildLiveIdSet(root, await activeNamespaces(root, profile), namespaceDirs, profile);
+  const reader: PageReader = { root, namespaceDirs, source };
+  const liveIds = await buildLiveIdSet(
+    root, await activeNamespaces(root, profile), namespaceDirs, profile, source,
+  );
   const eligible = chunks.filter((c) => passesPrefilter(c.pageId, liveIds, surface, profile));
   // See findRelevantPagesV3 — no candidates means no reason to embed the query.
   if (eligible.length === 0) return { hits: [], stalePageIds: [] };
   const queryVec = await embedQuery(question, store.dimensions);
   const ranked = scoreChunkEntries(queryVec, eligible);
-  return walkFreshChunks(root, ranked, k, namespaceDirs);
+  return walkFreshChunks(reader, ranked, k);
 }
 
 /**
@@ -347,17 +372,16 @@ type FreshnessFill<E, H> = (
  * crowding out a lower-score fresh one.
  */
 async function walkRankedFresh<E extends { pageId: PageId }, H>(
-  root: string,
+  reader: PageReader,
   ranked: Array<{ entry: E; score: number }>,
   k: number,
-  namespaceDirs: NamespaceDirs,
   fill: FreshnessFill<E, H>,
 ): Promise<{ hits: H[]; stalePageIds: PageId[] }> {
   const hits: H[] = [];
   const stalePageIds: PageId[] = [];
   for (const { entry, score } of ranked) {
     if (hits.length >= k) break;
-    const live = await buildLiveRegistryEntry(root, entry.pageId, namespaceDirs);
+    const live = await buildLiveRegistryEntry(reader.root, entry.pageId, reader.namespaceDirs, reader.source);
     const hit = live ? await fill(entry, score, live) : null;
     if (hit === null) stalePageIds.push(entry.pageId);
     else hits.push(hit);
@@ -367,39 +391,36 @@ async function walkRankedFresh<E extends { pageId: PageId }, H>(
 
 /** Walk page candidates, keeping a hit only when its `embeddingTextHash` is live. */
 function walkFreshPages(
-  root: string,
+  reader: PageReader,
   ranked: Array<{ entry: PageEmbeddingV3; score: number }>,
   k: number,
-  namespaceDirs: NamespaceDirs,
 ): Promise<{ hits: PageHitV3[]; stalePageIds: PageId[] }> {
-  return walkRankedFresh(root, ranked, k, namespaceDirs, async (entry, score, live) =>
-    live.embeddingTextHash === entry.embeddingTextHash ? rehydratePageHit(root, entry, score, namespaceDirs) : null,
+  return walkRankedFresh(reader, ranked, k, async (entry, score, live) =>
+    live.embeddingTextHash === entry.embeddingTextHash ? rehydratePageHit(reader, entry, score) : null,
   );
 }
 
 /** Walk chunk candidates, keeping a hit only when its `contentHash` is live. */
 function walkFreshChunks(
-  root: string,
+  reader: PageReader,
   ranked: Array<{ entry: ChunkEmbeddingV3; score: number }>,
   k: number,
-  namespaceDirs: NamespaceDirs,
 ): Promise<{ hits: ChunkHitV3[]; stalePageIds: PageId[] }> {
-  return walkRankedFresh(root, ranked, k, namespaceDirs, async (entry, score, live) =>
+  return walkRankedFresh(reader, ranked, k, async (entry, score, live) =>
     live.chunkHashes[entry.chunkIndex] === entry.contentHash
-      ? rehydrateChunkHit(root, entry, score, live.chunkHashes[entry.chunkIndex], namespaceDirs)
+      ? rehydrateChunkHit(reader, entry, score, live.chunkHashes[entry.chunkIndex])
       : null,
   );
 }
 
 /** Rehydrate a page hit's title/summary from the LIVE file, never the store (S12). */
 async function rehydratePageHit(
-  root: string,
+  reader: PageReader,
   entry: PageEmbeddingV3,
   score: number,
-  namespaceDirs: NamespaceDirs,
 ): Promise<PageHitV3> {
   const slug = parseQualifiedPageId(entry.pageId)?.pagePart ?? "";
-  const live = await loadLivePage(root, entry.pageId, namespaceDirs);
+  const live = await loadLivePage(reader, entry.pageId);
   return {
     pageId: entry.pageId,
     slug,
@@ -416,13 +437,12 @@ async function rehydratePageHit(
  * poisoned cached value cannot reach output even if its hash matched live.
  */
 async function rehydrateChunkHit(
-  root: string,
+  reader: PageReader,
   entry: ChunkEmbeddingV3,
   score: number,
   liveContentHash: string,
-  namespaceDirs: NamespaceDirs,
 ): Promise<ChunkHitV3> {
-  const live = await loadLivePage(root, entry.pageId, namespaceDirs);
+  const live = await loadLivePage(reader, entry.pageId);
   const liveText = live ? splitIntoChunks(live.body)[entry.chunkIndex] ?? "" : "";
   return {
     pageId: entry.pageId,
@@ -435,11 +455,7 @@ async function rehydrateChunkHit(
 }
 
 /** Resolve one live page record via the confined registry loader (absent → null). */
-async function loadLivePage(
-  root: string,
-  pageId: PageId,
-  namespaceDirs: NamespaceDirs,
-): Promise<PageRecord | null> {
-  const records = await loadPageRecordsByPageId(root, [pageId], namespaceDirs);
+async function loadLivePage(reader: PageReader, pageId: PageId): Promise<PageRecord | null> {
+  const records = await loadPageRecordsByPageId(reader.root, [pageId], reader.namespaceDirs, reader.source);
   return records[0] ?? null;
 }

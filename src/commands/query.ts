@@ -24,8 +24,9 @@ import { languageDirective } from "../utils/output-language.js";
 import * as output from "../utils/output.js";
 import { verbose } from "../utils/output.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
-import { hasCompiledPages } from "../dimensions/wiki/page-source-seam.js";
+import { hasCompiledPages, withRegistrySource } from "../dimensions/wiki/page-source-seam.js";
 import { loadSelectedRefRecords } from "../search/retrieval.js";
+import type { RegistryPageSource } from "../utils/page-registry.js";
 import { slugFromPageId, type PageId } from "../utils/page-id.js";
 import type { PageRecordWithId } from "../utils/page-registry.js";
 import { selectRelevantPages, type SelectedPages } from "./query-selection.js";
@@ -124,6 +125,14 @@ function buildChunkProvenance(chunks: ChunkCitation[]): string {
 interface GenerateAnswerOptions {
   /** Opt into embedding-error recovery; scoped/review queries default to fallback. */
   embeddingFailure?: "throw" | "fallback";
+  /**
+   * Where page bodies come from, when the caller holds a database handle.
+   *
+   * One value serves both retrieval and hydration on purpose: ranking against rows
+   * and hydrating from files would validate a hit's freshness against a file that
+   * may not exist, and silently drop every page of a Stack-backed wiki.
+   */
+  registrySource?: RegistryPageSource;
   /** Report/filter to hydrated grounding. Scoped/review queries always use this mode. */
   grounding?: "hydrated";
   /** Persist the answer as a wiki query page when set. */
@@ -178,6 +187,7 @@ export async function generateAnswer(
   const hydratedGrounding = scopedOrReview || options.grounding === "hydrated";
   const selection = await timeStage("query.retrieval", () => selectRelevantPages(root, question, Boolean(options.debug), options.pageScope, {
     embeddingFailure: options.embeddingFailure ?? (scopedOrReview ? "fallback" : "throw"),
+    registrySource: options.registrySource,
   }));
   // Human/log surfaces use the QUALIFIED pageId so same-slug pages
   // (`concepts/foo` vs `papers/foo`) are distinguishable; the structured
@@ -190,7 +200,7 @@ export async function generateAnswer(
   // a `papers/foo` ref loads wiki/<papers-dir>/foo.md, never wiki/concepts/foo.md.
   // Scoped/review and explicitly hydrated queries use the live pairs as their
   // grounding identity. Ordinary public queries retain their selected-ref contract.
-  const hydratedPairs = await loadSelectedRefRecords(root, selection.refs);
+  const hydratedPairs = await loadSelectedRefRecords(root, selection.refs, options.registrySource);
   const pagesContent = renderRefRecords(hydratedPairs);
   verbose(`context pack: ${pagesContent.length} chars`);
 
@@ -310,17 +320,23 @@ export default async function queryCommand(
 
   output.header("Selecting relevant pages");
 
-  const result = await generateAnswer(root, question, {
-    save: options.save,
-    review: options.review,
-    debug: options.debug,
-    onToken: (text) => process.stdout.write(text),
-    onPageSelection: (pages, reasoning) => {
-      output.status("i", output.dim(`Reasoning: ${reasoning}`));
-      output.status("*", output.info(`Selected ${pages.length} page(s): ${pages.join(", ")}`));
-      output.header("Generating answer");
-    },
-  });
+  // Resolved once for the whole answer: retrieval, hydration and citation checks
+  // all address the same backend, so a Stack-backed wiki cannot rank a page from
+  // a row and then fail to read it from a file that was never written.
+  const result = await withRegistrySource(process.env, (registrySource) =>
+    generateAnswer(root, question, {
+      save: options.save,
+      review: options.review,
+      debug: options.debug,
+      registrySource,
+      onToken: (text) => process.stdout.write(text),
+      onPageSelection: (pages, reasoning) => {
+        output.status("i", output.dim(`Reasoning: ${reasoning}`));
+        output.status("*", output.info(`Selected ${pages.length} page(s): ${pages.join(", ")}`));
+        output.header("Generating answer");
+      },
+    }),
+  );
 
   // Newline after streamed answer so subsequent terminal output formats cleanly.
   process.stdout.write("\n");

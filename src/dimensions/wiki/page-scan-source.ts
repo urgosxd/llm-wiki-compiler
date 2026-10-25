@@ -288,11 +288,12 @@ export function createEmbeddingPageSource(
               slug: page.slug,
               title: page.title,
               summary: page.summary,
-              // TRIMMED, and this is load-bearing rather than cosmetic: the disk
-              // reader builds its record from `page.body.trim()`, and this body goes
-              // straight into `splitIntoChunks`. An untrimmed row would embed a
-              // leading newline the file path never had, producing different vectors
-              // for the same page -- text drift that no test of the store would show.
+              // Trimmed to match the disk reader, which builds its record from
+              // `page.body.trim()`. The CHUNK HASHES do not depend on this --
+              // `extractParagraphs` trims every paragraph and drops whitespace-only
+              // ones, so edge whitespace never reaches a chunk. What does depend on
+              // it is the body text answer grounding renders: an untrimmed row would
+              // show a page with leading blank lines the file path never had.
               body: (page.body ?? "").trim(),
             },
           });

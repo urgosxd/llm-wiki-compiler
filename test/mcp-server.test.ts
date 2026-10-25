@@ -234,10 +234,12 @@ describe("wiki_status tool", () => {
 });
 
 describe("error handling", () => {
-  it("query_wiki throws when wiki state is missing", async () => {
+  it("query_wiki throws when the wiki has no compiled pages", async () => {
     process.env.ANTHROPIC_API_KEY = "test-key";
     const server = buildServer();
-    await expect(callTool(server, "query_wiki", { question: "anything" })).rejects.toThrow(/index not found/);
+    // The precondition is "no compiled pages", not "no index.md": the index is a
+    // projection that may legitimately be absent while pages exist in rows.
+    await expect(callTool(server, "query_wiki", { question: "anything" })).rejects.toThrow(/No compiled pages found/);
   });
 
   it("compile_wiki surfaces missing-credential errors", async () => {

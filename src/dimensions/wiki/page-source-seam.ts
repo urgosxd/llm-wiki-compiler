@@ -24,6 +24,8 @@ import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js
 import { generateIndex } from "../../compiler/indexgen.js";
 import { generateMOC } from "../../compiler/obsidian.js";
 import { createPageListingSource } from "./page-write-sink.js";
+import { createRegistryPageSource } from "./page-registry-source.js";
+import type { RegistryPageSource } from "../../utils/page-registry.js";
 import {
   createPageScanSource,
   createRawPageSource,
@@ -152,4 +154,30 @@ export async function regenerateIndices(
     await generateIndex(root, source);
     if (options.skipMoc !== true) await generateMOC(root, source);
   });
+}
+
+/**
+ * Run `fn` with the row-backed REGISTRY source, or `undefined` for file reads.
+ *
+ * The search and answer paths ask the registry three separate questions -- which
+ * pages are live, what a page's live hashes are, and what its body says -- and all
+ * three must be answered by the same backend. Passing `undefined` when no Stack is
+ * configured is what keeps every existing file-backed caller byte-identical.
+ *
+ * @param env - Environment carrying the Stack id and database URL.
+ * @param fn - Receives the row source, or `undefined` to read files.
+ * @returns Whatever `fn` returns.
+ */
+export async function withRegistrySource<T>(
+  env: NodeJS.ProcessEnv,
+  fn: (source: RegistryPageSource | undefined) => Promise<T>,
+): Promise<T> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return fn(undefined);
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    return await fn(createRegistryPageSource(dimensionsDb.db, stackId));
+  } finally {
+    await dimensionsDb.close();
+  }
 }

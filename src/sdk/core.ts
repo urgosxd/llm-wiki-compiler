@@ -39,7 +39,7 @@ import {
 import { collectStatus } from "../status/collect.js";
 import { pickSearchRefs, loadSelectedRefs } from "../search/retrieval.js";
 import { getPage, listPages } from "../pages/list.js";
-import { withPageSource } from "../dimensions/wiki/page-source-seam.js";
+import { withPageSource, withRegistrySource } from "../dimensions/wiki/page-source-seam.js";
 import { listSources, getSource, deleteSource } from "../sources/store.js";
 import { runOkfExport } from "../export/okf/run.js";
 import { runOkfImport } from "../import/run.js";
@@ -107,16 +107,24 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     search: (question, opts = {}) =>
       runQuiet(async () => {
         ensureProviderAvailable();
-        const { refs, warnings } = await pickSearchRefs(root, question, opts);
-        const pages = await loadSelectedRefs(root, refs);
-        return { pages, refs, warnings };
+        // One source for ranking AND hydration: selecting against rows and then
+        // reading files would drop every ref of a Stack-backed wiki as absent.
+        const selected = await withRegistrySource(process.env, async (registrySource) => {
+          const { refs, warnings } = await pickSearchRefs(root, question, { ...opts, registrySource });
+          return { refs, warnings, pages: await loadSelectedRefs(root, refs, registrySource) };
+        });
+        return selected;
       }),
 
     query: (question, opts = {}) =>
       runQuiet(() => {
         assertQuerySaveOptions(opts);
         ensureProviderAvailable();
-        return generateAnswer(root, question, opts);
+        // The registry source is an internal handle, never part of the public SDK
+        // options, so the facade resolves it here for every embedder.
+        return withRegistrySource(process.env, (registrySource) =>
+          generateAnswer(root, question, { ...opts, registrySource }),
+        );
       }),
 
     // Pages come from rows when a Stack is configured. Both go through the same
