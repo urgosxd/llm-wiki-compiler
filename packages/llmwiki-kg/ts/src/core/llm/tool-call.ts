@@ -13,6 +13,7 @@ import { ANTHROPIC_VERSION, EXTRACTION_MAX_TOKENS, EXTRACTION_TEMPERATURE } from
 import { extractionEndpoint } from "./endpoints.js";
 import { LlmError } from "./errors.js";
 import { asArray, asRecord, asString, postJson } from "./json.js";
+import { strictSchemaEnabled } from "./strict-policy.js";
 
 /** A tool the model is required to call. */
 export interface ToolDefinition {
@@ -36,8 +37,19 @@ function anthropicToolPayload(prompt: string, tool: ToolDefinition, maxTokens: n
   };
 }
 
-/** The OpenAI-compatible request body: `tool_choice: "required"`, no streaming. */
+/**
+ * The OpenAI-compatible request body: `tool_choice: "required"`, no streaming.
+ *
+ * ## Why `strict` comes from a policy
+ *
+ * `strict: true` is what makes the schema binding rather than advisory. It cannot
+ * be decided from the provider name alone, because `gateway` covers every
+ * OpenAI-compatible endpoint and they disagree about the flag. The decision lives
+ * in `strict-policy.ts`, and `EXTRACTION_STRICT_SCHEMA` lets the operator declare
+ * that their gateway does support it.
+ */
 function openAiToolPayload(prompt: string, tool: ToolDefinition, maxTokens: number): unknown {
+  const strictSchema = strictSchemaEnabled();
   return {
     messages: [{ role: "user", content: prompt }],
     stream: false,
@@ -46,7 +58,12 @@ function openAiToolPayload(prompt: string, tool: ToolDefinition, maxTokens: numb
     tools: [
       {
         type: "function",
-        function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+          ...(strictSchema ? { strict: true } : {}),
+        },
       },
     ],
     tool_choice: "required",

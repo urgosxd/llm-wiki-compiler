@@ -11,8 +11,18 @@
 import { config } from "../config.js";
 import { callTool } from "./llm_clients.js";
 import { buildExtractionPrompt, buildToolSchema } from "./graph-prompt.js";
-import { parseTriplets, type Triplet } from "./graph-parse.js";
-import { parseTripletsWithOntology, type Ontology, type RejectedTriplet } from "./ontology.js";
+import {
+  parseStandaloneEntities,
+  parseTriplets,
+  type StandaloneEntity,
+  type Triplet,
+} from "./graph-parse.js";
+import {
+  admitStandaloneEntities,
+  parseTripletsWithOntology,
+  type Ontology,
+  type RejectedTriplet,
+} from "./ontology.js";
 import {
   EXTRACTED_CONFIDENCE,
   EXTRACTION_PIPELINE,
@@ -32,6 +42,21 @@ function emptyResult(): ExtractionResult {
   };
 }
 
+/** What one chunk contributed: admitted triplets, what was dropped, and nodes. */
+interface ChunkOutput {
+  readonly triplets: readonly Triplet[];
+  readonly rejected: readonly RejectedTriplet[];
+  readonly standalone: readonly StandaloneEntity[];
+  /**
+   * Endpoints of triplets whose only fault was the relationship.
+   *
+   * Kept apart from `standalone` because the two arrive from different places —
+   * the model's `entities` array versus a rejected triplet — and because the
+   * audit report counts them separately.
+   */
+  readonly rescued: readonly StandaloneEntity[];
+}
+
 /**
  * Asks the model for one chunk's triplets, never throwing.
  *
@@ -43,19 +68,35 @@ async function chunkTriplets(
   chunk: ChunkResult,
   stackName: string,
   ontology: Ontology | undefined,
-): Promise<{ triplets: readonly Triplet[]; rejected: readonly RejectedTriplet[] }> {
+): Promise<ChunkOutput> {
   const prompt = buildExtractionPrompt(chunk.content, chunk.chunkIndex, stackName);
   try {
     const argumentsJson = await callTool(prompt, buildToolSchema(ontology));
+    const standalone = standaloneFor(argumentsJson, ontology);
     if (ontology === undefined) {
-      return { triplets: parseTriplets(argumentsJson), rejected: [] };
+      return { triplets: parseTriplets(argumentsJson), rejected: [], standalone, rescued: [] };
     }
-    return parseTripletsWithOntology(argumentsJson, ontology);
+    return { ...parseTripletsWithOntology(argumentsJson, ontology), standalone };
   } catch {
     // A provider failure yields nothing for this chunk and extraction continues,
     // exactly as the oracle's `except (ValueError, TypeError, AttributeError)`.
-    return { triplets: [], rejected: [] };
+    return { triplets: [], rejected: [], standalone: [], rescued: [] };
   }
+}
+
+/**
+ * Reads the entities that took part in no relationship, enforcing if asked.
+ *
+ * Separate from the triplet parse because the two have different contracts: the
+ * triplet path mirrors the oracle and must keep doing so, while `entities` is an
+ * addition with no oracle behaviour to reproduce.
+ */
+function standaloneFor(
+  argumentsJson: string,
+  ontology: Ontology | undefined,
+): readonly StandaloneEntity[] {
+  const parsed = parseStandaloneEntities(argumentsJson);
+  return ontology === undefined ? parsed : admitStandaloneEntities(parsed, ontology);
 }
 
 /**
@@ -166,6 +207,20 @@ export async function extractGraphFromChunks(
     for (const triplet of batch.triplets) {
       absorbEndpoints(entityMap, triplet, chunk.chunkIndex);
       relationshipList.push(tripletRelationship(triplet, chunk.chunkIndex));
+    }
+    // A standalone entity is absorbed by name, so a node the model reported in
+    // both shapes stays one row. The triplet endpoints were absorbed first and
+    // `absorbEndpoint` only rewrites a type when confidence strictly increases,
+    // which it never does here — so the triplet's type wins, and it is the one a
+    // relationship already constrains.
+    for (const entity of batch.standalone) {
+      absorbEndpoint(entityMap, entity.name, entity.type, chunk.chunkIndex);
+    }
+    // Endpoints of relationship-only rejections. Both types were already checked
+    // by the ontology, so nothing here needs filtering again; what they must NOT
+    // do is produce a relationship, which is why they join the entity map only.
+    for (const entity of batch.rescued) {
+      absorbEndpoint(entityMap, entity.name, entity.type, chunk.chunkIndex);
     }
   }
 

@@ -47,7 +47,7 @@ describe.skipIf(skipReason !== false)("backfeed approve (live database)", () => 
       function flagBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
         return {
           domain: stackDomain,
-          proposal: { entities: [{ name: "Widget", type: "Thing" }] },
+          proposal: { entities: [{ name: "Widget", type: "PRODUCT" }] },
           ...overrides,
         };
       }
@@ -71,10 +71,10 @@ describe.skipIf(skipReason !== false)("backfeed approve (live database)", () => 
         const id = await flag(app, {
           proposal: {
             entities: [
-              { name: "Approved", type: "T", description: "from approval" },
-              { name: "Approved2", type: "T" },
+              { name: "Approved", type: "PRODUCT", description: "from approval" },
+              { name: "Approved2", type: "PRODUCT" },
             ],
-            relationships: [{ from_entity: "Approved", to_entity: "Approved2", type: "links" }],
+            relationships: [{ from_entity: "Approved", to_entity: "Approved2", type: "IS_A" }],
           },
         });
 
@@ -97,7 +97,7 @@ describe.skipIf(skipReason !== false)("backfeed approve (live database)", () => 
           status: "approved",
         });
 
-        const stored = await request(app).get(`/aks/v1/backfeed/${id}`);
+        const stored = await request(app).get(`/aks/v1/backfeed/${id}`).query({ domain: stackDomain });
         expect(asRecord(stored.body)).toMatchObject({
           status: "approved",
           reviewed_by: "alice",
@@ -212,7 +212,7 @@ describe.skipIf(skipReason !== false)("backfeed approve (live database)", () => 
           .send({ item_id: id })
           .expect(200);
 
-        const stored = await request(app).get(`/aks/v1/backfeed/${id}`);
+        const stored = await request(app).get(`/aks/v1/backfeed/${id}`).query({ domain: stackDomain });
         expect(asRecord(stored.body)).toMatchObject({
           reviewed_by: null,
           review_note: null,

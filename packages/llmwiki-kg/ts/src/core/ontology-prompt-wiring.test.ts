@@ -105,13 +105,44 @@ describe("a declaration changes the type lists and nothing else", () => {
     expect(buildToolSchema()).toBe(buildToolSchema(undefined));
   });
 
-  it("offers only triplets, so a standalone entity has no representation", () => {
+  it("offers triplets and a separate entities array", () => {
     const schema = buildToolSchema(ONTOLOGY);
     const properties = Object.keys(schema.parameters.properties as Record<string, unknown>);
 
-    // This is WHY an entity cannot be extracted on its own: the model has no
-    // place to put one.
-    expect(properties).toEqual(["triplets"]);
+    // `entities` is the deliberate divergence from the oracle. Without it a
+    // DECISION or a REQUIREMENT cannot be extracted at all, because the only
+    // place a node could live was inside a triplet.
+    expect(properties).toEqual(["triplets", "entities"]);
+  });
+
+  it("requires both arrays and forbids extra keys, as OpenAI strict mode demands", () => {
+    // OpenAI rejects a tool schema in strict mode unless every object has
+    // `additionalProperties: false` and lists all its properties as required. An
+    // optional `entities` would make the schema unusable with `strict: true`, so
+    // the field became required and the description tells the model to send an
+    // empty array when nothing is standalone.
+    const schema = buildToolSchema(ONTOLOGY);
+
+    expect(schema.parameters.required).toEqual(["triplets", "entities"]);
+    expect(schema.parameters.additionalProperties).toBe(false);
+    expect({
+      type: schema.parameters.properties.entities.type,
+      $ref: schema.parameters.properties.entities.items.$ref,
+    }).toEqual({ type: "array", $ref: "#/$defs/Entity" });
+  });
+
+  it("marks every nested object closed, so strict mode has nothing to reject", () => {
+    // The rule applies recursively: a schema can look compliant at the top level
+    // and still be refused because `Triplet`, `Entity` or `Relation` is open.
+    const schema = buildToolSchema(ONTOLOGY);
+    const definitions = schema.parameters.$defs as Record<string, Record<string, unknown>>;
+
+    for (const name of ["Entity", "Relation", "Triplet"]) {
+      expect(definitions[name]?.additionalProperties, `${name} should be closed`).toBe(false);
+      expect(definitions[name]?.required, `${name} should require every property`).toEqual(
+        Object.keys(definitions[name]?.properties as Record<string, unknown>),
+      );
+    }
   });
 });
 

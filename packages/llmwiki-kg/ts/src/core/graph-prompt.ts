@@ -59,7 +59,47 @@ function pythonLiteral(values: readonly string[]): string {
  * so the default is not merely equal to the oracle's schema but is the same
  * value.
  */
-export function buildToolSchema(ontology?: Ontology): typeof KG_TOOL {
+/**
+ * A tool definition after an ontology may have narrowed its type lists.
+ *
+ * `typeof KG_TOOL` was the return type here, and it is a lie once an ontology is
+ * supplied: the narrowed `type` fields carry an `enum` the constant does not have.
+ * Callers and tests that read `.enum` were rejected by the compiler even though
+ * the value was there at runtime, which is how a type annotation hides a feature.
+ *
+ * Modelled as `KG_TOOL` with the narrowed fields widened, rather than as a fully
+ * generic schema type, so the object literal below stays checked against the real
+ * shape.
+ */
+export type ToolSchema = Omit<typeof KG_TOOL, "parameters"> & {
+  readonly parameters: Omit<(typeof KG_TOOL)["parameters"], "$defs"> & {
+    readonly $defs:
+      & Omit<(typeof KG_TOOL)["parameters"]["$defs"], "Entity" | "Relation">
+      & {
+        readonly Entity: {
+          readonly type: "object";
+          readonly properties: { readonly type: TypeField; readonly name: { readonly type: "string" } };
+          readonly required: readonly string[];
+          readonly additionalProperties: false;
+        };
+        readonly Relation: {
+          readonly type: "object";
+          readonly properties: { readonly type: TypeField };
+          readonly required: readonly string[];
+          readonly additionalProperties: false;
+        };
+      };
+  };
+};
+
+/** The `type` field of an entity or relation: a string, described and enumerated. */
+interface TypeField {
+  readonly type: "string";
+  readonly description: string;
+  readonly enum?: readonly string[];
+}
+
+export function buildToolSchema(ontology?: Ontology): ToolSchema {
   if (ontology === undefined) {
     return KG_TOOL;
   }
@@ -73,23 +113,13 @@ export function buildToolSchema(ontology?: Ontology): typeof KG_TOOL {
           ...KG_TOOL.parameters.$defs.Entity,
           properties: {
             ...KG_TOOL.parameters.$defs.Entity.properties,
-            type: {
-              ...KG_TOOL.parameters.$defs.Entity.properties.type,
-              description:
-                "Entity in a knowledge graph. Only extract entities with types that are listed as valid: " +
-                pythonLiteral(ontology.entityTypes),
-            },
+            type: constrainedTypeField(ontology.entityTypes, "entity"),
           },
         },
         Relation: {
           ...KG_TOOL.parameters.$defs.Relation,
           properties: {
-            type: {
-              ...KG_TOOL.parameters.$defs.Relation.properties.type,
-              description:
-                "Relation in a knowledge graph. Only extract relations with types that are listed as valid: " +
-                pythonLiteral(ontology.relationshipTypes),
-            },
+            type: constrainedTypeField(ontology.relationshipTypes, "relation"),
           },
         },
       },
@@ -98,14 +128,80 @@ export function buildToolSchema(ontology?: Ontology): typeof KG_TOOL {
 }
 
 /**
- * The tool schema `SchemaLLMPathExtractor` generates for this configuration.
+ * The `type` field of an entity or relation, restricted by a real JSON Schema
+ * `enum`.
  *
- * Captured from the live request rather than transcribed from the class: with
- * `strict=False` and no `possible_entity_props`, `get_entity_class` produces a
- * bare `{type, name}` entity and a bare `{type}` relation, and the triplet
- * model wraps them as `subject` / `relation` / `object` under a `triplets`
- * array. The top-level `additionalProperties: false` is what LlamaIndex adds
- * when building the function tool.
+ * ## Why `enum` and not only the description
+ *
+ * This is the difference between guiding the model and cleaning up after it. The
+ * oracle's schema put the allowed types in the field's *description* and left the
+ * type as `string`, which llama_index does when `strict=False`:
+ *
+ * ```python
+ * type=(possible_entities if strict else str, ...)
+ * ```
+ *
+ * With `strict=True` — the library's own default — `possible_entities` (a
+ * `Literal[...]`) becomes the field's type and Pydantic renders it as an `enum`. A
+ * provider that honours the schema then cannot emit a type outside the list, and
+ * an out-of-schema value is a validation failure the model has to correct rather
+ * than something this package silently drops afterwards.
+ *
+ * The description is kept as well as the `enum`: an `enum` tells a model which
+ * values are legal, but the sentence is what tells it *why*, and the wording is
+ * llama_index's, so the model sees the same instruction it always did.
+ *
+ * @param allowed - The declared type names, already normalised.
+ * @param kind - Which list this is, for the description sentence.
+ * @returns The field definition, carrying both `description` and `enum`.
+ */
+function constrainedTypeField(allowed: readonly string[], kind: "entity" | "relation"): TypeField & {
+  readonly enum: readonly string[];
+} {
+  const noun = kind === "entity" ? "entities" : "relations";
+  return {
+    type: "string",
+    description:
+      `${kind === "entity" ? "Entity" : "Relation"} in a knowledge graph. Only extract ${noun} ` +
+      "with types that are listed as valid: " +
+      pythonLiteral(allowed),
+    enum: allowed,
+  };
+}
+
+/**
+ * The tool schema the extractor asks the model to fill.
+ *
+ * ## Provenance, and where this deliberately departs from it
+ *
+ * Captured from the live request `SchemaLLMPathExtractor` produces: with
+ * `strict=False` and no `possible_entity_props`, `get_entity_class` yields a bare
+ * `{type, name}` entity and a bare `{type}` relation, and the triplet model wraps
+ * them as `subject` / `relation` / `object` under a `triplets` array.
+ *
+ * **This is no longer byte-identical to the oracle's schema, on purpose.**
+ * `entities` is an addition the oracle does not have. The reason is structural
+ * rather than cosmetic: the oracle can only ever produce an entity that is an
+ * endpoint of a triplet, so a type like `DECISION` or `REQUIREMENT` — the things
+ * this compiler is fed documents about, which usually exist without a
+ * relationship — cannot survive extraction at all. A document that says "we
+ * decided to use Postgres" yields nothing, because there is no edge to hang the
+ * decision on.
+ *
+ * The divergence is registered in `odd/findings/aks-spec-conformance.md`.
+ *
+ * ## Shaped for OpenAI's strict mode
+ *
+ * Every object below carries `additionalProperties: false` and lists all of its
+ * properties as required. That is not stylistic: OpenAI rejects a tool schema in
+ * strict mode unless every object satisfies both rules, so a schema that omits
+ * them cannot be sent with `strict: true` at all.
+ *
+ * `entities` is therefore **required** rather than optional, which is the one
+ * behavioural cost of strict mode: a model can no longer omit the key, so it
+ * emits `entities: []` when a chunk has none. Parsing is unchanged — an empty
+ * array contributes nothing — and the payload is still the same shape for a chunk
+ * with no standalone nodes.
  */
 export const KG_TOOL = {
   name: "KGSchema",
@@ -117,8 +213,17 @@ export const KG_TOOL = {
         type: "array",
         items: { $ref: "#/$defs/Triplet" },
       },
+      entities: {
+        type: "array",
+        items: { $ref: "#/$defs/Entity" },
+        description:
+          "Entities that matter in this text but take part in no relationship. " +
+          "Report a subject or object here only when it belongs to no triplet. " +
+          "Use an empty array when every entity takes part in one.",
+      },
     },
-    required: ["triplets"],
+    required: ["triplets", "entities"],
+    additionalProperties: false,
     $defs: {
       Entity: {
         type: "object",
@@ -132,6 +237,7 @@ export const KG_TOOL = {
           name: { type: "string" },
         },
         required: ["type", "name"],
+        additionalProperties: false,
       },
       Relation: {
         type: "object",
@@ -144,6 +250,7 @@ export const KG_TOOL = {
           },
         },
         required: ["type"],
+        additionalProperties: false,
       },
       Triplet: {
         type: "object",
@@ -153,6 +260,7 @@ export const KG_TOOL = {
           object: { $ref: "#/$defs/Entity" },
         },
         required: ["subject", "relation", "object"],
+        additionalProperties: false,
       },
     },
   },

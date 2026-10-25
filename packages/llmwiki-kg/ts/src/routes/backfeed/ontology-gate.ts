@@ -26,15 +26,21 @@
  * create/update path). Inventing a new envelope for one endpoint would be a
  * contract this package owns alone.
  *
- * ## A Stack with no declaration is unaffected
+ * ## A Stack with no declaration is enforced against the default
  *
- * `null` means the oracle's behaviour, exactly as it does for ingest. Approval
- * stays total for every Stack that never opted in, which is the same rule that
- * keeps an unconfigured Stack's extraction permissive.
+ * `null` no longer means "anything goes", for the same reason it stopped meaning
+ * that in ingest: the graph a Stack accumulates must have one vocabulary whether
+ * or not the caller wrote one down. An unconfigured Stack therefore admits the
+ * types in `default_ontology.ts` and refuses the rest, and the refusal names the
+ * type so the human can fix the item or declare the ontology.
  */
 
+import { sql } from "drizzle-orm";
+
+import { defaultOntology } from "../../core/default_ontology.js";
 import { OntologyError, validateOntology } from "../../core/ontology.js";
 import type { Ontology } from "../../core/ontology.js";
+import type { Database } from "../../db.js";
 import type { BackfeedProposalDto } from "../../dto.js";
 import type { PydanticErrorDetail } from "../../errors.js";
 
@@ -72,15 +78,40 @@ function refuse(
 }
 
 /**
- * Resolves the Stack's stored declaration into an ontology, if it has one.
+ * Resolves the Stack's stored declaration into the ontology to enforce.
  *
  * @param stored - The raw `stacks.ontology` value.
- * @returns The ontology to enforce, or `undefined` when the Stack declares none.
+ * @returns The declared ontology, or the documented default when unset.
  * @throws {OntologyError} When a declaration is present but invalid.
  */
-export function stackOntology(stored: unknown): Ontology | undefined {
-  if (stored === null || stored === undefined) return undefined;
+export function stackOntology(stored: unknown): Ontology {
+  if (stored === null || stored === undefined) return defaultOntology();
   return validateOntology(stored);
+}
+
+/**
+ * Reads a Stack's declaration and resolves it, in one step.
+ *
+ * Lives here rather than in either route because BOTH endpoints need it and they
+ * must consult the same row: flag and approve each enforce the ontology, and a
+ * duplicate reader is how they drift into disagreeing about the same Stack.
+ *
+ * Read at request time rather than carried on the queue row, because the
+ * declaration can change between flagging and approval. Approval is the moment a
+ * write happens, so it must consult what the Stack declares NOW; flag is the
+ * moment a caller is told whether their proposal is viable, so it must consult
+ * the same thing.
+ *
+ * @param tx - The request transaction.
+ * @param stackId - Stack the item belongs to.
+ * @returns The ontology in force for that Stack.
+ * @throws {OntologyError} When the stored declaration is present but invalid.
+ */
+export async function loadStackOntology(tx: Database, stackId: string): Promise<Ontology> {
+  const rows = await tx.execute<{ ontology: unknown }>(
+    sql`select ontology from stacks where id = ${stackId}`,
+  );
+  return stackOntology(rows[0]?.ontology ?? null);
 }
 
 /**
@@ -90,16 +121,14 @@ export function stackOntology(stored: unknown): Ontology | undefined {
  * when both are wrong — the same ordering `rejectTriplet` uses, for the same
  * reason: the more specific cause is the one a human can act on.
  *
- * @param ontology - The Stack's ontology, or `undefined` for no declaration.
+ * @param ontology - The ontology to enforce.
  * @param proposal - The stored proposal about to be absorbed.
  * @returns `undefined` when the proposal is admissible, otherwise the refusal.
  */
 export function checkProposalAgainstOntology(
-  ontology: Ontology | undefined,
+  ontology: Ontology,
   proposal: BackfeedProposalDto,
 ): OntologyRefusal | undefined {
-  if (ontology === undefined) return undefined;
-
   const declaredEntities = new Set(ontology.entityTypes);
   for (const entity of proposal.entities) {
     if (!declaredEntities.has(normalizeType(entity.type))) {

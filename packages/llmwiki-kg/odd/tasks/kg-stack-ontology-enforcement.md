@@ -54,11 +54,17 @@ The raw document keeps reads total and matches the write in both directions.
 Semantic enforcement at write time is what guarantees the stored document is
 valid, so the read path never has to be the validator.
 
-### `null` still means the oracle's behaviour
+### ~~`null` still means the oracle's behaviour~~ — REVERSED
 
-Omitting `ontology` on create leaves the column NULL, `readStackOntology(null)`
-returns `undefined`, and the extraction call keeps its original two-argument
-arity. That is the existing invariant and this change does not touch it.
+Originally: omitting `ontology` on create left the column NULL,
+`readStackOntology(null)` returned `undefined`, and the extraction call kept its
+two-argument arity. That was recorded as an invariant this change did not touch.
+
+**It has since been reversed deliberately.** See "Decision: an unconfigured Stack
+is enforced against a default" below. The paragraph is kept, struck through,
+because the reversal is the point: `null` never meant "the vocabulary is absent",
+it meant "nobody is checking", and `type text not null` with no CHECK accepted
+`COMPANY` and `FIRM` as different things forever.
 
 ## Tasks
 
@@ -69,6 +75,16 @@ arity. That is the existing invariant and this change does not touch it.
 - [x] 5. RED: tests for the dimension reading `stacks.ontology` at `prepare`
 - [x] 6. Dimension reads the stored declaration and passes it to extraction
 - [x] 7. `tsc`, `build`, `test:affected`, `fallow`
+- [x] 8. RED: tests that the default admits COMPANY and EMPLOYS, not llama_index's list
+- [x] 9. `default_ontology.ts` with the domain vocabulary, exported through core-index
+- [x] 10. Wire the default into ingest, backfeed approval and the KG dimension
+- [x] 11. Add `declared` to the audit and rewrite the tests pinning "null = free field"
+- [x] 12. RED: tests that the audit names the dropped triplets, bounded and ordered
+- [x] 13. `samples` in `OntologyAudit`: name, relation, object, reason, offending type
+- [x] 14. RED: domain/range tests — `PERSON EMPLOYS PERSON` must be refused
+- [x] 15. Additive `relationships` field with `domains`/`ranges`, validated at load
+- [x] 16. Enforce pairs after the allowlists; hierarchy now decides admission
+- [x] 17. RED: standalone-entity tests, then `entities` in `KG_TOOL` and the flow
 
 ## Scope boundary
 
@@ -317,6 +333,546 @@ not evidence.
 - The first traverse assertion pinned the order of two edges at the same depth.
   The endpoint promises BFS depth order, not an order between siblings, so the
   comparison is now a set plus an explicit length.
+
+## Decision: an unconfigured Stack is enforced against a default
+
+**Decided by the human:** option (b), with our own vocabulary — not
+llama_index's. Recorded here because it changes the contract for every consumer.
+
+### The problem it closes
+
+`stacks.ontology` is nullable and `null` meant "the oracle's behaviour":
+`graph-prompt.ts` advertises ten entity types in the tool-schema *description*
+and nothing validates against them, because the extractor is `strict=False`. The
+`type` column is `text not null` with no CHECK. Measured consequence: nothing
+stopped `organisation` / `organization` / `ORGANIZATION` from becoming three
+distinct types in one Stack's graph.
+
+### Why not llama_index's list
+
+The cheap default was `DEFAULT_ENTITIES` / `DEFAULT_RELATIONS`, which would leave
+the tool schema byte-identical and risk nothing. Measured and rejected:
+
+| type | in llama_index's default |
+| --- | --- |
+| `COMPANY` | **no** |
+| `EMPLOYS` | **no** |
+| `ACQUIRES` | **no** |
+| `MISCELLANEOUS` | yes |
+
+Enforcing it would reject `Acme EMPLOYS Ada` — the most natural sentence in this
+domain — while admitting `MISCELLANEOUS`. A default that refuses real input is
+worse than no default, because it fails silently into a thin graph.
+
+### Why this does not contradict the vendored spec
+
+`SCHEMA.json:499` documents `AKSEntity.type` as *"Domain-defined category. No
+global enum."* The spec governs the **format** of an export, and a Stack still
+stores and emits whatever types it was given. `default_ontology.ts` supplies a
+**starting declaration** for the caller who wrote none — a convenience layered on
+a format that permits any value, not an enum carved into the schema.
+
+### Where the default is applied
+
+Three points already answered "the column is null"; all three now call
+`defaultOntology()`, so they cannot drift:
+
+| point | file | before | after |
+| --- | --- | --- | --- |
+| ingest | `routes/ingest/pipeline.ts` | `[]` | `[defaultOntology()]` |
+| backfeed approval | `routes/backfeed/ontology-gate.ts` | `undefined` | `defaultOntology()` |
+| KG dimension | `src/dimensions/kg/index.ts` | `undefined` | `defaultOntology()` |
+
+Deliberately NOT baked into `buildToolSchema()` or `extractGraphFromChunks`:
+those keep the oracle's bytes on purpose, because the parity tests and the
+Python-parity harness must keep observing the measured behaviour. A Stack's
+policy belongs at the boundary that knows a Stack exists.
+
+### `enforced` changed meaning, so the audit gained `declared`
+
+`enforced` was `false` for an undeclared Stack and `true` otherwise. It is now
+always `true`, which would make the field useless. The fact that still matters is
+*whose* vocabulary dropped the triplet:
+
+```jsonc
+// the caller wrote this Stack's ontology and it rejected 2 triplets
+{ "enforced": true, "declared": true,  "rejected": 2, "reason_codes": [...] }
+// the DEFAULT rejected 1 triplet on a Stack that never declared one
+{ "enforced": true, "declared": false, "rejected": 1, "reason_codes": [...] }
+```
+
+Only the second is our policy being wrong rather than their config being wrong,
+and a consumer cannot tell them apart without this field.
+
+### Measured blast radius
+
+Before touching any test, `ontologyArgument` was patched to return llama_index's
+lists and the suite run: **3 failures** (`ingest-ontology` ×2,
+`ingest-ontology-e2e` ×1). The real blast radius of the wiring was larger — 13
+tests — because three backfeed suites build Stacks with no ontology and propose
+`Thing` / `T` / `links`, and the KG dimension asserted a two-argument call arity.
+All were fixture- or arity-level, none was a behavioural disagreement.
+
+### Falsifiability
+
+Swapping `default_ontology.ts` back to llama_index's lists turns **3 of 8**
+default-ontology tests red, including "admits the canonical
+company-employs-person triplet". The swap leaves the tool schema byte-identical,
+which is exactly why it looks safe and is not.
+
+### A mistake this slice made and caught
+
+The first version of the e2e positive test asserted that `ACQUIRED` was admitted
+by the default. It failed with an empty graph, and the real reason was that the
+default declares `ACQUIRES` — present tense, verb phrase, per `SCHEMA.json:582` —
+not the fixture's past-tense `ACQUIRED`. The test now uses its own
+`GLOBEX_INITECH_ACQUIRES` fixture and says so. A test that had been written to
+pass would have hidden this.
+
+## Follow-up 3: what a rejection cost is now named, not just counted
+
+`rejected: 2` could not answer the question an operator actually asks: *which*
+triplets went missing, and therefore whether they forgot a type or the model
+invented a relationship. The audit blob now carries `samples`.
+
+### The measured cost this makes visible
+
+A rejected triplet takes its endpoints with it. Entities exist only as triplet
+endpoints (`absorbEndpoint`), so dropping a relation drops both nodes:
+
+```
+in:   [Acme EMPLOYS Ada]   [Globex BOGUS_REL Bob]
+out:  admitted 1, rejected 1, survivors [["Acme","Ada"]]
+```
+
+`Globex` and `Bob` never become rows. A document with three companies and one
+bad relation can leave two companies. That is now diagnosable from
+`GET /documents/:id` instead of only countable.
+
+### Shape
+
+```jsonc
+"ontology": {
+  "enforced": true, "declared": true, "rejected": 2,
+  "reason_codes": ["UNKNOWN_ENTITY_TYPE", "UNKNOWN_RELATIONSHIP_TYPE"],
+  "samples": [
+    { "subject": "Globex", "relation": "ACQUIRED", "object": "Nobody",
+      "reason": "UNKNOWN_RELATIONSHIP_TYPE", "offending_type": "ACQUIRED" }
+  ]
+}
+```
+
+### Why it is bounded
+
+`audit` is a `jsonb` column read on every `GET /documents/:id`, and
+`MAX_TRIPLETS_PER_CHUNK` is 20, so a many-chunk document can reject hundreds.
+Samples are capped at 5 and each name at 120 characters (elided with `…`).
+`rejected` stays the true total, so a truncated report reads as truncated rather
+than as complete.
+
+Order is the model's emission order, not sorted: the first rejections are the
+representative ones, and sorting by name would bury them.
+
+### Falsifiability
+
+- Cap removed (`rejected.map` instead of `rejected.slice(0, 5)`) -> 1 test red.
+- Samples emptied (`samples: []`) -> 4 tests red.
+
+### What this does NOT fix
+
+It reports the loss; it does not prevent it. Keeping the endpoints of a dropped
+triplet would create standalone entities, which is the change that has to come
+before entity types like `DECISION` or `REQUIREMENT` — things that usually exist
+without a relationship — can survive extraction at all.
+
+## Follow-up 4: relationships declare a domain and a range
+
+Measured before this existed: all four combinations of `COMPANY`/`PERSON` with
+`EMPLOYS` were admitted, including `PERSON EMPLOYS PERSON`, because
+`rejectTriplet` checked subject type, object type and relation type as three
+independent allowlist lookups and never as a pair.
+
+### Shape, and why it is additive
+
+```jsonc
+{
+  "entityTypes": ["COMPANY", "PERSON"],
+  "relationshipTypes": ["EMPLOYS"],
+  "relationships": [
+    { "type": "EMPLOYS", "domains": ["COMPANY"], "ranges": ["PERSON"] }
+  ]
+}
+```
+
+A relationship left out of `relationships` keeps exactly the behaviour it had.
+An empty `domains` or `ranges` means "any declared type", not "permit nothing" —
+the latter would silently drop every triplet of that relationship and read as a
+thin extraction. An ontology written before the field existed loads unchanged.
+
+New reason codes: `SUBJECT_TYPE_NOT_IN_DOMAIN`, `OBJECT_TYPE_NOT_IN_RANGE`.
+Checked after the allowlists so the reported reason is the more specific cause.
+
+A constraint that could never fire is refused at load: a constraint on an
+undeclared relationship, or a domain/range naming an undeclared entity type.
+
+### The hierarchy finally does work
+
+`isEntityTypeAllowed` was decorative before this: `rejectTriplet` passed the full
+allowlist as the required set, so every declared type matched by identity and the
+ancestor walk never decided anything. A domain of `ORGANIZATION` now admits
+`COMPANY` when `COMPANY IS_A ORGANIZATION` is declared, and that is pinned.
+
+### Falsifiability
+
+Neutralising the constraint lookup turns **5 of 14** domain/range tests red.
+
+## Follow-up 5: the tool schema asks for standalone entities
+
+**This breaks oracle parity deliberately** — see `aks-spec-conformance.md`
+section 2b.
+
+`KG_TOOL` gained an `entities` array of `{type, name}`. `triplets` stays the only
+required property, so a model that ignores `entities` returns a valid payload.
+
+### The measurement that forced it
+
+A document saying *"we decided to use Postgres"* contributed **no rows**. Entities
+existed only as triplet endpoints (`absorbEndpoint`, called from the triplet
+loop), so `DECISION`, `REQUIREMENT` and `TEAM` — most of what this compiler is fed
+— were unrepresentable.
+
+### Admission
+
+Standalone entities go through the same allowlist as triplet endpoints, so the
+addition cannot smuggle an undeclared type into the graph. A node reported in both
+shapes stays one row, and the triplet's type wins because that is the one a
+relationship already constrains.
+
+### Falsifiability
+
+Removing the standalone absorption turns **2** of the 12 formation tests red.
+Emptying `samples` earlier turned 4. Removing the domain/range lookup turns 5.
+
+### What this does NOT do
+
+It does not give the model an explicit slot for standalone entity *properties*;
+`ontology_entities.properties` is still always `{}`. And a standalone entity is
+still dropped silently rather than reported: it carries no pair information, so
+filtering it is not a rejection the caller needs a record of.
+
+## Follow-up 6: the declared types are an `enum`, not a description
+
+**Reversal of what an earlier section of this document claimed.**
+
+Measured, then corrected against llama_index's source. `get_entity_class` does:
+
+```python
+type=(possible_entities if strict else str, ...)
+```
+
+`SchemaLLMPathExtractor`'s own default is `strict=True`. With it, a
+`Literal[...]` of allowed types becomes the field's *type* and Pydantic renders a
+real `enum`. The oracle ran `strict=False`, so its schema carried the list in the
+field's `description` and left the type a bare `string`.
+
+That distinction is the difference between **guiding** the model and **cleaning
+up after it**:
+
+| | `enum` (strict=True) | description only (strict=False) |
+| --- | --- | --- |
+| model can emit an unlisted type | no; validation fails | yes, freely |
+| what happens to it | retried by the model | silently dropped here |
+
+`buildToolSchema(ontology)` now emits `enum` **and** keeps the description. The
+description is not redundant: the `enum` says which values are legal, the
+sentence says why, and the wording is llama_index's so the model reads what it
+always did.
+
+`buildToolSchema()` with no argument still returns `KG_TOOL` untouched, with no
+`enum`, because `strict=False` is what that object embodies and the parity harness
+observes it.
+
+The post-hoc filter stays. It is the net for providers that ignore the schema —
+nothing forces OpenAI to honour an `enum` without `strict: true` in the request,
+and the request does not send it.
+
+### Vocabulary now follows the project's roadmap
+
+`README.md` names four types: *"domain-specific types (Process, Role, System,
+Document), pass `possible_entities` and `possible_relations`"*. Those are now the
+spine of the default list, replacing types invented here. `ROLE`, `SYSTEM` and
+`DOCUMENT` were missing entirely; `GOVERNS`, `DOCUMENTS` and `OWNS` were added so
+the new entity types have something to connect them.
+
+The roadmap also warns that *"a small number of constrained types usually
+produces a more useful ontology than fully unconstrained extraction"*, which is an
+argument against a 16-type default. That tension is unresolved and recorded in
+the follow-ups rather than silently ignored.
+
+### A false claim removed
+
+The `KG_TOOL` docstring asserted *"The top-level `additionalProperties: false` is
+what LlamaIndex adds"*. Measured: `grep -c additionalProperties` over the schema
+source returns **0**. The object never had it, and `tool-call.ts` forwards
+`parameters` verbatim. In a file whose premise is that the wire shapes are
+measurements rather than guesses, that sentence was the one guess.
+
+### Falsifiability
+
+Removing `enum: allowed` from `constrainedTypeField` turns the `enum` test red
+while every description assertion stays green — which is exactly the failure mode
+this change exists to make impossible to reintroduce silently.
+
+## Follow-up 7: `strict: true` on the wire, and the schema it forces
+
+The `enum` from follow-up 6 only binds if the request tells the provider to
+enforce the schema. On OpenAI that is `strict`.
+
+### Sent by a policy the operator can override
+
+The first version decided from the provider name alone, which left every
+`gateway` deployment with advisory typing forever. That is wrong for the case
+that matters most here: a provider that is **not** OpenAI but exposes an
+OpenAI-compatible endpoint that does honour `strict`. The provider name cannot
+distinguish that from a gateway that rejects the field, and only the operator
+knows which one they run.
+
+`EXTRACTION_STRICT_SCHEMA` (`auto` | `true` | `false`, default `auto`) resolves it:
+
+| provider | `auto` | reason |
+| --- | --- | --- |
+| `openai` | on | structured outputs are guaranteed |
+| `gateway` | off | unknown backend; a strict parser may reject the request |
+| `anthropic` | off | no such field; always enforced |
+
+An explicit `true` opts a capable gateway in. An explicit `false` downgrades
+`openai` deliberately, which is legitimate behind a proxy that drops unknown
+fields in the function object — a lesser configuration, but better than a request
+that fails.
+
+`anthropic` ignores the override entirely: its body has no `function` object, so
+the flag would have nowhere to go and adding it would invent a field the API
+rejects.
+
+The decision lives in `core/llm/strict-policy.ts`, returning both the answer and
+its provenance (`provider-default` or `override`), so a deployment can be
+diagnosed without guessing.
+
+### What strict mode forced in the schema
+
+OpenAI rejects a strict-mode tool schema unless **every** object has
+`additionalProperties: false` and lists **all** its properties as required. The
+shipped schema had neither, so `strict: true` would have failed outright.
+
+Both are now present at every level: top level, `Entity`, `Relation`, `Triplet`.
+
+**`entities` became required**, which is the one behavioural cost. An optional
+field is illegal under strict mode, so the model must now always send it and the
+description tells it to use `[]` when every entity takes part in a triplet.
+Parsing is unchanged: an empty array contributes nothing.
+
+### Falsifiability
+
+- Removing the `strict` flag from the payload → 1 test red, and only that one,
+  because the gateway and Anthropic tests assert its *absence*.
+- Removing `additionalProperties: false` from `Entity` alone → 2 tests red, one of
+  which exists precisely because a schema can look compliant at the top level and
+  still be refused for an open nested object.
+
+## Follow-up 8: flag refuses what approve would refuse
+
+The asymmetry this closes: `POST /backfeed/flag` answered `201 Created` for a
+proposal `POST /backfeed/approve` then refused with `422`. A caller learned their
+type was undeclared only after a human had spent attention reviewing it, and from
+a different endpoint than the one that had said the proposal was fine.
+
+### What changed
+
+`flag` now runs the same `checkProposalAgainstOntology` and returns the same 422,
+before writing anything. The reader moved into the gate as `loadStackOntology` so
+both endpoints consult one function and one row; a duplicate reader is how two
+gates drift into disagreeing about the same Stack.
+
+The approval gate was **kept**, not deleted. It is defence in depth: the
+declaration can change between flagging and approving, and approval is the moment
+a write happens. A test flags while `EMPLOYS` is declared, narrows the Stack's
+`relationshipTypes` to `SUPPLIES`, and asserts approval still refuses.
+
+### What it gives up, deliberately
+
+An undeclared type can no longer be queued as a proposal. The queue is a review
+surface for viable work, not an inbox for vocabulary changes; proposing a new type
+means amending the Stack's declaration, which `PATCH /stacks` already does.
+
+This is the option chosen over marking the item `unapprovable_reason` and letting
+it sit in the queue, which would have kept the staging behaviour at the cost of a
+new response key and a human reading items that cannot succeed.
+
+### Falsifiability
+
+Removing the flag gate turns **4 of 8** backfeed-ontology tests red, including the
+one asserting nothing reached the queue.
+
+### Fixture fallout
+
+Four suites flagged `Thing`, `T`, `knows` and `links` — all outside the default
+vocabulary, and all previously fine because `flag` did not check. They now use
+`PRODUCT` and `IS_A`. None of them asserted on those strings; they test
+persistence, pagination and envelope shape, so the substitution preserves intent.
+
+## Follow-up 9: the default relationships carry semantics for the unambiguous ones
+
+The default vocabulary declared 20 relationships and **zero constraints**, which
+was measured to mean nothing: with it, `TIME EMPLOYS PERSON` and
+`LOCATION ACQUIRES DECISION` were both admitted. A list of verbs with no
+semantics is not a vocabulary.
+
+### Three constrained, five deliberately not
+
+| relationship | domain | range |
+| --- | --- | --- |
+| `EMPLOYS` | `COMPANY`, `ORGANIZATION`, `TEAM` | `PERSON` |
+| `WORKS_AT` | `PERSON` | `COMPANY`, `ORGANIZATION`, `TEAM` |
+| `OWNS` | `COMPANY`, `ORGANIZATION`, `PERSON`, `TEAM` | `PRODUCT`, `SYSTEM`, `DOCUMENT` |
+
+`PART_OF`, `HAS`, `IS_A`, `USED_BY` and `USED_FOR` are left unconstrained on
+purpose. Almost any pair can legitimately stand in those relations — a
+requirement is part of a process, a document is part of a decision — so a guess
+about which combination is impossible would be wrong often enough to hurt.
+
+### Why the line is drawn at "unambiguous misuse only"
+
+A rejected triplet takes its **two endpoints** with it (measured: `[Globex
+PARTNERS_WITH Initech]` leaves neither entity as a row). So an over-tight default
+does not merely drop an edge, it deletes entities the document really named. That
+asymmetry is why the constraint list is short and why `TEAM` is admitted as an
+`EMPLOYS` domain even though `COMPANY` alone would be tidier: a team does employ
+people, and refusing that sentence loses the people too.
+
+### Falsifiability, both directions
+
+- Over-tightening `EMPLOYS` to `domains: ["COMPANY"]` turns the
+  "admits the true sentences" test red on `TEAM EMPLOYS PERSON`.
+- Relaxing the domains back to unconstrained turns the nonsense-pair test red on
+  `TIME EMPLOYS PERSON`.
+
+Both are pinned, so neither the too-loose nor the too-tight version can return
+silently.
+
+## Follow-up 10: a rejected relationship keeps its entities
+
+The last piece of the cost problem, and the one with the largest effect on real
+documents.
+
+### What it was
+
+Nodes existed only as admitted triplet endpoints, so a rejected triplet took both
+its entities with it. Measured:
+
+```
+in:   [Acme EMPLOYS Ada]   [Globex PARTNERS_WITH Initech]
+out:  Acme, Ada             ← rows
+      Globex, Initech       ← NO rows at all
+```
+
+One unrecognised verb silently deleted two entities the document really named,
+even though both types were declared. With entity types that never appear in an
+edge — `DECISION`, `REQUIREMENT`, `DOCUMENT` — this was the difference between a
+useful graph and an empty one.
+
+### The rule
+
+`parseTripletsWithOntology` now returns `rescued`: the endpoints of a triplet whose
+rejection was **caused by the relationship**, not by an endpoint.
+
+| reason | endpoints kept |
+| --- | --- |
+| `UNKNOWN_RELATIONSHIP_TYPE` | yes |
+| `SUBJECT_TYPE_NOT_IN_DOMAIN` | yes |
+| `OBJECT_TYPE_NOT_IN_RANGE` | yes |
+| `UNKNOWN_ENTITY_TYPE` | **no** |
+
+The boundary is deliberate. An undeclared entity type means the model produced
+something the ontology does not have, so there is nothing to keep — and keeping it
+would make the allowlist optional, which is the one thing this feature must never
+allow.
+
+### What they are not
+
+They are not admitted triplets: the graph gains nodes and **no edge**, so nothing
+implies the two are related. They are also not a judgement that the pair belongs
+together — the pair is exactly what was refused. The recovery is only "this name
+was in the document and its type is declared".
+
+### Counters
+
+`entities_extracted` and `entities_in_stack` move (they count rows, and these now
+become rows). Both relationship counters stay put, because they count admitted
+edges and the refused one never became one.
+
+### Falsifiability, both directions
+
+- Removing the absorption of `batch.rescued` → 3 tests red, including the measured
+  `Globex`/`Initech` case.
+- Removing the `UNKNOWN_ENTITY_TYPE` guard (rescuing on EVERY rejection) → 2 tests
+  red, which is the allowlist bypass the boundary exists to prevent.
+
+### Tests that had to change, and why that is the point
+
+Five assertions encoded the old cost as if it were a requirement — literal comments
+like *"Globex/Initech were dropped with their triplet, so neither reaches AKS"*.
+They now assert the opposite. A test that documents a cost will happily defend it
+forever; only reading the comment shows it was never the intent.
+
+## Follow-up 11: the two unscoped backfeed reads
+
+Two routes queried `backfeed_queue` by id alone. The decision for each differs,
+because one is a spec endpoint and the other is not.
+
+### `GET /aks/v1/backfeed/:item_id` — now requires a Stack
+
+Not an AKS spec endpoint (only `flag`, `approve` and `queue` are), so extending it
+breaks no parity. `stack_id` and `domain` come from the query string, exactly as
+the sibling `GET /queue` already reads them, and the lookup became
+`where id = $1 and stack_id = $2`.
+
+No alias keeps the unscoped path reachable: an unscoped read is the defect.
+
+A missing Stack answers the same 422 `resolveStack` produces, and an item in
+another tenant answers the **same 404** as a nonexistent one, so the endpoint
+never confirms that an id exists in someone else's Stack.
+
+### `POST /aks/v1/backfeed/approve` — read by id, then binds
+
+This IS a spec endpoint whose body is `{item_id, reviewed_by, review_note}`: there
+is no Stack to filter on, so scoping the read would be a contract change the spec
+forbids. The read stays by id, and the resolved `stack_id` is bound as the tenant
+immediately afterwards, before any write — so the ontology gate, the absorbed rows
+and the status flip all run under RLS for that Stack.
+
+### The premise this corrected
+
+The instruction offered "the tenant binding alone already isolates, so the explicit
+filter is defence in depth". **Measured, that is false for this deployment:**
+nothing in the backfeed path sets `app.stack_id` — `resolveStack` in
+`routes/backfeed/stack.ts` does not call `bindTenant`; only
+`core/stack_resolver.ts` does, and no backfeed route uses it. The application role
+is a superuser with `rolbypassrls = true` **and owns the table**, so the
+`tenant_isolation` policy never runs.
+
+So the filter is the barrier for `GET /:item_id`, and the newly added binding is
+the barrier for `approve`. Neither is defence in depth yet.
+
+### Falsifiability
+
+Removing `and stack_id = ...` from the `GET /:item_id` lookup turns the
+cross-tenant 404 test red while every other test in the file stays green.
+
+### Fallout
+
+Eight `GET /:item_id` call sites across three files gained `.query({ domain })`.
+One test also needed a Stack created, because the Stack is resolved before the
+lookup and the route now answers the Stack error rather than a validation one.
 
 ## Open follow-ups (not in this change)
 

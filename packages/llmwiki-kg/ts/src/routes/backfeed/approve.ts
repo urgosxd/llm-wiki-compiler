@@ -7,13 +7,14 @@ import { sql } from "drizzle-orm";
 import type { Request, Response } from "express";
 
 import { consolidateBackfeedProposal } from "../../core/consolidation.js";
+import { bindTenant } from "../../core/stack_resolver.js";
 import type { Database } from "../../db.js";
 import { BackfeedApprovalRequest, BackfeedApprovalResult } from "../../dto.js";
 import type { BackfeedApprovalResultDto } from "../../dto.js";
 import { apiError, toFastApiValidationError } from "../../errors.js";
 import { readStoredProposal } from "./row.js";
 import { sendApiError, sendValidationError } from "./query.js";
-import { checkProposalAgainstOntology, stackOntology } from "./ontology-gate.js";
+import { checkProposalAgainstOntology, loadStackOntology } from "./ontology-gate.js";
 
 /** The queue row an approval needs: what it points at and what it holds. */
 type ApprovalItem = {
@@ -37,7 +38,27 @@ function approvalResult(
   };
 }
 
-/** The item being approved, or `undefined` when no row has that id. */
+/**
+ * The item being approved, or `undefined` when no row has that id.
+ *
+ * ## Why the READ stays unscoped, and what actually protects it
+ *
+ * `POST /backfeed/approve` is an AKS spec endpoint whose body is
+ * `{item_id, reviewed_by, review_note}` — there is no Stack to filter on, so
+ * scoping this read would be a contract change the spec does not allow. The
+ * request carries the item's own id, which a caller only obtains from their own
+ * Stack: `flag` answers 201 with it and `GET /queue` is already Stack-scoped.
+ *
+ * The read is therefore by id, and the isolation happens immediately after: the
+ * resolved `stack_id` is bound as the tenant for the rest of the transaction, so
+ * every write the approval performs runs under RLS for that Stack. Nothing is
+ * written before the binding.
+ *
+ * This is the one place where the binding is the barrier rather than defence in
+ * depth, which is why it is stated here instead of assumed. `GET /:item_id` was
+ * different — that route is not in the spec, so it now requires a Stack in the
+ * query string.
+ */
 async function readApprovalItem(
   tx: Database,
   itemId: string,
@@ -48,27 +69,6 @@ async function readApprovalItem(
     where id = ${itemId}
   `);
   return rows[0];
-}
-
-/**
- * Reads the Stack's stored ontology declaration, if it has one.
- *
- * Read here rather than carried on the queue row: the declaration can change
- * between flagging and approval, and approval is the moment a write happens, so
- * the gate must consult what the Stack declares NOW.
- *
- * @param tx - The approval transaction.
- * @param stackId - Stack the item belongs to.
- * @returns The raw `stacks.ontology` value, `null` when unconfigured.
- */
-async function readStackOntologyColumn(
-  tx: Database,
-  stackId: string,
-): Promise<unknown> {
-  const rows = await tx.execute<{ ontology: unknown }>(
-    sql`select ontology from stacks where id = ${stackId}`,
-  );
-  return rows[0]?.ontology ?? null;
 }
 
 /** Absorbs the stored proposal into the ontology, returning what it wrote. */
@@ -137,6 +137,11 @@ export async function approveItem(
     return;
   }
 
+  // Bind the item's own Stack before anything else touches a tenanted table, so
+  // the ontology gate, the absorbed rows and the status flip all run under RLS
+  // for that Stack. Read above, bound here, written only afterwards.
+  await bindTenant(tx, item.stack_id, null);
+
   if (item.status === "rejected") {
     sendApiError(res, apiError(409, "Cannot approve an item that has been rejected"));
     return;
@@ -151,7 +156,7 @@ export async function approveItem(
   // Refuse before writing anything: a partial approval would report a count the
   // human reads as success while an item was silently dropped.
   const proposal = readStoredProposal(item.proposal);
-  const ontology = stackOntology(await readStackOntologyColumn(tx, item.stack_id));
+  const ontology = await loadStackOntology(tx, item.stack_id);
   const refusal = checkProposalAgainstOntology(ontology, proposal);
   if (refusal !== undefined) {
     res.status(refusal.status).json(refusal.body);

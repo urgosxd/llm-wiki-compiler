@@ -42,6 +42,7 @@ import {
   type ExtractedEntity,
   type ExtractedRelationship,
 } from "llmwiki-kg";
+import { defaultOntology } from "llmwiki-kg";
 import type { ExtractionResult, Ontology } from "llmwiki-kg";
 
 import { loadStoredOntology } from "./ontology-store.js";
@@ -151,15 +152,20 @@ export interface KgDimensionOptions {
  * Reading the database to discard the answer would make an override depend on a
  * reachable database it does not actually need.
  *
+ * A Stack with no stored declaration is enforced against the documented default,
+ * not left permissive. `readStackOntology` still returns `undefined` for a null
+ * column — that is the reader's honest answer to "what is stored" — so the
+ * default is applied here, at the boundary that knows a Stack exists.
+ *
  * @param options - Stack binding, optional override, optional loader.
- * @returns The ontology to enforce, or `undefined` for the oracle's behaviour.
+ * @returns The ontology to enforce; never `undefined`.
  * @throws {OntologyError} When the stored declaration is present but invalid.
  */
-async function resolveOntology(options: KgDimensionOptions): Promise<Ontology | undefined> {
+async function resolveOntology(options: KgDimensionOptions): Promise<Ontology> {
   if (options.ontology !== undefined) return options.ontology;
   const load = options.loadOntology ?? loadStoredOntology;
   const stored = await load(options.stackId, options.databaseUrl);
-  return readStackOntology(stored);
+  return readStackOntology(stored) ?? defaultOntology();
 }
 
 /**

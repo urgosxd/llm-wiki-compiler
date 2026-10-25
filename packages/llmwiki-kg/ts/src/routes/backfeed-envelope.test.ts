@@ -44,7 +44,7 @@ describe.skipIf(skipReason !== false)("backfeed envelope and mounting (live data
       function flagBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
         return {
           domain: stackDomain,
-          proposal: { entities: [{ name: "Widget", type: "Thing" }] },
+          proposal: { entities: [{ name: "Widget", type: "PRODUCT" }] },
           ...overrides,
         };
       }
@@ -78,7 +78,7 @@ describe.skipIf(skipReason !== false)("backfeed envelope and mounting (live data
         }
 
         // Explicit null passes: re-reading the stored row keeps the keys present.
-        const reread = await request(app).get(`/aks/v1/backfeed/${String(body["id"])}`);
+        const reread = await request(app).get(`/aks/v1/backfeed/${String(body["id"])}`).query({ domain: stackDomain });
         const rereadBody = asRecord(reread.body);
         for (const key of REQUIRED_NULLABLE_KEYS) {
           expect(Object.hasOwn(rereadBody, key)).toBe(true);
@@ -90,7 +90,7 @@ describe.skipIf(skipReason !== false)("backfeed envelope and mounting (live data
         const app = buildApp();
         const id = await flag(app);
 
-        const flagged = await request(app).get(`/aks/v1/backfeed/${id}`);
+        const flagged = await request(app).get(`/aks/v1/backfeed/${id}`).query({ domain: stackDomain });
         expectOracleTimestamp(asRecord(flagged.body)["created_at"]);
 
         const approved = await request(app)
@@ -98,7 +98,7 @@ describe.skipIf(skipReason !== false)("backfeed envelope and mounting (live data
           .send({ item_id: id });
         expect(approved.status).toBe(200);
 
-        const after = await request(app).get(`/aks/v1/backfeed/${id}`);
+        const after = await request(app).get(`/aks/v1/backfeed/${id}`).query({ domain: stackDomain });
         expectOracleTimestamp(asRecord(after.body)["reviewed_at"]);
       });
 
@@ -130,7 +130,7 @@ describe.skipIf(skipReason !== false)("backfeed envelope and mounting (live data
         expect(response.status).toBe(201);
         const id = String(asRecord(response.body)["id"]);
 
-        await request(app).get(`/aks/v1/backfeed/${id}`).expect(200);
+        await request(app).get(`/aks/v1/backfeed/${id}`).query({ domain: stackDomain }).expect(200);
         await request(app).get("/aks/v1/backfeed/queue").query({ domain: stackDomain }).expect(200);
         await request(app).post("/aks/v1/backfeed/approve").send({ item_id: id }).expect(200);
         await request(app).post("/aks/v1/backfeed/reject").send({ item_id: id }).expect(404);

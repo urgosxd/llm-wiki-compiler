@@ -46,6 +46,7 @@ vi.mock("llmwiki-kg", async () => {
     createClient,
     createDatabase,
     readStackOntology: core.readStackOntology,
+    defaultOntology: core.defaultOntology,
     OntologyError: core.OntologyError,
     kgConfig: { DATABASE_URL: "postgres://invalid/none" },
   };
@@ -64,7 +65,7 @@ const DECLARATION = {
 };
 
 /** A validated ontology, in the shape `readStackOntology` returns. */
-const ONTOLOGY = { ...DECLARATION, parentsOf: new Map() };
+const ONTOLOGY = { ...DECLARATION, parentsOf: new Map(), constraintsOf: new Map() };
 
 const INPUT = { source: "src/a.md", title: "A", body: "body" };
 
@@ -105,10 +106,17 @@ beforeEach(() => {
 });
 
 describe("kg dimension ontology wiring", () => {
-  it("calls extraction with exactly two arguments when the Stack has no declaration", async () => {
+  it("enforces the default ontology when the Stack has no declaration", async () => {
+    // An undeclared Stack used to reach extraction with two arguments and no
+    // constraint at all. It now receives the documented default, which is the
+    // whole point of having one: the vocabulary is never absent, only unenforced.
     await build(async () => undefined).prepare(INPUT);
 
-    expect(extractGraphFromChunks).toHaveBeenCalledWith(expect.anything(), "demo");
+    expect(extractGraphFromChunks).toHaveBeenCalledWith(
+      expect.anything(),
+      "demo",
+      expect.objectContaining({ entityTypes: expect.arrayContaining(["COMPANY"]) }),
+    );
   });
 
   it("passes the Stack's stored declaration as the third argument", async () => {
@@ -148,7 +156,7 @@ describe("kg dimension ontology wiring", () => {
 
   it("prefers an explicitly supplied ontology over the stored one", async () => {
     const loadOntology = vi.fn(async () => undefined);
-    const explicit = { ...DECLARATION, parentsOf: new Map() };
+    const explicit = { ...DECLARATION, parentsOf: new Map(), constraintsOf: new Map() };
 
     await createKgDimension({
       stackId: "s",

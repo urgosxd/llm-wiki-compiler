@@ -146,6 +146,42 @@ touches both the emitted value and its schema default.
 
 ---
 
+## 2b. DIVERGENCE: the tool schema asks for `entities`, which the oracle never did
+
+**Deliberate, and registered here because it changes model output.**
+
+`KG_TOOL` used to be byte-identical to the schema
+`SchemaLLMPathExtractor` generates: one `triplets` array, nothing else. It now
+also carries an `entities` array of `{type, name}`.
+
+### Why the parity was broken on purpose
+
+The oracle can only produce an entity that is an endpoint of a triplet. Measured
+consequence: a document that says *"we decided to use Postgres"* contributed **no
+rows at all**, because `DECISION` has no edge to hang on. Entities exist only via
+`absorbEndpoint`, which is called from the triplet loop.
+
+Types like `DECISION`, `REQUIREMENT` and `TEAM` — most of what this compiler is
+fed — almost always appear without a stated relationship. Keeping parity meant
+keeping them unrepresentable.
+
+### What stays compatible
+
+- `triplets` is still the only **required** property, so a model that ignores
+  `entities` returns a valid payload and behaves exactly as before.
+- Standalone entities are enforced against the same ontology allowlist, so the
+  addition cannot smuggle an undeclared type into the graph.
+- The prompt text is untouched; only the tool schema changed.
+
+### What this costs
+
+The parity gate is now a real divergence rather than a guarantee. Two suites that
+described byte-identity (`ontology-prompt.test.ts`,
+`ontology-prompt-wiring.test.ts`) now pin the *new* shape, and the one assertion
+that said "offers only triplets" was rewritten to say the opposite. Any future
+consumer comparing this schema to the Python one will find a difference, and this
+section is why.
+
 ## 3. UNVERIFIED MUSTs that touch code in this package
 
 Not claimed as broken — claimed as **unverified**, which is different and is the

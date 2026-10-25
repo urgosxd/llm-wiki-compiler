@@ -47,7 +47,7 @@ describe.skipIf(skipReason !== false)("backfeed item (live database)", () => {
       function flagBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
         return {
           domain: stackDomain,
-          proposal: { entities: [{ name: "Widget", type: "Thing" }] },
+          proposal: { entities: [{ name: "Widget", type: "PRODUCT" }] },
           ...overrides,
         };
       }
@@ -70,7 +70,7 @@ describe.skipIf(skipReason !== false)("backfeed item (live database)", () => {
         const app = buildApp();
         const id = await flag(app);
 
-        const response = await request(app).get(`/aks/v1/backfeed/${id}`);
+        const response = await request(app).get(`/aks/v1/backfeed/${id}`).query({ domain: stackDomain });
 
         expect(response.status).toBe(200);
         const body = asRecord(response.body);
@@ -87,7 +87,7 @@ describe.skipIf(skipReason !== false)("backfeed item (live database)", () => {
       it("GET /:item_id answers 404 for an unknown id", async () => {
         const app = buildApp();
 
-        const response = await request(app).get(`/aks/v1/backfeed/${ABSENT_UUID}`);
+        const response = await request(app).get(`/aks/v1/backfeed/${ABSENT_UUID}`).query({ domain: stackDomain });
 
         expect(response.status).toBe(404);
         expect(response.body).toEqual({
@@ -114,12 +114,56 @@ describe.skipIf(skipReason !== false)("backfeed item (live database)", () => {
         });
       });
 
+      it("GET /:item_id answers 404 for an item belonging to another Stack", async () => {
+        // The reason this route requires a Stack at all. The lookup used to be
+        // `where id = $1`, so any caller holding an item UUID could read another
+        // tenant's proposal. RLS does not cover it in this deployment: the app role
+        // is a superuser with `bypassrls` and owns the table, and nothing in the
+        // backfeed path sets `app.stack_id`.
+        const app = buildApp();
+        const id = await flag(app);
+        const ownDomain = stackDomain;
+
+        // A second Stack, and the same id read against it.
+        await createStack("other");
+
+        const response = await request(app)
+          .get(`/aks/v1/backfeed/${id}`)
+          .query({ domain: stackDomain });
+
+        expect(response.status).toBe(404);
+
+        // And the owner can still read it, so the refusal is scoping and not a
+        // broken lookup.
+        const owned = await request(app)
+          .get(`/aks/v1/backfeed/${id}`)
+          .query({ domain: ownDomain });
+        expect(owned.status).toBe(200);
+      });
+
+      it("GET /:item_id answers 422 when no Stack is supplied", async () => {
+        // No alias keeps the unscoped path alive: an unscoped read is the defect.
+        const app = buildApp();
+        const id = await flag(app);
+
+        const response = await request(app).get(`/aks/v1/backfeed/${id}`);
+
+        expect(response.status).toBe(422);
+        expect(asRecord(response.body)["detail"]).toBe(
+          "Either stack_id (UUID) or domain (slug) must be provided",
+        );
+      });
+
       it("GET /:item_id normalizes an uppercase UUID in the 404 detail", async () => {
         const app = buildApp();
+        // A Stack is required and resolved BEFORE the lookup, so the route answers
+        // the Stack error rather than a validation one. The point of this test is
+        // the UUID normalisation in the 404 detail, which needs a real Stack.
+        await createStack("uuidcase");
 
-        const response = await request(app).get(
-          "/aks/v1/backfeed/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-        );
+        const response = await request(app)
+          .get("/aks/v1/backfeed/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")
+          .query({ domain: stackDomain });
 
         expect(response.status).toBe(404);
         expect(response.body).toEqual({

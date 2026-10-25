@@ -85,6 +85,27 @@ const EnvSchema = z.object({
   ANTHROPIC_API_KEY: z.string().default(""),
   GATEWAY_URL: z.string().default("").transform((value) => value.trim()),
   GATEWAY_API_KEY: z.string().default(""),
+
+  /**
+   * Whether to send `strict: true` in the tool definition.
+   *
+   * Defaults on for `openai`, where structured outputs are guaranteed, and off
+   * everywhere else because the flag is an OpenAI extension: a gateway that does
+   * not implement it may reject the whole request.
+   *
+   * Set this to `true` when the gateway is a provider that *does* support the
+   * flag — an OpenAI-compatible endpoint that implements structured outputs. This
+   * exists because "OpenAI-compatible" covers a wide range: some gateways proxy
+   * OpenAI faithfully and honour `strict`, others accept the field and ignore it,
+   * and a few reject unknown fields. Only the operator knows which one they run.
+   *
+   * `auto` keeps the provider default; `true`/`false` force it. An explicit
+   * `false` on `openai` is a deliberate downgrade to advisory typing.
+   */
+  EXTRACTION_STRICT_SCHEMA: z
+    .enum(["auto", "true", "false", "TRUE", "FALSE", "AUTO"])
+    .default("auto")
+    .transform((value) => value.toLowerCase() as "auto" | "true" | "false"),
 });
 
 /** Parsed env, plus the derived `auth_enabled` property from config.py. */

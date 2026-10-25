@@ -68,6 +68,40 @@ describe("an ontology changes only the type lists", () => {
     expect(description).not.toContain("USED_BY");
   });
 
+  it("constrains the type field with a real enum, not only a description", () => {
+    // The difference between guiding the model and cleaning up after it. With
+    // `strict=False` llama_index renders the allowed types into the *description*
+    // and leaves the field a bare `string`; with `strict=True` — the library's own
+    // default — `possible_entities` becomes the field's type and Pydantic emits an
+    // `enum`. A provider that honours the schema then cannot return a type outside
+    // the list.
+    const schema = buildToolSchema(ONTOLOGY);
+
+    expect(schema.parameters.$defs.Entity.properties.type.enum).toEqual([
+      "COMPANY",
+      "PERSON",
+    ]);
+    expect(schema.parameters.$defs.Relation.properties.type.enum).toEqual([
+      "SUPPLIES",
+      "EMPLOYS",
+    ]);
+  });
+
+  it("keeps the description beside the enum, because the sentence is the 'why'", () => {
+    const type = buildToolSchema(ONTOLOGY).parameters.$defs.Entity.properties.type;
+
+    expect(type.type).toBe("string");
+    expect(type.description).toContain("typing.Literal['COMPANY', 'PERSON']");
+  });
+
+  it("leaves the default schema free of an enum, as the oracle had it", () => {
+    // `strict=False` is what the default schema embodies, and it must stay that
+    // way: the parity tests and the Python-parity harness observe this object.
+    const type = buildToolSchema().parameters.$defs.Entity.properties.type;
+
+    expect(type).not.toHaveProperty("enum");
+  });
+
   it("keeps the extraction prompt independent of the ontology", () => {
     expect(buildExtractionPrompt("body", 0, "demo", ONTOLOGY)).toBe(
       buildExtractionPrompt("body", 0, "demo"),

@@ -90,6 +90,23 @@ const GLOBEX_INITECH = {
   object: { type: "COMPANY", name: "Initech" },
 };
 
+/**
+ * Out of the DEFAULT vocabulary: no entity type `ALIEN_CONSTRUCT` exists anywhere,
+ * so this pair is rejected even with no declaration.
+ */
+const OUT_OF_DEFAULT = {
+  subject: { type: "ALIEN_CONSTRUCT", name: "Vex" },
+  relation: { type: "EMPLOYS" },
+  object: { type: "PERSON", name: "Nobody" },
+};
+
+/** The same acquisition as {@link GLOBEX_INITECH}, spelled as a present-tense verb phrase. */
+const GLOBEX_INITECH_ACQUIRES = {
+  subject: { type: "COMPANY", name: "Globex" },
+  relation: { type: "ACQUIRES" },
+  object: { type: "COMPANY", name: "Initech" },
+};
+
 /** Build one app over all three routers, sharing a transaction wrapper. */
 function buildApp(): Express {
   const wrap = createRequestTransactionWrapper(database());
@@ -174,11 +191,15 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     const ingested = await ingest(stackId, [ACME_ADA, ACME_GRACE, GLOBEX_INITECH]);
     expect(ingested.status).toBe(200);
 
-    // Globex/Initech were dropped with their triplet, so neither reaches AKS.
+    // Globex and Initech keep their nodes even though `ACQUIRED` was rejected:
+    // their types are declared, so only the edge is refused. Their absence used to
+    // be asserted here, which documented the cost rather than a requirement.
     expect(await queriedEntities()).toEqual([
       { name: "Acme", type: "COMPANY" },
       { name: "Ada Lovelace", type: "PERSON" },
+      { name: "Globex", type: "COMPANY" },
       { name: "Grace Hopper", type: "PERSON" },
+      { name: "Initech", type: "COMPANY" },
     ]);
   });
 
@@ -230,33 +251,53 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     expect(single.body).toMatchObject({ name: "Acme", type: "COMPANY" });
   });
 
-  it("stores everything when the Stack declares no ontology", async () => {
-    // The control: without a declaration the same document yields all four
-    // entities, including the ones the declaration above rejected.
-    stackDomain = domain("plain");
-    const created = await request(app)
-      .post("/stacks")
-      .send({ name: "Plain Stack", domain: stackDomain })
-      .expect(201);
-    await ingest(String(created.body.id), [ACME_ADA, GLOBEX_INITECH]).then((r) =>
+  it("enforces the default when the Stack declares no ontology", async () => {
+    // The control. This used to store everything the model emitted, because no
+    // declaration meant no constraint. An undeclared Stack is now enforced
+    // against `default_ontology.ts`, so the same document yields the in-vocabulary
+    // entities and the out-of-vocabulary pair does not enter the graph.
+    //
+    // `ACQUIRED` is deliberately IN the default and `ALIEN_CONSTRUCT` is not, so
+    // this control cannot pass merely because the gate went back to being total.
+    const stackId = await createStack(undefined);
+    await ingest(stackId, [ACME_ADA, OUT_OF_DEFAULT]).then((r) =>
       expect(r.status).toBe(200),
     );
 
     const names = (await queriedEntities()).map((entity) => entity.name).sort();
-    expect(names).toEqual(["Acme", "Globex", "Initech", "Ada Lovelace"].sort());
+    expect(names).toEqual(["Acme", "Ada Lovelace"].sort());
   });
 
-  it("counts only the admitted knowledge in the Stack totals", async () => {
+  it("admits a relationship the default declares even when unconfigured", async () => {
+    // The positive half. `ACQUIRES` is absent from llama_index's DEFAULT_RELATIONS,
+    // so a default built from that list would drop this edge; it is in ours.
+    // The verb phrase is `ACQUIRES`, not the fixture's past-tense `ACQUIRED` — the
+    // distinction that made this test fail the first time it ran.
+    const stackId = await createStack(undefined);
+    await ingest(stackId, [GLOBEX_INITECH_ACQUIRES]).then((r) =>
+      expect(r.status).toBe(200),
+    );
+
+    const names = (await queriedEntities()).map((entity) => entity.name).sort();
+    expect(names).toEqual(["Globex", "Initech"].sort());
+  });
+
+  it("counts the rescued nodes but not the rejected edge", async () => {
     // `entities_in_stack` is what a caller reads to decide whether a document
-    // contributed. It must count what survived enforcement, not what the model
-    // produced — otherwise a rejected document looks productive.
+    // contributed. It must count what actually became a row — which now includes
+    // the endpoints of a relationship-only rejection, because those DO become
+    // rows. The edge is the only thing the declaration refuses, so
+    // `relationships_in_stack` stays at 2 while the entity count grows from 3 to
+    // 5: Globex and Initech exist, and nothing joins them.
     const stackId = await createStack(DECLARATION);
 
     const response = await ingest(stackId, [ACME_ADA, ACME_GRACE, GLOBEX_INITECH]);
 
     expect(response.body).toMatchObject({
-      entities_extracted: 3,
-      entities_in_stack: 3,
+      entities_extracted: 5,
+      entities_in_stack: 5,
+      // Both relationship counters stay at 2: they count admitted edges, and the
+      // rejected one never became an edge. Only the entity counters move.
       relationships_extracted: 2,
       relationships_in_stack: 2,
     });
@@ -269,8 +310,10 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
+    // The by-id document read is Stack-scoped since main's `e3e3c0c`, so the path
+    // carries the Stack. The bare `/documents/:id` form answers 404 by design.
     const stored = await request(app)
-      .get(`/documents/${documentId}`)
+      .get(`/stacks/${stackId}/documents/${documentId}`)
       .expect(200);
 
     expect(stored.body.audit).toMatchObject({
@@ -298,13 +341,19 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     expect(before).toHaveLength(2);
   });
 
-  it("writes no graph rows at all when every triplet is rejected", async () => {
+  it("writes nodes but no edges when every triplet fails on its relationship", async () => {
+    // The case that isolates the change. Every triplet here is rejected, so no
+    // edge exists — but both entity types are declared, so the nodes are real and
+    // are kept. Before this, the document contributed nothing at all.
     const stackId = await createStack(DECLARATION);
 
     const response = await ingest(stackId, [GLOBEX_INITECH]);
 
     expect(response.status).toBe(200);
-    expect(await queriedEntities()).toEqual([]);
-    expect(response.body).toMatchObject({ entities_extracted: 0, relationships_in_stack: 0 });
+    expect(await queriedEntities()).toEqual([
+      { name: "Globex", type: "COMPANY" },
+      { name: "Initech", type: "COMPANY" },
+    ]);
+    expect(response.body).toMatchObject({ entities_extracted: 2, relationships_in_stack: 0 });
   });
 });

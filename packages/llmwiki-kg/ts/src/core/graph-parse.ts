@@ -32,6 +32,20 @@ export interface Triplet {
   readonly objectType: string;
 }
 
+/**
+ * One entity the model reported outside any triplet.
+ *
+ * Before `entities` existed in the tool schema, every node in the graph was a
+ * triplet endpoint, so this shape had no reason to exist. It does now: a
+ * `DECISION`, a `REQUIREMENT`, or a `TEAM` usually appears in a document without
+ * participating in a stated relationship, and without this those documents
+ * contribute nothing to the graph.
+ */
+export interface StandaloneEntity {
+  readonly name: string;
+  readonly type: string;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return undefined;
@@ -122,6 +136,39 @@ export function parseTriplets(argumentsJson: string): Triplet[] {
       objectName,
       objectType: normalizeEntityType(object.type),
     });
+  }
+  return out;
+}
+
+/**
+ * Parses the `entities` array from a tool payload.
+ *
+ * Kept separate from {@link parseTriplets} so the triplet contract — which is the
+ * oracle's and is pinned by parity tests — stays untouched. An entity that is
+ * missing `type` or `name`, or whose name is blank, is dropped rather than fatal,
+ * for the same reason a malformed triplet is: one bad entry must not discard the
+ * rest of a chunk's output.
+ *
+ * Names are trimmed but NOT lowercased here: consolidation owns case-insensitive
+ * identity, and doing it in two places would let them disagree.
+ *
+ * @param argumentsJson - The model's tool-call argument string.
+ * @returns The standalone entities; an empty array when the payload has none.
+ */
+export function parseStandaloneEntities(argumentsJson: string): StandaloneEntity[] {
+  const payload = parseJsonLoosely(argumentsJson);
+  const entities = asRecord(payload)?.["entities"];
+  if (!Array.isArray(entities)) {
+    return [];
+  }
+
+  const out: StandaloneEntity[] = [];
+  for (const raw of entities) {
+    const entity = readEntity(raw);
+    if (entity === undefined) continue;
+    const name = entity.name.trim();
+    if (name === "") continue;
+    out.push({ name, type: normalizeEntityType(entity.type) });
   }
   return out;
 }

@@ -44,6 +44,20 @@ export interface StoredOntology {
   readonly entityTypes: readonly string[];
   readonly relationshipTypes: readonly string[];
   readonly subtypes: readonly { readonly child: string; readonly parent: string }[];
+  /**
+   * Pair constraints, or an empty list when none were declared.
+   *
+   * Always present so a caller reading the column does not have to distinguish
+   * "no constraints" from "this field was written before constraints existed".
+   * `validateOntology` treats a missing `relationships` key the same as an empty
+   * one, so old rows still load — the explicit list only makes the stored shape
+   * uniform for new writes.
+   */
+  readonly relationships: readonly {
+    readonly type: string;
+    readonly domains: readonly string[];
+    readonly ranges: readonly string[];
+  }[];
 }
 
 /**
@@ -79,5 +93,10 @@ export function toStoredOntology(declaration: unknown): StoredOntology {
     entityTypes: ontology.entityTypes,
     relationshipTypes: ontology.relationshipTypes,
     subtypes: ontology.subtypes,
+    relationships: [...ontology.constraintsOf.values()].map((constraint) => ({
+      type: constraint.type,
+      domains: constraint.domains,
+      ranges: constraint.ranges,
+    })),
   };
 }

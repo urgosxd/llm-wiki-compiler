@@ -42,6 +42,7 @@ vi.mock("llmwiki-kg", async () => {
     })),
     kgConfig: { DATABASE_URL: "postgres://invalid/none" },
     readStackOntology: core.readStackOntology,
+    defaultOntology: core.defaultOntology,
   };
 });
 
@@ -125,7 +126,7 @@ describe("kg dimension with a declared ontology", () => {
 });
 
 describe("kg dimension without an ontology", () => {
-  it("calls extraction with no ontology, preserving oracle behaviour", async () => {
+  it("calls extraction with the default ontology when the Stack declares none", async () => {
     chunkAndEmbed.mockResolvedValue([CHUNK]);
     extractGraphFromChunks.mockResolvedValue({
       entities: [{ name: "Thing", type: "ANYTHING" }],
@@ -141,9 +142,13 @@ describe("kg dimension without an ontology", () => {
       loadOntology: async () => undefined,
     }).prepare(INPUT);
 
-    // Exactly two arguments: a run with no ontology must not widen the call at
-    // all, so nothing downstream sees a trailing `undefined` where the oracle
-    // passed nothing.
-    expect(extractGraphFromChunks).toHaveBeenCalledWith([CHUNK], "demo");
+    // Exactly three arguments, the third being the default ontology. This used to
+    // assert a two-argument call, which is the behaviour that made an undeclared
+    // Stack's `type` column a free-text field.
+    expect(extractGraphFromChunks).toHaveBeenCalledWith(
+      [CHUNK],
+      "demo",
+      expect.objectContaining({ entityTypes: expect.arrayContaining(["COMPANY"]) }),
+    );
   });
 });
