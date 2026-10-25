@@ -149,6 +149,8 @@ export async function resolveStack(
     };
   }
 
+  await bootstrapTenant(tx, stackId, hasDomain ? domain : null);
+
   const rows =
     stackId !== null
       ? await tx.execute<StackRow>(sql`
@@ -171,4 +173,59 @@ export async function resolveStack(
   await bindTenant(tx, stack.id, domain);
 
   return { ok: true, stack };
+}
+
+/**
+ * Set the tenant GUC from the caller's own identifier, before the lookup reads.
+ *
+ * ## Why this is needed at all
+ *
+ * `stacks` has a tenant policy, and the policy accepts an id OR a domain:
+ *
+ * ```sql
+ * (id = current_setting('app.stack_id')::uuid)
+ *   OR (domain = current_setting('app.stack_domain'))
+ * ```
+ *
+ * The lookup below reads `stacks` BEFORE the row is known, so it ran with no GUC
+ * set at all. That was invisible while the connection was `aks` -- a superuser that
+ * owns the tables bypasses their own policies -- and it becomes a hard failure the
+ * moment the connection is `llmwiki_app`: an unbound policy matches nothing, so
+ * every `resolveStack` would answer 404 for a Stack that exists. Measured against
+ * the live database: `set role llmwiki_app; select ... from stacks where id = <a
+ * real id>` returns zero rows.
+ *
+ * The chicken-and-egg is only apparent. The caller already told us which Stack it
+ * means -- that is what `stackId` and `domain` ARE -- so the identifier we would
+ * read back is the identifier we were handed. Setting it first lets the policy
+ * match the row it is about to be asked for, without granting any role elevated
+ * read access and without a `security definer` function.
+ *
+ * ## What this does NOT weaken
+ *
+ * A caller cannot use this to read another tenant: the GUC is set to the value the
+ * caller supplied, so the policy matches exactly that Stack and nothing else. An
+ * unknown id matches no row and yields the same 404 as before. The binding is
+ * still overwritten by {@link bindTenant} with the resolved values afterwards, so
+ * the rest of the transaction runs on what the database confirmed rather than on
+ * what the caller claimed.
+ *
+ * @param tx - Transaction that will carry the lookup.
+ * @param stackId - Caller-supplied Stack UUID, or null.
+ * @param domain - Caller-supplied domain slug, or null.
+ */
+async function bootstrapTenant(
+  tx: Database,
+  stackId: string | null,
+  domain: string | null,
+): Promise<void> {
+  // Both are the caller's own values, never derived from another row. Setting the
+  // id lets the policy match by id; setting the domain covers the domain-only
+  // path, where no id exists yet.
+  if (stackId !== null) {
+    await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+  }
+  if (domain !== null && domain !== "") {
+    await tx.execute(sql`select set_config('app.stack_domain', ${domain}, true)`);
+  }
 }
