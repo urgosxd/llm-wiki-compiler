@@ -824,6 +824,56 @@ like *"Globex/Initech were dropped with their triplet, so neither reaches AKS"*.
 They now assert the opposite. A test that documents a cost will happily defend it
 forever; only reading the comment shows it was never the intent.
 
+## Follow-up 11: the two unscoped backfeed reads
+
+Two routes queried `backfeed_queue` by id alone. The decision for each differs,
+because one is a spec endpoint and the other is not.
+
+### `GET /aks/v1/backfeed/:item_id` — now requires a Stack
+
+Not an AKS spec endpoint (only `flag`, `approve` and `queue` are), so extending it
+breaks no parity. `stack_id` and `domain` come from the query string, exactly as
+the sibling `GET /queue` already reads them, and the lookup became
+`where id = $1 and stack_id = $2`.
+
+No alias keeps the unscoped path reachable: an unscoped read is the defect.
+
+A missing Stack answers the same 422 `resolveStack` produces, and an item in
+another tenant answers the **same 404** as a nonexistent one, so the endpoint
+never confirms that an id exists in someone else's Stack.
+
+### `POST /aks/v1/backfeed/approve` — read by id, then binds
+
+This IS a spec endpoint whose body is `{item_id, reviewed_by, review_note}`: there
+is no Stack to filter on, so scoping the read would be a contract change the spec
+forbids. The read stays by id, and the resolved `stack_id` is bound as the tenant
+immediately afterwards, before any write — so the ontology gate, the absorbed rows
+and the status flip all run under RLS for that Stack.
+
+### The premise this corrected
+
+The instruction offered "the tenant binding alone already isolates, so the explicit
+filter is defence in depth". **Measured, that is false for this deployment:**
+nothing in the backfeed path sets `app.stack_id` — `resolveStack` in
+`routes/backfeed/stack.ts` does not call `bindTenant`; only
+`core/stack_resolver.ts` does, and no backfeed route uses it. The application role
+is a superuser with `rolbypassrls = true` **and owns the table**, so the
+`tenant_isolation` policy never runs.
+
+So the filter is the barrier for `GET /:item_id`, and the newly added binding is
+the barrier for `approve`. Neither is defence in depth yet.
+
+### Falsifiability
+
+Removing `and stack_id = ...` from the `GET /:item_id` lookup turns the
+cross-tenant 404 test red while every other test in the file stays green.
+
+### Fallout
+
+Eight `GET /:item_id` call sites across three files gained `.query({ domain })`.
+One test also needed a Stack created, because the Stack is resolved before the
+lookup and the route now answers the Stack error rather than a validation one.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,

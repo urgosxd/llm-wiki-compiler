@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import type { Request, Response } from "express";
 
 import { consolidateBackfeedProposal } from "../../core/consolidation.js";
+import { bindTenant } from "../../core/stack_resolver.js";
 import type { Database } from "../../db.js";
 import { BackfeedApprovalRequest, BackfeedApprovalResult } from "../../dto.js";
 import type { BackfeedApprovalResultDto } from "../../dto.js";
@@ -37,7 +38,27 @@ function approvalResult(
   };
 }
 
-/** The item being approved, or `undefined` when no row has that id. */
+/**
+ * The item being approved, or `undefined` when no row has that id.
+ *
+ * ## Why the READ stays unscoped, and what actually protects it
+ *
+ * `POST /backfeed/approve` is an AKS spec endpoint whose body is
+ * `{item_id, reviewed_by, review_note}` — there is no Stack to filter on, so
+ * scoping this read would be a contract change the spec does not allow. The
+ * request carries the item's own id, which a caller only obtains from their own
+ * Stack: `flag` answers 201 with it and `GET /queue` is already Stack-scoped.
+ *
+ * The read is therefore by id, and the isolation happens immediately after: the
+ * resolved `stack_id` is bound as the tenant for the rest of the transaction, so
+ * every write the approval performs runs under RLS for that Stack. Nothing is
+ * written before the binding.
+ *
+ * This is the one place where the binding is the barrier rather than defence in
+ * depth, which is why it is stated here instead of assumed. `GET /:item_id` was
+ * different — that route is not in the spec, so it now requires a Stack in the
+ * query string.
+ */
 async function readApprovalItem(
   tx: Database,
   itemId: string,
@@ -115,6 +136,11 @@ export async function approveItem(
     sendApiError(res, apiError(404, `Backfeed item ${payload.item_id} not found`));
     return;
   }
+
+  // Bind the item's own Stack before anything else touches a tenanted table, so
+  // the ontology gate, the absorbed rows and the status flip all run under RLS
+  // for that Stack. Read above, bound here, written only afterwards.
+  await bindTenant(tx, item.stack_id, null);
 
   if (item.status === "rejected") {
     sendApiError(res, apiError(409, "Cannot approve an item that has been rejected"));

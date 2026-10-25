@@ -97,7 +97,7 @@ describe.skipIf(skipReason !== false)("backfeed approve (live database)", () => 
           status: "approved",
         });
 
-        const stored = await request(app).get(`/aks/v1/backfeed/${id}`);
+        const stored = await request(app).get(`/aks/v1/backfeed/${id}`).query({ domain: stackDomain });
         expect(asRecord(stored.body)).toMatchObject({
           status: "approved",
           reviewed_by: "alice",
@@ -212,7 +212,7 @@ describe.skipIf(skipReason !== false)("backfeed approve (live database)", () => 
           .send({ item_id: id })
           .expect(200);
 
-        const stored = await request(app).get(`/aks/v1/backfeed/${id}`);
+        const stored = await request(app).get(`/aks/v1/backfeed/${id}`).query({ domain: stackDomain });
         expect(asRecord(stored.body)).toMatchObject({
           reviewed_by: null,
           review_note: null,

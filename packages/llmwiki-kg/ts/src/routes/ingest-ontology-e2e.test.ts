@@ -310,8 +310,10 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
+    // The by-id document read is Stack-scoped since main's `e3e3c0c`, so the path
+    // carries the Stack. The bare `/documents/:id` form answers 404 by design.
     const stored = await request(app)
-      .get(`/documents/${documentId}`)
+      .get(`/stacks/${stackId}/documents/${documentId}`)
       .expect(200);
 
     expect(stored.body.audit).toMatchObject({
