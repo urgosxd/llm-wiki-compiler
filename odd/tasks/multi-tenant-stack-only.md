@@ -552,3 +552,44 @@ was ambiguous and the lookup would have had no correct answer.
 basename-collision disambiguation (#36) was dropped, so `alpha` and `Alpha!` both
 became `alpha.md` in one Stack. Latent while the table is empty; a silent ambiguity
 in every citation once populated. Restored in `b412d1d`, proven red-then-green.
+
+### W2 deployment: what a fresh database actually needs
+
+Measured on a real fresh database, not inferred from the files:
+
+| Step | Fresh DB before | Fresh DB after |
+|---|---|---|
+| `wiki` schema tables | 0 | 18 |
+| RLS policies | **0** | 16 |
+| Tenant tables enforcing RLS | 0 | 16 |
+
+The container's init script is ONE file (`packages/llmwiki-kg/db/schema.sql`). It
+creates the knowledge-graph tables and nothing else, so a database built from it
+alone has no wiki schema, no tenant policies, and no ingress tables. Every part
+existed as a separate file with no runner tying them together, which is why the
+dev database drifted upward by hand and nothing reported it.
+
+`scripts/apply-schemas.sh` is that runner. Idempotent, ordered, and with a
+`--check` mode that reports per-table drift and exits non-zero:
+
+```
+PSQL="docker exec -i llmwiki-kg-db-1 psql -U aks -d <db>" ./scripts/apply-schemas.sh
+PSQL="..." CHECK_ONLY=true ./scripts/apply-schemas.sh   # verify only
+```
+
+Verified both ways: a virgin database ends with policies IDENTICAL to the live one
+(16/16), and `--check` on an incomplete database names each missing table and exits 1.
+
+#### The role, which is deliberately NOLOGIN
+
+`llmwiki_app` exists with `rolcanlogin=f`, no password, `rolsuper=f`,
+`rolbypassrls=f`. `migration_rls_tenancy.sql:53` says so on purpose: the operator
+sets the password, the repo never holds one.
+
+To activate:
+
+1. Set the password out of band: `alter role llmwiki_app with login password '...'`
+2. Point `DATABASE_URL` at that role.
+3. Verify RLS is no longer inert: `aks` is `rolsuper=t` AND the table owner, so it
+   bypasses every policy. Confirmed working under `set local role llmwiki_app` in
+   `e3e3c0c`.
