@@ -20,12 +20,52 @@ import { applyCompilePageWritesLocked } from "./compile-write.js";
 import type { CompilePageNamespace, CompilePageWrite } from "./compile-write.js";
 import * as output from "../utils/output.js";
 
+/**
+ * Where link resolution reads page bodies from.
+ *
+ * Resolution is READ-MODIFY-WRITE inside the compile: it needs each page's current
+ * text to decide whether a title mention should become a wikilink, and it needs the
+ * same text back to rewrite it. When pages are rows that text never touches disk, so
+ * the source supplies BOTH the identity and the bytes -- splitting them would let the
+ * index come from rows while the rewrite read a file.
+ */
+export interface ResolverPageSource {
+  /**
+   * Every concept page with the text needed to rewrite it.
+   *
+   * @returns Each page's slug, title, full markdown (frontmatter included) and body.
+   */
+  listConcepts(): Promise<ResolverPage[]>;
+}
+
+/** One page as resolution sees it. */
+export interface ResolverPage {
+  /** Bare slug stem. */
+  slug: string;
+  /** Frontmatter title, used to find mentions. */
+  title: string;
+  /** Full markdown, frontmatter included -- the text that gets rewritten. */
+  content: string;
+  /** The body within `content`, so a rewrite replaces only the prose. */
+  body: string;
+}
+
 interface PageInfo {
-  /** Project root, carried so per-page reads/writes stay confined to `wiki/concepts`. */
+  /** Project root, carried so per-page writes stay confined to `wiki/concepts`. */
   root: string;
   slug: string;
   title: string;
   filePath: string;
+  /**
+   * The page's markdown as the index saw it.
+   *
+   * Carried rather than re-read: the row-backed source has no file to read back, and
+   * a second read of the disk-backed path could pick up a version the title index
+   * never saw -- rewriting a page against a body that does not match its own title.
+   */
+  content: string;
+  /** The body within `content`. */
+  body: string;
 }
 
 /**
@@ -34,7 +74,11 @@ interface PageInfo {
  * `wiki/concepts` is dropped (warned, skipped) and never enters the title index
  * (so its bytes can never be re-emitted into a rewritten page).
  */
-async function buildTitleIndex(root: string): Promise<PageInfo[]> {
+async function buildTitleIndex(
+  root: string,
+  source?: ResolverPageSource,
+): Promise<PageInfo[]> {
+  if (source !== undefined) return indexFromSource(root, await source.listConcepts());
   const conceptsDir = path.join(root, CONCEPTS_DIR);
   if (!existsSync(conceptsDir)) return [];
 
@@ -47,7 +91,7 @@ async function buildTitleIndex(root: string): Promise<PageInfo[]> {
     const slug = file.replace(/\.md$/, "");
     const content = await readWikiPageContentOrWarn(root, CONCEPTS_DIR, slug);
     if (!content) continue;
-    const { meta } = parseFrontmatter(content);
+    const { meta, body } = parseFrontmatter(content);
 
     if (meta.title && typeof meta.title === "string" && !meta.orphaned) {
       pages.push({
@@ -55,11 +99,37 @@ async function buildTitleIndex(root: string): Promise<PageInfo[]> {
         slug,
         title: meta.title,
         filePath: path.join(conceptsDir, file),
+        content,
+        body,
       });
     }
   }
 
   return pages;
+}
+
+/**
+ * Build the title index from pages a source supplied.
+ *
+ * The file path applies its own eligibility rule (a title is required and an orphaned
+ * page is skipped); this applies the SAME rule to rows, so a page that could not be
+ * linked from disk cannot be linked from the table either.
+ *
+ * @param root - Project root, carried on each entry for the confined write.
+ * @param pages - Pages with their text, as the source reported them.
+ * @returns Entries eligible for wikilink insertion.
+ */
+function indexFromSource(root: string, pages: ResolverPage[]): PageInfo[] {
+  return pages
+    .filter((page) => page.title !== "" && page.title.length > 0)
+    .map((page) => ({
+      root,
+      slug: page.slug,
+      title: page.title,
+      filePath: path.join(root, CONCEPTS_DIR, `${page.slug}.md`),
+      content: page.content,
+      body: page.body,
+    }));
 }
 
 /** Check if a position is inside an existing [[wikilink]]. */
@@ -150,8 +220,9 @@ export async function resolveLinks(
   root: string,
   changedSlugs: string[],
   newSlugs: string[],
+  source?: ResolverPageSource,
 ): Promise<CompilePageWrite[]> {
-  const titleIndex = await buildTitleIndex(root);
+  const titleIndex = await buildTitleIndex(root, source);
   if (titleIndex.length === 0) return [];
 
   // Pass 1 (outbound) on changed pages, then Pass 2 (inbound) on all pages,
@@ -190,8 +261,11 @@ export async function resolveAndApplyLinks(
   root: string,
   changedSlugs: string[],
   newSlugs: string[],
+  source?: ResolverPageSource,
 ): Promise<void> {
-  await applyCompilePageWritesLocked(root, await resolveLinks(root, changedSlugs, newSlugs));
+  await applyCompilePageWritesLocked(
+    root, await resolveLinks(root, changedSlugs, newSlugs, source),
+  );
 }
 
 /** Derive the compile namespace from a page's absolute file path. */
@@ -261,8 +335,9 @@ async function resolveInboundLinks(
 
 /** Compute the wikilink rewrite for a single page, or null when unchanged. */
 async function linkPage(page: PageInfo, titleIndex: PageInfo[]): Promise<CompilePageWrite | null> {
-  const content = await readWikiPageContentOrWarn(page.root, CONCEPTS_DIR, page.slug);
-  if (!content) return null;
-  const { body } = parseFrontmatter(content);
-  return rewritePage(page, content, addWikilinks(body, titleIndex, page.title), body);
+  // From the index, not a fresh read: the row-backed source has no file, and a
+  // second read could disagree with the body the title index was built from.
+  return rewritePage(
+    page, page.content, addWikilinks(page.body, titleIndex, page.title), page.body,
+  );
 }

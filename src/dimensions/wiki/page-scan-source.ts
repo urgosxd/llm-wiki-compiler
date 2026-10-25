@@ -27,6 +27,7 @@
 
 import { listStoredPages } from "./page-store.js";
 import type { Page, PageDirectory } from "../../pages/list.js";
+import type { ResolverPageSource } from "../../compiler/resolver.js";
 
 /** A page as `scanWikiPages` reports it: identity plus parsed frontmatter. */
 export interface ScannedPageShape {
@@ -125,4 +126,57 @@ export function summarizeScanned(scanned: ScannedPageShape[]): PageSummaryShape[
       slug,
       summary: typeof meta.summary === "string" ? meta.summary : "",
     }));
+}
+
+/**
+ * Serve the resolver's read-modify-write view from rows.
+ *
+ * ## Why `content` is rebuilt from columns
+ *
+ * The resolver rewrites a page by replacing its BODY inside its FULL markdown
+ * (`content`), then writes that back. A row stores the body and the metadata as
+ * separate columns, so `content` is reconstructed here -- frontmatter rendered from
+ * those columns, then the body. Rendering it in one place keeps the two from
+ * drifting, and keeps the resolver from having to know a row's shape.
+ *
+ * @param db - Database handle.
+ * @param stackId - Stack whose pages to read.
+ * @returns A source for `resolveLinks`.
+ */
+export function createResolverPageSource(
+  db: PageStoreHandle,
+  stackId: string,
+): ResolverPageSource {
+  return {
+    listConcepts: async () => {
+      const pages = await listStoredPages(db as never, stackId, Number.MAX_SAFE_INTEGER);
+      return pages
+        .filter((page) => page.pageDirectory === "concepts" && !page.orphaned)
+        .map((page) => ({
+          slug: page.slug,
+          title: page.title,
+          content: renderPageMarkdown(page),
+          body: page.body ?? "",
+        }));
+    },
+  };
+}
+
+/**
+ * Render a stored page back to the markdown a resolver expects.
+ *
+ * Only the fields link resolution acts on are emitted. A field the row does not hold
+ * is omitted rather than written as an empty value, because `orphaned: false` and a
+ * missing `orphaned` mean the same thing to the parser but render differently.
+ *
+ * @param page - A page from the row store.
+ * @returns Frontmatter plus the page's body.
+ */
+function renderPageMarkdown(page: Page): string {
+  const lines = [`title: ${JSON.stringify(page.title)}`];
+  if (page.summary !== "") lines.push(`summary: ${JSON.stringify(page.summary)}`);
+  if (page.tags.length > 0) lines.push(`tags:\n${page.tags.map((t) => `  - ${t}`).join("\n")}`);
+  if (page.orphaned) lines.push("orphaned: true");
+  if (page.archived) lines.push("archived: true");
+  return `---\n${lines.join("\n")}\n---\n\n${page.body ?? ""}`;
 }

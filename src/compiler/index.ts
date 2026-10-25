@@ -111,6 +111,8 @@ import {
 import type { ChangeDetectionSource, SourceContentSource } from "./hasher.js";
 import type { PageSink } from "../trust/page-apply.js";
 import { createPageWriteSink } from "../dimensions/wiki/page-write-sink.js";
+import { createResolverPageSource } from "../dimensions/wiki/page-scan-source.js";
+import type { ResolverPageSource } from "./resolver.js";
 import { timeStage } from "../utils/stage-timing.js";
 
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
@@ -454,12 +456,14 @@ async function seedThenFinalize(
   options: CompileOptions,
   draft: CompileStateDraft | null,
   embeddingStore?: EmbeddingStoreLocation,
+  resolverSource?: ResolverPageSource,
 ): Promise<void> {
   await maybeSeedPages(root, schema, generation, options);
   await finalizeWiki(root, draft, generation.writtenPages, generation.seedSlugs, {
     scoped: options.changeFilter !== undefined,
     embeddings: options.embeddings !== false,
     embeddingStore,
+    resolverSource,
   });
 }
 
@@ -516,6 +520,7 @@ async function runCompilePipeline(
         options,
         hasOwnerlessFrozen ? draft : null,
         embeddingStoreLocation(db),
+        resolverSourceReading(db, process.env),
       ));
       return {
         ...emptyCompileResult(),
@@ -597,6 +602,7 @@ async function runCompilePipeline(
     // commits.
     await timeStage("compile.finalize", () => seedThenFinalize(
       root, schema, generation, options, draft, embeddingStoreLocation(db),
+      resolverSourceReading(db, process.env),
     ));
     await logCompile(root, buckets, generation, existingIds);
   }
@@ -752,6 +758,14 @@ interface FinalizeFlags {
    */
   embeddings?: boolean;
   /**
+   * Where link resolution reads page text from.
+   *
+   * Carried on the flags because finalize is three levels below the pipeline that
+   * owns the database handle, and threading a second parameter through every level
+   * for one optional seam would obscure the call sites more than this does.
+   */
+  resolverSource?: ResolverPageSource;
+  /**
    * The run recompiled a SUBSET by design (`refresh --stale` supplies a
    * `changeFilter`), so it must not record the prompt-modifier selection as
    * true of the whole project — see the flush below.
@@ -783,7 +797,7 @@ async function finalizeWiki(
   seedSlugs: string[] = [],
   flags: FinalizeFlags = {},
 ): Promise<void> {
-  const { scoped = false, embeddings = true, embeddingStore } = flags;
+  const { scoped = false, embeddings = true, embeddingStore, resolverSource } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
   const conceptNewSlugs = pages
     .filter((entry) => entry.concept.is_new)
@@ -795,7 +809,9 @@ async function finalizeWiki(
     output.status("🔗", output.info("Resolving interlinks..."));
     // Compute + apply the resolution rewrites as ONE journalled batch. compile
     // holds the project lock for its whole pipeline → the lock-free seam.
-    await resolveAndApplyLinks(root, allChangedSlugs, allNewSlugs);
+    await resolveAndApplyLinks(
+      root, allChangedSlugs, allNewSlugs, resolverSource,
+    );
     // Resolution adds links for titles it recognises; repair fixes links the
     // model already wrote against a page whose slug is longer than the name it
     // used. Ordered after resolution so a link resolution has just created is
@@ -913,6 +929,27 @@ function sourcePageSink(
   const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
   if (stackId === "") return undefined;
   return createPageWriteSink(db, stackId);
+}
+
+/**
+ * Where this compile should read page text for LINK RESOLUTION.
+ *
+ * Resolution is read-modify-write over the pages themselves, so it has to agree with
+ * what compile just wrote. Paired with the write sink on the same variable: reading
+ * rows while writing files (or the reverse) would rewrite pages against a body that
+ * does not match the one being published.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The resolver source, or undefined to read `wiki/concepts` from disk.
+ */
+function resolverSourceReading(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): ResolverPageSource | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return createResolverPageSource(db, stackId);
 }
 
 /**
