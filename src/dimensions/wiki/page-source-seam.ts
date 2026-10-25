@@ -17,6 +17,8 @@
  * module-level pool -- would be a resource leak the caller never agreed to.
  */
 
+import { readdir } from "node:fs/promises";
+import path from "node:path";
 import type { PageListingSource } from "../../pages/list.js";
 import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js";
 import { createPageListingSource } from "./page-write-sink.js";
@@ -69,4 +71,27 @@ export async function withPageScan<T>(
   } finally {
     await dimensionsDb.close();
   }
+}
+
+/**
+ * Whether this project has any compiled page at all.
+ *
+ * Replaces the `existsSync(index.md)` test that query used as a proxy. The index is
+ * DERIVED from pages, so its absence never meant "nothing compiled" -- and in a
+ * Stack-backed project there is no file to find even when every page is present.
+ *
+ * @param root - Project root, used by the on-disk scan.
+ * @param env - Environment to read the Stack from.
+ * @returns True when at least one page exists in either backend.
+ */
+export async function hasCompiledPages(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  return withPageScan(env, async (scan) => {
+    if (scan !== undefined) return (await scan.scan("concepts")).length > 0;
+    const conceptsDir = path.join(root, "wiki", "concepts");
+    const entries = await readdir(conceptsDir).catch(() => [] as string[]);
+    return entries.some((entry) => entry.endsWith(".md"));
+  });
 }

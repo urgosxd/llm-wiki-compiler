@@ -111,7 +111,11 @@ import {
 import type { ChangeDetectionSource, SourceContentSource } from "./hasher.js";
 import type { PageSink } from "../trust/page-apply.js";
 import { createPageWriteSink } from "../dimensions/wiki/page-write-sink.js";
-import { createResolverPageSource } from "../dimensions/wiki/page-scan-source.js";
+import {
+  createPageScanSource,
+  createResolverPageSource,
+  type PageScanSource,
+} from "../dimensions/wiki/page-scan-source.js";
 import type { ResolverPageSource } from "./resolver.js";
 import { timeStage } from "../utils/stage-timing.js";
 
@@ -561,6 +565,9 @@ async function runCompilePipeline(
   const extractions = await timeStage("compile.extraction", () => runExtractionPhases(
     root, buckets.toCompile, state, { scoped: changes, detected }, concurrency, reusableSources,
     sourceContentReading(db, process.env),
+    // The extraction prompt asks the model not to duplicate an existing concept,
+    // which needs each page's title -- the scan shape, not the listing.
+    scanSourceReading(db, process.env),
   ));
   if (!options.review) {
     freezeFailedExtractions(draft, extractions, frozenSlugs);
@@ -929,6 +936,26 @@ function sourcePageSink(
   const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
   if (stackId === "") return undefined;
   return createPageWriteSink(db, stackId);
+}
+
+/**
+ * Where this compile should read the page index shown to the extraction prompt.
+ *
+ * `index.md` was a projection of the pages; deriving it from the same rows the
+ * compile already reads keeps the prompt identical while removing the file as a
+ * requirement.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The scan source, or undefined to read `wiki/index.md`.
+ */
+function scanSourceReading(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): PageScanSource | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return createPageScanSource(db, stackId);
 }
 
 /**

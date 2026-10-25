@@ -18,6 +18,10 @@ import {
 } from "./confined-wiki-read.js";
 import { callClaude } from "../utils/llm.js";
 import type { SourceContentSource } from "./hasher.js";
+import type {
+  PageScanSource,
+  ScannedPageShape,
+} from "../dimensions/wiki/page-scan-source.js";
 import {
   CONCEPT_EXTRACTION_TOOL,
   buildExtractionPrompt,
@@ -55,12 +59,13 @@ async function extractSourcesLimited(
   limit: ReturnType<typeof pLimit>,
   reuse: ExtractionReuse,
   contentSource?: SourceContentSource,
+  scanSource?: PageScanSource,
 ): Promise<ExtractionResult[]> {
   let aborted = false;
   return Promise.all(files.map((file) => limit(async () => {
     if (aborted) throw new Error(`extraction skipped for ${file}: a prior source failed`);
     try {
-      return await extractForSource(root, file, reuse, contentSource);
+      return await extractForSource(root, file, reuse, contentSource, scanSource);
     } catch (err) {
       aborted = true;
       throw err;
@@ -101,11 +106,12 @@ export async function runExtractionPhases(
   concurrency: number,
   reusableSources: ReadonlySet<string> = new Set(),
   contentSource?: SourceContentSource,
+  scanSource?: PageScanSource,
 ): Promise<ExtractionResult[]> {
   const limit = pLimit(concurrency);
   const reuse = { state, eligible: reusableSources };
   const extractions = await extractSourcesLimited(
-    root, toCompile.map((c) => c.file), limit, reuse, contentSource,
+    root, toCompile.map((c) => c.file), limit, reuse, contentSource, scanSource,
   );
 
   while (true) {
@@ -117,7 +123,9 @@ export async function runExtractionPhases(
     for (const file of lateAffected) {
       output.status("~", output.info(`${file} [shares concept with new source]`));
     }
-    const batch = await extractSourcesLimited(root, lateAffected, limit, reuse, contentSource);
+    const batch = await extractSourcesLimited(
+      root, lateAffected, limit, reuse, contentSource, scanSource,
+    );
     extractions.push(...batch);
   }
 
@@ -167,6 +175,7 @@ async function extractForSource(
   sourceFile: string,
   reuse: ExtractionReuse,
   contentSource?: SourceContentSource,
+  scanSource?: PageScanSource,
 ): Promise<ExtractionResult> {
   const { sourcePath, sourceContent } = await loadSourceText(root, sourceFile, contentSource);
   const cached = reuse.eligible.has(sourceFile)
@@ -179,7 +188,7 @@ async function extractForSource(
   const lines = sourceContent.split("\n").length;
   const chars = sourceContent.length;
   verbose(`source ${sourceFile}: ${lines} lines, ${chars} chars`);
-  const existingIndex = await readConfinedExtractionIndex(root);
+  const existingIndex = await readConfinedExtractionIndex(root, scanSource);
   const concepts = await extractConcepts(sourceContent, existingIndex);
 
   if (concepts.length > 0) {
@@ -188,6 +197,23 @@ async function extractForSource(
   }
   return { sourceFile, ...sourcePath, sourceContent, concepts,
     previousConcepts: reuse.state.sources[sourceFile]?.concepts ?? [] };
+}
+
+/**
+ * Render the same index text the prompt used to read from `index.md`.
+ *
+ * Only the concepts section: extraction asks the model not to duplicate a concept
+ * that already exists, which depends on titles, not on queries or entity pages.
+ *
+ * @param scanned - Concept pages in the scan shape.
+ * @returns A markdown list, or an empty string when there are no pages.
+ */
+function renderIndexFromScan(scanned: ScannedPageShape[]): string {
+  const rows = scanned
+    .filter(({ meta }) => typeof meta.title === "string" && meta.title !== "" && !meta.orphaned)
+    .map(({ slug, meta }) => `- **[[${slug}|${String(meta.title)}]]**`);
+  if (rows.length === 0) return "";
+  return ["# Knowledge Wiki", "", "## Concepts", "", ...rows].join("\n");
 }
 
 /**
@@ -202,7 +228,15 @@ async function extractForSource(
  * `readWikiPageContentOrWarn(..., warnAlways=false)` policy: absence is normal,
  * so the drop warning fires only when the file physically exists.
  */
-async function readConfinedExtractionIndex(root: string): Promise<string> {
+async function readConfinedExtractionIndex(
+  root: string,
+  scanSource?: PageScanSource,
+): Promise<string> {
+  // Built from rows when they are the corpus: the prompt only needs each page's
+  // title and summary to avoid duplicating a concept, and that is exactly what the
+  // scan shape carries. `index.md` is a projection of this, so deriving it keeps the
+  // prompt identical while removing the file as a requirement.
+  if (scanSource !== undefined) return renderIndexFromScan(await scanSource.scan("concepts"));
   const result = await readConfinedWikiFile(root, INDEX_FILE);
   if ("content" in result) return result.content;
   // An absent index shares the escapes-dir reason; warn only when index.md

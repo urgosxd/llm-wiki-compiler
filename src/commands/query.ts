@@ -23,7 +23,8 @@ import { safeReadFile, parseFrontmatter } from "../utils/markdown.js";
 import { languageDirective } from "../utils/output-language.js";
 import * as output from "../utils/output.js";
 import { verbose } from "../utils/output.js";
-import { INDEX_FILE, CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
+import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
+import { hasCompiledPages } from "../dimensions/wiki/page-source-seam.js";
 import { loadSelectedRefRecords } from "../search/retrieval.js";
 import { slugFromPageId, type PageId } from "../utils/page-id.js";
 import type { PageRecordWithId } from "../utils/page-registry.js";
@@ -166,8 +167,11 @@ export async function generateAnswer(
   // CLI action, `queryCommand`, and the SDK facade's `wiki.query`). This lower-
   // level function is also exported for compatibility, and here `review` alone
   // only selects review-mode grounding; nothing is published unless `save` is set.
-  if (!existsSync(path.join(root, INDEX_FILE))) {
-    throw new Error("Wiki index not found. Run `llmwiki compile` first.");
+  // Ask whether PAGES exist, not whether the derived index file does. The index is
+  // a projection of the pages; requiring it refused a Stack-backed project whose
+  // pages are all present but whose filesystem is empty.
+  if (!(await hasCompiledPages(root))) {
+    throw new Error("No compiled pages found. Run `llmwiki compile` first.");
   }
 
   const scopedOrReview = options.pageScope !== undefined || options.review === true;
@@ -299,8 +303,8 @@ export default async function queryCommand(
   options: { save?: boolean; debug?: boolean; review?: boolean },
 ): Promise<void> {
   assertQuerySaveOptions(options);
-  if (!existsSync(path.join(root, INDEX_FILE))) {
-    output.status("!", output.error("Wiki index not found. Run `llmwiki compile` first."));
+  if (!(await hasCompiledPages(root))) {
+    output.status("!", output.error("No compiled pages found. Run `llmwiki compile` first."));
     return;
   }
 
