@@ -58,32 +58,54 @@ import { validateOntology, type Ontology } from "./ontology.js";
 /**
  * Entity types an unconfigured Stack admits.
  *
- * Chosen to describe business and product knowledge — the documents this
- * compiler is fed are specs, tickets, and architecture notes — while staying
- * close enough to llama_index's list that a Stack migrating from the permissive
- * default loses little: `ORGANIZATION` was in that list, and `COMPANY` is a
- * narrower spelling of it. `MISCELLANEOUS` is deliberately absent: a type that
- * means "anything" reintroduces the free-text column this default exists to
- * remove.
+ * ## Where this list comes from
+ *
+ * `PROCESS`, `ROLE`, `SYSTEM` and `DOCUMENT` are the four types the project's own
+ * roadmap names, in `README.md`:
+ *
+ * > The default extractor uses generic types (PERSON, EVENT, CONCEPT). To get
+ * > domain-specific types (Process, Role, System, Document), pass
+ * > `possible_entities` and `possible_relations` to `SchemaLLMPathExtractor`.
+ *
+ * That sentence is the closest thing this project has to a stated opinion about
+ * vocabulary, so it is the spine of this list rather than something invented
+ * here. `TEAM`, `REQUIREMENT` and `DECISION` are added from the same domain —
+ * documents about how software is specified and built.
+ *
+ * The rest are carried from llama_index's `DEFAULT_ENTITIES` so a Stack migrating
+ * from the permissive default loses little: `ORGANIZATION`, `PRODUCT`,
+ * `TECHNOLOGY`, `CONCEPT`, `EVENT`, `LOCATION`, `TIME`. `MISCELLANEOUS` is
+ * deliberately absent: a type that means "anything" reintroduces the free-text
+ * column this default exists to remove.
  */
 export const DEFAULT_ENTITY_TYPES = [
   "COMPANY",
   "PERSON",
   "ORGANIZATION",
+  "TEAM",
+  "ROLE",
   "PRODUCT",
   "TECHNOLOGY",
+  "SYSTEM",
+  "PROCESS",
+  "DOCUMENT",
+  "REQUIREMENT",
+  "DECISION",
   "CONCEPT",
   "EVENT",
   "LOCATION",
   "TIME",
-  "REQUIREMENT",
-  "DECISION",
-  "PROCESS",
-  "TEAM",
 ] as const;
 
 /**
  * Relationship types an unconfigured Stack admits.
+ *
+ * The roadmap pairs `possible_entities` with `possible_relations`, and a
+ * constrained entity list is only half a schema. Every entry is a verb phrase,
+ * per `SCHEMA.json:582` (*"Typed verb phrase. Domain-defined."*), and the
+ * document-shaped relations (`GOVERNS`, `DOCUMENTS`, `OWNS`) exist because
+ * `ROLE`, `SYSTEM` and `DOCUMENT` are now entity types and need something to
+ * connect them.
  *
  * Every entry is a verb phrase, per `SCHEMA.json:582` (*"Typed verb phrase.
  * Domain-defined."*), and every one of them is a relation the extraction prompt
@@ -98,6 +120,8 @@ export const DEFAULT_ENTITY_TYPES = [
 export const DEFAULT_RELATIONSHIP_TYPES = [
   "EMPLOYS",
   "WORKS_AT",
+  "OWNS",
+  "GOVERNS",
   "PART_OF",
   "HAS",
   "USES",
@@ -110,6 +134,7 @@ export const DEFAULT_RELATIONSHIP_TYPES = [
   "TRIGGERS",
   "SUPPLIES",
   "ACQUIRES",
+  "DOCUMENTS",
   "LOCATED_IN",
   "IS_A",
   "HAS_ALIAS",

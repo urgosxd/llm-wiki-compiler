@@ -73,27 +73,60 @@ export function buildToolSchema(ontology?: Ontology): typeof KG_TOOL {
           ...KG_TOOL.parameters.$defs.Entity,
           properties: {
             ...KG_TOOL.parameters.$defs.Entity.properties,
-            type: {
-              ...KG_TOOL.parameters.$defs.Entity.properties.type,
-              description:
-                "Entity in a knowledge graph. Only extract entities with types that are listed as valid: " +
-                pythonLiteral(ontology.entityTypes),
-            },
+            type: constrainedTypeField(ontology.entityTypes, "entity"),
           },
         },
         Relation: {
           ...KG_TOOL.parameters.$defs.Relation,
           properties: {
-            type: {
-              ...KG_TOOL.parameters.$defs.Relation.properties.type,
-              description:
-                "Relation in a knowledge graph. Only extract relations with types that are listed as valid: " +
-                pythonLiteral(ontology.relationshipTypes),
-            },
+            type: constrainedTypeField(ontology.relationshipTypes, "relation"),
           },
         },
       },
     },
+  };
+}
+
+/**
+ * The `type` field of an entity or relation, restricted by a real JSON Schema
+ * `enum`.
+ *
+ * ## Why `enum` and not only the description
+ *
+ * This is the difference between guiding the model and cleaning up after it. The
+ * oracle's schema put the allowed types in the field's *description* and left the
+ * type as `string`, which llama_index does when `strict=False`:
+ *
+ * ```python
+ * type=(possible_entities if strict else str, ...)
+ * ```
+ *
+ * With `strict=True` — the library's own default — `possible_entities` (a
+ * `Literal[...]`) becomes the field's type and Pydantic renders it as an `enum`. A
+ * provider that honours the schema then cannot emit a type outside the list, and
+ * an out-of-schema value is a validation failure the model has to correct rather
+ * than something this package silently drops afterwards.
+ *
+ * The description is kept as well as the `enum`: an `enum` tells a model which
+ * values are legal, but the sentence is what tells it *why*, and the wording is
+ * llama_index's, so the model sees the same instruction it always did.
+ *
+ * @param allowed - The declared type names, already normalised.
+ * @param kind - Which list this is, for the description sentence.
+ * @returns The field definition, carrying both `description` and `enum`.
+ */
+function constrainedTypeField(
+  allowed: readonly string[],
+  kind: "entity" | "relation",
+): { type: "string"; description: string; enum: readonly string[] } {
+  const noun = kind === "entity" ? "entities" : "relations";
+  return {
+    type: "string",
+    description:
+      `${kind === "entity" ? "Entity" : "Relation"} in a knowledge graph. Only extract ${noun} ` +
+      "with types that are listed as valid: " +
+      pythonLiteral(allowed),
+    enum: allowed,
   };
 }
 

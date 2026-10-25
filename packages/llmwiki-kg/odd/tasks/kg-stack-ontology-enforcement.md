@@ -560,6 +560,69 @@ It does not give the model an explicit slot for standalone entity *properties*;
 still dropped silently rather than reported: it carries no pair information, so
 filtering it is not a rejection the caller needs a record of.
 
+## Follow-up 6: the declared types are an `enum`, not a description
+
+**Reversal of what an earlier section of this document claimed.**
+
+Measured, then corrected against llama_index's source. `get_entity_class` does:
+
+```python
+type=(possible_entities if strict else str, ...)
+```
+
+`SchemaLLMPathExtractor`'s own default is `strict=True`. With it, a
+`Literal[...]` of allowed types becomes the field's *type* and Pydantic renders a
+real `enum`. The oracle ran `strict=False`, so its schema carried the list in the
+field's `description` and left the type a bare `string`.
+
+That distinction is the difference between **guiding** the model and **cleaning
+up after it**:
+
+| | `enum` (strict=True) | description only (strict=False) |
+| --- | --- | --- |
+| model can emit an unlisted type | no; validation fails | yes, freely |
+| what happens to it | retried by the model | silently dropped here |
+
+`buildToolSchema(ontology)` now emits `enum` **and** keeps the description. The
+description is not redundant: the `enum` says which values are legal, the
+sentence says why, and the wording is llama_index's so the model reads what it
+always did.
+
+`buildToolSchema()` with no argument still returns `KG_TOOL` untouched, with no
+`enum`, because `strict=False` is what that object embodies and the parity harness
+observes it.
+
+The post-hoc filter stays. It is the net for providers that ignore the schema —
+nothing forces OpenAI to honour an `enum` without `strict: true` in the request,
+and the request does not send it.
+
+### Vocabulary now follows the project's roadmap
+
+`README.md` names four types: *"domain-specific types (Process, Role, System,
+Document), pass `possible_entities` and `possible_relations`"*. Those are now the
+spine of the default list, replacing types invented here. `ROLE`, `SYSTEM` and
+`DOCUMENT` were missing entirely; `GOVERNS`, `DOCUMENTS` and `OWNS` were added so
+the new entity types have something to connect them.
+
+The roadmap also warns that *"a small number of constrained types usually
+produces a more useful ontology than fully unconstrained extraction"*, which is an
+argument against a 16-type default. That tension is unresolved and recorded in
+the follow-ups rather than silently ignored.
+
+### A false claim removed
+
+The `KG_TOOL` docstring asserted *"The top-level `additionalProperties: false` is
+what LlamaIndex adds"*. Measured: `grep -c additionalProperties` over the schema
+source returns **0**. The object never had it, and `tool-call.ts` forwards
+`parameters` verbatim. In a file whose premise is that the wire shapes are
+measurements rather than guesses, that sentence was the one guess.
+
+### Falsifiability
+
+Removing `enum: allowed` from `constrainedTypeField` turns the `enum` test red
+while every description assertion stays green — which is exactly the failure mode
+this change exists to make impossible to reintroduce silently.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,
