@@ -20,9 +20,14 @@
  */
 
 import type { Database } from "llmwiki-kg";
-import { buildPage, type Page, type PageDirectory } from "../../pages/list.js";
+import {
+  buildPage,
+  type Page,
+  type PageDirectory,
+  type PageListingSource,
+} from "../../pages/list.js";
 import { parseFrontmatter } from "../../utils/markdown.js";
-import { upsertStoredPage } from "./page-store.js";
+import { getStoredPage, listStoredPages, upsertStoredPage } from "./page-store.js";
 
 /**
  * Where compiled pages are written.
@@ -75,4 +80,40 @@ export function toPage(request: PageWriteRequest): Page {
     body,
     true,
   );
+}
+
+/**
+ * Read pages back from the table, for the listing API to use instead of a directory.
+ *
+ * Only `concepts` and `queries` are wiki page directories; a row in any other
+ * `page_directory` (a profile entity type, for instance) is not a wiki page and is
+ * excluded here rather than surfacing as an unknown directory.
+ *
+ * @param db - Database handle.
+ * @param stackId - Stack whose pages to read.
+ * @returns A listing source for {@link listPages} and {@link getPage}.
+ */
+export function createPageListingSource(db: Database, stackId: string): PageListingSource {
+  return {
+    list: async () => {
+      // No limit: `listPages` owns pagination, and a source that truncated would
+      // make `total` and the cursor describe a subset it never admitted to.
+      const pages = await listStoredPages(db, stackId, Number.MAX_SAFE_INTEGER);
+      return pages.filter((page) => isWikiPageDirectory(page.pageDirectory));
+    },
+    get: async (pageDirectory, slug) => {
+      const page = await getStoredPage(db, stackId, pageDirectory, slug);
+      return page ?? null;
+    },
+  };
+}
+
+/**
+ * Whether a directory names a wiki page namespace.
+ *
+ * @param directory - The row's `page_directory`.
+ * @returns True for `concepts` and `queries`.
+ */
+function isWikiPageDirectory(directory: string): boolean {
+  return directory === "concepts" || directory === "queries";
 }

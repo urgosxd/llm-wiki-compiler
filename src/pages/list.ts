@@ -66,6 +66,18 @@ export interface ListPagesOptions {
   includeArchived?: boolean;
   includeOrphaned?: boolean;
   /**
+   * Where to read the pages from, when they are rows rather than files.
+   *
+   * Absent keeps the on-disk scan, which is why every existing caller is unchanged.
+   * Supplied, it replaces `collectPages` entirely: the directory is never touched, so
+   * a Stack-backed project reads its own pages even with no `wiki/` on disk.
+   *
+   * It returns EVERY page unfiltered, including orphaned and archived, because
+   * filtering is this module's job -- a source that pre-filtered would silently make
+   * `includeOrphaned` mean nothing.
+   */
+  pageSource?: PageListingSource;
+  /**
    * Opaque continuation cursor for the ADDITIVE profile entity section ONLY.
    * Drives the entity window independently of the legacy `cursor` (which scopes
    * `pages`), so the entity batch is never re-sliced or re-sent by legacy
@@ -204,8 +216,37 @@ export function buildPage(
  * @param root - Absolute path to the wiki workspace root.
  * @param ref - Which directory and slug to load.
  */
-export async function getPage(root: string, ref: PageRef): Promise<Page | null> {
+/**
+ * A source of pages that is not the filesystem.
+ *
+ * Deliberately the same shape `collectPages` produces, so the filtering, sorting and
+ * pagination below are shared rather than duplicated per storage backend.
+ */
+export interface PageListingSource {
+  /**
+   * Every page this source holds, ordered or not -- `listPages` sorts.
+   *
+   * @returns Pages with bodies included; callers strip them when not requested.
+   */
+  list(): Promise<Page[]>;
+
+  /**
+   * One page by directory and slug.
+   *
+   * @param pageDirectory - `concepts` or `queries`.
+   * @param slug - The page's slug.
+   * @returns The page with its body, or null when this source has no such page.
+   */
+  get(pageDirectory: PageDirectory, slug: string): Promise<Page | null>;
+}
+
+export async function getPage(
+  root: string,
+  ref: PageRef,
+  pageSource?: PageListingSource,
+): Promise<Page | null> {
   assertSafeSlug(ref.slug);
+  if (pageSource !== undefined) return pageSource.get(ref.pageDirectory, ref.slug);
   const filePath = path.join(root, DIR_NAMES[ref.pageDirectory], `${ref.slug}.md`);
   const content = await safeReadFile(filePath);
   if (!content) return null;
@@ -229,7 +270,9 @@ export async function listPages(
   root: string,
   options: ListPagesOptions = {},
 ): Promise<ListPagesResult> {
-  const all = await collectPages(root, options);
+  const all = options.pageSource === undefined
+    ? await collectPages(root, options)
+    : await filterSource(options.pageSource, options);
   all.sort(
     (a, b) =>
       a.pageDirectory.localeCompare(b.pageDirectory) || a.slug.localeCompare(b.slug),
@@ -337,6 +380,35 @@ function windowEntityPages(
  * Bodies are always read so wikilinks can be extracted; they are only retained
  * on the returned Page when `includeBody` is set.
  */
+/**
+ * Apply this module's own filters to pages that came from a non-file source.
+ *
+ * Mirrors what {@link collectPages} does to disk entries -- the status filters are
+ * applied HERE rather than by the source, so a row-backed listing honours
+ * `includeOrphaned` and `includeArchived` exactly as a scanned one does.
+ *
+ * @param source - Pages from the backend.
+ * @param options - The same inclusion flags the file path reads.
+ * @returns Pages surviving the filters, bodies included.
+ */
+async function filterSource(
+  source: PageListingSource,
+  options: ListPagesOptions,
+): Promise<Page[]> {
+  const includeBody = options.includeBody === true;
+  return (await source.list())
+    .filter((page) => {
+      if (page.orphaned && !options.includeOrphaned) return false;
+      if (page.archived && !options.includeArchived) return false;
+      return true;
+    })
+    // The file path OMITS the key entirely when a body was not requested
+    // (`buildPage` spreads it conditionally). Returning `body: undefined` instead
+    // would make the key PRESENT for rows and ABSENT for files, so a caller
+    // checking `"body" in page` would get different answers per backend.
+    .map(({ body, ...rest }) => (includeBody && body !== undefined ? { ...rest, body } : rest));
+}
+
 async function collectPages(root: string, options: ListPagesOptions): Promise<Page[]> {
   const all: Page[] = [];
   for (const dir of PAGE_DIRECTORIES) {

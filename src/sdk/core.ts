@@ -39,6 +39,7 @@ import {
 import { collectStatus } from "../status/collect.js";
 import { pickSearchRefs, loadSelectedRefs } from "../search/retrieval.js";
 import { getPage, listPages } from "../pages/list.js";
+import { withPageSource } from "../dimensions/wiki/page-source-seam.js";
 import { listSources, getSource, deleteSource } from "../sources/store.js";
 import { runOkfExport } from "../export/okf/run.js";
 import { runOkfImport } from "../import/run.js";
@@ -118,9 +119,14 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
         return generateAnswer(root, question, opts);
       }),
 
-    getPage: (ref) => runQuiet(() => getPage(root, ref)),
+    // Pages come from rows when a Stack is configured. Both go through the same
+    // seam so a listing and a single-page read can never disagree about which
+    // backend they are looking at.
+    getPage: (ref) =>
+      runQuiet(() => withPageSource(process.env, (source) => getPage(root, ref, source))),
 
-    listPages: (opts) => runQuiet(() => listPages(root, opts)),
+    listPages: (opts) =>
+      runQuiet(() => withPageSource(process.env, (source) => listPages(root, { ...opts, pageSource: source }))),
 
     listSources: (opts) => runQuiet(() => listSources(root, opts)),
 

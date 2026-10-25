@@ -24,7 +24,12 @@
  * second answer to "what is relevant" that drifts from the one `query` uses.
  */
 
-import { listPages, getPage } from "../../pages/list.js";
+import {
+  listPages,
+  getPage,
+  type PageListingSource,
+} from "../../pages/list.js";
+import { withPageSource } from "./page-source-seam.js";
 import { pickSearchRefs } from "../../search/retrieval.js";
 import type {
   DimensionAnswer,
@@ -50,23 +55,24 @@ import {
 async function readWiki(
   root: string,
   query: DimensionQuery,
+  source?: PageListingSource,
 ): Promise<GraphReadResult<DimensionAnswer>> {
   const limit = query.limit ?? DEFAULT_PAGE_LIMIT;
 
   // A named lookup is answered by exact-or-containing title match, because the
   // caller asked for ONE thing and paging every page to find it would be wasteful.
   if (query.name !== undefined && query.name.trim() !== "") {
-    return readByName(root, query.name, query.kinds);
+    return readByName(root, query.name, query.kinds, source);
   }
 
-  const listing = await listPages(root, { limit });
+  const listing = await listPages(root, { limit, pageSource: source });
   const scoped = scopeByKinds(listing.pages, query.kinds);
 
   // Text search is a SEPARATE capability: it needs the embedding store, and a
   // project without one still answers the listing.
   const chunks = query.text === undefined || query.text.trim() === ""
     ? []
-    : await searchChunks(root, query.text, limit);
+    : await searchChunks(root, query.text, limit, source);
 
   return { ok: true, value: { ...answerFromPages(scoped), chunks } };
 }
@@ -87,8 +93,12 @@ async function readByName(
   root: string,
   name: string,
   kinds: readonly string[] | undefined,
+  source?: PageListingSource,
 ): Promise<GraphReadResult<DimensionAnswer>> {
-  const listing = await listPages(root, { limit: Number.MAX_SAFE_INTEGER });
+  const listing = await listPages(root, {
+    limit: Number.MAX_SAFE_INTEGER,
+    pageSource: source,
+  });
   const page = resolvePageByName(scopeByKinds(listing.pages, kinds), name);
 
   if (page === undefined) {
@@ -116,6 +126,7 @@ async function searchChunks(
   root: string,
   text: string,
   limit: number,
+  source?: PageListingSource,
 ): Promise<readonly ReadChunk[]> {
   try {
     const selection = await pickSearchRefs(root, text, { embeddingFailure: "fallback" });
@@ -123,7 +134,7 @@ async function searchChunks(
     const chunks: ReadChunk[] = [];
     for (const ref of refs) {
       chunks.push({
-        content: await passageOf(root, ref.slug),
+        content: await passageOf(root, ref.slug, source),
         sourceId: ref.slug,
         // `kind` is the signal that produced the ref, so it is the honest rank.
         score: ref.kind === "chunk" ? 1 : ref.kind === "page" ? 0.5 : 0.25,
@@ -138,8 +149,12 @@ async function searchChunks(
 }
 
 /** Read a page body for a chunk, returning an empty string when it vanished. */
-async function passageOf(root: string, slug: string): Promise<string> {
-  const page = await getPage(root, { slug, pageDirectory: "concepts" });
+async function passageOf(
+  root: string,
+  slug: string,
+  source?: PageListingSource,
+): Promise<string> {
+  const page = await getPage(root, { slug, pageDirectory: "concepts" }, source);
   return page?.body ?? "";
 }
 
@@ -152,6 +167,9 @@ async function passageOf(root: string, slug: string): Promise<string> {
 export function createWikiReader(root: string): DimensionReader {
   return {
     name: "wiki",
-    read: (query: DimensionQuery) => readWiki(root, query),
+    // The seam wraps the WHOLE read, so a question that lists pages and then reads
+    // a passage hits one backend for both halves. Resolving it per call would let a
+    // listing come from rows and its passages from disk.
+    read: (query: DimensionQuery) => withPageSource(process.env, (source) => readWiki(root, query, source)),
   };
 }
