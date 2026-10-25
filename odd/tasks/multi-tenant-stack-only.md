@@ -490,3 +490,65 @@ Stack and retiring every document.
 2. **Citation validation** (`linter/rules-citations.ts:115`) does
    `path.join(sourcesDir, filename)` and reads the file to count lines. Found during
    T6, not in the original W4 map. It is the review path.
+
+### T6 closed — decision (2026-02)
+
+T6 is closed with `sources/` still on disk. The COMPILE path no longer needs a
+directory; other paths still do. That split is deliberate, not a postponement.
+
+#### What reads rows now (compile path)
+
+| Stage | Commit |
+|---|---|
+| Ingest writes a row | `2db3edf` |
+| Change detection lists rows | `acff82c` |
+| Extraction reads a row | `2db3edf` |
+| Rule extraction reads a row | `fb03607` |
+
+Verified pairing: detection hashes a key and extraction reads by that same key.
+A test reads from root `/nonexistent-root` to prove no directory is consulted.
+
+#### What still reads `sources/` — measured
+
+29 files reference `SOURCES_DIR`. The ones that read CONTENT, and so genuinely
+block removal:
+
+| File | disk reads |
+|---|---|
+| `src/mcp/resources.ts` | 6 |
+| `src/eval/citation-support.ts` | 5 |
+| `src/linter/rules-citations.ts` | 4 |
+| `src/freshness/index.ts` | 3 |
+| `src/eval/source-utilization.ts` | 3 |
+| `src/eval/candidate-evidence.ts` | 2 |
+
+#### Why citation validation is its own job, not a T6 step
+
+`checkBrokenCitations` validates `^[file.md:42-58]` spans by reading the cited file
+to count its lines. It cannot do that once bytes are rows.
+
+The blocker is structural, not mechanical:
+
+```
+type LintRule = (root: string) => Promise<LintResult[]>
+```
+
+The signature carries no `db` and no options, and ~15 rules are registered in an
+array of that shape. Threading a source reader means changing the shared `LintRule`
+type and every entry, or opening a handle inside the rule itself.
+
+It is also the REVIEW path, not compile. Wiring a compiler seam and redesigning the
+linter contract are two concerns; mixing them would put an unrelated interface
+change in a storage commit.
+
+Semantics to preserve when it is done: a citation names a FILENAME, so the lookup
+must be `(stack_id, filename)` — not identity. That is only sound because the row
+store now disambiguates basename collisions (`b412d1d`); before that fix, filename
+was ambiguous and the lookup would have had no correct answer.
+
+#### The guarantee that was lost and restored
+
+`8200361` claimed the row store preserved every `saveSource` guarantee. It did not:
+basename-collision disambiguation (#36) was dropped, so `alpha` and `Alpha!` both
+became `alpha.md` in one Stack. Latent while the table is empty; a silent ambiguity
+in every citation once populated. Restored in `b412d1d`, proven red-then-green.
