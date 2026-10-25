@@ -23,6 +23,11 @@ import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
 import * as output from "../utils/output.js";
 import { SOURCES_DIR } from "../utils/constants.js";
 import {
+  createDimensionsDatabase,
+  AKS_STACK_ID_ENV_VAR,
+} from "../dimensions/index.js";
+import { sourceDocumentsRuleCorpus } from "../dimensions/wiki/source-documents-store.js";
+import {
   extractRuleCandidates,
   type RuleExtractionResult,
 } from "../compiler/rule-extractor.js";
@@ -48,7 +53,11 @@ const RULE_EXPORT_PATH = "dist/exports/rule-candidates.json";
  */
 export async function rulesExtractCommand(): Promise<void> {
   const root = process.cwd();
-  if (!existsSync(path.join(root, SOURCES_DIR))) {
+  // A Stack-backed corpus lives in rows, so an absent sources/ directory is not an
+  // empty corpus. Checking only the directory would refuse to extract from a project
+  // whose documents were all ingested into the table.
+  const stackId = (process.env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "" && !existsSync(path.join(root, SOURCES_DIR))) {
     output.status("!", output.warn("No sources found. Run `llmwiki ingest <url>` first."));
     return;
   }
@@ -59,10 +68,16 @@ export async function rulesExtractCommand(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  const dimensionsDb = stackId === "" ? undefined : createDimensionsDatabase();
   try {
     output.header("Extracting rule candidates");
-    reportExtraction(await extractRuleCandidates(root));
+    const corpus = dimensionsDb === undefined
+      ? undefined
+      : sourceDocumentsRuleCorpus(dimensionsDb.db, stackId);
+    reportExtraction(await extractRuleCandidates(root, undefined, corpus));
   } finally {
+    // The pool is released before the lock so a slow drain cannot hold the lock.
+    await dimensionsDb?.close();
     await releaseLock(root);
   }
 }

@@ -40,6 +40,7 @@ import { createHash } from "node:crypto";
 import { slugify } from "../../utils/markdown.js";
 import { stableContent } from "../../utils/source-writer.js";
 import type { ChangeDetectionSource, SourceContentSource } from "../../compiler/hasher.js";
+import type { RuleCorpus } from "../../compiler/rule-extractor.js";
 
 /** Outcome of writing one document, matching the file writer's vocabulary. */
 export type SourceWriteStatus = "created" | "updated" | "unchanged";
@@ -299,5 +300,23 @@ export function sourceDocumentsContentSource(
         ? undefined
         : { content: document.content, hash: document.contentHash };
     },
+  };
+}
+
+/**
+ * Build the corpus a rule extraction needs, or undefined when no Stack is configured.
+ *
+ * Bundles detection and content together because the two must agree: a run that
+ * listed documents from one place and read them from another would ask for keys the
+ * reader never had.
+ *
+ * @param db - Database handle.
+ * @param stackId - Stack whose corpus to extract from.
+ * @returns The paired corpus source.
+ */
+export function sourceDocumentsRuleCorpus(db: Database, stackId: string): RuleCorpus {
+  return {
+    detection: sourceDocumentsChangeSource(db, stackId),
+    content: sourceDocumentsContentSource(db, stackId),
   };
 }

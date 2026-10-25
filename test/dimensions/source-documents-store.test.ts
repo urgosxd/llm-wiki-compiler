@@ -27,6 +27,7 @@ import {
   saveSourceDocument,
   sourceDocumentsChangeSource,
   sourceDocumentsContentSource,
+  sourceDocumentsRuleCorpus,
   sourceFilename,
   stableSourceContent,
 } from "../../src/dimensions/wiki/source-documents-store.js";
@@ -273,5 +274,31 @@ describe.skipIf(!harnessReachable)("the two ends agree", () => {
     expect(first.writeStatus).toBe("created");
     expect(second.writeStatus).toBe("unchanged");
     expect(stored?.content).toContain("b");
+  });
+});
+
+describe.skipIf(!harnessReachable)("rule extraction reads the same corpus", () => {
+  let harness: KgPostgresHarness;
+
+  beforeEach(async () => {
+    harness = await createKgPostgresHarness(`rules-${randomUUID().slice(0, 8)}`);
+  });
+
+  afterEach(async () => {
+    await harness.cleanup();
+  });
+
+  it("pairs a detector and a reader that agree on the same identity", async () => {
+    // The pairing is the whole point: a corpus that listed from one place and read
+    // from another would ask for keys the reader never had.
+    await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/1", "Alpha", "body"));
+    const corpus = sourceDocumentsRuleCorpus(harness.db, harness.stackId);
+
+    const [detected] = await corpus.detection.list();
+    const read = await corpus.content.read(detected!.sourceIdentity);
+
+    expect(detected?.sourceIdentity).toBe("https://a.test/1");
+    expect(read?.content).toContain("body");
+    expect(read?.hash).toBe(detected?.contentHash);
   });
 });
