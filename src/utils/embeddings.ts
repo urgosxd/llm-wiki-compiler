@@ -38,6 +38,7 @@ import { acquireMutationLockBlocking } from "../operation-bundles/lock-gate.js";
 import { loadProfile } from "../profile/load.js";
 import { migrateEmbeddingStore } from "./embeddings-migrate.js";
 import { collectEligibleLivePages, requestedPagesExistence, type PageExistence, type CollectedPage } from "./embeddings-collect.js";
+import type { EmbeddingPageSource } from "../dimensions/wiki/page-scan-source.js";
 import { reembedIntoStore, type ReembedReport } from "./embeddings-write.js";
 import type { PageId } from "./page-id.js";
 import { ENV_EMBEDDINGS } from "./constants.js";
@@ -92,6 +93,7 @@ export async function updateEmbeddingsLockedCore(
   changedPageIds: PageId[],
   prepare?: (pageIds: PageId[]) => Promise<PageId[]>,
   store?: EmbeddingStoreLocation,
+  pageSource?: EmbeddingPageSource,
 ): Promise<{ embedded: PageId[]; eligible: PageId[]; pruned: PageId[] }> {
   if (embeddingsDisabled()) {
     output.verbose(`embeddings: skipped because ${ENV_EMBEDDINGS} disables refreshes`);
@@ -99,7 +101,7 @@ export async function updateEmbeddingsLockedCore(
   }
   const model = resolveEmbeddingModel();
   const profile = await loadProfile(root);
-  const collected = await collectEligibleLivePages(root, profile);
+  const collected = await collectEligibleLivePages(root, profile, pageSource);
   const eligible = collected.map((p) => p.pageId);
   // Read and write must go through the SAME location: reading rows while writing
   // the file would make every compile update a store nothing consults, and reading
@@ -120,7 +122,11 @@ export async function updateEmbeddingsLockedCore(
   // removes quarantined ids. Direct callers retain the existing refresh contract.
   const reembed = prepare ? new Set(await prepare([...discovered])) : discovered;
   retainDeferredEmbeddings(preservable, migrated, new Set([...discovered].filter(id => !reembed.has(id))));
-  const pruned = absentRequestedPageIds(changedPageIds, await requestedPagesExistence(root, profile, changedPageIds), migrated);
+  const pruned = absentRequestedPageIds(
+    changedPageIds,
+    await requestedPagesExistence(root, profile, changedPageIds, pageSource),
+    migrated,
+  );
 
   // Persist when there is real work: something to re-embed, a sub-v3 store to
   // upgrade (version-driven migration, S1), OR a prune that shrank the store

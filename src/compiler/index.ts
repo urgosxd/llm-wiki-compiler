@@ -110,8 +110,10 @@ import type { ChangeDetectionSource, SourceContentSource } from "./hasher.js";
 import type { PageSink } from "../trust/page-apply.js";
 import { createPageWriteSink } from "../dimensions/wiki/page-write-sink.js";
 import {
+  createEmbeddingPageSource,
   createPageScanSource,
   createResolverPageSource,
+  type EmbeddingPageSource,
   type PageScanSource,
 } from "../dimensions/wiki/page-scan-source.js";
 import type { ResolverPageSource } from "./resolver.js";
@@ -460,6 +462,7 @@ async function seedThenFinalize(
   draft: CompileStateDraft | null,
   embeddingStore?: EmbeddingStoreLocation,
   resolverSource?: ResolverPageSource,
+  embeddingPageSource?: EmbeddingPageSource,
 ): Promise<void> {
   await maybeSeedPages(root, schema, generation, options);
   await finalizeWiki(root, draft, generation.writtenPages, generation.seedSlugs, {
@@ -467,6 +470,7 @@ async function seedThenFinalize(
     embeddings: options.embeddings !== false,
     embeddingStore,
     resolverSource,
+    embeddingPageSource,
   });
 }
 
@@ -524,6 +528,7 @@ async function runCompilePipeline(
         hasOwnerlessFrozen ? draft : null,
         embeddingStoreLocation(db),
         resolverSourceReading(db, process.env),
+        embeddingPageReading(db, process.env),
       ));
       return {
         ...emptyCompileResult(),
@@ -609,6 +614,7 @@ async function runCompilePipeline(
     await timeStage("compile.finalize", () => seedThenFinalize(
       root, schema, generation, options, draft, embeddingStoreLocation(db),
       resolverSourceReading(db, process.env),
+      embeddingPageReading(db, process.env),
     ));
     await logCompile(root, buckets, generation, existingIds);
   }
@@ -772,6 +778,14 @@ interface FinalizeFlags {
    */
   resolverSource?: ResolverPageSource;
   /**
+   * Where the post-compile embeddings refresh reads pages from.
+   *
+   * Paired with the write sink and the resolver on the same variable: an embeddings
+   * pass that scanned an empty directory would compute no vectors and store none,
+   * leaving semantic search silently empty while reporting success.
+   */
+  embeddingPageSource?: EmbeddingPageSource;
+  /**
    * The run recompiled a SUBSET by design (`refresh --stale` supplies a
    * `changeFilter`), so it must not record the prompt-modifier selection as
    * true of the whole project — see the flush below.
@@ -803,7 +817,10 @@ async function finalizeWiki(
   seedSlugs: string[] = [],
   flags: FinalizeFlags = {},
 ): Promise<void> {
-  const { scoped = false, embeddings = true, embeddingStore, resolverSource } = flags;
+  const {
+    scoped = false, embeddings = true, embeddingStore, resolverSource,
+    embeddingPageSource,
+  } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
   const conceptNewSlugs = pages
     .filter((entry) => entry.concept.is_new)
@@ -848,7 +865,11 @@ async function finalizeWiki(
   }
 
   await regenerateIndices(root, process.env);
-  if (embeddings) await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(root, allChangedSlugs, embeddingStore));
+  if (embeddings) {
+    await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(
+      root, allChangedSlugs, embeddingStore, embeddingPageSource,
+    ));
+  }
 }
 
 /**
@@ -968,6 +989,15 @@ function scanSourceReading(
  * @param env - Environment to read the Stack from; defaults to `process.env`.
  * @returns The resolver source, or undefined to read `wiki/concepts` from disk.
  */
+function embeddingPageReading(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): EmbeddingPageSource | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return createEmbeddingPageSource(db, stackId);
+}
+
 function resolverSourceReading(
   db: DimensionsDatabaseHandle,
   env: NodeJS.ProcessEnv = process.env,
@@ -1031,8 +1061,9 @@ async function safelyUpdateEmbeddings(
   root: string,
   changedSlugs: string[],
   embeddingStore?: EmbeddingStoreLocation,
+  pageSource?: EmbeddingPageSource,
 ): Promise<void> {
   const conceptsNamespace = path.basename(CONCEPTS_DIR);
   const changedPageIds = changedSlugs.map((slug) => qualifiedPageId(conceptsNamespace, slug));
-  await refreshEmbeddingsDrainingPending(root, changedPageIds, embeddingStore);
+  await refreshEmbeddingsDrainingPending(root, changedPageIds, embeddingStore, pageSource);
 }

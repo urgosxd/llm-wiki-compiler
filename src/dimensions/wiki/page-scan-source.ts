@@ -25,10 +25,11 @@
  * making every consumer know both vocabularies.
  */
 
-import { listStoredPages, listStoredPagesUnfiltered } from "./page-store.js";
+import { getStoredPage, listStoredPages, listStoredPagesUnfiltered } from "./page-store.js";
 import type { Page, PageDirectory } from "../../pages/list.js";
 import type { ResolverPageSource } from "../../compiler/resolver.js";
 import type { RawWikiPage } from "../../wiki/collect.js";
+import type { NamespacedPageRecord } from "../../utils/embeddings-pages.js";
 import path from "node:path";
 
 /** A page as `scanWikiPages` reports it: identity plus parsed frontmatter. */
@@ -253,4 +254,81 @@ export interface RawPageSource {
    * @returns Untitled and orphaned pages INCLUDED -- the collectors filter.
    */
   collect(): Promise<RawWikiPage[]>;
+}
+
+/**
+ * Serve the embedding collector's page records from rows.
+ *
+ * ## Why orphaned pages are dropped here
+ *
+ * `readConfinedPageRecord` returns null for an orphaned page, so the disk path never
+ * embeds one. Matching that rule here is not an optimisation: a row corpus that
+ * embedded orphans would compute vectors for pages the next disk-backed run considers
+ * gone, and the store would disagree with itself across a deployment change.
+ *
+ * @param db - Database handle.
+ * @param stackId - Stack whose pages to read.
+ * @returns Namespaced records for the two reserved directories.
+ */
+export function createEmbeddingPageSource(
+  db: PageStoreHandle,
+  stackId: string,
+): EmbeddingPageSource {
+  return {
+    collectNamespaced: async () => {
+      const pages = await listStoredPagesUnfiltered(db as never, stackId);
+      const out: NamespacedPageRecord[] = [];
+      for (const namespace of ["concepts", "queries"] as const) {
+        for (const page of pages) {
+          if (page.pageDirectory !== namespace || page.orphaned) continue;
+          if (page.title === "") continue;
+          out.push({
+            namespace,
+            record: {
+              slug: page.slug,
+              title: page.title,
+              summary: page.summary,
+              // TRIMMED, and this is load-bearing rather than cosmetic: the disk
+              // reader builds its record from `page.body.trim()`, and this body goes
+              // straight into `splitIntoChunks`. An untrimmed row would embed a
+              // leading newline the file path never had, producing different vectors
+              // for the same page -- text drift that no test of the store would show.
+              body: (page.body ?? "").trim(),
+            },
+          });
+        }
+      }
+      return out;
+    },
+    exists: async (pageId) => {
+      // A qualified id is `<namespace>/<slug>`; anything else is not a page this
+      // store can answer for, and "unknown" is the honest answer rather than
+      // reporting it absent and pruning its vectors.
+      const slash = pageId.indexOf("/");
+      if (slash <= 0) return "unknown";
+      const namespace = pageId.slice(0, slash);
+      const slug = pageId.slice(slash + 1);
+      if (namespace !== "concepts" && namespace !== "queries") return "unknown";
+      const found = await getStoredPage(db as never, stackId, namespace, slug);
+      return found === undefined ? "absent" : "present";
+    },
+  };
+}
+
+/** Where embedding collection reads pages from. */
+export interface EmbeddingPageSource {
+  /**
+   * Every embeddable page in the two reserved directories, orphaned ones excluded.
+   *
+   * @returns Namespaced records, concepts before queries.
+   */
+  collectNamespaced(): Promise<NamespacedPageRecord[]>;
+
+  /**
+   * Whether one page id still exists for this Stack.
+   *
+   * @param pageId - Qualified id, e.g. `concepts/alpha`.
+   * @returns `present`, `absent`, or `unknown` when the id cannot be read.
+   */
+  exists(pageId: string): Promise<"present" | "absent" | "unknown">;
 }
