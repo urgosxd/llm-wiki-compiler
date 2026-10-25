@@ -463,3 +463,30 @@ Two decisions are not the executor's to make, and both block the risky half:
    revert path changes with it. This cannot be designed before T2 lands.
 
 Until both are answered, T1–T3 are safe to schedule and T4–T7 are not.
+
+### T6 status (measured)
+
+| Step | Commit | State |
+|---|---|---|
+| Tables | `39cbbab` | done |
+| Row store | `8200361` | done |
+| Detection by query | `acff82c` | done |
+| Writer writes rows | `2db3edf` | done |
+| Extraction reads rows | `2db3edf` | done |
+
+Two ends are wired and agree: detection hashes a key, extraction reads by that same
+key. Five disk reads were removed from the compile path by hashing content already in
+memory.
+
+**Writer runs on every ingest, including a no-op file write.** The two stores start
+empty relative to each other: a project migrating in has files but no rows, so
+skipping the row when the FILE was unchanged would leave the compiler seeing an empty
+Stack and retiring every document.
+
+#### Remaining before `sources/` can be deleted
+
+1. **Rule extractor** (`extractRuleCandidates` -> `changedSources` -> `extractForSource`
+   -> `readFile`). No `db` anywhere in that chain; single caller `commands/rules.ts:64`.
+2. **Citation validation** (`linter/rules-citations.ts:115`) does
+   `path.join(sourcesDir, filename)` and reads the file to count lines. Found during
+   T6, not in the original W4 map. It is the review path.
