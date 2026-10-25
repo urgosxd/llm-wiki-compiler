@@ -47,6 +47,37 @@
  *
  * Nothing here knows about any concrete dimension, which is what keeps it
  * freezable: the port names no file path, no database, and no provider.
+ *
+ * ## An ingest is a SAGA, and this port is its participant contract
+ *
+ * Once both dimensions became remote, an ingest stopped being one atomic write and
+ * became a saga: an ordered sequence of local commits with a compensating action
+ * and a durable record to finish what a failure interrupted. There is no shared
+ * transaction to fall back on -- `wiki` writes rows through its own tenant-bound
+ * transaction and `kg` opens its own connection and commits separately -- so a
+ * single transaction spanning both is not available without rebuilding both
+ * dimensions around a handle neither currently accepts.
+ *
+ * So the guarantee this port offers is RECOVERABILITY, not atomicity, and every
+ * participant is written against that:
+ *
+ *   1. `prepare` may fail freely. It must not leave anything a reader can see, so
+ *      a failure here needs no compensation and leaves no outbox record.
+ *   2. `commit` is the point of no return. A dimension that committed is COMMITTED
+ *      even if a later dimension fails; that is accepted, not tolerated.
+ *   3. `discard` is best-effort compensation, and a quiet return does not mean the
+ *      write is gone -- see {@link Dimension.discard}.
+ *   4. The OUTBOX owns the gap. When a dimension committed and a later one failed,
+ *      the record stays `pending` and `reconcileOutbox` finishes the ingest by
+ *      replaying `commit`. That is why `commit` MUST be idempotent: replay is the
+ *      recovery mechanism, not an exceptional path.
+ *
+ * The window this accepts is real and must be stated rather than implied: between
+ * the first `commit` and the last, a reader can observe a wiki page whose graph
+ * document does not exist yet. That state is recoverable by replay and observable
+ * by anyone reading during the window. Choosing atomicity over this would mean
+ * coupling both dimensions to one transaction, which buys that window away at the
+ * cost of the independence the port exists to provide.
  */
 
 /**
@@ -143,7 +174,18 @@ export interface Dimension {
    */
   prepare(input: DimensionInput): Promise<PreparedWrite>;
 
-  /** Make a prepared write visible. */
+  /**
+   * Make a prepared write visible.
+   *
+   * MUST be idempotent, and this is stronger than it looks: replay is how a
+   * committed-but-unpaired ingest is recovered, so `reconcileOutbox` calls this
+   * again with the same input after the fact. A second call must report the same
+   * outcome the first would have -- not insert a duplicate row, and not resurrect
+   * work a `forget` has since removed.
+   *
+   * MUST NOT be relied on to undo itself. Once this returns, the dimension can no
+   * longer compensate; the outbox record is what makes the rest recoverable.
+   */
   commit(prepared: PreparedWrite): Promise<CommittedWrite>;
 
   /**
