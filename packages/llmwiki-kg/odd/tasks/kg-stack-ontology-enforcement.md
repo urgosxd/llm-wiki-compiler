@@ -1171,6 +1171,53 @@ So option 1 is honest but not free: it is the deletion half plus a rewording of 
 assertions. That is the price of a suite that is provably RLS-clean, and it is why the
 alternative (a bypassing cleanup role) stayed attractive.
 
+### Where this stops, and what is actually done
+
+Stopped here by decision. The state is honest and usable; it is not "RLS enabled".
+
+**Production code is RLS-capable.** Every path that reads or writes a tenant-scoped
+table now binds that tenant from the caller's own reference first. Defects found and
+fixed along the way, all of which were invisible while the suite ran as a role that
+bypasses RLS:
+
+| what | symptom under RLS |
+| --- | --- |
+| `resolveStack` read before it bound | 404 for every existing Stack |
+| `findDocument` joined two tenant tables unbound | every ingest 404 |
+| `GET`/`PATCH`/`DELETE /stacks/:id` unbound | 404 / 500 for existing Stacks |
+| `routes/backfeed/stack.ts` — a SECOND `resolveStack` that never bound | `POST /backfeed/flag` 404 for every Stack |
+| `consolidation.ts` + `document-consolidation.ts` writes unbound | 37 failures on `ontology_entities` |
+| `stacks` write policy checked only the domain | `PATCH` 500: an update needs the id half |
+
+The last one was a defect in `migration_rls_write_policies.sql` itself: `USING` and
+`WITH CHECK` disagreed. A write predicate stricter than the read predicate silently
+makes rows selectable-but-not-updatable.
+
+**Measured ladder**, running the suite as `llmwiki_app` with both migrations applied:
+
+```
+195  USING clauses only
+191  + WITH CHECK clauses + POST /stacks domain binding
+171  + bindCallerStack in resolveStack and findDocument
+156  + four harnesses bound
+138  + ten inline createStack helpers
+135  + documents-harness
+110  + per-stack cleanup (FixtureStacks), cascade instead of child deletes
+ 83  + five remaining harnesses, backfeed resolver, consolidation writers
+```
+
+**What is left: 83 failing, and it is test-side.** They are assertion mismatches, not
+tenant leaks: a test helper queries `database().execute` with no binding, so under RLS
+it sees an empty result and the assertion compares `[]` or `null` against the expected
+rows. Finishing them means binding those helper reads — mechanical, one per helper.
+
+**Do not enable RLS for the application yet.** The gate is the suite going green as
+`llmwiki_app`, and it has not. Order when that work resumes:
+
+1. Bind the remaining test helper reads until the suite is green as `llmwiki_app`.
+2. Create a login role and point `DATABASE_URL` at it.
+3. The migrations are already applied and are no-ops while the connection bypasses RLS.
+
 ### Order of operations
 
 1. Apply the migration while `DATABASE_URL` still names `aks` — it bypasses RLS, so
