@@ -14,6 +14,7 @@ import { ingestSource } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { compileAndReport } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { generateAnswer } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { lint } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { withPageScan } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { collectStatus } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { buildContextPack } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { ensureCompileProviderAvailable, ensureProviderAvailable } from "@atomicstrata/llmwiki-core/compiler-cli";
@@ -191,7 +192,7 @@ function registerStatusTool(server: McpServer, root: string): void {
         "the true totals. Read-only — never modifies the workspace.",
       inputSchema: {},
     },
-    async () => jsonResult(await collectStatus(root)),
+    async () => jsonResult(await withPageScan(process.env, (pageScan) => collectStatus(root, { pageScan }))),
   );
 }
 

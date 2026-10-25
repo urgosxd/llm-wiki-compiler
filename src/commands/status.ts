@@ -10,6 +10,7 @@
  */
 
 import { collectStatus, type WikiStatus } from "../status/collect.js";
+import { withPageScan } from "../dimensions/wiki/page-source-seam.js";
 import * as output from "../utils/output.js";
 
 /** CLI-supplied options for `llmwiki status`. */
@@ -31,7 +32,8 @@ export default async function statusCommand(
   // which quiet mode does not intercept. Same pattern as `context --json`.
   if (options.json) output.setQuiet(true);
   try {
-    const status = await collectStatus(process.cwd());
+    const root = process.cwd();
+    const status = await withPageScan(process.env, (pageScan) => collectStatus(root, { pageScan }));
     if (options.json) {
       process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     } else {

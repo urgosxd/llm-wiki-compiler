@@ -20,6 +20,7 @@
 import type { PageListingSource } from "../../pages/list.js";
 import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js";
 import { createPageListingSource } from "./page-write-sink.js";
+import { createPageScanSource, type PageScanSource } from "./page-scan-source.js";
 
 /**
  * Run `fn` against the page source for this environment, or against the file path.
@@ -39,6 +40,32 @@ export async function withPageSource<T>(
   const dimensionsDb = createDimensionsDatabase(env);
   try {
     return await fn(createPageListingSource(dimensionsDb.db, stackId));
+  } finally {
+    await dimensionsDb.close();
+  }
+}
+
+/**
+ * Run `fn` with the row-backed SCAN source, or `undefined` for the file scan.
+ *
+ * Kept separate from {@link withPageSource} because the two answer different
+ * shapes: `listPages` wants typed pages, while status and the index builder want
+ * `{ slug, meta }`. One seam returning both would force each caller to narrow a
+ * union it does not otherwise care about.
+ *
+ * @param env - Environment to read the Stack from.
+ * @param fn - Receives the scan source, or `undefined` to read `wiki/` from disk.
+ * @returns Whatever `fn` returns.
+ */
+export async function withPageScan<T>(
+  env: NodeJS.ProcessEnv,
+  fn: (source: PageScanSource | undefined) => Promise<T>,
+): Promise<T> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return fn(undefined);
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    return await fn(createPageScanSource(dimensionsDb.db, stackId));
   } finally {
     await dimensionsDb.close();
   }

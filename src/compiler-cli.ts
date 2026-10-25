@@ -99,6 +99,7 @@ export type { AppendRelationInput } from "./relations/store.js";
 export { pickSearchRefs, loadSelectedRefs } from "./search/retrieval.js";
 export { listSelectedSourceFiles } from "./sources/scan.js";
 export { collectStatus } from "./status/collect.js";
+export { withPageScan } from "./dimensions/wiki/page-source-seam.js";
 export type { TrustDecision } from "./trust/decision.js";
 export { readCappedNoFollow } from "./utils/confined-read.js";
 export { ENV_VERBOSE, MAX_WORKFLOW_SUBMIT_FILE_BYTES, CONCEPTS_DIR, INDEX_FILE, QUERIES_DIR, SOURCES_DIR, STATE_FILE } from "./utils/constants.js";
