@@ -11,7 +11,7 @@ import {
 } from "../db.js";
 import { StackCreate, StackResponse, StackUpdate } from "../dto.js";
 import type { StackResponseDto } from "../dto.js";
-import { bindCreatingStackDomain } from "../core/stack_resolver.js";
+import { bindCallerStack, bindCreatingStackDomain } from "../core/stack_resolver.js";
 import { apiError, pydanticUuid, toFastApiValidationError } from "../errors.js";
 import type { ApiError, ValidationFailure } from "../errors.js";
 
@@ -311,6 +311,11 @@ async function getStack(
     return;
   }
 
+  // Bind the tenant named in the path before reading. The `stacks` read policy
+  // matches only the bound tenant, so an unbound lookup answers 404 for a Stack
+  // that exists. `:stack_id` is the caller's own reference and the query's own
+  // filter, so binding it grants nothing extra — it lets the policy see the row.
+  await bindCallerStack(tx, stackId.stackId, null);
   const rows = await tx.execute<StackRow>(sql`
     select ${sql.raw(STACK_COLUMNS)}
     from stacks
@@ -432,6 +437,9 @@ async function updateStackRow(
   const { stackId, present, values } = update;
   const assignments = present.map((field) => assignmentFor(field, values[field]));
 
+  // Same reason as `getStack`: without the binding the UPDATE matches nothing
+  // under RLS and this reports a 404 for a Stack that exists.
+  await bindCallerStack(tx, stackId, null);
   const rows = await tx.execute<StackRow>(sql`
     update stacks
     set ${sql.join(assignments, sql`, `)}, updated_at = now()
@@ -478,6 +486,9 @@ async function deleteStack(
     return;
   }
 
+  // Same reason as `getStack`. The cascade removes the Stack's content, and it
+  // cannot reach another tenant because the parent is already scoped by the policy.
+  await bindCallerStack(tx, stackId.stackId, null);
   const rows = await tx.execute<{ id: string }>(
     sql`delete from stacks where id = ${stackId.stackId} returning id`,
   );

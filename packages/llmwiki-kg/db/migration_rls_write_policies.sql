@@ -103,18 +103,25 @@ create policy tenant_isolation on backfeed_queue
 -- ------------------------------------------------------------
 -- `stacks`: the bootstrap table, so the write predicate is the domain
 -- ------------------------------------------------------------
--- Read stays as it is — id OR domain, because resolution by domain happens before
--- `app.stack_id` is known.
+-- Both halves accept id OR domain, and they must accept the SAME two things.
 --
--- Write is `domain = app.stack_domain`. Two consequences worth stating:
+-- The first draft checked only `domain = app.stack_domain`. That is correct for
+-- INSERT — the row being created has no id yet, so the domain is the only thing a
+-- caller can be bound to — but it breaks UPDATE. A `PATCH /stacks/:id` binds
+-- `app.stack_id` and leaves `app.stack_domain` empty, so the check evaluates to NULL
+-- and an ordinary update of an existing Stack is refused. Measured: the PATCH
+-- answered 500 with `new row violates row-level security policy`.
 --
---   * A caller cannot create a Stack under a domain it was not bound to. That is
---     the isolation this migration exists for.
+-- So the write half mirrors the read half. Both are "the row this caller is allowed
+-- to touch", and a predicate that is stricter on write than on read silently makes
+-- some rows updatable-by-select and not-by-update.
+--
+-- Consequences worth stating:
+--
+--   * A caller cannot create a Stack under a domain it was not bound to.
 --   * `POST /stacks` must bind the domain it is about to create BEFORE its insert,
---     or this refuses the creation. That is fail-closed and intended.
---
--- Updates to an existing Stack still work: `using` selects the row by id, and the
--- `with check` validates the domain, which an update does not change.
+--     or the creation is refused. Fail-closed and intended.
+--   * `PATCH` and `DELETE` by id work because the id half of the check matches.
 drop policy if exists tenant_isolation on stacks;
 create policy tenant_isolation on stacks
     using (
@@ -122,5 +129,6 @@ create policy tenant_isolation on stacks
         or domain = nullif(current_setting('app.stack_domain', true), '')
     )
     with check (
-        domain = nullif(current_setting('app.stack_domain', true), '')
+        id = nullif(current_setting('app.stack_id', true), '')::uuid
+        or domain = nullif(current_setting('app.stack_domain', true), '')
     );
