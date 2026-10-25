@@ -874,6 +874,89 @@ Eight `GET /:item_id` call sites across three files gained `.query({ domain })`.
 One test also needed a Stack created, because the Stack is resolved before the
 lookup and the route now answers the Stack error rather than a validation one.
 
+## Follow-up 12: the audit section gets a name, a schema and one accessor
+
+The `audit` column was already carrying the ontology report, and the spec
+divergence recorded against it is moot: with the oracle and `aks_version` no
+longer treated as constraints, writing `ontology` into a `jsonb` blob is not a
+violation of anything. What remained was a real defect of a different kind.
+
+### Two hazards
+
+1. **The key was a string literal** inside a `jsonb_set` call. A misspelt
+   `'{ontolgy}'` does not fail — with `create_missing = true` it writes a SIBLING
+   key, the write succeeds, and every reader silently finds nothing.
+2. **Nothing validated the shape.** The reader took `Record<string, unknown>` and
+   then indexed into it, so a blob from an older version, or from a future producer
+   using different keys, was accepted and trusted field by field.
+
+Both matter more than they look because the column's own comment says it exists so
+that *"we can put structured audit results here later without a schema change"* —
+meaning more producers are expected.
+
+### What changed
+
+`routes/ingest/audit.ts` owns the section: `ONTOLOGY_AUDIT_KEY` is the only place
+the key is spelled, `OntologyAuditSchema` is a Zod schema, and `readOntologyAudit`
+parses rather than casts. `readOntologyAudit` returns `undefined` for a document
+with no report, which stays distinct from a report that rejected nothing.
+
+Extracted from `pipeline.ts`, which went from 424 to 297 lines — so this also keeps
+the file under the 400-line cap as the module grows.
+
+### Falsifiability
+
+Misspelling the key in the reader turns 4 tests red, including the negative case
+that proves the two ends are coupled to one name rather than each holding its own
+copy of a string.
+
+### What it does NOT change
+
+Re-ingest still REPLACES the section rather than appending. That is deliberate and
+now stated in the code: the report describes the run that produced the current
+graph, and a stale report would describe a graph that no longer exists. Keeping
+history is a new feature, not a fix.
+
+## Follow-up 13: measuring RLS, and why it is not switchable yet
+
+I measured what happens if the application connects as `llmwiki_app` instead of the
+superuser `aks`, because the migration creating that role is documented as INERT
+while the app uses `aks`.
+
+### The measurement, and what it found
+
+With `AKS_TEST_DATABASE_URL` pointed at `llmwiki_app`: **195 of 743 tests fail.**
+
+First confirmed RLS actually works for that role, so the number means something:
+
+```
+as llmwiki_app, unbound:                     0 stacks visible
+as llmwiki_app, bound to stack a:            1 stack visible
+as aks (rolsuper, rolbypassrls):             all
+```
+
+### The root cause is in the migration, not in application code
+
+```
+PostgresError: new row violates row-level security policy for table "stacks"
+```
+
+`grep -n "with check" db/migration_rls_tenancy.sql` returns **nothing**. Every
+policy is `using (...)`, which is a READ predicate only. Inserts and updates have no
+`WITH CHECK`, so under an unprivileged role **every write is rejected**, starting
+with `insert into stacks` in every fixture and in `POST /stacks`.
+
+That is not app code needing to bind a tenant. It is the migration missing its write
+half. Fixing it means `with check` clauses on eight tables — and `db/**` is not
+writable by this role, so it needs a human-run migration.
+
+### Consequence
+
+RLS is a real guarantee once two things are true: the role is unprivileged AND the
+policies have `WITH CHECK`. Neither is true today, so the explicit `where stack_id =
+...` filters remain the actual barrier. Recorded here rather than left as an
+assumption.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,
