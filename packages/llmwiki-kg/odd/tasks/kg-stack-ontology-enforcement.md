@@ -1138,6 +1138,39 @@ Option 2 is the smallest honest change; option 1 is the only one that makes the 
 suite provably RLS-clean. Both are cheap. What is not acceptable is binding the
 prefix deletes, because as measured above they then lie.
 
+### Chosen: per-stack cleanup, and what that costs
+
+Option 1. Two measurements shape it, both taken as `llmwiki_app`.
+
+**Good news — `ON DELETE CASCADE` works under RLS.** All seven tenant tables declare
+`stack_id uuid not null references stacks(id) on delete cascade`. Deleting the Stack
+while bound to it removed its child row (1 before, 0 after). So cleanup does not need
+to delete child tables at all: one bound `delete from stacks where id = $1` is enough,
+and the cascade cannot reach another tenant because the parent is already scoped.
+
+That is a real simplification. The current `deleteFixtureRows` deletes five child
+tables by prefix and then the Stacks, and every one of those six statements is
+unbound.
+
+**Cost — the prefix is also used for COUNTING, and counting is impossible.** Seven
+harnesses expose `countFixtureRows` / `countFixtureDocuments` / `countFixtureEntities`
+/ `counts()`, and twelve call sites assert against them:
+
+```ts
+expect(await countFixtureRows()).toBe(1);
+expect(await countFixtureDocuments()).toBe(0);
+```
+
+A count across every Stack sharing a prefix cannot be bound to one tenant, and no
+per-stack scheme makes it expressible. These assertions therefore have to change
+shape, not just get a binding: count the specific Stack the test created, which is
+the more precise assertion anyway — "this Stack has 1 document" beats "the namespace
+has 1 document".
+
+So option 1 is honest but not free: it is the deletion half plus a rewording of twelve
+assertions. That is the price of a suite that is provably RLS-clean, and it is why the
+alternative (a bypassing cleanup role) stayed attractive.
+
 ### Order of operations
 
 1. Apply the migration while `DATABASE_URL` still names `aks` — it bypasses RLS, so
