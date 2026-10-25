@@ -288,10 +288,29 @@ fork a duplicate on the next ingest. It does not, and there is now a test saying
 
 - **Seams**: `src/trust/journal.ts:92` (entry shape), `src/trust/executor.ts:169`
   (replay), **25 source files**, **35 test files**.
-- **Shape**: `JournalEntry.targetPath` is an absolute path and `JournalBatch`
+- **Shape**: ~~`JournalEntry.targetPath` is an absolute path and `JournalBatch`
   carries `root` (`journal.ts:103-107`), so a target becomes a
-  `(stack_id, page_directory, slug)` tuple. This cannot be designed before T2
-  settles page identity.
+  `(stack_id, page_directory, slug)` tuple.~~ **MEASURED FALSE — see below.**
+  This cannot be designed before T2 settles page identity.
+- **CORRECTION (measured)**: the journal is not a page journal. Its recorded
+  targets belong to FOUR classes, and three are not pages: artifact
+  `bytesPath`/`manifestPath` (`artifacts/apply.ts:91-92`), content-addressed
+  binary members (`artifacts/apply-members.ts:117-120`), and
+  `TEMPLATE_LOCK_FILE`/`PROFILE_FILE` (`profile/templates/update-apply.ts:107-108`).
+  Only `page-apply.ts:258` records a page.
+  `JournalEntry` has no identity fields at all — just `targetPath: string` and a
+  `preState` — and `journal.ts` carries **13** uses of
+  `confineUnderRoot`/`isInsideDir`/`safeRealpath`. The mechanism IS path
+  confinement: 9 of its 35 test files deliberately record paths that escape the
+  root (`journal-prestate`, `journal-recordprestate-confined`,
+  `journal-revert-confined`, `trust-planner`) because refusing them is the
+  property under test. A row tuple cannot "escape the root", so converting it to
+  a table deletes the security property those files exist to protect.
+- **Consequence**: T5 is DOWNSTREAM of T6 and T7, not upstream. A table-shaped
+  journal only makes sense once the file writes it guards are gone.
+- **Also measured**: `page-apply.ts:258` still writes pages via `atomicWrite`,
+  so approval writes files even though `compile` writes `wiki.pages`. That gap
+  must close before a page-target journal could exist at all.
 - **Verification**: crash-recovery must prove a pending batch reverts across a
   simulated restart. Load-bearing suites: `journal-strict-recovery`,
   `journal-revert-confined`, `atomic-write-post-commit-recovery`.

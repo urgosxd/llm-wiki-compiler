@@ -105,7 +105,7 @@ async function findFileBySourceIdentity(sourcesDir: string, source: string): Pro
  * content but a fresh timestamp is `unchanged`, while a changed title /
  * sourceType / truncation is `updated`.
  */
-function stableContent(document: string): string {
+export function stableContent(document: string): string {
   const { meta, body } = parseFrontmatter(document);
   const stable: Record<string, unknown> = {};
   for (const key of Object.keys(meta).sort()) {
