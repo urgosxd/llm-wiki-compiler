@@ -132,11 +132,29 @@ export interface WikiState {
   promptModifiers?: string;
 }
 
-/** Change detection result for a single source file. */
+/**
+ * Change detection result for a single source DOCUMENT.
+ *
+ * ## Why `file` carries a source identity and not a filename
+ *
+ * The key used to be a filename because the corpus was a directory. Two things
+ * break that now that documents are rows:
+ *
+ *  - A filename is not unique. `alpha` and `Alpha!` both slugify to `alpha.md`,
+ *    and the file writer's collision disambiguation is what kept them apart on
+ *    disk. A row has no such side channel.
+ *  - A deletion has to name the document it retires, and by then the file is
+ *    gone -- `SourceState.source` exists precisely to remember the identity for
+ *    that case.
+ *
+ * So the field keeps its name (eight call sites read it as the key) and carries
+ * the identity, which IS unique per Stack.
+ */
 export interface SourceChange {
+  /** Source identity (URL, path, or `manual:<sha>`), unique within the Stack. */
   file: string;
   status: "new" | "changed" | "unchanged" | "deleted";
-  /** Contribution retirement caused by selection policy, not a file unlink. */
+  /** Contribution retirement caused by selection policy, not a document removal. */
   reason?: "deselected";
 }
 

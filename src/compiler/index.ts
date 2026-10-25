@@ -103,6 +103,8 @@ type DimensionsDatabaseHandle = ReturnType<typeof createDimensionsDatabase>["db"
 import { createDimensionsDatabase, resolveDimensions, AKS_STACK_ID_ENV_VAR } from "../dimensions/index.js";
 import type { EmbeddingStoreLocation } from "../utils/embeddings.js";
 import { databaseEmbeddingLocation } from "../utils/embeddings-database.js";
+import { sourceDocumentsChangeSource } from "../dimensions/wiki/source-documents-store.js";
+import type { ChangeDetectionSource } from "./hasher.js";
 import { timeStage } from "../utils/stage-timing.js";
 
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
@@ -466,7 +468,8 @@ async function runCompilePipeline(
   // SINGLE flush after the resolution phase commits (see finalizeWiki below).
   const draft = await CompileStateDraft.load(root);
   const state = draft.read();
-  const detected = await timeStage("compile.detect-changes", () => detectChanges(root, state));
+  const detected = await timeStage("compile.detect-changes", () =>
+    detectChanges(root, state, sourceChangeDetection(db, process.env)));
   const changes = promoteForPromptModifiers(
     applyChangeFilter(detected, options.changeFilter),
     state,
@@ -853,6 +856,27 @@ async function finalizeWiki(
  * @param db - The run's database handle.
  * @returns The location, or undefined to keep using the file.
  */
+/**
+ * Where this compile should read its source corpus from.
+ *
+ * Returns `undefined` when no Stack is configured, which keeps the on-disk scan:
+ * a project that never opted into the knowledge backend must not start requiring a
+ * database to compile. When a Stack IS configured, change detection reads rows, so
+ * an ingest that wrote a row is visible to the compiler.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The detection source, or undefined to keep scanning `sources/`.
+ */
+function sourceChangeDetection(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): ChangeDetectionSource | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return sourceDocumentsChangeSource(db, stackId);
+}
+
 function embeddingStoreLocation(
   db: DimensionsDatabaseHandle,
   env: NodeJS.ProcessEnv = process.env,

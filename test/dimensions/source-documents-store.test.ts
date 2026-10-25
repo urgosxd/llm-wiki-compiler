@@ -20,10 +20,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { detectChanges } from "../../src/compiler/hasher.js";
 import {
   hashSourceContent,
   listSourceDocuments,
   saveSourceDocument,
+  sourceDocumentsChangeSource,
   sourceFilename,
   stableSourceContent,
 } from "../../src/dimensions/wiki/source-documents-store.js";
@@ -152,3 +154,76 @@ describe.skipIf(!harnessReachable)("the wiki source document store", () => {
     expect(all.map((d) => d.filename)).toEqual(["alpha.md", "bravo.md", "charlie.md"]);
   });
 });
+
+describe.skipIf(!harnessReachable)("the compiler's change detection reads rows", () => {
+  let harness: KgPostgresHarness;
+
+  beforeEach(async () => {
+    harness = await createKgPostgresHarness(`detect-${randomUUID().slice(0, 8)}`);
+  });
+
+  afterEach(async () => {
+    await harness.cleanup();
+  });
+
+  it("reports a newly ingested document as new, without touching sources/", async () => {
+    await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/1", "Alpha", "body"));
+    const source = sourceDocumentsChangeSource(harness.db, harness.stackId);
+
+    const changes = await detectChanges("/nonexistent-root", emptyState(), source);
+
+    // "/nonexistent-root" proves the directory was never consulted: a scan of it
+    // would throw or find nothing.
+    expect(changes).toEqual([{ file: "https://a.test/1", status: "new" }]);
+  });
+
+  it("reports unchanged when the stored hash still matches", async () => {
+    const written = doc("https://a.test/1", "Alpha", "body");
+    const saved = await saveSourceDocument(harness.db, harness.stackId, written);
+    const source = sourceDocumentsChangeSource(harness.db, harness.stackId);
+    const [stored] = await listSourceDocuments(harness.db, harness.stackId);
+
+    const changes = await detectChanges("/nonexistent-root", {
+      version: 2,
+      indexHash: "",
+      sources: { "https://a.test/1": { hash: stored!.contentHash, concepts: [], compiledAt: "x" } },
+    }, source);
+
+    expect(changes).toEqual([{ file: "https://a.test/1", status: "unchanged" }]);
+    expect(saved.writeStatus).toBe("created");
+  });
+
+  it("reports changed when the document body changed after the last compile", async () => {
+    await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/1", "Alpha", "before"));
+    const [before] = await listSourceDocuments(harness.db, harness.stackId);
+    await saveSourceDocument(harness.db, harness.stackId, doc("https://a.test/1", "Alpha", "after"));
+    const source = sourceDocumentsChangeSource(harness.db, harness.stackId);
+
+    const changes = await detectChanges("/nonexistent-root", {
+      version: 2,
+      indexHash: "",
+      sources: { "https://a.test/1": { hash: before!.contentHash, concepts: [], compiledAt: "x" } },
+    }, source);
+
+    expect(changes).toEqual([{ file: "https://a.test/1", status: "changed" }]);
+  });
+
+  it("reports a document removed from the table as deleted, naming its identity", async () => {
+    // The identity is what a deletion must name: the file is gone, so a filename
+    // could not identify it, and `SourceState.source` exists for exactly this.
+    const source = sourceDocumentsChangeSource(harness.db, harness.stackId);
+
+    const changes = await detectChanges("/nonexistent-root", {
+      version: 2,
+      indexHash: "",
+      sources: { "https://gone.test/1": { hash: "h", concepts: [], compiledAt: "x" } },
+    }, source);
+
+    expect(changes).toEqual([{ file: "https://gone.test/1", status: "deleted" }]);
+  });
+});
+
+/** A state with nothing compiled, for the cases that start from an empty corpus. */
+function emptyState() {
+  return { version: 2 as const, indexHash: "", sources: {} };
+}

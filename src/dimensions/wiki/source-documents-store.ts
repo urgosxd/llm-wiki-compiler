@@ -39,6 +39,7 @@ import type { Database } from "llmwiki-kg";
 import { createHash } from "node:crypto";
 import { slugify } from "../../utils/markdown.js";
 import { stableContent } from "../../utils/source-writer.js";
+import type { ChangeDetectionSource } from "../../compiler/hasher.js";
 
 /** Outcome of writing one document, matching the file writer's vocabulary. */
 export type SourceWriteStatus = "created" | "updated" | "unchanged";
@@ -212,4 +213,30 @@ export async function listSourceDocuments(db: Database, stackId: string): Promis
     contentHash: row.content_hash,
     sizeBytes: row.size_bytes,
   }));
+}
+
+/**
+ * Adapt the document table to the compiler's change-detection seam.
+ *
+ * Returns the identity and the stored hash together, because handing back only
+ * identities would force the compiler to re-read every document to hash it -- which
+ * is the `readdir` cost this migration exists to remove.
+ *
+ * @param db - Database handle.
+ * @param stackId - Stack whose corpus to scan.
+ * @returns A source the compiler can diff against its previous state.
+ */
+export function sourceDocumentsChangeSource(
+  db: Database,
+  stackId: string,
+): ChangeDetectionSource {
+  return {
+    list: async () => {
+      const documents = await listSourceDocuments(db, stackId);
+      return documents.map((doc) => ({
+        sourceIdentity: doc.sourceIdentity,
+        contentHash: doc.contentHash,
+      }));
+    },
+  };
 }
