@@ -180,11 +180,26 @@ export interface Dimension {
    * MUST be idempotent, and this is stronger than it looks: replay is how a
    * committed-but-unpaired ingest is recovered, so `reconcileOutbox` calls this
    * again with the same input after the fact. A second call must report the same
-   * outcome the first would have -- not insert a duplicate row, and not resurrect
-   * work a `forget` has since removed.
+   * outcome the first would have: no duplicate row, and no forked slug.
    *
    * MUST NOT be relied on to undo itself. Once this returns, the dimension can no
    * longer compensate; the outbox record is what makes the rest recoverable.
+   *
+   * ## Idempotency is about REPLAY, not about resurrection
+   *
+   * An earlier version of this comment also promised a second `commit` would "not
+   * resurrect work a `forget` has since removed". That was measured and is FALSE,
+   * because it assumed `forget` removes something. The wiki's `forget` is
+   * deliberately a no-op -- `compile` owns removal by marking orphaned pages -- so
+   * there is no removal for a replay to undo.
+   *
+   * The distinction is worth stating because the two cases look alike and behave
+   * oppositely. A replay after `forget` leaves exactly one row, because `forget`
+   * deleted nothing. A replay after ANOTHER actor deleted the row DOES recreate it,
+   * which is correct: the outbox record says this ingest committed, so reconciliation
+   * restores it. When `forget` gains teeth, that second case must start failing --
+   * the wiki store suite pins it precisely so whoever gives `forget` teeth sees it go
+   * red instead of discovering the interaction in production.
    */
   commit(prepared: PreparedWrite): Promise<CommittedWrite>;
 
