@@ -122,6 +122,43 @@ export async function bindTenant(
   }
 }
 
+/**
+ * Binds the domain of a Stack that is ABOUT TO BE CREATED.
+ *
+ * ## Why this exists separately from {@link bindTenant}
+ *
+ * Creating a Stack is the one write where the row being written IS the tenant, so
+ * there is no `stack_id` to bind — it is what the INSERT is about to produce. Under
+ * the write policies in `db/migration_rls_write_policies.sql`, `stacks` therefore
+ * validates against `app.stack_domain` instead of `app.stack_id`:
+ *
+ *   with check (domain = nullif(current_setting('app.stack_domain', true), '')::uuid)
+ *
+ * Without this call that predicate evaluates to NULL, the INSERT is refused, and
+ * `POST /stacks` fails closed. Failing closed is the right behaviour; being unable
+ * to create a Stack at all is not.
+ *
+ * ## Why it must run BEFORE the duplicate check
+ *
+ * The `stacks` READ policy also accepts a domain match. `createStack` first looks
+ * for an existing Stack with the same domain, and under RLS that lookup only sees
+ * the row if the domain is already bound. Binding here means the 409 a caller gets
+ * for a duplicate is the real answer rather than "no duplicate found" followed by
+ * a constraint violation from the INSERT.
+ *
+ * It is a no-op while the application connects as a role that bypasses RLS, which
+ * is why it can land before the migration is applied.
+ *
+ * @param tx - The creating transaction.
+ * @param domain - The domain the caller asked for, already validated.
+ */
+export async function bindCreatingStackDomain(
+  tx: Database,
+  domain: string,
+): Promise<void> {
+  await tx.execute(sql`select set_config('app.stack_domain', ${domain}, true)`);
+}
+
 /** A resolved Stack, or the error to answer with instead. */
 export type StackResolution =
   | { readonly ok: true; readonly stack: StackRow }

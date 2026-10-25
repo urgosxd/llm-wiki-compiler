@@ -11,6 +11,7 @@ import {
 } from "../db.js";
 import { StackCreate, StackResponse, StackUpdate } from "../dto.js";
 import type { StackResponseDto } from "../dto.js";
+import { bindCreatingStackDomain } from "../core/stack_resolver.js";
 import { apiError, pydanticUuid, toFastApiValidationError } from "../errors.js";
 import type { ApiError, ValidationFailure } from "../errors.js";
 
@@ -237,6 +238,20 @@ async function createStack(
   }
 
   const payload = parsed.data;
+
+  // Bind the domain this Stack is about to own, BEFORE any lookup on `stacks`.
+  //
+  // Two reasons, both about the RLS write policy for `stacks`, which validates
+  // against `app.stack_domain` because creating a Stack is the one write where the
+  // row being created IS the tenant: without the binding that predicate is NULL and
+  // the INSERT is refused. And the duplicate check below is itself a read on
+  // `stacks`, whose policy also accepts a domain match, so binding first makes the
+  // 409 a real answer rather than "no duplicate found" followed by a constraint
+  // error from the INSERT.
+  //
+  // A no-op while the connection bypasses RLS, which is why it is safe to land
+  // ahead of the migration.
+  await bindCreatingStackDomain(tx, payload.domain);
 
   const existing = await tx.execute<{ id: string }>(
     sql`select id from stacks where domain = ${payload.domain}`,

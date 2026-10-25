@@ -1000,6 +1000,57 @@ filtered reads, and nothing filtered writes.
 Scratch database dropped, role returned to `nologin` with no password, temp files
 removed.
 
+### Measured: applying it is NOT enough, and the blocker is not SQL
+
+Ran the suite against `llmwiki_app` with both migrations applied, plus the
+`POST /stacks` binding: **191 failed / 560 passed / 4 skipped** — 4 fewer than the
+195 before, i.e. the Stack-creation fix works and buys almost nothing.
+
+Failure census by table:
+
+```
+141  violates row-level security policy for table "stacks"
+ 36  violates row-level security policy for table "stack_documents"
+```
+
+Three separate causes, and the third is the one that matters:
+
+**1. Fixtures insert rows without binding.** `ingest-harness`, `pages-harness`,
+`aks-harness` and a dozen `backfeed-*.test.ts` insert `stacks` /
+`stack_documents` directly. Test-side; fixed for `ingest-harness` by binding
+inside a transaction.
+
+**2. `set_config(..., true)` is transaction-local on a pooled client.** Two bare
+`database().execute()` calls can land on different connections, so the binding is
+gone before the INSERT. Any binding must share a transaction with the write it
+protects. Worth stating loudly: this is a footgun for every future caller, not
+just fixtures.
+
+**3. `resolveStack` reads BEFORE it binds — so it cannot work under RLS at all.**
+
+```ts
+const rows = await tx.execute(sql`select ... from stacks where id = ${stackId}`);
+const stack = rows[0];
+if (stack === undefined) return { ok: false, error: apiError(404, ...) };
+await bindTenant(tx, stack.id, domain);   // <- after the read
+```
+
+Under RLS this SELECT matches nothing, so it returns **404 for every Stack that
+exists**, and never reaches `bindTenant`. The same shape appears in
+`routes/ingest/request.ts#findDocument`, which joins `stack_documents` to `stacks`
+with no binding — it also always returns empty.
+
+Chicken-and-egg, and it is architectural rather than a bug in any one function: the
+tenant scoping is derived FROM the row you are trying to read, so it is unavailable
+exactly when it is needed. Fixing it needs a decision, not a patch — e.g. a
+`SECURITY DEFINER` resolution function that reads the mapping under elevated rights
+and returns the id, or resolving by domain (which `stacks` accepts) instead of by
+id everywhere.
+
+**So the honest state of RLS is: the write half is now expressible and verified, and
+enabling it still requires making resolution RLS-capable first.** The 195→191
+measurement is the evidence that the SQL is not the remaining blocker.
+
 ### Order of operations
 
 1. Apply the migration while `DATABASE_URL` still names `aks` — it bypasses RLS, so

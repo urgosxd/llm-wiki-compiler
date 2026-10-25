@@ -179,13 +179,22 @@ export function createTestApp(): Express {
 export async function createStack(overrides: { synthesize?: boolean } = {}): Promise<string> {
   const id = randomUUID();
   const suffix = randomUUID().slice(0, 8);
-  await database().execute(sql`
-    insert into stacks (id, name, domain, synthesize_descriptions)
-    values (
-      ${id}, ${`w2ex ${suffix}`}, ${`${domainPrefix}${suffix}`},
-      ${overrides.synthesize ?? false}
-    )
-  `);
+  const domain = `${domainPrefix}${suffix}`;
+  // A fixture that inserts a Stack directly has to bind its domain first, for the
+  // same reason `POST /stacks` does: the `stacks` write policy validates against
+  // `app.stack_domain`. Without it this fails under RLS with
+  // "new row violates row-level security policy for table stacks".
+  //
+  // The binding must share a TRANSACTION with the insert. `set_config(..., true)`
+  // is transaction-local, so on a pooled client two bare `execute` calls can land
+  // on different connections and the setting is already gone.
+  await database().transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.stack_domain', ${domain}, true)`);
+    await tx.execute(sql`
+      insert into stacks (id, name, domain, synthesize_descriptions)
+      values (${id}, ${`w2ex ${suffix}`}, ${domain}, ${overrides.synthesize ?? false})
+    `);
+  });
   return id;
 }
 
@@ -202,12 +211,19 @@ export async function createDocument(
   writtenFiles.add(relative);
 
   const bytes = typeof content === "string" ? Buffer.byteLength(content, "utf8") : content.length;
-  await database().execute(sql`
-    insert into stack_documents (
-      id, stack_id, filename, storage_path, size_bytes, source_hash
-    )
-    values (${documentId}, ${stackId}, ${filename}, ${relative}, ${bytes}, ${randomUUID()})
-  `);
+  // `stack_documents` has no domain escape hatch: its write policy requires
+  // `stack_id` to equal the bound tenant. As in `createStack` above, the binding
+  // and the insert share a transaction because `set_config(..., true)` is
+  // transaction-local and the pool may hand each statement a different connection.
+  await database().transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+    await tx.execute(sql`
+      insert into stack_documents (
+        id, stack_id, filename, storage_path, size_bytes, source_hash
+      )
+      values (${documentId}, ${stackId}, ${filename}, ${relative}, ${bytes}, ${randomUUID()})
+    `);
+  });
   return documentId;
 }
 
