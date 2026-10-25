@@ -14,6 +14,7 @@ describe.skipIf(skipReason !== false)("documents validation and auth (live datab
 
       it("rejects a non-UUID path parameter with a 422 on the path location", async () => {
         const app = buildApp();
+        const stackId = await insertStack(uniqueDomain("uuidpath"));
 
         const listResponse = await request(app).get("/stacks/not-a-uuid/documents");
         expect(listResponse.status).toBe(422);
@@ -29,7 +30,9 @@ describe.skipIf(skipReason !== false)("documents validation and auth (live datab
           ],
         });
 
-        const getResponse = await request(app).get("/documents/not-a-uuid");
+        const getResponse = await request(app).get(
+          `/stacks/${stackId}/documents/not-a-uuid`,
+        );
         expect(getResponse.status).toBe(422);
         expect(getResponse.body).toEqual({
           detail: [
@@ -50,7 +53,7 @@ describe.skipIf(skipReason !== false)("documents validation and auth (live datab
 
         for (const pending of [
           request(guarded).get(`/stacks/${stackId}/documents`),
-          request(guarded).get(`/documents/${UNKNOWN_UUID}`),
+          request(guarded).get(`/stacks/${stackId}/documents/${UNKNOWN_UUID}`),
           request(guarded)
             .post(`/stacks/${stackId}/documents`)
             .attach("file", Buffer.from("x"), { filename: "x.txt" }),

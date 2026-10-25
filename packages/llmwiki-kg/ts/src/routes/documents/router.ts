@@ -33,9 +33,22 @@ const DEFAULT_DEPENDENCIES: DocumentsRouterDependencies = {
  * Builds the documents router.
  *
  * Paths are absolute — the router must be mounted at the application root
- * (`app.use(createDocumentsRouter())`), not under `/stacks`, because the by-id
- * routes live under `/documents`. Auth is mounted here, mirroring
- * `dependencies=[Depends(require_api_key)]` on the Python router.
+ * (`app.use(createDocumentsRouter())`), not under `/stacks`. Auth is mounted here,
+ * mirroring `dependencies=[Depends(require_api_key)]` on the Python router.
+ *
+ * ## Every route names its Stack, including the by-id ones
+ *
+ * The by-id routes used to be `/documents/:doc_id`, which was enough while a
+ * document id was globally unique and RLS was inert. It stopped being enough when
+ * tenancy became real: a document id alone cannot tell a policy which Stack the
+ * reader belongs to, so the query returns zero rows under the application role and
+ * stays correct only while the connection bypasses RLS as a superuser. Naming the
+ * Stack in the path is what lets the route bind tenant context and filter.
+ *
+ * The old `/documents/:doc_id` paths are deliberately NOT kept as aliases. An alias
+ * would be an unfiltered read reachable by anyone, which is the exact hole this
+ * closes; a caller that has not been updated fails loudly with a 404 instead of
+ * quietly reading across tenants.
  */
 export function createDocumentsRouter(
   deps: DocumentsRouterDependencies = DEFAULT_DEPENDENCIES,
@@ -46,8 +59,8 @@ export function createDocumentsRouter(
 
   router.post("/stacks/:stack_id/documents", deps.wrap(uploadDocument));
   router.get("/stacks/:stack_id/documents", deps.wrap(listDocuments));
-  router.get("/documents/:doc_id", deps.wrap(getDocument));
-  router.delete("/documents/:doc_id", deps.wrap(deleteDocument));
+  router.get("/stacks/:stack_id/documents/:doc_id", deps.wrap(getDocument));
+  router.delete("/stacks/:stack_id/documents/:doc_id", deps.wrap(deleteDocument));
 
   return router;
 }

@@ -67,7 +67,7 @@ describe.skipIf(skipReason !== false)("documents read (live database)", () => {
         expect(uppercase.body).toEqual({ detail: `Stack ${UNKNOWN_UUID} not found` });
       });
 
-      it("GET /documents/:doc_id returns the document, and 404s an unknown id", async () => {
+      it("GET /stacks/:stack_id/documents/:doc_id returns the document, and 404s an unknown id", async () => {
         const app = buildApp();
         const stackId = await insertStack(uniqueDomain("getbyid"));
 
@@ -77,31 +77,46 @@ describe.skipIf(skipReason !== false)("documents read (live database)", () => {
         expect(created.status).toBe(201);
         const documentId = String(field(created.body, "id"));
 
-        const found = await request(app).get(`/documents/${documentId}`);
+        const found = await request(app).get(`/stacks/${stackId}/documents/${documentId}`);
         expect(found.status).toBe(200);
         expect(found.body).toEqual(created.body);
         expect(responseKeys(found.text)).toEqual([...RESPONSE_KEYS]);
         expectOracleTimestamp(field(found.body, "ingested_at"));
 
-        const missing = await request(app).get(`/documents/${UNKNOWN_UUID}`);
+        const missing = await request(app).get(`/stacks/${stackId}/documents/${UNKNOWN_UUID}`);
         expect(missing.status).toBe(404);
         expect(missing.body).toEqual({ detail: `Document ${UNKNOWN_UUID} not found` });
       });
 
-      it("GET /documents/:doc_id serves a document belonging to any stack", async () => {
-        // The by-id route carries no stack parameter, so a document of another
-        // stack is still a 200 — measured on the oracle.
+      it("GET a document under the WRONG stack is a 404, not a cross-stack read", async () => {
+        // This replaces a test that asserted the opposite. The old case was named
+        // 'serves a document belonging to any stack' and cited the oracle as its
+        // authority, which was accurate: the by-id route carried no stack, so any
+        // caller read any tenant's document.
+        //
+        // That was a leak, not a feature, and it stayed invisible because the
+        // connection ran as a superuser bypassing row-level security. With the
+        // Stack in the path the read is scoped by construction, so the same request
+        // now has to fail.
+        //
+        // 404 rather than 403 on purpose: 'forbidden' would confirm the id exists
+        // somewhere, which is the same disclosure wearing a different status code.
         const app = buildApp();
-        const stackId = await insertStack(uniqueDomain("cross"));
+        const ownerStack = await insertStack(uniqueDomain("owner"));
+        const otherStack = await insertStack(uniqueDomain("other"));
 
         const created = await request(app)
-          .post(`/stacks/${stackId}/documents`)
+          .post(`/stacks/${ownerStack}/documents`)
           .attach("file", Buffer.from("cross stack\n"), { filename: "cross.txt" });
         expect(created.status).toBe(201);
+        const documentId = String(field(created.body, "id"));
 
-        const fetched = await request(app).get(`/documents/${String(field(created.body, "id"))}`);
-        expect(fetched.status).toBe(200);
-        expect(field(fetched.body, "stack_id")).toBe(stackId);
+        const sameStack = await request(app).get(`/stacks/${ownerStack}/documents/${documentId}`);
+        expect(sameStack.status).toBe(200);
+
+        const wrongStack = await request(app).get(`/stacks/${otherStack}/documents/${documentId}`);
+        expect(wrongStack.status).toBe(404);
+        expect(field(wrongStack.body, "stack_id")).toBeUndefined();
       });
   },
 );

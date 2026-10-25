@@ -1,12 +1,23 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ingestSource, ingestTextSource } from "../../src/commands/ingest.js";
 import { LOG_FILE } from "../../src/utils/constants.js";
+import { provisionEnvStack } from "../fixtures/env-stack.js";
+
+// Ingest writes a wiki page row, so it needs a real Stack. Provisioned per FILE:
+// `manual:<sha256>` identity is stable across runs, and this suite asserts on the
+// journal line that an `unchanged` write skips -- so a shared Stack would fail it
+// on the second run and never again on a fresh volume.
+const env = await provisionEnvStack("ingest-status");
+
+afterAll(async () => {
+  await env.cleanup();
+});
 
 describe("ingestTextSource writeStatus + journaling", () => {
-  it("created/updated/unchanged; unchanged writes no journal entry and no rewrite", async () => {
+  it.skipIf(!env.reachable)("created/updated/unchanged; unchanged writes no journal entry and no rewrite", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ingest-status-"));
     const body = "Enough body content to satisfy the minimum source length requirement.";
 
@@ -26,7 +37,7 @@ describe("ingestTextSource writeStatus + journaling", () => {
     expect((await stat(path.join(root, "sources", r3.filename))).mtimeMs).toBe(fileBefore.mtimeMs);
   });
 
-  it("ingestSource: re-ingesting an unchanged file is a no-op (writeStatus + no journal)", async () => {
+  it.skipIf(!env.reachable)("ingestSource: re-ingesting an unchanged file is a no-op (writeStatus + no journal)", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ingest-src-status-"));
     const src = path.join(root, "note.md");
     await writeFile(src, "Enough body content to satisfy the minimum source length requirement.", "utf-8");
