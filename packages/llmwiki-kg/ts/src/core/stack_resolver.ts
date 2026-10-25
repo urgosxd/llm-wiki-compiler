@@ -165,6 +165,49 @@ export type StackResolution =
   | { readonly ok: false; readonly error: ApiError };
 
 /**
+ * Binds the tenant named by the CALLER, before any query touches it.
+ *
+ * ## The order problem this exists to solve
+ *
+ * `resolveStack` used to read `stacks` first and call {@link bindTenant} with the
+ * id it found. Under RLS that is circular and cannot work: the `stacks` read policy
+ * matches only the bound tenant, so with no binding the SELECT returns nothing, the
+ * resolver answers 404 for a Stack that exists, and `bindTenant` is never reached.
+ *
+ * The circularity is avoidable because the caller already told us which tenant it
+ * means. `?stack_id=<uuid>` is the binding, and so is `?domain=<slug>`. Hiding the
+ * id until after a privileged read was never protecting anything: with a single
+ * shared API key (`auth.ts` attaches no principal and owns no rows per key) the id
+ * IS the caller's whole authority claim. Binding it up front changes nothing about
+ * who may read what — the policies still refuse every other tenant — and removes
+ * the need for a `SECURITY DEFINER` function, i.e. for elevated rights inside the
+ * request path.
+ *
+ * Both settings are set. `stacks` accepts either match, so binding only the id
+ * would make a domain-only lookup invisible, and binding only the domain would make
+ * an id-only lookup invisible.
+ *
+ * A missing reference binds nothing, and the policies then match nothing — the
+ * correct fail-closed answer, produced by the database rather than by a guard.
+ *
+ * @param tx - Transaction that will carry the lookup.
+ * @param stackId - Canonical UUID text the caller supplied, or `null`.
+ * @param domain - Domain slug the caller supplied, or `null`.
+ */
+export async function bindCallerStack(
+  tx: Database,
+  stackId: string | null,
+  domain: string | null,
+): Promise<void> {
+  if (stackId !== null && stackId !== "") {
+    await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+  }
+  if (domain !== null && domain !== "") {
+    await tx.execute(sql`select set_config('app.stack_domain', ${domain}, true)`);
+  }
+}
+
+/**
  * Looks up a Stack by id or domain.
  *
  * @param stackId canonical UUID text, or `null` when the parameter was absent.
@@ -185,6 +228,10 @@ export async function resolveStack(
       error: apiError(422, "Either stack_id (UUID) or domain (slug) must be provided"),
     };
   }
+
+  // Bind from the caller's own reference BEFORE reading. See {@link bindCallerStack}:
+  // under RLS the read is otherwise invisible and this returns a false 404.
+  await bindCallerStack(tx, stackId, domain);
 
   const rows =
     stackId !== null

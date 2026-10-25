@@ -14,6 +14,7 @@ import { sql } from "drizzle-orm";
 import type { Request, Response } from "express";
 
 import { MAX_EXTRACTION_CHARS } from "../../core/files.js";
+import { bindCallerStack } from "../../core/stack_resolver.js";
 import type { Database } from "../../db.js";
 import { apiError, toFastApiValidationError } from "../../errors.js";
 import type { ApiError, ValidationFailure } from "../../errors.js";
@@ -180,12 +181,19 @@ export function sendDocumentNotFound(res: Response, params: IngestParams): void 
  *
  * An unknown Stack and an unknown document are therefore the same 404 carrying
  * both ids — the measured wording.
+ *
+ * The tenant is bound from the path's `:stack_id` before the query runs. Both
+ * tables are tenant-scoped, so under RLS an unbound join matches nothing and every
+ * ingest would answer 404. `:stack_id` is the caller's own claim and is already the
+ * filter in the WHERE clause, so binding it grants nothing that the query wasn't
+ * already asking for — it only lets the policies see the rows the filter selects.
  */
 export async function findDocument(
   tx: Database,
   stackId: string,
   docId: string,
 ): Promise<DocumentRow | undefined> {
+  await bindCallerStack(tx, stackId, null);
   const rows = await tx.execute<DocumentRow>(sql`
     select sd.id, sd.stack_id, sd.storage_path,
            s.name as stack_name,

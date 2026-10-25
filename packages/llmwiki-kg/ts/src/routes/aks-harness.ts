@@ -18,6 +18,7 @@ import { parseConfig } from "../config.js";
 import { createClient, createDatabase, createRequestTransactionWrapper } from "../db.js";
 import { createApp } from "../server.js";
 import type { Database } from "../db.js";
+import { withFixtureTenant } from "./fixture-tenant.js";
 
 import type { AksRouterDependencies } from "./aks.js";
 
@@ -225,15 +226,20 @@ export async function createFixture(options: { withDocument?: boolean } = {}): P
   const ids = fixtureIds();
   const withDocument = options.withDocument !== false;
 
-  await insertFixtureStack(ids);
-  if (withDocument) {
-    await insertFixtureDocument(ids);
-  }
-  await insertFixtureEntities(ids);
-  await insertFixtureGraph(ids);
-  if (withDocument) {
-    await linkFixtureDocument(ids);
-  }
+  // One transaction for the whole seeding: every row below is tenant-scoped, and
+  // `set_config(..., true)` dies with its transaction, so the binding has to cover
+  // all of them rather than just the Stack INSERT.
+  await withFixtureTenant(database(), { stackId: ids.stackId, domain: ids.domain }, async (tx) => {
+    await insertFixtureStack(ids, tx);
+    if (withDocument) {
+      await insertFixtureDocument(ids, tx);
+    }
+    await insertFixtureEntities(ids, tx);
+    await insertFixtureGraph(ids, tx);
+    if (withDocument) {
+      await linkFixtureDocument(ids, tx);
+    }
+  });
 
   return {
     stackId: ids.stackId,
@@ -272,16 +278,16 @@ function fixtureIds(): FixtureIds {
 }
 
 /** Inserts the Stack row. */
-async function insertFixtureStack(ids: FixtureIds): Promise<void> {
-  await database().execute(sql`
+async function insertFixtureStack(ids: FixtureIds, tx: Database): Promise<void> {
+  await tx.execute(sql`
     insert into stacks (id, name, domain, description, scope, compilation_strategy)
     values (${ids.stackId}, ${`w2aks ${ids.domain.slice(-8)}`}, ${ids.domain}, ${"fixture stack"}, ${"stack"}, ${"incremental"})
   `);
 }
 
 /** Inserts the one document the fixture optionally carries. */
-async function insertFixtureDocument(ids: FixtureIds): Promise<void> {
-  await database().execute(sql`
+async function insertFixtureDocument(ids: FixtureIds, tx: Database): Promise<void> {
+  await tx.execute(sql`
     insert into stack_documents (
       id, stack_id, filename, storage_path, size_bytes, source_hash,
       truncated, original_length, audit
@@ -295,8 +301,8 @@ async function insertFixtureDocument(ids: FixtureIds): Promise<void> {
 }
 
 /** Inserts the three entities the query endpoints read. */
-async function insertFixtureEntities(ids: FixtureIds): Promise<void> {
-  await database().execute(sql`
+async function insertFixtureEntities(ids: FixtureIds, tx: Database): Promise<void> {
+  await tx.execute(sql`
     insert into ontology_entities (
       id, stack_id, name, type, description, properties, confidence,
       verified, extracted_by_model, source_kind, pipeline
@@ -317,8 +323,8 @@ async function insertFixtureEntities(ids: FixtureIds): Promise<void> {
 }
 
 /** Inserts the two edges the traverse tests walk. */
-async function insertFixtureGraph(ids: FixtureIds): Promise<void> {
-  await database().execute(sql`
+async function insertFixtureGraph(ids: FixtureIds, tx: Database): Promise<void> {
+  await tx.execute(sql`
     insert into ontology_relationships (
       id, stack_id, from_entity_id, to_entity_id, type, description,
       confidence, verified, extracted_by_model, source_kind, pipeline
@@ -334,8 +340,8 @@ async function insertFixtureGraph(ids: FixtureIds): Promise<void> {
 }
 
 /** Links the document to the gateway entity. */
-async function linkFixtureDocument(ids: FixtureIds): Promise<void> {
-  await database().execute(sql`
+async function linkFixtureDocument(ids: FixtureIds, tx: Database): Promise<void> {
+  await tx.execute(sql`
     insert into entity_source_documents (entity_id, document_id, stack_id)
     values (${ids.gateway}, ${ids.documentId}, ${ids.stackId})
   `);

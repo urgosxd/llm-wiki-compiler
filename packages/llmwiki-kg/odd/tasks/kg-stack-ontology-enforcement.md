@@ -1051,6 +1051,52 @@ id everywhere.
 enabling it still requires making resolution RLS-capable first.** The 195→191
 measurement is the evidence that the SQL is not the remaining blocker.
 
+### Resolved: bind from the caller's reference, before reading
+
+The chosen fix is the caller's own identifier, not `SECURITY DEFINER`.
+
+`?stack_id=<uuid>` and `?domain=<slug>` are the only references a request carries,
+and with a single shared API key (`auth.ts` attaches no principal and owns no rows
+per key) that identifier IS the caller's whole authority claim. Hiding it behind a
+privileged read was never protecting anything: the policies still refuse every other
+tenant either way.
+
+So `bindCallerStack(tx, stackId, domain)` sets both settings from the request's own
+arguments BEFORE the lookup, and `resolveStack` calls it first. `findDocument` does
+the same from the path's `:stack_id`, which is already its WHERE filter.
+
+No elevated rights anywhere in the request path, and no `db/**` change — which
+matters, because `packages/llmwiki-kg/db/**` is a shared path this role does not own.
+
+**Measured, running the suite as `llmwiki_app` with both migrations applied:**
+
+| stage | failing |
+| --- | --- |
+| baseline, `USING` only | 195 |
+| + `WITH CHECK` + `POST /stacks` domain binding | 191 |
+| + `bindCallerStack` in `resolveStack` and `findDocument` | 171 |
+| + fixture bindings (4 harnesses) | 156 |
+| + fixture bindings (10 inline `createStack` helpers) | 138 |
+| + `documents-harness` | **135** |
+
+Failure census at the end: 38 `stacks`, 23 `ontology_entities`, 7 `document_chunks`,
+2 `ontology_relationships`, 1 `stack_documents` — **all from fixtures**, no production
+path remains.
+
+### The remaining 135 are test-side, not architectural
+
+Every one is a fixture writing or deleting rows without a binding. Two shapes:
+
+- `delete from ontology_entities where stack_id = $1` in `aks-entities.test.ts`
+  deletes NOTHING under RLS, so a test asserting "empty array for a Stack with no
+  entities" receives 3 rows. Not a leak: the production read filters
+  `where stack_id = ${stackId}` explicitly, verified in `routes/aks/*.ts`.
+- `db.test.ts` drives drizzle `insert().values()`, not raw SQL, and tests driver
+  semantics (rollback, timestamptz precision) rather than tenancy.
+
+They need the same `withFixtureTenant` treatment. It is mechanical and does not
+touch product code.
+
 ### Order of operations
 
 1. Apply the migration while `DATABASE_URL` still names `aks` — it bypasses RLS, so

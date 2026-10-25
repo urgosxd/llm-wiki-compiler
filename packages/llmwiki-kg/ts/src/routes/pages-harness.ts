@@ -23,6 +23,7 @@ import {
 } from "../db.js";
 import { createApp } from "../server.js";
 import type { Database } from "../db.js";
+import { withFixtureTenant } from "./fixture-tenant.js";
 
 import type { PageEntityRow, PageRelationshipRow } from "../core/page_generator.js";
 
@@ -214,21 +215,30 @@ function fixtureIds(): FixtureIds {
 
 /** Inserts the Stack row and its one document. */
 async function insertFixtureStack(ids: FixtureIds): Promise<void> {
-  await database().execute(sql`
-    insert into stacks (id, name, domain, description, scope, compilation_strategy)
-    values (${ids.stackId}, ${ids.stackName}, ${ids.domain}, ${"pages fixture"}, ${"stack"}, ${"incremental"})
-  `);
-  await database().execute(sql`
-    insert into stack_documents (
-      id, stack_id, filename, storage_path, size_bytes, source_hash,
-      truncated, original_length, audit
-    )
-    values (
-      ${ids.documentId}, ${ids.stackId}, ${"w2pg-runbook.txt"},
-      ${"uploads/w2pg-runbook.txt"}, ${240}, ${`hash-${ids.documentId}`},
-      ${false}, ${240}, ${null}
-    )
-  `);
+  // Both rows are tenant-scoped, so both need the binding, and both must share the
+  // binding's transaction. `domain` covers the INSERT into `stacks`; `stackId`
+  // covers the document that references it.
+  await withFixtureTenant(
+    database(),
+    { stackId: ids.stackId, domain: ids.domain },
+    async (tx) => {
+      await tx.execute(sql`
+        insert into stacks (id, name, domain, description, scope, compilation_strategy)
+        values (${ids.stackId}, ${ids.stackName}, ${ids.domain}, ${"pages fixture"}, ${"stack"}, ${"incremental"})
+      `);
+      await tx.execute(sql`
+        insert into stack_documents (
+          id, stack_id, filename, storage_path, size_bytes, source_hash,
+          truncated, original_length, audit
+        )
+        values (
+          ${ids.documentId}, ${ids.stackId}, ${"w2pg-runbook.txt"},
+          ${"uploads/w2pg-runbook.txt"}, ${240}, ${`hash-${ids.documentId}`},
+          ${false}, ${240}, ${null}
+        )
+      `);
+    },
+  );
 }
 
 /** Inserts the three entities the page endpoints read. */

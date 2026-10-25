@@ -7,6 +7,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { sql } from "drizzle-orm";
 import request from "supertest";
 import { asRecord, buildApp, currentDomainPrefix, database, deleteFixtureRows, skipReason, useDomainPrefix } from "./backfeed-harness.js";
+import { withFixtureTenant } from "./fixture-tenant.js";
 
 // This file owns its own domain namespace: the split suites run in parallel
 // against one database and the cleanup deletes by prefix.
@@ -26,11 +27,11 @@ describe.skipIf(skipReason !== false)("backfeed flag validation (live database)"
       /** Creates a fixture Stack through the DB and records it for the tests. */
       async function createStack(label: string): Promise<string> {
         const domain = uniqueDomain(label);
-        const rows = await database().execute<{ id: string }>(sql`
+        const rows = await withFixtureTenant(database(), { domain: domain }, (tx) => tx.execute<{ id: string }>(sql`
           insert into stacks (name, domain)
           values (${`Backfeed fixture ${label}`}, ${domain})
           returning id
-        `);
+        `));
         const row = rows[0];
         if (row === undefined) {
           throw new Error("insert into stacks returned no row");

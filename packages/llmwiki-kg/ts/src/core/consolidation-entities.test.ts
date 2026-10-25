@@ -8,6 +8,7 @@ import { consolidateBackfeedProposal } from "./consolidation.js";
 import { sql } from "drizzle-orm";
 import { currentDomainPrefix, database, entity, runner, skipReason, useDomainPrefix } from "./consolidation-harness.js";
 import type { EntityRow } from "./consolidation-harness.js";
+import { withFixtureTenant } from "../routes/fixture-tenant.js";
 
 describe.skipIf(skipReason !== false)("consolidateBackfeedProposal entities (live database)", () => {
   useDomainPrefix("entities");
@@ -23,11 +24,11 @@ describe.skipIf(skipReason !== false)("consolidateBackfeedProposal entities (liv
 
       /** Creates a fixture Stack and returns its id. */
       async function createStack(label: string): Promise<string> {
-        const rows = await database().execute<{ id: string }>(sql`
+        const rows = await withFixtureTenant(database(), { domain: uniqueDomain(label) }, (tx) => tx.execute<{ id: string }>(sql`
           insert into stacks (name, domain)
           values (${`Consolidation fixture ${label}`}, ${uniqueDomain(label)})
           returning id
-        `);
+        `));
         const row = rows[0];
         if (row === undefined) {
           throw new Error("insert into stacks returned no row");

@@ -21,6 +21,7 @@ import {
   createRequestTransactionWrapper,
 } from "../db.js";
 import type { Database } from "../db.js";
+import { withFixtureTenant } from "./fixture-tenant.js";
 
 import { createDocumentsRouter } from "./documents.js";
 import type { DocumentsRouterDependencies } from "./documents.js";
@@ -110,11 +111,11 @@ export async function tick(): Promise<void> {
 }
 
 export async function insertStack(domain: string): Promise<string> {
-  const rows = await database().execute<{ id: string }>(sql`
+  const rows = await withFixtureTenant(database(), { domain }, (tx) => tx.execute<{ id: string }>(sql`
     insert into stacks (name, domain)
     values (${"w1doc stack"}, ${domain})
     returning id
-  `);
+  `));
   const row = rows[0];
   if (row === undefined) {
     throw new Error("insert into stacks returned no row");
