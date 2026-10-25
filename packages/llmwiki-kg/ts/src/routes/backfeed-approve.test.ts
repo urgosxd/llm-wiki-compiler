@@ -47,7 +47,7 @@ describe.skipIf(skipReason !== false)("backfeed approve (live database)", () => 
       function flagBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
         return {
           domain: stackDomain,
-          proposal: { entities: [{ name: "Widget", type: "Thing" }] },
+          proposal: { entities: [{ name: "Widget", type: "PRODUCT" }] },
           ...overrides,
         };
       }
@@ -71,10 +71,10 @@ describe.skipIf(skipReason !== false)("backfeed approve (live database)", () => 
         const id = await flag(app, {
           proposal: {
             entities: [
-              { name: "Approved", type: "T", description: "from approval" },
-              { name: "Approved2", type: "T" },
+              { name: "Approved", type: "PRODUCT", description: "from approval" },
+              { name: "Approved2", type: "PRODUCT" },
             ],
-            relationships: [{ from_entity: "Approved", to_entity: "Approved2", type: "links" }],
+            relationships: [{ from_entity: "Approved", to_entity: "Approved2", type: "IS_A" }],
           },
         });
 

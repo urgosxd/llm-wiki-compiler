@@ -62,6 +62,20 @@ export type {
 export { readStackOntology, toStoredOntology } from "./core/stack_ontology.js";
 export type { StoredOntology } from "./core/stack_ontology.js";
 
+// The ontology an unconfigured Stack is enforced against (contract
+// core-index.ts@2).
+//
+// Exported because the policy is now part of the contract a consumer can depend
+// on: a caller that wants to know what an undeclared Stack permits reads this
+// instead of inferring it from a rejection report. `readStackOntology` answers
+// "what did the caller declare"; this answers "what is enforced when they
+// declared nothing", and the two answers are deliberately different.
+export {
+  defaultOntology,
+  DEFAULT_ENTITY_TYPES,
+  DEFAULT_RELATIONSHIP_TYPES,
+} from "./core/default_ontology.js";
+
 export {
   consolidateEntityRows,
   consolidateRelationshipRows,

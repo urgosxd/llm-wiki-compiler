@@ -14,9 +14,11 @@
  * your items was silently dropped". Refusing keeps the invariant that anything in
  * the graph was declared, and puts the correction where the human can act on it.
  *
- * A Stack with no declaration is unaffected: `null` means the oracle's behaviour,
- * exactly as it does for ingest, so approval stays total for every Stack that
- * never opted in.
+ * A Stack with no declaration is enforced against the documented default, not
+ * left total. `null` used to mean the oracle's behaviour, and that was reversed
+ * together with ingest: the graph a Stack accumulates must have one vocabulary
+ * whether or not the caller wrote one down. Both halves are pinned below — the
+ * default admits `COMPANY`, and it refuses `ALIEN_CONSTRUCT`.
  */
 
 import { describe, expect, it, beforeEach } from "vitest";
@@ -166,14 +168,39 @@ describe.skipIf(skipReason !== false)("backfeed approve respects the Stack ontol
     expect(await entityTypes()).toEqual(["company"]);
   });
 
-  it("stays total for a Stack with no declaration", async () => {
+  it("admits the default vocabulary for a Stack with no declaration", async () => {
+    // A Stack that never declared an ontology is still constrained: it admits the
+    // documented default. This is the case that used to be total, and the reversal
+    // is deliberate — an undeclared Stack accumulated whatever the model emitted,
+    // so two Stacks could disagree forever about what a company is called.
+    await createStack(undefined);
+    const app = buildApp();
+    const id = await flag(app, { entities: [{ name: "Acme", type: "COMPANY" }] });
+
+    const response = await approve(app, id);
+
+    expect(response.status).toBe(200);
+    expect(await entityTypes()).toEqual(["COMPANY"]);
+  });
+
+  it("refuses a type outside the default for a Stack with no declaration", async () => {
+    // The other half of the same contract: the default is a real allowlist, not a
+    // suggestion. Without this test the previous one would also pass if the gate
+    // had silently gone back to being total.
     await createStack(undefined);
     const app = buildApp();
     const id = await flag(app, { entities: [{ name: "Vex", type: "ALIEN_CONSTRUCT" }] });
 
     const response = await approve(app, id);
 
-    expect(response.status).toBe(200);
-    expect(await entityTypes()).toEqual(["ALIEN_CONSTRUCT"]);
+    expect(response.status).toBe(422);
+    expect(asRecord(response.body)).toMatchObject({
+      detail: [
+        expect.objectContaining({
+          loc: ["body", "proposal"],
+          msg: expect.stringContaining("ALIEN_CONSTRUCT") as string,
+        }),
+      ],
+    });
   });
 });

@@ -187,21 +187,35 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
     expect(await writtenRelationTypes(stackId)).toEqual(["EMPLOYS"]);
   });
 
-  it("writes everything the model emits when the Stack has no declaration", async () => {
-    // The oracle's `strict=False` behaviour, preserved: no declaration means the
-    // type hints are a suggestion and whatever arrives is stored.
+  it("enforces the default vocabulary when the Stack has no declaration", async () => {
+    // The reversal this feature exists for. `strict=False` used to carry through
+    // to storage: no declaration meant the type hints were a suggestion and
+    // whatever the model emitted was written. An undeclared Stack is now
+    // enforced against `default_ontology.ts`, so `COMPANY`/`PERSON`/`EMPLOYS`
+    // survive and the two out-of-vocabulary triplets do not.
     setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION, BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("plain"));
     const documentId = await createDocument(stackId, BODY);
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    expect(await writtenEntityTypes(stackId)).toEqual([
-      "ALIEN_CONSTRUCT",
-      "COMPANY",
-      "PERSON",
-    ]);
-    expect(await writtenRelationTypes(stackId)).toEqual(["ACQUIRED", "EMPLOYS"]);
+    expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
+    expect(await writtenRelationTypes(stackId)).toEqual(["EMPLOYS"]);
+  });
+
+  it("admits the default vocabulary even though it is not llama_index's", async () => {
+    // `COMPANY` and `EMPLOYS` are absent from llama_index's DEFAULT_ENTITIES /
+    // DEFAULT_RELATIONS, so this is the test that fails if anyone "simplifies"
+    // the default back to those lists. The tool schema stays byte-identical
+    // either way, which is exactly why the swap looks safe and is not.
+    setToolResponse([{ triplets: [IN_ONTOLOGY] }]);
+    const stackId = await createStackWith(app, domain("defaults"));
+    const documentId = await createDocument(stackId, BODY);
+
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
+    expect(await writtenRelationTypes(stackId)).toEqual(["EMPLOYS"]);
   });
 
   it("shows the declared types in the tool schema the model is given", async () => {
@@ -282,15 +296,18 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     expect(await documentAudit(documentId)).toEqual({
       ontology: {
         enforced: true,
+        declared: true,
         rejected: 2,
         reason_codes: ["UNKNOWN_ENTITY_TYPE", "UNKNOWN_RELATIONSHIP_TYPE"],
       },
     });
   });
 
-  it("records that no ontology was enforced when the Stack declares none", async () => {
-    // `enforced: false` rather than an absent key: a document with no rejection
-    // report must be distinguishable from one ingested before this existed.
+  it("records that the default was in force when the Stack declares none", async () => {
+    // `declared: false` rather than an absent key, and `enforced: true` rather
+    // than false. The pair distinguishes "dropped by a default the caller never
+    // chose" from "dropped by a declaration they wrote", which is the difference
+    // between our policy being wrong and their config being wrong.
     setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION] }]);
     const stackId = await createStackWith(app, domain("plain"), undefined);
     const documentId = await createDocument(stackId, BODY);
@@ -298,7 +315,12 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
     expect(await documentAudit(documentId)).toEqual({
-      ontology: { enforced: false, rejected: 0, reason_codes: [] },
+      ontology: {
+        enforced: true,
+        declared: false,
+        rejected: 1,
+        reason_codes: ["UNKNOWN_RELATIONSHIP_TYPE"],
+      },
     });
   });
 
@@ -310,7 +332,7 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
     expect(await documentAudit(documentId)).toEqual({
-      ontology: { enforced: true, rejected: 0, reason_codes: [] },
+      ontology: { enforced: true, declared: true, rejected: 0, reason_codes: [] },
     });
   });
 

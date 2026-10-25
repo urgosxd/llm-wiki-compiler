@@ -48,6 +48,7 @@ vi.mock("llmwiki-kg", async () => {
     registerDocumentRow,
     kgConfig: { DATABASE_URL: "postgres://from-config" },
     readStackOntology: core.readStackOntology,
+    defaultOntology: core.defaultOntology,
   };
 });
 
@@ -128,7 +129,15 @@ describe("the kg dimension adapter", () => {
     await dimension().prepare(INPUT);
 
     expect(chunkAndEmbed).toHaveBeenCalledWith(INPUT.body, "stack-1", expect.stringMatching(/^[0-9a-f]{32}$/));
-    expect(extractGraphFromChunks).toHaveBeenCalledWith(expect.anything(), "Stack One");
+    // The third argument is the ontology in force: the Stack's own declaration
+    // when it has one, the documented default otherwise. Either way extraction is
+    // never called with only the name, which is how an undeclared Stack used to
+    // reach the parser with nothing to check against.
+    expect(extractGraphFromChunks).toHaveBeenCalledWith(
+      expect.anything(),
+      "Stack One",
+      expect.objectContaining({ entityTypes: expect.any(Array) }),
+    );
   });
 
   it("writes both node kinds in one transaction and reports the counts", async () => {

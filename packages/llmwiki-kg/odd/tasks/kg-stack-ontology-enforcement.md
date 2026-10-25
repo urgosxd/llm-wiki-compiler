@@ -54,11 +54,17 @@ The raw document keeps reads total and matches the write in both directions.
 Semantic enforcement at write time is what guarantees the stored document is
 valid, so the read path never has to be the validator.
 
-### `null` still means the oracle's behaviour
+### ~~`null` still means the oracle's behaviour~~ — REVERSED
 
-Omitting `ontology` on create leaves the column NULL, `readStackOntology(null)`
-returns `undefined`, and the extraction call keeps its original two-argument
-arity. That is the existing invariant and this change does not touch it.
+Originally: omitting `ontology` on create left the column NULL,
+`readStackOntology(null)` returned `undefined`, and the extraction call kept its
+two-argument arity. That was recorded as an invariant this change did not touch.
+
+**It has since been reversed deliberately.** See "Decision: an unconfigured Stack
+is enforced against a default" below. The paragraph is kept, struck through,
+because the reversal is the point: `null` never meant "the vocabulary is absent",
+it meant "nobody is checking", and `type text not null` with no CHECK accepted
+`COMPANY` and `FIRM` as different things forever.
 
 ## Tasks
 
@@ -69,6 +75,10 @@ arity. That is the existing invariant and this change does not touch it.
 - [x] 5. RED: tests for the dimension reading `stacks.ontology` at `prepare`
 - [x] 6. Dimension reads the stored declaration and passes it to extraction
 - [x] 7. `tsc`, `build`, `test:affected`, `fallow`
+- [x] 8. RED: tests that the default admits COMPANY and EMPLOYS, not llama_index's list
+- [x] 9. `default_ontology.ts` with the domain vocabulary, exported through core-index
+- [x] 10. Wire the default into ingest, backfeed approval and the KG dimension
+- [x] 11. Add `declared` to the audit and rewrite the tests pinning "null = free field"
 
 ## Scope boundary
 
@@ -317,6 +327,101 @@ not evidence.
 - The first traverse assertion pinned the order of two edges at the same depth.
   The endpoint promises BFS depth order, not an order between siblings, so the
   comparison is now a set plus an explicit length.
+
+## Decision: an unconfigured Stack is enforced against a default
+
+**Decided by the human:** option (b), with our own vocabulary — not
+llama_index's. Recorded here because it changes the contract for every consumer.
+
+### The problem it closes
+
+`stacks.ontology` is nullable and `null` meant "the oracle's behaviour":
+`graph-prompt.ts` advertises ten entity types in the tool-schema *description*
+and nothing validates against them, because the extractor is `strict=False`. The
+`type` column is `text not null` with no CHECK. Measured consequence: nothing
+stopped `organisation` / `organization` / `ORGANIZATION` from becoming three
+distinct types in one Stack's graph.
+
+### Why not llama_index's list
+
+The cheap default was `DEFAULT_ENTITIES` / `DEFAULT_RELATIONS`, which would leave
+the tool schema byte-identical and risk nothing. Measured and rejected:
+
+| type | in llama_index's default |
+| --- | --- |
+| `COMPANY` | **no** |
+| `EMPLOYS` | **no** |
+| `ACQUIRES` | **no** |
+| `MISCELLANEOUS` | yes |
+
+Enforcing it would reject `Acme EMPLOYS Ada` — the most natural sentence in this
+domain — while admitting `MISCELLANEOUS`. A default that refuses real input is
+worse than no default, because it fails silently into a thin graph.
+
+### Why this does not contradict the vendored spec
+
+`SCHEMA.json:499` documents `AKSEntity.type` as *"Domain-defined category. No
+global enum."* The spec governs the **format** of an export, and a Stack still
+stores and emits whatever types it was given. `default_ontology.ts` supplies a
+**starting declaration** for the caller who wrote none — a convenience layered on
+a format that permits any value, not an enum carved into the schema.
+
+### Where the default is applied
+
+Three points already answered "the column is null"; all three now call
+`defaultOntology()`, so they cannot drift:
+
+| point | file | before | after |
+| --- | --- | --- | --- |
+| ingest | `routes/ingest/pipeline.ts` | `[]` | `[defaultOntology()]` |
+| backfeed approval | `routes/backfeed/ontology-gate.ts` | `undefined` | `defaultOntology()` |
+| KG dimension | `src/dimensions/kg/index.ts` | `undefined` | `defaultOntology()` |
+
+Deliberately NOT baked into `buildToolSchema()` or `extractGraphFromChunks`:
+those keep the oracle's bytes on purpose, because the parity tests and the
+Python-parity harness must keep observing the measured behaviour. A Stack's
+policy belongs at the boundary that knows a Stack exists.
+
+### `enforced` changed meaning, so the audit gained `declared`
+
+`enforced` was `false` for an undeclared Stack and `true` otherwise. It is now
+always `true`, which would make the field useless. The fact that still matters is
+*whose* vocabulary dropped the triplet:
+
+```jsonc
+// the caller wrote this Stack's ontology and it rejected 2 triplets
+{ "enforced": true, "declared": true,  "rejected": 2, "reason_codes": [...] }
+// the DEFAULT rejected 1 triplet on a Stack that never declared one
+{ "enforced": true, "declared": false, "rejected": 1, "reason_codes": [...] }
+```
+
+Only the second is our policy being wrong rather than their config being wrong,
+and a consumer cannot tell them apart without this field.
+
+### Measured blast radius
+
+Before touching any test, `ontologyArgument` was patched to return llama_index's
+lists and the suite run: **3 failures** (`ingest-ontology` ×2,
+`ingest-ontology-e2e` ×1). The real blast radius of the wiring was larger — 13
+tests — because three backfeed suites build Stacks with no ontology and propose
+`Thing` / `T` / `links`, and the KG dimension asserted a two-argument call arity.
+All were fixture- or arity-level, none was a behavioural disagreement.
+
+### Falsifiability
+
+Swapping `default_ontology.ts` back to llama_index's lists turns **3 of 8**
+default-ontology tests red, including "admits the canonical
+company-employs-person triplet". The swap leaves the tool schema byte-identical,
+which is exactly why it looks safe and is not.
+
+### A mistake this slice made and caught
+
+The first version of the e2e positive test asserted that `ACQUIRED` was admitted
+by the default. It failed with an empty graph, and the real reason was that the
+default declares `ACQUIRES` — present tense, verb phrase, per `SCHEMA.json:582` —
+not the fixture's past-tense `ACQUIRED`. The test now uses its own
+`GLOBEX_INITECH_ACQUIRES` fixture and says so. A test that had been written to
+pass would have hidden this.
 
 ## Open follow-ups (not in this change)
 

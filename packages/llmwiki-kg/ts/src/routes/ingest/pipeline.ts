@@ -18,6 +18,7 @@ import {
   extractGraphFromChunks,
   synthesizeEntityDescriptions,
 } from "../../core/extraction.js";
+import { defaultOntology } from "../../core/default_ontology.js";
 import type { ChunkResult, ExtractionResult } from "../../core/extraction-types.js";
 import { validateOntology } from "../../core/ontology.js";
 import type { Ontology } from "../../core/ontology.js";
@@ -48,16 +49,24 @@ import { sendValidationFailure } from "./response.js";
  * future defaulted or overloaded parameter would silently pick up a value that a
  * two-argument call never passed.
  *
- * A null column is the oracle behaviour, not an empty ontology — `validateOntology`
- * rejects an empty declaration, and enforcing one would drop every triplet of
- * every document on an unconfigured Stack.
+ * A null column resolves to {@link defaultOntology} rather than to "no
+ * enforcement". `null` used to mean the oracle's permissive behaviour, and that
+ * was reversed deliberately: the vocabulary was never absent, it was only
+ * unenforced, so the type column accepted `COMPANY` and `FIRM` as different
+ * things forever. An unconfigured Stack is now enforced against a documented
+ * default, and a rejection it did not ask for is reported in the document's
+ * `audit` blob — visible, not silent.
+ *
+ * A Stack that wants no constraint cannot express that by omitting the field.
+ * It declares a wide ontology instead, which is a decision the caller makes
+ * explicitly rather than one the schema makes by default.
  *
  * @param stored - The Stack's `ontology` column, or null/undefined when unset.
- * @returns No arguments when unset, otherwise the one validated ontology.
+ * @returns Exactly one validated ontology: the declared one, or the default.
  * @throws {OntologyError} When the stored value is present but not a valid declaration.
  */
-function ontologyArgument(stored: unknown): [] | [Ontology] {
-  if (stored === null || stored === undefined) return [];
+function ontologyArgument(stored: unknown): [Ontology] {
+  if (stored === null || stored === undefined) return [defaultOntology()];
   return [validateOntology(stored)];
 }
 
@@ -72,14 +81,20 @@ function ontologyArgument(stored: unknown): [] | [Ontology] {
  * indistinguishable from one that only had three entities in it — which makes a
  * tight ontology look like a thin extraction, and vice versa.
  *
- * ## Why `enforced` is explicit rather than implied by `rejected: 0`
+ * ## What `enforced` means now that every run is enforced
  *
- * "No declaration, so nothing could be rejected" and "a declaration rejected
- * nothing" are different facts with the same count. Collapsing them would make a
- * misconfigured Stack look like a clean run.
+ * It used to distinguish "no declaration, so nothing could be rejected" from "a
+ * declaration rejected nothing" — two facts with the same count. With a default
+ * ontology in force, `enforced` is always `true`, and the field that carries
+ * meaning is `declared`: whether the caller wrote this Stack's vocabulary or
+ * inherited the default. A document whose types were dropped by a default the
+ * caller never chose must be distinguishable from one dropped by a declaration
+ * they did choose, because only the second is a bug in their own config.
  */
 export interface OntologyAudit {
   readonly enforced: boolean;
+  /** Whether the Stack's own declaration was used, rather than the default. */
+  readonly declared: boolean;
   readonly rejected: number;
   /** Distinct reason codes, sorted, so the blob is comparable across runs. */
   readonly reason_codes: readonly string[];
@@ -100,16 +115,16 @@ export interface ProcessedIngest {
  * of violation occurred, and a stable order means two documents with the same
  * problem produce the same blob.
  *
- * @param enforced - Whether a declaration was in force for this run.
- * @param rejected - The triplets the declaration turned away.
+ * @param declared - Whether the Stack's own declaration was in force.
+ * @param rejected - The triplets the ontology turned away.
  * @returns The audit blob's `ontology` object.
  */
 function ontologyAudit(
-  enforced: boolean,
+  declared: boolean,
   rejected: readonly { readonly reason: string }[],
 ): OntologyAudit {
   const codes = [...new Set(rejected.map((entry) => entry.reason))].sort();
-  return { enforced, rejected: rejected.length, reason_codes: codes };
+  return { enforced: true, declared, rejected: rejected.length, reason_codes: codes };
 }
 
 /**
@@ -139,9 +154,10 @@ export async function chunkAndExtract(
   if (shouldSynthesize) {
     await synthesizeEntityDescriptions(extraction, chunks);
   }
-  // `extraction.rejected` is populated only when an ontology was supplied, so the
-  // presence of the argument is the same fact as `enforced`.
-  const audit = ontologyAudit(ontologyArgs.length > 0, extraction.rejected ?? []);
+  // The default ontology means extraction always has one, so `rejected` is always
+  // populated and the remaining distinction is whether the caller declared it.
+  const declared = document.stack_ontology !== null && document.stack_ontology !== undefined;
+  const audit = ontologyAudit(declared, extraction.rejected ?? []);
   return { chunks, extraction, shouldSynthesize, ontologyAudit: audit };
 }
 
