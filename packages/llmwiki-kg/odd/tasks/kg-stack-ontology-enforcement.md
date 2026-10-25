@@ -1097,6 +1097,47 @@ Every one is a fixture writing or deleting rows without a binding. Two shapes:
 They need the same `withFixtureTenant` treatment. It is mechanical and does not
 touch product code.
 
+### The last 135 are not "just fixtures" — cleanup conflicts with the model
+
+Continuing the fixture bindings surfaced a real limitation, measured rather than
+assumed. Every harness ends with a `deleteFixtureRows()` that cleans up **across all
+stacks sharing a domain prefix**:
+
+```sql
+delete from stacks where domain like '${domainPrefix}%'
+```
+
+That cursor cannot be bound to a tenant, and binding it does not merely fail — it
+silently cleans only part of what it selected:
+
+| probe (as `llmwiki_app`) | result |
+| --- | --- |
+| unbound `select count(*) ... where domain like 'probe-%'` | **0** |
+| bound to `probe-a`, same query | **1** of 2 rows |
+| bound to `probe-a`, `delete from stacks where domain like 'probe-%'` | **DELETE 1** |
+
+The last row is the important one. It reports success and leaves the other tenant's
+rows behind, so a mis-bound cleanup looks like it worked. Each policy filters by
+exact domain equality, so a `LIKE` prefix cannot see its siblings regardless of what
+is bound.
+
+**Consequence: fixture cleanup is a cross-tenant operation by nature, and RLS is
+designed to forbid exactly that.** Three options, and this is a decision rather than
+a chore:
+
+1. **Per-stack cleanup.** Delete by the specific `stack_id` each test created instead
+   of by prefix. Correct under RLS, but every harness must track the ids it made, and
+   the prefix scheme exists because the split suites share one database.
+2. **A cleanup role.** Run `deleteFixtureRows` on a role that bypasses RLS (`aks`),
+   leaving every other fixture path bound. Small, but it means the test suite keeps a
+   second connection, and the bypass has to be deliberate and documented.
+3. **Truncate between files.** Drop the prefix scheme and let the suite start from a
+   clean database.
+
+Option 2 is the smallest honest change; option 1 is the only one that makes the whole
+suite provably RLS-clean. Both are cheap. What is not acceptable is binding the
+prefix deletes, because as measured above they then lie.
+
 ### Order of operations
 
 1. Apply the migration while `DATABASE_URL` still names `aks` — it bypasses RLS, so
