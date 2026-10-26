@@ -250,11 +250,15 @@ async function readEventsFromRows(
     }
     // Verified over EXACTLY the fields that were checksummed. `seq` is a storage
     // column the file never had, so including it would change the digest and report
-    // every record as corrupt.
+    // every record as corrupt. `operationBinding`/`decision` are OMITTED by
+    // `eventChecksum`'s canonicalization when undefined, and `toEventRecord` omits
+    // them too, so the shapes already agree.
     if (eventChecksum(record as never) !== checksum) {
       problems.push(`checksum mismatch at seq ${seq}`);
     }
-    prev = checksum;
+    // The NEXT record links on this record's CONTENT digest, not on its checksum.
+    // Chaining on the checksum here would compare a value the writer never used.
+    prev = eventPrevHash(record as never);
   }
   return { events: records.map(({ seq, ...rest }) => rest as never), problems };
 }

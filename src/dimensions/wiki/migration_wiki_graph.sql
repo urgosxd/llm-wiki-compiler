@@ -57,7 +57,12 @@ create table if not exists wiki.event_log (
     prev_hash text not null,
     checksum text not null,
 
-    at timestamptz not null,
+    -- TEXT, not `timestamptz`, on purpose: `at` is part of the CHECKSUMMED content.
+    -- A timestamptz normalizes the rendering (`...11.123Z` in becomes `...11.123000Z`
+    -- out), so a record read back would hash differently from the one written and an
+    -- untampered chain would verify as corrupt. The column stores the exact ISO string
+    -- the writer hashed. Nothing filters events by time, so no query loses an index.
+    at text not null,
 
     primary key (stack_id, seq)
 );
@@ -143,3 +148,10 @@ create policy tenant_isolation on wiki.relation_edges
 
 grant select, insert, update, delete on wiki.event_log to llmwiki_app;
 grant select, insert, update, delete on wiki.relation_edges to llmwiki_app;
+
+-- `at` moved from `timestamptz` to `text`: it is CHECKSUMMED content, and a
+-- timestamptz re-renders the value (`...11.123Z` in becomes `...11.123000Z` out), so a
+-- read-back record hashed differently and every untampered chain verified as corrupt.
+-- The CREATE above already declares `text`; this makes an EXISTING database converge,
+-- because `create table if not exists` skips the whole statement when the table exists.
+alter table wiki.event_log alter column at type text;

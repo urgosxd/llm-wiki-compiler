@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { appendEventRow, readEventLog } from "../../src/dimensions/wiki/event-log-store.js";
+import { eventPrevHash } from "../../src/events/event-digest.js";
 import { GENESIS_PREV_HASH } from "../../src/events/types.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { createProbeStack } from "./harness-lifecycle.js";
@@ -37,7 +38,7 @@ describe("event log as rows", () => {
     expect(await readEventLog(harness.db, harness.stackId)).toEqual([]);
   });
 
-  it("chains each record to the previous one's checksum", async () => {
+  it("chains each record to the previous one's CHAIN DIGEST", async () => {
     await append("a");
     await append("b");
     await append("c");
@@ -45,8 +46,12 @@ describe("event log as rows", () => {
     const log = await readEventLog(harness.db, harness.stackId);
     expect(log.map((e) => e.seq)).toEqual([1, 2, 3]);
     expect(log[0]?.prevHash).toBe(GENESIS_PREV_HASH);
-    expect(log[1]?.prevHash).toBe(log[0]?.checksum);
-    expect(log[2]?.prevHash).toBe(log[1]?.checksum);
+    // The link is `eventPrevHash` of the previous record's CONTENT, which is exactly
+    // what `verifyEventChain` recomputes and what the file backend writes. It is NOT
+    // the stored `checksum`: the checksum also covers `prevHash`, so chaining on it
+    // produces links no verifier can reproduce.
+    expect(log[1]?.prevHash).toBe(eventPrevHash(log[0]!));
+    expect(log[2]?.prevHash).toBe(eventPrevHash(log[1]!));
   });
 
   it("gives every record its own checksum", async () => {
@@ -88,7 +93,7 @@ describe("event log as rows", () => {
     const log = await readEventLog(harness.db, harness.stackId);
     expect(log.map((e) => e.seq)).toEqual([1, 2, 3]);
     for (let i = 1; i < log.length; i += 1) {
-      expect(log[i]?.prevHash).toBe(log[i - 1]?.checksum);
+      expect(log[i]?.prevHash).toBe(eventPrevHash(log[i - 1]!));
     }
   });
 });

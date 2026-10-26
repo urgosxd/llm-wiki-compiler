@@ -31,6 +31,7 @@ import { sql } from "drizzle-orm";
 import type { Database } from "llmwiki-kg";
 import { ulid } from "../../relations/ulid.js";
 import { eventChecksum, type EventChecksumInput } from "../../events/store-record.js";
+import { eventPrevHash } from "../../events/event-digest.js";
 import { GENESIS_PREV_HASH } from "../../events/types.js";
 import type { EventContent, EventRecord } from "../../events/types.js";
 
@@ -45,7 +46,7 @@ interface EventRow extends Record<string, unknown> {
   readonly operation_binding: unknown;
   readonly prev_hash: string;
   readonly checksum: string;
-  readonly at: string | Date;
+  readonly at: string;
 }
 
 /**
@@ -64,7 +65,7 @@ function toEventRecord(row: EventRow): EventRecord & { seq: number } {
     ...(row.operation_binding === null
       ? {}
       : { operationBinding: row.operation_binding as EventContent["operationBinding"] }),
-    at: row.at instanceof Date ? row.at.toISOString() : new Date(row.at).toISOString(),
+    at: row.at,
   };
   return {
     ...content,
@@ -89,7 +90,8 @@ export async function readEventLog(db: Database, stackId: string): Promise<Array
     await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
     const rows = await tx.execute<EventRow>(sql`
       select seq, event_id, event_type, origin, payload, decision,
-             operation_binding, prev_hash, checksum, at
+             operation_binding, prev_hash, checksum,
+             at
       from wiki.event_log
       where stack_id = ${stackId}
       order by seq asc
@@ -132,12 +134,20 @@ export async function appendEventRow(
     // unrelated tooling sharing the database cannot collide by accident.
     await tx.execute(sql`select pg_advisory_xact_lock(19535, hashtext(${stackId}))`);
 
-    const tail = await tx.execute<{ seq: string | number; checksum: string }>(sql`
-      select seq, checksum from wiki.event_log
+    // The chain link is `eventPrevHash` of the previous record's CONTENT -- the same
+    // function `verifyEventChain` recomputes. Taking the stored `checksum` instead
+    // would chain on a DIFFERENT value (the checksum also covers `prevHash`, so the
+    // two are never equal), and every chain would verify as broken on an untampered
+    // log. The row stores the checksum for its own integrity; the LINK uses the
+    // digest of the content.
+    const tail = await tx.execute<EventRow>(sql`
+      select seq, event_id, event_type, origin, payload, decision,
+             operation_binding, prev_hash, checksum, at
+      from wiki.event_log
       where stack_id = ${stackId}
       order by seq desc limit 1
     `);
-    const prevHash = tail[0]?.checksum ?? GENESIS_PREV_HASH;
+    const prevHash = tail[0] === undefined ? GENESIS_PREV_HASH : eventPrevHash(toEventRecord(tail[0]));
     const seq = tail[0] === undefined ? 1 : Number(tail[0].seq) + 1;
 
     const record: Omit<EventContent, "id"> & { id: EventContent["id"] } = {
@@ -160,7 +170,7 @@ export async function appendEventRow(
         ${record.operationBinding === undefined
           ? null
           : JSON.stringify(record.operationBinding)}::jsonb,
-        ${prevHash}, ${checksum}, ${at}::timestamptz
+        ${prevHash}, ${checksum}, ${at}
       )
     `);
 
