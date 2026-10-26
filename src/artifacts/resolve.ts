@@ -72,7 +72,7 @@ export class ArtifactVerifyUnavailableError extends Error {
  * already cleared): the manifest's declared length, its own recorded hash, the
  * ref's pinned hash, and the write-time schema — in that order.
  */
-function verifyOkBody(def: ArtifactTypeDef, ref: ArtifactRef, m: ArtifactManifest, body: string): { health: ArtifactHealth; storeFault?: StoreFaultReason } {
+export function verifyOkBody(def: ArtifactTypeDef, ref: ArtifactRef, m: ArtifactManifest, body: string): { health: ArtifactHealth; storeFault?: StoreFaultReason } {
   // A byte-count divergence is a manifest lying about its own body length — an
   // integrity-lie the write-time precondition must DENY, not a retryable fault.
   if (m.bytes !== Buffer.byteLength(body, "utf8")) return { health: "artifact-store-unavailable", storeFault: "integrity-lie" };
@@ -99,7 +99,7 @@ function withManifest(manifest: ArtifactManifest | undefined): { manifest?: Arti
  * manifest is honest on these fields (the byte-count/sha checks live in verifyOkBody,
  * which genuinely needs the body bytes).
  */
-function manifestIntegrityLie(def: ArtifactTypeDef, ref: ArtifactRef, m: ArtifactManifest): ArtifactResolution | undefined {
+export function manifestIntegrityLie(def: ArtifactTypeDef, ref: ArtifactRef, m: ArtifactManifest): ArtifactResolution | undefined {
   if (m.artifactType !== ref.artifactType || m.slug !== ref.slug) return { health: "artifact-store-unavailable", storeFault: "integrity-lie", manifest: m };
   if (m.contentKind !== def.contentKind) return { health: "artifact-store-unavailable", storeFault: "integrity-lie", manifest: m };
   return undefined;
