@@ -198,6 +198,47 @@ describe.skipIf(!provisioned)("SET LOCAL and savepoints", () => {
   });
 
   /**
+   * S5 — the coordinator's single bind survives BOTH dimensions writing in one
+   * transaction, including `kg`'s own internal `bindCallerStack` rebind.
+   *
+   * This is the case that decides whether `CommitScope` needs a `stackId` field.
+   * `registerDocumentRow`, `consolidateEntityRows` and `consolidateRelationshipRows`
+   * each rebind the GUC to the value they were constructed with. If that rebind
+   * were harmful, the scope would have to carry the tenant; if it is inert, the
+   * dimension's constructed `options.stackId` is enough and a scope field would
+   * only add a call site someone can forget.
+   *
+   * Measured: inert. All three writes land.
+   */
+  it("both dimensions write in one bound transaction despite kg's internal rebind", async () => {
+    const slug = slugOf("both");
+
+    await withBoundOuter(async (outer) => {
+      // wiki-shaped write: does not rebind
+      await insertPage(outer, stackId, slug);
+      // kg-shaped writes, including the same-value rebind each helper performs
+      await outer.execute(sql`
+        insert into stack_documents (stack_id, filename, storage_path, size_bytes, source_hash)
+        values (${stackId}, ${slug}, ${"src://" + slug}, ${4}, ${"h-" + slug})
+      `);
+      await outer.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+      await outer.execute(sql`
+        insert into ontology_entities (stack_id, name, type) values (${stackId}, ${slug}, 'concept')
+      `);
+    });
+
+    expect(await countPage(slug)).toBe(1);
+    const docs = await db.execute<{ n: number }>(
+      `select count(*)::int as n from stack_documents where storage_path = 'src://${slug}'`,
+    );
+    expect((docs[0] as { n: number } | undefined)?.n).toBe(1);
+    const ents = await db.execute<{ n: number }>(
+      `select count(*)::int as n from ontology_entities where name = '${slug}'`,
+    );
+    expect((ents[0] as { n: number } | undefined)?.n).toBe(1);
+  });
+
+  /**
    * S4 — RLS still refuses a FOREIGN write from inside a savepoint.
    *
    * The negative control for S1-S3: if inheritance worked by weakening the

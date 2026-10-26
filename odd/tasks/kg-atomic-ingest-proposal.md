@@ -1,7 +1,8 @@
 # Proposal: atomic ingest across both dimensions
 
-**Status:** `changes` received (`cd-2026-10-26-01`) with no reason carried; revised
-here against `feat/pages-rows-only` and re-proposed as `@4`.
+**Status:** three `changes` received (`cd-2026-10-26-01`, `-02`) and one
+`work_request` naming the objections. All three answered here; re-proposed as `@5`.
+`@4` was rejected, so by the versioning rule stated above it is never redefined.
 **Author:** `orchestrator-b` (kg-dimension).
 **Evidence:** `test/dimensions/kg-runtime-cross-dimension-transaction.test.ts`, 4 tests, all green
 against a real Postgres. Branch `feat/orchestrator-b`.
@@ -79,20 +80,47 @@ export interface CommitScope {
   /**
    * Transaction the commit must run inside, or `undefined` for a standalone
    * commit. A dimension that receives one MUST NOT open its own connection.
+   *
+   * The tenant is NOT carried here: both dimensions already hold their Stack from
+   * CONSTRUCTION (`options.stackId`) and use it for every `stack_id` value, so a
+   * second copy on the scope would be a field a caller can forget.
    */
   readonly tx?: unknown;
-  /** Stack both dimensions are bound to; REQUIRED when `tx` is absent. */
-  readonly stackId?: string;
 }
 
 commit(prepared: PreparedWrite, scope?: CommitScope): Promise<CommittedWrite>;
 ```
 
-`stackId` is included because the branch revision made the tenant explicit on every
-call path (`saveRecord(db, stackId, ...)`, `saveSourceDocument(db, stackId, ...)`).
-A transaction handed to a dimension is not self-describing about its tenant, and a
-`commit` that joined a tx without binding the GUC would fail the policy check rather
-than the transaction — the exact failure mode the measurement in case 2 rules out.
+### `stackId` was removed from this shape, and why that is the correct call
+
+An earlier revision of this proposal added `stackId?` to `CommitScope`, arguing a
+handed-in transaction "is not self-describing about its tenant". That was wrong, and
+three facts measured this session say so:
+
+1. **Both dimensions already have the Stack from construction.** `kg` uses
+   `options.stackId` at `kg/index.ts:220,227,233` for the `stack_id` VALUES, and
+   `wiki` uses `options.stackId` at `store-dimension.ts:281`. Neither needs the scope
+   for it.
+2. **`kg` already rebinds internally and it is harmless.** `registerDocumentRow`,
+   `consolidateEntityRows` and `consolidateRelationshipRows` each call
+   `bindCallerStack(tx, stackId, null)`, setting the SAME value. Measured: one
+   coordinator bind followed by both dimensions' writes (including the internal
+   rebind) succeeds — wiki page, document and entity all land in one transaction.
+3. **A tenant threaded through calls is exactly the defect this repo already
+   rejected.** `multi-tenant-storage.md:512-518`: *"a tenant threaded through every
+   call can be forgotten at exactly one call site, and that miss silently writes or
+   reads the wrong stack. A tenant captured at construction cannot be omitted later,
+   because there is no later place to omit it."* Putting `stackId` on `CommitScope`
+   reintroduces the forgettable site the tenant-at-construction rule exists to remove.
+
+**The corrected rule:** the COORDINATOR owns the bind. It already receives
+`stackId` as a parameter, so it binds once on the transaction it opens and then hands
+that transaction to every dimension. Dimensions keep using their constructed
+`options.stackId` for VALUES and never bind on their own behalf.
+
+This also fixes a contradiction in the previous revision: its doc comment said
+"REQUIRED when `tx` is absent" while its prose argued the problem was when `tx` was
+PRESENT. Both are now gone with the field.
 
 Why `unknown` and not a Drizzle type: the port's whole value is naming no storage,
 no file path, and no provider (`types.ts` says so). A concrete `Database` type
@@ -104,15 +132,14 @@ narrows `scope.tx` to its own handle and fails closed on a shape it cannot use.
 
 | Side | Change | Owner | Size |
 | --- | --- | --- | --- |
-| Port | `commit` gains an optional `scope`; `DIMENSION_PORT_VERSION` → **4** | `orchestrator-main` (`types.ts` is shared) | one optional field |
+| Port | `commit` gains an optional `scope`; `DIMENSION_PORT_VERSION` → **5** | `orchestrator-main` (`types.ts` is shared) | one optional field |
 | `kg` | `writeGraph` uses `scope.tx` instead of `createClient` | `orchestrator-b` (owns `src/dimensions/kg/**`) | small: one function |
 | `wiki` | thread the handle through `saveSourceDocument` AND `withTenant`; move `saveSource` out of the write path | `orchestrator-main` (owns `src/dimensions/wiki/**` on that branch) | **NOT small** — see Gap 1 |
 | Coordinator | open ONE transaction, bind the Stack, pass it to every `commit` | `orchestrator-main` (`coordinator.ts`) | medium |
 
-Version is **4**, not 3: the `changes` reply invalidated the `@3` proposal before it
-was agreed, and `DIMENSION_PORT_VERSION` is already `2` on both branches. A fresh
-number keeps every decision traceable to one shape instead of silently redefining
-`@3`.
+Version is **5**, not 4 or 3: `@3` and `@4` were each rejected before agreement, and
+`DIMENSION_PORT_VERSION` is already `2` on both branches. A fresh number keeps every
+decision traceable to one shape instead of silently redefining an already-rejected one.
 
 ### What does NOT change
 
@@ -174,11 +201,43 @@ Both are real today and neither requires a port change.
 
 ## What I am asking for
 
-A `contract_decision` on `src/dimensions/types.ts@4`, carrying the optional
+A `contract_decision` on `src/dimensions/types.ts@5`, carrying the optional
 `commit(prepared, scope?)` shape above.
 
 I am not asking to rewrite the coordinator, and I am not asking for a branch merge.
 Approve the interface (or send `changes`) and I will implement only the `kg` side.
+
+## The three objections behind `cd-2026-10-26-02`, all accepted
+
+### Objection 1 — protocol: `@4` was rejected, so the next number is `@5`
+
+Correct, and it was my error twice: I moved `@3` → `@4` for the same reason and then
+reused `@4`. The rule I wrote myself — a version bump requires a new decision, and a
+rejected number is never silently redefined — applies to me. This is `@5`.
+
+### Objection 2 — `stackId` on `CommitScope` reintroduces a forgettable call site
+
+Correct, and it is the decisive one. See the corrected shape above. The rule the
+repo already settled (`multi-tenant-storage.md:512-518`) is that a tenant captured at
+CONSTRUCTION cannot be omitted; a tenant threaded through a call can be missed at
+exactly one site and silently write the wrong Stack. `stackId` on a scope field is
+that missable site. Removed, and the coordinator owns the bind instead.
+
+### Objection 3 — the field's own doc comment contradicted the prose
+
+Correct. `stackId` said "REQUIRED when `tx` is absent" while the surrounding prose
+argued the problem was when `tx` was PRESENT. Two opposite claims in one paragraph,
+which is a defect in the shape and not just in the wording — it is part of why the
+field did not survive.
+
+### What the revision still asks for, and what it no longer asks for
+
+- Asks for: ONE optional field, `tx?: unknown`.
+- No longer asks for: `stackId`, a dimension-side bind, or any change to how a
+dimension learns its tenant.
+- The coordinator binds once on the transaction it opens. Measured: with that one
+  bind, a wiki-shaped write and a kg-shaped write (including `kg`'s own internal
+  `bindCallerStack` rebind) all land in the same transaction.
 
 ## Answering the two gaps `wq-2026-10-26-01` named
 
