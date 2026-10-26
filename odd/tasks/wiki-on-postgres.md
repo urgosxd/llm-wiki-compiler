@@ -219,6 +219,45 @@ one column. Grouped because separately they are not worth a review.
 Keep the advisory lock; delete the file path once no project can be Stack-less. That
 last condition is a product call (Decision 4).
 
+**Keying is fixed; the fallback is not removed.** The advisory lock was keyed on
+`realpath(root)`, so two hosts serving one Stack held different keys, both acquired,
+and both compiled one corpus — the exact collision the lock exists to prevent. The key
+now derives from `stackId` in one place (`lockKeyFor`) that acquire, release and the
+FIFO all use. `releaseLock` also resolves under either key, because a `finally` block
+or a test teardown does not carry the Stack environment acquire used.
+
+**Why the file path survives, measured.** Forcing the lock to require a Stack turned
+**2017** tests red, all on `AKS_STACK_ID is not set`: 26 `stackId === ""` gates remain
+across 12 modules, so the code it guards is still legitimately Stack-less.
+
+### Probe: 1 store, 431 new failures (reverted)
+
+Made `events/store.ts` require a Stack and ran the suite.
+
+| Metric | Baseline | After 1 store |
+|---|---|---|
+| Failing tests | 79 | **510** |
+| Files with new failures | — | **121** |
+
+The graph stores are **not leaves**. Five modules emit events
+(`trust/lifecycle-apply.ts`, `relations/store.ts`, `artifacts/apply-guards.ts`,
+`connectors/run.ts`, `connectors/audit.ts`) and every mutation path runs through them.
+Emitters are **blocking**, so a mandatory audit event drags its whole caller into
+needing a Stack.
+
+Two consequences for the plan's ordering:
+
+1. **Events go last, not first.** The leaf-first order below was wrong: it put the
+   most transversal store at the head of the queue.
+2. **CI cannot cover it.** `.github/workflows/ci.yml` runs `npm test` with no Postgres
+   service and dimension tests use `skipIf(!harnessReachable)`. Forcing a Stack in a
+   transversal path does not move that coverage to CI, it deletes it. 113 of the 121
+   newly-failing files run in-process, so no inherited environment fixes them.
+
+> **The remaining fallbacks are one product decision, not twelve independent chores.**
+> "May a Stack-less project compile?" has to be answered before any of them moves,
+> because the answer determines whether CI keeps testing 113 files.
+
 ### Not scheduled without a decision
 
 - **F — `profile.json`.** Decision 1.
