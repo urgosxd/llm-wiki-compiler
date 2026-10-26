@@ -122,7 +122,30 @@ Removing it removes the last reason any of them needs `root` for state.
 Verification: a compile against a root with no `.llmwiki/` produces identical
 freshness and stale-refresh decisions.
 
-### Step 2 — `relations.jsonl` + `events.jsonl` → tables (B, C)
+### Step 2 — `relations.jsonl` + `events.jsonl` → tables (B, C) — **STORAGE LAYER DONE**
+
+> Landed: `wiki.event_log` and `wiki.relation_edges` (RLS forced on both),
+> `event-log-store.ts`, `relation-edge-store.ts`, migration `migration_wiki_graph.sql`.
+> 258 tests in `test/dimensions/`, `tsc` 0, build 0.
+>
+> **The chain survives without line order.** A file got ordering free from byte
+> position; a table needs it explicitly, so `seq` is a per-Stack gapless counter
+> allocated as `max(seq)+1` inside a transaction holding the Stack's advisory lock.
+> Two properties IMPROVE: two hosts appending to one Stack's file each held their own
+> copy and forked the chain silently, and a crash could leave a torn tail. Neither is
+> possible now. `.llmwiki/events.head` becomes unnecessary — a committed row IS the
+> seal the head anchor existed to represent.
+>
+> **The checksum guarantee is reused, not reimplemented**: `eventChecksum` and
+> `recordChecksum` come from the same modules the file path uses, so a row and a line
+> describe a record identically. Asserted, including a tampering test.
+>
+> **The dedup key is preserved exactly**: endpoints + type + `contentHash`, with
+> evidence inside `contentHash`. An edge that GAINS evidence is a separate edge — the
+> test asserts two rows, because collapsing them would lose provenance.
+>
+> Append-only discipline preserved by never deleting: compaction marks
+> `superseded_by`, so a superseded edge still verifies and history stays readable.
 
 Do them together: an edge and the event that recorded it must land in one
 transaction, or a crash can leave a relation with no provenance. Both already carry
