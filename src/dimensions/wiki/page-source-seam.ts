@@ -220,6 +220,45 @@ export async function withPageRemover<T>(
 }
 
 /**
+ * What a row-backed artifact write needs from the environment: a handle plus its Stack.
+ *
+ * Returned as one bundle because the write NEEDS both or neither -- a handle without a
+ * Stack would read the wrong tenant's rows, and a Stack without a handle cannot reach
+ * them. Resolving them together is the same rule the page seams follow for the same
+ * reason.
+ */
+export interface ArtifactRowWrite {
+  /** Database handle; the caller must close it. */
+  db: unknown;
+  /** The Stack the artifact belongs to. */
+  stackId: string;
+  /** Close the handle. */
+  close: () => Promise<void>;
+}
+
+/**
+ * Resolve the row backend for an artifact WRITE, or undefined for the file path.
+ *
+ * Mirrors {@link withPageRemover} but returns the handle instead of invoking a callback,
+ * because the artifact write needs to interleave the handle with an already-admitted
+ * plan and a preflighted audit event; wrapping that in a callback would push the whole
+ * admission sequence into this module.
+ *
+ * The CALLER owns `close()`. That is the one difference from the `with*` seams, and it is
+ * deliberate: `apply.ts` must emit its audit event AFTER the write, so a scope that
+ * closed on return would close the handle too early.
+ *
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The row write target, or undefined when no Stack is configured.
+ */
+export function resolveArtifactRowWrite(env: NodeJS.ProcessEnv = process.env): ArtifactRowWrite | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  const dimensionsDb = createDimensionsDatabase(env);
+  return { db: dimensionsDb.db, stackId, close: () => dimensionsDb.close() };
+}
+
+/**
  * Every page seam a compile stage may need, resolved together.
  *
  * ## Why one bundle instead of four parameters

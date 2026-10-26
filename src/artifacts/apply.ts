@@ -19,12 +19,15 @@ import { openBatch, recordPreState, commitBatch } from "../trust/journal.js";
 import { preflightEventAppend } from "../events/store.js";
 import type { OperationBinding } from "../utils/operation-binding.js";
 import type { ArtifactPlannedMutation } from "../trust/planner.js";
+import type { ArtifactTypeDef } from "../profile/types.js";
 import type { ArtifactRef } from "./ref.js";
 import type { TrustDecision } from "../trust/decision.js";
 import { planArtifactMutation, ARTIFACT_LIVE_WRITE_DECISIONS } from "./plan.js";
 import { artifactPaths, hashArtifactBody, writeArtifactFiles, readArtifactManifest, readArtifactBody, type ArtifactManifest, type ArtifactPathsV1 } from "./store.js";
 import { snapshotMemberFiles } from "./members.js";
 import { applyMembersLocked } from "./apply-members.js";
+import { applyArtifactToRows } from "./apply-rows.js";
+import { resolveArtifactRowWrite } from "../dimensions/wiki/page-source-seam.js";
 import {
   ArtifactWriteDeniedError, ArtifactWriteRefusedError, artifactEvent, assertTargetsRegularOrAbsent, emitArtifactEvent,
   refAndManifest,
@@ -46,6 +49,48 @@ async function isAlreadyApplied(root: string, paths: ArtifactPathsV1, m: Artifac
   const onDisk = await readArtifactBody(root, paths, maxBytes);
   return onDisk.kind === "ok" && hashArtifactBody(onDisk.body) === m.sha256
     && Buffer.byteLength(onDisk.body, "utf8") === m.bytes;
+}
+
+/** Everything {@link applyArtifactRows} needs once the mutation has been admitted. */
+interface RowsApplyV1 {
+  root: string;
+  rowWrite: { db: unknown; stackId: string; close: () => Promise<void> };
+  def: ArtifactTypeDef;
+  mutation: ArtifactPlannedMutation;
+  body: string;
+  decision: TrustDecision;
+  binding?: OperationBinding;
+}
+
+/**
+ * Store an admitted artifact mutation as ROWS, keeping the file path's ORDER of effects.
+ *
+ * The order is load-bearing, not incidental: the audit event is built ONCE and
+ * PREFLIGHTED before anything is written, so a refused append leaves no bundle behind,
+ * and it is emitted only AFTER the transaction commits, so it never announces an artifact
+ * that does not exist. Reusing one event object for both steps is what prevents the
+ * preflight and the append from disagreeing.
+ *
+ * `close()` runs in a `finally` because the handle is opened for this one write; a throw
+ * anywhere above must not leak a connection.
+ *
+ * @param write - The admitted write and its resolved row target.
+ * @returns The persisted ref and the composed decision.
+ */
+async function applyArtifactRows(write: RowsApplyV1): Promise<{ ref: ArtifactRef; decision: TrustDecision }> {
+  const { root, rowWrite, def, mutation, body, decision, binding } = write;
+  try {
+    const { manifest } = refAndManifest(mutation, def.contentKind, hashArtifactBody(body), body) as { manifest: ArtifactManifest };
+    const event = artifactEvent(manifest, mutation.origin, decision); // build ONCE -- preflight and append the SAME object
+    await preflightEventAppend(root, event);
+    const applied = await applyArtifactToRows({
+      db: rowWrite.db, stackId: rowWrite.stackId, def, mutation, body, decision, manifest,
+    });
+    await emitArtifactEvent(root, event, binding);
+    return applied;
+  } finally {
+    await rowWrite.close();
+  }
 }
 
 /**
@@ -79,6 +124,13 @@ export async function applyArtifactLocked(root: string, supplied: ArtifactPlanne
   }
   if (!isTrustedWriteGranted(loaded.profile.profileId)) throw new ArtifactWriteRefusedError(mutation.artifactType);
   const paths = artifactPaths(root, mutation.artifactType, mutation.slug, def.fileName);
+  // A Stack makes the bundle a set of ROWS. The admission above is unchanged -- profile,
+  // composed decision, grant -- because none of it is about storage. Only the write and
+  // its audit event differ, and the event must still be preflighted BEFORE either lands.
+  const rowWrite = resolveArtifactRowWrite();
+  if (rowWrite !== undefined) {
+    return applyArtifactRows({ root, rowWrite, def, mutation, body, decision, binding });
+  }
   if (def.members !== undefined) {
     return applyMembersLocked({ root, profile: loaded.profile, def, mutation, body, decision, paths, binding });
   }
