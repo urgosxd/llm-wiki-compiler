@@ -305,6 +305,58 @@ A third property that survived and is now pinned on rows:
 slugs are refused before anything is persisted. Mutation-verified: bypassing
 validation on the rows path turns 4 of 5 red while the safe round trip stays green.
 
+### Probe: ALL 8 seams required at once — 2247 failures (reverted)
+
+Every artifact now has a row backend, so the obvious next step is trying to DELETE
+the seams (`withPageSource`, `withPageScan`, `withRawPageSource`, `withRegistrySource`,
+`withCandidateSource`, `withJournalSource`, `withDerivedSource`, `withProfileSource`)
+and make a Stack mandatory. Measured before writing any of it:
+
+| Partition | Result |
+|---|---|
+| aa | 672 failed / 2349 passed |
+| ab | 335 failed / 1689 passed / 11 skipped |
+| ac | 402 failed / 2059 passed |
+| ad | 838 failed / 1706 passed |
+| **Total** | **2247 failed of ~10,062** |
+
+Re-ran partition `ab` to confirm it reproduces exactly (335 again). The change is
+reverted: no seam was removed.
+
+#### What the failures actually are
+
+Grepping the partition-`ad` output by failure CLASS, not by file:
+
+| Class | Count |
+|---|---|
+| `PROBE: seam requires a Stack` | **1687** |
+| `AssertionError` | 56 |
+| scattered singles | 8 |
+
+The overwhelming majority are NOT filesystem semantics — they are "this test never
+configured a Stack". That is encouraging and misleading in equal measure: it says the
+blocker is test setup rather than test intent, but it does NOT say test setup is cheap.
+Two earlier fixtures were measured and both recovered far less than their importer
+count suggested:
+
+- `useTempRoot` + Stack on 17 class-B files: **178/178 passing → 86 failing**.
+- `useCompileProject` + Stack on 21 files: **66 failing → 57 failing (9 of 68 recovered)**.
+
+So adding a Stack is the RIGHT fix and still needs per-test attention, because these
+suites seed files with `writeFile` and then expect the API to read them. Once rows are
+the only backend, those seeds are invisible and the assertions have to be rewritten
+against the seam, not merely wrapped in an env var.
+
+#### Consequence for the order
+
+Seam removal is not a task, it is the LAST task — it can only happen after the suites
+that assume a filesystem have been rewritten for rows. It sits behind class A (61) and
+class C (126), and those are behind nothing except their own budget.
+
+The one seam that IS cheap to remove is the one with no file semantics left in it. The
+file-contract half of `lint-cache.test.ts` (~39 failures) is the opposite: it still
+guards the file backend, so it must not be deleted until the file backend is gone.
+
 ### Probe: 1 store, 431 new failures (reverted)
 
 Made `events/store.ts` require a Stack and ran the suite.
