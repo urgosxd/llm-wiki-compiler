@@ -45,6 +45,8 @@ import {
   eventHeaderLine,
 } from "./store-record.js";
 import { eventPrevHash } from "./event-digest.js";
+import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+import { readEventLog } from "../dimensions/wiki/event-log-store.js";
 
 /** The substring {@link readEvents} prefixes onto a tolerated torn-trailing-line problem. */
 const TORN_TAIL_MARKER = "torn trailing line";
@@ -216,6 +218,48 @@ async function appendChainProblems(root: string, events: EventRecord[], problems
 }
 
 /**
+ * Read this Stack's events from rows, or report that no Stack is configured.
+ *
+ * The chain is verified over the rows exactly as it is over the file: same
+ * `eventPrevHash` link check, same GENESIS anchor for the first record. The head
+ * anchor has no row analogue and is deliberately NOT consulted — a committed row IS
+ * the seal that anchor represented, so there is nothing left to compare against.
+ *
+ * @param env - Environment to read the Stack from.
+ * @returns The events plus problems, or null when no Stack is configured.
+ */
+async function readEventsFromRows(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ReadEventsResult | null> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return null;
+  const dimensionsDb = createDimensionsDatabase(env);
+  let records;
+  try {
+    records = await readEventLog(dimensionsDb.db, stackId);
+  } finally {
+    await dimensionsDb.close();
+  }
+  const problems: string[] = [];
+  let prev = GENESIS_PREV_HASH;
+  for (const { seq, checksum, ...record } of records) {
+    // The same link rule the file reader enforces: a record must point at its
+    // predecessor, so a deleted or reordered row is reported rather than trusted.
+    if (record.prevHash !== prev) {
+      problems.push(`chain break at seq ${seq}: prevHash does not match the prior record`);
+    }
+    // Verified over EXACTLY the fields that were checksummed. `seq` is a storage
+    // column the file never had, so including it would change the digest and report
+    // every record as corrupt.
+    if (eventChecksum(record as never) !== checksum) {
+      problems.push(`checksum mismatch at seq ${seq}`);
+    }
+    prev = checksum;
+  }
+  return { events: records.map(({ seq, ...rest }) => rest as never), problems };
+}
+
+/**
  * Read the event store into the ordered events plus any problems. Corruption /
  * too-new / symlink fail CLOSED (throw); a torn trailing line, a broken chain,
  * and a head-anchor mismatch are returned as `problems` (PR2 surfaces them).
@@ -224,6 +268,8 @@ async function appendChainProblems(root: string, events: EventRecord[], problems
  * @returns The events in append order and a list of problems.
  */
 export async function readEvents(root: string): Promise<ReadEventsResult> {
+  const viaRows = await readEventsFromRows();
+  if (viaRows !== null) return viaRows;
   const raw = await readStoreFile(root); // throws on symlink/too-new/corrupt
   const recordLines = splitStoreRecords(raw, parseHeader);
   // An ABSENT or header-only log yields ZERO events — but if the sealed head

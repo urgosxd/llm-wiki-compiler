@@ -52,6 +52,13 @@ interface RelationRow extends Record<string, unknown> {
 export interface StoredRelationEdge {
   readonly ref: RelationRef;
   readonly operationBinding?: OperationBinding;
+  /**
+   * The stored per-record checksum, so a reader can recompute and compare it.
+   *
+   * Exposed rather than kept internal because verifying it IS the point of storing
+   * it: a reader that cannot see the stored digest cannot notice a tampered row.
+   */
+  readonly checksum: string;
 }
 
 /**
@@ -72,6 +79,7 @@ function toStoredEdge(row: RelationRow): StoredRelationEdge {
   };
   return {
     ref,
+    checksum: row.checksum,
     ...(row.operation_binding === null
       ? {}
       : { operationBinding: row.operation_binding as OperationBinding }),
