@@ -151,7 +151,7 @@ function assertBatchShape(planned: PlannedMutation[]): void {
 async function applyBatch(
   root: string,
   planned: PagePlannedMutation[],
-  batch: JournalBatch,
+  batch: JournalBatch | undefined,
   writeOne: WriteOne,
   pageSink: PageSink | undefined,
   pageRemover: PageRemover | undefined,
@@ -159,6 +159,24 @@ async function applyBatch(
   for (const mutation of planned) {
     await applyPageMutationLocked(root, mutation, batch, writeOne, pageSink, pageRemover);
   }
+}
+
+/**
+ * Whether this apply has anything to journal at all.
+ *
+ * A journal entry records a target's PREVIOUS BYTES. Only the FILE backend has
+ * such bytes; a row-backed page routes through {@link PageSink} and records
+ * nothing. So a sink-bearing apply journals only if it also deletes — a delete
+ * falls back to the file remover when no `pageRemover` was supplied.
+ *
+ * @param opts - The apply options under which the batch would run.
+ * @returns True when at least one target can produce a pre-state.
+ */
+function needsJournal(planned: PagePlannedMutation[], opts: ApplyOptions): boolean {
+  if (opts.pageSink === undefined) return true;
+  // A row-backed page records nothing, but a DELETE without a row remover falls
+  // back to unlinking the file -- and that branch journals a pre-state.
+  return opts.pageRemover === undefined && planned.some((m) => m.operation === "delete");
 }
 
 /**
@@ -197,10 +215,17 @@ export async function applyApprovedMutationsLocked(
   if (planned.length === 0) return [];
   if (planned.every((m) => m.kind === "page")) {
     const writeOne = opts.writeOne ?? atomicWrite;
-    const batch = await openBatch(root);
+    // A batch is only opened when something will actually journal. With a page sink
+    // every page lands in a row, and `applyPageMutationLocked` deliberately records
+    // NO pre-state for a row (there are no previous bytes to snapshot, and the
+    // transaction already gives all-or-nothing). Opening and committing a batch
+    // anyway would create then delete `.llmwiki/journal/<id>.json` on every apply of
+    // a project that is otherwise entirely row-backed -- a filesystem effect on the
+    // one backend that must not have any.
+    const batch = needsJournal(planned as PagePlannedMutation[], opts) ? await openBatch(root) : undefined;
     await applyBatch(
       root, planned as PagePlannedMutation[], batch, writeOne, opts.pageSink, opts.pageRemover);
-    await commitBatch(batch);
+    if (batch !== undefined) await commitBatch(batch);
     return planned.map(() => ({ kind: "page" as const }));
   }
   if (planned.length === 1 && planned[0].kind === "relation") {

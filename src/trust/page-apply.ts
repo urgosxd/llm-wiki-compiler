@@ -292,7 +292,7 @@ async function assertFloorAtApply(root: string, mutation: PagePlannedMutation, a
  */
 async function deletePageLocked(
   abs: string,
-  batch: JournalBatch,
+  batch: JournalBatch | undefined,
   remover: PageRemover | undefined,
   mutation: PagePlannedMutation,
 ): Promise<void> {
@@ -303,7 +303,7 @@ async function deletePageLocked(
     return;
   }
   if (!(await targetExists(abs))) return;
-  await recordPreState(batch, abs);
+  await recordPreState(requireJournal(batch), abs);
   await unlink(abs);
 }
 
@@ -329,7 +329,7 @@ function pageRemoveRequest(mutation: PagePlannedMutation): { directory: string; 
 export async function applyPageMutationLocked(
   root: string,
   mutation: PagePlannedMutation,
-  batch: JournalBatch,
+  batch: JournalBatch | undefined,
   writeOne: WriteOne = atomicWrite,
   pageSink?: PageSink,
   pageRemover?: PageRemover,
@@ -348,8 +348,27 @@ export async function applyPageMutationLocked(
   if (mutation.operation === "create" && (await targetExists(abs))) {
     throw new CreateCollisionError(abs);
   }
-  await recordPreState(batch, abs);
+  await recordPreState(requireJournal(batch), abs);
   await writeOne(abs, mutation.body);
+}
+
+/**
+ * Assert a batch is present, for the file-backend branches only.
+ *
+ * Those branches record a pre-state and therefore REQUIRE a batch. The batch is
+ * optional at the call site because a row-backed apply has nothing to journal;
+ * reaching a file-branch without one means the caller decided no journal was
+ * needed while still writing files -- a planner/dispatch disagreement that must
+ * fail loudly rather than skip the write-ahead record.
+ *
+ * @param batch - The batch supplied by the executor, possibly absent.
+ * @returns The same batch, narrowed to non-undefined.
+ */
+function requireJournal(batch: JournalBatch | undefined): JournalBatch {
+  if (batch === undefined) {
+    throw new Error("file-backed page mutation requires an open journal batch");
+  }
+  return batch;
 }
 
 /**
