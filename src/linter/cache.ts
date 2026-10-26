@@ -173,8 +173,7 @@ async function readLintCacheFromRows(
   try {
     const stored = await readCachedLintResult(handle.db, stackId);
     if (stored === undefined) return null;
-    const entry = stored.findings as LintCacheEntry;
-    return isValidEntry(entry) ? entry : null;
+    return corroborateEntry(stored.findings);
   } finally {
     await handle.close();
   }
@@ -253,6 +252,25 @@ export async function readLintCache(root: string): Promise<LintCacheEntry | null
   } catch {
     return null;
   }
+  return corroborateEntry(parsed);
+}
+
+/**
+ * Validate one cache document into a {@link LintCacheEntry}, or null for a miss.
+ *
+ * BOTH backends go through this. They did not always: the rows path validated types
+ * and returned, while the file path went on to drop a `rules` breakdown that
+ * contradicted the totals beside it. That left the corroboration in the LESS trusted
+ * backend only — a row could carry a breakdown the file reader would have refused,
+ * and the viewer would have rendered "<page> · 99 of 5".
+ *
+ * A malformed document is a MISS, not an error: this is a cache, so garbage means
+ * "lint again", never a failure surfaced to the user.
+ *
+ * @param parsed - A parsed cache document from either backend.
+ * @returns The corroborated entry, or null when it is not a usable cache.
+ */
+function corroborateEntry(parsed: unknown): LintCacheEntry | null {
   if (!isValidEntry(parsed)) return null;
   const entry: LintCacheEntry = {
     warnings: parsed.warnings,
