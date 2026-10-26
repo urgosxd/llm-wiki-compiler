@@ -1,9 +1,29 @@
 # Proposal: atomic ingest across both dimensions
 
-**Status:** proposal, awaiting a `contract_decision` from `orchestrator-main`.
+**Status:** `changes` received (`cd-2026-10-26-01`) with no reason carried; revised
+here against `feat/pages-rows-only` and re-proposed as `@4`.
 **Author:** `orchestrator-b` (kg-dimension).
 **Evidence:** `test/dimensions/kg-runtime-cross-dimension-transaction.test.ts`, 4 tests, all green
 against a real Postgres. Branch `feat/orchestrator-b`.
+
+## Revision note: this was first written against a stale tree
+
+The original proposal was measured on `feat/orchestrator-b` (`47f015f`) and assumed
+the outbox was a FILE (`src/dimensions/outbox.ts`, `.llmwiki/dimensions/outbox/*.json`).
+On `feat/pages-rows-only` it is a TABLE — `public.ingest_outbox`, 276 rows live,
+written through `saveRecord(db, stackId, record)`.
+
+That does not weaken the case; it STRENGTHENS it, and moves the argument one step.
+Measured on the live container: `public.ingest_outbox`, `public.stack_documents` and
+`wiki.pages` are three tables **of one database**. The outbox, the wiki dimension and
+the kg dimension are therefore — today, already — in the same transaction space.
+The comment at the top of `outbox.ts` on that branch still opens with "the two
+dimensions cannot share a transaction", which the shipped storage layout has
+outgrown.
+
+What remains true and is NOT proposed to change: **`prepare` stays outside any
+transaction** (it makes LLM and embedding calls), so the split the port already has
+is still the right one.
 
 ## The premise this proposal challenges
 
@@ -61,10 +81,18 @@ export interface CommitScope {
    * commit. A dimension that receives one MUST NOT open its own connection.
    */
   readonly tx?: unknown;
+  /** Stack both dimensions are bound to; REQUIRED when `tx` is absent. */
+  readonly stackId?: string;
 }
 
 commit(prepared: PreparedWrite, scope?: CommitScope): Promise<CommittedWrite>;
 ```
+
+`stackId` is included because the branch revision made the tenant explicit on every
+call path (`saveRecord(db, stackId, ...)`, `saveSourceDocument(db, stackId, ...)`).
+A transaction handed to a dimension is not self-describing about its tenant, and a
+`commit` that joined a tx without binding the GUC would fail the policy check rather
+than the transaction — the exact failure mode the measurement in case 2 rules out.
 
 Why `unknown` and not a Drizzle type: the port's whole value is naming no storage,
 no file path, and no provider (`types.ts` says so). A concrete `Database` type
@@ -76,10 +104,15 @@ narrows `scope.tx` to its own handle and fails closed on a shape it cannot use.
 
 | Side | Change | Owner |
 | --- | --- | --- |
-| Port | `commit` gains an optional `scope`; `DIMENSION_PORT_VERSION` → **3** | `orchestrator-main` (`types.ts` is shared) |
+| Port | `commit` gains an optional `scope`; `DIMENSION_PORT_VERSION` → **4** | `orchestrator-main` (`types.ts` is shared) |
 | `kg` | `writeGraph` stops calling `createClient` when `scope.tx` is present | `orchestrator-b` (owns `src/dimensions/kg/**`) |
-| `wiki` | `commit` runs its upsert on `scope.tx` when present | `orchestrator-a` (owns `src/dimensions/wiki/**`) |
-| Coordinator | opens ONE transaction, passes it to every `commit`, commits at the end | `orchestrator-main` (owns `coordinator.ts`) |
+| `wiki` | `commit` passes `scope.tx` into `saveSourceDocument` instead of opening one | `orchestrator-main` on `feat/pages-rows-only` (owns `src/dimensions/wiki/**` there) |
+| Coordinator | opens ONE transaction, binds the Stack once, passes it to every `commit` | `orchestrator-main` (owns `coordinator.ts`) |
+
+Version is **4**, not 3: the `changes` reply invalidated the `@3` proposal before it
+was agreed, and `DIMENSION_PORT_VERSION` is already `2` on both branches. A fresh
+number keeps every decision traceable to one shape instead of silently redefining
+`@3`.
 
 ### What does NOT change
 
@@ -141,11 +174,46 @@ Both are real today and neither requires a port change.
 
 ## What I am asking for
 
-A `contract_decision` on `src/dimensions/types.ts@3`, carrying the optional
+A `contract_decision` on `src/dimensions/types.ts@4`, carrying the optional
 `commit(prepared, scope?)` shape above.
 
 I am not asking to rewrite the coordinator, and I am not asking for a branch merge.
 Approve the interface (or send `changes`) and I will implement only the `kg` side.
+
+## What `changes` must carry to be actionable
+
+The `contract_decision` envelope has no `reason` field by design (v2 forbids it on
+that type), so a bare `changes` states that the shape is wrong without stating how.
+I will not guess at a contract shape: guessing is exactly what the port's frozen
+contract rule exists to prevent.
+
+Three questions decide the revision, and any one of them is enough to answer:
+
+1. **Is the objection that `scope` is on the wrong METHOD?** The alternative is a
+transaction-owning coordinator that dimensions never see, with `commit` gaining
+nothing — cheaper for the port, but it cannot work for `kg`, which opens its own
+client inside `writeGraph` and would have to be handed a handle somehow.
+2. **Is the objection that `tx?: unknown` is too loose?** The alternative is a
+narrower structural interface (an object with a single `execute`) that both
+implementations satisfy without naming a driver.
+3. **Is the objection that this should be `orchestrator-main`'s implementation
+rather than mine?** Then the interface stands and the question is only who writes
+the coordinator; I will still take the `kg` side.
+
+## Measured facts the revision rests on
+
+All verified this session against the live container and `feat/pages-rows-only`:
+
+- `public.ingest_outbox`, `public.stack_documents`, `wiki.pages` — three tables,
+  **one database**.
+- `ingest_outbox` is already populated (276 rows) and RLS-forced.
+- `writeGraph` (`src/dimensions/kg/index.ts:212`) still calls `createClient`, which
+  is the single line that makes atomicity impossible.
+- `saveSourceDocument` (`src/dimensions/wiki/source-documents-store.ts:193`) opens
+  its own `db.transaction`, so it has the same shape as `writeGraph`.
+- **`types.ts` is byte-identical between `feat/orchestrator-b` and
+  `feat/pages-rows-only`**, so the contract proposal is not stale — only my
+  surrounding description of the outbox was.
 
 ## Also requested, unrelated to the version bump: the harness RLS trap
 
