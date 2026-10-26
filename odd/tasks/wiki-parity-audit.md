@@ -52,13 +52,57 @@ no row equivalent at all, and two more have storage that production never calls.
 | Table | Store | Status |
 |---|---|---|
 | `wiki.review_candidates` | `dimensions/wiki/candidate-store.ts` | **Only the test imports it.** Candidates still persist through `compiler/candidates.ts:254` (`atomicWrite`). Step 3 was storage-only and never wired. |
-| `wiki.page_embeddings` / `wiki.page_chunk_embeddings` | `utils/embeddings-database.ts` | Read side adapts to the loader seam and no production caller passes it; write side has no database implementation at all. |
+| `wiki.page_embeddings` / `wiki.page_chunk_embeddings` | `utils/embeddings-database.ts` | **CORRECTED — full parity.** See the correction note below. |
 
-The embedding CORPUS is the biggest artifact of the lot and is still **file-only in
-both directions**: `persistEmbeddingStore` (`utils/embeddings-storage.ts:109`) writes
-`.llmwiki/embeddings.json` unconditionally, and `EmbeddingStoreSink` — the interface
-that would let a caller persist to rows — has no database implementation. The tables
-exist and other paths populate them, which is what makes the gap easy to miss.
+## 3b. CORRECTION: the embedding corpus IS wired
+
+An earlier draft of this audit claimed the embedding store was file-only and that
+`EmbeddingStoreSink` had no database implementation. **That was wrong**, and the
+error came from grepping for the wrong identifiers:
+
+- `databaseEmbeddingSink` and `databaseEmbeddingLocation` exist
+  (`utils/embeddings-database.ts`).
+- `writeEmbeddingStore` accepts a `sink` and dispatches to it
+  (`utils/embeddings-store.ts:211,221`).
+- Production wires the whole chain:
+  `compiler/index.ts:1121` → `embeddingStoreLocation(db)` →
+  `safelyUpdateEmbeddings(…, embeddingStore, …)` (`:913`) →
+  `refreshEmbeddingsDrainingPending` (`utils/embeddings-refresh.ts:69`) →
+  `updateEmbeddingsLockedCore(…, store, …)` → `writeEmbeddingStore(root, stamped, sink)`.
+
+The grep that produced the false claim searched for `databaseEmbeddingSource` and
+for `EmbeddingStoreSink` *implementations*, and missed that the pair is composed by
+`databaseEmbeddingLocation` and passed down as one value. **A missing grep hit is not
+evidence of absence** — the same mistake the audit was written to avoid.
+
+## 3c. Storage that IS genuinely unwired
+
+| Table | Store | Status |
+|---|---|---|
+| `wiki.review_candidates` | `dimensions/wiki/candidate-store.ts` | **Only the test imports it**, AND the table cannot hold a real candidate. See §3d. |
+
+## 3d. The candidate store is not merely unwired — it is incomplete
+
+Wiring `candidate-store.ts` as it stands would **silently lose five fields** that the
+file backend persists (`compiler/candidates.ts:290-298` sets them; the store never
+mentions them):
+
+| Field | Column | Consequence if dropped |
+|---|---|---|
+| `candidateKind` | **missing** | `review-publication.ts:16` can no longer tell a validated answer from anything else |
+| `citationManifest` | **missing** | `review-publication.ts:46` dereferences `candidate.citationManifest!.bodyDigest` to detect an edited answer. Without it, **the integrity check before publishing a reviewed answer has nothing to compare** |
+| `connectorProvenance` | **missing** | one of the four signals `isConnectorCandidate` uses (`connectors/origin.ts:28`) and what `review-show.ts:106` displays |
+| `confidence` | **missing** | display only (`review-show`) |
+| `contradicted` | **missing** | `review/policy.ts:88` gates the `contradicted` review mode |
+
+Present columns cover the rest: `review_mode`, `held_reasons` and `body` also feed
+`isConnectorCandidate`, so the operator-pin control in `review-approve.ts:167` still
+holds even without `connectorProvenance`. That is the one field loss that does NOT
+weaken a security check — but only because three sibling signals survive.
+
+So the work is **not** "call the store from production". It is: extend
+`migration_wiki_candidates.sql` with the five columns, round-trip them in the store,
+then wire it.
 
 ## 4. What this means for the migration order
 
