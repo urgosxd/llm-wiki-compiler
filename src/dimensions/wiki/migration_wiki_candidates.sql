@@ -55,9 +55,14 @@ create table if not exists wiki.review_candidates (
 
     generated_at timestamptz not null,
 
-    -- `policy` (held by a rule) or `forced` (--review). Not an enum type: the set is
-    -- small and a check constraint keeps a migration out of adding a mode.
-    review_mode text not null check (review_mode in ('policy', 'forced')),
+    -- Every value `ReviewMode` declares: `policy` (held by a rule), `forced`
+    -- (--review), `imported` (an OKF bundle stage) and `connector` (a fetched
+    -- source). This check listed only the first two at first, which made the row
+    -- store unable to hold an imported or connector candidate at all -- the write
+    -- failed on the constraint rather than degrading. Kept as a check rather than an
+    -- enum type so adding a mode is a statement, not a type migration.
+    review_mode text not null
+        check (review_mode in ('policy', 'forced', 'imported', 'connector')),
 
     -- Structured reasons the candidate awaits review. jsonb because the shape is a
     -- discriminated union the reader validates per code.
@@ -148,6 +153,16 @@ alter table wiki.review_candidates
     -- True when the generated frontmatter declares contradictions; gates the
     -- `contradicted` review mode.
     add column if not exists contradicted boolean;
+
+-- The review_mode check above lives in the CREATE, which is `if not exists` -- so a
+-- database that already had this table keeps the OLD two-value constraint and cannot
+-- store an imported or connector candidate. Re-stating it here fixes both a fresh
+-- database (no-op, the constraint already matches) and an existing one.
+alter table wiki.review_candidates
+    drop constraint if exists review_candidates_review_mode_check;
+alter table wiki.review_candidates
+    add constraint review_candidates_review_mode_check
+    check (review_mode in ('policy', 'forced', 'imported', 'connector'));
 
 -- A confidence outside 0..1 cannot come from the generator, so a row carrying one
 -- means the value was written around the interface. Refusing it at the boundary
