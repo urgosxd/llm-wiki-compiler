@@ -19,16 +19,11 @@
  * profile they had.
  */
 
-import { sql } from "drizzle-orm";
 import type { Database } from "llmwiki-kg";
+import { readDocumentRow, saveDocumentRow, type StoredDocumentRow } from "./document-store.js";
 
 /** One Stack's stored profile document. */
-export interface StoredProfileRow {
-  /** The profile document as stored. */
-  readonly document: unknown;
-  /** The digest recorded at write time. */
-  readonly digest: string;
-}
+export type StoredProfileRow = StoredDocumentRow;
 
 /**
  * Store one Stack's profile, replacing whatever was there.
@@ -47,17 +42,7 @@ export async function saveProfile(
   document: unknown,
   digest: string,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
-    await tx.execute(sql`
-      insert into wiki.profile (stack_id, document, digest)
-      values (${stackId}, ${JSON.stringify(document)}::jsonb, ${digest})
-      on conflict (stack_id) do update set
-        document = excluded.document,
-        digest = excluded.digest,
-        updated_at = now()
-    `);
-  });
+  await saveDocumentRow(db, "profile", stackId, document, digest);
 }
 
 /**
@@ -75,12 +60,5 @@ export async function readProfile(
   db: Database,
   stackId: string,
 ): Promise<StoredProfileRow | undefined> {
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
-    const rows = await tx.execute<{ document: unknown; digest: string }>(sql`
-      select document, digest from wiki.profile where stack_id = ${stackId}
-    `);
-    const row = rows[0];
-    return row === undefined ? undefined : { document: row.document, digest: row.digest };
-  });
+  return readDocumentRow(db, "profile", stackId);
 }

@@ -26,16 +26,11 @@
  * authoritative -- so a mismatch is left to the parser, which is stricter anyway.
  */
 
-import { sql } from "drizzle-orm";
 import type { Database } from "llmwiki-kg";
+import { readDocumentRow, saveDocumentRow, type StoredDocumentRow } from "./document-store.js";
 
 /** One Stack's stored advisory lock document. */
-export interface StoredTemplateLockRow {
-  /** The lock document as stored, unparsed. */
-  readonly document: unknown;
-  /** The digest recorded at write time. */
-  readonly digest: string;
-}
+export type StoredTemplateLockRow = StoredDocumentRow;
 
 /**
  * Store one Stack's advisory lock, replacing whatever was there.
@@ -55,17 +50,7 @@ export async function saveTemplateLock(
   document: unknown,
   digest: string,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
-    await tx.execute(sql`
-      insert into wiki.template_lock (stack_id, document, digest)
-      values (${stackId}, ${JSON.stringify(document)}::jsonb, ${digest})
-      on conflict (stack_id) do update set
-        document = excluded.document,
-        digest = excluded.digest,
-        updated_at = now()
-    `);
-  });
+  await saveDocumentRow(db, "template_lock", stackId, document, digest);
 }
 
 /**
@@ -83,12 +68,5 @@ export async function readTemplateLockRow(
   db: Database,
   stackId: string,
 ): Promise<StoredTemplateLockRow | undefined> {
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
-    const rows = await tx.execute<{ document: unknown; digest: string }>(sql`
-      select document, digest from wiki.template_lock where stack_id = ${stackId}
-    `);
-    const row = rows[0];
-    return row === undefined ? undefined : { document: row.document, digest: row.digest };
-  });
+  return readDocumentRow(db, "template_lock", stackId);
 }
