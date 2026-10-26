@@ -288,3 +288,53 @@ thing left standing, and it disappears site by site as each target becomes a row
 Its 675 LOC of no-follow/parent-confine/TOCTOU machinery is filesystem-as-identity
 defence — the same species as `candidate-custody.ts`, which rows made unnecessary by
 construction.
+
+## Artifacts: measured cost, and why the first number was wrong
+
+`vitest related src/artifacts/{store,apply,apply-members}.ts` reports **1475 files /
+3336 tests**. That is not the cost of migrating artifacts. `vitest related` follows
+the import graph, and `src/artifacts/*` is reachable from `core-index.ts`,
+`compiler-cli.ts` and `sdk/core.ts`, so "related" sprawls to most of the suite.
+
+The real figure, measured by running the files that actually import `src/artifacts/`
+and touch the disk: **85 files / 226 tests, 0 failing**. This is the number to plan
+against, and it is 17× smaller than the `vitest related` artefact.
+
+Lesson for the other three subsystems: `vitest related` is right for judging blast
+radius of an EDIT, and wrong for sizing a MIGRATION. For sizing, count the files that
+import the subsystem and assert its storage.
+
+### Where the filesystem actually is
+
+Four files in a 17-file subsystem:
+
+| File | FS sites |
+|---|---|
+| `apply-members.ts` | 11 |
+| `apply-guards.ts` | 7 |
+| `store.ts` | 4 |
+| `resolve-members.ts` | 2 |
+
+`resolve.ts`, `members.ts` and `read-verified.ts` read no disk at all; they delegate.
+So the migration surface is four files, not seventeen.
+
+### The four properties the directory gave for free
+
+`store.ts` is filesystem-as-identity machinery: no-follow-leaf reads, parent-realpath
+confinement, post-read TOCTOU re-confirmation. All of it exists because a directory is
+an untrusted namespace. A row set is closed by construction, so each property becomes
+an explicit behaviour with its own test (`artifact-store-rows.test.ts`):
+
+1. **The set is closed** — primary keys, not a directory listing.
+2. **A shrink leaves nothing behind** — the member set is REPLACED inside the same
+   transaction as the insert (`apply-members` had to unlink "obsolete" leaves
+   afterwards, where an unlink can fail while the batch still commits).
+3. **Order is declaration order** — a member-bearing ref is a Merkle root folded in
+   declaration order, so `position` is stored and read back, never re-sorted.
+4. **Bytes are bytes** — `bytea`, never text.
+
+### Divergence from the journal-first plan
+
+`src/artifacts/` has **zero** Stack awareness today, so sites 4 and 5 are not hiding a
+live defect the way `executor.ts` and `delete-page.ts` were. This is pure migration,
+and it costs more than the two bug fixes did.
