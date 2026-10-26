@@ -29,33 +29,55 @@ suite("the lock facade with a Stack", () => {
   });
 
   afterEach(() => {
+    // The registry is process-global. A leaked entry makes the NEXT test's size
+    // assertion lie, which is a test bug that looks exactly like a product bug.
+    lockRegistry.clear();
     rmSync(root, { recursive: true, force: true });
   });
 
   it("takes the lock through Postgres", async () => {
-    const acquired = await acquireLock(root, { quiet: true, env: stackEnv() });
+    const env = stackEnv();
+    const acquired = await acquireLock(root, { quiet: true, env });
 
     expect(acquired).toBe(true);
     expect(lockRegistry.size).toBe(1);
-    await releaseLock(root);
+    await releaseLock(root, env);
     expect(lockRegistry.size).toBe(0);
   });
 
   it("reports busy to a second holder of the same root", async () => {
     //  Two calls share one process, but each reserves its own connection, so this
     // is a real contention check rather than a reentrant one.
-    await acquireLock(root, { quiet: true, env: stackEnv() });
-    const second = await acquireLock(root, { quiet: true, env: stackEnv() });
+    const env = stackEnv();
+    await acquireLock(root, { quiet: true, env });
+    // The SAME Stack through a second call: the key is the Stack id, so it contends.
+    const second = await acquireLock(root, { quiet: true, env });
 
     expect(second).toBe(false);
-    await releaseLock(root);
+    await releaseLock(root, env);
   });
 
   it("falls back to the file when no Stack is configured", async () => {
-    const acquired = await acquireLock(root, { quiet: true, env: {} as NodeJS.ProcessEnv });
+    const env = {} as NodeJS.ProcessEnv;
+    const acquired = await acquireLock(root, { quiet: true, env });
 
     expect(acquired).toBe(true);
-    expect(lockRegistry.size).toBe(0);
-    await releaseLock(root);
+    expect(lockRegistry.size).toBe(0); // the file path registers nothing
+    await releaseLock(root, env);
+  });
+
+  it("excludes two DIFFERENT paths that name the SAME Stack", async () => {
+    // The defect this closes. Before the fix the key was the resolved PATH, so two
+    // hosts serving one Stack had different keys, both acquired, and both compiled
+    // the same corpus -- precisely the collision the advisory lock exists to stop.
+    const other = mkdtempSync(join(tmpdir(), "pglock-other-"));
+    const env = stackEnv();
+    try {
+      await acquireLock(root, { quiet: true, env });
+      expect(await acquireLock(other, { quiet: true, env })).toBe(false);
+    } finally {
+      await releaseLock(root, env);
+      rmSync(other, { recursive: true, force: true });
+    }
   });
 });
