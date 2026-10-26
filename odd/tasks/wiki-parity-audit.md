@@ -156,6 +156,54 @@ Revised order:
 Step 2 of the old plan ("wire Step 3 candidates to production") stops being a
 cleanup item and becomes a prerequisite for deleting any candidate file path.
 
+## 5. The gap this audit did not ask about: whole SUBSYSTEMS
+
+This audit paired `src/utils/constants.ts` artifacts with tables. That question is
+"does every FILE have a row?" -- and once the four missing backends were built
+(`log`, `index`/`MOC`, `profile`, plus the quarantine correction), the answer became
+yes for artifacts.
+
+It was the wrong shape of question. The remaining 63 test files classified as
+"genuine file semantics" are not testing artifacts, they are testing **subsystems**,
+and four of them have no row path at all:
+
+| Subsystem | Files | Files with any row seam |
+|---|---|---|
+| `src/preparations/` | 124 | **0** |
+| `src/operation-bundles/` | 70 | **0** |
+| `src/products/` | 27 | **0** |
+| `src/artifacts/` | 16 | **0** |
+
+(Measured by grepping each tree for any of the eight `with*Source` seams or
+`AKS_STACK_ID`; zero hits in all four.)
+
+### What that means for the 63 files
+
+37 of the 63 (301 tests) import `src/preparations/` directly. They are not tests with
+filesystem ASSUMPTIONS that could be rewritten -- they exercise a subsystem whose
+implementation only knows how to write files. Rewriting the test would not help,
+because there is nothing on the other side to call.
+
+Note the shapes of records these subsystems keep: preparation runs, operation
+bundles, product packages, artifact members. They are all MUTATION JOURNALS AND
+MANIFESTS -- the same species as the trust journal (Decision 2: "no files"), which is
+already parked for exactly this reason. `src/trust/journal.ts` is 675 LOC with 9
+file-write call sites and no row seam.
+
+### Revised meaning of "done"
+
+Artifact parity is achieved. **Subsystem** parity is not, and it is a much larger
+piece of work than the remaining test adaptation:
+
+1. The four subsystems above need row backends before their tests can go anywhere.
+2. That is the same decision the journal is waiting on (Decision 2 — "no files"),
+   so it should be made ONCE for journals/manifests generally, not four times.
+3. Until then, the 63 files are not backlog in the sense the plan implied. They are
+   correctly testing the only implementation that exists.
+
+The honest status: the WIKI is on rows. The PREPARATION / OPERATION / PRODUCT / ARTIFACT
+machinery around it is not, and calling those tests "the 63 remaining" hides that.
+
 ## Evidence limits
 
 - Capability parity, not byte parity: a row-backed project round-trips the same
