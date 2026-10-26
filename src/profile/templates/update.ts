@@ -4,20 +4,18 @@
  * It never writes and treats every unverifiable profile-owned store as unsafe.
  */
 import canonicalize from "canonicalize";
-import { CANDIDATES_DIR } from "../../utils/constants.js";
 import { diffProfiles, type PageDisposition, type ProfileDiffReport } from "../diff.js";
 import { profileDigest } from "../digest.js";
 import { loadProfile } from "../load.js";
 import { lintProfileEntities } from "../lint.js";
 import type { ProfilePack } from "../types.js";
 import type { ProfileTemplatePackage } from "./types.js";
-import { confinedEntries, firstFileUnder } from "./corpus.js";
+import { firstFileUnder } from "./corpus.js";
 import { auditArtifactStore } from "./artifact-audit.js";
-import { auditCandidateArchive, auditWorkflowHistory } from "./history-audit.js";
+import { auditCandidateArchive, auditCandidateStore, auditWorkflowHistory } from "./history-audit.js";
 import { readTemplateLock } from "./lock.js";
 import { getBuiltinTemplate, getBuiltinTemplateRelease } from "./registry.js";
 
-const MAX_PENDING_CANDIDATE_ENTRIES = 10_000;
 
 /** One structured refusal reason from the corpus-wide compatibility audit. */
 export interface TemplateUpdateReason {
@@ -131,21 +129,36 @@ function isContentOnlyFinding(rule: string): boolean {
   return rule === "empty-page" || rule === "malformed-claim-citation" || rule === "low-confidence";
 }
 
+/**
+ * Reasons the pending candidate queue blocks a template update.
+ *
+ * The gate is "is anything still pending", and the archive is a separate integrity
+ * question. Both are asked through the audit module so the backend decision lives in
+ * one place instead of being re-derived here from a directory walk.
+ *
+ * @param root - Project root, used by the file backend.
+ * @returns One reason per blocked condition.
+ */
 async function candidateReasons(root: string): Promise<TemplateUpdateReason[]> {
-  const pending = await confinedEntries(root, CANDIDATES_DIR);
-  if (pending === "unavailable") return [{ kind: "store", message: "candidate store is unreadable or unsafe" }];
-  if (Array.isArray(pending)) {
-    if (pending.length > MAX_PENDING_CANDIDATE_ENTRIES) {
-      return [{ kind: "store", message: "candidate store exceeds its entry cap" }];
-    }
-    if (pending.some((entry) => entry !== "archive" && !isJsonFile(entry))) {
-      return [{ kind: "store", message: "candidate store contains unexpected entries" }];
-    }
-    if (pending.some(isJsonFile)) {
-      return [{ kind: "candidate", message: "pending review candidates must be resolved before update" }];
-    }
-  }
-  return (await auditCandidateArchive(root)).map((message) => ({ kind: "store", message }));
+  const pending = (await auditCandidateStore(root)).map(classifyStoreReason);
+  const archived = (await auditCandidateArchive(root)).map((message) => ({ kind: "store" as const, message }));
+  return [...pending, ...archived];
+}
+
+/**
+ * Label one candidate-store finding as a queue entry or a store fault.
+ *
+ * The distinction is the caller's: a pending candidate is something a human must
+ * resolve (`candidate`), while an unresolvable store is a fault in the store itself
+ * (`store`). Collapsing them would tell an operator to review a queue whose contents
+ * are unknown, which is the one thing they cannot safely do.
+ *
+ * @param message - The finding the audit produced.
+ * @returns The reason, labelled.
+ */
+function classifyStoreReason(message: string): TemplateUpdateReason {
+  const isQueueEntry = /pending review candidates/i.test(message);
+  return { kind: isQueueEntry ? "candidate" : "store", message };
 }
 
 async function workflowReasons(root: string): Promise<TemplateUpdateReason[]> {
@@ -159,10 +172,6 @@ async function artifactReasons(root: string, active: ProfilePack, candidate: Pro
   if (state === "unavailable") return [...audit, { kind: "store", message: "artifact store is unreadable or unsafe" }];
   if (state === "present") return [...audit, { kind: "artifact", message: "artifact contracts changed while stored artifacts exist" }];
   return audit;
-}
-
-function isJsonFile(name: string): boolean {
-  return name.endsWith(".json");
 }
 
 function errorMessage(error: unknown): string {

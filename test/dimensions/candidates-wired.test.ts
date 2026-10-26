@@ -171,3 +171,16 @@ describe("other candidate entry points", () => {
     expect(await deleteCandidateBySlug(root, "theta")).toBe(false);
   });
 });
+
+describe("profile update gates on the Stack queue", () => {
+  it("sees a pending candidate on a Stack-backed project", async () => {
+    // The gate inspected `.llmwiki/candidates` with confinedEntries, which answers
+    // "absent" on a Stack-backed project because the directory does not exist -- so a
+    // template update could proceed with review candidates still unresolved.
+    await writeCandidate(root, draft("Iota"));
+
+    const { auditCandidateStore } = await import("../../src/profile/templates/history-audit.js");
+    const reasons = await auditCandidateStore(root);
+    expect(reasons.some((reason) => /pending review candidates/.test(reason))).toBe(true);
+  });
+});

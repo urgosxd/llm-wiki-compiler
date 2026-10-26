@@ -11,9 +11,58 @@ import { CANDIDATES_ARCHIVE_DIR } from "../../utils/constants.js";
 import { isTerminalStatus } from "../../workflow-history/definition.js";
 import { readRun } from "../../workflow-history/store.js";
 import { confinedEntries } from "./corpus.js";
+import { withCandidateSource } from "../../dimensions/wiki/candidate-source.js";
+import { CANDIDATES_DIR } from "../../utils/constants.js";
 
 const MAX_ARCHIVED_CANDIDATE_BYTES = 4 * 1024 * 1024;
 const MAX_HISTORY_ENTRIES = 10_000;
+
+/** Entries a pending queue may hold before the store itself is the problem. */
+const MAX_PENDING_ENTRIES = 10_000;
+
+/**
+ * Report whether the pending queue still holds anything a profile update would strand.
+ *
+ * ## Why this is a separate audit from the archive
+ *
+ * They answer different questions. This one asks "may the update proceed at all",
+ * and any pending candidate blocks it. The archive audit asks "is the material the
+ * update is about to reinterpret still intact". Collapsing them would let a malformed
+ * archive hide behind an empty queue, and vice versa.
+ *
+ * ## Why a Stack answers from rows
+ *
+ * The file version walked `.llmwiki/candidates` with `confinedEntries`, which returns
+ * "absent" on a Stack-backed project because that directory does not exist -- so the
+ * gate reported a clean queue no matter how many candidates were actually pending.
+ * A row cannot be absent while existing, so the row path answers the question the
+ * audit was always asking.
+ *
+ * @param root - Project root, used only by the file backend.
+ * @returns One message per reason the update must not proceed.
+ */
+export async function auditCandidateStore(root: string): Promise<string[]> {
+  const fromRows = await withCandidateSource(process.env, async (source) => {
+    if (source === undefined) return undefined;
+    const pending = await source.list();
+    if (pending.length > MAX_PENDING_ENTRIES) return ["candidate store exceeds its entry cap"];
+    return pending.length === 0
+      ? []
+      : ["pending review candidates must be resolved before update"];
+  });
+  if (fromRows !== undefined) return fromRows;
+
+  const pending = await confinedEntries(root, CANDIDATES_DIR);
+  if (pending === "unavailable") return ["candidate store is unreadable or unsafe"];
+  if (pending === "absent") return [];
+  if (pending.length > MAX_PENDING_ENTRIES) return ["candidate store exceeds its entry cap"];
+  if (pending.some((entry) => entry !== "archive" && !entry.endsWith(".json"))) {
+    return ["candidate store contains unexpected entries"];
+  }
+  return pending.some((entry) => entry.endsWith(".json"))
+    ? ["pending review candidates must be resolved before update"]
+    : [];
+}
 
 /** Validate every archived candidate record through confined capped reads. */
 export async function auditCandidateArchive(root: string): Promise<string[]> {
