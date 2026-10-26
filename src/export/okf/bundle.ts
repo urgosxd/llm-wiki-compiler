@@ -16,6 +16,8 @@ import type { ExportPage } from "../types.js";
 import type { LinkResolver } from "./types.js";
 import { renderOkfDoc } from "./render-doc.js";
 import { buildOkfIndex, buildOkfLog, parseLlmwikiLog } from "./index-log.js";
+import { renderJournal } from "../../utils/activity-log.js";
+import { withJournalSource } from "../../dimensions/wiki/activity-log-source.js";
 import { collectReferenceFiles, resolveReferences, type ResolvedReference } from "./references.js";
 import { resolveOutputPaths } from "./output-paths.js";
 import { collectProfileEntityDocs } from "./profile-docs.js";
@@ -113,9 +115,23 @@ async function clearContents(realOut: string): Promise<void> {
 /** OKF log translated from llmwiki's activity log.md when present, else a synthetic export entry. */
 async function buildLog(root: string, pageCount: number): Promise<string> {
   const fallback = [{ date: new Date().toISOString().slice(0, 10), action: "Export", text: `${pageCount} doc(s)` }];
-  const llmwikiLog = await readFile(path.join(root, "log.md"), "utf-8").catch(() => null);
-  const parsed = llmwikiLog ? parseLlmwikiLog(llmwikiLog) : [];
+  const parsed = parseLlmwikiLog(await readJournalMarkdown(root));
   return buildOkfLog(parsed.length ? parsed : fallback);
+}
+
+/**
+ * Read the activity journal as markdown, from rows when a Stack is configured.
+ *
+ * The export downstream PARSES headings, so a Stack's journal is rendered back into
+ * the same markdown the file backend writes rather than being read as data. That
+ * keeps one parser and one format instead of teaching the OKF bundle about rows.
+ */
+async function readJournalMarkdown(root: string): Promise<string> {
+  const viaRows = await withJournalSource(process.env, async (source) =>
+    source === undefined ? null : renderJournal(await source.read()),
+  );
+  if (viaRows !== null) return viaRows;
+  return (await readFile(path.join(root, "log.md"), "utf-8").catch(() => null)) ?? "";
 }
 
 /** Copy the already-resolved references into references/, confined to the bundle. */
