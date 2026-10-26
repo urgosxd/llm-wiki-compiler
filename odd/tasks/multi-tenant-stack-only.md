@@ -399,6 +399,80 @@ local, which is the failure mode the migration exists to remove.
   `journal-revert-confined`, `atomic-write-post-commit-recovery`.
 - **Must not**: land in the same change as the removal of `atomic-write.ts`.
 
+##### T5 status after paso 4 — one blocker fell, one defect appeared (2026-02)
+
+Re-measured after the page write removal. **T5 is still not implementable, and the
+reason changed.**
+
+**The blocker the document named is gone.** It said T5 was downstream of T7 because
+`page-apply.ts` still wrote pages via `atomicWrite`. That is no longer true: with a
+sink the file write does not happen. Page-target journal entries are now only
+recorded on the file path.
+
+**The core objection is untouched, and is why T5 stays design-only.** The journal
+is not a page journal. Measured again on today's tree — all four target classes
+still record paths:
+
+| Class | Site | Ever a row? |
+|---|---|---|
+| artifact bytes + manifest | `artifacts/apply.ts:91-92` | no |
+| artifact + binary members | `artifacts/apply-members.ts:117-120` | no |
+| `TEMPLATE_LOCK_FILE`, `PROFILE_FILE` | `profile/templates/update-apply.ts:107-108` | no |
+| a page | `page-apply.ts` | only when no sink |
+
+`JournalEntry` still has no identity fields — it is `targetPath: string` plus a
+`preState`. `journal.ts` still carries **13** confinement uses
+(`confineUnderRoot`/`isInsideDir`/`safeRealpath`). The mechanism IS path confinement,
+so converting it to a table does not migrate the journal — it deletes the security
+property for three classes that will never be rows, and leaves them with no home.
+
+**Volume unchanged**: 24 source files import the journal, 35 test files cover it.
+
+**A no-op batch, measured.** A row-only page batch still opens and commits a journal
+with ZERO entries (`.llmwiki/journal` is empty afterwards). Harmless noise, not a
+defect, but it means the batch layer is now partly ceremony for a Stack-backed run.
+
+##### Defect found in paso 4 and FIXED here
+
+`deletePageLocked` never received the sink. Measured before the fix:
+
+```
+PROBE delete -> row:  STILL THERE
+PROBE delete -> file: REMOVED
+```
+
+In a Stack-backed project a `delete` mutation was a **complete no-op that reported
+success**: it unlinked a file that does not exist and left the row alive. Reachable
+in principle through `applyApprovedMutationsLocked`'s six sink-less callers and the
+page-delete pack mutation kind; not reachable from `compile`, which orphans pages
+rather than deleting them.
+
+**What closed it:** `deleteStoredPage` (`page-store.ts`),
+`createPageRemoveSink`/`PageRemover` (`page-write-sink.ts`, `page-apply.ts`), a
+`pageRemover` on `ApplyOptions` threaded through the executor and the `PageSeams`
+bundle to all five compile writers, and `pageStoreOptions` collapsing the two
+optional flags into one narrowing helper.
+
+**Red-then-green, mutation-verified**: forcing `deletePageLocked` to ignore the
+remover fails the new test with `expected { slug: 'doomed', … } to be undefined` —
+the row survives, which is the defect. Restored by checksum. The file branch is
+asserted too, because the fix must not change it.
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | 0 |
+| `npm run build` (DTS) | 0 |
+| `test/dimensions/` + compile-write | 37 files / **235 tests** |
+| `fallow` | 0 above threshold, no dead exports |
+| `test:affected` | 30 failures, **byte-identical list** to the baseline (diffed) |
+
+**T5 remains DESIGN-ONLY.** A table-shaped journal needs a product decision the
+executor cannot make: what "revert" means when three of four target classes stay
+files. Two candidate shapes, neither chosen: a polymorphic journal target (path OR
+row identity), or two journals with one recovery pass over both. Both need the
+`journal.ts` confinement contract re-specified, which is a contract change, not a
+port.
+
 #### T6 — Raw bytes to the Stack (L1)
 
 - **Seams**: `src/utils/source-writer.ts:158` (`saveSource`; exactly two non-comment

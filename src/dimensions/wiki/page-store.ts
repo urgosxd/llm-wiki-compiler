@@ -308,3 +308,30 @@ export async function upsertStoredPage(
     `);
   });
 }
+
+/**
+ * Remove one page from a Stack.
+ *
+ * DELETING AN ABSENT PAGE IS NOT AN ERROR, matching the file path: a delete's goal
+ * state is "not present", and something else reaching it first does not make this a
+ * failure. Refusing would strand a retry after a partial apply.
+ *
+ * @param db - Database handle.
+ * @param stackId - The tenant that owns the page.
+ * @param pageDirectory - `concepts` or `queries`.
+ * @param slug - The page's slug.
+ */
+export async function deleteStoredPage(
+  db: Database,
+  stackId: string,
+  pageDirectory: PageDirectory,
+  slug: string,
+): Promise<void> {
+  await withTenant(db, stackId, async (tx) => {
+    await tx.execute(sql`
+      delete from wiki.pages
+      where stack_id = ${stackId}
+        and page_directory = ${pageDirectory} and slug = ${slug}
+    `);
+  });
+}

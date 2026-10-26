@@ -107,7 +107,7 @@ import {
   sourceDocumentsContentSource,
 } from "../dimensions/wiki/source-documents-store.js";
 import type { ChangeDetectionSource, SourceContentSource } from "./hasher.js";
-import type { PageSink } from "../trust/page-apply.js";
+import { pageStoreOptions, type PageRemover, type PageSink } from "../trust/page-apply.js";
 import { createPageWriteSink } from "../dimensions/wiki/page-write-sink.js";
 import {
   createEmbeddingPageSource,
@@ -212,6 +212,7 @@ async function generatePagesPhase(
   policy: ReviewPolicy,
   concurrency: number,
   pageSink: PageSink | undefined,
+  pageRemover: PageRemover | undefined,
 ): Promise<PageGenerationResult> {
   const merged = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs);
   // Build the per-source state snapshot once so each candidate can carry the
@@ -244,7 +245,8 @@ async function generatePagesPhase(
   // Apply every live page as ONE journalled executor batch under the held lock,
   // then derive writtenPages from what ACTUALLY committed (skipped pages folded
   // into errors), so finalizeWiki never resolves/embeds an uncommitted page.
-  const { writtenPages, batchErrors } = await commitLivePageWrites(root, outcomes, pageSink);
+  const { writtenPages, batchErrors } = await commitLivePageWrites(
+    root, outcomes, pageSink, pageRemover);
   errors.push(...batchErrors);
   return { pages, writtenPages, errors, candidates, review, seedSlugs: [] };
 }
@@ -270,12 +272,13 @@ async function commitLivePageWrites(
   root: string,
   outcomes: GeneratedOutcome[],
   pageSink: PageSink | undefined,
+  pageRemover: PageRemover | undefined,
 ): Promise<{ writtenPages: MergedConcept[]; batchErrors: string[] }> {
   const live = outcomes.filter((o) => o.result.liveWrite);
   const { skipped } = await applyCompilePageWritesLocked(
     root,
     live.map((o) => o.result.liveWrite!),
-    pageSink === undefined ? {} : { pageSink },
+    pageStoreOptions(pageSink, pageRemover),
   );
   const skippedKeys = new Set(skipped.map((s) => `${s.item.namespace}/${s.item.slug}`));
   const writtenPages = live
@@ -426,7 +429,8 @@ async function reconcileOwnerlessFrozen(
   seams: PageSeams = {},
 ): Promise<boolean> {
   if (reconciliationSlugs.size === 0) return false;
-  await orphanUnownedFrozenPages(root, draft, new Set(reconciliationSlugs), seams.content, seams.sink);
+  await orphanUnownedFrozenPages(
+    root, draft, new Set(reconciliationSlugs), seams.content, seams.sink, seams.remover);
   draft.setFrozen(new Set());
   return true;
 }
@@ -444,7 +448,7 @@ async function maybeSeedPages(
   seams: PageSeams,
 ): Promise<void> {
   if (!options.review && !options.skipSeedPages) {
-    await generateSeedPages(root, schema, generation, seams.content, seams.sink);
+    await generateSeedPages(root, schema, generation, seams.content, seams.sink, seams.remover);
   }
 }
 
@@ -599,7 +603,8 @@ async function runCompilePipeline(
     options,
     reviewPolicy,
     concurrency,
-    sourcePageSink(db, process.env),
+    seams.sink,
+    seams.remover,
   ));
 
   if (!options.review) {
@@ -610,7 +615,8 @@ async function runCompilePipeline(
     await persistExtractionStates(draft, extractions, generation.writtenPages, retained);
     const orphanCandidates = new Set([...reconciliationSlugs, ...frozenSlugs]);
     if (orphanCandidates.size > 0) {
-      await orphanUnownedFrozenPages(root, draft, orphanCandidates, seams.content, seams.sink);
+      await orphanUnownedFrozenPages(
+        root, draft, orphanCandidates, seams.content, seams.sink, seams.remover);
     }
     persistFrozenSlugs(draft, frozenSlugs, extractions, {
       pending: reconciliationSlugs,
@@ -701,7 +707,7 @@ async function markDeletedAsOrphaned(
   seams: PageSeams = {},
 ): Promise<void> {
   for (const del of deleted) {
-    await markOrphaned(root, del.file, draft, seams.content, seams.sink);
+    await markOrphaned(root, del.file, draft, seams.content, seams.sink, seams.remover);
   }
 }
 
@@ -852,13 +858,13 @@ async function finalizeWiki(
     // Compute + apply the resolution rewrites as ONE journalled batch. compile
     // holds the project lock for its whole pipeline → the lock-free seam.
     await resolveAndApplyLinks(
-      root, allChangedSlugs, allNewSlugs, resolverSource, seams.sink,
+      root, allChangedSlugs, allNewSlugs, resolverSource, seams.sink, seams.remover,
     );
     // Resolution adds links for titles it recognises; repair fixes links the
     // model already wrote against a page whose slug is longer than the name it
     // used. Ordered after resolution so a link resolution has just created is
     // already valid and never looks repairable.
-    await repairAndApplyLinks(root, seams.content, seams.scan, seams.sink);
+    await repairAndApplyLinks(root, seams.content, seams.scan, seams.sink, seams.remover);
   }
 
   // SINGLE durable state write of the whole compile: the buffered draft is

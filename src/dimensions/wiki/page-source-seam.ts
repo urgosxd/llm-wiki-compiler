@@ -23,8 +23,8 @@ import type { PageListingSource } from "../../pages/list.js";
 import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js";
 import { generateIndex } from "../../compiler/indexgen.js";
 import { generateMOC } from "../../compiler/obsidian.js";
-import { createPageListingSource, createPageWriteSink } from "./page-write-sink.js";
-import type { PageSink } from "../../trust/page-apply.js";
+import { createPageListingSource, createPageRemoveSink, createPageWriteSink } from "./page-write-sink.js";
+import type { PageRemover, PageSink } from "../../trust/page-apply.js";
 import { createRegistryPageSource } from "./page-registry-source.js";
 import type { RegistryPageSource } from "../../utils/page-registry.js";
 import {
@@ -211,6 +211,8 @@ export interface PageSeams {
   scan?: PageScanSource;
   /** Store a compiled page as a row instead of writing a file. */
   sink?: PageSink;
+  /** Remove a page from the row store instead of unlinking a file. */
+  remover?: PageRemover;
 }
 
 /**
@@ -230,5 +232,6 @@ export function resolvePageSeams(
     content: createPageContentSource(db, stackId),
     scan: createPageScanSource(db, stackId),
     sink: createPageWriteSink(db as never, stackId),
+    remover: createPageRemoveSink(db as never, stackId),
   };
 }

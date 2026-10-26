@@ -27,7 +27,8 @@ import {
   type PageListingSource,
 } from "../../pages/list.js";
 import { parseFrontmatter } from "../../utils/markdown.js";
-import { getStoredPage, listStoredPages, upsertStoredPage } from "./page-store.js";
+import { deleteStoredPage, getStoredPage, listStoredPages, upsertStoredPage } from "./page-store.js";
+import type { PageRemover } from "../../trust/page-apply.js";
 
 /**
  * Where compiled pages are written.
@@ -58,6 +59,27 @@ export interface PageWriteRequest {
 export function createPageWriteSink(db: Database, stackId: string): PageWriteSink {
   return async (request) => {
     await upsertStoredPage(db, stackId, toPage(request));
+  };
+}
+
+/**
+ * Build a row DELETING sink for one Stack.
+ *
+ * Paired with {@link createPageWriteSink} rather than folded into it: the executor
+ * takes a writer as a bare function at five call sites, and a store may support
+ * writing without supporting deletion. Supplying this is what makes a `delete`
+ * mutation reach the row instead of unlink-ing a file that does not exist, which is
+ * a complete no-op in a Stack-backed project.
+ *
+ * @param db - Database handle.
+ * @param stackId - Stack that owns these pages.
+ * @returns A remover the executor can call instead of unlinking a file.
+ */
+export function createPageRemoveSink(db: Database, stackId: string): PageRemover {
+  return async (request) => {
+    await deleteStoredPage(
+      db, stackId, request.directory as PageDirectory, request.slug,
+    );
   };
 }
 

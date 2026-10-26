@@ -56,18 +56,42 @@ export type PageSink = (request: {
 }) => Promise<void>;
 
 /**
- * Wrap an optional sink as the `ApplyOptions` a batch call takes.
+ * Remove one page from a store, without touching the filesystem.
  *
- * `ApplyOptions.pageSink` is OPTIONAL, and passing `{ pageSink: undefined }` is not
- * the same as passing `{}` under `exactOptionalPropertyTypes`: the former asserts the
- * key exists with an undefined value. Five compile stages now forward a sink they may
- * not have, so the narrowing lives here once instead of being retyped at each call.
+ * SEPARATE FROM {@link PageSink} rather than a method on it, for two reasons. The
+ * sink is a bare function at five call sites, so widening it to an object would
+ * churn all of them for one extra capability. And a store can legitimately support
+ * writing without supporting deletion — the same way an object can be write-only —
+ * so a caller that supplies no remover must get a clear refusal rather than a sink
+ * whose `delete` silently does nothing.
+ */
+export type PageRemover = (request: { directory: string; slug: string }) => Promise<void>;
+
+/**
+ * Both page-store options a batch call takes, narrowed together.
+ *
+ * `ApplyOptions` declares both fields OPTIONAL, and under `exactOptionalPropertyTypes`
+ * passing `{ pageSink: undefined }` is not the same as passing `{}`: the former
+ * asserts the key exists holding undefined. Five compile stages forward a writer and a
+ * remover they may not have, so the narrowing lives here once instead of being
+ * retyped at each call.
+ *
+ * The two travel together on purpose. A writer without a remover is a shape worth
+ * making hard to express: it stores a page and then cannot remove it, so a `delete`
+ * unlinks a file that does not exist and reports success.
  *
  * @param pageSink - The row writer, or undefined to keep writing files.
- * @returns Options carrying the sink only when one was supplied.
+ * @param pageRemover - The row remover, or undefined to keep unlinking files.
+ * @returns Options carrying only the capabilities that were supplied.
  */
-export function sinkOptions(pageSink: PageSink | undefined): { pageSink?: PageSink } {
-  return pageSink === undefined ? {} : { pageSink };
+export function pageStoreOptions(
+  pageSink: PageSink | undefined,
+  pageRemover: PageRemover | undefined,
+): { pageSink?: PageSink; pageRemover?: PageRemover } {
+  return {
+    ...(pageSink === undefined ? {} : { pageSink }),
+    ...(pageRemover === undefined ? {} : { pageRemover }),
+  };
 }
 
 /**
@@ -266,10 +290,40 @@ async function assertFloorAtApply(root: string, mutation: PagePlannedMutation, a
  * present"; something else reaching it first does not make this batch a
  * failure, and refusing would strand a retry after a partial apply.
  */
-async function deletePageLocked(abs: string, batch: JournalBatch): Promise<void> {
+async function deletePageLocked(
+  abs: string,
+  batch: JournalBatch,
+  remover: PageRemover | undefined,
+  mutation: PagePlannedMutation,
+): Promise<void> {
+  if (remover !== undefined) {
+    // Same reasoning as the write path: a row has no previous bytes to snapshot, so
+    // the journal is skipped and durability belongs to the transaction.
+    await remover(pageRemoveRequest(mutation));
+    return;
+  }
   if (!(await targetExists(abs))) return;
   await recordPreState(batch, abs);
   await unlink(abs);
+}
+
+/**
+ * The identity a remover needs, taken from the mutation's own structured target.
+ *
+ * Mirrors {@link pageWriteRequest}: the planner already validated the identity, and
+ * re-splitting the path would reintroduce the escaping concerns `confineUnderRoot`
+ * exists to settle.
+ *
+ * @param mutation - The page mutation being removed.
+ * @returns Directory and slug.
+ */
+function pageRemoveRequest(mutation: PagePlannedMutation): { directory: string; slug: string } {
+  const target = mutation.target;
+  if ("id" in target) {
+    const { entityType, slug } = parseEntityId(target.id);
+    return { directory: entityType, slug };
+  }
+  return { directory: target.directory, slug: target.slug };
 }
 
 export async function applyPageMutationLocked(
@@ -278,9 +332,12 @@ export async function applyPageMutationLocked(
   batch: JournalBatch,
   writeOne: WriteOne = atomicWrite,
   pageSink?: PageSink,
+  pageRemover?: PageRemover,
 ): Promise<void> {
   const abs = await confineUnderRoot(pageRelPath(mutation), root, { mustExist: false });
-  if (mutation.operation === "delete") return deletePageLocked(abs, batch);
+  if (mutation.operation === "delete") {
+    return deletePageLocked(abs, batch, pageRemover, mutation);
+  }
   // The floor runs BEFORE the branch and for both backends: it validates the BYTES
   // (size, frontmatter shape), which is a property of the content rather than of
   // where the content lands.

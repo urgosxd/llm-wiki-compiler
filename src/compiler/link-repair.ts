@@ -28,7 +28,7 @@ import { listLinkResolvablePendingSlugs } from "./candidate-read.js";
 import { applyCompilePageWritesLocked } from "./compile-write.js";
 import type { CompilePageNamespace, CompilePageWrite } from "./compile-write.js";
 import type { PageContentSource, PageScanSource } from "../dimensions/wiki/page-scan-source.js";
-import { sinkOptions, type PageSink } from "../trust/page-apply.js";
+import { pageStoreOptions, type PageRemover, type PageSink } from "../trust/page-apply.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import * as output from "../utils/output.js";
 
@@ -251,6 +251,8 @@ export async function repairAndApplyLinks(
   source?: PageContentSource,
   scan?: PageScanSource,
   sink?: PageSink,
+  remover?: PageRemover,
 ): Promise<void> {
-  await applyCompilePageWritesLocked(root, await repairLinks(root, source, scan), sinkOptions(sink));
+  await applyCompilePageWritesLocked(
+    root, await repairLinks(root, source, scan), pageStoreOptions(sink, remover));
 }

@@ -63,7 +63,7 @@ import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
 import { atomicWrite } from "../utils/markdown.js";
 import { openBatch, commitBatch, replayJournal, type JournalBatch } from "./journal.js";
 import { type ApplyResult, CrossStoreBatchUnsupportedError } from "./apply-result.js";
-import { applyPageMutationLocked, type PageSink, type WriteOne } from "./page-apply.js";
+import { applyPageMutationLocked, type PageRemover, type PageSink, type WriteOne } from "./page-apply.js";
 import { applyRelationLocked } from "./relation-apply.js";
 import { applyLifecycleLocked } from "./lifecycle-apply.js";
 import { applyArtifactLocked } from "../artifacts/apply.js";
@@ -89,6 +89,15 @@ export interface ApplyOptions {
    * journal claim a revert capability it does not have.
    */
   pageSink?: PageSink;
+  /**
+   * Remove a page from a store instead of unlinking a file.
+   *
+   * Needed alongside {@link pageSink} or a `delete` mutation becomes a complete
+   * no-op in a Stack-backed project: the file it would unlink does not exist, and
+   * the row it should remove survives. Supplying the writer without this one used to
+   * be silently wrong, which is why the two travel together.
+   */
+  pageRemover?: PageRemover;
 }
 
 
@@ -145,9 +154,10 @@ async function applyBatch(
   batch: JournalBatch,
   writeOne: WriteOne,
   pageSink: PageSink | undefined,
+  pageRemover: PageRemover | undefined,
 ): Promise<void> {
   for (const mutation of planned) {
-    await applyPageMutationLocked(root, mutation, batch, writeOne, pageSink);
+    await applyPageMutationLocked(root, mutation, batch, writeOne, pageSink, pageRemover);
   }
 }
 
@@ -188,7 +198,8 @@ export async function applyApprovedMutationsLocked(
   if (planned.every((m) => m.kind === "page")) {
     const writeOne = opts.writeOne ?? atomicWrite;
     const batch = await openBatch(root);
-    await applyBatch(root, planned as PagePlannedMutation[], batch, writeOne, opts.pageSink);
+    await applyBatch(
+      root, planned as PagePlannedMutation[], batch, writeOne, opts.pageSink, opts.pageRemover);
     await commitBatch(batch);
     return planned.map(() => ({ kind: "page" as const }));
   }

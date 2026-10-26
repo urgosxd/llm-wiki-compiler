@@ -23,7 +23,7 @@ import { isSafeFilenameComponent } from "../profile/identity.js";
 import { applyCompilePageWritesLocked, type CompilePageWrite } from "./compile-write.js";
 import type { CompileStateDraft } from "./compile-state-draft.js";
 import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
-import { sinkOptions, type PageSink } from "../trust/page-apply.js";
+import { pageStoreOptions, type PageRemover, type PageSink } from "../trust/page-apply.js";
 
 /**
  * Mark wiki pages as orphaned when their source is deleted.
@@ -41,6 +41,7 @@ export async function markOrphaned(
   draft: CompileStateDraft,
   source?: PageContentSource,
   sink?: PageSink,
+  remover?: PageRemover,
 ): Promise<void> {
   const state = draft.read();
   const sourceEntry = state.sources[sourceFile];
@@ -60,7 +61,7 @@ export async function markOrphaned(
     const write = await orphanPage(root, slug, "source deleted", source);
     if (write) writes.push(write);
   }
-  await applyCompilePageWritesLocked(root, writes, sinkOptions(sink));
+  await applyCompilePageWritesLocked(root, writes, pageStoreOptions(sink, remover));
 
   draft.removeSource(sourceFile);
 }
@@ -81,6 +82,7 @@ export async function orphanUnownedFrozenPages(
   frozenSlugs: Set<string>,
   source?: PageContentSource,
   sink?: PageSink,
+  remover?: PageRemover,
 ): Promise<void> {
   // Read-after-write: reflects the compiled markers set earlier this run via
   // the same draft, so a slug re-claimed by a just-compiled source is NOT
@@ -98,7 +100,7 @@ export async function orphanUnownedFrozenPages(
     const write = await orphanPage(root, slug, "no remaining sources", source);
     if (write) writes.push(write);
   }
-  await applyCompilePageWritesLocked(root, writes, sinkOptions(sink));
+  await applyCompilePageWritesLocked(root, writes, pageStoreOptions(sink, remover));
 }
 
 /**
