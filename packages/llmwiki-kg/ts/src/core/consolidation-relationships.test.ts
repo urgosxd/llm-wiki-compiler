@@ -6,8 +6,9 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { consolidateBackfeedProposal } from "./consolidation.js";
 import { sql } from "drizzle-orm";
-import { currentDomainPrefix, database, entity, relationship, runner, skipReason, useDomainPrefix } from "./consolidation-harness.js";
+import { currentDomainPrefix, database, entity, relationship, runner, skipReason, useDomainPrefix, trackFixtureStack } from "./consolidation-harness.js";
 import type { EntityRow } from "./consolidation-harness.js";
+import { withFixtureTenant } from "../routes/fixture-tenant.js";
 
 describe.skipIf(skipReason !== false)("consolidateBackfeedProposal relationships (live database)", () => {
   useDomainPrefix("relationships");
@@ -23,15 +24,20 @@ describe.skipIf(skipReason !== false)("consolidateBackfeedProposal relationships
 
       /** Creates a fixture Stack and returns its id. */
       async function createStack(label: string): Promise<string> {
-        const rows = await database().execute<{ id: string }>(sql`
+        // The domain is computed ONCE: binding one value and inserting another would
+        // bind a tenant that does not match the row being written, which the policy
+        // refuses.
+        const domain = uniqueDomain(label);
+        const rows = await withFixtureTenant(database(), { domain }, (tx) => tx.execute<{ id: string }>(sql`
           insert into stacks (name, domain)
-          values (${`Consolidation fixture ${label}`}, ${uniqueDomain(label)})
+          values (${`Consolidation fixture ${label}`}, ${domain})
           returning id
-        `);
+        `));
         const row = rows[0];
         if (row === undefined) {
           throw new Error("insert into stacks returned no row");
         }
+        trackFixtureStack(row.id);
         return row.id;
       }
       /** A single entity row by exact name, or `undefined`. */

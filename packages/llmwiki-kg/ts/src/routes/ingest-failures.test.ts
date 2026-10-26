@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import request from "supertest";
 import { createDocument, createStack, createTestApp, database, deleteFixtureRows, ingestUrl, skipReason, useDomainPrefix } from "./ingest-harness.js";
+import { withFixtureTenant } from "./fixture-tenant.js";
 
 // This file owns its own domain namespace: the split suites run in parallel
 // against one database and the cleanup deletes by prefix.
@@ -30,7 +31,7 @@ describe.skipIf(skipReason !== false)("ingest file failures (no gateway)", () =>
       // Measured: `Document file is missing on disk`, status 500.
       const stackId = await createStack();
       const missing = randomUUID();
-      await database().execute(sql`
+      await withFixtureTenant(database(), { stackId }, (tx) => tx.execute(sql`
         insert into stack_documents (
           id, stack_id, filename, storage_path, size_bytes, source_hash
         )
@@ -38,7 +39,7 @@ describe.skipIf(skipReason !== false)("ingest file failures (no gateway)", () =>
           ${missing}, ${stackId}, ${"gone.txt"},
           ${`uploads/${stackId}/definitely-not-there.txt`}, ${5}, ${randomUUID()}
         )
-      `);
+      `));
 
       const response = await request(app).post(ingestUrl(stackId, missing)).expect(500);
 

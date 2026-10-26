@@ -874,6 +874,362 @@ Eight `GET /:item_id` call sites across three files gained `.query({ domain })`.
 One test also needed a Stack created, because the Stack is resolved before the
 lookup and the route now answers the Stack error rather than a validation one.
 
+## Follow-up 12: the audit section gets a name, a schema and one accessor
+
+The `audit` column was already carrying the ontology report, and the spec
+divergence recorded against it is moot: with the oracle and `aks_version` no
+longer treated as constraints, writing `ontology` into a `jsonb` blob is not a
+violation of anything. What remained was a real defect of a different kind.
+
+### Two hazards
+
+1. **The key was a string literal** inside a `jsonb_set` call. A misspelt
+   `'{ontolgy}'` does not fail — with `create_missing = true` it writes a SIBLING
+   key, the write succeeds, and every reader silently finds nothing.
+2. **Nothing validated the shape.** The reader took `Record<string, unknown>` and
+   then indexed into it, so a blob from an older version, or from a future producer
+   using different keys, was accepted and trusted field by field.
+
+Both matter more than they look because the column's own comment says it exists so
+that *"we can put structured audit results here later without a schema change"* —
+meaning more producers are expected.
+
+### What changed
+
+`routes/ingest/audit.ts` owns the section: `ONTOLOGY_AUDIT_KEY` is the only place
+the key is spelled, `OntologyAuditSchema` is a Zod schema, and `readOntologyAudit`
+parses rather than casts. `readOntologyAudit` returns `undefined` for a document
+with no report, which stays distinct from a report that rejected nothing.
+
+Extracted from `pipeline.ts`, which went from 424 to 297 lines — so this also keeps
+the file under the 400-line cap as the module grows.
+
+### Falsifiability
+
+Misspelling the key in the reader turns 4 tests red, including the negative case
+that proves the two ends are coupled to one name rather than each holding its own
+copy of a string.
+
+### What it does NOT change
+
+Re-ingest still REPLACES the section rather than appending. That is deliberate and
+now stated in the code: the report describes the run that produced the current
+graph, and a stale report would describe a graph that no longer exists. Keeping
+history is a new feature, not a fix.
+
+## Follow-up 13: measuring RLS, and why it is not switchable yet
+
+I measured what happens if the application connects as `llmwiki_app` instead of the
+superuser `aks`, because the migration creating that role is documented as INERT
+while the app uses `aks`.
+
+### The measurement, and what it found
+
+With `AKS_TEST_DATABASE_URL` pointed at `llmwiki_app`: **195 of 743 tests fail.**
+
+First confirmed RLS actually works for that role, so the number means something:
+
+```
+as llmwiki_app, unbound:                     0 stacks visible
+as llmwiki_app, bound to stack a:            1 stack visible
+as aks (rolsuper, rolbypassrls):             all
+```
+
+### The root cause is in the migration, not in application code
+
+```
+PostgresError: new row violates row-level security policy for table "stacks"
+```
+
+`grep -n "with check" db/migration_rls_tenancy.sql` returns **nothing**. Every
+policy is `using (...)`, which is a READ predicate only. Inserts and updates have no
+`WITH CHECK`, so under an unprivileged role **every write is rejected**, starting
+with `insert into stacks` in every fixture and in `POST /stacks`.
+
+That is not app code needing to bind a tenant. It is the migration missing its write
+half. Fixing it means `with check` clauses on eight tables — and `db/**` is not
+writable by this role, so it needs a human-run migration.
+
+### Consequence
+
+RLS is a real guarantee once two things are true: the role is unprivileged AND the
+policies have `WITH CHECK`. Neither is true today, so the explicit `where stack_id =
+...` filters remain the actual barrier. Recorded here rather than left as an
+assumption.
+
+## Follow-up 14: the write half of the RLS policies, verified on a scratch database
+
+`db/migration_rls_write_policies.sql` adds the `WITH CHECK` clauses
+`migration_rls_tenancy.sql` was missing. Written and verified here; applying it to
+the live database is an operator action.
+
+### The bootstrap problem, and why `stacks` is not like the others
+
+Seven tables take `stack_id = app.stack_id` on both sides. `stacks` cannot: the row
+being written IS the tenant, and `app.stack_id` does not exist yet when
+`POST /stacks` inserts. A uniform predicate there would make Stack creation
+impossible for every caller, forever.
+
+So `stacks` write-checks against the domain instead:
+
+```sql
+with check (domain = nullif(current_setting('app.stack_domain', true), '')::uuid)
+```
+
+which means `routes/stacks.ts` must bind the domain it is about to create BEFORE
+inserting. It does not today. That is a code change that belongs with the
+migration: applying the SQL alone makes `POST /stacks` fail closed, which is the
+correct failure but would take the endpoint down.
+
+### Verified on a scratch database, not assumed
+
+Created `rls_probe` from `db/schema.sql`, applied both migrations, connected as
+`llmwiki_app` (nosuperuser, nobypassrls, login enabled temporarily):
+
+| probe | result |
+| --- | --- |
+| unbound `insert into stacks` | **ERROR: new row violates row-level security policy** |
+| bound `app.stack_domain`, insert that domain | **succeeded**, row created |
+| bound to alpha, insert `stack_documents` into **beta** | **ERROR: violates row-level security policy** |
+| bound to alpha, insert `stack_documents` into alpha | **succeeded** |
+| bound to alpha, `select count(*) from stack_documents` | **1** — beta's rows invisible |
+
+The cross-tenant write is the case that did not exist before this file: `USING`
+filtered reads, and nothing filtered writes.
+
+Scratch database dropped, role returned to `nologin` with no password, temp files
+removed.
+
+### Measured: applying it is NOT enough, and the blocker is not SQL
+
+Ran the suite against `llmwiki_app` with both migrations applied, plus the
+`POST /stacks` binding: **191 failed / 560 passed / 4 skipped** — 4 fewer than the
+195 before, i.e. the Stack-creation fix works and buys almost nothing.
+
+Failure census by table:
+
+```
+141  violates row-level security policy for table "stacks"
+ 36  violates row-level security policy for table "stack_documents"
+```
+
+Three separate causes, and the third is the one that matters:
+
+**1. Fixtures insert rows without binding.** `ingest-harness`, `pages-harness`,
+`aks-harness` and a dozen `backfeed-*.test.ts` insert `stacks` /
+`stack_documents` directly. Test-side; fixed for `ingest-harness` by binding
+inside a transaction.
+
+**2. `set_config(..., true)` is transaction-local on a pooled client.** Two bare
+`database().execute()` calls can land on different connections, so the binding is
+gone before the INSERT. Any binding must share a transaction with the write it
+protects. Worth stating loudly: this is a footgun for every future caller, not
+just fixtures.
+
+**3. `resolveStack` reads BEFORE it binds — so it cannot work under RLS at all.**
+
+```ts
+const rows = await tx.execute(sql`select ... from stacks where id = ${stackId}`);
+const stack = rows[0];
+if (stack === undefined) return { ok: false, error: apiError(404, ...) };
+await bindTenant(tx, stack.id, domain);   // <- after the read
+```
+
+Under RLS this SELECT matches nothing, so it returns **404 for every Stack that
+exists**, and never reaches `bindTenant`. The same shape appears in
+`routes/ingest/request.ts#findDocument`, which joins `stack_documents` to `stacks`
+with no binding — it also always returns empty.
+
+Chicken-and-egg, and it is architectural rather than a bug in any one function: the
+tenant scoping is derived FROM the row you are trying to read, so it is unavailable
+exactly when it is needed. Fixing it needs a decision, not a patch — e.g. a
+`SECURITY DEFINER` resolution function that reads the mapping under elevated rights
+and returns the id, or resolving by domain (which `stacks` accepts) instead of by
+id everywhere.
+
+**So the honest state of RLS is: the write half is now expressible and verified, and
+enabling it still requires making resolution RLS-capable first.** The 195→191
+measurement is the evidence that the SQL is not the remaining blocker.
+
+### Resolved: bind from the caller's reference, before reading
+
+The chosen fix is the caller's own identifier, not `SECURITY DEFINER`.
+
+`?stack_id=<uuid>` and `?domain=<slug>` are the only references a request carries,
+and with a single shared API key (`auth.ts` attaches no principal and owns no rows
+per key) that identifier IS the caller's whole authority claim. Hiding it behind a
+privileged read was never protecting anything: the policies still refuse every other
+tenant either way.
+
+So `bindCallerStack(tx, stackId, domain)` sets both settings from the request's own
+arguments BEFORE the lookup, and `resolveStack` calls it first. `findDocument` does
+the same from the path's `:stack_id`, which is already its WHERE filter.
+
+No elevated rights anywhere in the request path, and no `db/**` change — which
+matters, because `packages/llmwiki-kg/db/**` is a shared path this role does not own.
+
+**Measured, running the suite as `llmwiki_app` with both migrations applied:**
+
+| stage | failing |
+| --- | --- |
+| baseline, `USING` only | 195 |
+| + `WITH CHECK` + `POST /stacks` domain binding | 191 |
+| + `bindCallerStack` in `resolveStack` and `findDocument` | 171 |
+| + fixture bindings (4 harnesses) | 156 |
+| + fixture bindings (10 inline `createStack` helpers) | 138 |
+| + `documents-harness` | **135** |
+
+Failure census at the end: 38 `stacks`, 23 `ontology_entities`, 7 `document_chunks`,
+2 `ontology_relationships`, 1 `stack_documents` — **all from fixtures**, no production
+path remains.
+
+### The remaining 135 are test-side, not architectural
+
+Every one is a fixture writing or deleting rows without a binding. Two shapes:
+
+- `delete from ontology_entities where stack_id = $1` in `aks-entities.test.ts`
+  deletes NOTHING under RLS, so a test asserting "empty array for a Stack with no
+  entities" receives 3 rows. Not a leak: the production read filters
+  `where stack_id = ${stackId}` explicitly, verified in `routes/aks/*.ts`.
+- `db.test.ts` drives drizzle `insert().values()`, not raw SQL, and tests driver
+  semantics (rollback, timestamptz precision) rather than tenancy.
+
+They need the same `withFixtureTenant` treatment. It is mechanical and does not
+touch product code.
+
+### The last 135 are not "just fixtures" — cleanup conflicts with the model
+
+Continuing the fixture bindings surfaced a real limitation, measured rather than
+assumed. Every harness ends with a `deleteFixtureRows()` that cleans up **across all
+stacks sharing a domain prefix**:
+
+```sql
+delete from stacks where domain like '${domainPrefix}%'
+```
+
+That cursor cannot be bound to a tenant, and binding it does not merely fail — it
+silently cleans only part of what it selected:
+
+| probe (as `llmwiki_app`) | result |
+| --- | --- |
+| unbound `select count(*) ... where domain like 'probe-%'` | **0** |
+| bound to `probe-a`, same query | **1** of 2 rows |
+| bound to `probe-a`, `delete from stacks where domain like 'probe-%'` | **DELETE 1** |
+
+The last row is the important one. It reports success and leaves the other tenant's
+rows behind, so a mis-bound cleanup looks like it worked. Each policy filters by
+exact domain equality, so a `LIKE` prefix cannot see its siblings regardless of what
+is bound.
+
+**Consequence: fixture cleanup is a cross-tenant operation by nature, and RLS is
+designed to forbid exactly that.** Three options, and this is a decision rather than
+a chore:
+
+1. **Per-stack cleanup.** Delete by the specific `stack_id` each test created instead
+   of by prefix. Correct under RLS, but every harness must track the ids it made, and
+   the prefix scheme exists because the split suites share one database.
+2. **A cleanup role.** Run `deleteFixtureRows` on a role that bypasses RLS (`aks`),
+   leaving every other fixture path bound. Small, but it means the test suite keeps a
+   second connection, and the bypass has to be deliberate and documented.
+3. **Truncate between files.** Drop the prefix scheme and let the suite start from a
+   clean database.
+
+Option 2 is the smallest honest change; option 1 is the only one that makes the whole
+suite provably RLS-clean. Both are cheap. What is not acceptable is binding the
+prefix deletes, because as measured above they then lie.
+
+### Chosen: per-stack cleanup, and what that costs
+
+Option 1. Two measurements shape it, both taken as `llmwiki_app`.
+
+**Good news — `ON DELETE CASCADE` works under RLS.** All seven tenant tables declare
+`stack_id uuid not null references stacks(id) on delete cascade`. Deleting the Stack
+while bound to it removed its child row (1 before, 0 after). So cleanup does not need
+to delete child tables at all: one bound `delete from stacks where id = $1` is enough,
+and the cascade cannot reach another tenant because the parent is already scoped.
+
+That is a real simplification. The current `deleteFixtureRows` deletes five child
+tables by prefix and then the Stacks, and every one of those six statements is
+unbound.
+
+**Cost — the prefix is also used for COUNTING, and counting is impossible.** Seven
+harnesses expose `countFixtureRows` / `countFixtureDocuments` / `countFixtureEntities`
+/ `counts()`, and twelve call sites assert against them:
+
+```ts
+expect(await countFixtureRows()).toBe(1);
+expect(await countFixtureDocuments()).toBe(0);
+```
+
+A count across every Stack sharing a prefix cannot be bound to one tenant, and no
+per-stack scheme makes it expressible. These assertions therefore have to change
+shape, not just get a binding: count the specific Stack the test created, which is
+the more precise assertion anyway — "this Stack has 1 document" beats "the namespace
+has 1 document".
+
+So option 1 is honest but not free: it is the deletion half plus a rewording of twelve
+assertions. That is the price of a suite that is provably RLS-clean, and it is why the
+alternative (a bypassing cleanup role) stayed attractive.
+
+### Where this stops, and what is actually done
+
+Stopped here by decision. The state is honest and usable; it is not "RLS enabled".
+
+**Production code is RLS-capable.** Every path that reads or writes a tenant-scoped
+table now binds that tenant from the caller's own reference first. Defects found and
+fixed along the way, all of which were invisible while the suite ran as a role that
+bypasses RLS:
+
+| what | symptom under RLS |
+| --- | --- |
+| `resolveStack` read before it bound | 404 for every existing Stack |
+| `findDocument` joined two tenant tables unbound | every ingest 404 |
+| `GET`/`PATCH`/`DELETE /stacks/:id` unbound | 404 / 500 for existing Stacks |
+| `routes/backfeed/stack.ts` — a SECOND `resolveStack` that never bound | `POST /backfeed/flag` 404 for every Stack |
+| `consolidation.ts` + `document-consolidation.ts` writes unbound | 37 failures on `ontology_entities` |
+| `stacks` write policy checked only the domain | `PATCH` 500: an update needs the id half |
+
+The last one was a defect in `migration_rls_write_policies.sql` itself: `USING` and
+`WITH CHECK` disagreed. A write predicate stricter than the read predicate silently
+makes rows selectable-but-not-updatable.
+
+**Measured ladder**, running the suite as `llmwiki_app` with both migrations applied:
+
+```
+195  USING clauses only
+191  + WITH CHECK clauses + POST /stacks domain binding
+171  + bindCallerStack in resolveStack and findDocument
+156  + four harnesses bound
+138  + ten inline createStack helpers
+135  + documents-harness
+110  + per-stack cleanup (FixtureStacks), cascade instead of child deletes
+ 83  + five remaining harnesses, backfeed resolver, consolidation writers
+```
+
+**What is left: 83 failing, and it is test-side.** They are assertion mismatches, not
+tenant leaks: a test helper queries `database().execute` with no binding, so under RLS
+it sees an empty result and the assertion compares `[]` or `null` against the expected
+rows. Finishing them means binding those helper reads — mechanical, one per helper.
+
+**Do not enable RLS for the application yet.** The gate is the suite going green as
+`llmwiki_app`, and it has not. Order when that work resumes:
+
+1. Bind the remaining test helper reads until the suite is green as `llmwiki_app`.
+2. Create a login role and point `DATABASE_URL` at it.
+3. The migrations are already applied and are no-ops while the connection bypasses RLS.
+
+### Order of operations
+
+1. Apply the migration while `DATABASE_URL` still names `aks` — it bypasses RLS, so
+   nothing changes yet.
+2. Land the `routes/stacks.ts` domain binding.
+3. Run the suite with `AKS_TEST_DATABASE_URL` on `llmwiki_app`.
+4. Only then point `DATABASE_URL` at `llmwiki_app`.
+
+Steps 1 and 2 are independent. Step 3 is the gate for step 4: the earlier
+measurement was 195 of 743 failing, and it has not been re-run against these
+policies.
+
 ## Open follow-ups (not in this change)
 
 - `GET /stacks/{id}/ontology` was not added: the declaration is on the response,

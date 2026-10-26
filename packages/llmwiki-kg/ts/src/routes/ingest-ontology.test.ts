@@ -53,6 +53,7 @@ import request from "supertest";
 import express from "express";
 import type { Express } from "express";
 import { sql } from "drizzle-orm";
+import { withFixtureTenant } from "./fixture-tenant.js";
 
 import { createRequireApiKey } from "../auth.js";
 import { parseConfig } from "../config.js";
@@ -139,16 +140,20 @@ async function createStackWith(
 
 /** Every entity type actually written to the Stack's graph, sorted. */
 async function writtenEntityTypes(stackId: string): Promise<string[]> {
-  const rows = await database().execute<{ type: string }>(
-    sql`select distinct type from ontology_entities where stack_id = ${stackId} order by type`,
+  const rows = await withFixtureTenant(database(), { stackId }, (tx) =>
+    tx.execute<{ type: string }>(
+      sql`select distinct type from ontology_entities where stack_id = ${stackId} order by type`,
+    ),
   );
   return rows.map((row) => row.type);
 }
 
 /** Every relationship type actually written to the Stack's graph, sorted. */
 async function writtenRelationTypes(stackId: string): Promise<string[]> {
-  const rows = await database().execute<{ type: string }>(
-    sql`select distinct type from ontology_relationships where stack_id = ${stackId} order by type`,
+  const rows = await withFixtureTenant(database(), { stackId }, (tx) =>
+    tx.execute<{ type: string }>(
+      sql`select distinct type from ontology_relationships where stack_id = ${stackId} order by type`,
+    ),
   );
   return rows.map((row) => row.type);
 }
@@ -259,9 +264,11 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
 });
 
 /** The audit blob recorded for one document, or null when none was written. */
-async function documentAudit(documentId: string): Promise<unknown> {
-  const rows = await database().execute<{ audit: unknown }>(
-    sql`select audit from stack_documents where id = ${documentId}`,
+async function documentAudit(stackId: string, documentId: string): Promise<unknown> {
+  const rows = await withFixtureTenant(database(), { stackId }, (tx) =>
+    tx.execute<{ audit: unknown }>(
+      sql`select audit from stack_documents where id = ${documentId}`,
+    ),
   );
   return rows[0]?.audit ?? null;
 }
@@ -299,7 +306,7 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     // `rejected: 2` cannot tell an operator whether they forgot a type or the
     // model invented a relationship. `BAD_RELATION` comes first: it is the
     // fixture order, and the sample list preserves it rather than sorting.
-    expect(await documentAudit(documentId)).toEqual({
+    expect(await documentAudit(stackId, documentId)).toEqual({
       ontology: {
         enforced: true,
         declared: true,
@@ -335,7 +342,7 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    const audit = await documentAudit(documentId);
+    const audit = await documentAudit(stackId, documentId);
     const samples = (audit["ontology"] as { samples: Array<{ subject: string; object: string }> })
       .samples;
     expect(samples.map((sample) => [sample.subject, sample.object])).toEqual([
@@ -361,7 +368,7 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    const ontology = (await documentAudit(documentId))["ontology"] as {
+    const ontology = (await documentAudit(stackId, documentId))["ontology"] as {
       rejected: number;
       samples: unknown[];
     };
@@ -380,7 +387,7 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    expect(await documentAudit(documentId)).toEqual({
+    expect(await documentAudit(stackId, documentId)).toEqual({
       ontology: {
         enforced: true,
         declared: false,
@@ -406,7 +413,7 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    expect(await documentAudit(documentId)).toEqual({
+    expect(await documentAudit(stackId, documentId)).toEqual({
       ontology: {
         enforced: true,
         declared: true,

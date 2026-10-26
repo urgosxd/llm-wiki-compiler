@@ -19,9 +19,11 @@ import {
   synthesizeEntityDescriptions,
 } from "../../core/extraction.js";
 import { defaultOntology } from "../../core/default_ontology.js";
+import { buildOntologyAudit, writeOntologyAudit } from "./audit.js";
+import type { OntologyAudit } from "./audit.js";
 import type { ChunkResult, ExtractionResult } from "../../core/extraction-types.js";
 import { validateOntology } from "../../core/ontology.js";
-import type { Ontology, RejectedTriplet } from "../../core/ontology.js";
+import type { Ontology } from "../../core/ontology.js";
 import {
   consolidateEntityRows,
   consolidateRelationshipRows,
@@ -91,109 +93,12 @@ function ontologyArgument(stored: unknown): [Ontology] {
  * caller never chose must be distinguishable from one dropped by a declaration
  * they did choose, because only the second is a bug in their own config.
  */
-export interface OntologyAudit {
-  readonly enforced: boolean;
-  /** Whether the Stack's own declaration was used, rather than the default. */
-  readonly declared: boolean;
-  readonly rejected: number;
-  /** Distinct reason codes, sorted, so the blob is comparable across runs. */
-  readonly reason_codes: readonly string[];
-  /**
-   * The first few dropped triplets by name, in the order the model emitted them.
-   *
-   * Capped at {@link MAX_AUDIT_SAMPLES}; `rejected` is the true total, so a
-   * document with more rejections than samples reads as truncated rather than
-   * as complete.
-   */
-  readonly samples: readonly RejectionSample[];
-}
-
-/** One dropped triplet as it appears in the audit blob. */
-export interface RejectionSample {
-  readonly subject: string;
-  readonly relation: string;
-  readonly object: string;
-  readonly reason: string;
-  /** The type that caused the drop: an entity type or the relation type. */
-  readonly offending_type: string;
-}
-
-/**
- * How many dropped triplets are reported by name.
- *
- * Five is enough to show the shape of a failure — usually one or two distinct
- * causes repeated — without letting a pathological document write thousands of
- * rows into a `jsonb` column that is read on every `GET /documents/:id`.
- */
-const MAX_AUDIT_SAMPLES = 5;
-
-/** Characters kept from a model-supplied name before it is elided. */
-const MAX_SAMPLE_NAME_LENGTH = 120;
-
 /** What steps 5 and 6 produced, plus the synthesis decision. */
 export interface ProcessedIngest {
   readonly chunks: readonly ChunkResult[];
   readonly extraction: ExtractionResult;
   readonly shouldSynthesize: boolean;
   readonly ontologyAudit: OntologyAudit;
-}
-
-/**
- * Summarises what the ontology rejected, for the document's audit record.
- *
- * Reason codes are deduplicated and sorted: the useful question is *which kinds*
- * of violation occurred, and a stable order means two documents with the same
- * problem produce the same blob.
- *
- * `samples` answers the question `rejected: 2` cannot: *which* triplets went
- * missing. A count tells an operator that a document was thin; only names tell
- * them whether the cause was a type they forgot to declare or a model that
- * invented a relationship. It is bounded because `audit` is a `jsonb` column and
- * `MAX_TRIPLETS_PER_CHUNK` is 20, so a many-chunk document can reject hundreds —
- * an unbounded list would turn one long PDF into a large column value for every
- * document it touches.
- *
- * @param declared - Whether the Stack's own declaration was in force.
- * @param rejected - The triplets the ontology turned away.
- * @returns The audit blob's `ontology` object.
- */
-function ontologyAudit(
-  declared: boolean,
-  rejected: readonly RejectedTriplet[],
-): OntologyAudit {
-  const codes = [...new Set(rejected.map((entry) => entry.reason))].sort();
-  return {
-    enforced: true,
-    declared,
-    rejected: rejected.length,
-    reason_codes: codes,
-    samples: rejected.slice(0, MAX_AUDIT_SAMPLES).map(toRejectionSample),
-  };
-}
-
-/**
- * One dropped triplet, flattened for the audit blob.
- *
- * Names are trimmed to {@link MAX_SAMPLE_NAME_LENGTH} because entity names come
- * from the model and can be a whole sentence; the reason travels with the sample
- * so a reader does not have to cross-reference `reason_codes` to know why this
- * particular one was dropped.
- */
-function toRejectionSample(entry: RejectedTriplet): RejectionSample {
-  return {
-    subject: truncateName(entry.subject),
-    relation: truncateName(entry.relation),
-    object: truncateName(entry.object),
-    reason: entry.reason,
-    offending_type: truncateName(entry.offendingType),
-  };
-}
-
-/** Shortens a model-supplied name to the audit's budget, marking the cut. */
-function truncateName(name: string): string {
-  return name.length <= MAX_SAMPLE_NAME_LENGTH
-    ? name
-    : `${name.slice(0, MAX_SAMPLE_NAME_LENGTH)}…`;
 }
 
 /**
@@ -226,7 +131,7 @@ export async function chunkAndExtract(
   // The default ontology means extraction always has one, so `rejected` is always
   // populated and the remaining distinction is whether the caller declared it.
   const declared = document.stack_ontology !== null && document.stack_ontology !== undefined;
-  const audit = ontologyAudit(declared, extraction.rejected ?? []);
+  const audit = buildOntologyAudit(declared, extraction.rejected ?? []);
   return { chunks, extraction, shouldSynthesize, ontologyAudit: audit };
 }
 
@@ -271,7 +176,7 @@ export async function ingestDocument(
   // Step 7b: record what the ontology did, in the same transaction as the write
   // it describes. A separate transaction could land the graph rows and lose the
   // audit, leaving an ingested document nobody can explain.
-  await recordOntologyAudit(tx, params.docId, audit);
+  await writeOntologyAudit(tx, params.docId, audit);
 
   // Step 8: totals for the Stack, after consolidation so they include this run.
   const payload = await buildIngestionResult(tx, {
@@ -351,36 +256,6 @@ export async function consolidateExtraction(
   );
 }
 
-/**
- * Writes the ontology audit onto the document row.
- *
- * `audit` is the column `db/schema.sql` reserved for exactly this — "structured
- * audit results here later without a schema change" — and nothing wrote it
- * before, so `GET /documents/:id` reported `null` for every ingested document.
- *
- * `jsonb_set` with `create_missing = true` merges into whatever is already
- * there rather than replacing the column, because later audit producers should be
- * able to add their own keys without erasing this one. Stringified before binding
- * and cast once, the same way `routes/stacks.ts` binds its ontology: handing
- * drizzle a bare object produces a parameter Postgres refuses.
- *
- * @param tx - The ingest transaction.
- * @param docId - Document the audit describes.
- * @param audit - What the ontology rejected.
- */
-async function recordOntologyAudit(
-  tx: Database,
-  docId: string,
-  audit: OntologyAudit,
-): Promise<void> {
-  await tx.execute(sql`
-    update stack_documents
-    set audit = jsonb_set(
-      coalesce(audit, '{}'::jsonb), '{ontology}', ${JSON.stringify(audit)}::jsonb, true
-    )
-    where id = ${docId}
-  `);
-}
 
 /** Everything the response payload is assembled from. */
 export interface IngestionFacts {

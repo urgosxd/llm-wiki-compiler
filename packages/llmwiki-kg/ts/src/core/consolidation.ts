@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 
 import type { Database } from "../db.js";
+import { bindCallerStack } from "./stack_resolver.js";
 import type {
   BackfeedEntityProposalDto,
   BackfeedRelationshipProposalDto,
@@ -290,6 +291,12 @@ export async function consolidateBackfeedProposal(
   entities: readonly BackfeedEntityProposalDto[],
   relationships: readonly BackfeedRelationshipProposalDto[],
 ): Promise<BackfeedConsolidationResult> {
+  // Bind the tenant this proposal targets before any write. Every statement below is
+  // tenant-scoped, so under RLS an unbound insert is refused; `stackId` is already the
+  // caller's own claim and the filter on every query here, so binding it grants
+  // nothing extra.
+  await bindCallerStack(tx, stackId, null);
+
   /** Lowercased name → entity id, for this proposal only. */
   const nameToId = new Map<string, string>();
 

@@ -122,10 +122,90 @@ export async function bindTenant(
   }
 }
 
+/**
+ * Binds the domain of a Stack that is ABOUT TO BE CREATED.
+ *
+ * ## Why this exists separately from {@link bindTenant}
+ *
+ * Creating a Stack is the one write where the row being written IS the tenant, so
+ * there is no `stack_id` to bind — it is what the INSERT is about to produce. Under
+ * the write policies in `db/migration_rls_write_policies.sql`, `stacks` therefore
+ * validates against `app.stack_domain` instead of `app.stack_id`:
+ *
+ *   with check (domain = nullif(current_setting('app.stack_domain', true), '')::uuid)
+ *
+ * Without this call that predicate evaluates to NULL, the INSERT is refused, and
+ * `POST /stacks` fails closed. Failing closed is the right behaviour; being unable
+ * to create a Stack at all is not.
+ *
+ * ## Why it must run BEFORE the duplicate check
+ *
+ * The `stacks` READ policy also accepts a domain match. `createStack` first looks
+ * for an existing Stack with the same domain, and under RLS that lookup only sees
+ * the row if the domain is already bound. Binding here means the 409 a caller gets
+ * for a duplicate is the real answer rather than "no duplicate found" followed by
+ * a constraint violation from the INSERT.
+ *
+ * It is a no-op while the application connects as a role that bypasses RLS, which
+ * is why it can land before the migration is applied.
+ *
+ * @param tx - The creating transaction.
+ * @param domain - The domain the caller asked for, already validated.
+ */
+export async function bindCreatingStackDomain(
+  tx: Database,
+  domain: string,
+): Promise<void> {
+  await tx.execute(sql`select set_config('app.stack_domain', ${domain}, true)`);
+}
+
 /** A resolved Stack, or the error to answer with instead. */
 export type StackResolution =
   | { readonly ok: true; readonly stack: StackRow }
   | { readonly ok: false; readonly error: ApiError };
+
+/**
+ * Binds the tenant named by the CALLER, before any query touches it.
+ *
+ * ## The order problem this exists to solve
+ *
+ * `resolveStack` used to read `stacks` first and call {@link bindTenant} with the
+ * id it found. Under RLS that is circular and cannot work: the `stacks` read policy
+ * matches only the bound tenant, so with no binding the SELECT returns nothing, the
+ * resolver answers 404 for a Stack that exists, and `bindTenant` is never reached.
+ *
+ * The circularity is avoidable because the caller already told us which tenant it
+ * means. `?stack_id=<uuid>` is the binding, and so is `?domain=<slug>`. Hiding the
+ * id until after a privileged read was never protecting anything: with a single
+ * shared API key (`auth.ts` attaches no principal and owns no rows per key) the id
+ * IS the caller's whole authority claim. Binding it up front changes nothing about
+ * who may read what — the policies still refuse every other tenant — and removes
+ * the need for a `SECURITY DEFINER` function, i.e. for elevated rights inside the
+ * request path.
+ *
+ * Both settings are set. `stacks` accepts either match, so binding only the id
+ * would make a domain-only lookup invisible, and binding only the domain would make
+ * an id-only lookup invisible.
+ *
+ * A missing reference binds nothing, and the policies then match nothing — the
+ * correct fail-closed answer, produced by the database rather than by a guard.
+ *
+ * @param tx - Transaction that will carry the lookup.
+ * @param stackId - Canonical UUID text the caller supplied, or `null`.
+ * @param domain - Domain slug the caller supplied, or `null`.
+ */
+export async function bindCallerStack(
+  tx: Database,
+  stackId: string | null,
+  domain: string | null,
+): Promise<void> {
+  if (stackId !== null && stackId !== "") {
+    await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+  }
+  if (domain !== null && domain !== "") {
+    await tx.execute(sql`select set_config('app.stack_domain', ${domain}, true)`);
+  }
+}
 
 /**
  * Looks up a Stack by id or domain.
@@ -149,7 +229,9 @@ export async function resolveStack(
     };
   }
 
-  await bootstrapTenant(tx, stackId, hasDomain ? domain : null);
+  // Bind from the caller's own reference BEFORE reading. See {@link bindCallerStack}:
+  // under RLS the read is otherwise invisible and this returns a false 404.
+  await bindCallerStack(tx, stackId, domain);
 
   const rows =
     stackId !== null
@@ -173,59 +255,4 @@ export async function resolveStack(
   await bindTenant(tx, stack.id, domain);
 
   return { ok: true, stack };
-}
-
-/**
- * Set the tenant GUC from the caller's own identifier, before the lookup reads.
- *
- * ## Why this is needed at all
- *
- * `stacks` has a tenant policy, and the policy accepts an id OR a domain:
- *
- * ```sql
- * (id = current_setting('app.stack_id')::uuid)
- *   OR (domain = current_setting('app.stack_domain'))
- * ```
- *
- * The lookup below reads `stacks` BEFORE the row is known, so it ran with no GUC
- * set at all. That was invisible while the connection was `aks` -- a superuser that
- * owns the tables bypasses their own policies -- and it becomes a hard failure the
- * moment the connection is `llmwiki_app`: an unbound policy matches nothing, so
- * every `resolveStack` would answer 404 for a Stack that exists. Measured against
- * the live database: `set role llmwiki_app; select ... from stacks where id = <a
- * real id>` returns zero rows.
- *
- * The chicken-and-egg is only apparent. The caller already told us which Stack it
- * means -- that is what `stackId` and `domain` ARE -- so the identifier we would
- * read back is the identifier we were handed. Setting it first lets the policy
- * match the row it is about to be asked for, without granting any role elevated
- * read access and without a `security definer` function.
- *
- * ## What this does NOT weaken
- *
- * A caller cannot use this to read another tenant: the GUC is set to the value the
- * caller supplied, so the policy matches exactly that Stack and nothing else. An
- * unknown id matches no row and yields the same 404 as before. The binding is
- * still overwritten by {@link bindTenant} with the resolved values afterwards, so
- * the rest of the transaction runs on what the database confirmed rather than on
- * what the caller claimed.
- *
- * @param tx - Transaction that will carry the lookup.
- * @param stackId - Caller-supplied Stack UUID, or null.
- * @param domain - Caller-supplied domain slug, or null.
- */
-async function bootstrapTenant(
-  tx: Database,
-  stackId: string | null,
-  domain: string | null,
-): Promise<void> {
-  // Both are the caller's own values, never derived from another row. Setting the
-  // id lets the policy match by id; setting the domain covers the domain-only
-  // path, where no id exists yet.
-  if (stackId !== null) {
-    await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
-  }
-  if (domain !== null && domain !== "") {
-    await tx.execute(sql`select set_config('app.stack_domain', ${domain}, true)`);
-  }
 }

@@ -16,6 +16,7 @@ import {
   createRequestTransactionWrapper,
 } from "../db.js";
 import type { Database } from "../db.js";
+import { FixtureStacks, withFixtureTenant } from "./fixture-tenant.js";
 import { createApp } from "../server.js";
 import { createBackfeedRouter } from "./backfeed.js";
 import type { BackfeedRouterDependencies } from "./backfeed.js";
@@ -101,19 +102,18 @@ export function database(): Database {
   return state.database;
 }
 
-export async function deleteFixtureRows(): Promise<void> {
-  const prefixed = sql`select id from stacks where domain like ${`${domainPrefix}%`}`;
+/** Fixture Stacks this file created, for per-tenant cleanup and counting. */
+const fixtureStacks = new FixtureStacks();
 
-  await database().execute(
-    sql`delete from ontology_relationships where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from ontology_entities where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from backfeed_queue where stack_id in (${prefixed})`,
-  );
-  await database().execute(sql`delete from stacks where domain like ${`${domainPrefix}%`}`);
+/** Remembers a Stack so cleanup can target it by id. */
+export function trackFixtureStack(stackId: string): void {
+  fixtureStacks.add(stackId);
+}
+
+export async function deleteFixtureRows(): Promise<void> {
+  // One bound delete per Stack; the child tables follow through
+  // `on delete cascade`, verified to fire under RLS.
+  await fixtureStacks.deleteAll(database());
 }
 
 export async function counts(): Promise<{
@@ -122,24 +122,33 @@ export async function counts(): Promise<{
   entities: number;
   relationships: number;
 }> {
-  const prefixed = sql`select id from stacks where domain like ${`${domainPrefix}%`}`;
-  const rows = await database().execute<{
-    stacks: number;
-    queue: number;
-    entities: number;
-    relationships: number;
-  }>(sql`
-    select
-      (select count(*)::int from stacks where domain like ${`${domainPrefix}%`}) as stacks,
-      (select count(*)::int from backfeed_queue where stack_id in (${prefixed})) as queue,
-      (select count(*)::int from ontology_entities where stack_id in (${prefixed})) as entities,
-      (select count(*)::int from ontology_relationships where stack_id in (${prefixed})) as relationships
-  `);
-  const row = rows[0];
-  if (row === undefined) {
-    throw new Error("count query returned no row");
+  // Counted per tracked Stack, in one bound transaction each: a count across several
+  // Stacks has no single tenant to bind, so the old prefix query cannot see them under
+  // RLS. The shape of the answer is unchanged, which is why the thirty call sites that
+  // read it did not move.
+  const totals = { stacks: 0, queue: 0, entities: 0, relationships: 0 };
+  for (const stackId of fixtureStacks.ids()) {
+    totals.stacks += 1;
+    const row = await withFixtureTenant(database(), { stackId }, async (tx) => {
+      const rows = await tx.execute<{
+        queue: number;
+        entities: number;
+        relationships: number;
+      }>(sql`
+        select
+          (select count(*)::int from backfeed_queue where stack_id = ${stackId}) as queue,
+          (select count(*)::int from ontology_entities where stack_id = ${stackId}) as entities,
+          (select count(*)::int from ontology_relationships where stack_id = ${stackId}) as relationships
+      `);
+      const counted = rows[0];
+      if (counted === undefined) throw new Error("count query returned no row");
+      return counted;
+    });
+    totals.queue += row.queue;
+    totals.entities += row.entities;
+    totals.relationships += row.relationships;
   }
-  return row;
+  return totals;
 }
 
 export function deps(apiKey = ""): BackfeedRouterDependencies {

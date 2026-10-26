@@ -105,56 +105,61 @@ export function database(): Database {
 
 export const writtenFiles = new Set<string>();
 
-export async function deleteFixtureRows(): Promise<void> {
-  const prefixed = sql`select id from stacks where domain like ${`${domainPrefix}%`}`;
+/**
+ * Every Stack this file's fixtures created, so cleanup and counting can target each
+ * one by id.
+ *
+ * ## Why a registry instead of the domain prefix
+ *
+ * Cleanup used to delete by `domain like '<prefix>%'`. Under RLS that cursor has no
+ * single tenant and cannot be bound: measured as the unprivileged role, a prefix
+ * delete bound to one domain removes that domain's row and silently leaves its
+ * siblings, so it reports success while cleaning only part of what it selected.
+ *
+ * Tracking ids makes every statement single-tenant. `stacks` is deleted by id with
+ * the tenant bound, and the seven child tables go with it through
+ * `on delete cascade` — verified to fire under RLS — so no child delete is needed.
+ */
+const fixtureStacks = new Set<string>();
 
-  await database().execute(
-    sql`delete from entity_source_documents where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from ontology_relationships where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from ontology_entities where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from document_chunks where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from stack_documents where stack_id in (${prefixed})`,
-  );
-  await database().execute(sql`delete from stacks where domain like ${`${domainPrefix}%`}`);
+/** Registers a Stack for cleanup. Called by {@link createStack}. */
+export function trackFixtureStack(stackId: string): void {
+  fixtureStacks.add(stackId);
+}
+
+export async function deleteFixtureRows(): Promise<void> {
+  for (const stackId of fixtureStacks) {
+    await database().transaction(async (tx) => {
+      await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+      await tx.execute(sql`delete from stacks where id = ${stackId}`);
+    });
+  }
+  fixtureStacks.clear();
 }
 
 export async function countFixtureRows(): Promise<number> {
-  const rows = await database().execute<{ total: number }>(sql`
-    select
-      (select count(*) from document_chunks
-        where stack_id in (select id from stacks where domain like ${`${domainPrefix}%`}))
-      + (select count(*) from ontology_entities
-        where stack_id in (select id from stacks where domain like ${`${domainPrefix}%`}))
-      as total
-  `);
-  // The sum of two `count(*)` values is `numeric`, which postgres-js delivers as
-  // a string; `Number` is the narrowing, and a missing row is treated as "cleanup
-  // did not run" rather than "clean".
-  const total = rows[0]?.total;
-  return total === undefined ? -1 : Number(total);
+  // Counted one bound Stack at a time rather than with one prefix query. A single
+  // query across several Stacks has no single tenant to bind, so it cannot see them
+  // under RLS; looping keeps the summed semantics identical while every statement
+  // stays single-tenant. Callers see the same number as before.
+  let total = 0;
+  for (const stackId of fixtureStacks) {
+    total += await database().transaction(async (tx) => {
+      await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+      const rows = await tx.execute<{ total: number }>(sql`
+        select
+          (select count(*) from document_chunks where stack_id = ${stackId})
+          + (select count(*) from ontology_entities where stack_id = ${stackId})
+          as total
+      `);
+      // The sum of two `count(*)` values is `numeric`, which postgres-js delivers as
+      // a string; `Number` is the narrowing.
+      const counted = rows[0]?.total;
+      return counted === undefined ? -1 : Number(counted);
+    });
+  }
+  return total;
 }
-
-afterAll(async () => {
-  await deleteFixtureRows();
-  expect(await countFixtureRows()).toBe(0);
-
-  const { unlink } = await import("node:fs/promises");
-  for (const path of writtenFiles) {
-    await unlink(resolve(process.cwd(), path)).catch(() => undefined);
-  }
-
-  if (state.client !== undefined) {
-    await state.client.end({ timeout: 5 });
-  }
-});
 
 export function createTestApp(): Express {
   const deps: IngestRouterDependencies = {
@@ -179,13 +184,23 @@ export function createTestApp(): Express {
 export async function createStack(overrides: { synthesize?: boolean } = {}): Promise<string> {
   const id = randomUUID();
   const suffix = randomUUID().slice(0, 8);
-  await database().execute(sql`
-    insert into stacks (id, name, domain, synthesize_descriptions)
-    values (
-      ${id}, ${`w2ex ${suffix}`}, ${`${domainPrefix}${suffix}`},
-      ${overrides.synthesize ?? false}
-    )
-  `);
+  const domain = `${domainPrefix}${suffix}`;
+  // A fixture that inserts a Stack directly has to bind its domain first, for the
+  // same reason `POST /stacks` does: the `stacks` write policy validates against
+  // `app.stack_domain`. Without it this fails under RLS with
+  // "new row violates row-level security policy for table stacks".
+  //
+  // The binding must share a TRANSACTION with the insert. `set_config(..., true)`
+  // is transaction-local, so on a pooled client two bare `execute` calls can land
+  // on different connections and the setting is already gone.
+  await database().transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.stack_domain', ${domain}, true)`);
+    await tx.execute(sql`
+      insert into stacks (id, name, domain, synthesize_descriptions)
+      values (${id}, ${`w2ex ${suffix}`}, ${domain}, ${overrides.synthesize ?? false})
+    `);
+  });
+  trackFixtureStack(id);
   return id;
 }
 
@@ -202,12 +217,19 @@ export async function createDocument(
   writtenFiles.add(relative);
 
   const bytes = typeof content === "string" ? Buffer.byteLength(content, "utf8") : content.length;
-  await database().execute(sql`
-    insert into stack_documents (
-      id, stack_id, filename, storage_path, size_bytes, source_hash
-    )
-    values (${documentId}, ${stackId}, ${filename}, ${relative}, ${bytes}, ${randomUUID()})
-  `);
+  // `stack_documents` has no domain escape hatch: its write policy requires
+  // `stack_id` to equal the bound tenant. As in `createStack` above, the binding
+  // and the insert share a transaction because `set_config(..., true)` is
+  // transaction-local and the pool may hand each statement a different connection.
+  await database().transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+    await tx.execute(sql`
+      insert into stack_documents (
+        id, stack_id, filename, storage_path, size_bytes, source_hash
+      )
+      values (${documentId}, ${stackId}, ${filename}, ${relative}, ${bytes}, ${randomUUID()})
+    `);
+  });
   return documentId;
 }
 

@@ -21,6 +21,7 @@ import {
   createRequestTransactionWrapper,
 } from "../db.js";
 import type { Database } from "../db.js";
+import { FixtureStacks, withFixtureTenant } from "./fixture-tenant.js";
 
 import { createDocumentsRouter } from "./documents.js";
 import type { DocumentsRouterDependencies } from "./documents.js";
@@ -109,37 +110,46 @@ export async function tick(): Promise<void> {
   await new Promise((done) => setTimeout(done, 5));
 }
 
+/** Fixture Stacks this file created, for per-tenant cleanup and counting. */
+const fixtureStacks = new FixtureStacks();
+
 export async function insertStack(domain: string): Promise<string> {
-  const rows = await database().execute<{ id: string }>(sql`
+  const rows = await withFixtureTenant(database(), { domain }, (tx) => tx.execute<{ id: string }>(sql`
     insert into stacks (name, domain)
     values (${"w1doc stack"}, ${domain})
     returning id
-  `);
+  `));
   const row = rows[0];
   if (row === undefined) {
     throw new Error("insert into stacks returned no row");
   }
+  fixtureStacks.add(row.id);
   return row.id;
 }
 
 export async function countFixtureDocuments(): Promise<number> {
-  const rows = await database().execute<{ total: number }>(sql`
-    select count(*)::int as total
-    from stack_documents d
-    join stacks s on s.id = d.stack_id
-    where s.domain like ${`${domainPrefix}%`}
-  `);
-  return rows[0]?.total ?? -1;
+  // Summed per tracked Stack: a count across several Stacks has no single tenant to
+  // bind, so the old prefix query cannot see them under RLS. Callers get the same
+  // number.
+  return fixtureStacks.sum(database(), async (tx, stackId) => {
+    const rows = await tx.execute<{ total: number }>(
+      sql`select count(*)::int as total from stack_documents where stack_id = ${stackId}`,
+    );
+    return rows[0]?.total ?? -1;
+  });
 }
 
 export async function fixtureStoragePaths(): Promise<string[]> {
-  const rows = await database().execute<{ storage_path: string }>(sql`
-    select d.storage_path
-    from stack_documents d
-    join stacks s on s.id = d.stack_id
-    where s.domain like ${`${domainPrefix}%`}
-  `);
-  return rows.map((row) => row.storage_path);
+  const paths: string[] = [];
+  for (const stackId of fixtureStacks.ids()) {
+    const rows = await withFixtureTenant(database(), { stackId }, (tx) =>
+      tx.execute<{ storage_path: string }>(
+        sql`select storage_path from stack_documents where stack_id = ${stackId}`,
+      ),
+    );
+    paths.push(...rows.map((row) => row.storage_path));
+  }
+  return paths;
 }
 
 export async function deleteFixtureFiles(): Promise<void> {
@@ -149,17 +159,13 @@ export async function deleteFixtureFiles(): Promise<void> {
 }
 
 export async function deleteFixtureRows(): Promise<void> {
+  // Files first: their paths live in rows the cascade is about to remove.
   await deleteFixtureFiles();
-  await database().execute(
-    sql`delete from stacks where domain like ${`${domainPrefix}%`}`,
-  );
+  await fixtureStacks.deleteAll(database());
 }
 
 export async function countFixtureStacks(): Promise<number> {
-  const rows = await database().execute<{ total: number }>(
-    sql`select count(*)::int as total from stacks where domain like ${`${domainPrefix}%`}`,
-  );
-  return rows[0]?.total ?? -1;
+  return fixtureStacks.ids().length;
 }
 
 export function deps(apiKey = ""): DocumentsRouterDependencies {

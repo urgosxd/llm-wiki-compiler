@@ -23,6 +23,7 @@ import {
 } from "../db.js";
 import { createApp } from "../server.js";
 import type { Database } from "../db.js";
+import { FixtureStacks, withFixtureTenant } from "./fixture-tenant.js";
 
 import type { PageEntityRow, PageRelationshipRow } from "../core/page_generator.js";
 
@@ -102,48 +103,30 @@ export function database(): Database {
 }
 
 export async function deleteFixtureRows(): Promise<void> {
-  const prefixed = sql`select id from stacks where domain like ${`${domainPrefix}%`}`;
-
-  await database().execute(
-    sql`delete from entity_pages where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from entity_source_documents where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from ontology_relationships where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from ontology_entities where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from document_chunks where stack_id in (${prefixed})`,
-  );
-  await database().execute(
-    sql`delete from stack_documents where stack_id in (${prefixed})`,
-  );
-  await database().execute(sql`delete from stacks where domain like ${`${domainPrefix}%`}`);
+  // One bound delete per Stack; the child tables follow through `on delete cascade`,
+  // verified to fire under RLS. The old prefix deletes could not be bound, and under
+  // RLS a bound prefix delete removes only the bound domain's row while reporting
+  // success.
+  await fixtureStacks.deleteAll(database());
 }
 
 export async function countFixtureRows(): Promise<number> {
-  const rows = await database().execute<{ total: number }>(sql`
-    select
-      (select count(*) from ontology_entities
-        where stack_id in (select id from stacks where domain like ${`${domainPrefix}%`}))
-      + (select count(*) from ontology_relationships
-        where stack_id in (select id from stacks where domain like ${`${domainPrefix}%`}))
-      + (select count(*) from document_chunks
-        where stack_id in (select id from stacks where domain like ${`${domainPrefix}%`}))
-      + (select count(*) from stack_documents
-        where stack_id in (select id from stacks where domain like ${`${domainPrefix}%`}))
-      + (select count(*) from entity_pages
-        where stack_id in (select id from stacks where domain like ${`${domainPrefix}%`}))
-      as total
-  `);
-  // The sum of `count(*)` values is `numeric`, which postgres-js delivers as a
-  // string; `Number` is the narrowing.
-  const total = rows[0]?.total;
-  return total === undefined ? -1 : Number(total);
+  // Summed per tracked Stack: a count across several Stacks has no single tenant to
+  // bind, so the old prefix query cannot see them under RLS. Callers get the same
+  // number.
+  return fixtureStacks.sum(database(), async (tx, stackId) => {
+    const rows = await tx.execute<{ total: number }>(sql`
+      select
+        (select count(*) from ontology_entities where stack_id = ${stackId})
+        + (select count(*) from ontology_relationships where stack_id = ${stackId})
+        + (select count(*) from document_chunks where stack_id = ${stackId})
+        + (select count(*) from stack_documents where stack_id = ${stackId})
+        + (select count(*) from entity_pages where stack_id = ${stackId})
+        as total
+    `);
+    const counted = rows[0]?.total;
+    return counted === undefined ? -1 : Number(counted);
+  });
 }
 
 afterAll(async () => {
@@ -172,11 +155,20 @@ export interface Fixture {
   readonly documentId: string;
 }
 
+/** Fixture Stacks this file created, for per-tenant cleanup and counting. */
+const fixtureStacks = new FixtureStacks();
+
 export async function createFixture(): Promise<Fixture> {
   const ids = fixtureIds();
-  await insertFixtureStack(ids);
-  await insertFixtureEntities(ids);
-  await insertFixtureGraph(ids);
+  // One transaction for the whole seed. Every row below is tenant-scoped and
+  // `set_config(..., true)` dies with its transaction, so the binding has to cover all
+  // of them — not just the Stack INSERT.
+  await withFixtureTenant(database(), { stackId: ids.stackId, domain: ids.domain }, async (tx) => {
+    await insertFixtureStack(ids, tx);
+    await insertFixtureEntities(ids, tx);
+    await insertFixtureGraph(ids, tx);
+  });
+  fixtureStacks.add(ids.stackId);
   return {
     stackId: ids.stackId,
     stackName: ids.stackName,
@@ -213,12 +205,14 @@ function fixtureIds(): FixtureIds {
 }
 
 /** Inserts the Stack row and its one document. */
-async function insertFixtureStack(ids: FixtureIds): Promise<void> {
-  await database().execute(sql`
+async function insertFixtureStack(ids: FixtureIds, tx: Database): Promise<void> {
+  // Runs on the caller's bound transaction: `createFixture` opens one covering the
+  // whole seed, because `set_config(..., true)` is transaction-local.
+  await tx.execute(sql`
     insert into stacks (id, name, domain, description, scope, compilation_strategy)
     values (${ids.stackId}, ${ids.stackName}, ${ids.domain}, ${"pages fixture"}, ${"stack"}, ${"incremental"})
   `);
-  await database().execute(sql`
+  await tx.execute(sql`
     insert into stack_documents (
       id, stack_id, filename, storage_path, size_bytes, source_hash,
       truncated, original_length, audit
@@ -232,8 +226,8 @@ async function insertFixtureStack(ids: FixtureIds): Promise<void> {
 }
 
 /** Inserts the three entities the page endpoints read. */
-async function insertFixtureEntities(ids: FixtureIds): Promise<void> {
-  await database().execute(sql`
+async function insertFixtureEntities(ids: FixtureIds, tx: Database): Promise<void> {
+  await tx.execute(sql`
     insert into ontology_entities (
       id, stack_id, name, type, description, properties, confidence,
       verified, extracted_by_model, source_kind, pipeline
@@ -252,8 +246,8 @@ async function insertFixtureEntities(ids: FixtureIds): Promise<void> {
 }
 
 /** Inserts the edges, the source-document link and one chunk. */
-async function insertFixtureGraph(ids: FixtureIds): Promise<void> {
-  await database().execute(sql`
+async function insertFixtureGraph(ids: FixtureIds, tx: Database): Promise<void> {
+  await tx.execute(sql`
     insert into ontology_relationships (
       id, stack_id, from_entity_id, to_entity_id, type, description,
       confidence, verified, extracted_by_model, source_kind, pipeline
@@ -266,11 +260,11 @@ async function insertFixtureGraph(ids: FixtureIds): Promise<void> {
        ${"limit caps billing"}, ${0.55}, ${true}, ${"model-b"},
        ${"document"}, ${"llamaindex-schema-extraction"})
   `);
-  await database().execute(sql`
+  await tx.execute(sql`
     insert into entity_source_documents (entity_id, document_id, stack_id)
     values (${ids.billing}, ${ids.documentId}, ${ids.stackId})
   `);
-  await database().execute(sql`
+  await tx.execute(sql`
     insert into document_chunks (
       id, document_id, stack_id, chunk_index, content, content_hash, token_count
     )

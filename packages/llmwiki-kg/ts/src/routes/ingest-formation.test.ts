@@ -34,6 +34,7 @@ import request from "supertest";
 import express from "express";
 import type { Express } from "express";
 import { sql } from "drizzle-orm";
+import { withFixtureTenant } from "./fixture-tenant.js";
 
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../core/extraction-harness.js";
 import { createRequireApiKey } from "../auth.js";
@@ -130,30 +131,35 @@ async function createStack(app: Express, domain: string): Promise<string> {
 
 /** All entity rows for one Stack. */
 async function entityRows(stackId: string): Promise<EntityRow[]> {
-  return database().execute<EntityRow>(sql`
+  return withFixtureTenant(database(), { stackId }, (tx) => tx.execute<EntityRow>(sql`
     select id, stack_id, name, type, confidence, verified,
            extracted_by_model, source_kind, pipeline
     from ontology_entities
     where stack_id = ${stackId}
     order by name
-  `);
+  `));
 }
 
 /** All relationship rows for one Stack. */
 async function relationshipRows(stackId: string): Promise<RelationshipRow[]> {
-  return database().execute<RelationshipRow>(sql`
+  return withFixtureTenant(database(), { stackId }, (tx) => tx.execute<RelationshipRow>(sql`
     select id, stack_id, from_entity_id, to_entity_id, type,
            extracted_by_model, source_kind
     from ontology_relationships
     where stack_id = ${stackId}
-  `);
+  `));
 }
 
 /** Contribution rows linking entities to the document that mentioned them. */
-async function contributions(documentId: string): Promise<Array<{ entity_id: string }>> {
-  return database().execute<{ entity_id: string }>(sql`
-    select entity_id from entity_source_documents where document_id = ${documentId}
-  `);
+async function contributions(
+  stackId: string,
+  documentId: string,
+): Promise<Array<{ entity_id: string }>> {
+  return withFixtureTenant(database(), { stackId }, (tx) =>
+    tx.execute<{ entity_id: string }>(sql`
+      select entity_id from entity_source_documents where document_id = ${documentId}
+    `),
+  );
 }
 
 describe.skipIf(skipReason !== false)("entities and relationships are formed", () => {
@@ -234,7 +240,7 @@ describe.skipIf(skipReason !== false)("entities and relationships are formed", (
     // source. Without these rows the graph exists but nothing explains it.
     const { stackId, documentId } = await ingestOnce("contributions");
 
-    const rows = await contributions(documentId);
+    const rows = await contributions(stackId, documentId);
     const entityIds = new Set((await entityRows(stackId)).map((entity) => entity.id));
 
     expect(rows).toHaveLength(2);
@@ -282,7 +288,7 @@ describe.skipIf(skipReason !== false)("entities and relationships are formed", (
 
     expect(rows).toHaveLength(2);
     // Both documents are recorded against the same entity rows.
-    expect(await contributions(secondDoc)).toHaveLength(2);
+    expect(await contributions(stackId, secondDoc)).toHaveLength(2);
   });
 
   it("never forms an edge whose endpoints belong to another Stack", async () => {
