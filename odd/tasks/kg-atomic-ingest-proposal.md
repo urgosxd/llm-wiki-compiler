@@ -134,12 +134,39 @@ narrows `scope.tx` to its own handle and fails closed on a shape it cannot use.
 | --- | --- | --- | --- |
 | Port | `commit` gains an optional `scope`; `DIMENSION_PORT_VERSION` → **5** | `orchestrator-main` (`types.ts` is shared) | one optional field |
 | `kg` | `writeGraph` uses `scope.tx` instead of `createClient` | `orchestrator-b` (owns `src/dimensions/kg/**`) | small: one function |
-| `wiki` | thread the handle through `saveSourceDocument` AND `withTenant`; move `saveSource` out of the write path | `orchestrator-main` (owns `src/dimensions/wiki/**` on that branch) | **NOT small** — see Gap 1 |
+| `wiki` | thread the handle through `saveSourceDocument` AND `withTenant`, keeping the `saveSource` file write | `orchestrator-a` per the CONTRACT; `orchestrator-main` holds it de facto on `feat/pages-rows-only` — see the ownership note | **NOT small** — see Gap 1 |
 | Coordinator | open ONE transaction, bind the Stack, pass it to every `commit` | `orchestrator-main` (`coordinator.ts`) | medium |
 
 Version is **5**, not 4 or 3: `@3` and `@4` were each rejected before agreement, and
 `DIMENSION_PORT_VERSION` is already `2` on both branches. A fresh number keeps every
 decision traceable to one shape instead of silently redefining an already-rejected one.
+
+### Two implementation constraints the proposal must not paper over
+
+Both were raised against `@5` and both are correct.
+
+**1. `saveSource` cannot simply leave the write path — `artifactPath` depends on it.**
+The earlier table said "move `saveSource` out of the write path", which would break
+ingest: `services/ingest/service.ts:137` throws
+`no file-backed dimension reported a write path` whenever `artifactPath` is
+`undefined`, and `saveSource` is the only thing that produces one today. So the file
+write must STAY until either `artifactPath` becomes optional or L1 moves off disk.
+Corrected scope for the wiki side: thread the ambient handle through
+`saveSourceDocument` and `withTenant`, and LEAVE `saveSource` where it is. That means
+a shared transaction covers the rows and still leaves one file projection — which is
+the residual this document already states, not a new one. Anyone reading the earlier
+wording could have planned a change that breaks every ingest.
+
+**2. Ownership of `src/dimensions/wiki/**` is a CONTRACT question, and I got it wrong.**
+`contract-cordination.json` assigns `src/dimensions/wiki/**` to `orchestrator-a`
+(`ownedPaths`), and lists `src/dimensions/types.ts`, `coordinator.ts`, `outbox.ts`,
+`reconcile.ts` and `index.ts` as `sharedPaths`. My table assigned the wiki side to
+`orchestrator-main` because that branch is where the code lives — conflating "who has
+the code today" with "who may write it". Those are different facts.
+
+The honest statement is: the work needs `orchestrator-a` (contract owner of the wiki
+directory) or an `unrestrictedWrite` role (`orchestrator-main` holds `**`), and that is
+the integration role's call to route — not mine to reassign in a proposal.
 
 ### What does NOT change
 
