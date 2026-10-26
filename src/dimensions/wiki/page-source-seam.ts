@@ -190,6 +190,36 @@ export async function withRegistrySource<T>(
 }
 
 /**
+ * Run `fn` with the row-backed page REMOVER, or `undefined` for the file path.
+ *
+ * The delete counterpart of {@link withPageSource}, and the only way a caller that
+ * already holds a lock can reach the remover without opening a database of its own
+ * or importing the dimensions graph. `src/sources/removal.ts` deletes pages under
+ * the lock via `deleteWikiPagesLocked`, which needs exactly this handle: with a
+ * Stack the page is a row, so unlinking `wiki/concepts/<slug>.md` removes nothing
+ * and reports success for a page that is still there.
+ *
+ * The handle is closed before returning, whatever `fn` does.
+ *
+ * @param env - Environment to read the Stack from.
+ * @param fn - Receives the row remover, or `undefined` to unlink files.
+ * @returns Whatever `fn` returns.
+ */
+export async function withPageRemover<T>(
+  env: NodeJS.ProcessEnv,
+  fn: (remover: PageRemover | undefined) => Promise<T>,
+): Promise<T> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return fn(undefined);
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    return await fn(createPageRemoveSink(dimensionsDb.db as never, stackId));
+  } finally {
+    await dimensionsDb.close();
+  }
+}
+
+/**
  * Every page seam a compile stage may need, resolved together.
  *
  * ## Why one bundle instead of four parameters

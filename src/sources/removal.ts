@@ -58,7 +58,7 @@ import {
   applyFrozenSlugs,
   StateTooNewError,
 } from "../utils/state.js";
-import { readStateClassifiedFor, writeStateFor } from "../dimensions/wiki/page-source-seam.js";
+import { readStateClassifiedFor, withPageRemover, writeStateFor } from "../dimensions/wiki/page-source-seam.js";
 import { collectAllPages } from "../linter/rules.js";
 import { listCandidates } from "../compiler/candidate-read.js";
 import { updateEmbeddingsLockedCore } from "../utils/embeddings.js";
@@ -298,7 +298,13 @@ export async function applyRemovalLocked(root: string, plan: RemovalPlan): Promi
   // skips as errors (src/compiler/index.ts:225), and a page the user asked to
   // remove that silently stayed on disk is exactly the failure `rm` exists to
   // prevent.
-  const { skipped } = await deleteWikiPagesLocked(root, current.deleteSlugs);
+  // Resolve the page remover from the environment for THIS delete. With a Stack the
+  // page is a row, so the file path would unlink a file that does not exist and
+  // report success while the row survived. Resolved here rather than threaded from
+  // the caller so the CLI stays free of the dimensions graph, and scoped to this one
+  // call because the handle must be closed before the rest of the apply.
+  const { skipped } = await withPageRemover(process.env, (pageRemover) =>
+    deleteWikiPagesLocked(root, current.deleteSlugs, { pageRemover }));
   const deleted = withoutSkipped(current.deleteSlugs, skipped);
 
   const frozen = new Set(fresh.frozenSlugs ?? []);
