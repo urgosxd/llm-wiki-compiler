@@ -134,3 +134,40 @@ describe("candidates wired to rows", () => {
     expect(await listCandidates(root)).toHaveLength(2);
   });
 });
+
+describe("rejection on a Stack-backed project", () => {
+  it("rejects a candidate without touching a candidate directory", async () => {
+    // `review reject` archived by moving the queue FILE. A row has no file to move,
+    // so the unmigrated path failed outright -- the candidate stayed pending and the
+    // command reported "could not be archived safely".
+    const written = await writeCandidate(root, draft("Zeta"));
+
+    const { archiveRejectedCandidate } = await import("../../src/compiler/candidate-rejection.js");
+    expect(await archiveRejectedCandidate(root, written.id)).toBe(true);
+    expect(await candidateDirExists()).toBe(false);
+    expect(await listCandidates(root)).toEqual([]);
+  });
+});
+
+describe("other candidate entry points", () => {
+  it("writeFreshCandidate publishes to rows without a candidate directory", async () => {
+    // Typed staging supersede and validated answers call this directly, bypassing
+    // writeCandidate. It was still allocating through the filesystem allocator.
+    const { writeFreshCandidate } = await import("../../src/compiler/candidates.js");
+    const fresh = await writeFreshCandidate(root, draft("Eta"));
+
+    expect(fresh.id).toBeTruthy();
+    expect(await candidateDirExists()).toBe(false);
+    expect(await listCandidates(root)).toHaveLength(1);
+  });
+
+  it("deleteCandidateBySlug removes every row for one concepts slug", async () => {
+    const { deleteCandidateBySlug } = await import("../../src/compiler/candidates.js");
+    await writeCandidate(root, draft("Theta"));
+
+    expect(await deleteCandidateBySlug(root, "theta")).toBe(true);
+    expect(await listCandidates(root)).toEqual([]);
+    // Nothing left to match: the honest answer, same as the file path's false.
+    expect(await deleteCandidateBySlug(root, "theta")).toBe(false);
+  });
+});

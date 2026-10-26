@@ -226,6 +226,18 @@ export async function writeFreshCandidate(
   draft: CandidateDraft,
   options: FreshCandidateWriteOptions = {},
 ): Promise<ReviewCandidate> {
+  // The typed-staging and validated-answer paths call this directly, bypassing
+  // writeCandidate, so it needs the same backend decision rather than falling through
+  // to the filesystem allocator.
+  const viaRows = await withCandidateSource(process.env, async (source) => {
+    if (source === undefined) return undefined;
+    const id = writableCandidateId(draft.slug, 0, options);
+    const candidate = buildCandidate(draft, id);
+    await source.save(candidate);
+    return candidate;
+  });
+  if (viaRows !== undefined) return viaRows;
+
   const firstId = writableCandidateId(draft.slug, 0, options);
   return publishNewCandidate(root, draft, firstId, options);
 }
@@ -450,6 +462,21 @@ export async function deleteCandidateBySlug(
   hooks: CandidateDeletionHooks = {},
 ): Promise<boolean> {
   assertCandidateSlug(slug);
+
+  // Rows answer the whole match in one query: the slug is an indexed comparison, not
+  // a directory walk filtered by a parsed target key. Every match is removed, which is
+  // what the file path reached by collecting entries first.
+  const viaRows = await withCandidateSource(process.env, async (source) => {
+    if (source === undefined) return undefined;
+    const target = `concepts/${slug}`;
+    const matching = (await source.list()).filter(
+      (candidate) => candidateTargetKey(candidate) === target,
+    );
+    for (const candidate of matching) await source.remove(candidate.id);
+    return matching.length > 0;
+  });
+  if (viaRows !== undefined) return viaRows;
+
   const matching = await selectReadableCandidateEntriesForMutation(
     root,
     (candidate) => candidateTargetKey(candidate) === `concepts/${slug}`,
