@@ -7,6 +7,7 @@
  */
 import { captureCandidateCustody } from "./candidate-custody.js";
 import { archiveCandidate } from "./candidates.js";
+import { assertWritableCandidateId } from "./candidate-paths.js";
 import { withCandidateSource } from "../dimensions/wiki/candidate-source.js";
 import * as output from "../utils/output.js";
 
@@ -15,9 +16,14 @@ export async function loadRejectableCandidateOrFail(root: string, id: string): P
   // A row IS the record, so "exists" is a lookup rather than a custody capture. The
   // custody call below is a filesystem precondition a Stack-backed project has no
   // leaf for and would always answer "not found" to.
-  const fromRows = await withCandidateSource(process.env, async (source) =>
-    source === undefined ? undefined : (await source.get(id)) !== undefined,
-  );
+  const fromRows = await withCandidateSource(process.env, async (source) => {
+    if (source === undefined) return undefined;
+    // A row is addressed by a bound parameter, so an unsafe id cannot escape a path.
+    // It still must not be reported as ABSENCE: "not found" would hide a caller
+    // passing `../outside` behind the same message a genuinely missing candidate gets.
+    assertWritableCandidateId(id);
+    return (await source.get(id)) !== undefined;
+  });
   if (fromRows !== undefined) {
     if (fromRows) return true;
     output.status("!", output.error(`Candidate not found or removed during review: ${id}`));
