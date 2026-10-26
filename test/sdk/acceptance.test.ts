@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createWiki } from "../../src/sdk/wiki.js";
 import { ProviderUnavailableError, UnknownProviderError } from "../../src/utils/provider-guard.js";
+import { useStackEnv } from "../fixtures/stack-env.js";
 
 const saved = { ...process.env };
 afterEach(() => {
@@ -46,6 +47,8 @@ async function expectNotProviderUnavailable(promise: Promise<unknown>): Promise<
 }
 
 describe("SDK acceptance", () => {
+  // Every dimension is Postgres-backed, so a Stack is required before any ingest.
+  useStackEnv("acceptance");
   it("compile throws ProviderUnavailableError without creds (mandatory gate)", async () => {
     stripAnthropicCreds();
     const root = await mkdtemp(path.join(tmpdir(), "wiki-acc-"));

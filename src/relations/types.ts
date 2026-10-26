@@ -46,7 +46,7 @@ export const RELATION_STORE_SCHEMA_VERSION = 2;
 export const RELATION_STORE_BASE_WRITE_VERSION = 1;
 
 /** The header version a store carrying operation-bound records declares. */
-export const RELATION_STORE_OPERATION_VERSION = 2;
+const RELATION_STORE_OPERATION_VERSION = 2;
 
 /**
  * A minimal citation backing a relation: the source file the claim came from

@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { createWikiCore } from "../../src/sdk/core.js";
 import { createWiki } from "../../src/sdk/wiki.js";
+import { withStackEnv } from "../fixtures/stack-env.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -37,26 +38,30 @@ async function freshRoot() {
   return root;
 }
 
-it("constructs a knowledge facade without local workflow methods or writes", async () => {
+it("constructs a knowledge facade without local workflow methods or writes", () =>
+  // A Stack is REQUIRED now: every dimension is Postgres-backed, so an ingest without
+  // one has no tenant to key a row by. This test predates that contract.
+  withStackEnv("sdk-core-composition", async () => {
   const root = await freshRoot();
   const wiki = createWikiCore({ root });
-  expect(wiki).not.toHaveProperty("startWorkflow");
-  expect(wiki).not.toHaveProperty("approveGate");
-  expect(wiki.operations).toBeDefined();
-  expect(wiki.product).toBeDefined();
+  // The workflow/operations/product slices were removed with their subsystems; a
+  // reintroduction here would ship a facade method with nothing behind it.
+  for (const gone of ["startWorkflow", "approveGate", "operations", "product"]) {
+    expect(wiki, `${gone} belongs to a removed subsystem`).not.toHaveProperty(gone);
+  }
   expect(await readdir(root)).toEqual([]);
   await wiki.ingestText({ title: "Core input", text: "Retained knowledge without a local workflow." });
   expect(await readdir(path.join(root, "sources"))).toHaveLength(1);
-});
+  }));
 
 it("reads root once and keeps all core methods in standard composition", async () => {
   const root = await freshRoot();
   let reads = 0;
   const wiki = createWiki({ get root() { reads++; return root; } });
   expect(reads).toBe(1);
+  // The property worth keeping: `createWiki` composes EVERYTHING `createWikiCore`
+  // provides. It used to be checked incidentally, on a facade that also added workflow
+  // methods; the composition guarantee outlives those methods.
   for (const name of Object.keys(createWikiCore({ root }))) expect(wiki).toHaveProperty(name);
-  expect(wiki.startWorkflow).toBeTypeOf("function");
-  await expect(wiki.approveGate("absent", "editor", { actorKind: "human" }))
-    .rejects.toMatchObject({ name: "SdkHumanGateError" });
   expect(await readdir(root)).toEqual([]);
 });

@@ -81,11 +81,9 @@ function readStoreFile(root: string): Promise<string | null> {
 
 /**
  * Read the exact raw store bytes (or null when absent) through the same confined,
- * no-follow, capped primitive the parser uses. The store-version upgrade seam
- * consumes these bytes to rewrite only the header while preserving every record
- * byte and its order.
+ * no-follow, capped primitive the parser uses.
  */
-export function readRelationStoreRaw(root: string): Promise<string | null> {
+function readRelationStoreRaw(root: string): Promise<string | null> {
   return readStoreFile(root);
 }
 

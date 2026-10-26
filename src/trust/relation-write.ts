@@ -100,7 +100,7 @@ export class RelationsRequireProfileError extends Error {
  * @throws {RelationsRequireProfileError} When the project has no non-default profile.
  * @throws {RelationWriteDeniedError} When the planner denies the write.
  */
-export async function createRelationForProject(
+async function createRelationForProject(
   root: string,
   input: AppendRelationInput,
 ): Promise<RelationRef> {

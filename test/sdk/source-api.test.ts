@@ -3,8 +3,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createWiki } from "../../src/sdk/wiki.js";
+import { useStackEnv } from "../fixtures/stack-env.js";
 
 describe("Wiki source API", () => {
+  // Every dimension is Postgres-backed, so a Stack is required before any ingest.
+  useStackEnv("source-api");
   it("ingest → list/get → delete round-trip, with writeStatus, silently", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "sdk-src-"));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
