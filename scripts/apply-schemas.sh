@@ -49,6 +49,7 @@ readonly SCHEMA_FILES=(
   "src/dimensions/wiki/migration_wiki_small_markers.sql"
   "src/dimensions/wiki/migration_wiki_log.sql"
   "src/dimensions/wiki/migration_wiki_derived.sql"
+  "src/dimensions/wiki/migration_wiki_profile.sql"
   "packages/llmwiki-kg/db/migration_rls_tenancy.sql"
   "packages/llmwiki-kg/db/migration_ingest_outbox.sql"
   "src/dimensions/wiki/migration_page_embeddings.sql"

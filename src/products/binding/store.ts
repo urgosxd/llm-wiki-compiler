@@ -22,6 +22,7 @@ import { readConfinedLeafBuffer } from "../../utils/confined-read.js";
 import { resolveExistingConfinedPrivateDir } from "../../utils/private-dir.js";
 import { legacyPrivateAliasHasNoEntries } from "../../utils/legacy-private-layout.js";
 import { LLMWIKI_DIR, PROFILE_FILE } from "../../utils/constants.js";
+import { profileExistsAnywhere } from "../../dimensions/wiki/profile-source.js";
 import { parseActiveProductBinding } from "./parse.js";
 import { MAX_ACTIVE_PRODUCT_BINDING_BYTES } from "./types.js";
 import type { ActiveProductBindingV1 } from "./types.js";
@@ -73,11 +74,26 @@ export async function readActiveProductBinding(root: string): Promise<ActiveBind
 }
 
 /**
- * Whether a legacy `.llmwiki/profile.json` is present (design section 8.2). ANY
- * on-disk entry counts, including a symlink, so its mere presence beside a binding
- * is fail-closed as a conflict. An absent or unreadable private dir is `false`.
+ * Whether a project profile is present in EITHER backend (design section 8.2).
+ *
+ * The question this answers is not "which backend do I read" but "do two competing
+ * authorities exist", and on that question the answer is yes if EITHER holds a
+ * profile. ANY on-disk entry counts, including a symlink, so its mere presence beside
+ * a binding is fail-closed as a conflict. An absent or unreadable private dir is
+ * `false` for the file half, and a Stack row then has its say.
+ *
+ * This check used to lstat the file and stop there. Once a profile can live in a row,
+ * stopping there would have turned a fail-closed authority conflict into a silent
+ * product-mode win for any Stack that had both -- a security regression hiding behind
+ * a storage migration.
  */
 export async function profileJsonPresent(root: string): Promise<boolean> {
+  const filePresent = await profileFilePresent(root);
+  return profileExistsAnywhere(process.env, filePresent);
+}
+
+/** Whether the legacy `profile.json` leaf exists, symlink included. */
+async function profileFilePresent(root: string): Promise<boolean> {
   const dir = await resolveExistingConfinedPrivateDir(root).catch(() => null);
   if (dir === null) return false;
   const stat = await lstat(path.join(dir, path.basename(PROFILE_FILE))).catch(() => null);

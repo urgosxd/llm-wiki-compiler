@@ -8,6 +8,7 @@ import path from "node:path";
 import { atomicWrite } from "../utils/atomic-write.js";
 import { readCappedNoFollow } from "../utils/confined-read.js";
 import { CONCEPTS_DIR, MAX_PROFILE_BYTES, PROFILE_FILE, QUERIES_DIR } from "../utils/constants.js";
+import { withProfileSource } from "../dimensions/wiki/profile-source.js";
 import { releaseLock } from "../utils/lock.js";
 import { acquireMutationLockBlocking } from "../operation-bundles/lock-gate.js";
 import { confineUnderRoot, isInsideDir } from "../utils/path-confine.js";
@@ -17,6 +18,7 @@ import { loadProfile } from "./load.js";
 import { isTypedCorpusEmpty } from "./templates/corpus.js";
 import type { ProfilePack } from "./types.js";
 import { validateProfile } from "./validate.js";
+import { profileDigest } from "./digest.js";
 
 /** Whether a failed scaffold operation wrote its active profile. */
 export type ProfileInstallOutcome = "installed" | "not-installed" | "unknown";
@@ -98,6 +100,16 @@ export type ProfileCommitStatus = "committed" | "absent" | "unknown";
 
 /** Atomically write the active profile as the scaffold's commit point. */
 async function writeProfile(root: string, body: string): Promise<void> {
+  // The caller has already rendered and validated `body`, so the row takes the parsed
+  // document -- a Stack must never store text it would then have to re-parse and hope
+  // it means the same thing.
+  const stored = await withProfileSource(process.env, async (source) => {
+    if (source === undefined) return false;
+    const document: unknown = JSON.parse(body);
+    await source.save(document, profileDigest(validateProfile(document).profile));
+    return true;
+  });
+  if (stored) return;
   await atomicWrite(path.join(root, PROFILE_FILE), body, { confineRoot: root, durable: true });
 }
 

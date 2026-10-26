@@ -6,11 +6,12 @@ import path from "node:path";
 import packageJson from "../../../package.json";
 import { readCappedNoFollow } from "../../utils/confined-read.js";
 import { MAX_PROFILE_BYTES, PROFILE_FILE } from "../../utils/constants.js";
+import { withProfileSource } from "../../dimensions/wiki/profile-source.js";
 import { releaseLock } from "../../utils/lock.js";
 import { acquireMutationLockBlocking } from "../../operation-bundles/lock-gate.js";
 import { atomicWrite } from "../../utils/markdown.js";
-import { profileDigest } from "../digest.js";
 import { loadProfile } from "../load.js";
+import { profileDigest } from "../digest.js";
 import { isTypedCorpusEmpty } from "./corpus.js";
 import { TEMPLATE_LOCK_FILE } from "./lock.js";
 import { getBuiltinTemplate } from "./registry.js";
@@ -194,7 +195,14 @@ export async function writeInstalledProfile(root: string, pkg: ProfileTemplatePa
   if (Buffer.byteLength(body, "utf8") > MAX_PROFILE_BYTES) {
     throw new TemplateInstallError(`${PROFILE_FILE} would exceed the ${MAX_PROFILE_BYTES}-byte profile cap`);
   }
-  await atomicWrite(path.join(root, PROFILE_FILE), body, { confineRoot: root, durable: true });
+  const stored = await withProfileSource(process.env, async (source) => {
+    if (source === undefined) return false;
+    await source.save(pkg.profile, profileDigest(pkg.profile));
+    return true;
+  });
+  if (!stored) {
+    await atomicWrite(path.join(root, PROFILE_FILE), body, { confineRoot: root, durable: true });
+  }
 }
 
 async function tryWriteLock(root: string, pkg: ProfileTemplatePackage, options: InstallPackageOptions): Promise<boolean> {

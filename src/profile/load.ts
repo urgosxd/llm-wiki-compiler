@@ -39,6 +39,10 @@ import { openFileNoFollow } from "../utils/no-follow-open.js";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { PROFILE_FILE, MAX_PROFILE_BYTES } from "../utils/constants.js";
+import {
+  withProfileSource,
+  type StoredProfileRow,
+} from "../dimensions/wiki/profile-source.js";
 import { resolveExistingConfinedPrivateDir, PrivateDirConfinementError } from "../utils/private-dir.js";
 import { DEFAULT_PROFILE } from "./default.js";
 import { validateProfile } from "./validate.js";
@@ -109,6 +113,14 @@ async function resolveConfinedProfileDir(root: string): Promise<string | null> {
  * @throws {ProfileLoadError} When a present file is unparseable, invalid, or confined.
  */
 async function loadLegacyProfile(root: string): Promise<LoadedProfile> {
+  // Rows first: when the project is bound to a Stack, its profile lives there and
+  // there is no file to read. A Stack WITHOUT a profile is not a broken project -- it
+  // is one that never installed a profile -- so it yields the built-in default, the
+  // same answer the file backend gives for an absent file.
+  const fromRows = await withProfileSource(process.env, async (source) =>
+    source === undefined ? null : (await source.read()) ?? null,
+  );
+  if (fromRows !== null) return loadProfileFromRow(fromRows);
   const dir = await resolveConfinedProfileDir(root);
   // Absent .llmwiki dir means no profile file — yield the built-in default without
   // creating the directory (read-only contract: a clean project stays clean).
@@ -132,6 +144,35 @@ async function loadLegacyProfile(root: string): Promise<LoadedProfile> {
   const parsed = parseOrThrow(raw, logicalFilePath);
   const { profile } = validateProfile(parsed);
   return { profile, loadedFrom: logicalFilePath, digest: profileDigest(profile) };
+}
+
+/**
+ * Validate one stored profile row into a {@link LoadedProfile}.
+ *
+ * Three things happen here, and each one is deliberate:
+ *
+ * 1. **The document goes through the SAME validator the file does.** A row is not more
+ *    trusted than a file just because it came from Postgres.
+ * 2. **The digest is recomputed and compared.** A stored digest alone would let a row
+ *    be edited while a projection still believed it held the profile it verified
+ *    against. A mismatch is a load error, not a silent new authority.
+ * 3. **`loadedFrom` is a non-null marker.** Four callers treat `loadedFrom === null` as
+ *    "built-in default" (the linter and the viewer skip work entirely on it), so a row
+ *    that reported null would make an installed profile invisible to them.
+ *
+ * @param row - The stored document and its recorded digest.
+ * @returns The validated profile, its source marker and its digest.
+ * @throws {ProfileLoadError} When the row fails validation or its digest disagrees.
+ */
+function loadProfileFromRow(row: StoredProfileRow): LoadedProfile {
+  const { profile } = validateProfile(row.document);
+  const digest = profileDigest(profile);
+  if (digest !== row.digest) {
+    throw new ProfileLoadError(
+      `Stored ${PROFILE_FILE} does not match its recorded digest — refusing to use it`,
+    );
+  }
+  return { profile, loadedFrom: `${PROFILE_FILE} (stack)`, digest };
 }
 
 /**
