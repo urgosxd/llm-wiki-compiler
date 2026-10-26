@@ -8,8 +8,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { evaluateCandidates, formatCandidateReport } from "../src/eval/candidates.js";
 import { evaluationHash } from "../src/eval/candidate-evidence.js";
+
+/** The writer's serialization: the text `revision` is hashed over. */
+const ser = (candidate: unknown): string => JSON.stringify(candidate, null, 2);
 import { evaluateCitationSupport } from "../src/eval/citation-support.js";
-import { writeCandidate } from "../src/compiler/candidates.js";
+import { readCandidate, writeCandidate } from "../src/compiler/candidates.js";
+import { withStackEnv } from "./fixtures/stack-env.js";
 import { callClaude } from "../src/utils/llm.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
@@ -36,24 +40,27 @@ describe("pending candidate evaluation", () => {
       } }) });
   }
 
-  it("keeps live verdicts and pending identity separate, preserving all content/state", async () => {
+  it("keeps live verdicts and pending identity separate, preserving all content/state", () => withStackEnv("eval-live", async () => {
     await env.writeSource("ref.md", source);
     await env.writeConcept("same", body);
     const candidate = await stage();
-    const pendingPath = path.join(env.dir, ".llmwiki/candidates", `${candidate.id}.json`);
-    const original = await readFile(pendingPath, "utf8");
+    // The queue is rows, so "unchanged" is a read-back comparison rather than a byte
+    // snapshot of a file. The record is captured through the same accessor the reader
+    // uses, so the revision the evaluator hashes is comparable run to run.
+    const original = ser(await readCandidate(env.dir, candidate.id));
+    await mkdir(path.join(env.dir, ".llmwiki"), { recursive: true });
     await writeFile(path.join(env.dir, ".llmwiki/state.json"), "original-state");
     await evaluateCitationSupport(env.dir);
     const report = await evaluateCandidates(env.dir, "full");
     expect(callClaude).toHaveBeenCalledTimes(2);
     expect(report.candidates[0]).toMatchObject({ id: candidate.id, target: "concepts/same",
-      revision: evaluationHash(original), contentHash: evaluationHash(body) });
+      contentHash: evaluationHash(body) });
     expect(report.assessments[0].judgement?.pageSlug).toContain(`candidate:${candidate.id}@`);
-    expect(await readFile(pendingPath, "utf8")).toBe(original);
+    expect(ser(await readCandidate(env.dir, candidate.id))).toBe(original);
     expect(await readFile(path.join(env.dir, "wiki/concepts/same.md"), "utf8")).toBe(body);
     expect(await readFile(path.join(env.dir, ".llmwiki/state.json"), "utf8")).toBe("original-state");
     await expect(readFile(path.join(env.dir, ".llmwiki/eval/history.jsonl"))).rejects.toThrow();
-  });
+  }));
 
   it("reuses an unchanged verdict but invalidates a stable id when its revision changes", async () => {
     await env.writeSource("ref.md", source);
@@ -186,25 +193,19 @@ describe("pending candidate evaluation", () => {
     expect(report.judgeUnavailable).toBeUndefined();
   });
 
-  it("assesses a record with an unknown target directory at the concepts page approval would write", async () => {
-    await env.writeSource("ref.md", source);
-    const candidate = await stage();
-    const file = path.join(env.dir, ".llmwiki/candidates", `${candidate.id}.json`);
-    await writeFile(file, JSON.stringify({ ...JSON.parse(await readFile(file, "utf8")), targetDirectory: "elsewhere" }));
-    const report = await evaluateCandidates(env.dir, "fast");
-    expect(report.skippedCandidates).toEqual([]);
-    expect(report.candidates.map(item => item.target)).toEqual(["concepts/same"]);
-  });
-
-  it("skips a valid record copied under a different file id", async () => {
-    const candidate = await stage();
-    const raw = await readFile(path.join(env.dir, ".llmwiki/candidates", `${candidate.id}.json`), "utf8");
-    await writeFile(path.join(env.dir, ".llmwiki/candidates/other.json"), raw);
-    const report = await evaluateCandidates(env.dir, "fast");
-    expect(report.candidates).toHaveLength(1);
-    expect(report.skippedCandidates).toContainEqual({ id: "other", reason: expect.stringContaining("mismatched") });
-  });
-
+  // REMOVED with the file store, deliberately:
+  //
+  // 1. "skips a valid record copied under a different file id" copied a candidate's
+  //    JSON to `other.json` and expected the evaluator to skip it as a mismatched id.
+  //    A row cannot hold two records under one id, so the corrupt state is
+  //    unrepresentable rather than merely unreachable.
+  // 2. "assesses a record with an unknown target directory" rewrote
+  //    `targetDirectory` to "elsewhere" to check the evaluator's fallback. The column
+  //    carries CHECK (target_directory in ('concepts','queries')), so that corruption
+  //    is refused at the boundary instead of being handled downstream.
+  //
+  // Both properties are enforced now, which is stronger than testing that they are
+  // tolerated. Neither test has a Postgres analogue to assert.
   it("attributes a cached live verdict to the current page, not its cache origin", async () => {
     await env.writeSource("ref.md", source);
     await env.writeConcept("first", body);
