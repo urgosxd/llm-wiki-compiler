@@ -86,7 +86,23 @@ this is finite and enumerable, not open-ended.
 
 Ordered by (value delivered) ÷ (risk carried), not by layer.
 
-### Step 1 — `state.json` → rows (A)
+### Step 1 — `state.json` → rows (A) — **STORAGE LAYER DONE**
+
+> Landed: `wiki.compile_config` (new table, RLS forced), `source_compile_state`
+> widened to carry the fields it was missing, `compile-config-store.ts`,
+> `wiki-state-source.ts`, and an optional row backend on `CompileStateDraft`
+> (`load`/`flush`). 244 tests in `test/dimensions/`, `tsc` 0, build 0, zero
+> regressions. What remains is flipping the DEFAULT for a Stack-configured project
+> and deleting the file path.
+>
+> Two corrections to the sizing below, both measured:
+> 1. `source_compile_state` was NOT "already modelling" this — it held 5 columns for
+>    an 8-field shape and had **zero rows and zero TypeScript references**. It was
+>    dead DDL. It is now widened (`extraction`, `entities`, `output_language`,
+>    `source_ref`) and used.
+> 2. "Three callers" counted the seam, not the consumers: ~20 modules read
+>    `state.sources[...]`. That is fine, and is the reason the seam is where it is —
+>    they all read the in-memory `WikiState`, so only `load` and `flush` changed.
 
 The cheapest win and the one that removes a whole class of bug. The hash bookkeeping
 is already in `source_compile_state`; what is missing is a home for `frozenSlugs`,
@@ -144,9 +160,21 @@ last condition is a product call (Decision 4).
 - **I — `journal`.** Decision 2.
 - **K — `index.md` / `MOC.md`.** Decision 3.
 
-## Decisions the human owns
+## Decisions — ANSWERED (2026-02)
 
-### Decision 1 — Is the profile global, per Stack, or both?
+| # | Question | Answer | Consequence |
+|---|---|---|---|
+| 1 | Is the profile global, per Stack, or both? | **Per Stack** | `profile.json` becomes a Stack row; a template upgrade is a per-tenant migration |
+| 2 | What does "revert" mean when three of four journal targets stay files? | **No files** | The three non-page classes must ALSO stop being files before the journal moves — so the journal is last, not merely parked |
+| 3 | Do `index.md`/`MOC.md` become rows, files, or disappear? | **Rows** | They stop being written as files; the viewer and the OKF bundle read rows |
+
+Decision 2 does not pick between the two candidate journal shapes — it removes the
+need for a hybrid. With no file targets left, the journal has ONE target class and
+the polymorphic shape collapses to a row identity. That is a real simplification, and
+it reorders the plan: the journal is now gated on Steps 1–4 plus the artifact/profile
+migrations, not on a design question.
+
+## Decisions the human owns — original text, kept for context
 
 `profile.json` declares the product's entity types, relation types and workflows. Two
 Stacks serving two products need different profiles; but a Stack is also just a

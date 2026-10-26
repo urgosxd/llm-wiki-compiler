@@ -111,6 +111,25 @@ create table if not exists wiki.source_compile_state (
 
     compiled_at timestamptz not null default now(),
 
+    -- Reusable extraction snapshot: the ExtractedConcept[] an unchanged source can
+    -- skip re-extracting. Kept as jsonb because it is a CACHE validated on read
+    -- (fingerprint + sourceHash + slug ownership); losing it costs LLM calls, never
+    -- correctness. Without this column, migrating state.json would silently throw
+    -- away every reusable extraction.
+    extraction jsonb,
+
+    -- Typed mirror of `concept_slugs`, as branded `concepts/<slug>` ids.
+    entities text[] not null default '{}',
+
+    -- Output language the extraction ran under. Read by rule-extractor to decide
+    -- whether an unchanged source's extraction is still reusable.
+    output_language text,
+
+    -- The source identity recorded at ingest time. Persisted so a REMOVED source can
+    -- still be named: by the time a deletion is detected its file is gone, and
+    -- without this nothing could tell the graph which document to retire.
+    source_ref text,
+
     primary key (stack_id, source_identity),
     constraint source_compile_state_document_fkey
         foreign key (stack_id, source_identity)

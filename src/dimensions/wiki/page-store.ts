@@ -57,6 +57,7 @@ import { sql } from "drizzle-orm";
 
 import type { Page, PageDirectory } from "../../pages/list.js";
 import type { Database } from "llmwiki-kg";
+import { toArrayLiteral } from "./sql-array.js";
 
 /** The two page directories the schema's CHECK constraint allows. */
 const PAGE_DIRECTORIES: readonly PageDirectory[] = ["concepts", "queries"] as const;
@@ -156,29 +157,6 @@ export async function withTenant<T>(
   });
 }
 
-/**
- * Render a `text[]` parameter as a Postgres array literal.
- *
- * Drizzle expands a JS array into a ROW constructor -- `(a, b)` -- so
- * `tags = ${["x"]}` becomes an empty `()` for one element and a syntax error for
- * more. Measured here: a one-element array rendered as literally `()`, which
- * Postgres rejects. The working form is a single text parameter holding
- * `{"x","y"}`, cast to `text[]` in SQL.
- *
- * The vendored package solves the same problem in `toPostgresArrayLiteral`
- * (`core/aks_serializers.ts:161`) but does not export it through the barrel, and
- * importing the module directly would reach into the package's internals. This is
- * deliberately the same algorithm, kept local.
- *
- * @param values - Strings to encode.
- * @returns A Postgres array literal.
- */
-function toArrayLiteral(values: readonly string[]): string {
-  const quoted = values.map(
-    (value) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`,
-  );
-  return `{${quoted.join(",")}}`;
-}
 
 /** Columns a listing needs; `body` is excluded because a listing rarely shows it. */
 const PAGE_LISTING_COLUMNS = sql`

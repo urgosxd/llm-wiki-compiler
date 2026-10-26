@@ -119,6 +119,8 @@ import {
 import type { ResolverPageSource } from "./resolver.js";
 import { timeStage } from "../utils/stage-timing.js";
 import { regenerateIndices, resolvePageSeams, type PageSeams } from "../dimensions/wiki/page-source-seam.js";
+import { createWikiStateRowsBackend } from "../dimensions/wiki/wiki-state-source.js";
+import type { WikiStateRowsBackend } from "./compile-state-draft.js";
 
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
 function emptyCompileResult(): CompileResult {
@@ -470,6 +472,7 @@ async function seedThenFinalize(
   resolverSource?: ResolverPageSource,
   embeddingPageSource?: EmbeddingPageSource,
   seams: PageSeams = {},
+  stateRows?: WikiStateRowsBackend,
 ): Promise<void> {
   await maybeSeedPages(root, schema, generation, options, seams);
   await finalizeWiki(root, draft, generation.writtenPages, generation.seedSlugs, {
@@ -479,6 +482,7 @@ async function seedThenFinalize(
     resolverSource,
     embeddingPageSource,
     seams,
+    stateRows,
   });
 }
 
@@ -495,7 +499,11 @@ async function runCompilePipeline(
   // Single in-memory draft of state.json for the whole run. Every intra-compile
   // state read/write goes through it; the durable marker advances only at the
   // SINGLE flush after the resolution phase commits (see finalizeWiki below).
-  const draft = await CompileStateDraft.load(root);
+  // Read and write state from the SAME backend. A run that seeded from
+  // `state.json` and flushed to rows would report every source as new on the next
+  // pass, because the file it compared against was never the one updated.
+  const stateRows = wikiStateRowsBackend(db, process.env);
+  const draft = await CompileStateDraft.load(root, stateRows);
   const state = draft.read();
   const detected = await timeStage("compile.detect-changes", () =>
     detectChanges(root, state, sourceChangeDetection(db, process.env)));
@@ -542,6 +550,7 @@ async function runCompilePipeline(
         resolverSourceReading(db, process.env),
         embeddingPageReading(db, process.env),
         seams,
+        stateRows,
       ));
       return {
         ...emptyCompileResult(),
@@ -631,6 +640,7 @@ async function runCompilePipeline(
       resolverSourceReading(db, process.env),
       embeddingPageReading(db, process.env),
       seams,
+      stateRows,
     ));
     await logCompile(root, buckets, generation, existingIds);
   }
@@ -825,6 +835,14 @@ interface FinalizeFlags {
    * rewrites back to rows, and a repair pass that read rows must not write files.
    */
   seams?: PageSeams;
+  /**
+   * Where the compile state is persisted, when it is a row.
+   *
+   * Carried beside {@link seams} rather than inside it because it is not a PAGE
+   * seam: it stores the compile's bookkeeping, not pages. Kept in the same flags
+   * object so a caller cannot thread one and forget the other.
+   */
+  stateRows?: WikiStateRowsBackend;
 }
 
 /**
@@ -844,7 +862,7 @@ async function finalizeWiki(
 ): Promise<void> {
   const {
     scoped = false, embeddings = true, embeddingStore, resolverSource,
-    embeddingPageSource, seams = {},
+    embeddingPageSource, seams = {}, stateRows,
   } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
   const conceptNewSlugs = pages
@@ -886,7 +904,7 @@ async function finalizeWiki(
   // full compile, which is the safe direction to be wrong in.
   if (draft) {
     if (!scoped) draft.setPromptModifiers(promptModifiersDigest());
-    await draft.flush(root);
+    await draft.flush(root, stateRows);
   }
 
   await regenerateIndices(root, process.env);
@@ -1071,6 +1089,27 @@ function sourceChangeDetection(
   const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
   if (stackId === "") return undefined;
   return sourceDocumentsChangeSource(db, stackId);
+}
+
+/**
+ * Where this compile should read and write its incremental state.
+ *
+ * Returns `undefined` when no Stack is configured, which keeps `state.json`. Gated
+ * on the same variable as every other seam because the state a run reads must be the
+ * state it writes: an ingest and a compile that disagreed about the backend would
+ * each see the other's work as missing.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The rows backend, or undefined to keep `.llmwiki/state.json`.
+ */
+function wikiStateRowsBackend(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): WikiStateRowsBackend | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return createWikiStateRowsBackend(db, stackId);
 }
 
 function embeddingStoreLocation(

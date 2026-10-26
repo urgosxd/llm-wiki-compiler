@@ -57,8 +57,9 @@ readonly REQUIRED_TENANT_TABLES=(
   "wiki.page_chunk_embeddings"
   "wiki.page_embeddings"
   "wiki.pages"
-  "wiki.source_compile_state"
   "wiki.source_documents"
+  "wiki.source_compile_state"
+  "wiki.compile_config"
 )
 
 # Run psql against the target, using whatever invocation the environment provides.

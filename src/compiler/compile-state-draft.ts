@@ -29,6 +29,20 @@ import {
 import type { SourceState, WikiState } from "../utils/types.js";
 
 /**
+ * Where the compile state is loaded from and persisted to, when it is a row.
+ *
+ * Structural rather than a database handle: the draft is on the compile path, which
+ * must stay usable with no database at all — that is how every project without a
+ * Stack runs. Two methods, because those are exactly the two moments that change.
+ */
+export interface WikiStateRowsBackend {
+  /** The current state for this Stack. */
+  read(): Promise<WikiState>;
+  /** Persist a complete state for this Stack. */
+  write(state: WikiState): Promise<void>;
+}
+
+/**
  * A buffered, single-flush view of the compile incremental state. Construct via
  * {@link CompileStateDraft.load}; mutate with `setSource` / `removeSource` /
  * `setFrozen`; observe the in-memory result with `read`; persist once with
@@ -37,9 +51,20 @@ import type { SourceState, WikiState } from "../utils/types.js";
 export class CompileStateDraft {
   private constructor(private state: WikiState) {}
 
-  /** Seed a draft from the current on-disk state. */
-  static async load(root: string): Promise<CompileStateDraft> {
-    return new CompileStateDraft(await readState(root));
+  /**
+   * Seed a draft from the current state.
+   *
+   * @param root - Project root, used by the file backend.
+   * @param rows - Row backend, or undefined to read `.llmwiki/state.json`.
+   *   Supplied when a Stack is configured, so the draft seeds from the same place
+   *   the compile will persist to — a run that read files and wrote rows would
+   *   duplicate every source on the next pass.
+   */
+  static async load(root: string, rows?: WikiStateRowsBackend): Promise<CompileStateDraft> {
+    const state = rows === undefined
+      ? await readState(root)
+      : await rows.read();
+    return new CompileStateDraft(state);
   }
 
   /**
@@ -85,7 +110,11 @@ export class CompileStateDraft {
    * Persist every buffered mutation in a single durable write. Goes through
    * {@link writeState} so the v2 typed mirror is re-synced at the choke point.
    */
-  async flush(root: string): Promise<void> {
+  async flush(root: string, rows?: WikiStateRowsBackend): Promise<void> {
+    if (rows !== undefined) {
+      await rows.write(this.state);
+      return;
+    }
     await writeState(root, this.state);
   }
 }

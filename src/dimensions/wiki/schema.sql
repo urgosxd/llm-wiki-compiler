@@ -238,6 +238,25 @@ create table if not exists wiki.source_compile_state (
 
     compiled_at timestamptz not null default now(),
 
+    -- Reusable extraction snapshot: the ExtractedConcept[] an unchanged source can
+    -- skip re-extracting. Kept as jsonb because it is a CACHE validated on read
+    -- (fingerprint + sourceHash + slug ownership); losing it costs LLM calls, never
+    -- correctness. Without this column, migrating state.json would silently throw
+    -- away every reusable extraction.
+    extraction jsonb,
+
+    -- Typed mirror of `concept_slugs`, as branded `concepts/<slug>` ids.
+    entities text[] not null default '{}',
+
+    -- Output language the extraction ran under. Read by rule-extractor to decide
+    -- whether an unchanged source's extraction is still reusable.
+    output_language text,
+
+    -- The source identity recorded at ingest time. Persisted so a REMOVED source can
+    -- still be named: by the time a deletion is detected its file is gone, and
+    -- without this nothing could tell the graph which document to retire.
+    source_ref text,
+
     primary key (stack_id, source_identity),
     constraint source_compile_state_document_fkey
         foreign key (stack_id, source_identity)
@@ -371,3 +390,30 @@ grant select, insert, update, delete on all tables in schema wiki to llmwiki_app
 -- arrive ungranted the way this whole schema would have without these lines.
 alter default privileges in schema wiki
     grant select, insert, update, delete on tables to llmwiki_app;
+
+
+-- ============================================================
+-- wiki.compile_config — Stack-scoped compile coordination
+--
+-- The last piece of `.llmwiki/state.json`: `frozenSlugs`, `frozenEntities` and
+-- `promptModifiers` are properties of the COMPILE, not of a document, so
+-- `source_compile_state` has no home for them. One row per Stack.
+-- See `migration_wiki_compile_config.sql` for the full rationale.
+-- ============================================================
+create table if not exists wiki.compile_config (
+    stack_id uuid primary key references stacks(id) on delete cascade,
+    frozen_slugs text[] not null default '{}',
+    frozen_entities text[] not null default '{}',
+    prompt_modifiers text,
+    updated_at timestamptz not null default now()
+);
+
+alter table wiki.compile_config enable row level security;
+alter table wiki.compile_config force row level security;
+
+drop policy if exists tenant_isolation on wiki.compile_config;
+create policy tenant_isolation on wiki.compile_config
+    using (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid)
+    with check (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);
+
+grant select, insert, update, delete on wiki.compile_config to llmwiki_app;
