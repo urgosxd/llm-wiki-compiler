@@ -1,0 +1,208 @@
+# Plan: the wiki lives in Postgres, one Stack at a time
+
+This is the CURRENT plan. `multi-tenant-stack-only.md` is now the measurement and
+correction log behind it — read it for evidence, not for sequence.
+
+## The goal, stated so it can be checked
+
+Two properties, each independently verifiable:
+
+1. **No filesystem.** A wiki command works with `wiki/`, `sources/` and `.llmwiki/`
+   deleted, against a reachable database.
+2. **Multi-tenant by StackId.** Two Stacks in one database never see each other's
+   rows, enforced by the database, not by the application remembering a filter.
+
+A step is done when a test proves it by using a root that has no such directory —
+"the directory happened to exist" must not be able to make an assertion pass.
+
+### How property 2 is proven today
+
+The dangerous way to "prove" isolation is to test the dimension's own reads: those
+carry an explicit `where stack_id = ...`, so they pass whether or not RLS works. The
+suite that exists does the opposite — it issues a RAW query with no stack predicate
+as `llmwiki_app`, an unprivileged role, and asks whether the database alone stops it.
+
+That matters because the shared pool connects as `aks`, which is SUPERUSER **and**
+BYPASSRLS; every policy is invisible from there. Both suites pass (7 tests:
+`wiki-stack-isolation` 3, `kg-rls-tenancy` 4), and a mutation that drops the policy
+turns them red while removing the explicit predicate does not — which is the correct
+result: the wiki is protected twice and neither layer is load-bearing for the other.
+
+## Scoreboard
+
+Sixteen tables carry wiki and graph state, every one with `stack_id` and
+RLS enabled AND forced. Measured against the live database, not inferred
+from the DDL:
+
+```
+wiki.pages                      wiki.source_documents
+wiki.concept_aliases            wiki.source_compile_state
+wiki.page_embeddings            wiki.embedding_store_meta
+wiki.page_chunk_embeddings
++ 9 graph tables (stacks, stack_documents, document_chunks,
+  ontology_entities, ontology_relationships, entity_source_documents,
+  entity_pages, backfeed_queue, ingest_outbox)
+16 tables · 16 with RLS forced · 0 without
+```
+
+### Done
+
+| Capability | Where it lives now | Proof |
+|---|---|---|
+| Raw documents | `wiki.source_documents` | change detection by query |
+| Compiled pages | `wiki.pages` | compile reads AND writes rows; no file written |
+| Page identity | `(stack_id, page_directory, slug)` | registry answers from rows, takes no root |
+| Embeddings + chunks | `wiki.page_{,chunk_}embeddings` | compile persists, search reads |
+| Ingest outbox | `ingest_outbox` | per-Stack rows, not per-project files |
+| Mutual exclusion | `pg_advisory_lock` | cross-process test with a real child |
+| Tenant isolation | RLS policy on all 16 | raw predicate-free query as `llmwiki_app` |
+| Search / query / MCP | rows via one seam | four entry points wired |
+| Index / MOC | derived from rows | content from rows, artifacts still written |
+
+### Remaining, measured
+
+Every row below is state that is still a FILE today. `Files` counts source files
+that reference the constant.
+
+| # | Artifact | Files | Why it is still a file | Blocking? |
+|---|---|---|---|---|
+| A | `state.json` | 6 | **Half-migrated**: the per-source hashes already live in `source_compile_state`; `frozenSlugs` + `promptModifiers` do not have a home | no |
+| B | `relations.jsonl` | 4 | Typed graph edges + hash-chained event log | no |
+| C | `events.jsonl` | 4 | Append-only event chain with `prevHash` | no |
+| D | `candidates/` | 9 | Review candidates before approval | no |
+| E | `pending-embeddings.json` | 4 | Marker for a partially-written store | no |
+| F | `profile.json` | 7 | Product authority + template install | **yes — see Decision 1** |
+| G | `last-lint.json` | 4 | Lint result cache | no |
+| H | `rule-state.json` | 2 | Rule extractor position | no |
+| I | `journal` | 24 | Pre-state snapshots for revert | **yes — see Decision 2** |
+| J | `lock` | 6 | Superseded by the advisory lock; file is the fallback | no |
+| K | `wiki/index.md`, `wiki/MOC.md` | — | Deliberately still written: a browsing human and the OKF bundle read them | **see Decision 3** |
+
+That is **10 artifacts and 46 file references** to their path constants
+(`grep -rl <CONST> src/ --include=*.ts | wc -l`, summed). The number is the point:
+this is finite and enumerable, not open-ended.
+
+## The sequence
+
+Ordered by (value delivered) ÷ (risk carried), not by layer.
+
+### Step 1 — `state.json` → rows (A)
+
+The cheapest win and the one that removes a whole class of bug. The hash bookkeeping
+is already in `source_compile_state`; what is missing is a home for `frozenSlugs`,
+`frozenEntities` and `promptModifiers`. One new table
+(`wiki.stack_compile_config`, `(stack_id)` primary key) and `state.ts` becomes a
+reader/writer over it.
+
+Measured size: `readState`/`writeState` have **three** real callers outside the
+module (`review-approve`, `recover`, and the compiler pipeline), and `indexHash` — the
+one field with no obvious column — is neither read nor written to make a decision
+anywhere; it exists only in the type and in validation. So the migration is smaller
+than the field list suggests: two coordination fields need a column, one field can go.
+
+Why first: `state.json` is read by freshness, lint, view, export and the MCP server.
+Removing it removes the last reason any of them needs `root` for state.
+
+Verification: a compile against a root with no `.llmwiki/` produces identical
+freshness and stale-refresh decisions.
+
+### Step 2 — `relations.jsonl` + `events.jsonl` → tables (B, C)
+
+Do them together: an edge and the event that recorded it must land in one
+transaction, or a crash can leave a relation with no provenance. Both already carry
+`stack_id`-shaped identity (`relationType`, endpoints, evidence) and a hash chain.
+
+Why here: this is the GRAPH of the wiki — the thing `relate`, `query --typed` and the
+viewer depend on. It is also the last big read that takes a `root`.
+
+Verification: the relation dedup key, the evidence fingerprint and the hash chain all
+survive a round trip; replaying the event log reproduces the relation store byte for
+byte.
+
+### Step 3 — `candidates/` → table (D)
+
+Nine files touch candidate custody, and candidates are the review workflow's whole
+durable state. A Stack-scoped table also fixes a real defect: candidates are
+currently per-checkout, so two hosts reviewing one Stack see different queues.
+
+Verification: a held candidate is visible from a second host on the same Stack, and
+invisible from a different Stack.
+
+### Step 4 — the small markers (E, G, H)
+
+`pending-embeddings.json`, `last-lint.json`, `rule-state.json`. Each is one table or
+one column. Grouped because separately they are not worth a review.
+
+### Step 5 — `lock` fallback removal (J)
+
+Keep the advisory lock; delete the file path once no project can be Stack-less. That
+last condition is a product call (Decision 4).
+
+### Not scheduled without a decision
+
+- **F — `profile.json`.** Decision 1.
+- **I — `journal`.** Decision 2.
+- **K — `index.md` / `MOC.md`.** Decision 3.
+
+## Decisions the human owns
+
+### Decision 1 — Is the profile global, per Stack, or both?
+
+`profile.json` declares the product's entity types, relation types and workflows. Two
+Stacks serving two products need different profiles; but a Stack is also just a
+tenancy boundary, and forcing every Stack to carry a full profile copy means a
+template upgrade becomes a migration across every tenant.
+
+This is a product question, not an implementation one.
+
+### Decision 2 — What does "revert" mean when three of four journal targets stay files?
+
+The journal records a target's PREVIOUS BYTES so a crash can restore them. Its four
+target classes are: artifact bytes+manifest, artifact binary members,
+`TEMPLATE_LOCK_FILE`/`PROFILE_FILE`, and pages. Only the last is (or will be) a row.
+A row has no previous bytes to snapshot, so a page journal entry cannot exist in the
+same form.
+
+Until this is answered, the journal cannot move. Two candidate shapes:
+
+- **Polymorphic target**: an entry is either a path or a `(stack_id, directory,
+  slug)` tuple, with one recovery pass dispatching on the discriminator.
+- **Two journals**: a file journal and a row journal, with recovery over both in a
+  defined order.
+
+Both require re-specifying `journal.ts`'s confinement contract — 13 uses of
+`confineUnderRoot`/`isInsideDir`/`safeRealpath`, and 9 of 35 test files deliberately
+record paths that ESCAPE the root because refusing them is the property under test.
+
+### Decision 3 — Do `index.md` and `MOC.md` become rows, files, or disappear?
+
+They are the only two artifacts that are genuinely derived AND genuinely read by a
+human or an external bundle. Options: keep writing them as an export (current), give
+them their own table, or drop them and let the viewer render from rows.
+
+### Decision 4 — May a Stack-less project still compile?
+
+Today `LLMWIKI_DIMENSIONS` unset yields a file-backed wiki. Every remaining fallback
+in this plan exists for that project. Making Postgres mandatory deletes ~half of the
+remaining work and is a release-note-level product change.
+
+## What is NOT in scope, and why
+
+- **Deleting `atomic-write.ts`.** Measured: 49 call sites across 19 modules, 26
+  passing `confineRoot`, 12 `durable`, 1,072 lines, 13 test files. Exactly **one**
+  call site writes a page. It is the project's durability primitive, not a page
+  writer. The page case has already moved; the module stays.
+- **Renaming the `stacks` table.** It is KG-side DDL and the code already uses the
+  name.
+- **Rewriting `root: string` (1,458 occurrences).** Breadth, not depth; each site is
+  mechanical and must be converted per-seam, when its artifact moves.
+
+## Known defects, recorded and unfixed
+
+1. **The lock keys on resolved PATH, not Stack.** Two checkouts of one Stack both
+   acquire, which is the cross-machine collision the advisory lock exists to prevent.
+   Fix: key on `stackId` when configured, path only for the file fallback.
+2. **A Stack-configured project without `AKS_DATABASE_URL` silently uses the file
+   lock**, because `databaseUrlFor` requires both variables while `config.ts` already
+   defaults the DSN.
+3. **A row-only page batch opens and commits an EMPTY journal.** Noise, not damage.

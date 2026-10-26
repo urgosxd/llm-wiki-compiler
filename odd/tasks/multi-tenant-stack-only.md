@@ -1,17 +1,31 @@
 # Feature: Stack-only storage — Postgres as the only backend
 
+> **SUPERSEDED AS A PLAN — `odd/tasks/wiki-on-postgres.md` is the current plan.**
+> This file is kept because it is the measurement and correction log: every number,
+> every falsified premise and every defect found on the way lives here and is still
+> cited. What it is NOT is a sequence: its remaining tasks (T5, T7) block each other
+> by their own words, and T7's premise does not survive measurement. Read it for
+> evidence. Work from `wiki-on-postgres.md`.
+>
+> Landed since this was written: pages read AND written as rows, the page write
+> removal, T4 closed on evidence, T6 closed, and a delete-mutation defect fixed.
+
 ## Goal
 
 Decide, measure, and design the removal of the local filesystem as a storage
 medium, so every layer of the wiki lives in Postgres keyed by **Stack** — the name
 the code already uses. The `wiki` dimension stops having a file-backed sibling.
 
-Status: **MEASUREMENT + DESIGN ONLY. NO PRODUCT CODE.** The human selected
-"Postgres obligatorio: se borra el camino local" and "Stack, y corregir los docs"
-in this session, and then selected "medición + diseño ejecutable para main" as the
-deliverable. Nothing here is implemented, because the surface this plan needs is
-`shared-read-only` to this role (see `## Scope verdict`), and because the plan
-retires a ratified requirement that has to be recorded before anyone writes code.
+Status when written: **MEASUREMENT + DESIGN ONLY. NO PRODUCT CODE** — the surface
+this plan needed was `shared-read-only` to that role (see `## Scope verdict`).
+
+Status now: **much of it IS implemented.** That status line was true of the role
+that wrote it, not of the work. Pages are read and written as rows, the file write
+is gone, T4 and T6 are closed, and the multi-tenant properties below were confirmed
+against the live database (16 tables, RLS enabled AND forced on all 16). The
+sections that follow are preserved as written so the corrections stay auditable;
+where a claim is now false, the correction section below it says so. For what is
+left and in what order, see `wiki-on-postgres.md`.
 
 ## Decision record
 
