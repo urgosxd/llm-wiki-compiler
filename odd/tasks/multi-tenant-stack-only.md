@@ -491,6 +491,86 @@ port.
 - **Must not**: run before T5. This is the step where the second safety net
   disappears.
 
+##### T5 and T7 block each other — measured, and the cycle was never registered (2026-02)
+
+The plan as written is not a sequence. Every remaining task waits on a task that
+waits back, and both prohibitions are in this document:
+
+- **T5** says `T5 is DOWNSTREAM of T6 and T7, not upstream. A table-shaped journal
+  only makes sense once the file writes it guards are gone.`
+- **T7** says `Must not: run before T5. This is the step where the second safety net
+  disappears.`
+
+Each is blocked by the other, by the plan's own words. T4 is closed and T6 is closed,
+so those two references resolve to each other and to nothing else. `src/trust/journal.ts`
+already imports `trust/journal` from 24 source files and the write primitive from the
+other side, so there is no third task that breaks the tie.
+
+**This is a plan defect, not an implementation obstacle.** It should have been caught
+when the T5 correction was written — the correction moved T5 downstream without
+re-checking what was upstream of it.
+
+##### T7's premise is measurably false: `atomic-write.ts` is not a page writer
+
+T7's title is "Delete `atomic-write.ts` and the file-backed paths", which reads as the
+last step of the PAGE migration. Measured, it is the durability primitive of the whole
+project:
+
+| Measure | Command | Value |
+|---|---|---|
+| `atomicWrite(` call sites under `src/` | `grep -rn 'atomicWrite(' src/ --include=*.ts \| wc -l` | 50 raw, **49 real** (one is the def in `atomic-write.ts`) |
+| Files importing `atomic-write` | `grep -rl 'atomic-write' src/ --include=*.ts \| wc -l` | **46** |
+| Lines across the three modules | `wc -l src/utils/atomic-write*.ts` | **1,072** |
+| Test files | `ls test/ \| grep -c atomic-write` | **13** |
+| Call sites passing `confineRoot` | grep the calls | **26** |
+| Call sites passing `durable: true` | grep the calls | **12** |
+| **Call sites that write a PAGE** | grep the calls for page/concept/wiki | **1** — `src/import/run.ts:76` |
+
+The other 48, by module (`grep -rn 'atomicWrite(' src/ --include=*.ts | grep -v
+'atomic-write.ts' | sed 's|src/\([^/]*\)/.*|\1|' | sort | uniq -c`):
+
+```
+ 7 profile            6 compiler           4 utils
+ 4 operation-bundles  4 capability-providers
+ 3 local-workflow-host  3 events          3 commands
+ 3 artifacts          2 trust              2 products
+ 1 relations  1 preparations  1 local-workflows
+ 1 linter     1 import        1 export   1 eval   1 connectors
+```
+
+That sums to **49**. The single page write is `src/import/run.ts:76`;
+`trust/page-apply.ts` dispatches through an injected `writeOne` whose DEFAULT is
+`atomicWrite`, and that path is already bypassed whenever a sink is supplied.
+
+So: **1 page, 48 not pages.**
+
+`atomic-write.ts` is not "the second safety net for pages". It is the atomic,
+symlink-confined, parent-swap-defended, optionally `fsync`-durable writer that 19
+modules rely on (`artifacts capability-providers commands compiler connectors eval
+events export import linter local-workflow-host local-workflows operation-bundles
+preparations products profile relations trust utils`). Deleting it is not finishing a
+migration — it is removing the durability primitive from everything that is NOT a
+page, and the page case is the one that has already moved.
+
+**Consequence: T7 as written has no valid target.** There is no "file-backed page
+path" left to delete beyond one import call site, and the module itself cannot go
+while **48 non-page writes across 19 modules** depend on it. What T7 would actually
+mean has to be re-scoped before it can be scheduled: most likely "stop using it for
+pages" (already done by paso 4) plus "move the remaining state stores to Postgres
+one at a time", which is W2.3/W2.4 work under a different name.
+
+##### The honest remaining order
+
+1. **T5 needs a product decision, not an implementation.** A table-shaped journal
+   requires answering what "revert" means when three of four target classes stay
+   files. Two candidate shapes are recorded in the T5 status section; neither is
+   chosen. No amount of code resolves this.
+2. **T7 needs a new scope, not a deletion.** Its current form is void per the
+   measurement above.
+3. **Neither is schedulable today.** T4 and T6 are closed, paso 4 is closed, and what
+   remains is a decision plus a re-scoping. The plan is honest about where it stops
+   rather than pretending a sequence exists.
+
 ## Measurement — results
 
 Every number below came from a command quoted beside it, run in this worktree.
