@@ -23,13 +23,17 @@ import type { PageListingSource } from "../../pages/list.js";
 import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js";
 import { generateIndex } from "../../compiler/indexgen.js";
 import { generateMOC } from "../../compiler/obsidian.js";
-import { createPageListingSource } from "./page-write-sink.js";
+import { createPageListingSource, createPageWriteSink } from "./page-write-sink.js";
+import type { PageSink } from "../../trust/page-apply.js";
 import { createRegistryPageSource } from "./page-registry-source.js";
 import type { RegistryPageSource } from "../../utils/page-registry.js";
 import {
+  createPageContentSource,
   createPageScanSource,
   createRawPageSource,
+  type PageContentSource,
   type PageScanSource,
+  type PageStoreHandle,
   type RawPageSource,
 } from "./page-scan-source.js";
 
@@ -180,4 +184,51 @@ export async function withRegistrySource<T>(
   } finally {
     await dimensionsDb.close();
   }
+}
+
+/**
+ * Every page seam a compile stage may need, resolved together.
+ *
+ * ## Why one bundle instead of four parameters
+ *
+ * Five compile stages write pages and seven read them, and each needs a different
+ * subset: generation reads a page's previous version, seeding reads related pages,
+ * orphan and repair read one page and write another. Passing the seams individually
+ * would add three parameters to functions that already carry eight, and would let a
+ * stage be wired to a sink while its reader still pointed at disk -- the exact
+ * mixed-backend defect this whole migration keeps re-introducing.
+ *
+ * Resolving them from ONE variable also means a run cannot store rows while
+ * repairing files, or read rows while writing `wiki/`.
+ *
+ * All fields are `undefined` for a project with no Stack, which is the case every
+ * existing caller still runs, so the file path is untouched.
+ */
+export interface PageSeams {
+  /** Read one page by identity, for re-render, seeding, orphaning and repair. */
+  content?: PageContentSource;
+  /** Enumerate a wiki directory, for the sibling-context and repair scans. */
+  scan?: PageScanSource;
+  /** Store a compiled page as a row instead of writing a file. */
+  sink?: PageSink;
+}
+
+/**
+ * Resolve the page seams this run should use.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The seams, empty when no Stack is configured.
+ */
+export function resolvePageSeams(
+  db: PageStoreHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): PageSeams {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return {};
+  return {
+    content: createPageContentSource(db, stackId),
+    scan: createPageScanSource(db, stackId),
+    sink: createPageWriteSink(db as never, stackId),
+  };
 }

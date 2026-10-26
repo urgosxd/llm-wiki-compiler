@@ -56,6 +56,21 @@ export type PageSink = (request: {
 }) => Promise<void>;
 
 /**
+ * Wrap an optional sink as the `ApplyOptions` a batch call takes.
+ *
+ * `ApplyOptions.pageSink` is OPTIONAL, and passing `{ pageSink: undefined }` is not
+ * the same as passing `{}` under `exactOptionalPropertyTypes`: the former asserts the
+ * key exists with an undefined value. Five compile stages now forward a sink they may
+ * not have, so the narrowing lives here once instead of being retyped at each call.
+ *
+ * @param pageSink - The row writer, or undefined to keep writing files.
+ * @returns Options carrying the sink only when one was supplied.
+ */
+export function sinkOptions(pageSink: PageSink | undefined): { pageSink?: PageSink } {
+  return pageSink === undefined ? {} : { pageSink };
+}
+
+/**
  * Thrown when a `create` target — free at plan time — has appeared on disk by
  * the time the batch runs under the lock. Aborting before any write closes the
  * plan→apply TOCTOU so a create never clobbers a concurrently-created file.
@@ -266,22 +281,43 @@ export async function applyPageMutationLocked(
 ): Promise<void> {
   const abs = await confineUnderRoot(pageRelPath(mutation), root, { mustExist: false });
   if (mutation.operation === "delete") return deletePageLocked(abs, batch);
-  // The floor still runs for a row write: it validates the BYTES (size, frontmatter
-  // shape), which is a property of the content rather than of where it lands.
+  // The floor runs BEFORE the branch and for both backends: it validates the BYTES
+  // (size, frontmatter shape), which is a property of the content rather than of
+  // where the content lands.
   await assertFloorAtApply(root, mutation, abs);
-  // DUAL WRITE, deliberately. The sink stores the row; the file write below still
-  // runs. Reads have not moved yet -- `listPages` and every consumer of it still
-  // open `wiki/concepts/*.md` -- so writing only the row would publish pages that
-  // nothing can find, which is worse than not migrating at all. The file is removed
-  // in a later step, once reads come from rows.
   if (pageSink !== undefined) {
-    await pageSink(pageWriteRequest(mutation));
+    return storeRowLocked(mutation, pageSink);
   }
   if (mutation.operation === "create" && (await targetExists(abs))) {
     throw new CreateCollisionError(abs);
   }
   await recordPreState(batch, abs);
   await writeOne(abs, mutation.body);
+}
+
+/**
+ * Store one page as a row, skipping both the file write and the journal entry.
+ *
+ * THE JOURNAL IS SKIPPED ON PURPOSE, and that is the one behaviour that changes
+ * with the backend rather than travelling with it. A journal entry records the
+ * target's PREVIOUS BYTES so replay can restore them; a row write has no file to
+ * snapshot, and recording a path this function never touches would make the batch
+ * claim a revert capability it does not have -- turning a recoverable batch into a
+ * silently unrecoverable one. Row durability is the transaction's job, not the
+ * journal's.
+ *
+ * The create-collision re-probe is also skipped, and correctly: it exists to stop a
+ * `create` clobbering a file that appeared between plan and apply, and the row path
+ * never opens that file. A row's create/update distinction is the upsert's own.
+ *
+ * @param mutation - The approved page mutation to store.
+ * @param pageSink - The row writer.
+ */
+async function storeRowLocked(
+  mutation: PagePlannedMutation,
+  pageSink: PageSink,
+): Promise<void> {
+  await pageSink(pageWriteRequest(mutation));
 }
 
 /**

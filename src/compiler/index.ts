@@ -118,7 +118,7 @@ import {
 } from "../dimensions/wiki/page-scan-source.js";
 import type { ResolverPageSource } from "./resolver.js";
 import { timeStage } from "../utils/stage-timing.js";
-import { regenerateIndices } from "../dimensions/wiki/page-source-seam.js";
+import { regenerateIndices, resolvePageSeams, type PageSeams } from "../dimensions/wiki/page-source-seam.js";
 
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
 function emptyCompileResult(): CompileResult {
@@ -423,9 +423,10 @@ async function reconcileOwnerlessFrozen(
   root: string,
   draft: CompileStateDraft,
   reconciliationSlugs: ReadonlySet<string>,
+  seams: PageSeams = {},
 ): Promise<boolean> {
   if (reconciliationSlugs.size === 0) return false;
-  await orphanUnownedFrozenPages(root, draft, new Set(reconciliationSlugs));
+  await orphanUnownedFrozenPages(root, draft, new Set(reconciliationSlugs), seams.content, seams.sink);
   draft.setFrozen(new Set());
   return true;
 }
@@ -440,9 +441,10 @@ async function maybeSeedPages(
   schema: SchemaConfig,
   generation: PageGenerationResult,
   options: CompileOptions,
+  seams: PageSeams,
 ): Promise<void> {
   if (!options.review && !options.skipSeedPages) {
-    await generateSeedPages(root, schema, generation);
+    await generateSeedPages(root, schema, generation, seams.content, seams.sink);
   }
 }
 
@@ -463,14 +465,16 @@ async function seedThenFinalize(
   embeddingStore?: EmbeddingStoreLocation,
   resolverSource?: ResolverPageSource,
   embeddingPageSource?: EmbeddingPageSource,
+  seams: PageSeams = {},
 ): Promise<void> {
-  await maybeSeedPages(root, schema, generation, options);
+  await maybeSeedPages(root, schema, generation, options, seams);
   await finalizeWiki(root, draft, generation.writtenPages, generation.seedSlugs, {
     scoped: options.changeFilter !== undefined,
     embeddings: options.embeddings !== false,
     embeddingStore,
     resolverSource,
     embeddingPageSource,
+    seams,
   });
 }
 
@@ -501,6 +505,10 @@ async function runCompilePipeline(
   const reconciliationSlugs = findReconciliationSlugs(state, changes);
 
   const buckets = bucketChanges(changes);
+  // Resolve every page seam ONCE, from one variable: a run that stores rows while
+  // repairing files -- or reads rows while writing `wiki/` -- would split the
+  // corpus in half and is the defect this migration kept re-introducing.
+  const seams = resolvePageSeams(db, process.env);
   if (buckets.toCompile.length === 0 && buckets.deleted.length === 0) {
     output.status("✓", output.success("Nothing to compile — all sources up to date."));
     // Seed pages are cheap deterministic writes — always run them even when
@@ -508,7 +516,7 @@ async function runCompilePipeline(
     // effect on the next compile without needing a source file edit.
     if (!options.review) {
       const hasOwnerlessFrozen = await reconcileOwnerlessFrozen(
-        root, draft, reconciliationSlugs,
+        root, draft, reconciliationSlugs, seams,
       );
       const emptyGeneration: PageGenerationResult = {
         pages: [],
@@ -529,6 +537,7 @@ async function runCompilePipeline(
         embeddingStoreLocation(db),
         resolverSourceReading(db, process.env),
         embeddingPageReading(db, process.env),
+        seams,
       ));
       return {
         ...emptyCompileResult(),
@@ -553,7 +562,7 @@ async function runCompilePipeline(
   // compiles.
   const forgetErrors: string[] = [];
   if (!options.review) {
-    await markDeletedAsOrphaned(root, buckets.deleted, draft);
+    await markDeletedAsOrphaned(root, buckets.deleted, draft, seams);
     // Graph retirement follows the same review rule: a held-back run must not
     // retire documents the wiki has not stopped serving yet.
     forgetErrors.push(...(await forgetDeletedSources(root, buckets.deleted, state, db)));
@@ -601,7 +610,7 @@ async function runCompilePipeline(
     await persistExtractionStates(draft, extractions, generation.writtenPages, retained);
     const orphanCandidates = new Set([...reconciliationSlugs, ...frozenSlugs]);
     if (orphanCandidates.size > 0) {
-      await orphanUnownedFrozenPages(root, draft, orphanCandidates);
+      await orphanUnownedFrozenPages(root, draft, orphanCandidates, seams.content, seams.sink);
     }
     persistFrozenSlugs(draft, frozenSlugs, extractions, {
       pending: reconciliationSlugs,
@@ -615,6 +624,7 @@ async function runCompilePipeline(
       root, schema, generation, options, draft, embeddingStoreLocation(db),
       resolverSourceReading(db, process.env),
       embeddingPageReading(db, process.env),
+      seams,
     ));
     await logCompile(root, buckets, generation, existingIds);
   }
@@ -688,9 +698,10 @@ async function markDeletedAsOrphaned(
   root: string,
   deleted: SourceChange[],
   draft: CompileStateDraft,
+  seams: PageSeams = {},
 ): Promise<void> {
   for (const del of deleted) {
-    await markOrphaned(root, del.file, draft);
+    await markOrphaned(root, del.file, draft, seams.content, seams.sink);
   }
 }
 
@@ -800,6 +811,14 @@ interface FinalizeFlags {
    * that no longer feeds retrieval.
    */
   embeddingStore?: EmbeddingStoreLocation;
+  /**
+   * The page seams resolution and repair read and write through.
+   *
+   * Carried here rather than as three parameters on {@link finalizeWiki} because
+   * they always travel together: a run that resolves against rows must write the
+   * rewrites back to rows, and a repair pass that read rows must not write files.
+   */
+  seams?: PageSeams;
 }
 
 /**
@@ -819,7 +838,7 @@ async function finalizeWiki(
 ): Promise<void> {
   const {
     scoped = false, embeddings = true, embeddingStore, resolverSource,
-    embeddingPageSource,
+    embeddingPageSource, seams = {},
   } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
   const conceptNewSlugs = pages
@@ -833,13 +852,13 @@ async function finalizeWiki(
     // Compute + apply the resolution rewrites as ONE journalled batch. compile
     // holds the project lock for its whole pipeline → the lock-free seam.
     await resolveAndApplyLinks(
-      root, allChangedSlugs, allNewSlugs, resolverSource,
+      root, allChangedSlugs, allNewSlugs, resolverSource, seams.sink,
     );
     // Resolution adds links for titles it recognises; repair fixes links the
     // model already wrote against a page whose slug is longer than the name it
     // used. Ordered after resolution so a link resolution has just created is
     // already valid and never looks repairable.
-    await repairAndApplyLinks(root);
+    await repairAndApplyLinks(root, seams.content, seams.scan, seams.sink);
   }
 
   // SINGLE durable state write of the whole compile: the buffered draft is

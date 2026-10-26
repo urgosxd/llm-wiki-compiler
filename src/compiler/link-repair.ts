@@ -27,6 +27,8 @@ import { isLiteralMarkdown } from "./link-repair-code.js";
 import { listLinkResolvablePendingSlugs } from "./candidate-read.js";
 import { applyCompilePageWritesLocked } from "./compile-write.js";
 import type { CompilePageNamespace, CompilePageWrite } from "./compile-write.js";
+import type { PageContentSource, PageScanSource } from "../dimensions/wiki/page-scan-source.js";
+import { sinkOptions, type PageSink } from "../trust/page-apply.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import * as output from "../utils/output.js";
 
@@ -97,9 +99,68 @@ function repairBody(
   return { body: next, repaired };
 }
 
+/**
+ * The pages a repair pass rewrites, keyed by the identity its writes need.
+ *
+ * `namespace` and `slug` are carried alongside the text because a row has no path:
+ * deriving a namespace by splitting a path only works on the file branch, and doing
+ * it there and something else here is how the two backends drift apart.
+ */
+interface RepairPage {
+  namespace: CompilePageNamespace;
+  slug: string;
+  content: string;
+}
+
 /** Read only pages whose opened bytes remain within their expected directory. */
-async function collectRepairPages(root: string): Promise<Array<{ filePath: string; content: string }>> {
-  const pages: Array<{ filePath: string; content: string }> = [];
+async function collectRepairPages(
+  root: string,
+  source: PageContentSource | undefined,
+  scan: PageScanSource | undefined,
+): Promise<RepairPage[]> {
+  if (source !== undefined && scan !== undefined) {
+    return await collectRepairPagesFromRows(source, scan);
+  }
+  return await collectRepairPagesFromDisk(root);
+}
+
+/**
+ * Collect the pages a repair pass must consider from a row corpus.
+ *
+ * The scan supplies the identities and the content source supplies each body, which
+ * is the same split the disk branch performs by listing a directory and reading each
+ * entry. Both directories are read because a `concepts` page may link to a `queries`
+ * page.
+ *
+ * @param source - Per-page reader for the Stack.
+ * @param scan - Listing source for the Stack.
+ * @returns Every page with a body that could be read.
+ */
+async function collectRepairPagesFromRows(
+  source: PageContentSource,
+  scan: PageScanSource,
+): Promise<RepairPage[]> {
+  const pages: RepairPage[] = [];
+  for (const namespace of ["concepts", "queries"] as const) {
+    for (const scanned of await scan.scan(namespace)) {
+      const content = await source.read(namespace, scanned.slug);
+      // A listing entry whose body cannot be read is skipped rather than repaired
+      // against empty text, which would rewrite a page into nothing.
+      if (content === undefined) continue;
+      pages.push({ namespace, slug: scanned.slug, content });
+    }
+  }
+  return pages;
+}
+
+/**
+ * Collect the pages a repair pass must consider from `wiki/` on disk.
+ *
+ * @param root - Absolute project root the reads are confined under.
+ * @returns Every page whose opened bytes stay inside its expected directory.
+ */
+async function collectRepairPagesFromDisk(root: string): Promise<RepairPage[]> {
+  const pages: RepairPage[] = [];
   for (const dir of [CONCEPTS_DIR, QUERIES_DIR]) {
     const files = await readdir(path.join(root, dir)).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return [];
@@ -112,7 +173,7 @@ async function collectRepairPages(root: string): Promise<Array<{ filePath: strin
         await warnDroppedWikiReadIfPresent(filePath, path.join(dir, file), result.dropped);
         continue;
       }
-      pages.push({ filePath, content: result.content });
+      pages.push({ namespace: namespaceForPage(filePath), slug: file.slice(0, -3), content: result.content });
     }
   }
   return pages;
@@ -132,13 +193,19 @@ function namespaceForPage(filePath: string): CompilePageNamespace {
  * and calls no model, so the cost is the same order as `llmwiki lint`.
  *
  * @param root - Absolute project root the reads and writes are confined under.
+ * @param source - Row-backed page reader, or undefined to read `wiki/`.
+ * @param scan - Row-backed listing, or undefined to list `wiki/`.
  * @returns One write per page whose body actually changed.
  */
-export async function repairLinks(root: string): Promise<CompilePageWrite[]> {
-  const pages = await collectRepairPages(root);
+export async function repairLinks(
+  root: string,
+  source?: PageContentSource,
+  scan?: PageScanSource,
+): Promise<CompilePageWrite[]> {
+  const pages = await collectRepairPages(root, source, scan);
   if (pages.length === 0) return [];
 
-  const slugs = pages.map((page) => path.basename(page.filePath, ".md").toLowerCase());
+  const slugs = pages.map((page) => page.slug.toLowerCase());
   const pending = await listLinkResolvablePendingSlugs(root);
   const resolve = createRepairResolver(slugs, pending);
 
@@ -150,8 +217,8 @@ export async function repairLinks(root: string): Promise<CompilePageWrite[]> {
     if (result.repaired === 0) continue;
     repairedLinks += result.repaired;
     writes.push({
-      namespace: namespaceForPage(page.filePath),
-      slug: path.basename(page.filePath, ".md"),
+      namespace: page.namespace,
+      slug: page.slug,
       body: page.content.replace(body, () => result.body),
     });
   }
@@ -175,7 +242,15 @@ export async function repairLinks(root: string): Promise<CompilePageWrite[]> {
  * interlink resolution is applied from the same place in the pipeline.
  *
  * @param root - Absolute project root the writes are confined under.
+ * @param source - Row-backed page reader, or undefined to read `wiki/`.
+ * @param scan - Row-backed listing, or undefined to list `wiki/`.
+ * @param sink - Row writer, or undefined to write files.
  */
-export async function repairAndApplyLinks(root: string): Promise<void> {
-  await applyCompilePageWritesLocked(root, await repairLinks(root));
+export async function repairAndApplyLinks(
+  root: string,
+  source?: PageContentSource,
+  scan?: PageScanSource,
+  sink?: PageSink,
+): Promise<void> {
+  await applyCompilePageWritesLocked(root, await repairLinks(root, source, scan), sinkOptions(sink));
 }

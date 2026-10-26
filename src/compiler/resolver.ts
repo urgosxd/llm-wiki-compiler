@@ -16,6 +16,7 @@ import { existsSync } from "fs";
 import { parseFrontmatter } from "../utils/markdown.js";
 import { readWikiPageContentOrWarn } from "./confined-wiki-read.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
+import { sinkOptions, type PageSink } from "../trust/page-apply.js";
 import { applyCompilePageWritesLocked } from "./compile-write.js";
 import type { CompilePageNamespace, CompilePageWrite } from "./compile-write.js";
 import * as output from "../utils/output.js";
@@ -256,15 +257,17 @@ export async function resolveLinks(
  * @param root - Absolute project root the writes are confined under.
  * @param changedSlugs - Slugs whose pages get outbound links re-resolved.
  * @param newSlugs - Newly-created slugs other pages get scanned for (inbound).
+ * @param sink - Row writer, or undefined to write files.
  */
 export async function resolveAndApplyLinks(
   root: string,
   changedSlugs: string[],
   newSlugs: string[],
   source?: ResolverPageSource,
+  sink?: PageSink,
 ): Promise<void> {
   await applyCompilePageWritesLocked(
-    root, await resolveLinks(root, changedSlugs, newSlugs, source),
+    root, await resolveLinks(root, changedSlugs, newSlugs, source), sinkOptions(sink),
   );
 }
 
@@ -324,10 +327,13 @@ async function resolveInboundLinks(
   for (const page of titleIndex) {
     // Skip pages already processed in the outbound pass.
     if (newSlugs.includes(page.slug)) continue;
-    const content = await readWikiPageContentOrWarn(page.root, CONCEPTS_DIR, page.slug);
-    if (!content) continue;
-    const { body } = parseFrontmatter(content);
-    const write = rewritePage(page, content, addWikilinks(body, newTitles, page.title), body);
+    // From the index, like the outbound pass: `page.content` and `page.body` are
+    // what the title index was built from, so re-reading disk here would mix
+    // backends -- and with a row corpus the read finds nothing at all, silently
+    // producing zero inbound links while `compile` reports success.
+    const write = rewritePage(
+      page, page.content, addWikilinks(page.body, newTitles, page.title), page.body,
+    );
     if (write) writes.push(write);
   }
   return writes;

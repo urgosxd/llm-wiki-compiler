@@ -54,7 +54,7 @@ export interface PageSummaryShape {
  * real check happens at the CALL SITE, where `listStoredPages` still demands its own
  * parameter type -- so nothing is actually loosened.
  */
-type PageStoreHandle = unknown;
+export type PageStoreHandle = unknown;
 
 /** Where the scan-shaped reads come from. */
 export interface PageScanSource {
@@ -242,6 +242,74 @@ export function createRawPageSource(
         pages.filter((page) => page.pageDirectory === dir).map(toRaw);
       // Concepts before queries, matching `collectRawWikiPages`.
       return [...inDir("concepts"), ...inDir("queries")];
+    },
+  };
+}
+
+/**
+ * Read ONE page's markdown by identity, from rows or from disk.
+ *
+ * ## Why a per-page read is a separate shape
+ *
+ * Four compile stages ask for a single page by slug rather than walking the wiki:
+ * link repair, orphaning, page re-rendering and seed generation. They each used
+ * `readWikiPageContentOrWarn`, which resolves a PATH -- and with a row corpus there
+ * is no path, so the read returns nothing and the stage quietly does no work. The
+ * listing-shaped sources above cannot answer them: they enumerate, and enumerating
+ * every page to fetch one is both slower and a different query.
+ *
+ * `undefined` means "this backend has no such page", which is a NORMAL answer here:
+ * a new page is absent, a related slug may name nothing, and a page being generated
+ * for the first time has no previous version. A caller must not read it as a fault.
+ */
+export interface PageContentSource {
+  /**
+   * One page's full markdown, frontmatter included.
+   *
+   * @param directory - The wiki namespace the page lives in.
+   * @param slug - Bare slug stem, no extension.
+   * @returns Frontmatter plus body, or undefined when the backend has no such page.
+   */
+  read(directory: PageDirectory, slug: string): Promise<string | undefined>;
+  /**
+   * Every page slug in one wiki namespace, in the backend's natural order.
+   *
+   * Needed where a stage wants a SIBLING set rather than one known page: choosing
+   * which pages to show as cross-reference context starts from "what else exists",
+   * which is a listing even though each page is then read individually.
+   *
+   * @param directory - The wiki namespace to enumerate.
+   * @returns Slugs, no directories and no extensions.
+   */
+  listSlugs(directory: PageDirectory): Promise<string[]>;
+}
+
+/**
+ * Build the row-backed per-page content source for one Stack.
+ *
+ * Rendering reuses {@link renderPageMarkdown}, the same translation the resolver
+ * source uses, so a rewritten page and a re-rendered page cannot come back with
+ * different frontmatter from the same row.
+ *
+ * @param db - Database handle.
+ * @param stackId - Stack whose pages to read.
+ * @returns A source for the stages that read one page at a time.
+ */
+export function createPageContentSource(
+  db: PageStoreHandle,
+  stackId: string,
+): PageContentSource {
+  return {
+    read: async (directory, slug) => {
+      const page = await getStoredPage(db as never, stackId, directory, slug);
+      return page === undefined ? undefined : renderPageMarkdown(page);
+    },
+    listSlugs: async (directory) => {
+      // Unfiltered: a caller deciding what to show chooses its own eligibility, and
+      // a pre-filtered list would hide an orphaned page from the caller that has to
+      // recognise and skip it.
+      const pages = await listStoredPagesUnfiltered(db as never, stackId);
+      return pages.filter((page) => page.pageDirectory === directory).map((page) => page.slug);
     },
   };
 }

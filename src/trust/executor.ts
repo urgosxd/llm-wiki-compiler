@@ -78,10 +78,10 @@ export interface ApplyOptions {
   /**
    * Store a page as a row instead of writing a file.
    *
-   * Optional and absent by default, so every existing caller keeps the file path.
-   * When present, a page mutation is stored through it AND no file is written for
-   * it: writing both would let the two copies drift, and the point of the row is to
-   * be the page.
+   * Optional and absent by default, so every caller without a Stack keeps the file
+   * path unchanged. When present, a page mutation is stored through it and NO file
+   * is written for it: writing both would let the two copies drift, and the point of
+   * the row is to be the page.
    *
    * The journal is skipped for these writes. `recordPreState` reads the target's
    * current BYTES so a rollback can restore them; a row has no such pre-state to

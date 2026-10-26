@@ -14,7 +14,8 @@ import {
   buildFrontmatter,
   parseFrontmatter,
 } from "../utils/markdown.js";
-import { readWikiPageContentOrWarn } from "./confined-wiki-read.js";
+import { readWikiPageFrom } from "./confined-wiki-read.js";
+import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
 import { callClaude } from "../utils/llm.js";
 import { buildPagePrompt } from "./prompts.js";
 import { addObsidianMeta } from "./obsidian.js";
@@ -42,17 +43,19 @@ interface RenderableConcept {
  * @param root - Project root directory.
  * @param entry - The merged concept to render.
  * @param schema - Resolved schema config, used to stamp `kind` on frontmatter.
+ * @param source - Row-backed page reader, or undefined to read `wiki/concepts`.
  * @returns Full markdown content (frontmatter + body, trailing newline).
  */
 export async function renderMergedPageContent(
   root: string,
   entry: RenderableConcept,
   schema: SchemaConfig,
+  source?: PageContentSource,
 ): Promise<string> {
-  const existingPage = await readWikiPageContentOrWarn(
-    root, CONCEPTS_DIR, entry.slug, false /* new page — absence is normal */,
+  const existingPage = await readWikiPageFrom(
+    root, CONCEPTS_DIR, entry.slug, source, false /* new page — absence is normal */,
   );
-  const relatedPages = await loadRelatedPages(root, entry.slug);
+  const relatedPages = await loadRelatedPages(root, entry.slug, source);
 
   const system = buildPagePrompt(
     entry.concept.concept,
@@ -116,25 +119,19 @@ function buildMergedFrontmatter(
  * the generation prompt.
  * @param root - Project root directory.
  * @param excludeSlug - Slug of the current page to exclude.
- * @returns Concatenated related page contents (empty when concepts dir is missing).
+ * @param source - Row-backed page reader, or undefined to read `wiki/concepts`.
+ * @returns Concatenated related page contents (empty when no related page exists).
  */
-async function loadRelatedPages(root: string, excludeSlug: string): Promise<string> {
-  const conceptsPath = path.join(root, CONCEPTS_DIR);
-  let files: string[];
-
-  try {
-    files = await readdir(conceptsPath);
-  } catch {
-    return "";
-  }
-
-  const related = files
-    .filter((f) => f.endsWith(".md") && f !== `${excludeSlug}.md`)
-    .slice(0, RELATED_PAGE_CONTEXT_LIMIT);
-
+async function loadRelatedPages(
+  root: string,
+  excludeSlug: string,
+  source?: PageContentSource,
+): Promise<string> {
+  const slugs = await listRelatedSlugs(root, excludeSlug, source);
   const contents: string[] = [];
-  for (const f of related) {
-    const content = await readWikiPageContentOrWarn(root, CONCEPTS_DIR, f.replace(/\.md$/, ""));
+  for (const slug of slugs) {
+    // warnAlways=true: the list proved this page exists, so a drop is a real escape.
+    const content = await readWikiPageFrom(root, CONCEPTS_DIR, slug, source);
     if (!content) continue;
     const { meta } = parseFrontmatter(content);
     if (meta.orphaned) continue;
@@ -142,4 +139,32 @@ async function loadRelatedPages(root: string, excludeSlug: string): Promise<stri
   }
 
   return contents.join("\n\n---\n\n");
+}
+
+/**
+ * The sibling concept slugs a page may cross-reference, capped at the limit.
+ *
+ * Listing is separated from reading because the two backends list differently: the
+ * file branch walks a directory, the row branch is handed every page and filters.
+ *
+ * @param root - Project root directory.
+ * @param excludeSlug - Slug of the current page to exclude.
+ * @param source - Row-backed page reader, or undefined to list `wiki/concepts`.
+ * @returns Slugs to read, in a stable order.
+ */
+async function listRelatedSlugs(
+  root: string,
+  excludeSlug: string,
+  source: PageContentSource | undefined,
+): Promise<string[]> {
+  if (source === undefined) {
+    const files = await readdir(path.join(root, CONCEPTS_DIR)).catch(() => [] as string[]);
+    return files
+      .filter((f) => f.endsWith(".md") && f !== `${excludeSlug}.md`)
+      .slice(0, RELATED_PAGE_CONTEXT_LIMIT)
+      .map((f) => f.replace(/\.md$/, ""));
+  }
+  return (await source.listSlugs("concepts"))
+    .filter((slug) => slug !== excludeSlug)
+    .slice(0, RELATED_PAGE_CONTEXT_LIMIT);
 }

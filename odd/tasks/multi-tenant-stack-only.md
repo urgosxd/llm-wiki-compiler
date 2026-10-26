@@ -640,3 +640,95 @@ exists" to "pages exist". The test was stale, not the code.
 
 **Still open before paso 4:** the file write in `applyPageMutationLocked`
 (`src/trust/page-apply.ts`) is untouched, so writes remain dual.
+
+---
+
+## Paso 4 closed — reads wired, then the file write removed (2026-02)
+
+Paso 4 was written down as "remove the file write in `applyPageMutationLocked`".
+Measured against the code, that was **one line away from a silent regression**: the
+write was the only thing still producing files, and five compile stages still READ
+those files. Removing it first would have left each of them returning empty and
+reporting success.
+
+### The five readers, found by running them rather than reading them
+
+A temporary probe (deleted afterwards) called `resolveLinks` with a row source and
+no files on disk. The OUTBOUND pass worked; the INBOUND pass returned `[]` where the
+disk control returned one rewrite. The same shape appeared four more times:
+
+| Reader | What it did with rows | Effect |
+|---|---|---|
+| `resolver.ts` `resolveInboundLinks` | re-read the page from disk | **proven**: zero inbound wikilinks |
+| `link-repair.ts` `collectRepairPages` | `readdir`; took no source at all | no link ever repaired |
+| `orphan.ts` `orphanPage` | confined disk read → `null` | no page ever orphaned |
+| `page-renderer.ts` existing page | disk read | lost prior version; `createdAt` reset every recompile |
+| `page-renderer.ts` related pages | `readdir` + disk reads | no cross-reference context |
+
+The inbound defect was the subtlest: `linkPage` (outbound) already used the content
+the title index carried, and `resolveInboundLinks` re-read the same page from disk.
+Two passes over one index, disagreeing about where the bytes come from — the
+mixed-backend defect this migration had already recorded twice.
+
+### What was built
+
+- **`PageContentSource`** (`page-scan-source.ts`) — `read(directory, slug)` and
+  `listSlugs(directory)`. The listing-shaped sources cannot answer a per-page
+  question, and enumerating everything to fetch one page is a different query.
+- **`resolvePageSeams(db, env)`** (`page-source-seam.ts`) — one bundle, resolved
+  from ONE variable. Five writers and seven readers now cannot disagree about the
+  backend, which was the recurring defect shape.
+- **`readWikiPageFrom`** (`confined-wiki-read.ts`) — the backend-aware per-page read,
+  so seeding and re-rendering stopped hardcoding the file.
+- **`sinkOptions(sink)`** (`page-apply.ts`) — `{ pageSink: undefined }` is not `{}`
+  under `exactOptionalPropertyTypes`, and five call sites needed the narrowing.
+
+### The write removal, and the one behaviour that changes with the backend
+
+`applyPageMutationLocked` now stores the row and writes NO file. Two things are
+skipped on that branch, both deliberate:
+
+1. **The journal entry.** `recordPreState` snapshots a target's PREVIOUS BYTES so
+   replay can restore them. A row write has no file to snapshot, so recording the
+   path would make the batch claim a revert capability it does not have. Row
+   durability is the transaction's job.
+2. **The create-collision re-probe.** It exists to stop a `create` clobbering a file
+   that appeared between plan and apply. The row path never opens that file.
+
+### Evidence
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | exit 0 |
+| `npm run build` (incl. DTS) | exit 0 |
+| `test/dimensions/` | 35 files / 231 tests green |
+| New inbound test, buggy version | `expected [] to deeply equal [ 'alpha' ]` — right reason |
+| New inbound test, fixed version | 3/3 green |
+| `fallow` | exit 0, 0 above threshold |
+| `test:affected` | 30 failures, **identical before and after** (20 of 20 and 12 of 12 re-measured under `git stash`) |
+
+The 30 pre-existing failures are the `LLMWIKI_DIMENSIONS`-without-`AKS_STACK_ID`
+ingest path plus `test/sdk/` and `test/host/`, all recorded in
+`odd/tasks/orchestrator-main-role.md`. They were verified NOT to be regressions by
+stashing the change and re-running the same files twice.
+
+### Two corrections to earlier statements in this document
+
+1. **The T2 dual-write contract is retired, not violated.** `test/compile-write-dual.test.ts`
+   pinned "stores the row AND still writes the file". That was correct while reads
+   came from disk; it is now the defect. Renamed to `compile-write-backend.test.ts`
+   with the assertion inverted, plus the no-sink case preserved byte-identically
+   because that is what every project without a Stack still runs.
+2. **`ApplyOptions.pageSink` documentation was already right and is unchanged.**
+   `executor.ts` said a sink means "no file is written"; `page-apply.ts` said "DUAL
+   WRITE, deliberately". The executor comment was the accurate one and the executor
+   was the one NOT doing what its comment said — the action lived in `page-apply`.
+   Both now agree with the code.
+
+### What is still open (unchanged by this step)
+
+T4 (`lock.ts`), T5 (journal as a table) and T7 (`atomic-write.ts`) are untouched.
+`src/compiler/indexgen.ts` and `obsidian.ts` still read pages through
+`readWikiPageInDirOrWarn` — they are wired through `PageScanSource` for their
+CONTENT but read the index/MOC files themselves, which is correct because those two
+artifacts are deliberately still written to disk (see the `48c5d24` note above).

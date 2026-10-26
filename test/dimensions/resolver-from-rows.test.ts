@@ -65,4 +65,26 @@ describe("link resolution from rows", () => {
 
     expect(writes).toEqual([]);
   });
+
+  /**
+   * The INBOUND pass, which is a different code path from the outbound one above.
+   *
+   * Inbound resolves a page that did not itself change by scanning it for a NEW
+   * title, and it used to re-read that page from disk instead of using the text the
+   * title index had already supplied. With a row corpus the read found nothing, so
+   * resolution silently produced zero links while the compile reported success.
+   */
+  it("adds inbound links from rows with no page on disk", async () => {
+    const sink = createPageWriteSink(harness.db, harness.stackId);
+    await sink({ directory: "concepts", slug: "alpha", body: ALPHA });
+    await sink({ directory: "concepts", slug: "beta", body: BETA });
+
+    // `beta` is NEW and `alpha` is untouched: only the inbound pass can link them.
+    const writes = await resolveLinks(
+      root, [], ["beta"], createResolverPageSource(harness.db, harness.stackId),
+    );
+
+    expect(writes.map((w) => w.slug)).toEqual(["alpha"]);
+    expect(writes[0]?.body).toContain("[[beta|Beta]]");
+  });
 });
