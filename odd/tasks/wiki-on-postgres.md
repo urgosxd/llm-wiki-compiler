@@ -293,15 +293,62 @@ That is class B behaviour — the test reads the candidate FILE itself — not c
 So the class boundaries in this plan were drawn from a measurement taken while the
 fixture was broken, and they do not survive correction.
 
-#### Revised reading of the classes
+#### THE RE-MEASUREMENT (with the fixture fixed)
 
-- **Class A is not 61 mechanical fixture edits.** A file that needs a Stack and a file
-  that reads the candidate directory can look identical in a failure list, because the
-  second reports ENOENT only AFTER the first is satisfied.
-- **Re-derive the classes** with a working fixture before spending a budget on either.
-  The list at `/tmp/class{A,B,C}.txt` was computed under the bug and must be rebuilt.
-- The one durable result here is the fixture fix: it unblocks every suite that used a
-  capitalised label, which is most of the new row-backed ones.
+The old lists were computed under the fixture bug, so they were discarded and the
+whole unit partition was re-run with all eight seams forced to require a Stack.
+
+Method: `npx vitest run --reporter=json` per batch, then classify each failing TEST
+by its first error line. Classifying by message rather than by file is the whole
+point — the previous classification used file names and therefore could not tell
+"needs a Stack" from "reads the candidate directory".
+
+**Total: 2262 failing tests across 454 files** (of ~10,392 run). Cause breakdown:
+
+| Cause | Tests | Share |
+|---|---|---|
+| `needs-stack` | **1968** | 87% |
+| `assertion-mismatch` | 236 | 10% |
+| `other` | 48 | 2% |
+| `reads-file` (artifact ENOENT) | 6 | — |
+| `timeout` / `snapshot` | 4 | — |
+
+Then, per file, whether a file's failures are PURELY missing-Stacks:
+
+| Group | Files | Tests | What it means |
+|---|---|---|---|
+| only `needs-stack` | **382** | 1933 | mechanical: the suite just needs a Stack |
+| `needs-stack` + others | 9 | 75 | needs a Stack AND a rewrite |
+| no `needs-stack` | 63 | 254 | genuinely about file semantics |
+
+#### The mechanical group is real, and it is 382 files
+
+A sample of 8 files from the 382, all already using `useTempRoot` (so no root work):
+
+| Condition | Passing |
+|---|---|
+| Forced seams, no Stack | 3 of 124 |
+| …plus `useStackEnv` | **48 of 124** |
+
+45 recovered, 37% of the sample — roughly triple the 13% that the broken fixture made
+this look like. The remaining 76 failures contained **zero** `needs-stack`: they are
+39 `reads-file` plus 31 assertions, i.e. class B behaviour surfacing once the Stack
+requirement is satisfied.
+
+That is the structural lesson: **a suite's failure CLASS changes as you fix the layer
+beneath it.** "No Stack" was masking "reads the candidate file". Sequencing has to be
+Stack-enable first, then rewrite what the now-reachable assertions actually ask.
+
+#### Revised order
+
+1. **382 files: add a Stack.** Mechanical, ~37% of their failures clear immediately.
+   The rest become visible for what they are.
+2. **63 files: genuine file semantics.** 254 tests; needs per-test decisions.
+3. **9 mixed files.** Last of the three, because the mix only becomes clear after 1.
+
+Fixture distribution inside the 382 (measured, not assumed): 195 use no shared root at
+all, 83 use `makeTempRoot`, 67 `useTempRoot`, 21 `useCompileProject`, 16
+`useLintTempRoot`. The 195 are cheapest — they own their root already.
 
 ### Class B: tests that read the candidate file directly
 
