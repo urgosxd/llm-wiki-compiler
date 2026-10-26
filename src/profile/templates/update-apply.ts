@@ -8,8 +8,10 @@ import { releaseLock } from "../../utils/lock.js";
 import { acquireMutationLockBlocking } from "../../operation-bundles/lock-gate.js";
 import { PROFILE_FILE } from "../../utils/constants.js";
 import { openBatch, recordPreState, commitBatch } from "../../trust/journal.js";
+import { withTemplateLockSource } from "../../dimensions/wiki/template-lock-source.js";
 import { recoverJournalBeforeCompile } from "../../trust/journal-recovery.js";
 import { loadProfile } from "../load.js";
+import { withProfileSource } from "../../dimensions/wiki/profile-source.js";
 import {
   buildTemplateLock,
   writeAdvisoryTemplateLock,
@@ -96,12 +98,49 @@ async function recoverBeforePlanning(root: string): Promise<void> {
   }
 }
 
+/**
+ * True when both targets of this update live in ROWS rather than files.
+ *
+ * The lock and the profile are the pair rewritten together here, and each has its own row
+ * backend. When BOTH are rows the journal has nothing to record -- there are no previous
+ * bytes, and the two writes are transactional on their own -- so opening a batch would
+ * create, journal and delete `.llmwiki/journal/<id>.json` for a project that must not
+ * touch the filesystem, recording pre-states of files this path never writes.
+ *
+ * Partial cases stay on the journal deliberately: if only one backend is a row, the other
+ * target is a real file whose pre-state still has to be recoverable.
+ *
+ * @param env - Environment naming the Stack.
+ * @returns True when neither target is a file.
+ */
+async function bothTargetsAreRows(env: NodeJS.ProcessEnv): Promise<boolean> {
+  return withTemplateLockSource(env, async (lockSource) => {
+    if (lockSource === undefined) return false;
+    const profileIsRow = await withProfileSource(env, async (source) => source !== undefined);
+    return profileIsRow;
+  });
+}
+
 async function writeUpdateTransaction(
   root: string,
   pkg: RemoteUpdatePair["candidate"]["package"],
   nextLock: TemplateLock,
   options: RemoteUpdateApplyOptions,
 ): Promise<void> {
+  if (await bothTargetsAreRows(process.env)) {
+    // No pre-state exists for either target, and each write is its own all-or-nothing, so
+    // the recovery path below cannot be needed. `recoverOrRefuse` still runs on failure:
+    // an unrelated dangling batch from a prior crash must not be ignored just because this
+    // update happens to be row-backed.
+    try {
+      await writeAdvisoryTemplateLock(root, nextLock);
+      await (options.writeProfileForTest ?? writeInstalledProfile)(root, pkg);
+      return;
+    } catch (error) {
+      await recoverOrRefuse(root);
+      throw error;
+    }
+  }
   const batch = await openBatch(root);
   try {
     await recordPreState(batch, path.join(root, TEMPLATE_LOCK_FILE));

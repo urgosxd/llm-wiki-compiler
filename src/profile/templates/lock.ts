@@ -5,6 +5,7 @@
  */
 import path from "node:path";
 import { readCappedNoFollow } from "../../utils/confined-read.js";
+import { withTemplateLockSource } from "../../dimensions/wiki/template-lock-source.js";
 import { resolveExistingConfinedPrivateDir } from "../../utils/private-dir.js";
 import type {
   RemoteTemplateProvenance,
@@ -32,6 +33,18 @@ const REMOTE_KEYS = ["coordinate", "packageDigest", "tap", "indexSequence", "pub
 
 /** Read an advisory lock through a resolved, confined `.llmwiki` directory. */
 export async function readTemplateLock(root: string): Promise<TemplateLockRead> {
+  // A Stack stores the lock as a row. The verdict vocabulary is IDENTICAL because the
+  // same parser produces it -- only the observation changes, so every caller keeps its
+  // existing `ok` / `absent` / `malformed` / `unavailable` handling. In particular a
+  // malformed document stays malformed rather than looking like an absent lock, which is
+  // the one confusion this module was written to prevent.
+  const fromRows = await withTemplateLockSource(process.env, async (source) => {
+    if (source === undefined) return undefined;
+    const stored = await source.read();
+    if (stored === undefined) return { kind: "absent" } as const;
+    return parseTemplateLock(stored.document);
+  });
+  if (fromRows !== undefined) return fromRows;
   let privateDir: string | null;
   try {
     privateDir = await resolveExistingConfinedPrivateDir(root);

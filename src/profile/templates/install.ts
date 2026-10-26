@@ -3,10 +3,12 @@
  * @description Installs validated profile template packages into .llmwiki/profile.json.
  */
 import path from "node:path";
+import { createHash } from "node:crypto";
 import packageJson from "../../../package.json";
 import { readCappedNoFollow } from "../../utils/confined-read.js";
 import { MAX_PROFILE_BYTES, PROFILE_FILE } from "../../utils/constants.js";
 import { withProfileSource } from "../../dimensions/wiki/profile-source.js";
+import { withTemplateLockSource } from "../../dimensions/wiki/template-lock-source.js";
 import { releaseLock } from "../../utils/lock.js";
 import { acquireMutationLockBlocking } from "../../operation-bundles/lock-gate.js";
 import { atomicWrite } from "../../utils/markdown.js";
@@ -230,5 +232,16 @@ export function buildTemplateLock(pkg: ProfileTemplatePackage, options: Template
 
 /** Durably write advisory provenance; callers must not treat it as authority. */
 export async function writeAdvisoryTemplateLock(root: string, lock: TemplateLock): Promise<void> {
-  await atomicWrite(path.join(root, TEMPLATE_LOCK_FILE), `${JSON.stringify(lock, null, 2)}\n`, { confineRoot: root, durable: true });
+  const body = `${JSON.stringify(lock, null, 2)}\n`;
+  // A Stack stores the lock as a row. Same document, same importer, same advisory role --
+  // the file was never the authority, so there is nothing to lose by relocating it, and
+  // writing BOTH would let the two copies drift the way a page write once did.
+  const stored = await withTemplateLockSource(process.env, async (source) => {
+    if (source === undefined) return false;
+    await source.save(lock, createHash("sha256").update(body, "utf8").digest("hex"));
+    return true;
+  });
+  if (!stored) {
+    await atomicWrite(path.join(root, TEMPLATE_LOCK_FILE), body, { confineRoot: root, durable: true });
+  }
 }
