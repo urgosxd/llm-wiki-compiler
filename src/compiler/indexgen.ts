@@ -9,6 +9,7 @@
 import { readdir } from "fs/promises";
 import path from "path";
 import { atomicWrite, parseFrontmatter } from "../utils/markdown.js";
+import { withDerivedSource } from "../dimensions/wiki/derived-artifact-source.js";
 import { readWikiPageInDirOrWarn } from "./confined-wiki-read.js";
 import { toPosixPath } from "../utils/path-confine.js";
 import { CONCEPTS_DIR, QUERIES_DIR, INDEX_FILE } from "../utils/constants.js";
@@ -55,8 +56,17 @@ export async function generateIndex(
 
   const entityPages = await collectTypedPages(root);
   const indexContent = buildIndexContent(concepts, queries, entityPages);
-  const indexPath = path.join(root, INDEX_FILE);
-  await atomicWrite(indexPath, indexContent, { confineRoot: root });
+  // A Stack stores the render; the file is what a project without one gets, byte for
+  // byte as before. `index.md` is DERIVED -- nothing reads it back -- so there is no
+  // reader to keep in sync, only the write to redirect.
+  const stored = await withDerivedSource(process.env, async (source) => {
+    if (source === undefined) return false;
+    await source.save("index", indexContent);
+    return true;
+  });
+  if (!stored) {
+    await atomicWrite(path.join(root, INDEX_FILE), indexContent, { confineRoot: root });
+  }
 
   // Typed pages are rendered in the index, so the count must include them too
   // (empty for a DEFAULT project → unchanged "concepts + queries" total).

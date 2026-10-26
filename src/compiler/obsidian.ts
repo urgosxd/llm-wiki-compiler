@@ -11,6 +11,7 @@
 import { readdir } from "fs/promises";
 import path from "path";
 import { slugify, atomicWrite, parseFrontmatter } from "../utils/markdown.js";
+import { withDerivedSource } from "../dimensions/wiki/derived-artifact-source.js";
 import { readWikiPageInDirOrWarn } from "./confined-wiki-read.js";
 import { CONCEPTS_DIR, MOC_FILE } from "../utils/constants.js";
 import type { PageScanSource, ScannedPageShape } from "../dimensions/wiki/page-scan-source.js";
@@ -122,7 +123,16 @@ export async function generateMOC(
   const tagGroups = groupPagesByTag(pages);
   const content = buildMOCContent(tagGroups);
 
-  await atomicWrite(path.join(root, MOC_FILE), content, { confineRoot: root });
+  // Same split as the index: the MOC is derived, so a Stack stores the render and a
+  // project without one keeps the file.
+  const stored = await withDerivedSource(process.env, async (source) => {
+    if (source === undefined) return false;
+    await source.save("moc", content);
+    return true;
+  });
+  if (!stored) {
+    await atomicWrite(path.join(root, MOC_FILE), content, { confineRoot: root });
+  }
 }
 
 /**
