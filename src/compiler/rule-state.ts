@@ -19,6 +19,8 @@ import path from "path";
 import { RULE_STATE_FILE } from "../utils/constants.js";
 import { atomicWrite } from "../utils/markdown.js";
 import type { WikiState, SourceState } from "../utils/types.js";
+import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+import { readRuleExtractorState, writeRuleExtractorState } from "../dimensions/wiki/marker-store.js";
 
 /** A source advances only under the language that successfully processed it. */
 interface RuleSourceState extends SourceState {
@@ -43,6 +45,11 @@ function emptyRuleState(): RuleState {
  * @param root - Project root directory.
  */
 export async function readRuleState(root: string): Promise<RuleState> {
+  // Rows first when a Stack is configured. The cursor must live where the rest of
+  // the compile state lives, or two hosts would each advance their own and
+  // re-extract each other's work.
+  const viaRows = await readRuleStateFromRows();
+  if (viaRows !== null) return viaRows;
   const filePath = path.join(root, RULE_STATE_FILE);
   if (!existsSync(filePath)) return emptyRuleState();
   try {
@@ -76,5 +83,52 @@ export async function updateRuleSourceState(
 ): Promise<void> {
   const state = await readRuleState(root);
   state.sources[sourceFile] = entry;
-  await writeRuleState(root, state);
+  await writeRuleStateFor(root, state);
+}
+
+/** Stack id this run is bound to, or undefined for the file backend. */
+function stackIdOf(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  return stackId === "" ? undefined : stackId;
+}
+
+/** Read the cursor from rows, or null when no Stack is configured. */
+async function readRuleStateFromRows(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<RuleState | null> {
+  const stackId = stackIdOf(env);
+  if (stackId === undefined) return null;
+  const handle = createDimensionsDatabase(env);
+  try {
+    const stored = await readRuleExtractorState(handle.db, stackId);
+    // A cursor that has never been written is EMPTY, not an error: it just means
+    // everything looks new, which is exactly what the file path answered for a
+    // missing rule-state.json.
+    return (stored ?? emptyRuleState()) as RuleState;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Persist the cursor to the backend this run will read from.
+ *
+ * Separate from {@link writeRuleState} so the two cannot disagree: a cursor written
+ * to a file while reads come from rows would make every run re-extract everything.
+ *
+ * @param root - Project root, used by the file backend.
+ * @param state - The cursor to persist.
+ */
+async function writeRuleStateFor(root: string, state: WikiState): Promise<void> {
+  const stackId = stackIdOf();
+  if (stackId === undefined) {
+    await writeRuleState(root, state);
+    return;
+  }
+  const handle = createDimensionsDatabase();
+  try {
+    await writeRuleExtractorState(handle.db, stackId, state);
+  } finally {
+    await handle.close();
+  }
 }

@@ -189,7 +189,27 @@ currently per-checkout, so two hosts reviewing one Stack see different queues.
 Verification: a held candidate is visible from a second host on the same Stack, and
 invisible from a different Stack.
 
-### Step 4 — the small markers (E, G, H)
+### Step 4 — the small markers (E, G, H) — **DONE (storage + wiring)**
+
+> Landed: `wiki.embedding_refresh_marker`, `wiki.lint_cache`,
+> `wiki.rule_extractor_state` (all RLS forced), `marker-store.ts`,
+> `migration_wiki_small_markers.sql`, and the seams in `pending-embeddings.ts`,
+> `linter/cache.ts` and `rule-state.ts`. 282 tests, `tsc` 0, build 0, `fallow` 0
+> above threshold, zero regressions.
+>
+> **The two embedding marker files became ONE table.** `pending-embeddings.json` and
+> `quarantined-embeddings.json` had one shape (`{pageId, attempts}[]`) and differed
+> only in what the list meant — retried versus aged out. A `state` column carries
+> that without duplicating the schema, the readers and the caps.
+>
+> **Two no-op traps caught by asserting**: `clearPendingEmbeddings` unlinked a file
+> and never touched rows (a settled id would stay queued forever), and
+> `writeLintCache` ran an unconditional `mkdir` before the backend check, leaving an
+> empty `.llmwiki/` on every Stack-backed run — the tell of a half-done migration.
+>
+> **`fallow` caught a duplicate export**: `marker-store` exported `readLintCache`
+> and `linter/cache.ts` already did. Renamed to `readCachedLintResult`, because two
+> exports with one name is how a caller imports the wrong one silently.
 
 `pending-embeddings.json`, `last-lint.json`, `rule-state.json`. Each is one table or
 one column. Grouped because separately they are not worth a review.

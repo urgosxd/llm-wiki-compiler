@@ -17,6 +17,11 @@ import { mkdir, readFile } from "fs/promises";
 import path from "path";
 import { atomicWrite } from "../utils/markdown.js";
 import { LLMWIKI_DIR, LAST_LINT_FILE } from "../utils/constants.js";
+import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+import {
+  readCachedLintResult,
+  writeCachedLintResult,
+} from "../dimensions/wiki/marker-store.js";
 import type { LintResult, LintSummary } from "./types.js";
 
 /** Per-rule freshness counts, derived from the lint results. Optional so a pre-upgrade cache still parses. */
@@ -147,13 +152,63 @@ function aggregateRules(root: string, results: LintResult[]): LintRuleAggregate[
   return rows;
 }
 
+/** Stack id this run is bound to, or undefined for the file backend. */
+function lintStackId(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  return stackId === "" ? undefined : stackId;
+}
+
+/**
+ * Read the cached summary from rows, or undefined when no Stack is configured.
+ *
+ * A malformed row is treated as a MISS, exactly as a malformed file was: this is a
+ * cache, so garbage means "lint again", never an error surfaced to the user.
+ */
+async function readLintCacheFromRows(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<LintCacheEntry | null | undefined> {
+  const stackId = lintStackId(env);
+  if (stackId === undefined) return undefined;
+  const handle = createDimensionsDatabase(env);
+  try {
+    const stored = await readCachedLintResult(handle.db, stackId);
+    if (stored === undefined) return null;
+    const entry = stored.findings as LintCacheEntry;
+    return isValidEntry(entry) ? entry : null;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Persist the cached summary to rows, or report that no Stack is configured.
+ *
+ * @param entry - The cache entry to store.
+ * @returns True when it was written to rows.
+ */
+async function writeLintCacheToRows(entry: LintCacheEntry): Promise<boolean> {
+  const stackId = lintStackId();
+  if (stackId === undefined) return false;
+  const handle = createDimensionsDatabase();
+  try {
+    await writeCachedLintResult(handle.db, stackId, {
+      inputHash: entry.at,
+      findings: entry,
+      errorCount: entry.errors,
+      warningCount: entry.warnings,
+    });
+    return true;
+  } finally {
+    await handle.close();
+  }
+}
+
 /**
  * Persist a lint summary to `.llmwiki/last-lint.json` after a completed run.
  * Creates the `.llmwiki/` directory if missing. Overwrites any prior entry so
  * the cache reflects the most recent run, including zero-issue runs.
  */
 export async function writeLintCache(root: string, summary: LintSummary): Promise<void> {
-  await mkdir(path.join(root, LLMWIKI_DIR), { recursive: true });
   const rules = aggregateRules(root, summary.results);
   const entry: LintCacheEntry = {
     warnings: summary.warnings,
@@ -165,6 +220,12 @@ export async function writeLintCache(root: string, summary: LintSummary): Promis
     },
     ...(rules !== undefined ? { rules } : {}),
   };
+  const viaRows = await writeLintCacheToRows(entry);
+  if (viaRows) return;
+  // Only the FILE branch creates the directory. An unconditional mkdir would leave
+  // an empty `.llmwiki/` behind on every Stack-backed run, which is the tell that a
+  // migration is half done.
+  await mkdir(path.join(root, LLMWIKI_DIR), { recursive: true });
   await atomicWrite(path.join(root, LAST_LINT_FILE), `${JSON.stringify(entry, null, 2)}\n`);
 }
 
@@ -178,6 +239,8 @@ export async function writeLintCache(root: string, summary: LintSummary): Promis
  * {@link rulesAgreeWithTotals}.
  */
 export async function readLintCache(root: string): Promise<LintCacheEntry | null> {
+  const viaRows = await readLintCacheFromRows();
+  if (viaRows !== undefined) return viaRows;
   let raw: string;
   try {
     raw = await readFile(path.join(root, LAST_LINT_FILE), "utf-8");
