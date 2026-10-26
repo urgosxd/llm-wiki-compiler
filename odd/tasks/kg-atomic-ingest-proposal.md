@@ -102,12 +102,12 @@ narrows `scope.tx` to its own handle and fails closed on a shape it cannot use.
 
 ### Per-side work
 
-| Side | Change | Owner |
-| --- | --- | --- |
-| Port | `commit` gains an optional `scope`; `DIMENSION_PORT_VERSION` → **4** | `orchestrator-main` (`types.ts` is shared) |
-| `kg` | `writeGraph` stops calling `createClient` when `scope.tx` is present | `orchestrator-b` (owns `src/dimensions/kg/**`) |
-| `wiki` | `commit` passes `scope.tx` into `saveSourceDocument` instead of opening one | `orchestrator-main` on `feat/pages-rows-only` (owns `src/dimensions/wiki/**` there) |
-| Coordinator | opens ONE transaction, binds the Stack once, passes it to every `commit` | `orchestrator-main` (owns `coordinator.ts`) |
+| Side | Change | Owner | Size |
+| --- | --- | --- | --- |
+| Port | `commit` gains an optional `scope`; `DIMENSION_PORT_VERSION` → **4** | `orchestrator-main` (`types.ts` is shared) | one optional field |
+| `kg` | `writeGraph` uses `scope.tx` instead of `createClient` | `orchestrator-b` (owns `src/dimensions/kg/**`) | small: one function |
+| `wiki` | thread the handle through `saveSourceDocument` AND `withTenant`; move `saveSource` out of the write path | `orchestrator-main` (owns `src/dimensions/wiki/**` on that branch) | **NOT small** — see Gap 1 |
+| Coordinator | open ONE transaction, bind the Stack, pass it to every `commit` | `orchestrator-main` (`coordinator.ts`) | medium |
 
 Version is **4**, not 3: the `changes` reply invalidated the `@3` proposal before it
 was agreed, and `DIMENSION_PORT_VERSION` is already `2` on both branches. A fresh
@@ -179,6 +179,59 @@ A `contract_decision` on `src/dimensions/types.ts@4`, carrying the optional
 
 I am not asking to rewrite the coordinator, and I am not asking for a branch merge.
 Approve the interface (or send `changes`) and I will implement only the `kg` side.
+
+## Answering the two gaps `wq-2026-10-26-01` named
+
+Both were correct, and both change the proposal. Evidence:
+`test/dimensions/kg-runtime-savepoint-binding.test.ts`, 4 tests green.
+
+### Gap 1 — `wiki` commit is NOT one upsert. Confirmed, and it is a real cost.
+
+Measured on `feat/pages-rows-only`, `store-dimension.ts` calls three things:
+
+| Step | What it opens |
+| --- | --- |
+| `saveSource(root, …)` | a FILE write, no transaction |
+| `saveSourceDocument(db, stackId, …)` | **its own** `db.transaction` (`source-documents-store.ts:193`) |
+| `withTenant(db, stackId, …)` | **another** `db.transaction` (`page-store.ts:154`) |
+
+So the wiki commit is not "one upsert that needs to join a tx". It is two
+independent transactions plus a file write. Measured on the wire, the difference
+is concrete: today's shape takes **2 distinct `txid`s**; one spanning transaction
+with two savepoints takes **1**.
+
+This is a scope increase for whoever owns that file, and the proposal never said
+otherwise. The work is not "pass a handle" but "thread one handle through three
+call sites, two of which currently open their own". The `wiki` side is therefore
+**not** a one-line change, and I am not asking anyone to believe it is.
+
+### Gap 2 — `SET LOCAL` under savepoints. Measured, and it favours the design.
+
+Four cases, all green, all under `set local role llmwiki_app` so RLS actually bites:
+
+| Case | Question | Result |
+| --- | --- | --- |
+| S1 | Does a savepoint INHERIT the outer `app.stack_id`? | **Yes** — inner sees the outer's Stack |
+| S2 | Does a savepoint that rebinds and rolls back steal it? | **No** — outer binding intact, outer can still write |
+| S3 | Can a savepoint write for the outer's Stack? | **Yes** — the operation a joining dimension needs |
+| S4 | Is a FOREIGN write still refused inside a savepoint? | **Yes** — SQLSTATE 42501 |
+
+S4 is the negative control: if inheritance had worked by weakening the policy,
+the design would be trading isolation for atomicity. It does not.
+
+**One correction worth recording, because it nearly produced a false answer.** A
+first measurement nested `db.transaction` inside `db.transaction` and concluded
+savepoints do NOT inherit. That was wrong: drizzle's pool gives the inner call a
+DIFFERENT connection, so it is not a savepoint at all. A savepoint requires
+`tx.transaction` on the outer handle. The suite pins this distinction in S1 so the
+wrong shape cannot quietly return.
+
+**And one constraint the measurement imposed on the design:** a savepoint
+inherits an existing binding but does not create one. So the coordinator MUST bind
+the Stack on the transaction it opens, before handing it to any dimension. A
+dimension that assumed its own `commit` would bind the GUC would fail 42501 inside
+the shared transaction, and the failure would look like a permissions bug rather
+than an ordering one. That is why `CommitScope` carries `stackId` alongside `tx`.
 
 ## What `changes` must carry to be actionable
 
