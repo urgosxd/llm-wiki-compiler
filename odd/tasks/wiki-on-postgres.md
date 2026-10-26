@@ -251,6 +251,58 @@ Test scaffolding added: `test/fixtures/stack-env.ts` with `withStackEnv` (wrap o
 body) and `useStackEnv` (whole file). Both snapshot and restore `process.env`,
 because a Stack left installed makes an unrelated suite run against it.
 
+### Class A: a FIXTURE BUG made the class look far more expensive than it is
+
+Class A is 61 files whose only problem is "no Stack configured". Before adapting
+any of them, two measurements were taken on the first 12:
+
+| Condition | Failures |
+|---|---|
+| Unforced (today) | 0 — all 89 pass |
+| Candidate seam requiring a Stack | 82 |
+| …plus `useStackEnv` on all 12 | **69** |
+
+Only 13 recovered of 82, which read as "class A is a rewrite, not a fixture change".
+That conclusion was WRONG, and the reason is worth recording.
+
+#### The fixture could not provision the Stacks it was given
+
+`createKgPostgresHarness` copied the suite label straight into `stacks.domain`, but
+the schema constrains that column to `^[a-z0-9-]+$`. `useStackEnv("classA")` — the
+obvious label to type — violated the CHECK, the insert failed, and because a failed
+provision only WARNS on stderr and returns `reachable: false`, every seam downstream
+saw no Stack and reported "requires a Stack".
+
+The fixture bug therefore MASQUERADED AS THE EXACT FAILURE CLASS IT WAS SUPPOSED TO
+FIX. Any suite using a capitalised label — including the row-backed suites written
+during this migration — was silently running without a Stack.
+
+Fixed in `9f46b46` (label is now slugified before reaching `domain`). Verified:
+`createProbeStack("ClassA").harness.reachable === true`.
+
+#### With the fixture fixed, class A splits into two very different things
+
+Re-measured on the same 12 files with a working Stack: **69 still fail**, and the
+failure class is no longer "needs Stack":
+
+```
+ENOENT: no such file or directory, open '/tmp/llmwiki-test-…/.llmwiki/candidates/answer-…json'
+```
+
+That is class B behaviour — the test reads the candidate FILE itself — not class A.
+So the class boundaries in this plan were drawn from a measurement taken while the
+fixture was broken, and they do not survive correction.
+
+#### Revised reading of the classes
+
+- **Class A is not 61 mechanical fixture edits.** A file that needs a Stack and a file
+  that reads the candidate directory can look identical in a failure list, because the
+  second reports ENOENT only AFTER the first is satisfied.
+- **Re-derive the classes** with a working fixture before spending a budget on either.
+  The list at `/tmp/class{A,B,C}.txt` was computed under the bug and must be rebuilt.
+- The one durable result here is the fixture fix: it unblocks every suite that used a
+  capitalised label, which is most of the new row-backed ones.
+
 ### Class B: tests that read the candidate file directly
 
 **27 files.** These do not need a fixture change — they need rewriting, because they
