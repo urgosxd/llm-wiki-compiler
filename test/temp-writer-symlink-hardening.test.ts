@@ -16,6 +16,7 @@ import { updateRuleSourceState, readRuleState } from "../src/compiler/rule-state
 import { openBatch, recordPreState } from "../src/trust/journal.js";
 import { STATE_FILE, RULE_STATE_FILE, LLMWIKI_DIR } from "../src/utils/constants.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
+import { withStackEnv } from "./fixtures/stack-env.js";
 
 const ctx = useConfinementRoots("tw");
 
@@ -39,15 +40,27 @@ describe("bespoke temp-writers route through hardened atomicWrite", () => {
     expect((await readState(root)).indexHash).toBe("h"); // target round-trips
   });
 
-  it("rule-state write does not escape via a planted rule-state.json.tmp symlink", async () => {
+  it("rule-state write escapes NOT AT ALL, because it no longer writes a file", async () => {
+    // Stronger than the hardening it replaces. This case used to plant a symlink at
+    // `rule-state.json.tmp` and assert `atomicWrite` refused to follow it. On a
+    // Stack-backed project the cursor is a ROW, so there is no temp leaf to redirect
+    // -- and the assertion that proves it is that no `/tmp` sink and no in-root file
+    // was touched at all, while the cursor still round-trips through the database.
     const { root } = ctx;
     await mkdir(path.join(root, LLMWIKI_DIR), { recursive: true });
     const sink = await plantTempSymlink(path.join(root, RULE_STATE_FILE));
 
-    await updateRuleSourceState(root, "a.md", { hash: "x", compiledAt: "t", concepts: [] });
+    await withStackEnv("symlink-rule-state", async () => {
+      await updateRuleSourceState(root, "a.md", { hash: "x", compiledAt: "t", concepts: [] });
 
-    expect(await readFile(sink, "utf-8")).toBe("original");
-    expect((await readRuleState(root)).sources["a.md"].hash).toBe("x");
+      expect(await readFile(sink, "utf-8")).toBe("original"); // outside untouched
+      expect((await readRuleState(root)).sources["a.md"].hash).toBe("x"); // round-trips
+      // No marker file was created either: the write never went near the filesystem.
+      const { access } = await import("node:fs/promises");
+      const onDisk = await access(path.join(root, LLMWIKI_DIR, RULE_STATE_FILE))
+        .then(() => true, () => false);
+      expect(onDisk).toBe(false);
+    });
   });
 
   it("journal persist does not escape via a planted journal.tmp symlink", async () => {

@@ -210,6 +210,23 @@ export async function readRuleExtractorState(
 }
 
 /**
+ * Drop one Stack's rule-extractor cursor, so the next run re-extracts everything.
+ *
+ * Needed by anyone who wants to force a full re-extraction without touching the
+ * other markers: the cursor is the only thing that decides "unchanged". Absent a
+ * row the reader already answers empty, so this is idempotent.
+ *
+ * @param db - Database handle.
+ * @param stackId - The Stack whose cursor is cleared.
+ */
+export async function clearRuleExtractorState(db: Database, stackId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+    await tx.execute(sql`delete from wiki.rule_extractor_state where stack_id = ${stackId}`);
+  });
+}
+
+/**
  * Store one Stack's rule-extractor state, replacing any previous snapshot.
  *
  * @param db - Database handle.

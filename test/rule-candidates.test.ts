@@ -24,6 +24,7 @@ import {
 } from "../src/export/rule-candidates-json.js";
 import { candidateFileId } from "../src/utils/candidate-store.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
 import {
   restoreProviderEnvAfterEach,
   seedRuleSource as seedSource,
@@ -37,6 +38,9 @@ const FIXED_NOW = "2026-05-31T00:00:00.000Z";
 const CANDIDATE_ID_RE = /^rulecand\.process\.require-tests-before-merge-[a-f0-9]{8}$/;
 
 restoreProviderEnvAfterEach();
+
+// The rule cursor and candidates live in rows for a Stack-backed project.
+useStackEnv("rule-cand");
 
 describe("rule-candidate extraction", () => {
   const ctx = useTempRoot(["sources"]);

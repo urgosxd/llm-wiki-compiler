@@ -8,12 +8,16 @@ import path from "node:path";
 import { extractRuleCandidates } from "../src/compiler/rule-extractor.js";
 import * as llm from "../src/utils/llm.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
 import { seedRuleSource, restoreProviderEnvAfterEach, stubRuleExtraction } from "./fixtures/rule-extraction.js";
 import { listRuleCandidates } from "../src/compiler/rule-candidates.js";
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
 
 const ctx = useTempRoot(["sources"]);
 restoreProviderEnvAfterEach();
+
+// The rule cursor and candidates live in rows for a Stack-backed project.
+useStackEnv("rule-lang");
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 it("re-extracts changed and cleared language, but skips unchanged selections", async () => {
