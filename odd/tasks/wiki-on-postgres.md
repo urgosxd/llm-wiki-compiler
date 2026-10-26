@@ -251,6 +251,60 @@ Test scaffolding added: `test/fixtures/stack-env.ts` with `withStackEnv` (wrap o
 body) and `useStackEnv` (whole file). Both snapshot and restore `process.env`,
 because a Stack left installed makes an unrelated suite run against it.
 
+### Class B: tests that read the candidate file directly
+
+**27 files.** These do not need a fixture change — they need rewriting, because they
+read `.llmwiki/candidates/<id>.json` themselves and assert the bytes. Forcing the
+rows path turns each into an ENOENT rather than a semantic failure.
+
+Each was classified by asking one question: *is the property under test a property of
+the CANDIDATE, or of storing one candidate per FILE?*
+
+| File | Cases now | Portable to rows | Why the rest cannot move |
+|---|---|---|---|
+| `eval-candidates` | 11, **all green on rows** | 11 | 2 removed as unrepresentable (below); the queue itself is now read from rows |
+| `candidate-id-safety` | 15 | 5 | 10 are filename properties: reserved stems, ASCII-case aliases, filename/id disagreement, legacy collisions |
+| `answer-candidate-rejection` | 8 | 3 | 5 are symlink and file-race guards |
+| `candidate-identity-binding` | 7 | **0** | all 7 assert a filename disagreeing with its embedded id; `toCandidate` derives `id` from the column, so the state is unrepresentable |
+
+Two removals inside `eval-candidates`, with reasons rather than convenience:
+
+- *"skips a valid record copied under a different file id"* — the primary key makes
+  two records under one id unrepresentable.
+- *"assesses a record with an unknown target directory"* —
+  `review_candidates_target_directory_check` refuses `'elsewhere'` at the boundary.
+
+Both properties are now **enforced**, which is stronger than being tested as
+tolerated.
+
+`candidate-identity-binding` is the clearest case of a suite that dies with its
+backend rather than needing a rewrite: every one of its seven cases plants a file whose
+name and embedded id disagree, then asserts the refusal. A row stores one id in one
+column, so "disagreement" cannot be constructed. That is not lost coverage — it is a
+class of bug the old design had to defend against and the new one cannot have.
+
+#### Two real defects found by asking the portability question
+
+Neither was reachable by reading code; both needed a test that ran on a Stack.
+
+1. **`eval/candidates.ts` assessed an always-empty queue.** `collectPending`
+   inventoried `.llmwiki/candidates` with `resolveConfinedCandidatesDir` +
+   `listCandidateFileIds`. On a Stack-backed project that directory does not exist,
+   so `evaluateCandidates` reported zero candidates forever. Fixed by reading the
+   seam. `5e9be62`
+2. **`review reject` reported a hostile id as absence.**
+   `loadRejectableCandidateOrFail` short-circuits to a rows lookup and that branch
+   skipped `assertWritableCandidateId`, so `review reject ../outside` printed
+   "Candidate not found" instead of raising `UnsafeCandidateIdError`. Nothing was
+   corrupted (a row is addressed by a bound parameter) — the diagnosis was wrong,
+   which is still a defect because it hides a caller error as a missing record.
+   `1deed03`
+
+A third property that survived and is now pinned on rows:
+**slug hardening** (`36b7898`). Traversal, separator, deep-traversal and oversized
+slugs are refused before anything is persisted. Mutation-verified: bypassing
+validation on the rows path turns 4 of 5 red while the safe round trip stays green.
+
 ### Probe: 1 store, 431 new failures (reverted)
 
 Made `events/store.ts` require a Stack and ran the suite.
