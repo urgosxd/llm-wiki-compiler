@@ -147,12 +147,34 @@ A `contract_decision` on `src/dimensions/types.ts@3`, carrying the optional
 I am not asking to rewrite the coordinator, and I am not asking for a branch merge.
 Approve the interface (or send `changes`) and I will implement only the `kg` side.
 
-## Also requested, unrelated to the version bump
+## Also requested, unrelated to the version bump: the harness RLS trap
 
-`test/fixtures/kg-postgres.ts` is in `sharedPaths`, so I cannot edit it. It
-connects as `aks`, which this session measured to be **SUPERUSER with BYPASSRLS**.
-That makes row-level security **inert** for every suite built on the fixture, so
-any RLS conclusion drawn through it without an explicit
-`set local role llmwiki_app` is unfounded. My suite works around it locally; the
-fixture should not require a workaround. Proposal: add a documented
-`asAppRole()` helper to the fixture so the safe path is the default one.
+`test/fixtures/kg-postgres.ts` is `shared-read-only` for this role. It connects as
+`aks`, which this session measured to be **SUPERUSER with BYPASSRLS**. Row-level
+security is therefore **inert** for every suite built on that fixture, so any
+isolation conclusion drawn through it without an explicit `set local role` is
+unfounded. The danger is specific: the unsafe path does not fail, it *passes*, and
+reads as proof of the tenancy guarantee.
+
+### What I did inside my own scope
+
+Because the hook refuses the fixture edit, I built the safe path in the surface I
+do own rather than working around the contract:
+
+- `test/dimensions/kg-runtime-app-role.ts` — `asAppRole()`, which drops to
+  `llmwiki_app` inside a transaction, plus `connectionBypassesRls()`, which probes
+  `rolbypassrls or rolsuper` on the live connection.
+- `test/dimensions/kg-runtime-rls-trap.test.ts` — pins the trap as measured fact:
+  the fixture's connection **does** bypass RLS, a cross-tenant write **is accepted**
+  there (the trap, stated as behaviour), and the same write **is refused** with
+  SQLSTATE 42501 under the helper.
+
+Both suites pass (7 tests). The guard is falsifiable: if the fixture is later
+connected as the app role, the first two cases fail and point at the cause.
+
+### What is still needed from the integration role
+
+Add an equivalent helper to `test/fixtures/kg-postgres.ts` and expose it on
+`KgPostgresHarness`, so the safe path is the DEFAULT rather than something each
+suite must remember. My module is a correct workaround, not the right home: a
+shared fixture should not depend on one feature role's test directory.

@@ -48,11 +48,21 @@ import { sql } from "drizzle-orm";
 import { createClient, createDatabase } from "llmwiki-kg";
 
 import { DATABASE_URL, createKgPostgresHarness } from "../fixtures/kg-postgres.js";
+import {
+  asAppRole as runAsAppRole,
+  sqlStateOf,
+  type AppRoleExecutor,
+} from "./kg-runtime-app-role.js";
 
 const harness = await createKgPostgresHarness("kg-runtime-xdim-tx");
 
-/** Minimal executor shape both drizzle and a transaction handle satisfy. */
-type Executor = { execute: (query: ReturnType<typeof sql>) => Promise<unknown[]> };
+/**
+ * Executor shape the insertion helpers below accept.
+ *
+ * An ALIAS of the shared {@link AppRoleExecutor} rather than a local twin, so the
+ * helpers accept exactly what `asAppRole` hands them and the two cannot drift.
+ */
+type Executor = AppRoleExecutor;
 
 /**
  * Is the environment able to answer the question at all?
@@ -97,18 +107,16 @@ function uniqueSlug(label: string): string {
 /**
  * Run `work` as the production application role inside ONE transaction.
  *
- * `set local role` is transaction-scoped, so it cannot leak onto the pooled
- * connection the harness hands back — a leaked role change would silently alter
- * every later statement in the suite.
+ * Thin binding of the SHARED helper (`kg-runtime-app-role.ts`), which owns the
+ * `set local role` scope rule and the reasoning behind it. Bound to one argument
+ * here so every call site below reads as `asAppRole(fn)` instead of threading the
+ * harness through each one.
  *
  * @param work - Statements to run under the app role.
  * @returns Whatever `work` produced, after COMMIT.
  */
 function asAppRole<T>(work: (tx: Executor) => Promise<T>): Promise<T> {
-  return harness.db.transaction(async (tx) => {
-    await tx.execute(sql`set local role llmwiki_app`);
-    return work(tx as unknown as Executor);
-  });
+  return runAsAppRole(harness, work);
 }
 
 /** Write one page row into `wiki.pages` for the harness stack (the wiki dimension). */
@@ -172,26 +180,6 @@ async function createForeignStack(): Promise<string> {
  */
 async function dropForeignStack(id: string): Promise<void> {
   await harness.db.execute(`delete from stacks where id = '${id}'`).catch(() => undefined);
-}
-
-/**
- * Walk an error's `cause` chain looking for a Postgres SQLSTATE code.
- *
- * Drizzle re-throws driver failures as a generic wrapper, so the actionable
- * information lives one level down. Returning `undefined` (rather than throwing)
- * lets a caller assert the ABSENCE of a code as clearly as its presence.
- *
- * @param error - Whatever a rejected statement produced.
- * @returns The SQLSTATE (e.g. `"42501"`), or `undefined` when none is present.
- */
-function sqlStateOf(error: unknown): string | undefined {
-  let current: unknown = error;
-  for (let depth = 0; depth < 8 && current !== null && typeof current === "object"; depth += 1) {
-    const code = (current as { code?: unknown }).code;
-    if (typeof code === "string" && code !== "") return code;
-    current = (current as { cause?: unknown }).cause;
-  }
-  return undefined;
 }
 
 describe.skipIf(!provisioned)("one transaction across the kg and wiki dimensions", () => {
