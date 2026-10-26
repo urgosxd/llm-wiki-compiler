@@ -17,6 +17,9 @@ import { readEvents } from "../src/events/store-read.js";
 import {
   EXP, IDEA, relationsProfile, makeRelationsRoot, cleanupRoot, readChainVerified, createTestRelationEvent,
 } from "./fixtures/event-audit-fixture.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
+
+useStackEnv("rows-subset");
 
 let root = "";
 beforeEach(async () => { root = await makeRelationsRoot("evt-audit-"); });

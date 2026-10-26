@@ -29,6 +29,9 @@ import {
   activatedProject, verticalService,
   VERTICAL_ACTION_ID, VERTICAL_ALIAS_TOKEN, VERTICAL_WORKSPACE_ID,
 } from "./product-vertical-fixture.js";
+import { useStackEnv } from "../fixtures/stack-env.js";
+
+useStackEnv("rows-subset");
 
 /** The caller input both invocation forms declare, so only the NAME differs. */
 const INPUT = { topic: "superconductivity" } as const;

@@ -18,6 +18,9 @@ import { parseSha256Digest } from "../../src/capability-providers/ids.js";
 import { acquireMutationLockBlocking } from "../../src/operation-bundles/lock-gate.js";
 import { releaseLock } from "../../src/utils/lock.js";
 import { activatedProject, buildVerticalProduct, gatedVerticalPack, verticalService, VERTICAL_ACTION_ID, VERTICAL_WORKSPACE_ID } from "./product-vertical-fixture.js";
+import { useStackEnv } from "../fixtures/stack-env.js";
+
+useStackEnv("rows-subset");
 
 const PARENT_RUN_ID = "journey-2026-08-29-e2e";
 const WF_DIGEST = "ab".repeat(32);

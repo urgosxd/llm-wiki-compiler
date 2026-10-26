@@ -23,6 +23,9 @@ import {
 } from "../src/utils/pending-embeddings.js";
 import { mockEmbeddingSuccess } from "./fixtures/embedding-success.js";
 import { makeTrustRoot, cleanupTrustRoot } from "./trust/fixture.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
+
+useStackEnv("rows-subset");
 
 const PENDING_A = "concepts/alpha";
 const PENDING_B = "concepts/beta";

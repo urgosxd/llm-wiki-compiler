@@ -35,6 +35,9 @@ import type { ProductInvokeResultV1 } from "../../src/products/service.js";
 import {
   activatedProject, verticalService, VERTICAL_ACTION_ID, VERTICAL_WORKSPACE_ID,
 } from "./product-vertical-fixture.js";
+import { useStackEnv } from "../fixtures/stack-env.js";
+
+useStackEnv("rows-subset");
 
 type IntentModule = typeof import("../../src/operations-packs/handlers/intent-compile.js");
 

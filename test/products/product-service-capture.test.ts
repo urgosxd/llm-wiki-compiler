@@ -37,6 +37,9 @@ import {
   undeclaredTargetVerticalPack, verticalClock, verticalService,
   VERTICAL_ACTION_ID, VERTICAL_CLOCK_YEAR, VERTICAL_WORKSPACE_ID,
 } from "./product-vertical-fixture.js";
+import { useStackEnv } from "../fixtures/stack-env.js";
+
+useStackEnv("rows-subset");
 
 /** One invocation request whose nested input record the caller still owns. */
 function requestFor(topic: string): ProductInvocationRequestV1 {
