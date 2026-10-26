@@ -267,7 +267,7 @@ fork a duplicate on the next ingest. It does not, and there is now a test saying
 - **Must not**: rename the `stacks` table, or rename `DimensionName` ("wiki" stays
   the name of the SOURCE dimension even though its backend changed).
 
-#### T4 — Advisory lock for L3 mutual exclusion
+#### T4 — Advisory lock for L3 mutual exclusion — **CLOSED (2026-02), see below**
 
 - **Seams**: `src/utils/lock.ts` (4 exports: `acquireLock`, `acquireLockBlocking`,
   `releaseLock`, `LockBusyError`) and **52 source callers**.
@@ -283,6 +283,89 @@ fork a duplicate on the next ingest. It does not, and there is now a test saying
   not reproduce.
 - **Must not**: delete a test to make the suite green. A deleted assertion is a lost
   requirement, not a passing build.
+
+##### T4 closed — the decision was already made by the mechanism (2026-02)
+
+T4 did not start from zero: **W2.1 (`e12c663`) had already shipped** the advisory
+lock behind the unchanged four signatures, with the file lock as the fallback for a
+project with no Stack. What this document still listed as open was the liveness
+decision. It is not open, and no human choice is needed, because the question it
+posed was answered by measurement.
+
+**The liveness question.** The document offered two options: a `lock_holder` table
+with `heartbeat_at`, or accepting that a crashed holder blocks until timeout.
+Measured with a real `SIGKILL` against a live database:
+
+```
+PROBE while child alive -> BLOCKED     (a live holder excludes others)
+PROBE after SIGKILL     -> ACQUIRED    (Postgres drops the lock with the session)
+```
+
+A session-scoped advisory lock is RELEASED BY THE SERVER when its session dies.
+Neither option is required: there is no heartbeat to add and no timeout to wait out.
+
+**What that costs, stated plainly.** The file protocol answered a question an
+advisory lock does not: "is the holder alive or a corpse?" It could because the
+holder was a PID on the same machine. An advisory lock cannot answer it and does not
+need to — the SERVER knows, and acts. The consequence is a real semantic change that
+the six adversarial suites below encode the OLD answer to: a crashed holder now
+frees the lock immediately instead of being classified, and a crashed holder is not
+distinguishable from a released one. That is accepted, not overlooked.
+
+**A false result worth recording.** The first probe reported `STILL BLOCKED` after
+`SIGKILL`. It was wrong: it killed the `npx` WRAPPER, leaving the node child alive
+and still holding the connection (three orphan processes were found afterwards).
+Re-run killing the child's own reported PID, it reported `ACQUIRED`. A cross-process
+lock probe that kills the wrong process proves nothing positive — it agrees with the
+hypothesis that nothing was released.
+
+**Verification (all green, database live):**
+
+| Suite group | Result |
+|---|---|
+| The six adversarial suites named above | 6 files / **43 tests** |
+| The Postgres path + confinement + identity suites | 8 files / **37 tests** |
+| `lock-postgres-crossprocess` | 1 test, real spawned child excluded |
+
+**Must-not honoured:** no test was deleted or softened. All six adversarial suites
+pass unchanged, because they exercise the FILE path, which is still exactly what it
+was — the fallback for a project with no Stack.
+
+##### Open defect found while closing T4 — NOT fixed, recorded here
+
+The lock is keyed by **path**, not by Stack:
+
+```ts
+// src/utils/lock.ts:161
+const lockKey = await realpath(root).catch(() => path.resolve(root));
+```
+
+Measured with two different checkout directories and ONE Stack id:
+
+```
+PROBE same Stack, two hosts -> A: true B: true
+PROBE verdict -> BOTH ACQUIRED: the lock is per-PATH, not per-Stack
+```
+
+**Why this matters more than it looks.** `lock-postgres.ts` justifies the whole
+migration as "visibility across machines ... two hosts sharing one Stack each held
+the lock on their own disk and could compile concurrently". Two hosts have different
+paths, so the key differs, so both acquire. The property that motivated W2.1 is
+still not delivered: an advisory lock keyed by path reproduces the file lock's
+defect with more steps.
+
+**Not fixed here** because it changes the identity every one of the 52 callers
+serializes on, which is a contract decision rather than a defect fix, and because
+the human chose to close T4 on evidence. Candidate fix: key on the Stack id when one
+is configured, and on the resolved path only for the file fallback.
+
+**A second, smaller observation.** `databaseUrlFor` (`lock.ts:191`) requires
+`AKS_STACK_ID` *and* a non-empty `AKS_DATABASE_URL`, but `config.ts` already defaults
+the DSN. So a Stack-configured project that never sets `AKS_DATABASE_URL` silently
+falls back to the FILE lock — the one path W2.1 was meant to replace. This is
+deliberate per the doc comment ("gated on AKS_STACK_ID rather than the DSN alone"),
+but the effect is worth stating: with a Stack and no explicit DSN, the lock stays
+local, which is the failure mode the migration exists to remove.
 
 #### T5 — Journal as a table (the risky one)
 
