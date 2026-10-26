@@ -25,7 +25,8 @@ import { readFile, realpath } from "fs/promises";
 import path from "path";
 import { listSelectedSourceEntries } from "../sources/scan.js";
 import { countCandidates } from "../compiler/candidates.js";
-import { readStateClassified, isPlainObject } from "../utils/state.js";
+import { isPlainObject } from "../utils/state.js";
+import { readStateClassifiedFor } from "../dimensions/wiki/page-source-seam.js";
 import type { ClassifiedState } from "../utils/state.js";
 import { collectViewerPages, decorateEntityPages, resolveBareSlugList } from "./collect.js";
 import { extractWikilinkSlugs } from "../wiki/collect.js";
@@ -65,7 +66,7 @@ export async function buildViewerSnapshot(root: string): Promise<ViewerSnapshot>
   const [defaultPages, classified, pendingReviews, sourceFilenames, index, typed] =
     await Promise.all([
       withRawPageSource(root, process.env, (source) => collectViewerPages(root, source)),
-      readStateClassified(root),
+      readStateClassifiedFor(root),
       countCandidates(root),
       listSelectedSourceEntries(root),
       readIndexFile(root),

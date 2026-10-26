@@ -16,7 +16,7 @@ import {
   withPageSource,
 } from "@atomicstrata/llmwiki-core/compiler-cli";
 import type { PageDirectory } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { readStateClassified } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { readStateClassifiedFor } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { loadPreviousReport, loadHistory } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { listSelectedSourceFiles } from "@atomicstrata/llmwiki-core/compiler-cli";
 
@@ -98,11 +98,11 @@ function registerStateResource(server: McpServer, root: string): void {
     "llmwiki://state",
     {
       title: "Compilation State",
-      description: "Per-source hashes, concepts, and last compile times from .llmwiki/state.json.",
+      description: "Per-source hashes, concepts, and last compile times from the compile state.",
       mimeType: "application/json",
     },
     async (uri) => {
-      const { status, state } = await readStateClassified(root);
+      const { status, state } = await readStateClassifiedFor(root);
       // Fail closed on a too-new state: every sibling surface branches on
       // `status`, so the resource must too rather than streaming a body written
       // by a newer llmwiki as if it were healthy. "ok"/"missing"/"corrupt" keep

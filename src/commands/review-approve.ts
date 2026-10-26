@@ -55,7 +55,7 @@ import { resolveAndApplyLinks } from "../compiler/resolver.js";
 import { repairAndApplyLinks } from "../compiler/link-repair.js";
 import { qualifiedPageId, type PageId } from "../utils/page-id.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
-import { readState, updateSourceState } from "../utils/state.js";
+import { readStateClassifiedFor, writeStateFor } from "../dimensions/wiki/page-source-seam.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import * as output from "../utils/output.js";
 import type { ReviewCandidate } from "../utils/types.js";
@@ -383,14 +383,20 @@ async function addApprovedSlugToSourceState(
   approvedSlug: string,
   sourceHash: string,
 ): Promise<void> {
-  const currentState = await readState(root);
+  // Read and write the SAME backend. Reading `state.json` while the compile
+  // persists to rows would merge the approved slug into a file nothing loads, and
+  // the next compile would re-derive the page as unapproved.
+  const { status, state: currentState } = await readStateClassifiedFor(root);
+  if (status === "too-new") return; // fail closed, as every sibling surface does
   const existing = currentState.sources[sourceFile];
   const concepts = existing?.concepts ?? [];
   const merged = Array.from(new Set([...concepts, approvedSlug]));
-  await updateSourceState(root, sourceFile, {
-    hash: sourceHash,
-    concepts: merged,
-    compiledAt: new Date().toISOString(),
+  await writeStateFor(root, {
+    ...currentState,
+    sources: {
+      ...currentState.sources,
+      [sourceFile]: { hash: sourceHash, concepts: merged, compiledAt: new Date().toISOString() },
+    },
   });
 }
 

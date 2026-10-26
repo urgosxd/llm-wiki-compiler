@@ -10,7 +10,7 @@ import type { FreshnessSnapshot, PageFreshness, PageFreshnessInput, FreshnessSta
 import { existsSync } from "fs";
 import { realpath } from "fs/promises";
 import path from "path";
-import { readStateClassified } from "../utils/state.js";
+import { readStateClassifiedFor } from "../dimensions/wiki/page-source-seam.js";
 import type { ClassifiedState } from "../utils/state.js";
 import { hashFile } from "../compiler/hasher.js";
 import { SOURCES_DIR } from "../utils/constants.js";
@@ -69,7 +69,7 @@ export async function buildFreshnessSnapshot(
   root: string,
   classified?: ClassifiedState,
 ): Promise<FreshnessSnapshot> {
-  const { status, state } = classified ?? (await readStateClassified(root));
+  const { status, state } = classified ?? (await readStateClassifiedFor(root));
   const sources: FreshnessSnapshot["sources"] = {};
   if (status === "ok") {
     const sourcesRoot = path.resolve(root, SOURCES_DIR);

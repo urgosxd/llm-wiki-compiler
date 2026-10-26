@@ -25,6 +25,9 @@ import { generateIndex } from "../../compiler/indexgen.js";
 import { generateMOC } from "../../compiler/obsidian.js";
 import { createPageListingSource, createPageRemoveSink, createPageWriteSink } from "./page-write-sink.js";
 import type { PageRemover, PageSink } from "../../trust/page-apply.js";
+import { readStateClassified, writeState, type StateStatus } from "../../utils/state.js";
+import type { WikiState } from "../../utils/types.js";
+import { readStateClassifiedFromRows, writeWikiStateToRows } from "./wiki-state-source.js";
 import { createRegistryPageSource } from "./page-registry-source.js";
 import type { RegistryPageSource } from "../../utils/page-registry.js";
 import {
@@ -234,4 +237,61 @@ export function resolvePageSeams(
     sink: createPageWriteSink(db as never, stackId),
     remover: createPageRemoveSink(db as never, stackId),
   };
+}
+
+/**
+ * Classify this environment's compile state, from rows when a Stack is configured.
+ *
+ * ONE function so the seven read-only callers do not each repeat the
+ * stack-check / open-handle / close-handle dance. Lives here rather than in
+ * `wiki-state-source.ts` because that module is reachable from the compile path,
+ * which must not pull the dimensions database into its graph — the same rule that
+ * governs every other seam in this file.
+ *
+ * @param root - Project root, used only by the file backend.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The status plus the carried state.
+ */
+export async function readStateClassifiedFor(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ status: StateStatus; state: WikiState }> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return readStateClassified(root);
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    return await readStateClassifiedFromRows(dimensionsDb.db, stackId);
+  } finally {
+    await dimensionsDb.close();
+  }
+}
+
+/**
+ * Persist this environment's compile state, to rows when a Stack is configured.
+ *
+ * The write half of {@link readStateClassifiedFor}, and it exists for the same
+ * reason: a caller that LOADS rows and SAVES a file duplicates the state on the
+ * next read — the file it wrote is never the one anything loads. `sources/removal`
+ * is exactly such a caller, which is why the pair lives together.
+ *
+ * @param root - Project root, used only by the file backend.
+ * @param state - The state to persist.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ */
+export async function writeStateFor(
+  root: string,
+  state: WikiState,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") {
+    await writeState(root, state);
+    return;
+  }
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    await writeWikiStateToRows(dimensionsDb.db, stackId, state);
+  } finally {
+    await dimensionsDb.close();
+  }
 }

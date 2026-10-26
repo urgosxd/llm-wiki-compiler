@@ -54,12 +54,11 @@ import {
 } from "./removal-plan.js";
 import { deleteWikiPagesLocked, type SkippedDelete } from "../wiki/delete-page.js";
 import {
-  readStateClassified,
-  writeState,
   removeSourceFrom,
   applyFrozenSlugs,
   StateTooNewError,
 } from "../utils/state.js";
+import { readStateClassifiedFor, writeStateFor } from "../dimensions/wiki/page-source-seam.js";
 import { collectAllPages } from "../linter/rules.js";
 import { listCandidates } from "../compiler/candidate-read.js";
 import { updateEmbeddingsLockedCore } from "../utils/embeddings.js";
@@ -130,7 +129,7 @@ function toSourceId(ref: string): string | null {
  *   than guess.
  */
 async function readStateFailClosed(root: string): Promise<WikiState> {
-  const classified = await readStateClassified(root);
+  const classified = await readStateClassifiedFor(root);
   if (classified.status === "too-new") {
     throw new StateTooNewError(classified.state.version as number);
   }
@@ -305,7 +304,7 @@ export async function applyRemovalLocked(root: string, plan: RemovalPlan): Promi
   const frozen = new Set(fresh.frozenSlugs ?? []);
   for (const slug of current.keptSlugs) frozen.add(slug);
   const next = applyFrozenSlugs(removeSourceFrom(fresh, plan.sourceFile), frozen);
-  await writeState(root, next);
+  await writeStateFor(root, next);
 
   return { deleted, skipped, sourceDeleted };
 }

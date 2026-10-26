@@ -99,7 +99,7 @@ export type { AppendRelationInput } from "./relations/store.js";
 export { pickSearchRefs, loadSelectedRefs } from "./search/retrieval.js";
 export { listSelectedSourceFiles } from "./sources/scan.js";
 export { collectStatus } from "./status/collect.js";
-export { withPageScan, withPageSource, withRegistrySource } from "./dimensions/wiki/page-source-seam.js";
+export { withPageScan, withPageSource, withRegistrySource, readStateClassifiedFor } from "./dimensions/wiki/page-source-seam.js";
 export type { PageDirectory } from "./pages/list.js";
 export type { TrustDecision } from "./trust/decision.js";
 export { readCappedNoFollow } from "./utils/confined-read.js";

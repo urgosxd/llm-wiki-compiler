@@ -9,7 +9,7 @@
 
 import { listSelectedSourceFiles } from "../sources/scan.js";
 import path from "path";
-import { readStateClassified } from "../utils/state.js";
+import { readStateClassifiedFor } from "../dimensions/wiki/page-source-seam.js";
 import { buildFreshnessSnapshot } from "../freshness/index.js";
 import { findAffectedSources } from "./deps.js";
 import { scanWikiPages } from "./indexgen.js";
@@ -145,7 +145,7 @@ export async function resolveStaleRefresh(
   root: string,
   scanSource?: PageScanSource,
 ): Promise<RefreshResolution> {
-  const classified = await readStateClassified(root);
+  const classified = await readStateClassifiedFor(root);
   if (classified.status !== "ok") {
     return { stateStatus: classified.status, plan: null };
   }

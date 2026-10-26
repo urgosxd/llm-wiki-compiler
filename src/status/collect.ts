@@ -19,7 +19,8 @@ import {
   type PageScanSource,
 } from "../dimensions/wiki/page-scan-source.js";
 import { countCandidates } from "../compiler/candidates.js";
-import { readStateClassified, isPlainObject } from "../utils/state.js";
+import { isPlainObject } from "../utils/state.js";
+import { readStateClassifiedFor } from "../dimensions/wiki/page-source-seam.js";
 import type { StateStatus } from "../utils/state.js";
 import { buildFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
@@ -202,7 +203,7 @@ export async function collectStatus(
   root: string,
   options: CollectStatusOptions = {},
 ): Promise<WikiStatus> {
-  const classified = await readStateClassified(root);
+  const classified = await readStateClassifiedFor(root);
   const snapshot = await buildFreshnessSnapshot(root, classified);
 
   const scan = options.pageScan;

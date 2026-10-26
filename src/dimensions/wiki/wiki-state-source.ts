@@ -37,7 +37,7 @@
 import { sql } from "drizzle-orm";
 import type { Database } from "llmwiki-kg";
 import type { WikiState, SourceState } from "../../utils/types.js";
-import { KNOWN_STATE_VERSION } from "../../utils/state.js";
+import { KNOWN_STATE_VERSION, type StateStatus } from "../../utils/state.js";
 import { readCompileConfig, writeCompileConfig } from "./compile-config-store.js";
 import { toArrayLiteral } from "./sql-array.js";
 
@@ -224,4 +224,53 @@ export function createWikiStateRowsBackend(
     read: () => readWikiStateFromRows(db, stackId),
     write: (state) => writeWikiStateToRows(db, stackId, state),
   };
+}
+
+/**
+ * Classify one Stack's state from rows, in the shape the read-only callers take.
+ *
+ * ## Why "missing" and "corrupt" still have meanings here
+ *
+ * Seven modules classify state and branch on the outcome — freshness, lint, the
+ * viewer, the MCP server, status, removal and the refresh planner. They share one
+ * vocabulary (`ok` / `missing` / `corrupt` / `too-new`) and it has to keep meaning
+ * something when the state is rows:
+ *
+ *   - **missing** — the Stack configured nothing at all. A fresh Stack. This is the
+ *     same answer `readStateClassified` gave for an absent file, so no caller needs
+ *     a new branch.
+ *   - **ok** — rows exist.
+ *   - **corrupt** — a source row whose `compiled_at` cannot be parsed. Rows cannot be
+ *     malformed JSON the way a file can, but they CAN hold a timestamp this build
+ *     cannot read, and reporting that as `ok` would let a poisoned row flow into
+ *     freshness arithmetic.
+ *   - **too-new** — currently unreachable from rows: the table has no version column,
+ *     because a Stack's rows are always migrated with the deployment that wrote them.
+ *     Kept in the union so callers written against the file path stay valid.
+ *
+ * @param db - Database handle.
+ * @param stackId - The Stack whose state to classify.
+ * @returns The status plus the carried state, matching `ClassifiedState`.
+ */
+export async function readStateClassifiedFromRows(
+  db: Database,
+  stackId: string,
+): Promise<{ status: StateStatus; state: WikiState }> {
+  let state: WikiState;
+  try {
+    state = await readWikiStateFromRows(db, stackId);
+  } catch {
+    // A read failure is CORRUPT rather than propagating: the file path also fails
+    // closed on an unreadable state, and a caller that threw here would break every
+    // read-only view of a Stack whose database blipped.
+    return { status: "corrupt", state: { version: KNOWN_STATE_VERSION, indexHash: "", sources: {} } };
+  }
+  const hasSources = Object.keys(state.sources).length > 0;
+  const hasConfig = state.frozenSlugs !== undefined
+    || state.frozenEntities !== undefined
+    || state.promptModifiers !== undefined;
+  if (!hasSources && !hasConfig) return { status: "missing", state };
+  // Every `compiledAt` was parsed by `readWikiStateFromRows`; an unparseable one
+  // throws there and was caught above as corrupt. So reaching here means readable.
+  return { status: "ok", state };
 }
