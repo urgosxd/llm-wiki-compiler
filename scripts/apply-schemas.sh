@@ -30,11 +30,23 @@ readonly CHECK_ONLY="${CHECK_ONLY:-false}"
 # Order matters. The knowledge-graph schema first because the wiki schema and the
 # migrations add tenant policies that assume `public.stacks` exists; the outbox and
 # embedding migrations last because they extend tables the earlier files create.
+# The wiki migrations that used to be applied by hand were MISSING from this list,
+# so a database built from this runner alone had no `wiki.compile_config`, no
+# `wiki.event_log`, no `wiki.relation_edges`, no `wiki.review_candidates`, and none
+# of the small marker tables -- while the developer machine had all of them, because
+# they had been pasted in manually. Every environment drifted silently and nothing
+# said so. A new stack (CI included) would come up missing tables that the code
+# already writes to.
 readonly SCHEMA_FILES=(
   "packages/llmwiki-kg/db/schema.sql"
   "packages/llmwiki-kg/db/migration_stack_ontology.sql"
   "packages/llmwiki-kg/db/migration_synthesize_descriptions.sql"
   "src/dimensions/wiki/schema.sql"
+  "src/dimensions/wiki/migration_wiki_sources.sql"
+  "src/dimensions/wiki/migration_wiki_compile_config.sql"
+  "src/dimensions/wiki/migration_wiki_graph.sql"
+  "src/dimensions/wiki/migration_wiki_candidates.sql"
+  "src/dimensions/wiki/migration_wiki_small_markers.sql"
   "packages/llmwiki-kg/db/migration_rls_tenancy.sql"
   "packages/llmwiki-kg/db/migration_ingest_outbox.sql"
   "src/dimensions/wiki/migration_page_embeddings.sql"
@@ -60,6 +72,12 @@ readonly REQUIRED_TENANT_TABLES=(
   "wiki.source_documents"
   "wiki.source_compile_state"
   "wiki.compile_config"
+  "wiki.event_log"
+  "wiki.relation_edges"
+  "wiki.review_candidates"
+  "wiki.embedding_refresh_marker"
+  "wiki.lint_cache"
+  "wiki.rule_extractor_state"
 )
 
 # Run psql against the target, using whatever invocation the environment provides.

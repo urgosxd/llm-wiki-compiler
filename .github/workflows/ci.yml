@@ -26,6 +26,36 @@ jobs:
     strategy:
       matrix:
         node-version: [24]
+    # The wiki stores its corpus, graph, candidates and compile state in Postgres,
+    # so a Stack-less project is on its way out. Dimension tests already skip when
+    # the harness is unreachable (`skipIf(!harnessReachable)`), which means running
+    # here WITHOUT a database does not fail loudly -- it silently drops that coverage
+    # while the job stays green. A service makes the coverage real instead of absent.
+    #
+    # Image is the pgvector build, not plain `postgres`: the embedding migrations
+    # create `vector` columns and a plain image would refuse them.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: aks
+          POSTGRES_PASSWORD: aks
+          POSTGRES_DB: aks
+        ports:
+          - 5432:5432
+        # Wait for readiness explicitly. Without a healthcheck the steps below can
+        # start against a socket that is not accepting yet, which reads as a flaky
+        # database rather than a race.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # One definition, read by both the schema runner and the tests, so the two can
+      # never drift onto different databases.
+      LLMWIKI_TEST_DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
+      AKS_DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,6 +77,13 @@ jobs:
           --dev /dev --proc /proc -- "$(command -v node)" --version
       - run: npm run release:check-docs
       - run: npm run build
+      # Build the schema from the same runner operators use, before any test needs
+      # it. If a migration is missing from the runner, this is where it shows up --
+      # `--check` asserts every tenant table exists AND enforces row-level security.
+      - name: Apply database schemas
+        run: ./scripts/apply-schemas.sh
+      - name: Verify tenant isolation is enforced
+        run: CHECK_ONLY=true ./scripts/apply-schemas.sh
       - run: npm test
       # Default tests exclude this fresh-install check. Exercise the shipped
       # facade, its exact workspace dependencies, and consumer declarations.
