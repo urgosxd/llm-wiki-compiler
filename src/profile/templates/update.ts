@@ -41,7 +41,7 @@ export interface TemplateUpdatePlan {
 }
 
 /** Plan a builtin update using an independently resolved installed release. */
-export async function planBuiltinTemplateUpdate(root: string, requestedId?: string): Promise<TemplateUpdatePlan> {
+async function planBuiltinTemplateUpdate(root: string, requestedId?: string): Promise<TemplateUpdatePlan> {
   const lockRead = await readTemplateLock(root);
   if (lockRead.kind !== "ok") throw new Error(`cannot plan update: template provenance is ${lockRead.kind}`);
   const lock = lockRead.lock;

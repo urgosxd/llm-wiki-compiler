@@ -39,7 +39,7 @@ export function advancePublisherPins(index: VerifiedTapIndex, prior: PublisherPi
 }
 
 /** Refuse packages or publisher keys revoked by any accepted snapshot. */
-export function assertPackageNotRevoked(state: PublisherPinState, digest: string, publisherKeyId: string): void {
+function assertPackageNotRevoked(state: PublisherPinState, digest: string, publisherKeyId: string): void {
   if (state.revokedPackages.includes(digest)) throw new Error("package digest is revoked");
   if (state.revokedPublisherKeys.includes(publisherKeyId)) throw new Error("publisher key is revoked");
 }

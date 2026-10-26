@@ -42,7 +42,7 @@ import path from "path";
 import { EVENTS_FILE, EVENTS_HEAD_FILE, MAX_EVENT_RECORD_BYTES, MAX_EVENT_STORE_BYTES } from "../utils/constants.js";
 import { assertOperationBinding, type OperationBinding } from "../utils/operation-binding.js";
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLockBlocking } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLockBlocking } from "../utils/mutation-lock.js";
 import { atomicWrite } from "../utils/markdown.js";
 import { ulid } from "../relations/ulid.js";
 import type { EventContent, EventId, EventRecord, EventType } from "./types.js";

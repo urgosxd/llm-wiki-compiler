@@ -190,7 +190,7 @@ async function checkGatedPageProvenance(root: string, page: ArtifactRefPageSourc
     const ref = parseArtifactRef(page.frontmatter[req.field]);
     if (req.executionProvenance === undefined || !ref || ref.artifactType !== req.artifactType) continue; // the pure pass reports those
     const slug = path.basename(page.filePath, ".md");
-    const verdict = await verifyExecutionProvenance(root, req.executionProvenance, slug, `sha256:${ref.sha256}`);
+    const verdict = await verifyExecutionProvenance(req.executionProvenance);
     if (verdict.verdict === "pass") continue;
     findings.push({
       rule: REQUIRED_ARTIFACT_UNPROVEN_RULE, severity: verdict.verdict === "deny" ? "error" : "warning",

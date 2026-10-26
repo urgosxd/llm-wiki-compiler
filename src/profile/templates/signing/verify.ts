@@ -122,7 +122,7 @@ export function verifyTapKeyRotation(
 }
 
 /** Verify one Ed25519 signature over already-selected canonical claim bytes. */
-export function verifyEd25519Signature(bytes: Buffer, signature: Ed25519Signature, key: PublisherKey, code: string): void {
+function verifyEd25519Signature(bytes: Buffer, signature: Ed25519Signature, key: PublisherKey, code: string): void {
   if (signature.algorithm !== "ed25519") refuse("algorithm", "only Ed25519 signatures are supported");
   if (signature.keyId !== key.keyId) refuse("wrong-key", "signature key id does not match its verification key");
   const publicKey = importEd25519PublicKey(key);

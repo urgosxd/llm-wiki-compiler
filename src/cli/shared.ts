@@ -16,7 +16,7 @@ import * as output from "../utils/output.js";
  * session's audit trail, and one group importing another's copy would drag that
  * group's whole import reach along with the constant.
  */
-export const CLI_OPERATOR_ID = "cli-operator";
+const CLI_OPERATOR_ID = "cli-operator";
 
 /**
  * Run one command's work with human output SUPPRESSED for `--json`.
@@ -32,7 +32,7 @@ export const CLI_OPERATOR_ID = "cli-operator";
  * @param work - The command's work, run inside the quiet scope.
  * @returns Whatever `work` resolves to.
  */
-export async function withQuietJson<T>(json: boolean, work: () => Promise<T>): Promise<T> {
+async function withQuietJson<T>(json: boolean, work: () => Promise<T>): Promise<T> {
   if (!json) return work();
   output.setQuiet(true);
   try {

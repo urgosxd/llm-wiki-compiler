@@ -40,7 +40,7 @@ export async function addTap(paths: TapPaths, input: { name: string; indexUrl: s
 }
 
 /** Disable a tap while retaining every root, pin, revocation, and coordinate. */
-export async function removeTap(paths: TapPaths, name: string): Promise<TapSummary> {
+async function removeTap(paths: TapPaths, name: string): Promise<TapSummary> {
   assertSlug(name, "tap name");
   return withTapStateLock(paths, async () => {
     const state = await readTapState(paths);
@@ -53,7 +53,7 @@ export async function removeTap(paths: TapPaths, name: string): Promise<TapSumma
 }
 
 /** Permanently delete one tap's roots and continuity after explicit consent. */
-export async function forgetTap(paths: TapPaths, name: string, confirmed: boolean): Promise<void> {
+async function forgetTap(paths: TapPaths, name: string, confirmed: boolean): Promise<void> {
   assertSlug(name, "tap name");
   if (!confirmed) throw new Error("tap forget requires --yes because it permanently deletes trust history");
   await withTapStateLock(paths, async () => {
@@ -66,7 +66,7 @@ export async function forgetTap(paths: TapPaths, name: string, confirmed: boolea
 }
 
 /** List configured taps without exposing raw key bytes. */
-export async function listTaps(paths: TapPaths): Promise<TapSummary[]> {
+async function listTaps(paths: TapPaths): Promise<TapSummary[]> {
   const state = await readTapState(paths);
   const warnings = tapStateCapacityWarnings(state);
   return Object.values(state.taps).map((source) => summarize(source, warnings.filter((item) => item.startsWith(source.name) || item.startsWith("operator "))))

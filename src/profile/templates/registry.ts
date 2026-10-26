@@ -22,7 +22,7 @@ const BUILTIN_TEMPLATE_RELEASES: readonly ProfileTemplatePackage[] = [
 ];
 
 /** List inspectable builtin template summaries. */
-export function listBuiltinTemplates(): readonly ProfileTemplateSummary[] {
+function listBuiltinTemplates(): readonly ProfileTemplateSummary[] {
   return [
     DEFAULT_TEMPLATE_SUMMARY,
     ...latestBuiltinTemplates().map(summaryFor),
@@ -46,7 +46,7 @@ export function getBuiltinTemplateRelease(
 }
 
 /** Whether profile bytes exactly match the implicit default or a shipped release. */
-export function isShippedBuiltinProfile(profile: ProfilePack): boolean {
+function isShippedBuiltinProfile(profile: ProfilePack): boolean {
   const digest = profileDigest(profile);
   if (digest === profileDigest(DEFAULT_PROFILE)) return true;
   return BUILTIN_TEMPLATE_RELEASES.some((release) => profileDigest(release.profile) === digest);
@@ -109,7 +109,7 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
 }
 
 /** Build one user-facing summary from a package. */
-export function summaryFor(template: ProfileTemplatePackage): ProfileTemplateSummary {
+function summaryFor(template: ProfileTemplatePackage): ProfileTemplateSummary {
   return {
     templateId: template.templateId,
     profileId: template.profile.profileId,

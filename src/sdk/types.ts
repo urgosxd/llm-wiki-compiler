@@ -4,6 +4,5 @@
  */
 export type * from "@atomicstrata/llmwiki-core/compiler-sdk";
 import type { WikiCore } from "@atomicstrata/llmwiki-core/compiler-sdk";
-import type { WikiWorkflow } from "./workflow-types.js";
 
-export interface Wiki extends WikiCore, WikiWorkflow {}
+export interface Wiki extends WikiCore {}

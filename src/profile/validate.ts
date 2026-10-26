@@ -663,7 +663,7 @@ function validateConnectors(profile: ProfilePack): void {
  * `validateProfile`. Non-mutating: clones the input and returns the canonical
  * clone.
  */
-export function validateProfileShape(raw: unknown): ProfileValidationResult {
+function validateProfileShape(raw: unknown): ProfileValidationResult {
   assertStructurallyValid(raw);
   const profile = structuredClone(raw) as ProfilePack;
   rejectInheritance(profile);

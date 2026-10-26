@@ -9,7 +9,7 @@ import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import { qualifiedPageId, type PageId } from "../utils/page-id.js";
 import { refreshAfterImport } from "./okf-refresh.js";
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { withQuiet } from "../utils/output.js";
 import { LockUnavailableError, QueueFullError } from "./run-errors.js";
 import { buildBundleSections, type BundleReportSections, type ParsedBundleBlock } from "./bundle-block-read.js";

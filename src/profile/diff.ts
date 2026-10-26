@@ -26,7 +26,7 @@ import { profileDigest } from "./digest.js";
 import type { ProfilePack, EntityTypeDef } from "./types.js";
 
 /** The six dispositions, ordered low → high priority for the lattice. */
-export const DISPOSITIONS = [
+const DISPOSITIONS = [
   "unchanged",
   "newly-supported",
   "deprecated",

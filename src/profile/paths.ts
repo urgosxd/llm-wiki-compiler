@@ -20,7 +20,7 @@ import path from "path";
 const WIKI_ROOT = "wiki";
 
 /** Error raised when a profile declares a structurally invalid directory. */
-export class ProfilePathError extends Error {
+class ProfilePathError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ProfilePathError";

@@ -11,7 +11,7 @@
 import path from "node:path";
 import { atomicWrite } from "../utils/markdown.js";
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { readConfinedLeaf } from "../utils/confined-read.js";
 import type { ConnectorRuntimeConfig } from "./config.js";
 import type { RunConnectorResult } from "./run.js";

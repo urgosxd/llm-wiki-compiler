@@ -59,7 +59,7 @@
  */
 
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { atomicWrite } from "../utils/markdown.js";
 import { openBatch, commitBatch, replayJournal, type JournalBatch } from "./journal.js";
 import { type ApplyResult, CrossStoreBatchUnsupportedError } from "./apply-result.js";

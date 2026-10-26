@@ -34,18 +34,11 @@ import { setVerbose } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { parseConcurrencyFlag } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { ENV_VERBOSE } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { runExitCodeCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { registerStateCommands } from "./cli/state-commands.js";
 import { registerSchemaCommands } from "./cli/schema-commands.js";
-import { registerProfileCommands } from "./cli/profile-commands.js";
-import { registerTemplateCommands } from "./cli/template-commands.js";
 import { registerArtifactCommands } from "./cli/artifact-commands.js";
 import { registerReviewCommands } from "./cli/review-commands.js";
 import { registerEvalCommands } from "./cli/eval-commands.js";
-import { registerWorkflowCommands } from "./cli/workflow-commands.js";
 import { registerConnectorCommands } from "./cli/connector-commands.js";
-import { registerOperationCommands } from "./cli/operation-commands.js";
-import { registerProductCommands } from "./cli/product-commands.js";
-import { registerPreparationCommands } from "./cli/preparation-commands.js";
 import { addProviderOption, applyProviderOption, type ProviderOption } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { loadCliEnvironment } from "./cli/environment.js";
 
@@ -215,7 +208,6 @@ addProviderOption(program.command("refresh").description("Recompile only stale/c
 
 registerReviewCommands(program);
 
-registerStateCommands(program);
 
 program
   .command("recover")
@@ -326,18 +318,12 @@ registerEvalCommands(program);
 
 registerSchemaCommands(program);
 
-registerProfileCommands(program);
 
-registerTemplateCommands(program);
 
-registerWorkflowCommands(program);
 
 registerArtifactCommands(program);
 
 registerConnectorCommands(program);
-registerOperationCommands(program);
-registerProductCommands(program);
-registerPreparationCommands(program);
 
 program
   .command("export")

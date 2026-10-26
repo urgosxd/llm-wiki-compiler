@@ -29,10 +29,6 @@
       "types": "./dist/compiler-cli.d.ts",
       "import": "./dist/compiler-cli.js"
     },
-    "./compiler-legacy-workflows": {
-      "types": "./dist/compiler-legacy-workflows.d.ts",
-      "import": "./dist/compiler-legacy-workflows.js"
-    },
     "./compiler-sdk": {
       "types": "./dist/compiler-sdk.d.ts",
       "import": "./dist/compiler-sdk.js"
@@ -40,14 +36,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./local-workflow-host": {
-      "types": "./dist/local-workflow-host.d.ts",
-      "import": "./dist/local-workflow-host.js"
-    },
-    "./local-workflow-contracts": {
-      "types": "./dist/local-workflow-contracts.d.ts",
-      "import": "./dist/local-workflow-contracts.js"
     },
     "./package.json": "./package.json"
   },

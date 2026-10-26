@@ -45,7 +45,7 @@ import {
 } from "../sources/removal.js";
 import type { SkippedDelete } from "../wiki/delete-page.js";
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import * as output from "../utils/output.js";
 
 /** Options for {@link rmCommand}. */

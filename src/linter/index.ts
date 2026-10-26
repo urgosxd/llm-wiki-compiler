@@ -23,7 +23,6 @@ import {
 } from "./rules.js";
 import { checkJournalHealth } from "./journal-rule.js";
 import { checkPendingEmbeddings } from "./pending-embeddings-rule.js";
-import { checkWorkflowRunHealth } from "./workflow-run-rule.js";
 import { loadSchema } from "../schema/index.js";
 import { buildFreshnessSnapshot } from "../freshness/index.js";
 import type { FreshnessSnapshot } from "../freshness/types.js";
@@ -58,7 +57,6 @@ const RULES_WITHOUT_SCHEMA: ReadonlyArray<{ rule: LintRule; tier: LintTierV1 }> 
   { rule: checkJournalHealth, tier: "deterministic" },
   // Embeddings not yet computed: a derived view is behind, nothing is wrong.
   { rule: checkPendingEmbeddings, tier: "derived-view" },
-  { rule: checkWorkflowRunHealth, tier: "deterministic" },
 ];
 
 /** Lint rules that need the resolved schema to know per-kind expectations. */

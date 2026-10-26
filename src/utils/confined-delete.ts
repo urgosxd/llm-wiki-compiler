@@ -44,7 +44,7 @@ export async function unlinkConfinedLeafDurable(root: string, leaf: string, expe
  * examined is `redirected`, because treating an unreadable path as "not there yet"
  * would let a permission fault turn into permission to create and write through it.
  */
-export async function isConfinedDirectory(root: string, dir: string): Promise<"confined" | "absent" | "redirected"> {
+async function isConfinedDirectory(root: string, dir: string): Promise<"confined" | "absent" | "redirected"> {
   const leaf = await lstatLeaf(dir);
   if (leaf.kind === "absent") return "absent";
   if (leaf.kind !== "present" || !leaf.stats.isDirectory() || leaf.stats.isSymbolicLink()) return "redirected";
@@ -60,7 +60,7 @@ export async function isConfinedDirectory(root: string, dir: string): Promise<"c
  * reads as empty through `readdir` and `rmdir` would then fail — after the caller had
  * already committed earlier steps.
  */
-export async function rmdirConfinedDurable(root: string, dir: string, expectedParent: string): Promise<void> {
+async function rmdirConfinedDurable(root: string, dir: string, expectedParent: string): Promise<void> {
   const canonicalParent = await resolveExpectedReal(root, expectedParent);
   const parentReal = await realpath(path.dirname(dir)).catch(() => null);
   if (canonicalParent === null || parentReal === null || parentReal !== canonicalParent) {

@@ -8,7 +8,6 @@ import { readEvents } from "../../events/store-read.js";
 import { readRelations } from "../../relations/store-read.js";
 import { CANDIDATES_ARCHIVE_DIR, CANDIDATES_DIR } from "../../utils/constants.js";
 import { confineUnderRoot } from "../../utils/path-confine.js";
-import { listRuns } from "../../workflow-history/store.js";
 import type { LoadedProfile, ProfilePack } from "../types.js";
 
 /** Result of checking whether a profile install can reinterpret no existing typed data. */
@@ -23,7 +22,6 @@ export async function isTypedCorpusEmpty(root: string, loaded: LoadedProfile, ta
   await collectEntityPageReasons(root, [loaded.profile, target], reasons);
   await collectRelationReasons(root, reasons);
   await collectArtifactReasons(root, reasons);
-  await collectWorkflowReasons(root, reasons);
   await collectCandidateReasons(root, reasons);
   await collectEventReasons(root, reasons);
   return { empty: reasons.length === 0, reasons };
@@ -73,14 +71,6 @@ async function collectCandidateReasons(root: string, reasons: string[]): Promise
   }
 }
 
-async function collectWorkflowReasons(root: string, reasons: string[]): Promise<void> {
-  const runs = await listRuns(root);
-  if (runs.status === "unavailable") {
-    reasons.push(`workflow run store is unreadable or unsafe: ${runs.detail}`);
-    return;
-  }
-  if (runs.runIds.length > 0) reasons.push("workflow runs exist");
-}
 
 async function collectArtifactReasons(root: string, reasons: string[]): Promise<void> {
   const result = await firstFileUnder(root, "artifacts");

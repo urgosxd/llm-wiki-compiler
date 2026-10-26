@@ -75,7 +75,7 @@ const MAX_SIGNALABLE_PID = 2147483647;
  * defended by an argument — and the two consumers, which want opposite fail
  * directions for an unknown code, no longer have to be reasoned about separately.
  */
-export function isSignalablePid(pid: number): boolean {
+function isSignalablePid(pid: number): boolean {
   return Number.isInteger(pid) && pid > 0 && pid <= MAX_SIGNALABLE_PID;
 }
 

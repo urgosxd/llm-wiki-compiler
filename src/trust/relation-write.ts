@@ -23,7 +23,7 @@
  */
 
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLockBlocking } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLockBlocking } from "../utils/mutation-lock.js";
 import { type AppendRelationInput } from "../relations/store.js";
 import { applyApprovedMutationsLocked } from "./executor.js";
 import { loadNonDefaultProfile } from "../profile/block.js";

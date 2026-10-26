@@ -24,7 +24,7 @@ import {
   slugify,
 } from "../utils/markdown.js";
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import {
   parseConcepts,
 } from "./prompts.js";

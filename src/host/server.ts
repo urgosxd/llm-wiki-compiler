@@ -43,6 +43,7 @@
  * performance choice — a reloaded snapshot would authorize serving bytes that
  * changed after startup.
  */
+import { tryWithOrdinaryMutationLock } from "../utils/mutation-lock.js";
 import http from "node:http";
 import { listenOn } from "../utils/http-listen.js";
 import type { AddressInfo } from "node:net";
@@ -63,8 +64,6 @@ import {
   resolveStackId,
   type ReconcileOutcome,
 } from "../dimensions/index.js";
-import { tryWithOrdinaryMutationLock } from "../operation-bundles/with-mutation-lock.js";
-import type { ViewerDeps } from "../viewer/workflow-run-projection.js";
 
 /** Default port when the caller does not pin one. `0` asks the OS for a free port. */
 const DEFAULT_HOST_PORT = 4173;
@@ -80,7 +79,7 @@ export interface HostOptions {
   /** Bind port; `0` lets the OS pick one. */
   readonly port?: number;
   /** Viewer collaborator overrides, passed straight through. */
-  readonly viewerDeps?: ViewerDeps;
+  readonly viewerDeps?: Record<string, unknown>;
   /**
    * Mount the graph sub-app.
    *
@@ -210,7 +209,7 @@ function createDispatcher(
 function tenantViewerFactory(
   host: string,
   portHolder: { port?: number },
-  deps: ViewerDeps,
+  deps: Record<string, unknown>,
 ) {
   // `deps` is threaded through for the same reason as the default viewer: a product
   // operator injects one, and a tenant silently losing it would serve a different

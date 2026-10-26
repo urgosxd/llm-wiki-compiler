@@ -12,7 +12,7 @@
 
 import { appendEventLocked, preflightEventAppend, type AppendEventInput } from "../events/store.js";
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { MAX_CONNECTOR_URL_BYTES } from "./confined-fetch.js";
 import {
   assertConnectorCandidateBatchCount,

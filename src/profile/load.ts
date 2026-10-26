@@ -206,7 +206,7 @@ async function assertPrivateDirNotConfinementFault(root: string): Promise<void> 
  * @throws {ProfileLoadError} When the legacy `profile.json` is present but broken/confined.
  */
 export async function loadProfile(root: string): Promise<LoadedProfile> {
-  const resolution = await resolveActiveProduct(root);
+  const resolution = await resolveActiveProduct();
   if (resolution.mode === "legacy") return loadLegacyProfile(root);
   if (resolution.mode === "product") return resolution.loaded;
   if (resolution.mode === "conflict") throw new ProductAuthorityConflictError();

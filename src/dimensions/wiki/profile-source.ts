@@ -68,7 +68,7 @@ export async function withProfileSource<T>(
  * @param filePresent - Whether the legacy `profile.json` exists.
  * @returns True when either backend holds a profile.
  */
-export async function profileExistsAnywhere(
+async function profileExistsAnywhere(
   env: NodeJS.ProcessEnv,
   filePresent: boolean,
 ): Promise<boolean> {

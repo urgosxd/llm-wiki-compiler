@@ -28,7 +28,7 @@ export interface RemoteTemplateUpdatePlan extends TemplateUpdatePlan {
 }
 
 /** Parse a complete remote lock and require all identity fields to agree. */
-export function remoteCoordinateFromLock(lock: TemplateLockV2): TemplateCoordinate {
+function remoteCoordinateFromLock(lock: TemplateLockV2): TemplateCoordinate {
   if (!lock.remote) throw new Error("remote template provenance is missing");
   const coordinate = parseTemplateCoordinate(lock.remote.coordinate);
   if (coordinate.tap !== lock.remote.tap
@@ -54,7 +54,7 @@ export function remoteProvenanceForResolved(resolved: ResolvedRemotePackage): Re
 }
 
 /** Produce a read-only remote update plan from independently verified releases. */
-export async function planRemoteTemplateUpdate(
+async function planRemoteTemplateUpdate(
   root: string,
   paths: TapPaths,
   toVersion: string,

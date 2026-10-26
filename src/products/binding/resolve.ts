@@ -1,86 +1,39 @@
 /**
  * @file src/products/binding/resolve.ts
- * @description Classify a project's runtime mode from its active-product binding
- * (design section 8.2) and, in product mode, resolve the effective profile from
- * the installed package's knowledge-profile member. There are exactly two healthy
- * modes: LEGACY (no binding — the caller runs the existing `loadProfile` path
- * unchanged) and PRODUCT (a present, healthy binding whose exact installed package
- * resolves and whose component digests match its manifest). Every unhealthy state
- * is `unavailable` and NEVER falls back to legacy: a malformed/unsafe binding, an
- * unresolved or digest-mismatched package, or an unloadable knowledge profile. A
- * binding present beside a legacy `profile.json` is a `conflict` — neither wins.
+ * @description Resolve which profile AUTHORITY a project uses.
  *
- * ACYCLIC RULE: this resolver loads the knowledge-profile member bytes and
- * validates them DIRECTLY through {@link ../../profile/validate} /
- * {@link ../../profile/digest} (via {@link loadKnowledgeProfileMember}). It NEVER
- * calls `loadProfile()`; `profile/load.ts` imports THIS module, not the reverse.
+ * ## What this replaced
  *
- * UNIVERSAL effective authority: this resolution backs the single {@link ../../profile/load.loadProfile}
- * entry point every reader uses, so product mode is coherent across ALL surfaces —
- * workflows, search/retrieval, the linter, embeddings, context assembly, the
- * operations-authority resolver, the profile commands, and the rest all authorize
- * against the exact product package and its knowledge profile, never the default.
+ * A product binding was a second, signed profile authority that could sit beside a
+ * legacy `profile.json`. Deciding between them was a real problem: two authorities
+ * present had to be a hard conflict rather than a silent preference, and a binding that
+ * was present but unhealthy had to fail closed instead of quietly falling back.
+ *
+ * The product layer is gone from this build, so one of the three outcomes can no longer
+ * occur: nothing can produce a binding. This module therefore reports `legacy` for every
+ * project -- not as a permissive default, but because it is now the only possible state.
+ *
+ * ## Why the union keeps its other arms
+ *
+ * `loadProfile` still branches on `product` and `conflict`, and `on-unavailable` still
+ * carries a detail string. Narrowing the union to a single arm would force a rewrite of
+ * the loader's authority handling for no behavioural gain, and would erase the vocabulary
+ * a future binding implementation would need. The caller keeps failing closed on the arms
+ * it can still receive from elsewhere; they are simply unreachable here.
  */
 
-import { MAX_KNOWLEDGE_PROFILE_BYTES } from "../constants.js";
-import { readInstalledProductPackage } from "../packages/store.js";
-import type { LoadedProfile } from "../../profile/types.js";
-import type { ProductPackageManifestV1 } from "../types.js";
-import {
-  bindingComponentMismatch, knowledgeProfileMemberPath, loadKnowledgeProfileMember, readStoredMemberText,
-} from "./manifest-authority.js";
-import { profileJsonPresent, readActiveProductBinding } from "./store.js";
-import type { ActiveProductBindingV1 } from "./types.js";
-
-/**
- * The classified runtime mode (design section 8.2). `legacy` means run the
- * existing profile loader unchanged; `product` carries the resolved binding and
- * effective profile; `conflict` means a binding and a legacy `profile.json`
- * coexist; `unavailable` carries a fail-closed reason and never degrades to legacy.
- */
+/** Which authority a project's profile comes from. */
 export type ActiveProductResolution =
   | { mode: "legacy" }
-  | { mode: "product"; binding: ActiveProductBindingV1; loaded: LoadedProfile }
+  | { mode: "product"; loaded: never }
   | { mode: "conflict" }
   | { mode: "unavailable"; detail: string };
 
-/** Load the product-mode effective profile from the knowledge-profile member. */
-async function loadProductProfile(
-  root: string, binding: ActiveProductBindingV1, manifest: ProductPackageManifestV1,
-): Promise<LoadedProfile> {
-  const text = await readStoredMemberText(
-    root, binding.packageDigest, manifest.knowledgeProfile, MAX_KNOWLEDGE_PROFILE_BYTES);
-  const memberPath = knowledgeProfileMemberPath(root, binding.packageDigest, manifest.knowledgeProfile.digest);
-  return loadKnowledgeProfileMember(text, memberPath);
-}
-
-/** Resolve a present, non-conflicting binding to product mode or `unavailable`. */
-async function resolveProductMode(
-  root: string, binding: ActiveProductBindingV1,
-): Promise<ActiveProductResolution> {
-  const pkg = await readInstalledProductPackage(root, binding.packageDigest);
-  if (pkg.status !== "ok") return { mode: "unavailable", detail: `package-${pkg.status}` };
-  const mismatch = bindingComponentMismatch(binding, pkg.manifest);
-  if (mismatch !== null) return { mode: "unavailable", detail: `component-mismatch:${mismatch}` };
-  try {
-    const loaded = await loadProductProfile(root, binding, pkg.manifest);
-    return { mode: "product", binding, loaded };
-  } catch (error) {
-    return { mode: "unavailable", detail: error instanceof Error ? error.message : "knowledge-profile" };
-  }
-}
-
 /**
- * Resolve the project's runtime mode from `.llmwiki/active-product.json`. An absent
- * binding is legacy mode (no discovery, network, install, or project writes); a
- * present binding beside a legacy `profile.json` is a conflict; a present healthy
- * binding resolves to product mode; every present-but-unhealthy binding is
- * unavailable and never falls back to legacy.
+ * Report that this project has no product binding, so its profile is the legacy one.
+ *
+ * @returns Always `{ mode: "legacy" }` in this build.
  */
-export async function resolveActiveProduct(root: string): Promise<ActiveProductResolution> {
-  const read = await readActiveProductBinding(root);
-  if (read.kind === "absent") return { mode: "legacy" };
-  if (read.kind === "malformed") return { mode: "unavailable", detail: read.detail };
-  if (await profileJsonPresent(root)) return { mode: "conflict" };
-  return resolveProductMode(root, read.binding);
+export async function resolveActiveProduct(): Promise<ActiveProductResolution> {
+  return { mode: "legacy" };
 }

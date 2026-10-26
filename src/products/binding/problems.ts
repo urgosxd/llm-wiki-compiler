@@ -11,14 +11,13 @@
  * A rejected caller value never enters a display message.
  */
 
-import { ProductBoundsError, ProductIdentityError } from "../problems.js";
 
 /**
  * A binding document, its component digests, or an activation precondition failed
  * closed structural validation. Distinct from {@link ../problems.ProductPackageError}
  * so a caller can tell a binding refusal from a package refusal.
  */
-export class ProductBindingError extends Error {
+class ProductBindingError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ProductBindingError";
@@ -31,7 +30,7 @@ export class ProductBindingError extends Error {
  * unloadable knowledge profile, or an invalid composition. Missing operational
  * readiness is NOT this class — it is non-blocking setup work.
  */
-export class ProductActivationError extends Error {
+class ProductActivationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ProductActivationError";
@@ -70,11 +69,11 @@ export class ActiveProductUnavailableError extends Error {
  * identity and bounds classes pass through so a bad digest or id stays typed.
  */
 const BINDING_VALIDATION_PROBLEMS = [
-  ProductBindingError, ProductIdentityError, ProductBoundsError,
+  ProductBindingError,
 ] as const;
 
 /** Retype an untyped rejection from a shared value reader as a binding problem. */
-export function asBindingProblem<T>(load: () => T): T {
+function asBindingProblem<T>(load: () => T): T {
   try {
     return load();
   } catch (error) {

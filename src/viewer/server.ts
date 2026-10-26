@@ -28,17 +28,15 @@ import { handleApiSource } from "./api-sources.js";
 import { loadShellTemplate } from "./shell.js";
 import { ASSETS_DIR, handleAsset } from "./static-assets.js";
 import { searchPages } from "./search.js";
-import { workflowStatus } from "../workflow-history/status.js";
-import { buildWorkflowRunsEnvelope } from "./workflow-runs.js";
 import { listCandidatePage } from "../compiler/candidates.js";
 import { buildReviewsEnvelope, REVIEW_LIST_LIMIT } from "./reviews.js";
 import { tryRenderBody, writeJson, writeJsonError, writeRenderFailed } from "./respond.js";
 import type { ViewerSnapshot } from "./types.js";
 import { listenOn } from "../utils/http-listen.js";
+
+/** Host-supplied viewer dependencies. */
+type ViewerDeps = Record<string, unknown>;
 import { buildViewerSnapshot } from "./snapshot.js";
-import { handleApiWorkflowRun, type ViewerDeps } from "./workflow-run-projection.js";
-import { handleApiStageOutput, parseStageOutputPath } from "./workflow-artifact.js";
-import { handleApiWorkflowPdf, parsePdfPath } from "./workflow-pdf.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
 
@@ -224,19 +222,12 @@ async function routeLiveResources(
   config: ViewerServerConfig, deps: ViewerDeps,
 ): Promise<void> {
   const isLoopback = LOOPBACK_HOSTS.has(config.host);
-  if (parsedUrl.pathname === "/api/workflow-runs") {
-    const journeys = workflowJourneysEnabled(config, deps);
-    return handleApiWorkflowRuns(res, snapshot.root, journeys);
-  }
   if (parsedUrl.pathname === "/api/index") return handleApiIndex(res, snapshot, isLoopback);
   if (parsedUrl.pathname === "/api/search") return handleApiSearch(res, parsedUrl, snapshot);
   if (ARTIFACT_PATHS.has(parsedUrl.pathname)) return handleApiArtifact(res, snapshot, parsedUrl, isLoopback);
   if (parsedUrl.pathname.startsWith("/api/source/")) return handleApiSource(res, snapshot, parsedUrl.pathname, isLoopback);
   if (parsedUrl.pathname.startsWith("/api/page/")) {
     return handleApiPage(res, parsedUrl.pathname, snapshot, isLoopback);
-  }
-  if (parsedUrl.pathname.startsWith("/api/workflows/")) {
-    return dispatchWorkflowRoute(res, parsedUrl.pathname, snapshot.root, deps, config);
   }
   // Unreachable: `isRouteRegistered` is the gate, and every branch
   // there has a matching dispatch above. If it ever fires, the two
@@ -250,24 +241,6 @@ function workflowJourneysEnabled(config: ViewerServerConfig, deps: ViewerDeps): 
     (config.workflowJourneys === true || deps.liveStageProjectionProvider !== undefined);
 }
 
-/**
- * The `/api/workflows/` family: the more specific `.../stage/:stageId/output` sub-path serves
- * artifact bytes, `.../runs/:runId/pdf` serves the run's final PDF member (P9.6) with its own
- * CSP, and the `.../runs/:runId` shape serves the per-run projection.
- */
-function dispatchWorkflowRoute(
-  res: http.ServerResponse, pathname: string, root: string, deps: ViewerDeps, config: ViewerServerConfig,
-): Promise<void> {
-  if (!LOOPBACK_HOSTS.has(config.host)) {
-    writeJsonError(res, 403, "loopback_only", "Workflow content is available on loopback only.");
-    return Promise.resolve();
-  }
-  if (parseStageOutputPath(pathname) !== null) return handleApiStageOutput(res, pathname, root);
-  if (parsePdfPath(pathname) !== null) {
-    return handleApiWorkflowPdf(res, pathname, root, { provider: deps.liveStageProjectionProvider, timeoutMs: config.providerTimeoutMs });
-  }
-  return handleApiWorkflowRun(res, pathname, root, deps.liveStageProjectionProvider, config.providerTimeoutMs);
-}
 
 /**
  * Exact-path API routes whose handler needs only `(res, snapshot)` — collapsed
@@ -470,10 +443,6 @@ function handleApiGraph(res: ServerResponse, snapshot: ViewerSnapshot): void {
  * empty list. Strictly read-only: no run-state mutation, status fields only
  * (no machine-local paths).
  */
-async function handleApiWorkflowRuns(res: ServerResponse, root: string, journeys: boolean): Promise<void> {
-  const envelope = buildWorkflowRunsEnvelope(await workflowStatus(root));
-  writeJson(res, 200, journeys ? { ...envelope, workflowJourneys: true } : envelope);
-}
 
 /**
  * `/api/reviews` — read-only projection of the pending review queue.

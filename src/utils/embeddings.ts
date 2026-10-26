@@ -34,7 +34,7 @@ import {
 import { resolveEmbedBatchSize } from "./embeddings-batch.js";
 import { getActiveEmbeddingProviderName } from "./embedding-provider.js";
 import { releaseLock } from "./lock.js";
-import { acquireMutationLockBlocking } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLockBlocking } from "../utils/mutation-lock.js";
 import { loadProfile } from "../profile/load.js";
 import { migrateEmbeddingStore } from "./embeddings-migrate.js";
 import { collectEligibleLivePages, requestedPagesExistence, type PageExistence, type CollectedPage } from "./embeddings-collect.js";

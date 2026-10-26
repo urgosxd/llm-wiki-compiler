@@ -23,6 +23,7 @@
  * on their own terms.
  */
 
+import { tryWithOrdinaryMutationLock } from "../../utils/mutation-lock.js";
 import path from "path";
 import { createHash } from "node:crypto";
 import {
@@ -31,7 +32,6 @@ import {
   resolveDimensions,
   resolveStackId,
 } from "../../dimensions/index.js";
-import { tryWithOrdinaryMutationLock } from "../../operation-bundles/with-mutation-lock.js";
 import { LockBusyError } from "../../utils/lock.js";
 import { appendLog } from "../../utils/activity-log.js";
 import { SOURCES_DIR } from "../../utils/constants.js";

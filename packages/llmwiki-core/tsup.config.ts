@@ -10,10 +10,7 @@ export default defineConfig({
   entry: {
     index: "../../src/core-index.ts",
     "compiler-cli": "../../src/compiler-cli.ts",
-    "compiler-legacy-workflows": "../../src/local-workflow-host/legacy-composition.ts",
     "compiler-sdk": "../../src/sdk/compiler-composition.ts",
-    "local-workflow-host": "../../src/local-workflow-host/index.ts",
-    "local-workflow-contracts": "../../src/local-workflow-host/shared-contracts.ts",
   },
   outDir: "dist",
   format: ["esm"],

@@ -8,8 +8,6 @@ import path from "node:path";
 import { resolveConfinedCandidatesDir } from "../../compiler/candidate-store-paths.js";
 import { readConfinedLeaf } from "../../utils/confined-read.js";
 import { CANDIDATES_ARCHIVE_DIR } from "../../utils/constants.js";
-import { isTerminalStatus } from "../../workflow-history/definition.js";
-import { readRun } from "../../workflow-history/store.js";
 import { confinedEntries } from "./corpus.js";
 import { withCandidateSource } from "../../dimensions/wiki/candidate-source.js";
 import { CANDIDATES_DIR } from "../../utils/constants.js";
@@ -115,14 +113,6 @@ export async function auditWorkflowHistory(root: string): Promise<Array<{ kind: 
     return [{ kind: "store", message: "workflow store is unreadable, unsafe, or over its entry cap" }];
   }
   const reasons: Array<{ kind: "store" | "workflow"; message: string }> = [];
-  for (const name of entries) reasons.push(...await auditWorkflowLeaf(root, name));
   return reasons;
 }
 
-async function auditWorkflowLeaf(root: string, name: string): Promise<Array<{ kind: "store" | "workflow"; message: string }>> {
-  if (!name.endsWith(".json")) return [{ kind: "store", message: `workflow store contains unexpected entry: ${name}` }];
-  const runId = name.slice(0, -".json".length);
-  const read = await readRun(root, runId);
-  if (read.status !== "ok") return [{ kind: "store", message: `workflow run ${runId} is unavailable` }];
-  return isTerminalStatus(read.run.status) ? [] : [{ kind: "workflow", message: `workflow run ${runId} is active` }];
-}

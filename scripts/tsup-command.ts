@@ -23,7 +23,7 @@ export function resolveTsupCli(): string {
 
 /** Build core before the externalized engine, then allow facade assembly. */
 export async function buildCompilerDependencies(root: string): Promise<void> {
-  for (const name of ["llmwiki-core", "llmwiki-local-workflows"]) {
+  for (const name of ["llmwiki-core"]) {
     const { stdout } = await exec(process.execPath, [resolveTsupCli()], {
       cwd: path.join(root, "packages", name), maxBuffer: 4 * 1024 * 1024,
     });

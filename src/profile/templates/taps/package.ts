@@ -134,7 +134,7 @@ async function assertSourceUnchanged(paths: TapPaths, expected: Awaited<ReturnTy
 }
 
 /** Derive the immutable package endpoint from the signed digest only. */
-export function packageUrl(indexUrl: string, digest: string): string {
+function packageUrl(indexUrl: string, digest: string): string {
   const hex = sha256DigestHex(digest);
   return new URL(`packages/sha256/${hex}.json`, new URL(".", indexUrl)).toString();
 }

@@ -29,7 +29,7 @@ import { MAX_WORKFLOW_INPUTS_BYTES, MAX_WORKFLOW_INPUT_DEPTH } from "./constants
  * so the CLI/MCP surfaces report a precise cause; the payload is never parsed or
  * materialized past the breach.
  */
-export class WorkflowInputBoundsError extends Error {
+class WorkflowInputBoundsError extends Error {
   constructor(reason: string) {
     super(`workflow inputs rejected: ${reason}`);
     this.name = "WorkflowInputBoundsError";

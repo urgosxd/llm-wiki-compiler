@@ -27,7 +27,7 @@ import { existsSync } from "fs";
 import path from "path";
 import { LLMWIKI_DIR, STATE_FILE } from "../utils/constants.js";
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { safeRealpath, isInsideDir, confineUnderRoot } from "../utils/path-confine.js";
 import * as output from "../utils/output.js";
 import {

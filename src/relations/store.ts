@@ -46,9 +46,9 @@
 import { open, mkdir, rename, stat } from "fs/promises";
 import { randomBytes } from "node:crypto";
 import path from "path";
+import { withOrdinaryMutationLock as underLock } from "../utils/mutation-lock.js";
 import { RELATIONS_FILE, MAX_RELATION_RECORD_BYTES, MAX_RELATION_STORE_BYTES } from "../utils/constants.js";
 import type { OperationBinding } from "../utils/operation-binding.js";
-import { withOrdinaryMutationLock as underLock } from "../operation-bundles/with-mutation-lock.js";
 import type { EntityId, ProfilePack, RelationTypeDef } from "../profile/types.js";
 import type { CitationRef, RelationRef } from "./types.js";
 import { RelationEndpointError, RelationStoreFullError } from "./types.js";
@@ -198,7 +198,7 @@ export function buildRelationRef(
  * store can never be driven past the read cap into an unreadable-yet-appendable
  * state. {@link compactRelations} is the escape valve.
  */
-export async function appendLine(root: string, ref: RelationRef, binding?: OperationBinding): Promise<void> {
+async function appendLine(root: string, ref: RelationRef, binding?: OperationBinding): Promise<void> {
   const { dir } = await resolveGraphDir(root); // throws on symlink escape (DIR defense)
   await mkdir(dir, { recursive: true });
   const file = path.join(dir, path.basename(RELATIONS_FILE));

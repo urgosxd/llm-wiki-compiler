@@ -22,10 +22,8 @@
  * export. Output is deterministic: every list is sorted and no timestamps ride.
  */
 import { readLiveValidRelations } from "../../relations/live-valid.js";
-import { listRuns, readRun } from "../../workflow-history/store.js";
 import type { LoadedProfile } from "../../profile/types.js";
 import type { RelationRef } from "../../relations/types.js";
-import type { WorkflowRun } from "../../workflow-history/types.js";
 import pkg from "../../../package.json";
 
 /** Producer identity stamped into every profile block. */
@@ -74,7 +72,6 @@ export interface BundleWorkflowEntry {
 export interface BundleBlock {
   profile: BundleProfileBlock;
   relations: BundleRelationEntry[];
-  workflows: BundleWorkflowEntry[];
 }
 
 /** Sorted keys of an optional record, or `[]` when the block is absent. */
@@ -124,19 +121,6 @@ async function collectRelationEntries(loaded: LoadedProfile, root: string): Prom
   return relations.map(toRelationEntry).sort(byStringKey((r) => r.id));
 }
 
-/** Reduce a durable run record to its BOUNDED bundle summary (D-7.6.7). */
-function toWorkflowEntry(run: WorkflowRun): BundleWorkflowEntry {
-  return {
-    runId: run.runId,
-    workflowId: run.workflowId,
-    status: run.status,
-    currentStage: run.currentStage,
-    satisfiedGates: run.satisfiedGates,
-    stages: run.stageLog.map((entry) => ({ id: entry.stageId, status: entry.status })),
-    workflowDigest: run.workflowDigest,
-    profileDigest: run.profileDigest,
-  };
-}
 
 /**
  * Collect a bounded summary of every READABLE workflow run, sorted by runId. An
@@ -144,16 +128,6 @@ function toWorkflowEntry(run: WorkflowRun): BundleWorkflowEntry {
  * summary is best-effort metadata, never a trust surface); foreign run records
  * are never materialized (D-7.6.7 keeps them export-only + inert on import).
  */
-async function collectWorkflowEntries(root: string): Promise<BundleWorkflowEntry[]> {
-  const list = await listRuns(root);
-  if (list.status !== "ok") return [];
-  const entries: BundleWorkflowEntry[] = [];
-  for (const runId of list.runIds) {
-    const read = await readRun(root, runId);
-    if (read.status === "ok") entries.push(toWorkflowEntry(read.run));
-  }
-  return entries.sort(byStringKey((entry) => entry.runId));
-}
 
 /**
  * Build the bundle-level `x-llmwiki` block for the ACTIVE profile, or `undefined`
@@ -173,6 +147,5 @@ export async function collectBundleBlock(
   return {
     profile: buildProfileSubBlock(loaded),
     relations: await collectRelationEntries(loaded, root),
-    workflows: await collectWorkflowEntries(root),
   };
 }

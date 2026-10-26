@@ -90,7 +90,7 @@ export async function resolveNonDefaultProfile(
  * full snapshot), and `listPages` paginates instead of capping — only this
  * count-only summary applies the cap.
  */
-export const PROFILE_PROBLEM_CAP = 100;
+const PROFILE_PROBLEM_CAP = 100;
 
 /** The additive profile summary shared by the status and viewer surfaces. */
 export interface ProfileSummaryBlock {
@@ -454,7 +454,7 @@ async function summarizeArtifacts(root: string, loaded: LoadedProfile): Promise<
  * rare store/standing signals out of the cap and read as silently healthy. Leading
  * with the high-severity classes guarantees they survive the cap.
  */
-export function orderProblemViews(
+function orderProblemViews(
   entity: EntityProblemView[],
   store: EntityProblemView[],
   standing: EntityProblemView[],

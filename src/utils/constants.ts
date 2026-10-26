@@ -265,7 +265,7 @@ export const MAX_PENDING_EMBEDDING_ATTEMPTS = 5;
  * reported as `unavailable` rather than read. Mirrors
  * {@link MAX_PENDING_EMBEDDINGS_BYTES}.
  */
-export const MAX_WORKFLOW_RUN_BYTES = 256 * 1024; // 256 KiB
+const MAX_WORKFLOW_RUN_BYTES = 256 * 1024; // 256 KiB
 
 /**
  * A generous per-run cap on the in-record event log. Appending past this fails
@@ -273,7 +273,7 @@ export const MAX_WORKFLOW_RUN_BYTES = 256 * 1024; // 256 KiB
  * record grow unbounded. {@link MAX_WORKFLOW_RUN_BYTES} remains the hard byte
  * backstop; this is the friendlier, count-based guard hit first in practice.
  */
-export const MAX_WORKFLOW_RUN_EVENTS = 1000;
+const MAX_WORKFLOW_RUN_EVENTS = 1000;
 
 /**
  * Cap on the serialized size of a run's caller-supplied `inputs` block, enforced
@@ -315,7 +315,7 @@ export const MAX_WORKFLOW_INPUT_DEPTH = 8;
  * a per-field cap rejects one runaway string with a precise error and bounds the
  * cost of validating/echoing it. 64k chars is far above any realistic field value.
  */
-export const MAX_WORKFLOW_INPUT_STRING_CHARS = 64 * 1024; // 64k chars
+const MAX_WORKFLOW_INPUT_STRING_CHARS = 64 * 1024; // 64k chars
 
 /**
  * Maximum number of items in a `string[]` workflow action input field, enforced
@@ -325,7 +325,7 @@ export const MAX_WORKFLOW_INPUT_STRING_CHARS = 64 * 1024; // 64k chars
  * ops that have no downstream byte cap. 1000 items is far above any realistic
  * typed list yet bounds the per-field surface. Excess items FAIL CLOSED.
  */
-export const MAX_WORKFLOW_INPUT_ARRAY_ITEMS = 1000;
+const MAX_WORKFLOW_INPUT_ARRAY_ITEMS = 1000;
 
 /**
  * Cap on the character length of a free-form actor LABEL recorded on a workflow
@@ -333,14 +333,14 @@ export const MAX_WORKFLOW_INPUT_ARRAY_ITEMS = 1000;
  * verbatim on the audit event, so an unbounded label could bloat the record
  * toward {@link MAX_WORKFLOW_RUN_BYTES}. A username/agent-id fits comfortably.
  */
-export const MAX_WORKFLOW_LABEL_CHARS = 256;
+const MAX_WORKFLOW_LABEL_CHARS = 256;
 
 /**
  * Cap on the character length of the free-form `detail` reason recorded on a
  * `run-failed` event by `failWorkflow`. Caller-controlled and recorded verbatim,
  * so it is bounded for the same reason as {@link MAX_WORKFLOW_LABEL_CHARS}.
  */
-export const MAX_WORKFLOW_DETAIL_CHARS = 2048;
+const MAX_WORKFLOW_DETAIL_CHARS = 2048;
 
 /**
  * Bounded number of re-mint attempts when a freshly-minted run id collides with
@@ -349,7 +349,7 @@ export const MAX_WORKFLOW_DETAIL_CHARS = 2048;
  * astronomically unlikely; this bounds the retry loop so a pathological
  * environment cannot spin forever, surfacing a typed error instead.
  */
-export const MAX_MINT_ATTEMPTS = 5;
+const MAX_MINT_ATTEMPTS = 5;
 
 /**
  * Global cap on the number of ACTIVE (non-terminal) workflow runs a project may
@@ -360,7 +360,7 @@ export const MAX_MINT_ATTEMPTS = 5;
  * frees quota. 100 concurrent in-flight runs is far above any legitimate single-
  * project workload yet bounds the active-run surface.
  */
-export const MAX_ACTIVE_WORKFLOW_RUNS = 100;
+const MAX_ACTIVE_WORKFLOW_RUNS = 100;
 
 /**
  * Global cap on the TOTAL number of workflow run FILES (active + terminal) a project
@@ -371,7 +371,7 @@ export const MAX_ACTIVE_WORKFLOW_RUNS = 100;
  * accumulated run history yet bounds the on-disk surface; an operator who wants more
  * must prune retired runs. Strictly greater than {@link MAX_ACTIVE_WORKFLOW_RUNS}.
  */
-export const MAX_TOTAL_WORKFLOW_RUNS = 1000;
+const MAX_TOTAL_WORKFLOW_RUNS = 1000;
 
 /**
  * Resource cap on the local `.llmwiki/config.json` consulted for workflow-action

@@ -27,7 +27,7 @@ const MAX_DISPLAY_NAME_BYTES = 256;
 const MAX_LICENSE_BYTES = 128;
 
 /** Error raised when a template package cannot be installed. */
-export class TemplatePackageError extends Error {
+class TemplatePackageError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "TemplatePackageError";

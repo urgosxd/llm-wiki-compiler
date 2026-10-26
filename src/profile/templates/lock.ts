@@ -16,7 +16,7 @@ import type {
 } from "./types.js";
 
 export const TEMPLATE_LOCK_FILE = ".llmwiki/template-lock.json";
-export const MAX_TEMPLATE_LOCK_BYTES = 64 * 1024;
+const MAX_TEMPLATE_LOCK_BYTES = 64 * 1024;
 
 /** Structured read result; faults never masquerade as a missing lock. */
 export type TemplateLockRead =

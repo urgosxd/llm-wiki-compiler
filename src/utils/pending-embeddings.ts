@@ -523,7 +523,7 @@ export function warnQuarantined(quarantined: PendingEmbedding[]): void {
  * @param entries - The full pending set to persist.
  */
 /** Persist the operation executor's write-ahead marker, surfacing every write failure. */
-export async function writePendingEmbeddingsStrict(root: string, entries: PendingEmbedding[]): Promise<void> {
+async function writePendingEmbeddingsStrict(root: string, entries: PendingEmbedding[]): Promise<void> {
   const normalized = normalizeMarker(entries);
   if (await writeMarkerToRows(normalized, PENDING_EMBEDDINGS_FILE)) return;
   const privateDir = await resolveConfinedPrivateDir(root);

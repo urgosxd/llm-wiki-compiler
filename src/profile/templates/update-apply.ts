@@ -5,7 +5,7 @@
  */
 import path from "node:path";
 import { releaseLock } from "../../utils/lock.js";
-import { acquireMutationLockBlocking } from "../../operation-bundles/lock-gate.js";
+import { acquireMutationLockBlocking } from "../../utils/mutation-lock.js";
 import { PROFILE_FILE } from "../../utils/constants.js";
 import { openBatch, recordPreState, commitBatch } from "../../trust/journal.js";
 import { withTemplateLockSource } from "../../dimensions/wiki/template-lock-source.js";

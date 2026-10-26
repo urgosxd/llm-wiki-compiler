@@ -10,7 +10,7 @@ import { MAX_PROFILE_BYTES, PROFILE_FILE } from "../../utils/constants.js";
 import { withProfileSource } from "../../dimensions/wiki/profile-source.js";
 import { withTemplateLockSource } from "../../dimensions/wiki/template-lock-source.js";
 import { releaseLock } from "../../utils/lock.js";
-import { acquireMutationLockBlocking } from "../../operation-bundles/lock-gate.js";
+import { acquireMutationLockBlocking } from "../../utils/mutation-lock.js";
 import { atomicWrite } from "../../utils/markdown.js";
 import { loadProfile } from "../load.js";
 import { profileDigest } from "../digest.js";
@@ -62,7 +62,7 @@ class TemplateInstallError extends Error {
 }
 
 /** Install one builtin template by id. */
-export async function installBuiltinTemplate(root: string, id: string, options: TemplateInstallOptions): Promise<TemplateInstallResult> {
+async function installBuiltinTemplate(root: string, id: string, options: TemplateInstallOptions): Promise<TemplateInstallResult> {
   if (id === "default") {
     throw new TemplateInstallError("The default profile is already active when .llmwiki/profile.json is absent. No file was written.");
   }
@@ -74,7 +74,7 @@ export async function installBuiltinTemplate(root: string, id: string, options: 
 }
 
 /** Install one local template package from an operator-supplied JSON file. */
-export async function installLocalTemplate(root: string, filePath: string, options: TemplateInstallOptions): Promise<TemplateInstallResult> {
+async function installLocalTemplate(root: string, filePath: string, options: TemplateInstallOptions): Promise<TemplateInstallResult> {
   const parsed = await readLocalPackageJson(filePath);
   const currentVersion = options.currentVersion ?? packageJson.version;
   const pkg = validateTemplatePackage(parsed, { currentVersion, sourceType: "local" });

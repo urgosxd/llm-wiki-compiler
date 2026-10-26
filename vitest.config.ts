@@ -10,12 +10,8 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: /^@atomicstrata\/llmwiki-core\/compiler-cli$/, replacement: fileURLToPath(new URL("./src/compiler-cli.ts", import.meta.url)) },
-      { find: /^@atomicstrata\/llmwiki-core\/compiler-legacy-workflows$/, replacement: fileURLToPath(new URL("./src/local-workflow-host/legacy-composition.ts", import.meta.url)) },
       { find: /^@atomicstrata\/llmwiki-core\/compiler-sdk$/, replacement: fileURLToPath(new URL("./src/sdk/compiler-composition.ts", import.meta.url)) },
-      { find: /^@atomicstrata\/llmwiki-local-workflows$/, replacement: fileURLToPath(new URL("./src/local-workflows/index.ts", import.meta.url)) },
-      { find: /^@atomicstrata\/llmwiki-core\/local-workflow-host$/, replacement: fileURLToPath(new URL("./src/local-workflow-host/index.ts", import.meta.url)) },
       { find: /^@atomicstrata\/llmwiki-core$/, replacement: fileURLToPath(new URL("./src/core-index.ts", import.meta.url)) },
-      { find: /^@atomicstrata\/llmwiki-core\/local-workflow-contracts$/, replacement: fileURLToPath(new URL("./src/local-workflow-host/shared-contracts.ts", import.meta.url)) },
       { find: /^llm-wiki-compiler$/, replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)) },
       { find: /^llmwiki-kg$/, replacement: fileURLToPath(new URL("./packages/llmwiki-kg/ts/src/core-index.ts", import.meta.url)) },
       { find: /^llmwiki-kg\/server$/, replacement: fileURLToPath(new URL("./packages/llmwiki-kg/ts/src/server.ts", import.meta.url)) },

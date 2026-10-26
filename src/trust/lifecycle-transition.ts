@@ -31,7 +31,7 @@
  */
 
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { applyApprovedMutationsLocked } from "./executor.js";
 import { LifecycleTransitionLockError } from "./lifecycle-apply.js";
 import type { LifecycleTransitionPlannedMutation } from "./planner.js";
