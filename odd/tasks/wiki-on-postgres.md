@@ -158,7 +158,29 @@ Verification: the relation dedup key, the evidence fingerprint and the hash chai
 survive a round trip; replaying the event log reproduces the relation store byte for
 byte.
 
-### Step 3 — `candidates/` → table (D)
+### Step 3 — `candidates/` → table (D) — **STORAGE LAYER DONE**
+
+> Landed: `wiki.review_candidates` (RLS forced), `candidate-store.ts`,
+> `migration_wiki_candidates.sql`, plus `harness-lifecycle.ts` for the probe-stack
+> setup three suites were copying. 269 tests, `tsc` 0, build 0, `fallow` 0 above
+> threshold, zero regressions.
+>
+> **`candidate-custody.ts` (483 lines) is not migrated — it becomes unnecessary.**
+> It exists to defend a filesystem store: bind a directory's `dev`/`ino`, refuse a
+> symlinked leaf, detect parent drift, fail closed on a cross-device rename. A row
+> has no inode and no parent directory, so every one of those properties holds BY
+> CONSTRUCTION. That is the largest single block of code this plan deletes without
+> writing a replacement.
+>
+> **What it fixes**: the file store was scoped to a CHECKOUT, so two hosts reviewing
+> one Stack kept two queues and neither saw the other's candidates — a reviewer on A
+> could approve work B had already superseded. Asserted by a cross-Stack test.
+>
+> **Parity is the hard part, not the schema**: `ReviewCandidate` distinguishes an
+> ABSENT optional from an empty one and `review show` prints them differently, so
+> every optional column spreads conditionally rather than assigning `undefined`.
+> `expectTargetAbsent` is stored as a real boolean but only spread back when TRUE,
+> preserving the omission.
 
 Nine files touch candidate custody, and candidates are the review workflow's whole
 durable state. A Stack-scoped table also fixes a real defect: candidates are

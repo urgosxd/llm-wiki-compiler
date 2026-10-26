@@ -16,12 +16,13 @@ import {
   readCompileConfig,
   writeCompileConfig,
 } from "../../src/dimensions/wiki/compile-config-store.js";
-import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { createProbeStack } from "./harness-lifecycle.js";
 
 let harness: KgPostgresHarness;
 
 beforeEach(async () => {
-  harness = await createKgPostgresHarness(`cfg-${randomUUID().slice(0, 8)}`);
+  harness = (await createProbeStack("cfg")).harness;
 });
 
 afterEach(async () => {

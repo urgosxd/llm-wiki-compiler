@@ -12,12 +12,13 @@ import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { appendEventRow, readEventLog } from "../../src/dimensions/wiki/event-log-store.js";
 import { GENESIS_PREV_HASH } from "../../src/events/types.js";
-import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { createProbeStack } from "./harness-lifecycle.js";
 
 let harness: KgPostgresHarness;
 
 beforeEach(async () => {
-  harness = await createKgPostgresHarness(`evt-${randomUUID().slice(0, 8)}`);
+  harness = (await createProbeStack("evt")).harness;
 });
 
 afterEach(async () => {
