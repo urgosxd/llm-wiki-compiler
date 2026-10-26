@@ -230,6 +230,27 @@ or a test teardown does not carry the Stack environment acquire used.
 **2017** tests red, all on `AKS_STACK_ID is not set`: 26 `stackId === ""` gates remain
 across 12 modules, so the code it guards is still legitimately Stack-less.
 
+### Markers: measured one at a time
+
+| Marker | Gates | New failures if forced | Outcome |
+|---|---|---|---|
+| `compiler/rule-state.ts` | 1 | **11** in 4 files | **Done** (`4586f0b`) |
+| `linter/cache.ts` | 2 | **79** in 22 files | Reverted |
+| `utils/pending-embeddings.ts` | 1 | not yet measured | — |
+
+`rule-state` was cheap because its four suites touched one seam and a shared
+fixture (`useTempRoot`) accepted a Stack with no test redesign. `linter/cache` is
+expensive for the opposite reason: lint runs inside viewer, host and e2e flows, and
+22 files assert `.llmwiki/last-lint.json` by name. Forcing it deletes assertions
+rather than adapting them.
+
+The lesson is not "markers are safe". It is that **cost tracks how many suites assert
+the file**, not how many gates a module has. Measure each marker before touching it.
+
+Test scaffolding added: `test/fixtures/stack-env.ts` with `withStackEnv` (wrap one
+body) and `useStackEnv` (whole file). Both snapshot and restore `process.env`,
+because a Stack left installed makes an unrelated suite run against it.
+
 ### Probe: 1 store, 431 new failures (reverted)
 
 Made `events/store.ts` require a Stack and ran the suite.
