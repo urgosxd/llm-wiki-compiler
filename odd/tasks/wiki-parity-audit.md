@@ -255,3 +255,36 @@ machinery around it is not, and calling those tests "the 63 remaining" hides tha
   data, but file *formatting* (key order, indentation) has no row analogue by design.
 - `LOC` and reference counts are grep-derived and will drift; the table/column lists
   are queried live.
+
+## The journal's real perimeter: 6 call sites, not 389 files
+
+Decision 2 looked like a 389-file / 2381-test migration. It is not. The journal is
+opened in exactly six places:
+
+| Site | What it journals |
+|---|---|
+| `src/trust/executor.ts` | page writes (file backend only now) |
+| `src/trust/lifecycle-apply.ts` | lifecycle steps |
+| `src/artifacts/apply.ts` | artifact body + sidecar manifest |
+| `src/artifacts/apply-members.ts` | member leaves (base64, budgeted) |
+| `src/profile/templates/update-apply.ts` | template lock file |
+| `src/wiki/delete-page.ts` | page delete |
+
+The 389 files touch these subsystems, but only these six create pre-states. A
+migrated backend at each site removes that site's journal use; nothing else in
+those subsystems has to change for the journal to be gone.
+
+### Why the transaction replaces the journal
+
+A journal entry exists to restore PREVIOUS BYTES after a partial failure, because a
+set of file writes is not atomic. A row write is already inside a transaction: the
+all-or-nothing is the database's, not the journal's. So the row path does not need
+a journal backend — it needs the journal to stop being opened. That is what
+`9ba51a8` established for the page path, and the same argument applies at the other
+five sites once their targets are rows.
+
+Corollary: the journal is not "the fourth subsystem to migrate". It is the *last*
+thing left standing, and it disappears site by site as each target becomes a row.
+Its 675 LOC of no-follow/parent-confine/TOCTOU machinery is filesystem-as-identity
+defence — the same species as `candidate-custody.ts`, which rows made unnecessary by
+construction.
