@@ -110,3 +110,50 @@ create policy tenant_isolation on wiki.review_candidates
     with check (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);
 
 grant select, insert, update, delete on wiki.review_candidates to llmwiki_app;
+
+-- ============================================================
+-- Columns the file backend persisted but this table did not
+--
+-- ## Why these are added with `if not exists` rather than folded into the CREATE
+--
+-- The CREATE above is `if not exists`, so a database that already has this table
+-- skips the whole statement and would never gain a new column. That is exactly the
+-- drift this project keeps finding: the developer machine has the table because it
+-- was created once, while a fresh environment builds it from this file and gets a
+-- different shape. Adding them separately makes the file authoritative for BOTH a
+-- new database and an existing one.
+--
+-- ## What was lost without them
+--
+-- `compiler/candidates.ts` sets all five on the serialized candidate, and the row
+-- store never mentioned them, so wiring the store would have dropped them
+-- silently. `citation_manifest` is the one that is not merely informational:
+-- `review-publication.ts` compares the candidate body against
+-- `citationManifest.bodyDigest` to detect an answer edited after staging. With no
+-- column, that integrity check has nothing to compare and every edited answer
+-- would pass as unmodified.
+-- ============================================================
+
+alter table wiki.review_candidates
+    -- Discriminates a reviewed validated answer from every other candidate kind.
+    add column if not exists candidate_kind jsonb,
+    -- Integrity record for a validated answer: citation list plus the body digest
+    -- the publication check re-computes.
+    add column if not exists citation_manifest jsonb,
+    -- Host-authored provenance for connector-fetched candidates. One of the four
+    -- signals `isConnectorCandidate` uses to decide the operator-pin requirement.
+    add column if not exists connector_provenance jsonb,
+    -- Confidence parsed from the generated page frontmatter, for display.
+    add column if not exists confidence double precision,
+    -- True when the generated frontmatter declares contradictions; gates the
+    -- `contradicted` review mode.
+    add column if not exists contradicted boolean;
+
+-- A confidence outside 0..1 cannot come from the generator, so a row carrying one
+-- means the value was written around the interface. Refusing it at the boundary
+-- keeps the display path from having to defend against it.
+alter table wiki.review_candidates
+    drop constraint if exists review_candidates_confidence_range;
+alter table wiki.review_candidates
+    add constraint review_candidates_confidence_range
+    check (confidence is null or (confidence >= 0 and confidence <= 1));

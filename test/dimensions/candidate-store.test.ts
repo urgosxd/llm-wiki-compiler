@@ -90,6 +90,41 @@ describe("review candidates as rows", () => {
     expect(stored?.expectTargetAbsent).toBe(true);
   });
 
+  it("round-trips the five fields the table used to have no column for", async () => {
+    // These were persisted by the FILE backend and absent from the table, so wiring
+    // the row store would have dropped them silently. `citationManifest` is the one
+    // that decides whether a reviewed answer may be published at all.
+    const candidate: ReviewCandidate = {
+      ...minimalCandidate("cand_5fields"),
+      candidateKind: { name: "validated-answer", version: 1 },
+      citationManifest: {
+        version: 1,
+        bodyDigest: "sha256-of-the-body",
+        citations: [{ source: "sources/a.md", line: 3 } as never],
+      },
+      connectorProvenance: { connector: "web", url: "https://example.com" } as never,
+      confidence: 0.82,
+      contradicted: true,
+    };
+    await saveStoredCandidate(harness.db, harness.stackId, candidate);
+
+    expect(await getStoredCandidate(harness.db, harness.stackId, "cand_5fields")).toEqual(candidate);
+  });
+
+  it("keeps an explicit contradicted:false distinct from an absent one", async () => {
+    // `review show` prints `contradicted: false` when the generator said so, and
+    // prints nothing when the field was absent. A NOT NULL DEFAULT false column
+    // would collapse the two and silently change the display.
+    await saveStoredCandidate(harness.db, harness.stackId, {
+      ...minimalCandidate("cand_false"), contradicted: false,
+    });
+    const explicit = await getStoredCandidate(harness.db, harness.stackId, "cand_false");
+    const absent = await getStoredCandidate(harness.db, harness.stackId, "cand_1");
+
+    expect(explicit?.contradicted).toBe(false);
+    expect("contradicted" in (absent ?? {})).toBe(false);
+  });
+
   it("replaces a candidate with the same id instead of duplicating", async () => {
     await saveStoredCandidate(harness.db, harness.stackId, minimalCandidate("cand_4"));
     await saveStoredCandidate(harness.db, harness.stackId, {

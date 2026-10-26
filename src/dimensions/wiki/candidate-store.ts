@@ -54,6 +54,11 @@ interface CandidateRow extends Record<string, unknown> {
   readonly schema_violations: unknown;
   readonly provenance_violations: unknown;
   readonly okf_path: string | null;
+  readonly candidate_kind: unknown;
+  readonly citation_manifest: unknown;
+  readonly connector_provenance: unknown;
+  readonly confidence: number | null;
+  readonly contradicted: boolean | null;
 }
 
 /**
@@ -143,17 +148,56 @@ function identityFieldsOf(row: CandidateRow): Partial<ReviewCandidate> {
  * @returns The evidence-related optional fields this row holds.
  */
 function payloadFieldsOf(row: CandidateRow): Partial<ReviewCandidate> {
+  return { ...compileBookkeepingOf(row), ...generationEvidenceOf(row) };
+}
+
+/**
+ * The compile bookkeeping a candidate carries, present only when the row holds it.
+ *
+ * Split out because ten conditional spreads in one literal is unreadable and
+ * `fallow` measured it as such -- the same reason `identityFieldsOf` exists.
+ *
+ * @param row - A `review_candidates` row.
+ * @returns The bookkeeping fields this row holds.
+ */
+function compileBookkeepingOf(row: CandidateRow): Partial<ReviewCandidate> {
   return {
     ...(row.source_states === null
       ? {}
       : { sourceStates: row.source_states as ReviewCandidate["sourceStates"] }),
     ...(row.prompt_modifiers === null ? {} : { promptModifiers: row.prompt_modifiers }),
+  };
+}
+
+/**
+ * The generation-time evidence a candidate carries, present only when the row holds it.
+ *
+ * @param row - A `review_candidates` row.
+ * @returns The evidence fields this row holds.
+ */
+function generationEvidenceOf(row: CandidateRow): Partial<ReviewCandidate> {
+  return {
     ...(row.schema_violations === null
       ? {}
       : { schemaViolations: row.schema_violations as ReviewCandidate["schemaViolations"] }),
     ...(row.provenance_violations === null
       ? {}
       : { provenanceViolations: row.provenance_violations as ReviewCandidate["provenanceViolations"] }),
+    ...(row.candidate_kind === null
+      ? {}
+      : { candidateKind: row.candidate_kind as ReviewCandidate["candidateKind"] }),
+    ...(row.citation_manifest === null
+      ? {}
+      : { citationManifest: row.citation_manifest as ReviewCandidate["citationManifest"] }),
+    ...(row.connector_provenance === null
+      ? {}
+      : { connectorProvenance: row.connector_provenance as ReviewCandidate["connectorProvenance"] }),
+    ...(row.confidence === null ? {} : { confidence: row.confidence }),
+    // THREE states, not two: `review show` prints `contradicted: false` when the
+    // generator explicitly said "not contradicted" and prints nothing when the
+    // field was absent. A nullable column carries that distinction; a
+    // not-null-default-false one would collapse it.
+    ...(row.contradicted === null ? {} : { contradicted: row.contradicted }),
   };
 }
 
@@ -171,7 +215,8 @@ export async function listStoredCandidates(db: StoreHandle, stackId: string): Pr
       select candidate_id, target_directory, target_entity_type, title, slug, summary,
              body, sources, generated_at, review_mode, held_reasons, trust_decision,
              expected_target_hash, expect_target_absent, source_states,
-             prompt_modifiers, schema_violations, provenance_violations, okf_path
+             prompt_modifiers, schema_violations, provenance_violations, okf_path,
+             candidate_kind, citation_manifest, connector_provenance, confidence, contradicted
       from wiki.review_candidates
       where stack_id = ${stackId}
       order by generated_at desc, candidate_id asc
@@ -199,7 +244,8 @@ export async function getStoredCandidate(
       select candidate_id, target_directory, target_entity_type, title, slug, summary,
              body, sources, generated_at, review_mode, held_reasons, trust_decision,
              expected_target_hash, expect_target_absent, source_states,
-             prompt_modifiers, schema_violations, provenance_violations, okf_path
+             prompt_modifiers, schema_violations, provenance_violations, okf_path,
+             candidate_kind, citation_manifest, connector_provenance, confidence, contradicted
       from wiki.review_candidates
       where stack_id = ${stackId} and candidate_id = ${candidateId}
     `);
@@ -231,14 +277,17 @@ async function insertCandidate(
         stack_id, candidate_id, target_directory, target_entity_type, title, slug,
         summary, body, sources, generated_at, review_mode, held_reasons,
         trust_decision, expected_target_hash, expect_target_absent, source_states,
-        prompt_modifiers, schema_violations, provenance_violations, okf_path
+        prompt_modifiers, schema_violations, provenance_violations, okf_path,
+        candidate_kind, citation_manifest, connector_provenance, confidence, contradicted
       ) values (
         ${v.stackId}, ${v.candidateId}, ${v.targetDirectory}, ${v.targetEntityType},
         ${v.title}, ${v.slug}, ${v.summary}, ${v.body}, ${v.sources}::text[],
         ${v.generatedAt}::timestamptz, ${v.reviewMode}, ${v.heldReasons}::jsonb,
         ${v.trustDecision}, ${v.expectedTargetHash}, ${v.expectTargetAbsent},
         ${v.sourceStates}::jsonb, ${v.promptModifiers}, ${v.schemaViolations}::jsonb,
-        ${v.provenanceViolations}::jsonb, ${v.okfPath}
+        ${v.provenanceViolations}::jsonb, ${v.okfPath},
+        ${v.candidateKind}::jsonb, ${v.citationManifest}::jsonb,
+        ${v.connectorProvenance}::jsonb, ${v.confidence}, ${v.contradicted}
       )
       on conflict (stack_id, candidate_id) do update set
         target_directory = excluded.target_directory,
@@ -258,7 +307,12 @@ async function insertCandidate(
         prompt_modifiers = excluded.prompt_modifiers,
         schema_violations = excluded.schema_violations,
         provenance_violations = excluded.provenance_violations,
-        okf_path = excluded.okf_path
+        okf_path = excluded.okf_path,
+        candidate_kind = excluded.candidate_kind,
+        citation_manifest = excluded.citation_manifest,
+        connector_provenance = excluded.connector_provenance,
+        confidence = excluded.confidence,
+        contradicted = excluded.contradicted
     `);
   });
 }
@@ -298,6 +352,13 @@ function toInsertValues(stackId: string, c: ReviewCandidate) {
     schemaViolations: json(c.schemaViolations),
     provenanceViolations: json(c.provenanceViolations),
     okfPath: c.okfPath ?? null,
+    candidateKind: json(c.candidateKind),
+    citationManifest: json(c.citationManifest),
+    connectorProvenance: json(c.connectorProvenance),
+    confidence: c.confidence ?? null,
+    // Preserve the three-way distinction the reader reconstructs: `undefined`
+    // stores as NULL (absent), an explicit `false` stays `false`.
+    contradicted: c.contradicted ?? null,
   };
 }
 
