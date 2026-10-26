@@ -339,16 +339,54 @@ That is the structural lesson: **a suite's failure CLASS changes as you fix the 
 beneath it.** "No Stack" was masking "reads the candidate file". Sequencing has to be
 Stack-enable first, then rewrite what the now-reachable assertions actually ask.
 
-#### Revised order
+#### STOP: adding a Stack to a green suite BREAKS it
 
-1. **382 files: add a Stack.** Mechanical, ~37% of their failures clear immediately.
-   The rest become visible for what they are.
-2. **63 files: genuine file semantics.** 254 tests; needs per-test decisions.
-3. **9 mixed files.** Last of the three, because the mix only becomes clear after 1.
+The step-1 plan above was "add a Stack to the 382 files". Measured before executing it,
+on 6 files from that group that all already use `useTempRoot`:
 
-Fixture distribution inside the 382 (measured, not assumed): 195 use no shared root at
-all, 83 use `makeTempRoot`, 67 `useTempRoot`, 21 `useCompileProject`, 16
-`useLintTempRoot`. The 195 are cheapest — they own their root already.
+| Condition | Result |
+|---|---|
+| Today, untouched, seams intact | **98 of 98 pass** |
+| `useStackEnv` added, **seams still intact** | **69 fail of 98** |
+
+That is the decisive measurement. Adding a Stack does not merely reveal 37% of a
+hidden backlog — it TURNS A PASSING SUITE RED, because the seam then routes to rows
+and the suite's `writeFile` seeds are no longer visible to the API it is testing.
+
+The failure signatures confirm it: `expected null not to be null`, `promise resolved
+instead of rejecting`, `Target cannot be null or undefined` — the API read rows, found
+nothing, and the suite's premise ("I wrote the file, so the API sees it") is false.
+
+#### What this means
+
+"382 mechanical files" is wrong, and so is "add a Stack everywhere". The 2262 forced
+failures are not 382 independent backlog items — they measure **what would break if
+the file backend disappeared today**, which is a different question from "what is
+there to migrate".
+
+A suite that passes today is not a suite with a hidden Stack debt; it is a suite that
+is correctly testing the FILE backend. Adding a Stack to it is a BACKEND SWITCH, and a
+backend switch is only safe once the test's seeds move to the backend it now reads.
+
+#### The real unit of work
+
+Per suite, one of these, decided by looking at what it asserts:
+
+1. **Race to rows** — seed through the seam (or the writer API), read through the
+   seam. Genuinely mechanical ONLY when the suite never touches the filesystem
+   directly. The 195 that own their root already are the candidates.
+2. **Keep as file-backend tests** — they still guard the file backend, which still
+   exists in `src/`. Deleting them would remove the only coverage of a backend that
+   is not deleted yet.
+3. **Delete with justification** — only once the file backend itself is gone.
+
+Until Decision 4 also removes file SUPPORT from `src/` (not just from the product
+promise), option 2 is legitimate and option 3 is premature.
+
+The honest next step is therefore not "add Stack to 382 files". It is: pick the
+subset whose assertions never name a file, migrate those first, and re-measure
+after each batch — because the 382 will shrink as file-backend tests are correctly
+classified as option 2 rather than as backlog.
 
 ### Class B: tests that read the candidate file directly
 
