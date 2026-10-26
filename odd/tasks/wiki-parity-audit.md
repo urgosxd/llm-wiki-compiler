@@ -35,17 +35,52 @@ no row equivalent at all, and two more have storage that production never calls.
 
 ## 2. NO row equivalent — the wiki cannot do these on Postgres
 
+**Four** artifacts, verified against `pg_tables` (14 tables in `wiki`, none of them
+covers these).
+
 | Artifact | Written by | Consequence |
 |---|---|---|
 | `.llmwiki/profile.json` | `profile/scaffold.ts:101`, `profile/templates/install.ts:197` | A Stack-backed project still writes its profile as a FILE. Decision 1 answered "per Stack"; that was never implemented. |
-| `wiki/index.md` | `compiler/indexgen.ts` via `regenerateIndices` | `regenerateIndices` READS from rows but always WRITES the file. Decision 3 answered "rows"; not implemented. |
+| `wiki/index.md` | `compiler/indexgen.ts:59` via `regenerateIndices` | `regenerateIndices` READS from rows but always WRITES the file. Decision 3 answered "rows"; not implemented. |
 | `wiki/MOC.md` | `compiler/obsidian.ts:125` | Same as index — unconditional `atomicWrite`, no row branch. |
-| `log.md` | `utils/activity-log.ts:123` | Unconditional `appendFile`. Best-effort (warns, never throws), so it fails silently on a read-only filesystem. |
-| `.llmwiki/quarantined-embeddings.json` | `utils/embeddings-retry.ts:81,98` | Quarantine state has no table. An embedding that fails permanently is recorded only in a file. |
+| `log.md` | `utils/activity-log.ts:123` | Unconditional `appendFile`. Best-effort (warns, never throws), so it fails **silently** on a read-only filesystem. |
 
-> These five are **not** the `stackId === ""` fallbacks. Those at least have a row
+> These four are **not** the `stackId === ""` fallbacks. Those at least have a row
 > branch. These have no row path at all: a Stack-backed project writes files for
 > them regardless.
+
+### 2b. CORRECTION: quarantine DOES have rows — I was wrong
+
+The first draft listed `.llmwiki/quarantined-embeddings.json` here. **That was wrong.**
+
+`wiki.embedding_refresh_marker` carries
+`state text not null default 'pending' check (state in ('pending','quarantined'))`, and
+`markerStateOf()` maps the marker FILE to that column
+(`pending-embeddings.ts:334`). Every access to the quarantine marker goes through
+`readPendingMarker` / `writePendingEmbeddings`, which both dispatch to rows first, and
+both take the marker file as a parameter. So the two markers are one table with two
+states, and quarantine has **full parity**.
+
+Unverified, it looked like a missing backend. Verified, it was already done. The probe
+that settled it:
+
+```
+ROWS quar: [{"pageId":"concepts/poison","attempts":7}]
+ROWS pend: [{"pageId":"concepts/live","attempts":1}]
+FILES: none
+```
+
+Same mistake as §3b, different artifact: **a single `state` column does the work of
+what looks like two tables, and grepping for a table named after the file will not
+find it.** Check the DDL's CHECK constraints and the mapper before declaring a
+backend missing.
+
+A first probe reported `[]` and "no rows" for both markers. Both readings were wrong
+and both had the same cause: the probe used `"quar-one"` as a page id, which
+`isValidPageId` rejects, so `normalizeMarker` dropped the entry before any backend
+saw it. The second reading — "0 rows in the table" — was the harness cleanup deleting
+the Stack after the test ended. **A probe can fail for a reason that has nothing to do
+with what it is measuring.**
 
 ## 3. Storage exists but production never calls it
 
