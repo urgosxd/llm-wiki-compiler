@@ -190,6 +190,51 @@ MANIFESTS -- the same species as the trust journal (Decision 2: "no files"), whi
 already parked for exactly this reason. `src/trust/journal.ts` is 675 LOC with 9
 file-write call sites and no row seam.
 
+### The cost of Decision 2, now measured
+
+Before committing to rows for journals/manifests, the blast radius was measured. It is
+an order of magnitude larger than the 63 files that raised the question:
+
+| Subsystem | Files importing it in `test/` | Tests |
+|---|---|---|
+| `src/preparations/` | 236 | 1547 |
+| `src/operation-bundles/` | 133 | 761 |
+| `src/products/` | 37 | 204 |
+| `src/artifacts/` | 39 | 200 |
+| **Union (deduplicated)** | **389** | **2381** |
+
+The suite total is 1380 files, so **389 of them — 28% — touch one of these four**.
+
+The journal is not a bystander either: `src/trust/journal.ts` has 24 consumers in
+`src/`, including `operation-bundles/lock-gate.ts` (the mutation gate), and
+`trust/page-apply.ts` calls `recordPreState` twice. **The journal IS today's
+revert mechanism for page mutations**, so migrating it is migrating the undo system
+for everything that mutates.
+
+#### What "no files" would actually require
+
+Not "write the run state to a table". Each of these subsystems has a different
+revert/recovery contract:
+
+- `preparations` keeps RUN records with phase summaries, gate proofs, effect summaries,
+  completeness records and handoff bindings (`run-types.ts`, 10+ `V1` interfaces).
+- `operation-bundles` keeps a catalog, payloads and manifests with capacity caps.
+- `products` keeps a binding plus an installed package.
+- `artifacts` keeps a content-addressed body plus a sidecar manifest, defended by
+  no-follow-leaf, parent-confined, capped reads and TOCTOU re-confirmation.
+
+The safety machinery in `artifacts/store.ts` and `journal.ts` exists to make a
+DIRECTORY behave like an identity, exactly like `candidate-custody.ts` did. Rows do
+not need most of it -- but deciding WHICH parts become unnecessary is per-subsystem
+work, not a shared refactor.
+
+#### Recommendation before starting
+
+Migrate ONE subsystem end to end and measure the real delta, rather than opening four
+at once. `artifacts` is the smallest (39 test files, 200 tests) and its contract is a
+content hash plus a manifest -- the closest analogue to what the wiki already does,
+so it validates the shape of the work cheapest.
+
 ### Revised meaning of "done"
 
 Artifact parity is achieved. **Subsystem** parity is not, and it is a much larger
