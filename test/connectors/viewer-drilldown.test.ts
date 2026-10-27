@@ -7,7 +7,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { useTempRoot } from "../fixtures/temp-root.js";
-import { getBuiltinTemplate } from "../../src/profile/templates/registry.js";
+import { AUTOSCI_INSTALLED_PROFILE } from "../fixtures/builtin-profile-data.js";
 import { runConnector } from "../../src/connectors/run.js";
 import { listCandidates } from "../../src/compiler/candidates.js";
 import approve from "../../src/commands/review-approve.js";
@@ -25,9 +25,9 @@ afterEach(async () => {
   process.exitCode = undefined;
 });
 
-/** Install the actual current template, not a hand-maintained profile duplicate. */
+/** Install the AutoSci profile exactly as the shipped template delivered it. */
 async function importPaper(): Promise<string> {
-  const profile = getBuiltinTemplate("autosci")!.profile;
+  const profile = AUTOSCI_INSTALLED_PROFILE;
   await mkdir(path.dirname(path.join(ctx.dir, PROFILE_FILE)), { recursive: true });
   await writeFile(path.join(ctx.dir, PROFILE_FILE), JSON.stringify(profile));
   await writeFile(path.join(ctx.dir, ".llmwiki/config.json"), JSON.stringify({ connectors: { crossref: { contactEmail: "test@example.com", allowedHosts: ["api.crossref.org"] } } }));

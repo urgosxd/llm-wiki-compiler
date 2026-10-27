@@ -68,19 +68,10 @@ afterEach(async () => {
 });
 
 describe("research profile — validate (clean)", () => {
-  it("profile validate exits 0 for the installed research profile", async () => {
-    const result = await runCLI(["profile", "validate"], root);
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain("valid");
-  });
-
-  it("profile show prints the research id and all twelve relation types", async () => {
-    const result = await runCLI(["profile", "show"], root);
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain("research");
-    expect(result.stdout).toMatch(/relations:\s+12/);
-  });
-
+  // The `profile validate` / `profile show` CLI assertions are gone with the
+  // template subsystem. Validation itself is still covered below, directly
+  // against `validateProfile(RESEARCH_PROFILE)` — which is the property that
+  // matters; the CLI surface was only ever the way to reach it.
   it("declares all 7 research artifact types (types only — no required-artifact precondition)", async () => {
     const { profile } = validateProfile(RESEARCH_PROFILE);
     expect(Object.keys(profile.artifacts ?? {}).sort()).toEqual([
