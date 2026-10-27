@@ -153,25 +153,30 @@ describe.skipIf(!provisioned)("atomic ingest across the shipped dimensions", () 
     expect(counts.graphDocuments).toBe(0);
   });
 
-  it("records the failure as diagnosis, not as pending debt", async () => {
-    const { db, stackId, wiki } = subject();
+  /**
+   * A WIKI dimension that fails after a graph double has written.
+   *
+   * The mirror image of {@link failingKg}: here the graph writes first and the wiki
+   * is the one that explodes, so the rows to roll back are the graph's.
+   */
+  function failingWiki(graphWriter: Dimension): Dimension {
+    return {
+      name: "wiki",
+      prepare: async (): Promise<PreparedWrite> => ({ unchanged: false, handle: {} }),
+      commit: async (prepared, scope) => {
+        await graphWriter.commit(await graphWriter.prepare(INPUT), scope);
+        throw new Error("wiki blew up after the graph wrote");
+      },
+      discard: async () => {},
+    };
+  }
 
-    await expect(
-      ingestDimensions(db, stackId, INPUT, [wiki, failingKg(wiki)]),
-    ).rejects.toThrow();
-
-    const { records } = await loadRecords(db, stackId);
-    expect(records).toHaveLength(1);
-    expect(records[0]?.status).toBe("failed");
-  });
-
-  it("commits BOTH dimensions when neither fails", async () => {
-    const { db, stackId, wiki } = subject();
-
-    // A graph double that joins the coordinator's transaction and writes a real
-    // `stack_documents` row, so the positive case covers the same two tables the
-    // failure case proves empty.
-    const kg: Dimension = {
+  /**
+   * A graph double that writes a REAL `stack_documents` row into the shared
+   * transaction. Used by the reverse-order case below.
+   */
+  function graphRowWriter(db: typeof setup.harness.db, stackId: string): Dimension {
+    return {
       name: "kg",
       prepare: async () => ({ unchanged: false, handle: {} }),
       commit: async (_prepared, scope) => {
@@ -187,6 +192,50 @@ describe.skipIf(!provisioned)("atomic ingest across the shipped dimensions", () 
       },
       discard: async () => {},
     };
+  }
+
+  it("rolls the GRAPH back when the WIKI is the dimension that fails", async () => {
+    // `coordinator.ts` states "inside one transaction order is free". Every case in
+    // this file used to fail the graph, so only one ordering was measured: a wiki
+    // write followed by a graph failure. If the transaction boundary were tied to
+    // commit ORDER rather than to the transaction itself, the reverse case is where
+    // it would show.
+    const { db, stackId } = subject();
+    const kg = graphRowWriter(db, stackId);
+
+    // The WIKI is the stated cause. Asserting the message is not cosmetic: a
+    // mutation that stopped handing the transaction to `commit` made the graph
+    // double throw "received no transaction" instead, so the graph never wrote and
+    // both counts below were zero for a reason that has nothing to do with rollback.
+    // Pinning the cause keeps the case honest.
+    await expect(
+      ingestDimensions(db, stackId, INPUT, [kg, failingWiki(kg)]),
+    ).rejects.toThrow(/wiki blew up after the graph wrote/);
+
+    const counts = await rowCounts();
+    // The graph row was written FIRST, inside the transaction, and must still be gone.
+    expect(counts.graphDocuments).toBe(0);
+    expect(counts.pages).toBe(0);
+  });
+
+  it("records the failure as diagnosis, not as pending debt", async () => {
+    const { db, stackId, wiki } = subject();
+
+    await expect(
+      ingestDimensions(db, stackId, INPUT, [wiki, failingKg(wiki)]),
+    ).rejects.toThrow();
+
+    const { records } = await loadRecords(db, stackId);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.status).toBe("failed");
+  });
+
+  it("commits BOTH dimensions when neither fails", async () => {
+    const { db, stackId, wiki } = subject();
+
+    // The same graph double the reverse-order case uses, so the positive case covers
+    // the two tables the failure case proves empty -- see `graphRowWriter`.
+    const kg = graphRowWriter(db, stackId);
 
     const outcome = await ingestDimensions(db, stackId, INPUT, [wiki, kg]);
     expect(outcome.summaries.get("kg")).toBe("kg:ok");

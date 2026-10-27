@@ -12,11 +12,18 @@
  *    The suite was inverted to record the loss: the wiki row SURVIVED, the outbox
  *    kept a `pending` debt, and the guarantee was recoverability rather than
  *    atomicity.
- * 3. **Now** (dimension port v3) the coordinator runs both dimensions in ONE
- *    transaction, retried twice. The saga is gone, so the loss recorded in (2) is
- *    gone with it, and this suite goes back to asserting the property that was
- *    originally wanted -- this time because the transaction provides it, not
- *    because a local file could be reverted.
+ * 3. **Then** (dimension port v3) the coordinator ran both dimensions in ONE
+ *    transaction, retried twice. The saga was gone, so the loss recorded in (2) was
+ *    gone with it, and this suite went back to asserting the property that was
+ *    originally wanted -- because the transaction provides it, not because a local
+ *    file could be reverted.
+ * 4. **Now** one assertion was corrected: it claimed "no source markdown was
+ *    written" by checking for a `sources/` directory inside a `mkdtemp` root that no
+ *    dimension in this file is ever given. Probed, that directory enters and exits
+ *    the run empty, so the case passed without inspecting anything. The projection
+ *    claim moved to where a real root exists (`wiki-store-dimension.test.ts` and
+ *    `source-projection.test.ts`); what stays here is the claim these doubles can
+ *    actually prove.
  *
  * Each inversion was a measurement of the code, never an adjustment to make a red
  * test green. The comments stay because a reader who finds only the final
@@ -70,7 +77,7 @@ async function newHarness(): Promise<KgPostgresHarness> {
 function recordingDimension(
   name: "wiki" | "kg",
   events: string[],
-  behaviour: { failCommit?: boolean; failPrepare?: boolean } = {},
+  behaviour: { failCommit?: boolean; failPrepare?: boolean; projections?: string[] } = {},
 ): Dimension {
   return {
     name,
@@ -82,7 +89,16 @@ function recordingDimension(
     commit: async () => {
       events.push(`${name}:commit`);
       if (behaviour.failCommit === true) throw new Error(`${name} commit exploded`);
-      return { idempotencyKey: `${name}:key`, summary: `${name}:created` };
+      return {
+        idempotencyKey: `${name}:key`,
+        summary: `${name}:created`,
+        // A projection is only ever reached for a commit that REPORTED success, so
+        // logging it is what makes "no projection ran" an observation rather than
+        // an assumption about a directory nobody looked at.
+        afterCommit: async () => {
+          behaviour.projections?.push(name);
+        },
+      };
     },
     discard: async () => {
       events.push(`${name}:discard`);
@@ -99,16 +115,17 @@ function recordingDimension(
  * reason than the one its name states.
  *
  * @param events - Log the doubles append to.
+ * @param projections - Log of `afterCommit` invocations, by dimension name.
  * @returns The harness the run used, and the promise it rejects with.
  */
-async function runUntilKgFails(events: string[]): Promise<{
+async function runUntilKgFails(events: string[], projections: string[]): Promise<{
   harness: KgPostgresHarness;
   failure: Promise<unknown>;
 }> {
   const harness = await newHarness();
   const failure = ingestDimensions(harness.db, harness.stackId, INPUT, [
-    recordingDimension("wiki", events),
-    recordingDimension("kg", events, { failCommit: true }),
+    recordingDimension("wiki", events, { projections }),
+    recordingDimension("kg", events, { failCommit: true, projections }),
   ]);
   return { harness, failure };
 }
@@ -119,14 +136,16 @@ async function ingestUntilKgFails(): Promise<{
   readonly events: string[];
   readonly root: string;
   readonly harness: KgPostgresHarness;
+  readonly projections: string[];
 }> {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "dim-rollback-")));
   const events: string[] = [];
-  const { harness, failure } = await runUntilKgFails(events);
+  const projections: string[] = [];
+  const { harness, failure } = await runUntilKgFails(events, projections);
 
   await expect(failure).rejects.toThrow(/ingest failed after 2 attempts/);
 
-  return { records: await loadRecords(harness.db, harness.stackId), events, root, harness };
+  return { records: await loadRecords(harness.db, harness.stackId), events, root, harness, projections };
 }
 
 describe("cross-dimension failure under one transaction", () => {
@@ -145,11 +164,23 @@ describe("cross-dimension failure under one transaction", () => {
     expect(outcome.records.records[0]?.status).toBe("failed");
   });
 
-  it("writes no source markdown, because the projection runs after a commit", async () => {
+  it("never runs a projection, because no dimension committed", async () => {
     const outcome = await ingestUntilKgFails();
-    // The residual this buys: when the transaction fails, the file was NEVER
-    // touched. Cleaning up a failed ingest therefore costs nothing in the case
-    // that actually happens.
+    // THIS REPLACES A VACUOUS ASSERTION. The old case checked
+    // `existsSync(path.join(outcome.root, "sources"))` on a `mkdtemp` directory the
+    // doubles are never handed, so it passed no matter what the projection did.
+    //
+    // What these doubles CAN prove is the precondition the file-level guarantee
+    // rests on: a projection only runs for a dimension whose `commit` reported
+    // success, and here none did. Zero `afterCommit` calls is why no source markdown
+    // can exist -- and it is observable, unlike an empty directory.
+    //
+    // The file-level claim itself is covered where a real root is passed:
+    // `wiki-store-dimension.test.ts` ("actually writes the markdown under
+    // sources/") and `source-projection.test.ts` (compensation).
+    expect(outcome.projections).toEqual([]);
+    // And the negative control: the root really is empty, so a future reader cannot
+    // mistake an empty directory for a fulfilled guarantee.
     expect(existsSync(path.join(outcome.root, "sources"))).toBe(false);
   });
 
