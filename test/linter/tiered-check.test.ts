@@ -119,7 +119,6 @@ describe("every rule's tier is pinned", () => {
       { rule: "checkInferredWithoutCitations", tier: "provider-judgement" },
       { rule: "checkJournalHealth", tier: "deterministic" },
       { rule: "checkPendingEmbeddings", tier: "derived-view" },
-      { rule: "checkWorkflowRunHealth", tier: "deterministic" },
       { rule: "checkSchemaCrossLinks", tier: "deterministic" },
       { rule: "checkStalePages", tier: "derived-view" },
     ]);

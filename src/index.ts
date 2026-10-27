@@ -32,6 +32,7 @@ export type { Wiki } from "./sdk/types.js";
  * They are the observation half of the same profile the loader uses, which is why
  * they outlive the subsystems that once consumed them.
  */
+export { ArtifactVerifyUnavailableError } from "./artifacts/resolve.js";
 export { activeProfileDigest } from "./profile/load.js";
 export { loadNonDefaultProfile } from "./profile/block.js";
 export {

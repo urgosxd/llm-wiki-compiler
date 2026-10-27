@@ -26,6 +26,11 @@ it("publishes exact direct-save bytes, leaves same-slug concept unchanged and re
   expect(await readFile(sameSlug, "utf8")).toBe(original);
   expect(await readFile(path.join(root.dir, "wiki/index.md"), "utf8")).toContain("answer");
   expect(await readFile(path.join(root.dir, "wiki/MOC.md"), "utf8")).toContain("answer");
+  // TWO refreshes happen: the save path embeds `queries/direct` and the approve path
+  // embeds `queries/answer`. This assertion expects exactly one and has been red since
+  // before the rows migration -- verified by running it against 0374a5f~1, where it
+  // fails identically. Left as-is rather than "fixed" by widening it to any-call,
+  // which would stop asserting WHICH page got embedded.
   expect(updateEmbeddingsLockedCore).toHaveBeenCalledWith(expect.any(String), ["queries/answer"], expect.any(Function));
   await expect(candidateBytes(root.dir, candidate.id)).rejects.toMatchObject({ code: "ENOENT" });
 });
