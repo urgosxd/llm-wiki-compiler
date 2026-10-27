@@ -36,6 +36,7 @@ import {
   type RetrievalOptions,
 } from "../search/retrieval.js";
 import type { PageId } from "../utils/page-id.js";
+import type { RegistryPageSource } from "../utils/page-registry.js";
 import { selectPages } from "./page-selection.js";
 import type { ChunkCitation, RetrievalDebug } from "../utils/types.js";
 
@@ -121,7 +122,7 @@ export async function selectRelevantPages(
   });
 
   if (outcome.store) {
-    const chunkSelection = await trySelectViaChunks(root, outcome.store, question, debug, profile, stalePageIds);
+    const chunkSelection = await trySelectViaChunks(root, outcome.store, question, debug, profile, stalePageIds, options);
     if (chunkSelection) return enrich(chunkSelection);
     const candidates = await tryFindRelevantPages(root, outcome.store, question, profile, options);
     stalePageIds.push(...candidates.stalePageIds);
@@ -129,7 +130,11 @@ export async function selectRelevantPages(
     if (candidates.hits.length > 0) return enrich(await selectFromCandidates(question, candidates.hits));
   }
 
-  const { refs, reasoning } = await selectFallbackRefs(root, question, "search", profile, pageScope);
+  // Pass the registry source: without it the fallback enumerates candidates by
+  // scanning wiki/<namespace> on DISK, so a Stack-backed wiki -- whose pages are
+  // rows and whose filesystem holds no page files -- reports zero eligible pages
+  // even though the corpus is fully compiled and embedded.
+  const { refs, reasoning } = await selectFallbackRefs(root, question, "search", profile, pageScope, options.registrySource);
   return enrich({ refs, reasoning, chunks: [], warnings: [] });
 }
 
@@ -201,8 +206,9 @@ async function trySelectViaChunks(
   debug: boolean,
   profile: Awaited<ReturnType<typeof loadProfile>>,
   stalePageIds: PageId[],
+  options: RetrievalOptions,
 ): Promise<SelectedPages | null> {
-  const ranked = await tryFindRelevantChunks(root, store, question, profile);
+  const ranked = await tryFindRelevantChunks(root, store, question, profile, options.registrySource);
   stalePageIds.push(...ranked.stalePageIds);
   if (ranked.chunks.length === 0) return null;
 
@@ -316,9 +322,16 @@ async function tryFindRelevantChunks(
   store: NonNullable<Awaited<ReturnType<typeof loadEmbeddingsForSearch>>["store"]>,
   question: string,
   profile: Awaited<ReturnType<typeof loadProfile>>,
+  registrySource?: RegistryPageSource,
 ): Promise<ChunkLookup> {
   try {
-    const { hits, stalePageIds } = await findRelevantChunksV3(root, store, "search", question, CHUNK_TOP_K, profile);
+    // `registrySource` is load-bearing: the prefilter drops any chunk whose pageId
+    // is not in the LIVE id set, and without a source that set is built by scanning
+    // wiki/<namespace> on disk. A Stack has no page files, so every chunk is
+    // discarded and retrieval silently returns nothing while the vectors sit in
+    // Postgres.
+    const { hits, stalePageIds } = await findRelevantChunksV3(
+      root, store, "search", question, CHUNK_TOP_K, profile, registrySource);
     return { chunks: hits.map((hit) => ({ chunk: toChunkEntry(hit), pageId: hit.pageId, score: hit.score })), stalePageIds };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

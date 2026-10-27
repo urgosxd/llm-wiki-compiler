@@ -29,6 +29,8 @@ import { readStateClassified, writeState, type StateStatus } from "../../utils/s
 import type { WikiState } from "../../utils/types.js";
 import { readStateClassifiedFromRows, writeWikiStateToRows } from "./wiki-state-source.js";
 import { createRegistryPageSource } from "./page-registry-source.js";
+import { databaseEmbeddingSource } from "../../utils/embeddings-database.js";
+import type { EmbeddingStoreSource } from "../../utils/embeddings-load.js";
 import type { RegistryPageSource } from "../../utils/page-registry.js";
 import {
   createPageContentSource,
@@ -194,6 +196,34 @@ export async function withRegistrySource<T>(
   const dimensionsDb = createDimensionsDatabase(env);
   try {
     return await fn(createRegistryPageSource(dimensionsDb.db, stackId));
+  } finally {
+    await dimensionsDb.close();
+  }
+}
+
+/**
+ * Run `fn` with the row-backed EMBEDDING source, or `undefined` for the file path.
+ *
+ * Symmetric with {@link withRegistrySource} and needed for the same reason: the
+ * retrieval pipeline only searches vectors when it is handed a store source, and
+ * with no source it falls straight through to a disk enumeration. On a Stack that
+ * makes a fully compiled, fully embedded corpus invisible -- the vectors sit in
+ * `wiki.page_embeddings` while the query looks at a filesystem that has no page
+ * files at all.
+ *
+ * @param env - Environment to read the Stack from.
+ * @param fn - Receives the source, or `undefined` for the file-backed path.
+ * @returns Whatever `fn` returns.
+ */
+export async function withEmbeddingStoreSource<T>(
+  env: NodeJS.ProcessEnv,
+  fn: (source: EmbeddingStoreSource | undefined) => Promise<T>,
+): Promise<T> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return fn(undefined);
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    return await fn(databaseEmbeddingSource(dimensionsDb.db as never, stackId));
   } finally {
     await dimensionsDb.close();
   }

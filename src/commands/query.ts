@@ -24,8 +24,9 @@ import { languageDirective } from "../utils/output-language.js";
 import * as output from "../utils/output.js";
 import { verbose } from "../utils/output.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
-import { hasCompiledPages, withRegistrySource } from "../dimensions/wiki/page-source-seam.js";
+import { hasCompiledPages, withEmbeddingStoreSource, withRegistrySource } from "../dimensions/wiki/page-source-seam.js";
 import { loadSelectedRefRecords } from "../search/retrieval.js";
+import type { EmbeddingStoreSource } from "../utils/embeddings-load.js";
 import type { RegistryPageSource } from "../utils/page-registry.js";
 import { slugFromPageId, type PageId } from "../utils/page-id.js";
 import type { PageRecordWithId } from "../utils/page-registry.js";
@@ -133,6 +134,8 @@ interface GenerateAnswerOptions {
    * may not exist, and silently drop every page of a Stack-backed wiki.
    */
   registrySource?: RegistryPageSource;
+  /** Row-backed embedding store; without it retrieval only searches the file store. */
+  embeddingStoreSource?: EmbeddingStoreSource;
   /** Report/filter to hydrated grounding. Scoped/review queries always use this mode. */
   grounding?: "hydrated";
   /** Persist the answer as a wiki query page when set. */
@@ -188,6 +191,7 @@ export async function generateAnswer(
   const selection = await timeStage("query.retrieval", () => selectRelevantPages(root, question, Boolean(options.debug), options.pageScope, {
     embeddingFailure: options.embeddingFailure ?? (scopedOrReview ? "fallback" : "throw"),
     registrySource: options.registrySource,
+    embeddingStoreSource: options.embeddingStoreSource,
   }));
   // Human/log surfaces use the QUALIFIED pageId so same-slug pages
   // (`concepts/foo` vs `papers/foo`) are distinguishable; the structured
@@ -324,18 +328,20 @@ export default async function queryCommand(
   // all address the same backend, so a Stack-backed wiki cannot rank a page from
   // a row and then fail to read it from a file that was never written.
   const result = await withRegistrySource(process.env, (registrySource) =>
+    withEmbeddingStoreSource(process.env, (embeddingStoreSource) =>
     generateAnswer(root, question, {
       save: options.save,
       review: options.review,
       debug: options.debug,
       registrySource,
+      embeddingStoreSource,
       onToken: (text) => process.stdout.write(text),
       onPageSelection: (pages, reasoning) => {
         output.status("i", output.dim(`Reasoning: ${reasoning}`));
         output.status("*", output.info(`Selected ${pages.length} page(s): ${pages.join(", ")}`));
         output.header("Generating answer");
       },
-    }),
+    })),
   );
 
   // Newline after streamed answer so subsequent terminal output formats cleanly.

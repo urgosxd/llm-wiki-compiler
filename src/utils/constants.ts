@@ -538,7 +538,7 @@ export const EMBEDDING_MODELS: Record<string, string> = {
   openai: "text-embedding-3-small",
   orcarouter: "openai/text-embedding-3-small",
   ollama: "nomic-embed-text",
-  offline: "offline-bow-64",
+  offline: "offline-bow-768",
 };
 
 /** Per-provider default batch size for embedding requests (count-based). */

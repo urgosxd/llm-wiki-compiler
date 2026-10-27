@@ -22,8 +22,18 @@
 import { createHash } from "node:crypto";
 import type { EmbeddingInputType, LLMMessage, LLMProvider, LLMTool } from "../utils/provider.js";
 
-/** The fixed embedding width of the offline provider. */
-export const OFFLINE_EMBEDDING_DIMENSIONS = 64;
+/**
+ * The embedding width the offline provider produces.
+ *
+ * MUST match the `vector(N)` declared by every store that holds these vectors --
+ * `wiki.page_embeddings.vector` is `vector(768)`, so a narrower vector fails the
+ * INSERT, and because embedding failures are deliberately swallowed to keep a
+ * compile alive, the symptom is a permanently `pending` marker and a query that
+ * silently finds nothing. 768 is not a quality claim: it is the one width this
+ * build's schema accepts. Raising it costs nothing here because the hash spreads
+ * tokens across whatever width it is given.
+ */
+export const OFFLINE_EMBEDDING_DIMENSIONS = 768;
 
 /** Thrown when a call shape the offline provider cannot answer honestly is made. */
 export class OfflineProviderError extends Error {}
