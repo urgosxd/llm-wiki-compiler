@@ -112,23 +112,35 @@ async function insertEntity(
 }
 
 /**
- * Records that `documentId` contributed to `entityId`.
+ * Records that `documentId` contributed to `entityId`, reporting whether this is
+ * a NEW contribution or a REPLAY of one already recorded.
  *
  * `on conflict (entity_id, document_id) do nothing` — a re-ingest does not
  * duplicate the contribution, which is why `entity_source_documents` keeps
  * exactly one row per entity/document pair.
+ *
+ * ## Why the return value exists
+ *
+ * `RETURNING` on a conflict-skipped insert yields ZERO rows, while a real insert
+ * yields one (measured). That difference is the only available proof of whether
+ * this document is new corroboration for the entity, and the caller needs it to
+ * decide whether confidence may rise — see {@link consolidateEntityRows}.
+ *
+ * @returns `true` when a contribution row was actually inserted.
  */
 async function recordContribution(
   tx: Database,
   entityId: string,
   documentId: string,
   stackId: string,
-): Promise<void> {
-  await tx.execute(sql`
+): Promise<boolean> {
+  const inserted = await tx.execute<{ entity_id: string }>(sql`
     insert into entity_source_documents (entity_id, document_id, stack_id)
     values (${entityId}, ${documentId}, ${stackId})
     on conflict (entity_id, document_id) do nothing
+    returning entity_id
   `);
+  return inserted.length > 0;
 }
 
 /**
@@ -172,10 +184,19 @@ export async function consolidateEntityRows(
     const entityId =
       existing === undefined
         ? await insertEntity(tx, stackId, entity)
-        : await updateEntity(tx, entity, existing);
+        : existing.id;
 
     nameToId.set(entity.name.toLowerCase(), entityId);
-    await recordContribution(tx, entityId, documentId, stackId);
+
+    // The contribution is recorded FIRST, because its result decides whether the
+    // confidence may move. Counting a replay as corroboration is how a retried
+    // outbox replay used to inflate an entity from 0.7 to 1.0 while nothing new
+    // was learned: `confidence` must mean "how many documents agree", never
+    // "how many times we tried".
+    const isNewCorroboration = await recordContribution(tx, entityId, documentId, stackId);
+    if (existing !== undefined && isNewCorroboration) {
+      await updateEntity(tx, entity, existing);
+    }
   }
 
   return nameToId;
