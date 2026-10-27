@@ -30,7 +30,15 @@ describe("public connector legacy capacity", () => {
       fetcher: countedFixtureFetch({ value: 0 }),
     });
     expect(result).toMatchObject({ kind: "superseded", archivedIds: ["large"] });
-    expect(await readFile(path.join(path.dirname(pending), "archive", "large.json"))).toEqual(before);
+    // BYTE equality, asserted with `equals` rather than `toEqual`.
+    //
+    // The intent was always "the archived bytes are identical to the predecessor".
+    // `toEqual` compares two Buffers element by element, and on this 5 MB fixture
+    // that measured 42 155 ms against 1 ms for `equals` -- so the 30 s test timeout
+    // fired on the comparison itself, not on the connector. `equals` keeps exactly
+    // the same claim and fails with a readable message instead of a megabyte diff.
+    const archived = await readFile(path.join(path.dirname(pending), "archive", "large.json"));
+    expect(archived.equals(before)).toBe(true);
   });
 
   it("supersedes 201 selected predecessors when that makes room for one replacement", async () => {
@@ -48,6 +56,7 @@ describe("public connector legacy capacity", () => {
       fetcher: countedFixtureFetch({ value: 0 }),
       beforeCandidateStageForTest: async () => { throw new Error("injected staging failure"); },
     })).rejects.toThrow("injected staging failure");
-    expect(await readFile(pending)).toEqual(before);
+    const restored = await readFile(pending);
+    expect(restored.equals(before)).toBe(true);
   });
 });
