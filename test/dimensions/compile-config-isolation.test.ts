@@ -12,6 +12,7 @@
  * forgets `set local role` passes vacuously and proves the opposite of its claim.
  */
 
+import { appRoleExists, countAsAppRole } from "../fixtures/rls-probe.js";
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import type { Database } from "llmwiki-kg";
@@ -21,23 +22,10 @@ import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 const stackA = await createKgPostgresHarness("cfg-iso-a");
 const stackB = await createKgPostgresHarness("cfg-iso-b");
 
-/** The role the application is meant to run as, once the DSN is switched. */
-const APP_ROLE = "llmwiki_app";
-
 /** A frozen slug unique to this file, so a probe cannot collide with other suites. */
 const SECRET_SLUG = "cfg-isolation-secret-slug";
 
-const appRolePresent = await (async (): Promise<boolean> => {
-  if (!stackA.reachable) return false;
-  try {
-    const rows = await stackA.db.execute<{ n: number }>(
-      `select count(*)::int as n from pg_roles where rolname = '${APP_ROLE}'`,
-    );
-    return ((rows[0] as { n: number } | undefined)?.n ?? 0) > 0;
-  } catch {
-    return false;
-  }
-})();
+const appRolePresent = stackA.reachable && (await appRoleExists(stackA.db));
 
 afterAll(async () => {
   await stackA.cleanup();
@@ -52,14 +40,7 @@ afterAll(async () => {
  * @returns How many rows the statement could see.
  */
 async function countSecretAsApp(db: Database, boundStackId: string | null): Promise<number> {
-  return db.transaction(async (tx) => {
-    // `SET LOCAL ROLE` takes no bind parameters, so it is raw SQL; the role name is
-    // a constant above, never caller input.
-    await tx.execute(sql.raw(`set local role ${APP_ROLE}`));
-    await tx.execute(sql.raw("reset app.stack_id"));
-    if (boundStackId !== null) {
-      await tx.execute(sql`select set_config('app.stack_id', ${boundStackId}, true)`);
-    }
+  return countAsAppRole(db, boundStackId, async (tx) => {
     const rows = await tx.execute<{ n: number }>(
       sql`select count(*)::int as n from wiki.compile_config where ${SECRET_SLUG} = any(frozen_slugs)`,
     );

@@ -14,7 +14,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { collectStatus } from "../../src/status/collect.js";
 import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
 import { createPageScanSource } from "../../src/dimensions/wiki/page-scan-source.js";
-import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { provisionStack } from "../fixtures/stack-harness.js";
 
 /** Render a page the way compile does, frontmatter included. */
 function page(title: string, extra = ""): string {
@@ -26,7 +27,7 @@ describe("status from rows", () => {
   let root: string;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`status-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("status")).harness;
     root = await mkdtemp(path.join(os.tmpdir(), "no-wiki-status-"));
   });
 

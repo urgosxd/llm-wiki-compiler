@@ -101,19 +101,86 @@ export async function confinedFetchRequest(
   req: ConfinedFetchRequest, limits: FetchLimits, policy: ConfinedFetchPolicy,
   seams: ConfinedFetchSeams = {},
 ): Promise<ConfinedFetchResult> {
+  // Every refusal is decided BEFORE any socket is opened, so the seconds half of this
+  // function is only reachable through a fully validated request. Splitting the
+  // checks out keeps that ordering visible and keeps this function to one job.
+  const gate = validateRequest(req, limits, policy);
+  if (gate.kind !== "ok") return gate;
+  const start = now(seams);
+  return fetchHop(gate.url, req.method, gate.body, gate.headers, limits, policy, seams,
+    limits.maxRedirects, start + limits.timeoutMs, start);
+}
+
+/** A request that passed every pre-flight check, ready to be sent. */
+type AdmittedRequest =
+  | { kind: "ok"; url: URL; headers: Record<string, string>; body: Buffer | undefined }
+  | { kind: "refused"; reason: string }
+  | { kind: "unavailable"; reason: string };
+
+/**
+ * Run every pre-flight refusal in one place, in order.
+ *
+ * Order is the contract, not an accident: a URL is checked before headers, headers
+ * before method, and the abort signal LAST, because an aborted request must still
+ * report a malformed URL rather than a cancellation. Coupling them into one function
+ * makes that sequence a single readable list.
+ *
+ * @param req - The caller's typed request.
+ * @param limits - Byte caps and the abort signal.
+ * @param policy - Allowlisted hosts and origins.
+ * @returns The admitted request, or the refusal to return unchanged.
+ */
+function validateRequest(
+  req: ConfinedFetchRequest, limits: FetchLimits, policy: ConfinedFetchPolicy,
+): AdmittedRequest {
+  const target = validateTarget(req, policy);
+  if (target.kind !== "ok") return target;
+  const payload = validatePayload(req, limits);
+  if (payload.kind !== "ok") return payload;
+  return { kind: "ok", url: target.url, headers: target.headers, body: payload.body };
+}
+
+/**
+ * Check WHERE the request goes: the URL, then the headers.
+ *
+ * Both are refusals about the destination, and both must be decided before any byte
+ * of the body is materialised.
+ *
+ * @param req - The caller's typed request.
+ * @param policy - Allowlisted hosts and origins.
+ * @returns The validated destination, or the refusal.
+ */
+function validateTarget(
+  req: ConfinedFetchRequest, policy: ConfinedFetchPolicy,
+): { kind: "ok"; url: URL; headers: Record<string, string> } | { kind: "refused"; reason: string } {
   const parsed = validateUrl(req.url, policy);
   if (parsed.kind !== "ok") return parsed;
   const headers = validateHeaders(req.headers ?? {});
   if (headers.kind !== "ok") return headers;
+  return { kind: "ok", url: parsed.url, headers: headers.headers };
+}
+
+/**
+ * Check WHAT the request sends: the method, the byte cap, and the abort signal.
+ *
+ * The abort check is deliberately LAST: a cancelled request must still report a
+ * malformed method or an oversized body rather than a cancellation, because those are
+ * the caller's bugs and a cancellation would hide them.
+ *
+ * @param req - The caller's typed request.
+ * @param limits - Byte caps and the abort signal.
+ * @returns The materialised body, or the refusal.
+ */
+function validatePayload(
+  req: ConfinedFetchRequest, limits: FetchLimits,
+): { kind: "ok"; body: Buffer | undefined } | { kind: "refused"; reason: string } | { kind: "unavailable"; reason: string } {
   if (!validMethod(req.method)) return { kind: "refused", reason: "connector method is not allowed" };
   const body = req.body === undefined ? undefined : Buffer.from(req.body);
   if (body && body.length > (limits.maxRequestBytes ?? 0)) {
     return { kind: "refused", reason: "connector request exceeds byte cap" };
   }
   if (limits.signal?.aborted) return { kind: "unavailable", reason: "connector fetch aborted" };
-  const start = now(seams);
-  return fetchHop(parsed.url, req.method, body, headers.headers, limits, policy, seams,
-    limits.maxRedirects, start + limits.timeoutMs, start);
+  return { kind: "ok", body };
 }
 
 type UrlValidation = { kind: "ok"; url: URL } | { kind: "refused"; reason: string };

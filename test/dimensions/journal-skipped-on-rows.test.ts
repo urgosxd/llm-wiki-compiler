@@ -24,20 +24,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { withStackEnv } from "../fixtures/stack-env.js";
+import { withProjectRoot, withStackEnv } from "../fixtures/stack-env.js";
 import { applyApprovedMutationsLocked } from "../../src/trust/executor.js";
 import { applyPageMutationLocked } from "../../src/trust/page-apply.js";
 import type { PageSink } from "../../src/trust/page-apply.js";
-
-/** Provision a project root plus a Stack, always tearing both down. */
-async function withProject(label: string, body: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(tmpdir(), `${label}-`));
-  try {
-    await withStackEnv(label, () => body(dir));
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
 
 /** A sink that records what it was asked to store and writes nothing. */
 function recordingSink(): { sink: PageSink; stored: string[] } {
@@ -61,7 +51,7 @@ function pageCreate(slug: string) {
 
 describe("journal is not opened for a fully row-backed apply", () => {
   it("leaves no journal directory behind when every target is a row", () =>
-    withProject("journal-rows", async (dir) => {
+    withProjectRoot("journal-rows", async (dir) => {
       const { sink, stored } = recordingSink();
 
       await applyApprovedMutationsLocked(dir, [pageCreate("alpha")], { pageSink: sink });
@@ -73,7 +63,7 @@ describe("journal is not opened for a fully row-backed apply", () => {
     }));
 
   it("still journals when the file backend is active", () =>
-    withProject("journal-files", async (dir) => {
+    withProjectRoot("journal-files", async (dir) => {
       // No sink: the page is written as a file, so a pre-state is recorded and a
       // batch MUST exist. Guards against "skip the journal always" masquerading as
       // a fix.
@@ -83,7 +73,7 @@ describe("journal is not opened for a fully row-backed apply", () => {
     }));
 
   it("still journals a row-backed delete that falls back to the file remover", () =>
-    withProject("journal-del", async (dir) => {
+    withProjectRoot("journal-del", async (dir) => {
       // A sink with NO remover: the write goes to a row, but the delete unlinks a
       // file and therefore records a pre-state. The batch is required again.
       const deleteMutation = {
@@ -97,7 +87,7 @@ describe("journal is not opened for a fully row-backed apply", () => {
     }));
 
   it("refuses a file-backed mutation that arrived without a batch", () =>
-    withProject("journal-guard", async (dir) => {
+    withProjectRoot("journal-guard", async (dir) => {
       // Defense in depth. `applyApprovedMutationsLocked` opens a batch whenever any
       // file branch is reachable, so this cannot happen from there. Calling the
       // mutation entry point directly with no batch must fail LOUDLY rather than
@@ -108,7 +98,7 @@ describe("journal is not opened for a fully row-backed apply", () => {
     }));
 
   it("creates no .llmwiki at all when the only writes are rows", () =>
-    withProject("journal-nodir", async (dir) => {
+    withProjectRoot("journal-nodir", async (dir) => {
       await applyApprovedMutationsLocked(dir, [pageCreate("beta")], { pageSink: recordingSink().sink });
 
       expect(existsSync(path.join(dir, ".llmwiki"))).toBe(false);

@@ -23,7 +23,11 @@ import {
   type ArtifactBundleRow,
   type ArtifactMemberRow,
 } from "../../src/dimensions/wiki/artifact-store.js";
-import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { stackHarnessRunner } from "../fixtures/stack-harness.js";
+
+/** This suite's Stack label, so a leaked Stack names the file that leaked it. */
+const withHarness = stackHarnessRunner("art");
 
 /** A minimal bundle row for `slug`, with a digest that is deliberately identifiable. */
 function bundleRow(slug: string, body: string): ArtifactBundleRow {
@@ -42,16 +46,6 @@ function bundleRow(slug: string, body: string): ArtifactBundleRow {
 /** One member leaf, at an explicit declaration position. */
 function memberRow(fileName: string, position: number, content: string): ArtifactMemberRow {
   return { fileName, position, bytes: new Uint8Array(Buffer.from(content, "utf8")) };
-}
-
-/** A Stack harness, torn down whatever the body does. */
-async function withHarness(body: (harness: KgPostgresHarness) => Promise<void>): Promise<void> {
-  const harness = await createKgPostgresHarness(`art-${randomUUID().slice(0, 8)}`);
-  try {
-    await body(harness);
-  } finally {
-    await harness.cleanup();
-  }
 }
 
 describe("artifact bundles as rows", () => {

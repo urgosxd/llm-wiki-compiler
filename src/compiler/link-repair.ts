@@ -61,22 +61,42 @@ function morphologyVariants(targetSlug: string): string[] {
   const head = separatorIndex === -1 ? "" : targetSlug.slice(0, separatorIndex + 1);
   const lastWord = separatorIndex === -1 ? targetSlug : targetSlug.slice(separatorIndex + 1);
   if (lastWord.length < MIN_REPAIRABLE_SLUG_LENGTH) return [];
-  const variants: string[] = [];
-  // plural -> singular, then singular -> plural. Both directions are needed:
-  // which one the link uses depends on how the extractor phrased it.
-  if (lastWord.endsWith("ies") && lastWord.length > 4) {
-    variants.push(head + lastWord.slice(0, -3) + "y");
-  }
-  if (lastWord.endsWith("es") && lastWord.length > 3) {
-    variants.push(head + lastWord.slice(0, -2));
-  }
-  if (lastWord.endsWith("s") && !lastWord.endsWith("ss")) {
-    variants.push(head + lastWord.slice(0, -1));
-  } else {
-    variants.push(head + lastWord + "s");
-    variants.push(head + lastWord + "es");
-  }
-  return variants;
+  return singularForms(head, lastWord).concat(pluralForms(head, lastWord));
+}
+
+/**
+ * Plural -> singular candidates for one word, in decreasing specificity.
+ *
+ * Both directions are needed: which one the link uses depends on how the extractor
+ * phrased it, so a rule that only stripped an `s` would miss `studies` -> `study`.
+ *
+ * @param head - Everything up to and including the last separator.
+ * @param lastWord - The final word of the slug.
+ * @returns Candidate singular slugs; possibly empty.
+ */
+function singularForms(head: string, lastWord: string): string[] {
+  const forms: string[] = [];
+  if (lastWord.endsWith("ies") && lastWord.length > 4) forms.push(head + lastWord.slice(0, -3) + "y");
+  if (lastWord.endsWith("es") && lastWord.length > 3) forms.push(head + lastWord.slice(0, -2));
+  // `ss` is not a plural marker, so `class` must not become `clas`.
+  if (lastWord.endsWith("s") && !lastWord.endsWith("ss")) forms.push(head + lastWord.slice(0, -1));
+  return forms;
+}
+
+/**
+ * Singular -> plural candidates for one word.
+ *
+ * Empty when the word already reads as a plural: the singular forms in
+ * {@link singularForms} are then the only candidates, and adding `-s` to `graphs`
+ * would propose `graphss`.
+ *
+ * @param head - Everything up to and including the last separator.
+ * @param lastWord - The final word of the slug.
+ * @returns Candidate plural slugs; possibly empty.
+ */
+function pluralForms(head: string, lastWord: string): string[] {
+  if (lastWord.endsWith("s") && !lastWord.endsWith("ss")) return [];
+  return [head + lastWord + "s", head + lastWord + "es"];
 }
 
 /**
@@ -96,25 +116,72 @@ function resolveUniquePrefix(targetSlug: string, slugs: string[]): string | null
   // truncations are what produce wrong links. Both still require exactly ONE
   // candidate, so an ambiguous inflection falls through to the prefix rule rather
   // than being guessed at.
+  const inflected = uniqueInflection(targetSlug, existing);
+  if (inflected.slug !== null) return inflected.slug;
+  if (inflected.status === "ambiguous") return null;
+  const prefixed = uniquePrefixMatch(targetSlug, slugs);
+  if (prefixed.slug !== null) return prefixed.slug;
+  if (prefixed.status === "ambiguous") return null;
+  return exactWithoutExtension(targetSlug, existing);
+}
+
+/** Outcome of one repair rule: a single answer, ambiguity, or no candidate. */
+type RepairAnswer =
+  | { readonly status: "found"; readonly slug: string }
+  | { readonly status: "ambiguous"; readonly slug: null }
+  | { readonly status: "none"; readonly slug: null };
+
+/**
+ * The ONE inflection of this slug that exists, or nothing.
+ *
+ * Ambiguity is not resolved here: two existing inflections means the link names
+ * something the corpus cannot decide, and a wrong link is worse than a visibly
+ * missing one.
+ *
+ * @param targetSlug - The broken slug.
+ * @param existing - Every slug the corpus has.
+ * @returns The single match, an ambiguity, or no candidate.
+ */
+function uniqueInflection(targetSlug: string, existing: ReadonlySet<string>): RepairAnswer {
   const inflected = morphologyVariants(targetSlug).filter((variant) => existing.has(variant));
-  if (inflected.length === 1) return inflected[0]!;
-  if (inflected.length > 1) return null;
+  if (inflected.length === 1) return { status: "found", slug: inflected[0]! };
+  if (inflected.length > 1) return { status: "ambiguous", slug: null };
+  return { status: "none", slug: null };
+}
+
+/**
+ * The ONE page whose slug extends this one with a separator, or nothing.
+ *
+ * @param targetSlug - The broken slug.
+ * @param slugs - Every slug the corpus has.
+ * @returns The single match, an ambiguity, or no candidate.
+ */
+function uniquePrefixMatch(targetSlug: string, slugs: readonly string[]): RepairAnswer {
   const prefix = targetSlug + SLUG_SEPARATOR;
   let match: string | null = null;
   for (const slug of slugs) {
     if (!slug.startsWith(prefix)) continue;
-    if (match) return null;
+    if (match) return { status: "ambiguous", slug: null };
     match = slug;
   }
-  if (match) return match;
-  // A link written as `[[algorithms.md]]` slugifies to `algorithmsmd`: `slugify`
-  // drops the dot and joins the words, because a dot is not a word separator it
-  // knows about. Split a trailing `md` back off and retry the exact lookup.
-  if (targetSlug.endsWith("md") && targetSlug.length > MIN_REPAIRABLE_SLUG_LENGTH + 2) {
-    const withoutExtension = targetSlug.slice(0, -2);
-    if (existing.has(withoutExtension)) return withoutExtension;
-  }
-  return null;
+  return match === null ? { status: "none", slug: null } : { status: "found", slug: match };
+}
+
+/**
+ * Recover a slug from which `slugify` already stripped the `.md` extension.
+ *
+ * A link written as `[[algorithms.md]]` slugifies to `algorithmsmd`: `slugify` drops
+ * the dot and joins the words, because a dot is not a separator it knows about. So a
+ * trailing `md` is split back off and the exact lookup is retried.
+ *
+ * @param targetSlug - The broken slug.
+ * @param existing - Every slug the corpus has.
+ * @returns The extension-free slug when it exists, else null.
+ */
+function exactWithoutExtension(targetSlug: string, existing: ReadonlySet<string>): string | null {
+  if (!targetSlug.endsWith("md") || targetSlug.length <= MIN_REPAIRABLE_SLUG_LENGTH + 2) return null;
+  const withoutExtension = targetSlug.slice(0, -2);
+  return existing.has(withoutExtension) ? withoutExtension : null;
 }
 
 /** Reuse the production retained-only prefix rule, including pending ambiguity. */

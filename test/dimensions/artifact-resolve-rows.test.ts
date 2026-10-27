@@ -20,7 +20,11 @@ import { saveArtifact, deleteArtifact, type ArtifactBundleRow } from "../../src/
 import { readVerifiedArtifactFromRows } from "../../src/artifacts/resolve-rows.js";
 import { hashMemberBytes } from "../../src/artifacts/members.js";
 import type { ProfilePack } from "../../src/profile/types.js";
-import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { stackHarnessRunner } from "../fixtures/stack-harness.js";
+
+/** This suite's Stack label, so a leaked Stack names the file that leaked it. */
+const withHarness = stackHarnessRunner("res");
 
 const BODY = "# report\n\nhello\n";
 
@@ -83,24 +87,78 @@ function createHashRef(body: string): string {
   return createHash("sha256").update(body, "utf8").digest("hex");
 }
 
-/** A Stack harness, torn down whatever the body does. */
-async function withHarness(body: (harness: KgPostgresHarness) => Promise<void>): Promise<void> {
-  const harness = await createKgPostgresHarness(`res-${randomUUID().slice(0, 8)}`);
-  try {
-    await body(harness);
-  } finally {
-    await harness.cleanup();
-  }
+/**
+ * Resolve the `report` artifact of the harness's Stack.
+ *
+ * Extracted because every case below makes the identical five-argument call and only
+ * the digest differs; five copies of it were flagged as a clone group. `members` is
+ * threaded through because the member cases need a profile that declares them.
+ *
+ * @param harness - Stack to read from.
+ * @param sha - Digest the REF points at.
+ * @param members - Member limits to declare, when the case is about members.
+ * @returns The resolver's verdict.
+ */
+async function readReport(
+  harness: KgPostgresHarness,
+  sha: string,
+  members?: { maxCount: number; maxMemberBytes: number; maxTotalBytes: number },
+): Promise<Awaited<ReturnType<typeof readVerifiedArtifactFromRows>>> {
+  return readVerifiedArtifactFromRows(
+    harness.db as never, harness.stackId, profileWith(members),
+    { artifactType: "report", slug: "r1", sha256: sha });
+}
+
+/** Member limits a case declares when it is about member verification. */
+const MEMBER_LIMITS = { maxCount: 4, maxMemberBytes: 1024, maxTotalBytes: 4096 } as const;
+
+/**
+ * Save a single-member bundle whose bytes the caller chooses.
+ *
+ * Every member case needs the same three steps -- declare limits, build a body with one
+ * member, save it with a chosen member byte-set -- and the copies were flagged as a
+ * clone group. Passing the member BYTES rather than a flag is what keeps the tamper
+ * cases explicit: "alpha" versus "ALPHA" is the whole point of one of them.
+ *
+ * @param harness - Stack to save into.
+ * @param memberBytes - Bytes to store for `a.md`.
+ * @returns The saved bundle's digest and the limits to pass to {@link readReport}.
+ */
+async function saveMemberBundle(
+  harness: KgPostgresHarness,
+  memberBytes: Uint8Array[],
+): Promise<{ sha: string; members: typeof MEMBER_LIMITS }> {
+  const body = memberBody([{ fileName: "a.md", content: "alpha" }]);
+  const bundle = bundleRow(createHashRef(body), body);
+  await saveArtifact(
+    harness.db, harness.stackId, bundle, manifestFor(bundle.sha256, body),
+    memberBytes.map((bytes, position) => ({ fileName: "a.md", position, bytes })),
+  );
+  return { sha: bundle.sha256, members: MEMBER_LIMITS };
+}
+
+/**
+ * Save an honest single-body bundle and return its digest.
+ *
+ * Two cases need exactly this and differ only in which digest they then point the REF
+ * at -- which is the distinction one of them exists to prove (row honest, ref wrong).
+ * Sharing the SETUP keeps that difference visible instead of buried in repetition.
+ *
+ * @param harness - Stack to save into.
+ * @returns The digest the bundle was saved and manifested under.
+ */
+async function saveHonestBundle(harness: KgPostgresHarness): Promise<string> {
+  const sha = bodySha();
+  await saveArtifact(harness.db, harness.stackId, bundleRow(sha), manifestFor(sha));
+  return sha;
 }
 
 describe("row-backed artifact resolution", () => {
   it("verifies a bundle that was written honestly", () =>
     withHarness(async (harness) => {
-      const sha = bodySha();
-      await saveArtifact(harness.db, harness.stackId, bundleRow(sha), manifestFor(sha));
+      const sha = await saveHonestBundle(harness);
 
-      const read = await readVerifiedArtifactFromRows(
-        harness.db as never, harness.stackId, profileWith(), { artifactType: "report", slug: "r1", sha256: sha });
+      const read = await readReport(harness, sha);
 
       expect(read.health).toBe("ok");
       expect(read.body).toBe(BODY);
@@ -128,8 +186,7 @@ describe("row-backed artifact resolution", () => {
       const sha = bodySha();
       await saveArtifact(harness.db, harness.stackId, bundleRow(sha), { ...manifestFor(sha), slug: "someone-else" });
 
-      const read = await readVerifiedArtifactFromRows(
-        harness.db as never, harness.stackId, profileWith(), { artifactType: "report", slug: "r1", sha256: sha });
+      const read = await readReport(harness, sha);
 
       // An identity lie must be refused identically on both backends, and BEFORE any
       // readability consideration.
@@ -145,19 +202,16 @@ describe("row-backed artifact resolution", () => {
       const tampered = "# tamper\n\nhello\n"; // SAME byte length as BODY, different bytes
       await saveArtifact(harness.db, harness.stackId, bundleRow(sha, tampered), manifestFor(sha));
 
-      const read = await readVerifiedArtifactFromRows(
-        harness.db as never, harness.stackId, profileWith(), { artifactType: "report", slug: "r1", sha256: sha });
+      const read = await readReport(harness, sha);
 
       expect(read.health).toBe("artifact-bytes-tampered");
     }));
 
   it("reports hash-mismatch when the ROW is honest but the REF points elsewhere", () =>
     withHarness(async (harness) => {
-      const sha = bodySha();
-      await saveArtifact(harness.db, harness.stackId, bundleRow(sha), manifestFor(sha));
+      await saveHonestBundle(harness);
 
-      const read = await readVerifiedArtifactFromRows(
-        harness.db as never, harness.stackId, profileWith(), { artifactType: "report", slug: "r1", sha256: "a".repeat(64) });
+      const read = await readReport(harness, "a".repeat(64));
 
       // The bundle is internally consistent, so this is a ref mismatch, not a tamper.
       expect(read.health).toBe("artifact-hash-mismatch");
@@ -165,14 +219,9 @@ describe("row-backed artifact resolution", () => {
 
   it("reports dangling when a manifest member row has no stored member", () =>
     withHarness(async (harness) => {
-      const members = { maxCount: 4, maxMemberBytes: 1024, maxTotalBytes: 4096 };
-      const body = memberBody([{ fileName: "a.md", content: "alpha" }]);
-      const bundle = bundleRow(createHashRef(body), body);
-      await saveArtifact(harness.db, harness.stackId, bundle, manifestFor(bundle.sha256, body), []);
+      const { sha, members } = await saveMemberBundle(harness, []);
 
-      const read = await readVerifiedArtifactFromRows(
-        harness.db as never, harness.stackId, profileWith(members),
-        { artifactType: "report", slug: "r1", sha256: bundle.sha256 });
+      const read = await readReport(harness, sha, members);
 
       expect(read.health).toBe("artifact-dangling");
     }));
@@ -187,9 +236,7 @@ describe("row-backed artifact resolution", () => {
         { fileName: "stowaway.md", position: 0, bytes: new Uint8Array(Buffer.from("x")) },
       ]);
 
-      const read = await readVerifiedArtifactFromRows(
-        harness.db as never, harness.stackId, profileWith(members),
-        { artifactType: "report", slug: "r1", sha256: bundle.sha256 });
+      const read = await readReport(harness, bundle.sha256, members);
 
       expect(read.health).toBe("artifact-bytes-tampered");
     }));
@@ -205,9 +252,7 @@ describe("row-backed artifact resolution", () => {
           fileName: file.fileName, position, bytes: new Uint8Array(Buffer.from(file.content)),
         })));
 
-      const read = await readVerifiedArtifactFromRows(
-        harness.db as never, harness.stackId, profileWith(members),
-        { artifactType: "report", slug: "r1", sha256: bundle.sha256 });
+      const read = await readReport(harness, bundle.sha256, members);
 
       expect(read.health).toBe("ok");
       expect(read.body).toBe(body);
@@ -215,18 +260,11 @@ describe("row-backed artifact resolution", () => {
 
   it("reports bytes-tampered when a member row has the right LENGTH but wrong bytes", () =>
     withHarness(async (harness) => {
-      const members = { maxCount: 4, maxMemberBytes: 1024, maxTotalBytes: 4096 };
-      const body = memberBody([{ fileName: "a.md", content: "alpha" }]);
-      const bundle = bundleRow(createHashRef(body), body);
       // "alpha" and "ALPHA" are both 5 bytes, so the length check passes and only the
       // digest comparison can notice. Without this the set check would carry the test.
-      await saveArtifact(harness.db, harness.stackId, bundle, manifestFor(bundle.sha256, body), [
-        { fileName: "a.md", position: 0, bytes: new Uint8Array(Buffer.from("ALPHA")) },
-      ]);
+      const { sha, members } = await saveMemberBundle(harness, [new Uint8Array(Buffer.from("ALPHA"))]);
 
-      const read = await readVerifiedArtifactFromRows(
-        harness.db as never, harness.stackId, profileWith(members),
-        { artifactType: "report", slug: "r1", sha256: bundle.sha256 });
+      const read = await readReport(harness, sha, members);
 
       expect(read.health).toBe("artifact-bytes-tampered");
     }));
@@ -237,8 +275,7 @@ describe("row-backed artifact resolution", () => {
       await saveArtifact(harness.db, harness.stackId, bundleRow(sha), manifestFor(sha));
       await deleteArtifact(harness.db, harness.stackId, "report", "r1");
 
-      const read = await readVerifiedArtifactFromRows(
-        harness.db as never, harness.stackId, profileWith(), { artifactType: "report", slug: "r1", sha256: sha });
+      const read = await readReport(harness, sha);
 
       expect(read.health).toBe("artifact-dangling");
     }));

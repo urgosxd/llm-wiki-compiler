@@ -15,6 +15,7 @@ import {
   type EmbeddingStoreV3,
 } from "../src/utils/embeddings.js";
 import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
+import { expectDegradedStore } from "./fixtures/embeddings-degrade.js";
 import { EmbeddingIntegrityError } from "../src/utils/embeddings-batch.js";
 import { OpenAIProvider } from "../src/providers/openai.js";
 import * as providerMod from "../src/utils/provider.js";
@@ -87,10 +88,7 @@ describe("read-side embedding validation", () => {
     setupOpenAI([1, 0]);
     await writeRawStore(root, pageStore([])); // empty vector: fails the gate
 
-    const outcome = await loadEmbeddingsForSearch(root);
-
-    expect(outcome.store).toBeNull();
-    expect(outcome.warnings.map((w) => w.code)).toContain("embedding-store-unavailable");
+    await expectDegradedStore(root, "embedding-store-unavailable");
   });
 
   it("degrades instead of ranking a store built by a different embedding model", async () => {
@@ -100,10 +98,7 @@ describe("read-side embedding validation", () => {
     stale.model = "some-other-model";
     await writeRawStore(root, stale);
 
-    const outcome = await loadEmbeddingsForSearch(root);
-
-    expect(outcome.store).toBeNull();
-    expect(outcome.warnings.map((w) => w.code)).toContain("embedding-index-outdated");
+    await expectDegradedStore(root, "embedding-index-outdated");
   });
 
   it("loads a healthy v3 store without warnings", async () => {

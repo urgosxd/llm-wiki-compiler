@@ -12,6 +12,7 @@ import { atomicWrite, parseFrontmatter } from "../utils/markdown.js";
 import { withDerivedSource } from "../dimensions/wiki/derived-artifact-source.js";
 import { readWikiPageInDirOrWarn } from "./confined-wiki-read.js";
 import { toPosixPath } from "../utils/path-confine.js";
+import { projectSummaries } from "../dimensions/wiki/page-scan-source.js";
 import { CONCEPTS_DIR, QUERIES_DIR, INDEX_FILE } from "../utils/constants.js";
 import {
   summarizeScanned,
@@ -133,14 +134,9 @@ export async function scanWikiPages(dirPath: string): Promise<ScannedPage[]> {
 export async function collectPageSummaries(
   conceptsPath: string,
 ): Promise<PageSummary[]> {
-  const scanned = await scanWikiPages(conceptsPath);
-  return scanned
-    .filter(({ meta }) => meta.title && typeof meta.title === "string" && !meta.orphaned)
-    .map(({ slug, meta }) => ({
-      title: meta.title as string,
-      slug,
-      summary: typeof meta.summary === "string" ? meta.summary : "",
-    }));
+  // The projection is SHARED with the row-backed scan, so an index built from files
+  // and one built from rows cannot disagree about which pages are listable.
+  return projectSummaries(await scanWikiPages(conceptsPath));
 }
 
 /** Strip [[wikilink]] brackets from text, leaving the inner text intact. */

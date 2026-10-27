@@ -14,7 +14,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveLinks } from "../../src/compiler/resolver.js";
 import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
 import { createResolverPageSource } from "../../src/dimensions/wiki/page-scan-source.js";
-import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { provisionStack } from "../fixtures/stack-harness.js";
 
 const ALPHA = "---\ntitle: Alpha\n---\n\nAlpha mentions Beta but is not linked.\n";
 const BETA = "---\ntitle: Beta\n---\n\nBeta stands alone.\n";
@@ -24,7 +25,7 @@ describe("link resolution from rows", () => {
   let root: string;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`resolve-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("resolver")).harness;
     root = await mkdtemp(path.join(os.tmpdir(), "resolve-"));
     await mkdir(path.join(root, "wiki/concepts"), { recursive: true });
   });

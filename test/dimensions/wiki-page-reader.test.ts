@@ -20,25 +20,12 @@ import { createWikiPageReader } from "../../src/dimensions/wiki/database.js";
 import { upsertStoredPage } from "../../src/dimensions/wiki/page-store.js";
 import type { Page } from "../../src/pages/list.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { wikiTablesPresent } from "../fixtures/rls-probe.js";
 
 const harness = await createKgPostgresHarness(`wiki-reader-${randomUUID().slice(0, 8)}`);
 const other = await createKgPostgresHarness(`wiki-reader-other-${randomUUID().slice(0, 8)}`);
 
-const provisioned = await (async (): Promise<boolean> => {
-  if (!harness.reachable) return false;
-  try {
-    const rows = await harness.db.execute<{ n: number }>(
-      // Ask for the tables the suite actually uses rather than a total. Counting every
-      // table in the schema made this probe silently disable 15 tests the moment an
-      // unrelated wiki table was added -- a skip is silent, so the guard has to be
-      // about presence, never about a total that other work can change.
-      "select count(*)::int as n from information_schema.tables where table_schema = 'wiki' and table_name in ('pages', 'concept_aliases')",
-    );
-    return (rows[0] as { n: number } | undefined)?.n === 2 /* both required tables present */;
-  } catch {
-    return false;
-  }
-})();
+const provisioned = await (harness.reachable && (await wikiTablesPresent(harness.db, ["pages", "concept_aliases"])));
 
 afterAll(async () => {
   await harness.cleanup();

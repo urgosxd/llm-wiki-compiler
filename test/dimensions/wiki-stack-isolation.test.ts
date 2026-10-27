@@ -33,6 +33,7 @@
  * and assert nothing.
  */
 
+import { appRoleExists, countAsAppRole } from "../fixtures/rls-probe.js";
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 
@@ -48,9 +49,6 @@ const stackA = await createKgPostgresHarness("wiki-iso-a");
 const stackB = await createKgPostgresHarness("wiki-iso-b");
 const sourcesRoot = await mkdtemp(path.join(tmpdir(), "wiki-iso-"));
 
-/** The role the application is meant to run as, once the DSN is switched. */
-const APP_ROLE = "llmwiki_app";
-
 /** A page title unique to this file, so a probe cannot collide with other suites. */
 const SECRET_TITLE = "Isolation Secret Page";
 
@@ -61,17 +59,7 @@ const SECRET_TITLE = "Isolation Secret Page";
  * and every isolation assertion would pass vacuously. So the suite skips loudly
  * rather than claiming a guarantee it cannot test.
  */
-const appRolePresent = await (async (): Promise<boolean> => {
-  if (!stackA.reachable) return false;
-  try {
-    const rows = await stackA.db.execute<{ n: number }>(
-      `select count(*)::int as n from pg_roles where rolname = '${APP_ROLE}'`,
-    );
-    return ((rows[0] as { n: number } | undefined)?.n ?? 0) > 0;
-  } catch {
-    return false;
-  }
-})();
+const appRolePresent = stackA.reachable && (await appRoleExists(stackA.db));
 
 afterAll(async () => {
   await stackA.cleanup();
@@ -95,14 +83,7 @@ function inputOf(title: string, source: string): DimensionInput {
  * @returns How many rows the statement could see.
  */
 async function countSecretAsApp(db: Database, boundStackId: string | null): Promise<number> {
-  return db.transaction(async (tx) => {
-    // `SET LOCAL ROLE` takes no bind parameters, so it is raw SQL; the role name
-    // is a constant above, never caller input.
-    await tx.execute(sql.raw(`set local role ${APP_ROLE}`));
-    await tx.execute(sql.raw("reset app.stack_id"));
-    if (boundStackId !== null) {
-      await tx.execute(sql`select set_config('app.stack_id', ${boundStackId}, true)`);
-    }
+  return countAsAppRole(db, boundStackId, async (tx) => {
     const rows = await tx.execute<{ n: number }>(
       sql`select count(*)::int as n from wiki.pages where title = ${SECRET_TITLE}`,
     );

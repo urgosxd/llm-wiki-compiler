@@ -13,14 +13,15 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRawPageSource } from "../../src/dimensions/wiki/page-scan-source.js";
 import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { provisionStack } from "../fixtures/stack-harness.js";
 
 describe("raw page source", () => {
   let harness: KgPostgresHarness;
   let root: string;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`raw-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("raw")).harness;
     root = await mkdtemp(path.join(os.tmpdir(), "no-wiki-raw-"));
   });
 

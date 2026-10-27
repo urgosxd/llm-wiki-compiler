@@ -27,26 +27,16 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { withStackEnv } from "../fixtures/stack-env.js";
+import { withProjectRoot, withStackEnv } from "../fixtures/stack-env.js";
 import { appendEventLocked } from "../../src/events/store.js";
 import { readEvents, verifyEventChain } from "../../src/events/store-read.js";
 
 /** A timestamp with MICROSECOND precision, which is what Postgres preserves. */
 const MICRO_AT = "2026-10-26T17:49:11.123456Z";
 
-/** Provision a project root plus a Stack, always tearing both down. */
-async function withProject(label: string, body: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(tmpdir(), `${label}-`));
-  try {
-    await withStackEnv(label, () => body(dir));
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
 describe("event chain across a timestamp round trip", () => {
   it("round-trips a microsecond timestamp without changing it", () =>
-    withProject("chain-precision", async (dir) => {
+    withProjectRoot("chain-precision", async (dir) => {
       await appendEventLocked(dir, {
         type: "page-create",
         origin: "compile",
@@ -59,7 +49,7 @@ describe("event chain across a timestamp round trip", () => {
     }));
 
   it("keeps the chain verifiable when a timestamp has microseconds", () =>
-    withProject("chain-verifies", async (dir) => {
+    withProjectRoot("chain-verifies", async (dir) => {
       await appendEventLocked(dir, {
         type: "page-create",
         origin: "compile",

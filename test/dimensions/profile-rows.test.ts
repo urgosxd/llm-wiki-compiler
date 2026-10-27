@@ -21,7 +21,7 @@ import path from "node:path";
 import { loadProfile } from "../../src/profile/load.js";
 import { profileDigest } from "../../src/profile/digest.js";
 import { withProfileSource } from "../../src/dimensions/wiki/profile-source.js";
-import { withStackEnv } from "../fixtures/stack-env.js";
+import { withProjectRoot, withStackEnv } from "../fixtures/stack-env.js";
 import type { ProfilePack } from "../../src/profile/types.js";
 import { DEFAULT_PROFILE } from "../../src/profile/default.js";
 
@@ -37,19 +37,9 @@ const INSTALLED_PROFILE: ProfilePack = {
   entities: { docs: { directory: "wiki/docs", fields: { title: { type: "string" } } } },
 };
 
-/** Provision a bare project root plus a Stack, always tearing both down. */
-async function withProject(label: string, body: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(tmpdir(), `${label}-`));
-  try {
-    await withStackEnv(label, () => body(dir));
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
 describe("profile on rows", () => {
   it("reads the built-in default when the Stack has no profile row", () =>
-    withProject("profile-empty", async (dir) => {
+    withProjectRoot("profile-empty", async (dir) => {
       const loaded = await loadProfile(dir);
 
       // Absent is NOT an error, and must stay distinguishable from one.
@@ -58,7 +48,7 @@ describe("profile on rows", () => {
     }));
 
   it("reads an installed profile from its row and writes no profile.json", () =>
-    withProject("profile-installed", async (dir) => {
+    withProjectRoot("profile-installed", async (dir) => {
       await withProfileSource(process.env, async (source) => {
         await source!.save(INSTALLED_PROFILE, profileDigest(INSTALLED_PROFILE));
       });
@@ -75,7 +65,7 @@ describe("profile on rows", () => {
     }));
 
   it("refuses a row whose document disagrees with its recorded digest", () =>
-    withProject("profile-tamper", async (dir) => {
+    withProjectRoot("profile-tamper", async (dir) => {
       await withProfileSource(process.env, async (source) => {
         // Store a digest that cannot match the document: the row was edited after
         // whoever verified the profile recorded what they verified.

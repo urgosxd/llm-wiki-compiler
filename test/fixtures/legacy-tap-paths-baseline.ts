@@ -27,11 +27,9 @@ export interface LegacyTapPaths {
 
 /** Resolve paths with the exact pinned baseline path policy. */
 export function resolveLegacyTapPaths(inputs: LegacyTapPathInputs = {}): LegacyTapPaths {
-  const env = inputs.env ?? process.env;
-  const home = inputs.home ?? os.homedir();
-  const platform = inputs.platform ?? process.platform;
-  const configRoot = inputs.configRoot ?? defaultConfigRoot(platform, env, home);
-  const cacheRoot = inputs.cacheRoot ?? defaultCacheRoot(platform, env, home);
+  const context = resolveBaselineContext(inputs);
+  const configRoot = inputs.configRoot ?? defaultConfigRoot(context);
+  const cacheRoot = inputs.cacheRoot ?? defaultCacheRoot(context);
   return {
     configRoot,
     cacheRoot,
@@ -40,7 +38,31 @@ export function resolveLegacyTapPaths(inputs: LegacyTapPathInputs = {}): LegacyT
   };
 }
 
-function defaultConfigRoot(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, home: string): string {
+/** The environment the pinned baseline resolves against, with defaults applied once. */
+interface BaselineContext {
+  readonly platform: NodeJS.Platform;
+  readonly env: NodeJS.ProcessEnv;
+  readonly home: string;
+}
+
+/**
+ * Apply the three environment defaults in one place.
+ *
+ * Both root resolvers need the same triplet, and threading three defaults through two
+ * signatures is what made this function read as more complex than it is.
+ *
+ * @param inputs - Caller overrides; absent fields fall back to the real process.
+ * @returns The context both resolvers read.
+ */
+function resolveBaselineContext(inputs: LegacyTapPathInputs): BaselineContext {
+  return {
+    platform: inputs.platform ?? process.platform,
+    env: inputs.env ?? process.env,
+    home: inputs.home ?? os.homedir(),
+  };
+}
+
+function defaultConfigRoot({ platform, env, home }: BaselineContext): string {
   if (platform === "win32" && absolute(platform, env.APPDATA)) {
     return path.join(env.APPDATA, "llmwiki");
   }
@@ -48,7 +70,7 @@ function defaultConfigRoot(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, ho
   return path.join(home, ".config", "llmwiki");
 }
 
-function defaultCacheRoot(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, home: string): string {
+function defaultCacheRoot({ platform, env, home }: BaselineContext): string {
   if (platform === "win32" && absolute(platform, env.LOCALAPPDATA)) {
     return path.join(env.LOCALAPPDATA, "llmwiki", "cache", "templates");
   }

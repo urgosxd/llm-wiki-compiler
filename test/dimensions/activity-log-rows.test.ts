@@ -20,17 +20,9 @@ import { appendLog, formatLogEntry, renderJournal } from "../../src/utils/activi
 import { withJournalSource } from "../../src/dimensions/wiki/activity-log-source.js";
 import { createDimensionsDatabase } from "../../src/dimensions/activation.js";
 import { readJournalEntries } from "../../src/dimensions/wiki/activity-log-store.js";
-import { withStackEnv } from "../fixtures/stack-env.js";
+import { withProjectRoot, withStackEnv } from "../fixtures/stack-env.js";
 
-/** Provision a project root plus a Stack, always tearing both down. */
-async function withProject(label: string, body: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(tmpdir(), `${label}-`));
-  try {
-    await withStackEnv(label, () => body(dir));
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
+
 
 /** Read one Stack's journal straight from the store, bypassing the seam. */
 async function readDirect(stackId: string): Promise<Awaited<ReturnType<typeof readJournalEntries>>> {
@@ -44,7 +36,7 @@ async function readDirect(stackId: string): Promise<Awaited<ReturnType<typeof re
 
 describe("activity log on rows", () => {
   it("appends to rows and writes no log.md", () =>
-    withProject("log-nofile", async (dir) => {
+    withProjectRoot("log-nofile", async (dir) => {
       await appendLog(dir, "ingest", "First ingest", { details: ["- page [[concepts/a]]"] });
 
       expect(existsSync(path.join(dir, "log.md"))).toBe(false);
@@ -53,7 +45,7 @@ describe("activity log on rows", () => {
     }));
 
   it("keeps entries in append order", () =>
-    withProject("log-order", async (dir) => {
+    withProjectRoot("log-order", async (dir) => {
       await appendLog(dir, "ingest", "first");
       await appendLog(dir, "compile", "second");
       await appendLog(dir, "query", "third");
@@ -65,7 +57,7 @@ describe("activity log on rows", () => {
     }));
 
   it("sanitizes the description once, before storing", () =>
-    withProject("log-sanitize", async (dir) => {
+    withProjectRoot("log-sanitize", async (dir) => {
       await appendLog(dir, "ingest", "line one\n\nline   two");
 
       const [entry] = await withJournalSource(process.env, async (source) => source!.read());
@@ -74,7 +66,7 @@ describe("activity log on rows", () => {
     }));
 
   it("renders the same markdown the file backend would write", () =>
-    withProject("log-render", async (dir) => {
+    withProjectRoot("log-render", async (dir) => {
       const at = new Date("2026-06-05T14:58:41.000Z");
       await appendLog(dir, "compile", "12 pages", { date: at, details: ["- 12 pages", "- 3 queries"] });
 
@@ -86,7 +78,7 @@ describe("activity log on rows", () => {
     }));
 
   it("orders by seq, not by timestamp, when two entries share a second", () =>
-    withProject("log-samesecond", async (dir) => {
+    withProjectRoot("log-samesecond", async (dir) => {
       const at = new Date("2026-06-05T14:58:41.000Z");
       await appendLog(dir, "ingest", "first", { date: at });
       await appendLog(dir, "query", "second", { date: at });

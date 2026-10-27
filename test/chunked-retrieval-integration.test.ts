@@ -143,6 +143,28 @@ afterEach(() => {
 // CLI smoke: --help and credential guard
 // ---------------------------------------------------------------------------
 
+/**
+ * Rank chunks against a query vector, highest cosine first.
+ *
+ * `findTopKChunks` was a v1/v2 helper keyed by bare slug and has no production
+ * caller, so the cases assert the property on the records instead. That made the same
+ * five-line ranking appear three times, which fallow flagged; sharing it also keeps
+ * the sort direction in one place, since an inverted comparator would still "pass" a
+ * single-element assertion.
+ *
+ * @param chunks - Chunk records to rank.
+ * @param queryVector - Vector to score against.
+ * @returns The chunks, best first.
+ */
+function rankChunks<T extends { vector: number[] }>(
+  chunks: readonly T[],
+  queryVector: number[],
+): { chunk: T; score: number }[] {
+  return [...chunks]
+    .map((chunk) => ({ chunk, score: cosineSimilarity(queryVector, chunk.vector) }))
+    .sort((left, right) => right.score - left.score);
+}
+
 describe("query --help (CLI level)", () => {
   it("shows --debug flag in query help output", async () => {
     const result = await runCLI(["query", "--help"], process.cwd());
@@ -192,9 +214,7 @@ describe("chunk ranking over a v3 store (programmatic)", () => {
     // Query vector pointing at the first dimension → ml-basics/0 is closest.
     // Scored directly: `findTopKChunks` was a v1/v2 helper keyed by bare slug and
     // has no production caller, so the property is asserted on the records.
-    const top = [...chunks]
-      .map((chunk) => ({ chunk, score: cosineSimilarity([1, 0], chunk.vector) }))
-      .sort((left, right) => right.score - left.score);
+    const top = rankChunks(chunks, [1, 0]);
     expect(top[0]?.chunk.pageId).toBe("concepts/ml-basics");
     expect(top[0]?.chunk.chunkIndex).toBe(0);
   });
@@ -211,9 +231,7 @@ describe("chunk ranking over a v3 store (programmatic)", () => {
     try {
       const outcome = await loadEmbeddingsForSearch(root);
       expect(outcome.store).not.toBeNull();
-      const ranked = (outcome.store?.chunks ?? [])
-        .map((chunk) => ({ chunk, score: cosineSimilarity([1, 0], chunk.vector) }))
-        .sort((left, right) => right.score - left.score);
+      const ranked = rankChunks(outcome.store?.chunks ?? [], [1, 0]);
       expect(ranked[0]?.chunk.pageId).toBe("concepts/a");
       expect(ranked[0]!.score).toBeGreaterThan(ranked[1]!.score);
     } finally {
@@ -245,9 +263,7 @@ describe("chunk ranking over a v3 store (programmatic)", () => {
 
     try {
       const outcome = await loadEmbeddingsForSearch(root);
-      const ranked = (outcome.store?.chunks ?? [])
-        .map((chunk) => ({ chunk, score: cosineSimilarity([1, 0], chunk.vector) }))
-        .sort((left, right) => right.score - left.score);
+      const ranked = rankChunks(outcome.store?.chunks ?? [], [1, 0]);
       // The fields a debug view renders: a qualified identity and a real score.
       expect(ranked[0]?.chunk.pageId).toBe("concepts/page-one");
       expect(typeof ranked[0]?.score).toBe("number");

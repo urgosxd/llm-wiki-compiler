@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { provisionStack } from "../fixtures/stack-harness.js";
 import { detectChanges } from "../../src/compiler/hasher.js";
 import {
   hashSourceContent,
@@ -54,7 +55,7 @@ describe.skipIf(!harnessReachable)("the wiki source document store", () => {
   let harness: KgPostgresHarness;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`srcstore-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("srcstore")).harness;
   });
 
   afterEach(async () => {
@@ -161,7 +162,7 @@ describe.skipIf(!harnessReachable)("the compiler's change detection reads rows",
   let harness: KgPostgresHarness;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`detect-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("srcstore")).harness;
   });
 
   afterEach(async () => {
@@ -234,7 +235,7 @@ describe.skipIf(!harnessReachable)("the two ends agree", () => {
   let harness: KgPostgresHarness;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`ends-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("srcstore")).harness;
   });
 
   afterEach(async () => {
@@ -281,7 +282,7 @@ describe.skipIf(!harnessReachable)("rule extraction reads the same corpus", () =
   let harness: KgPostgresHarness;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`rules-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("srcstore")).harness;
   });
 
   afterEach(async () => {
@@ -307,7 +308,7 @@ describe.skipIf(!harnessReachable)("filename collisions are disambiguated", () =
   let harness: KgPostgresHarness;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`col-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("srcstore")).harness;
   });
 
   afterEach(async () => {

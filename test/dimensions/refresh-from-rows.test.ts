@@ -14,7 +14,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveStaleRefresh } from "../../src/compiler/refresh-plan.js";
 import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
 import { createPageScanSource } from "../../src/dimensions/wiki/page-scan-source.js";
-import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { provisionStack } from "../fixtures/stack-harness.js";
 
 const PAGE = "---\ntitle: Alpha\nsummary: s\n---\n\nbody\n";
 
@@ -23,7 +24,7 @@ describe("refresh plan from rows", () => {
   let root: string;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`refresh-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("refresh")).harness;
     root = await mkdtemp(path.join(os.tmpdir(), "no-wiki-refresh-"));
   });
 

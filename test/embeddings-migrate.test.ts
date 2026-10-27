@@ -66,6 +66,25 @@ function chunkRecord(pageId: string, index: number, contentHash: string): ChunkE
   return { pageId, title: "T", chunkIndex: index, contentHash, text: "body", vector: [0.5, 0.5], updatedAt: "2026-01-01T00:00:00.000Z" };
 }
 
+/**
+ * Assert the store was REBUILT: nothing preserved, everything needs re-embedding.
+ *
+ * A rebuild is one decision with two observable halves -- an empty entry list and the
+ * full page set queued for re-embedding -- and asserting only one of them would pass
+ * over a store that kept stale vectors while still queuing work. Three cases asserted
+ * the pair, which fallow flagged; one helper keeps the halves together.
+ *
+ * @param result - What `migrateEmbeddingStore` returned.
+ * @param expectedPageIds - Pages that must be queued for re-embedding.
+ */
+function expectRebuild(
+  result: ReturnType<typeof migrateEmbeddingStore>,
+  expectedPageIds: readonly string[],
+): void {
+  expect(result.store.entries).toEqual([]);
+  expect(result.reembedPageIds).toEqual(expectedPageIds);
+}
+
 describe("migrateEmbeddingStore — legacy stores rebuild", () => {
   it("rebuilds a v1 store instead of guessing which page its slug belonged to", () => {
     const result = migrateEmbeddingStore(
@@ -76,8 +95,7 @@ describe("migrateEmbeddingStore — legacy stores rebuild", () => {
 
     // Nothing is preserved: a bare slug cannot prove it addresses concepts/alpha
     // rather than queries/alpha, and a wrong pairing is undetectable later.
-    expect(result.store.entries).toEqual([]);
-    expect(result.reembedPageIds).toEqual(["concepts/alpha"]);
+    expectRebuild(result, ["concepts/alpha"]);
   });
 
   it("rebuilds a v2 store that also carried chunks", () => {
@@ -98,8 +116,7 @@ describe("migrateEmbeddingStore — legacy stores rebuild", () => {
   it("rebuilds when there is no store at all, which is the clean-project case", () => {
     const result = migrateEmbeddingStore(null, [live("concepts/alpha", "hash-a")], MODEL);
 
-    expect(result.store.entries).toEqual([]);
-    expect(result.reembedPageIds).toEqual(["concepts/alpha"]);
+    expectRebuild(result, ["concepts/alpha"]);
   });
 
   it("reports dimensions 0 on a rebuild, never the discarded store's dimension", () => {
@@ -120,8 +137,7 @@ describe("migrateEmbeddingStore — legacy stores rebuild", () => {
 
     const result = migrateEmbeddingStore(stored, [live("concepts/alpha", "hash-a")], MODEL);
 
-    expect(result.store.entries).toEqual([]);
-    expect(result.reembedPageIds).toEqual(["concepts/alpha"]);
+    expectRebuild(result, ["concepts/alpha"]);
   });
 });
 
@@ -145,8 +161,7 @@ describe("migrateEmbeddingStore — v3 reconciliation", () => {
       MODEL,
     );
 
-    expect(result.store.entries).toEqual([]);
-    expect(result.reembedPageIds).toEqual(["concepts/alpha"]);
+    expectRebuild(result, ["concepts/alpha"]);
   });
 
   it("prunes a deleted page without re-embedding it", () => {

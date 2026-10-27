@@ -69,3 +69,29 @@ export function useStackEnv(label: string): void {
     await run?.();
   });
 }
+
+/**
+ * Run `body` with BOTH a temp project root and a freshly provisioned Stack.
+ *
+ * The temp root exists because these suites write real files (markers, candidates,
+ * profiles) and must not touch the checkout. The pairing was retyped in three files,
+ * each with its own `finally`, and fallow flagged the copies as a clone group; one
+ * copy means a suite cannot forget the `rm` and leave a directory behind.
+ *
+ * @param label - Short suite name, used for both the temp prefix and the Stack.
+ * @param body - Receives the absolute temp root; the Stack is installed in `process.env`.
+ */
+export async function withProjectRoot(
+  label: string,
+  body: (root: string) => Promise<void>,
+): Promise<void> {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const root = await mkdtemp(path.join(tmpdir(), `${label}-`));
+  try {
+    await withStackEnv(label, () => body(root));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}

@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { EXPECTED_RULE_SUMMARY } from "./fixtures/lint-cache-expectation.js";
 import { mkdtemp, mkdir, rm, readFile, writeFile } from "fs/promises";
 import os from "os";
 import path from "path";
@@ -186,11 +187,7 @@ describe("rule aggregates", () => {
     const entry = await readLintCache(tmpDir);
     // Tied counts (broken-wikilink vs missing-summary, both 2) break by rule
     // name ascending, so the order is deterministic without a client re-sort.
-    expect(entry?.rules).toEqual([
-      { rule: "broken-wikilink", severity: "error", count: 2, fileCount: 1, topFile: "a.md", topFileCount: 2 },
-      { rule: "missing-summary", severity: "warning", count: 2, fileCount: 2, topFile: "a.md", topFileCount: 1 },
-      { rule: "empty-page", severity: "warning", count: 1, fileCount: 1, topFile: "c.md", topFileCount: 1 },
-    ]);
+    expect(entry?.rules).toEqual(EXPECTED_RULE_SUMMARY);
   });
 
   it("stores topFile relative to the project root, never as an absolute filesystem path", async () => {

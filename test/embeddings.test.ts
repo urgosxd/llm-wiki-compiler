@@ -18,6 +18,7 @@ import {
   type EmbeddingEntry,
 } from "../src/utils/embeddings.js";
 import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
+import { expectDegradedStore } from "./fixtures/embeddings-degrade.js";
 import { OpenAIProvider } from "../src/providers/openai.js";
 import { EMBEDDING_MODELS } from "../src/utils/constants.js";
 
@@ -184,10 +185,7 @@ describe("embedding model selection", () => {
     // Asserted through `loadEmbeddingsForSearch`: a store built by a different
     // model must degrade to no store rather than be compared against vectors it is
     // incompatible with. `findRelevantPages` was the v1/v2 entry point and is gone.
-    const outcome = await loadEmbeddingsForSearch(root);
-
-    expect(outcome.store).toBeNull();
-    expect(outcome.warnings.map((w) => w.code)).toContain("embedding-index-outdated");
+    await expectDegradedStore(root, "embedding-index-outdated");
   });
 
   it("reports the stale store the same way on every lookup, without duplicating it", async () => {

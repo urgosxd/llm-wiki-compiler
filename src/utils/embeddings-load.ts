@@ -226,6 +226,38 @@ function degraded(code: EmbeddingWarning["code"], message: string): EmbeddingLoa
  * Returns the K freshest top-scoring page hits with live-rehydrated text plus
  * the ids dropped for staleness this read (reported, never written).
  */
+/**
+ * Build the reader and the candidate set shared by BOTH retrieval pipelines.
+ *
+ * The page and chunk pipelines differ only in what they filter and how they verify
+ * freshness; everything up to that point was duplicated line for line, and fallow
+ * flagged the copies. Sharing it also keeps one answer to "which pages are live",
+ * which is the step a divergence would silently corrupt.
+ *
+ * @param root - Project root the reader resolves against.
+ * @param entries - Store entries (pages or chunks) to prefilter.
+ * @param surface - Retrieval surface deciding eligibility.
+ * @param profile - Loaded profile, when one is in play.
+ * @param source - Registry page source, when rows back the corpus.
+ * @returns The reader plus the entries that passed the prefilter.
+ */
+async function buildRankingScope<T extends { readonly pageId: PageId }>(
+  root: string,
+  entries: readonly T[],
+  surface: RetrievalSurface,
+  profile: LoadedProfile | undefined,
+  source: RegistryPageSource | undefined,
+): Promise<{ readonly reader: PageReader; readonly eligible: T[] }> {
+  const namespaceDirs = buildNamespaceDirs(profile?.profile);
+  const reader: PageReader = { root, namespaceDirs, source };
+  const liveIds = await buildLiveIdSet(
+    root, await activeNamespaces(root, profile), namespaceDirs, profile, source,
+  );
+  const eligible = entries.filter((e) => passesPrefilter(e.pageId, liveIds, surface, profile));
+  // Copied into a mutable array because the scoring helpers take `T[]`.
+  return { reader, eligible: [...eligible] };
+}
+
 export async function findRelevantPagesV3(
   root: string,
   store: EmbeddingStoreV3,
@@ -235,12 +267,9 @@ export async function findRelevantPagesV3(
   profile?: LoadedProfile,
   source?: RegistryPageSource,
 ): Promise<{ hits: PageHitV3[]; stalePageIds: PageId[] }> {
-  const namespaceDirs = buildNamespaceDirs(profile?.profile);
-  const reader: PageReader = { root, namespaceDirs, source };
-  const liveIds = await buildLiveIdSet(
-    root, await activeNamespaces(root, profile), namespaceDirs, profile, source,
+  const { reader, eligible } = await buildRankingScope(
+    root, store.entries, surface, profile, source,
   );
-  const eligible = store.entries.filter((e) => passesPrefilter(e.pageId, liveIds, surface, profile));
   // Nothing to rank against — return before embedding. Skips a billed provider
   // round-trip whose result could only be scored against an empty pool.
   if (eligible.length === 0) return { hits: [], stalePageIds: [] };
@@ -263,13 +292,9 @@ export async function findRelevantChunksV3(
   profile?: LoadedProfile,
   source?: RegistryPageSource,
 ): Promise<{ hits: ChunkHitV3[]; stalePageIds: PageId[] }> {
-  const chunks = store.chunks ?? [];
-  const namespaceDirs = buildNamespaceDirs(profile?.profile);
-  const reader: PageReader = { root, namespaceDirs, source };
-  const liveIds = await buildLiveIdSet(
-    root, await activeNamespaces(root, profile), namespaceDirs, profile, source,
+  const { reader, eligible } = await buildRankingScope(
+    root, store.chunks ?? [], surface, profile, source,
   );
-  const eligible = chunks.filter((c) => passesPrefilter(c.pageId, liveIds, surface, profile));
   // See findRelevantPagesV3 — no candidates means no reason to embed the query.
   if (eligible.length === 0) return { hits: [], stalePageIds: [] };
   const queryVec = await embedQuery(question, store.dimensions);

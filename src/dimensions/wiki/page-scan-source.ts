@@ -126,6 +126,22 @@ function toScannedShape(page: Page): ScannedPageShape {
  * @returns Summaries as the index builder and status expect them.
  */
 export function summarizeScanned(scanned: ScannedPageShape[]): PageSummaryShape[] {
+  return projectSummaries(scanned);
+}
+
+/**
+ * Project scanned pages into index summaries, dropping pages that cannot be indexed.
+ *
+ * A page with no string `title` has nothing to list under, and an orphaned page is
+ * excluded by definition. BOTH rules were written twice -- once here and once in
+ * `compiler/indexgen.ts`, which builds summaries from the filesystem scan -- so a
+ * change to one silently desynchronized the row path from the file path. One
+ * projection means the two backends cannot disagree about which pages an index lists.
+ *
+ * @param scanned - Pages in any shape carrying `slug` and a frontmatter `meta`.
+ * @returns Summaries, in the order given.
+ */
+export function projectSummaries(scanned: readonly ScannedPageShape[]): PageSummaryShape[] {
   return scanned
     .filter(({ meta }) => meta.title && typeof meta.title === "string" && !meta.orphaned)
     .map(({ slug, meta }) => ({

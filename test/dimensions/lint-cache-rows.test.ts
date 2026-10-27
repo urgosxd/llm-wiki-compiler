@@ -24,12 +24,13 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { EXPECTED_RULE_SUMMARY } from "../fixtures/lint-cache-expectation.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { writeLintCache, readLintCache, type LintCacheEntry } from "../../src/linter/cache.js";
-import { withStackEnv } from "../fixtures/stack-env.js";
+import { withProjectRoot } from "../fixtures/stack-env.js";
 import type { LintSummary } from "../../src/linter/types.js";
 import { createDimensionsDatabase } from "../../src/dimensions/activation.js";
 import { writeCachedLintResult, readCachedLintResult } from "../../src/dimensions/wiki/marker-store.js";
@@ -39,15 +40,7 @@ function summaryOf(errors: number, warnings: number, results: LintSummary["resul
   return { errors, warnings, info: 0, results };
 }
 
-/** Provision a root plus a Stack; always tear both down. */
-async function withProject(label: string, body: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(tmpdir(), `${label}-`));
-  try {
-    await withStackEnv(label, () => body(dir));
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
+
 
 /** Store a deliberately inconsistent cache entry the way a tampered row would look. */
 async function storeRawEntry(entry: LintCacheEntry): Promise<void> {
@@ -78,7 +71,7 @@ async function readStoredFindings(): Promise<unknown> {
 
 describe("lint cache on rows", () => {
   it("stores the cache and creates no .llmwiki directory", () =>
-    withProject("lint-nodir", async (dir) => {
+    withProjectRoot("lint-nodir", async (dir) => {
       await writeLintCache(dir, summaryOf(0, 0, []));
 
       expect(existsSync(path.join(dir, ".llmwiki"))).toBe(false);
@@ -86,13 +79,13 @@ describe("lint cache on rows", () => {
     }));
 
   it("returns null when the Stack has no cache yet", () =>
-    withProject("lint-absent", async (dir) => {
+    withProjectRoot("lint-absent", async (dir) => {
       // A cache MISS, not an error: the caller lints again.
       expect(await readLintCache(dir)).toBeNull();
     }));
 
   it("counts and sorts rule rows deterministically, breaking ties by rule name", () =>
-    withProject("lint-rows", async (dir) => {
+    withProjectRoot("lint-rows", async (dir) => {
       await writeLintCache(dir, summaryOf(2, 3, [
         { rule: "broken-wikilink", severity: "error", file: "a.md", message: "" },
         { rule: "broken-wikilink", severity: "error", file: "a.md", message: "" },
@@ -102,15 +95,11 @@ describe("lint cache on rows", () => {
       ]));
 
       const entry = await readLintCache(dir);
-      expect(entry?.rules).toEqual([
-        { rule: "broken-wikilink", severity: "error", count: 2, fileCount: 1, topFile: "a.md", topFileCount: 2 },
-        { rule: "missing-summary", severity: "warning", count: 2, fileCount: 2, topFile: "a.md", topFileCount: 1 },
-        { rule: "empty-page", severity: "warning", count: 1, fileCount: 1, topFile: "c.md", topFileCount: 1 },
-      ]);
+      expect(entry?.rules).toEqual(EXPECTED_RULE_SUMMARY);
     }));
 
   it("reports a rule emitting both severities as an error", () =>
-    withProject("lint-mixed", async (dir) => {
+    withProjectRoot("lint-mixed", async (dir) => {
       await writeLintCache(dir, summaryOf(1, 1, [
         { rule: "mixed-rule", severity: "error", file: "a.md", message: "" },
         { rule: "mixed-rule", severity: "warning", file: "b.md", message: "" },
@@ -121,7 +110,7 @@ describe("lint cache on rows", () => {
     }));
 
   it("excludes info-severity findings from the rule rows", () =>
-    withProject("lint-info", async (dir) => {
+    withProjectRoot("lint-info", async (dir) => {
       await writeLintCache(dir, summaryOf(1, 0, [
         { rule: "broken-wikilink", severity: "error", file: "a.md", message: "" },
         { rule: "pending-target", severity: "info", file: "a.md", message: "" },
@@ -132,7 +121,7 @@ describe("lint cache on rows", () => {
     }));
 
   it("reconciles the aggregate count with the headline totals", () =>
-    withProject("lint-reconcile", async (dir) => {
+    withProjectRoot("lint-reconcile", async (dir) => {
       const summary = summaryOf(1, 2, [
         { rule: "broken-wikilink", severity: "error", file: "a.md", message: "" },
         { rule: "missing-summary", severity: "warning", file: "a.md", message: "" },
@@ -146,7 +135,7 @@ describe("lint cache on rows", () => {
     }));
 
   it("omits the rules field entirely for a clean run", () =>
-    withProject("lint-clean", async (dir) => {
+    withProjectRoot("lint-clean", async (dir) => {
       await writeLintCache(dir, summaryOf(0, 0, []));
 
       const stored = (await readStoredFindings()) as Record<string, unknown>;
@@ -160,7 +149,7 @@ describe("lint cache row invariants", () => {
 
   /** Store an entry whose `rules` contradict its own counters. */
   async function withCorrupt(rules: unknown[], body: (dir: string) => Promise<void>): Promise<void> {
-    await withProject("lint-corrupt", async (dir) => {
+    await withProjectRoot("lint-corrupt", async (dir) => {
       // The counters are written to match the file format; only `rules` is wrong.
       await storeRawEntry({ warnings: 4, errors: 6, at, rules } as LintCacheEntry);
       await body(dir);

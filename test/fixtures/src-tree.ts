@@ -17,8 +17,26 @@ export function srcTsFiles(dir = SRC_DIR, prefix = ""): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
-    if (entry.isDirectory()) out.push(...srcTsFiles(path.join(dir, entry.name), rel));
-    else if (/\.(?:ts|js)$/.test(entry.name)) out.push(rel);
+    // A directory is descended into; a source file is kept. Anything else (a README,
+    // an asset) is neither, which is the third case worth naming.
+    out.push(...(entry.isDirectory() ? srcTsFiles(path.join(dir, entry.name), rel) : keepIfSource(rel, entry.name)));
   }
   return out;
+}
+
+/** Is this file one of the sources this scan reports? */
+const SOURCE_FILE_PATTERN = /\.(?:ts|js)$/;
+
+/**
+ * The relative path as a single-element list, or nothing when it is not source.
+ *
+ * Returning a list keeps the caller a single `push(...)`, which is what removed the
+ * three-way branch from the recursion.
+ *
+ * @param rel - src-relative slash path.
+ * @param name - The entry's basename, which decides the extension.
+ * @returns One path, or an empty list.
+ */
+function keepIfSource(rel: string, name: string): string[] {
+  return SOURCE_FILE_PATTERN.test(name) ? [rel] : [];
 }

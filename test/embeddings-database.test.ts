@@ -18,6 +18,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createKgPostgresHarness, type KgPostgresHarness } from "./fixtures/kg-postgres.js";
+import { provisionStack } from "./fixtures/stack-harness.js";
 import {
   databaseEmbeddingLocation,
   databaseEmbeddingSink,
@@ -101,11 +102,30 @@ async function seedPages(harness: KgPostgresHarness, pageIds: readonly string[])
   }
 }
 
+/**
+ * Write one store and read it straight back.
+ *
+ * Eight cases in this file perform exactly this pair, and several wrap it across
+ * lines only because the store literal is long; sharing it also makes clear that the
+ * READ always follows the LAST write, which is the property every case asserts.
+ *
+ * @param harness - Stack to write into and read from.
+ * @param written - The store to persist.
+ * @returns Whatever the reader returned.
+ */
+async function writeThenRead(
+  harness: KgPostgresHarness,
+  written: Parameters<typeof writeEmbeddingStoreToDb>[2],
+): Promise<Awaited<ReturnType<typeof readEmbeddingStoreFromDb>>> {
+  await writeEmbeddingStoreToDb(harness.db, harness.stackId, written);
+  return readEmbeddingStoreFromDb(harness.db, harness.stackId);
+}
+
 describe.skipIf(!harnessReachable)("embedding vectors in Postgres", () => {
   let harness: KgPostgresHarness;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`emb-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("emb")).harness;
   });
 
   afterEach(async () => {
@@ -132,8 +152,7 @@ describe.skipIf(!harnessReachable)("embedding vectors in Postgres", () => {
   it("omits the fingerprint when the store had none, so an old store stays comparable on model", async () => {
     await seedPages(harness, ["concepts/alpha"]);
 
-    await writeEmbeddingStoreToDb(harness.db, harness.stackId, store([pageEntry("concepts/alpha", 0.3)]));
-    const read = await readEmbeddingStoreFromDb(harness.db, harness.stackId);
+    const read = await writeThenRead(harness, store([pageEntry("concepts/alpha", 0.3)]));
 
     // Absent, not empty string: `storeMatchesActiveEmbedding` falls back to `model`
     // only when the field is missing entirely.
@@ -155,8 +174,7 @@ describe.skipIf(!harnessReachable)("embedding vectors in Postgres", () => {
       store([pageEntry("concepts/alpha", 0.1), pageEntry("concepts/beta", 0.2)]),
     );
 
-    await writeEmbeddingStoreToDb(harness.db, harness.stackId, store([pageEntry("concepts/alpha", 0.1)]));
-    const read = await readEmbeddingStoreFromDb(harness.db, harness.stackId);
+    const read = await writeThenRead(harness, store([pageEntry("concepts/alpha", 0.1)]));
 
     // The second write covers only alpha, so beta's vector must be gone rather than
     // left retrievable from a corpus that no longer lists it.
@@ -167,8 +185,7 @@ describe.skipIf(!harnessReachable)("embedding vectors in Postgres", () => {
     await seedPages(harness, ["concepts/alpha"]);
     await writeEmbeddingStoreToDb(harness.db, harness.stackId, store([pageEntry("concepts/alpha", 0.1)]));
 
-    await writeEmbeddingStoreToDb(harness.db, harness.stackId, store([]));
-    const read = await readEmbeddingStoreFromDb(harness.db, harness.stackId);
+    const read = await writeThenRead(harness, store([]));
 
     expect(read?.entries).toEqual([]);
   });
@@ -199,8 +216,7 @@ describe.skipIf(!harnessReachable)("embedding vectors in Postgres", () => {
       store([pageEntry("concepts/alpha", 0.1)], [chunkEntry("concepts/alpha", 0, 0.11)]),
     );
 
-    await writeEmbeddingStoreToDb(harness.db, harness.stackId, store([pageEntry("concepts/alpha", 0.1)]));
-    const read = await readEmbeddingStoreFromDb(harness.db, harness.stackId);
+    const read = await writeThenRead(harness, store([pageEntry("concepts/alpha", 0.1)]));
 
     expect(read?.chunks).toEqual([]);
   });
@@ -231,11 +247,52 @@ describe.skipIf(!harnessReachable)("embedding vectors in Postgres", () => {
   });
 });
 
+/**
+ * Assert the loader refused the Stack's store as outdated.
+ *
+ * Both cases below end in exactly this pair -- `null` store plus the
+ * `embedding-index-outdated` code -- and asserting only the first half would pass
+ * while the caller lost the reason it branches on.
+ *
+ * @param harness - Stack to load from.
+ * @returns The load outcome.
+ */
+async function expectOutdatedStore(
+  harness: KgPostgresHarness,
+): Promise<Awaited<ReturnType<typeof loadEmbeddingsForSearch>>> {
+  const outcome = await loadEmbeddingsForSearch("", databaseEmbeddingSource(harness.db, harness.stackId));
+  expect(outcome.store).toBeNull();
+  expect(outcome.warnings.map((w) => w.code)).toContain("embedding-index-outdated");
+  return outcome;
+}
+
+/**
+ * Write a store through the paired sink and load it back through the same location.
+ *
+ * Both halves must address the SAME Stack; that is the property these cases assert,
+ * and it was set up twice. Sharing it also means a case cannot accidentally pair a
+ * sink from one Stack with a source from another, which would pass on a fresh database
+ * and fail only once two Stacks held data.
+ *
+ * @param harness - Stack to write into and read from.
+ * @param written - The store to persist through the sink.
+ * @returns The load outcome.
+ */
+async function sinkThenLoad(
+  harness: KgPostgresHarness,
+  written: Parameters<ReturnType<typeof databaseEmbeddingLocation>["sink"]["write"]>[0],
+): Promise<Awaited<ReturnType<typeof loadEmbeddingsForSearch>>> {
+  await seedPages(harness, ["concepts/alpha"]);
+  const location = databaseEmbeddingLocation(harness.db, harness.stackId);
+  await location.sink.write(written);
+  return loadEmbeddingsForSearch("", location.source);
+}
+
 describe.skipIf(!harnessReachable)("the loader reads its store through the database seam", () => {
   let harness: KgPostgresHarness;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`seam-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("seam")).harness;
   });
 
   afterEach(async () => {
@@ -261,12 +318,9 @@ describe.skipIf(!harnessReachable)("the loader reads its store through the datab
   });
 
   it("reports absence, not a fault, for a Stack that was never embedded", async () => {
-    const outcome = await loadEmbeddingsForSearch("", databaseEmbeddingSource(harness.db, harness.stackId));
-
     // A fresh Stack must degrade like a project with no store yet -- a reason to
     // build -- rather than warn about a store that is missing.
-    expect(outcome.store).toBeNull();
-    expect(outcome.warnings.map((w) => w.code)).toContain("embedding-index-outdated");
+    await expectOutdatedStore(harness);
   });
 
   it("degrades a store whose configuration does not match the active model", async () => {
@@ -278,10 +332,7 @@ describe.skipIf(!harnessReachable)("the loader reads its store through the datab
       entries: [pageEntry("concepts/alpha", 0.5)],
     });
 
-    const outcome = await loadEmbeddingsForSearch("", databaseEmbeddingSource(harness.db, harness.stackId));
-
-    expect(outcome.store).toBeNull();
-    expect(outcome.warnings.map((w) => w.code)).toContain("embedding-index-outdated");
+    await expectOutdatedStore(harness);
   });
 });
 
@@ -289,7 +340,7 @@ describe.skipIf(!harnessReachable)("the writer persists through the database sea
   let harness: KgPostgresHarness;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`sink-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("sink")).harness;
   });
 
   afterEach(async () => {
@@ -351,12 +402,10 @@ describe("the adapter pairs both directions", () => {
   it("reads back exactly what the paired sink wrote", async () => {
     const harness = await createKgPostgresHarness(`roundtrip-${randomUUID().slice(0, 8)}`);
     try {
-      await seedPages(harness, ["concepts/alpha"]);
-      const location = databaseEmbeddingLocation(harness.db, harness.stackId);
-      await location.sink.write({ ...store([pageEntry("concepts/alpha", 0.6)]), model: resolveEmbeddingModel() });
-
       // Both halves point at the same Stack, so the write is what the read sees.
-      const outcome = await loadEmbeddingsForSearch("", location.source);
+      const outcome = await sinkThenLoad(harness, {
+        ...store([pageEntry("concepts/alpha", 0.6)]), model: resolveEmbeddingModel(),
+      });
       expect(outcome.store?.entries.map((e) => e.pageId)).toEqual(["concepts/alpha"]);
     } finally {
       await harness.cleanup();

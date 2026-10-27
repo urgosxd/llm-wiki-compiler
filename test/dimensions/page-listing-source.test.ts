@@ -13,7 +13,8 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { listPages } from "../../src/pages/list.js";
 import { createPageWriteSink, createPageListingSource } from "../../src/dimensions/wiki/page-write-sink.js";
-import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { provisionStack } from "../fixtures/stack-harness.js";
 
 const RENDERED = "---\ntitle: Vector DB\nsummary: s\ntags:\n  - search\n---\n\nBody [[embeddings]].\n";
 
@@ -22,7 +23,7 @@ describe("row-backed listing", () => {
   let root: string;
 
   beforeEach(async () => {
-    harness = await createKgPostgresHarness(`listing-${randomUUID().slice(0, 8)}`);
+    harness = (await provisionStack("plist")).harness;
     // A root with NO wiki/ directory at all: if the listing answers, it answered
     // from rows and could not have scanned a directory that does not exist.
     root = await mkdtemp(path.join(os.tmpdir(), "no-wiki-"));
