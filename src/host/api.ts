@@ -41,6 +41,8 @@ const MAX_BODY_BYTES = 1024 * 64;
 /** What the ingest endpoint accepts. */
 interface IngestRequest {
   readonly source: string;
+  /** Set false to ingest without compiling; defaults to compiling. */
+  readonly compile?: boolean;
 }
 
 /**
@@ -94,21 +96,44 @@ function respondToThrow(res: ServerResponse, root: string, error: unknown): void
   writeJsonError(res, 500, "internal_error", message);
 }
 
-/** `POST /api/ingest` — ingest one source into the project. */
+/**
+ * `POST /api/ingest` -- ingest one source AND compile the wiki in one call.
+ *
+ * The endpoint used to stop after ingesting, leaving the caller to discover that
+ * a second request to `/api/compile` was required before the source became a page
+ * anything could query. Two commands for one intent is a trap: the source is on
+ * disk, `ingest` reported success, and the wiki is still empty.
+ *
+ * Compilation is reported alongside ingestion rather than replacing it. A compile
+ * that fails (no provider, lock contention) still leaves the source ingested, and
+ * the caller needs to see BOTH outcomes to decide whether to retry -- collapsing
+ * them into one status would hide which half succeeded.
+ *
+ * `{ "compile": false }` opts out for a caller that wants to batch several ingests
+ * and compile once at the end.
+ */
 async function handleIngest(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = await readJsonBody(req);
   if (!body.ok) {
     writeJsonError(res, body.status, "invalid_request", body.message);
     return;
   }
-  const source = (body.value as IngestRequest | undefined)?.source;
+  const request = body.value as IngestRequest | undefined;
+  const source = request?.source;
   if (typeof source !== "string" || source.trim() === "") {
     writeJsonError(res, 400, "invalid_request", "body must be {\"source\": \"<url-or-path>\"}");
     return;
   }
   try {
-    const result: IngestResult = await ingestSource(root, source);
-    writeJson(res, 200, result);
+    const ingested: IngestResult = await ingestSource(root, source);
+    if (request?.compile === false) {
+      writeJson(res, 200, { ...ingested, compiled: null });
+      return;
+    }
+    const compiled: CompileResult = await compileAndReport(root);
+    // `busy` means the compile never started (another holds the lock). The source
+    // IS ingested, so this is a retryable compile outcome, not a failed request.
+    writeJson(res, 200, { ...ingested, compiled, compileBusy: compiled.busy === true });
   } catch (error) {
     respondToThrow(res, root, error);
   }

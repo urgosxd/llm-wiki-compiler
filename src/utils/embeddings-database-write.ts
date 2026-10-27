@@ -25,6 +25,15 @@ import { sql } from "drizzle-orm";
 import type { Database } from "llmwiki-kg";
 import { bindStack, splitPageId } from "./embeddings-tenant.js";
 import type { ChunkEmbeddingV3, EmbeddingStoreV3, PageEmbeddingV3 } from "./embeddings-store.js";
+import { EMBEDDING_MODELS } from "./constants.js";
+import { getActiveEmbeddingProviderName } from "./embedding-provider.js";
+
+/**
+ * The width `wiki.page_embeddings.vector` and `wiki.page_chunk_embeddings.vector`
+ * declare. Kept as one constant so the check above and the schema cannot drift
+ * apart silently.
+ */
+const EMBEDDING_COLUMN_WIDTH = 768;
 
 export async function writeEmbeddingStoreToDb(
   db: Database,
@@ -71,6 +80,18 @@ async function upsertPageVectors(
   for (const entry of entries) {
     const split = splitPageId(entry.pageId);
     if (split === null) continue;
+    // Check the width BEFORE the insert. `vector(N)` rejects a mismatched vector
+    // with a Postgres error that names neither the provider nor the schema, and the
+    // caller swallows embedding failures so a compile survives them -- so a
+    // misconfigured provider used to look like "search quietly finds nothing".
+    // Naming the provider, its width and the column's width makes the fix obvious.
+    if (entry.vector.length !== EMBEDDING_COLUMN_WIDTH) {
+      throw new Error(
+        `embedding width ${entry.vector.length} does not match wiki.page_embeddings.vector(${EMBEDDING_COLUMN_WIDTH}). ` +
+        `Provider "${getActiveEmbeddingProviderName()}" (${EMBEDDING_MODELS[getActiveEmbeddingProviderName()] ?? "?"}) produced ${entry.vector.length} dimensions. ` +
+        `Use a provider/model that emits ${EMBEDDING_COLUMN_WIDTH} (ollama nomic-embed-text does), or migrate the column to match.`,
+      );
+    }
     await tx.execute(sql`
       insert into wiki.page_embeddings
         (stack_id, page_directory, slug, title, summary, embedding_text_hash, vector, updated_at)
