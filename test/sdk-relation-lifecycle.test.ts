@@ -44,52 +44,6 @@ beforeEach(async () => {
 });
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); });
 
-describe("createWiki() relation + lifecycle round-trip", () => {
-  it("createRelation appends a relation visible via the store", async () => {
-    const wiki = createWiki({ root });
-    const ref = await wiki.createRelation({ type: "tests", from: EXP, to: IDEA });
-    const { relations } = await readRelations(root);
-    expect(relations).toMatchObject([{ id: ref.id, type: "tests", from: EXP, to: IDEA }]);
-  });
-
-  it("transitionLifecycle updates the page, then refuses missing required evidence", async () => {
-    const wiki = createWiki({ root });
-    await wiki.transitionLifecycle({ entityType: "ideas", slug: "sparse-routing", toState: "testing" });
-    await wiki.transitionLifecycle({ entityType: "ideas", slug: "sparse-routing", toState: "tested" });
-    expect(await readFile(path.join(root, "wiki/ideas/sparse-routing.md"), "utf8")).toContain("status: tested");
-    const bad = wiki.transitionLifecycle({ entityType: "ideas", slug: "sparse-routing", toState: "failed" });
-    await expect(bad).rejects.toBeInstanceOf(LifecycleTransitionError);
-  });
-
-  it("admits the transition once required evidence is supplied", async () => {
-    const wiki = createWiki({ root });
-    await wiki.transitionLifecycle({ entityType: "ideas", slug: "sparse-routing", toState: "testing" });
-    await wiki.transitionLifecycle({ entityType: "ideas", slug: "sparse-routing", toState: "tested" });
-    await wiki.transitionLifecycle({
-      entityType: "ideas", slug: "sparse-routing", toState: "failed", evidence: { failureReason: "out of compute" },
-    });
-    const page = await readFile(path.join(root, "wiki/ideas/sparse-routing.md"), "utf8");
-    expect(page).toContain("status: failed");
-    expect(page).toContain("failureReason: out of compute");
-  });
-
-  it("merges only declared evidence — clobber/identity keys are dropped (FIX #2)", async () => {
-    const pagePath = path.join(root, "wiki/ideas/sparse-routing.md");
-    await writeFile(pagePath, "---\nstatus: tested\ntitle: Original Title\n---\n\nBody.\n", "utf8");
-    const wiki = createWiki({ root });
-    await wiki.transitionLifecycle({
-      entityType: "ideas", slug: "sparse-routing", toState: "failed",
-      evidence: { failureReason: "ran out of budget", title: "overwritten", slug: "../../escape", junk: "y" },
-    });
-    const page = await readFile(pagePath, "utf8");
-    expect(page).toContain("status: failed");
-    expect(page).toContain("failureReason: ran out of budget");
-    expect(page).toContain("title: Original Title"); // untouched
-    expect(page).not.toContain("overwritten");
-    expect(page).not.toContain("escape");
-    expect(page).not.toContain("junk");
-  });
-});
 
 describe("transitionLifecycle — lock discipline", () => {
   /**
@@ -108,16 +62,14 @@ describe("transitionLifecycle — lock discipline", () => {
   });
 });
 
-describe("default project guard", () => {
-  it("createRelation throws RelationsRequireProfileError on a default project", async () => {
-    const defaultRoot = await mkdtemp(path.join(os.tmpdir(), "sdk-rel-default-"));
-    try {
-      const wiki = createWiki({ root: defaultRoot });
-      await expect(
-        wiki.createRelation({ type: "tests", from: EXP, to: IDEA }),
-      ).rejects.toBeInstanceOf(RelationsRequireProfileError);
-    } finally {
-      await rm(defaultRoot, { recursive: true, force: true });
-    }
-  });
-});
+/**
+ * REMOVED: the `createWiki()` relation+lifecycle round-trip describe and the default
+ * project guard. Both drove `wiki.createRelation` / `wiki.transitionLifecycle`, which
+ * the SDK no longer exposes -- they came from `sdk/staging-facade.ts`, buried with the
+ * entity subsystem.
+ *
+ * The capability itself was NOT buried: `transitionLifecycle` lives in
+ * `src/trust/lifecycle-transition.ts` and the surviving lock-discipline suite below
+ * exercises it directly, so the write-gate behaviour still has coverage. What is gone
+ * is the SDK surface that reached it.
+ */

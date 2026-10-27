@@ -25,12 +25,6 @@ let root = "";
 beforeEach(async () => { root = await makeRelationsRoot("evt-audit-"); });
 afterEach(async () => { await cleanupRoot(root); });
 
-describe("B7 — relation events record the composed trust decision", () => {
-  it("a createRelation through the trust path records decision=allow", async () => {
-    const { event } = await createTestRelationEvent(root);
-    expect(event.decision).toBe("allow");
-  });
-});
 
 /** A profile whose `tests` relation type is undeclared, so a `tests` record is now invalid and dropped. */
 const noRelationsProfile = (): ProfilePack => ({ ...relationsProfile(), relations: {} });
@@ -45,24 +39,10 @@ describe("A5 — compaction emits a chained relation-compact event", () => {
   });
 });
 
-describe("lifecycle transitions record the composed trust decision TOP-LEVEL", () => {
-  it("emits a well-formed lifecycle-transition event carrying decision=allow", async () => {
-    const wiki = createWiki({ root });
-    await wiki.transitionLifecycle({ entityType: "ideas", slug: "sparse-routing", toState: "testing" });
-    const { events } = await readEvents(root);
-    expect(events[0].type).toBe("lifecycle-transition");
-    expect(events[0].decision).toBe("allow");
-    expect(events[0].payload).toMatchObject({ entityType: "ideas", slug: "sparse-routing", to: "testing" });
-  });
-});
+/**
+ * REMOVED: the B7, TOP-LEVEL lifecycle and mixed-chain describes. All three drove
+ * `wiki.createRelation` / `wiki.transitionLifecycle`, gone from the SDK with the
+ * staging facade. A5 (compaction) below still covers event chaining and anchoring, so
+ * the chain-verification property keeps a witness.
+ */
 
-describe("regression — chain verifies across create + compact + lifecycle", () => {
-  it("a mixed event stream chains and anchors intact", async () => {
-    const wiki = createWiki({ root });
-    await wiki.createRelation({ type: "tests", from: EXP, to: IDEA });
-    await compactRelations(root, relationsProfile());
-    await wiki.transitionLifecycle({ entityType: "ideas", slug: "sparse-routing", toState: "testing" });
-    const events = await readChainVerified(root);
-    expect(events.map((e) => e.type)).toEqual(["relation-create", "relation-compact", "lifecycle-transition"]);
-  });
-});

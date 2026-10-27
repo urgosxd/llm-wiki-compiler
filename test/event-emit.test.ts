@@ -11,12 +11,12 @@ import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { createWiki } from "../src/index.js";
 import { appendRelation, updateRelation } from "../src/relations/store.js";
 import { readEvents, verifyEventChain, verifyHeadAnchor } from "../src/events/store-read.js";
 import {
   EXP, IDEA, relationsProfile as profile, makeRelationsRoot, cleanupRoot, createTestRelationEvent,
 } from "./fixtures/event-audit-fixture.js";
+import { transitionLifecycle } from "../src/trust/lifecycle-transition.js";
 
 let root = "";
 beforeEach(async () => { root = await makeRelationsRoot("evt-emit-"); });
@@ -24,8 +24,9 @@ afterEach(async () => { await cleanupRoot(root); });
 
 describe("lifecycle transition emits a chained event", () => {
   it("appends a lifecycle-transition event that chains + anchors", async () => {
-    const wiki = createWiki({ root });
-    await wiki.transitionLifecycle({ entityType: "ideas", slug: "sparse-routing", toState: "testing" });
+    // Repointed from `wiki.transitionLifecycle` (gone with the staging facade) to the
+    // surviving writer the CLI uses, so the event-emission property keeps a witness.
+    await transitionLifecycle(root, "ideas", "sparse-routing", "testing");
     const { events, problems } = await readEvents(root);
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe("lifecycle-transition");
