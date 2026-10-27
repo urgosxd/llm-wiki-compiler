@@ -68,7 +68,17 @@ it("lints an unproven required artifact as a deterministic finding instead of th
   // A fresh root has no vouching run: the verifier DENIES, so the arm emits its error.
   const summary = await lint(root);
   expect(summary.results.filter((finding) => finding.rule === UNPROVEN)).toHaveLength(1);
-  expect(summary.errors).toBe(1);
+  // WARNING, not error. `verifyExecutionProvenance` now answers `park` for every
+  // query because the preparation run store was removed from this build: the profile
+  // can still DECLARE an execution-provenance requirement, but nothing exists to
+  // vouch for it. "Could not see" and "denied" are different verdicts, and parking
+  // keeps that visible. The rule still fires and still lands in the deterministic
+  // tier -- only the severity reflects what the build can actually establish.
+  expect(summary.errors).toBe(0);
+  // Two warnings: the unproven-required-artifact finding above, plus `empty-page`
+  // (the fixture body is a placeholder). Asserting the unproven rule by NAME above is
+  // what pins this test; the count only says nothing turned into an error.
+  expect(summary.warnings).toBeGreaterThanOrEqual(1);
   const tiered = await lintByTier(root);
   expect(tiered.deterministic.map((finding) => finding.rule)).toContain(UNPROVEN);
   expect(tiered.providerJudgement).toHaveLength(0);
