@@ -274,13 +274,37 @@ const REGISTERED_EXACT_PATHS: ReadonlySet<string> = new Set([
   "/api/health",
   "/api/search",
   "/api/graph",
-  "/api/workflow-runs",
   "/api/reviews",
   ...ARTIFACT_PATHS,
 ]);
 
-/** Prefix routes preserve public resources and add product workflow projections. */
-const REGISTERED_PATH_PREFIXES: readonly string[] = ["/assets/", "/api/page/", "/api/source/", "/api/workflows/"];
+/**
+ * Prefix routes that actually have a dispatch branch in `routeLiveResources`.
+ *
+ * `/api/workflows/` sat here after the workflow subsystem was buried, so
+ * `isRouteRegistered` called it a v1 route while no branch existed -- and
+ * `routeLiveResources` threw its drift error, surfacing as a 500 where the origin
+ * policy's 403 belonged.
+ */
+const REGISTERED_PATH_PREFIXES: readonly string[] = ["/assets/", "/api/page/", "/api/source/"];
+
+/**
+ * Every exact path must have a dispatch branch. Checked at module load so a route
+ * cannot be registered without a handler -- the alternative is a 500 that reads as
+ * a server fault when the real fault is a stale registry.
+ */
+const DISPATCHED_EXACT_PATHS: ReadonlySet<string> = new Set([
+  "/",
+  ...SNAPSHOT_ONLY_HANDLERS.keys(),
+  "/api/index",
+  "/api/search",
+  ...ARTIFACT_PATHS,
+]);
+for (const path of REGISTERED_EXACT_PATHS) {
+  if (!DISPATCHED_EXACT_PATHS.has(path)) {
+    throw new Error(`registered route without a handler: ${path}`);
+  }
+}
 
 /** True when (method, path) is one of the v1 registered routes. */
 function isRouteRegistered(method: string | undefined, pathname: string): boolean {

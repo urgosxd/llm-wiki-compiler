@@ -22,6 +22,7 @@
 
 import type { EntityTypeDef, FieldDef, LifecycleDef, ProfilePack } from "../../src/profile/types.js";
 import { writeMarkdownPage } from "./profile-fixtures.js";
+import { newsroomEntities, newsroomRelations } from "./builtin-profile-data.js";
 
 /** The state `articles` declares but no transition can reach. */
 const UNREACHABLE_STATE = "killed";

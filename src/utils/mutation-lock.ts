@@ -26,39 +26,40 @@ import {
   acquireLock, acquireLockBlocking, releaseLock,
   type AcquireLockOptions, type BlockingLockOptions,
 } from "./lock.js";
-import { recoverJournalBeforeCompile } from "../trust/journal-recovery.js";
+import { recoverJournalBeforeCompile, JournalUnsafeError } from "../trust/journal-recovery.js";
 
 /** Intent labels kept so call sites and diagnostics read the same as before. */
 export type MutationGateIntent =
   | "ordinary" | "review" | "recovery" | "quarantine" | "sweep" | "prune" | "handoff" | "reset";
 
-/** Thrown when the project's journal cannot be settled, so the mutation is refused. */
-class RecoveryGateError extends Error {
-  constructor(readonly detail: string) {
-    super(`project recovery is incomplete; refusing to mutate: ${detail}`);
-    this.name = "RecoveryGateError";
-  }
-}
-
 /**
  * Run the recovery gate, releasing the held lock if it refuses.
  *
  * @param root - Absolute project root whose journal is settled.
- * @throws {RecoveryGateError} when the journal is unsafe or cannot be replayed.
+ * @throws {JournalUnsafeError} when the journal is unsafe or cannot be replayed.
  */
 async function gateOrRelease(root: string): Promise<void> {
-  const recovery = await recoverJournalBeforeCompile(root).catch(() => ({ status: "unsafe" as const }));
-  if (recovery.status === "unsafe") {
-    await releaseLock(root);
-    throw new RecoveryGateError("the project journal is unsafe");
-  }
+  // No `.catch(() => unsafe)`: that collapsed every failure -- an unsafe journal, a
+  // symlink escape, and an unexpected replay fault -- into one private error type
+  // nobody catches. `recoverJournalBeforeCompile` already maps the unsafe cases to
+  // `status: "unsafe"` and rethrows anything else, so the only error to raise here is
+  // the one `compile` used to raise from its own recovery check.
+  const recovery = await recoverJournalBeforeCompile(root);
+  if (recovery.status !== "unsafe") return;
+  await releaseLock(root);
+  throw new JournalUnsafeError("pre-compile journal recovery unsafe");
 }
 
 /**
  * Acquire the project lock (non-blocking) for a mutation, then pass the recovery gate.
  *
+ * The `recovery` intent is EXEMPT from the gate. It is the one caller whose entire
+ * job is to settle the journal, so running recovery-for-recovery first consumes the
+ * pending batch and leaves the command reporting "Nothing to recover" -- the gate
+ * doing the work it was supposed to be protecting.
+ *
  * @param root - Absolute project root.
- * @param intent - Retained for call-site symmetry; the wiki gate is not intent-dependent.
+ * @param intent - The mutation's purpose; `recovery` skips the gate.
  * @param options - Passed through to {@link acquireLock}.
  * @returns False when the lock is already held elsewhere; throws when the gate refuses.
  */
@@ -67,9 +68,9 @@ export async function acquireMutationLock(
   intent: MutationGateIntent,
   options: AcquireLockOptions = {},
 ): Promise<boolean> {
-  void intent;
   const acquired = await acquireLock(root, options);
   if (!acquired) return false;
+  if (intent === "recovery") return true;
   await gateOrRelease(root);
   return true;
 }
@@ -87,8 +88,8 @@ export async function acquireMutationLockBlocking(
   intent: MutationGateIntent,
   options: BlockingLockOptions = {},
 ): Promise<void> {
-  void intent;
   await acquireLockBlocking(root, options);
+  if (intent === "recovery") return;
   await gateOrRelease(root);
 }
 
