@@ -107,9 +107,17 @@ describe("LLMWIKI_EMBEDDINGS", () => {
 
     await refreshEmbeddingsDrainingPending(root, []);
 
-    // The fourth argument is the store location, and it is UNDEFINED here: this
-    // caller holds no database handle, so the refresh must keep using the file.
-    expect(provider).toHaveBeenCalledWith(root, [], expect.any(Function), undefined);
+    // BOTH row-backend arguments are UNDEFINED here, and that is the assertion: this
+    // caller holds no database handle, so the refresh must keep using the file store
+    // and the filesystem page source rather than reaching for rows.
+    //
+    // The arity was stale rather than the intent being wrong. `updateEmbeddingsLockedCore`
+    // gained a fifth parameter (`pageSource`) when the wiki began reading pages from
+    // `wiki.source_documents`; the call this asserts is
+    // `(root, ids, prepare, store, pageSource)`, so pinning four arguments failed on a
+    // shape that is still correct. Naming both undefineds keeps the original claim --
+    // no handle, no row backend -- and now covers the seam that was added.
+    expect(provider).toHaveBeenCalledWith(root, [], expect.any(Function), undefined, undefined);
     expect(existsSync(pendingPath())).toBe(false);
   });
 

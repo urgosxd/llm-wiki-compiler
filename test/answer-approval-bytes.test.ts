@@ -26,12 +26,27 @@ it("publishes exact direct-save bytes, leaves same-slug concept unchanged and re
   expect(await readFile(sameSlug, "utf8")).toBe(original);
   expect(await readFile(path.join(root.dir, "wiki/index.md"), "utf8")).toContain("answer");
   expect(await readFile(path.join(root.dir, "wiki/MOC.md"), "utf8")).toContain("answer");
-  // TWO refreshes happen: the save path embeds `queries/direct` and the approve path
-  // embeds `queries/answer`. This assertion expects exactly one and has been red since
-  // before the rows migration -- verified by running it against 0374a5f~1, where it
-  // fails identically. Left as-is rather than "fixed" by widening it to any-call,
-  // which would stop asserting WHICH page got embedded.
-  expect(updateEmbeddingsLockedCore).toHaveBeenCalledWith(expect.any(String), ["queries/answer"], expect.any(Function));
+  // TWO refreshes happen, and that is the design rather than a leak: the save path
+  // embeds the page it just wrote (`queries/direct`) and the approve path embeds the
+  // page it just published (`queries/answer`). This assertion used to demand exactly
+  // one call with three arguments;
+  //
+  //   measured call log:  call0 ids=["queries/direct"]  argCount=2
+  //                       call1 ids=["queries/answer"]  argCount=5
+  //
+  // so BOTH numbers were stale -- the save-path refresh predates the rows migration,
+  // and `updateEmbeddingsLockedCore` grew `store` and `pageSource` (5 args now).
+  //
+  // What must survive is the original claim, WHICH page got embedded by the approve
+  // path. Widening this to "called at all" would lose exactly that, so the call is
+  // selected by its argument vector instead: the trailing `undefined, undefined` says
+  // this caller holds no row backend and must use the file store, which is the same
+  // claim `embeddings-disabled.test.ts` pins for the refresh path.
+  const approvedPageEmbeddings = vi
+    .mocked(updateEmbeddingsLockedCore)
+    .mock.calls.filter((call) => JSON.stringify(call[1]) === JSON.stringify(["queries/answer"]));
+  expect(approvedPageEmbeddings).toHaveLength(1);
+  expect(approvedPageEmbeddings[0]?.slice(3)).toEqual([undefined, undefined]);
   await expect(candidateBytes(root.dir, candidate.id)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
