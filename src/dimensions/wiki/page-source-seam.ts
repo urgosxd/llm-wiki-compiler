@@ -24,6 +24,8 @@ import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js
 import { generateIndex } from "../../compiler/indexgen.js";
 import { generateMOC } from "../../compiler/obsidian.js";
 import { createPageListingSource, createPageRemoveSink, createPageWriteSink } from "./page-write-sink.js";
+import { createResolverPageSource } from "./page-scan-source.js";
+import type { ResolverPageSource } from "../../compiler/resolver.js";
 import type { PageRemover, PageSink } from "../../trust/page-apply.js";
 import { readStateClassified, writeState, type StateStatus } from "../../utils/state.js";
 import type { WikiState } from "../../utils/types.js";
@@ -325,6 +327,8 @@ export interface PageSeams {
   sink?: PageSink;
   /** Remove a page from the row store instead of unlinking a file. */
   remover?: PageRemover;
+  /** Enumerate concept pages for link RESOLUTION (a different shape than `scan`). */
+  resolver?: ResolverPageSource;
 }
 
 /**
@@ -345,7 +349,36 @@ export function resolvePageSeams(
     scan: createPageScanSource(db, stackId),
     sink: createPageWriteSink(db as never, stackId),
     remover: createPageRemoveSink(db as never, stackId),
+    resolver: createResolverPageSource(db as never, stackId),
   };
+}
+
+/**
+ * Run `fn` with EVERY page seam resolved together, or all-undefined for files.
+ *
+ * The individual `with*` helpers exist for callers that need one capability. The
+ * link-repair and link-resolve paths need all four at once, and taking them from
+ * separate handles would open the database four times for one operation. More
+ * importantly, a caller that takes SOME of them writes rows and reads files: the
+ * repair pass would rewrite a page through the sink while listing pages from a
+ * directory a Stack never populates. One handle, one consistent view.
+ *
+ * @param env - Environment to read the Stack from.
+ * @param fn - Receives the seams; all undefined on a file-backed project.
+ * @returns Whatever `fn` returns.
+ */
+export async function withPageSeams<T>(
+  env: NodeJS.ProcessEnv,
+  fn: (seams: PageSeams) => Promise<T>,
+): Promise<T> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return fn({});
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    return await fn(resolvePageSeams(dimensionsDb.db as never, env));
+  } finally {
+    await dimensionsDb.close();
+  }
 }
 
 /**

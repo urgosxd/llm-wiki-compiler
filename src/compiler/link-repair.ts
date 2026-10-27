@@ -46,11 +46,59 @@ const SLUG_SEPARATOR = "-";
 const MIN_REPAIRABLE_SLUG_LENGTH = 3;
 
 /**
- * Resolve a broken link slug to the single page it prefixes, or null when it
- * prefixes none or more than one.
+ * Candidate slugs an exact-modulo-morphology match would accept, or null.
+ *
+ * Extraction names a concept in the singular while its page title often lands in
+ * the plural (or vice versa), so `[[graph]]` misses `graphs` and `[[weighted-graph]]`
+ * misses `weighted-graphs`. Both name the same thing, and the link sits broken
+ * pointing at a page that is right there.
+ *
+ * Only the LAST word is inflected: `graph-theory` and `graphs-theory` are not the
+ * same concept, but `weighted-graph`/`weighted-graphs` are.
+ */
+function morphologyVariants(targetSlug: string): string[] {
+  const separatorIndex = targetSlug.lastIndexOf(SLUG_SEPARATOR);
+  const head = separatorIndex === -1 ? "" : targetSlug.slice(0, separatorIndex + 1);
+  const lastWord = separatorIndex === -1 ? targetSlug : targetSlug.slice(separatorIndex + 1);
+  if (lastWord.length < MIN_REPAIRABLE_SLUG_LENGTH) return [];
+  const variants: string[] = [];
+  // plural -> singular, then singular -> plural. Both directions are needed:
+  // which one the link uses depends on how the extractor phrased it.
+  if (lastWord.endsWith("ies") && lastWord.length > 4) {
+    variants.push(head + lastWord.slice(0, -3) + "y");
+  }
+  if (lastWord.endsWith("es") && lastWord.length > 3) {
+    variants.push(head + lastWord.slice(0, -2));
+  }
+  if (lastWord.endsWith("s") && !lastWord.endsWith("ss")) {
+    variants.push(head + lastWord.slice(0, -1));
+  } else {
+    variants.push(head + lastWord + "s");
+    variants.push(head + lastWord + "es");
+  }
+  return variants;
+}
+
+/**
+ * Resolve a broken link slug to the single page it identifies, or null.
+ *
+ * Tried in order of certainty: an exact match, then a unique prefix (the original
+ * rule), then a unique singular/plural variant. Null when a step finds none or
+ * more than one -- an ambiguous target is still left alone rather than guessed at,
+ * because a wrong link is worse than a visibly missing one.
  */
 function resolveUniquePrefix(targetSlug: string, slugs: string[]): string | null {
   if (targetSlug.length < MIN_REPAIRABLE_SLUG_LENGTH) return null;
+  const existing = new Set(slugs);
+  // Morphology BEFORE prefix. `[[graph]]` beside both `graphs` and `graph-theory`
+  // is far more likely to mean the plural of itself than a longer unrelated page:
+  // inflection is a naming difference, while a prefix match is a truncation, and
+  // truncations are what produce wrong links. Both still require exactly ONE
+  // candidate, so an ambiguous inflection falls through to the prefix rule rather
+  // than being guessed at.
+  const inflected = morphologyVariants(targetSlug).filter((variant) => existing.has(variant));
+  if (inflected.length === 1) return inflected[0]!;
+  if (inflected.length > 1) return null;
   const prefix = targetSlug + SLUG_SEPARATOR;
   let match: string | null = null;
   for (const slug of slugs) {
@@ -58,7 +106,15 @@ function resolveUniquePrefix(targetSlug: string, slugs: string[]): string | null
     if (match) return null;
     match = slug;
   }
-  return match;
+  if (match) return match;
+  // A link written as `[[algorithms.md]]` slugifies to `algorithmsmd`: `slugify`
+  // drops the dot and joins the words, because a dot is not a word separator it
+  // knows about. Split a trailing `md` back off and retry the exact lookup.
+  if (targetSlug.endsWith("md") && targetSlug.length > MIN_REPAIRABLE_SLUG_LENGTH + 2) {
+    const withoutExtension = targetSlug.slice(0, -2);
+    if (existing.has(withoutExtension)) return withoutExtension;
+  }
+  return null;
 }
 
 /** Reuse the production retained-only prefix rule, including pending ambiguity. */
@@ -66,8 +122,14 @@ export function createRepairResolver(slugs: string[], pending: Set<string>): (ta
   const existing = new Set(slugs);
   const possible = [...slugs, ...[...pending].filter(slug => !existing.has(slug))];
   // Exact pending targets must not be redirected to a different retained page.
-  return (targetSlug: string): string | null => {
-    if (existing.has(targetSlug) || pending.has(targetSlug)) return null;
+  return (writtenTarget: string): string | null => {
+    const targetSlug = slugify(writtenTarget);
+    // An EXISTING slug is the page this link names -- return it so the caller can
+    // normalise a title-shaped target (`[[Some Concept]]`) to its slug. Returning
+    // null here would mean "nothing to do", which is only true when the link is
+    // already written as that slug.
+    if (existing.has(targetSlug)) return targetSlug;
+    if (pending.has(targetSlug)) return null;
     const match = resolveUniquePrefix(targetSlug, possible);
     return match && existing.has(match) ? match : null;
   };
@@ -81,20 +143,44 @@ function splitWikilink(inner: string): { target: string; alias: string } {
   return { target, alias };
 }
 
-/** Rewrite every repairable link in a body; returns the body and a repair count. */
+/**
+ * Normalise every wikilink that names a page to ONE form: `[[slug|label]]`.
+ *
+ * A wiki may not have two ways to spell a link. Generation writes concept TITLES
+ * (`[[Betweenness Centrality]]`) while pages are stored under SLUGS
+ * (`betweenness-centrality`), and a reader tolerates that inconsistency only by
+ * guessing -- matching case-insensitively, folding spaces to hyphens, hoping no
+ * two titles collide once folded. Every one of those guesses is a way for a link
+ * to be silently wrong.
+ *
+ * So the CANONICAL form is the slug, always, with the original words kept as the
+ * alias: `[[betweenness-centrality|Betweenness Centrality]]`. The page reads the
+ * same, the target is exact, and nothing downstream has to reconstruct which page
+ * a link meant. A link is left alone only when it already IS its own slug.
+ *
+ * @param body - Page markdown with the frontmatter already stripped.
+ * @param identify - Maps a written target to the ONE page it names, or null.
+ * @returns The rewritten body and how many links changed.
+ */
 function repairBody(
   body: string,
-  resolve: (targetSlug: string) => string | null,
+  identify: (writtenTarget: string) => string | null,
 ): { body: string; repaired: number } {
   let repaired = 0;
   const literal = isLiteralMarkdown(body);
   const next = body.replace(WIKILINK_PATTERN, (match, inner: string, offset: number) => {
     if (literal(offset)) return match;
     const { target, alias } = splitWikilink(inner);
-    const resolved = resolve(slugify(target));
-    if (!resolved) return match;
+    const slug = identify(target);
+    if (!slug) return match;
+    // Compare the RESULT, not the inputs. A link already written as
+    // `[[slug|Original Title]]` re-derives to exactly the same bytes, and counting
+    // that as a repair would make every pass rewrite every page -- re-embedding the
+    // whole wiki each compile for output identical to what was already there.
+    const canonical = `[[${slug}|${alias}]]`;
+    if (canonical === match) return match;
     repaired += 1;
-    return `[[${resolved}|${alias}]]`;
+    return canonical;
   });
   return { body: next, repaired };
 }

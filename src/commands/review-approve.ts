@@ -55,7 +55,7 @@ import { resolveAndApplyLinks } from "../compiler/resolver.js";
 import { repairAndApplyLinks } from "../compiler/link-repair.js";
 import { qualifiedPageId, type PageId } from "../utils/page-id.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
-import { readStateClassifiedFor, writeStateFor } from "../dimensions/wiki/page-source-seam.js";
+import { readStateClassifiedFor, withPageSeams, writeStateFor } from "../dimensions/wiki/page-source-seam.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import * as output from "../utils/output.js";
 import type { ReviewCandidate } from "../utils/types.js";
@@ -406,8 +406,13 @@ async function refreshWikiAfterApproval(root: string, candidate: ReviewCandidate
   // approveUnderLock runs under the held project lock (runReviewUnderLock), so
   // this routes through the lock-free resolution seam.
   if (!isValidatedAnswer(candidate)) {
-    await resolveAndApplyLinks(root, [slug], [slug]);
-    await repairAndApplyLinks(root);
+    // Seams, not bare root: on a Stack the pages live in rows, and a call without
+    // them lists `wiki/<ns>` from disk (finding nothing) and writes repaired links
+    // to files nothing reads. Both halves must address the SAME backend.
+    await withPageSeams(process.env, async (seams) => {
+      await resolveAndApplyLinks(root, [slug], [slug], seams.resolver, seams.sink, seams.remover);
+      await repairAndApplyLinks(root, seams.content, seams.scan, seams.sink, seams.remover);
+    });
   }
   await regenerateIndices(root, process.env);
   await safelyUpdateEmbeddings(root, candidatePageId(candidate));

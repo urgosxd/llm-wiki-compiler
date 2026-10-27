@@ -140,13 +140,16 @@ describe("repairLinks", () => {
     expect(await readPage("deployment")).toContain("[[Caddy]]");
   });
 
-  it("does not touch a link that already resolves", async () => {
+  it("normalises a title-shaped link to the canonical slug form", async () => {
     await writePage("workspace", "Details.");
     await writePage("onboarding", "Create a [[Workspace]] first.");
 
     await repairAndApply();
 
-    expect(await readPage("onboarding")).toContain("[[Workspace]]");
+    // ONE form, always: the slug as target, the original words as the label. The
+    // page reads identically and the target is exact, so no reader has to guess
+    // which page `[[Workspace]]` meant by folding case and spaces.
+    expect(await readPage("onboarding")).toContain("[[workspace|Workspace]]");
   });
 
   it("refuses a slug too short to prefix meaningfully", async () => {

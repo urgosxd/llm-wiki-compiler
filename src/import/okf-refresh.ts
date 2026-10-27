@@ -3,6 +3,7 @@ import { resolveAndApplyLinks } from "../compiler/resolver.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
 import { slugFromPageId, type PageId } from "../utils/page-id.js";
 import { regenerateIndices } from "../dimensions/wiki/page-source-seam.js";
+import { withPageSeams } from "../dimensions/wiki/page-source-seam.js";
 
 /**
  * Rebuild derived artifacts after writing imported pages live.
@@ -26,7 +27,10 @@ export async function refreshAfterImport(root: string, pageIds: PageId[]): Promi
   // pipeline). The OKF import already holds the project lock (runOkfImport), so
   // this routes through the lock-free resolution seam.
   const slugs = pageIds.map(slugFromPageId);
-  await resolveAndApplyLinks(root, slugs, slugs);
+  // Seams, not bare root: on a Stack the resolver reads concept pages from ROWS,
+  // and a call without a source lists a directory that holds no page files.
+  await withPageSeams(process.env, (seams) =>
+    resolveAndApplyLinks(root, slugs, slugs, seams.resolver, seams.sink, seams.remover));
   await regenerateIndices(root, process.env);
   // Union the imported page-ids into the shared pending-marker drain (preserves
   // the existing changed-id set; the drain adds prior-pending ids on top).
