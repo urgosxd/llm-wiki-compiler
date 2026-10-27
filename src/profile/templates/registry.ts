@@ -35,7 +35,7 @@ export function getBuiltinTemplate(id: string): ProfileTemplatePackage | undefin
 }
 
 /** Resolve one immutable builtin release by its complete published identity. */
-export function getBuiltinTemplateRelease(
+function getBuiltinTemplateRelease(
   id: string,
   version: string,
   publisher: string,
@@ -62,7 +62,7 @@ function latestBuiltinTemplates(): ProfileTemplatePackage[] {
 }
 
 /** Compare validated SemVer strings when selecting the latest builtin release. */
-export function compareTemplateVersions(left: string, right: string): number {
+function compareTemplateVersions(left: string, right: string): number {
   const [leftVersion, leftPre] = versionParts(left);
   const [rightVersion, rightPre] = versionParts(right);
   const a = leftVersion.split(".").map(Number);

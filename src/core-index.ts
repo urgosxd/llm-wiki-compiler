@@ -100,12 +100,10 @@ export { resolveArtifactRef } from "./artifacts/resolve.js";
 export { artifactPaths, memberLeafPath, readArtifactMemberBytes } from "./artifacts/store.js";
 export { loadProfile } from "./profile/load.js";
 export { isSlugSafe } from "./profile/identity.js";
-export type { ProfileTemplatePackage } from "./profile/templates/types.js";
 export { confineUnderRoot } from "./utils/path-confine.js";
 export { resolveConfinedPrivateDir } from "./utils/private-dir.js";
 export { releaseLock } from "./utils/lock.js";
 
-export { canonicalBytes, canonicalDigest } from "./profile/templates/signing/canonical.js";
 export { confinedFetch, confinedFetchRequest } from "./connectors/confined-fetch.js";
 export type { FetchLimits, ConfinedFetchSeams, ConfinedFetchResult, ConfinedFetchRequest, ConfinedFetchMethod } from "./connectors/confined-fetch.js";
 export { scaffoldConfinedDirectories, ensureConfinedDirectory, type ScaffoldDirectoriesResultV1 } from "./utils/confined-scaffold.js";

@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { open, unlink } from "node:fs/promises";
 import { readConfinedLeaf } from "./confined-read.js";
 import { isLockRecordStale, parseOwner, serializeOwner } from "./lock-owner.js";
-import { ensurePrivateRoot } from "../profile/templates/taps/private-root.js";
+import { ensurePrivateRoot } from "../operator-state/private-root.js";
 
 const MAX_LOCK_BYTES = 1024;
 const DEFAULT_TIMEOUT_MS = 5_000;

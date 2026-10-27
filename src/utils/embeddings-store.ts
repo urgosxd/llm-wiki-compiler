@@ -143,7 +143,7 @@ export interface EmbeddingStoreV3 {
  * O_RDONLY|O_NOFOLLOW (symlinked leaf → null), fstat-caps the size, and returns
  * the raw UTF-8 content. Returns null for all unavailable/absent/oversized cases.
  */
-export async function readConfinedRaw(root: string): Promise<string | null> {
+async function readConfinedRaw(root: string): Promise<string | null> {
   const dir = await resolveExistingConfinedPrivateDir(root);
   if (dir === null) return null;
   const filePath = path.join(dir, path.basename(EMBEDDINGS_FILE));

@@ -55,7 +55,7 @@ export { lint } from "./linter/index.js";
 export { readPageRecord } from "./pages/read.js";
 export { loadNonDefaultProfile } from "./profile/block.js";
 export { isSlugSafe } from "./profile/identity.js";
-export { readBoundedFromHandle } from "./profile/templates/publish/bounded-read.js";
+export { readBoundedFromHandle } from "./utils/bounded-read.js";
 export type { AppendRelationInput } from "./relations/store.js";
 export { pickSearchRefs, loadSelectedRefs } from "./search/retrieval.js";
 export { listSelectedSourceFiles } from "./sources/scan.js";
