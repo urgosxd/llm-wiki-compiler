@@ -37,6 +37,7 @@ import { createDatabase, createClient } from "llmwiki-kg";
 import { AKS_STACK_ID_ENV_VAR, resolveDimensions } from "../../src/dimensions/activation.js";
 import type { DimensionInput } from "../../src/dimensions/types.js";
 import { provisionEnvStack } from "../fixtures/env-stack.js";
+import { testDatabaseUrl } from "../fixtures/test-database.js";
 
 const env = await provisionEnvStack("wiki-activation-stack");
 
@@ -55,7 +56,10 @@ describe("resolveDimensions against a real Stack", () => {
     // A handle of this test's own, so the assertions below do not depend on the
     // dimension's private connection. 5434 is the harness's port, not the
     // production default -- see env-stack.ts for why that matters.
-    const client = createClient(process.env.AKS_DATABASE_URL ?? "", 5);
+    // `?? ""` here handed `createClient` an empty DSN, which the driver resolves to
+    // its own default -- the production port. Resolve it the same way every other
+    // fixture does instead.
+    const client = createClient(process.env.AKS_DATABASE_URL ?? testDatabaseUrl(), 5);
     const probe = createDatabase(client);
     try {
       // A FRESH root per run. The dimension writes the source markdown into

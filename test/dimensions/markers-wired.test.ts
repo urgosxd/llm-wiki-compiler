@@ -21,6 +21,7 @@ import {
 import { readRuleState, updateRuleSourceState } from "../../src/compiler/rule-state.js";
 import { readLintCache, writeLintCache } from "../../src/linter/cache.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { testDatabaseUrl } from "../fixtures/test-database.js";
 import { createProbeStack } from "./harness-lifecycle.js";
 
 let harness: KgPostgresHarness;
@@ -41,7 +42,7 @@ afterEach(async () => {
 /** Point the seams at this harness's Stack. */
 function applyStackEnv(): void {
   process.env.AKS_STACK_ID = harness.stackId;
-  process.env.AKS_DATABASE_URL = process.env.LLMWIKI_TEST_DATABASE_URL ?? "";
+  process.env.AKS_DATABASE_URL = testDatabaseUrl();
 }
 
 /** True when the project has a `.llmwiki/` directory. */

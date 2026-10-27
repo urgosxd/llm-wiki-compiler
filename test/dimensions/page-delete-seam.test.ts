@@ -24,6 +24,7 @@ import { deleteWikiPagesLocked } from "../../src/wiki/delete-page.js";
 import { createPageWriteSink, createPageRemoveSink } from "../../src/dimensions/wiki/page-write-sink.js";
 import { getStoredPage } from "../../src/dimensions/wiki/page-store.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { testDatabaseUrl } from "../fixtures/test-database.js";
 import { withStackEnv } from "../fixtures/stack-env.js";
 import { withPageRemover } from "../../src/dimensions/wiki/page-source-seam.js";
 
@@ -106,7 +107,10 @@ describe("withPageRemover resolves the remover from the environment", () => {
   it("hands a remover to the callback when a Stack is configured", async () => {
     const harness = await createKgPostgresHarness(`seam-${randomUUID().slice(0, 8)}`);
     try {
-      const env = { LLMWIKI_DATABASE_URL: process.env.LLMWIKI_TEST_DATABASE_URL } as NodeJS.ProcessEnv;
+      // Resolved, not copied: a bare `process.env.LLMWIKI_TEST_DATABASE_URL` is
+      // `undefined` on a default machine, and an undefined DSN is precisely the shape
+      // that sends the resolver to the production port.
+      const env = { LLMWIKI_DATABASE_URL: testDatabaseUrl() } as NodeJS.ProcessEnv;
       await withStackEnv(`seam-${randomUUID().slice(0, 8)}`, async () => {
         const sink = createPageWriteSink(harness.db, harness.stackId);
         await sink({ directory: "concepts", slug: "gone", body: BODY });

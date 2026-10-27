@@ -14,12 +14,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hasCompiledPages } from "../../src/dimensions/wiki/page-source-seam.js";
 import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { testDatabaseUrl } from "../fixtures/test-database.js";
 
 /** Environment naming THIS harness's Stack, so the seam reaches real rows. */
 function envFor(harness: KgPostgresHarness): NodeJS.ProcessEnv {
   return {
     AKS_STACK_ID: harness.stackId,
-    AKS_DATABASE_URL: process.env.LLMWIKI_TEST_DATABASE_URL ?? "",
+    AKS_DATABASE_URL: testDatabaseUrl(),
   } as NodeJS.ProcessEnv;
 }
 

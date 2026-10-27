@@ -23,6 +23,7 @@ import { readRelations } from "../../src/relations/store-read.js";
 import { appendRelationLocked } from "../../src/relations/store.js";
 import type { ProfilePack } from "../../src/profile/types.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { testDatabaseUrl } from "../fixtures/test-database.js";
 
 const PROFILE = {
   relations: { SUPPLIES: { from: ["concepts"], to: ["concepts"], direction: "directed" } },
@@ -53,7 +54,7 @@ afterEach(async () => {
 /** Environment naming this harness's Stack. */
 function applyStackEnv(): void {
   process.env.AKS_STACK_ID = harness.stackId;
-  process.env.AKS_DATABASE_URL = process.env.LLMWIKI_TEST_DATABASE_URL ?? "";
+  process.env.AKS_DATABASE_URL = testDatabaseUrl();
 }
 
 /** Restore the environment so other suites are not affected. */

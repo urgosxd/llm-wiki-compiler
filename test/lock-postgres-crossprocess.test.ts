@@ -14,8 +14,9 @@ import { rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { tryAcquirePostgresLock } from "../src/utils/lock-postgres.js";
+import { testDatabaseUrl } from "./fixtures/test-database.js";
 
-const DSN = process.env.LLMWIKI_TEST_DATABASE_URL ?? "";
+const DSN = testDatabaseUrl();
 const suite = DSN === "" ? describe.skip : describe;
 
 /** Run a child that tries the lock once, reporting whether it got it. */

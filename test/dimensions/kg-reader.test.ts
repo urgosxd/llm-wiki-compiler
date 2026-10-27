@@ -15,6 +15,7 @@
  */
 import { afterAll, describe, expect, it } from "vitest";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { testDatabaseUrl } from "../fixtures/test-database.js";
 import { consolidateEntityRows, consolidateRelationshipRows, registerDocumentRow } from "llmwiki-kg";
 import { createKgReader } from "../../src/dimensions/kg/reader.js";
 import { expectNamedLookupContract } from "../fixtures/reader-assertions.js";
@@ -30,7 +31,7 @@ afterAll(async () => {
 function reader() {
   return createKgReader({
     stackId,
-    databaseUrl: process.env.LLMWIKI_TEST_DATABASE_URL ?? "postgresql://aks:aks@localhost:5434/aks",
+    databaseUrl: testDatabaseUrl(),
   });
 }
 

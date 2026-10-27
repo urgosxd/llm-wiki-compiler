@@ -25,6 +25,7 @@ import { applyApprovedMutations } from "../../src/trust/executor.js";
 import { readArtifact, saveArtifact } from "../../src/dimensions/wiki/artifact-store.js";
 import { makeResearchLikeRoot, seedArtifact } from "../fixtures/artifact-root.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { testDatabaseUrl } from "../fixtures/test-database.js";
 
 const TYPE = "experiment-result";
 const BODY = JSON.stringify({ title: "one", accuracy: 0.9 });
@@ -34,7 +35,7 @@ async function withStackEnv(harness: KgPostgresHarness, body: () => Promise<void
   const saved = { ...process.env };
   try {
     process.env.AKS_STACK_ID = harness.stackId;
-    process.env.AKS_DATABASE_URL = process.env.LLMWIKI_TEST_DATABASE_URL ?? "";
+    process.env.AKS_DATABASE_URL = testDatabaseUrl();
     await body();
   } finally {
     process.env = saved;

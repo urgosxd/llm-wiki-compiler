@@ -12,8 +12,9 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { acquireLock, releaseLock } from "../src/utils/lock.js";
 import { lockRegistry } from "../src/utils/lock-postgres.js";
+import { testDatabaseUrl } from "./fixtures/test-database.js";
 
-const DSN = process.env.LLMWIKI_TEST_DATABASE_URL ?? "";
+const DSN = testDatabaseUrl();
 const suite = DSN === "" ? describe.skip : describe;
 
 /** Environment naming a Stack, so the facade consults the database. */

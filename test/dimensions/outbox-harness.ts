@@ -18,6 +18,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { testDatabaseUrl } from "../fixtures/test-database.js";
 
 /** One suite's private Stack, plus the cleanup that retires it. */
 export interface OutboxSetup {
@@ -71,9 +72,14 @@ export async function outboxReachable(label: string): Promise<boolean> {
   return ok;
 }
 
-/** The harness DSN, matching what `kg-postgres.ts` connects to. */
+/**
+ * The harness DSN, resolved through the shared resolver.
+ *
+ * This used to inline the documented container, which is the duplication that let it
+ * disagree with the seven fixtures that fell back to the PRODUCTION port instead.
+ */
 function databaseUrl(): string {
-  return process.env.LLMWIKI_TEST_DATABASE_URL ?? "postgresql://aks:aks@localhost:5434/aks";
+  return testDatabaseUrl();
 }
 
 /** Put an environment variable back the way it was, deleting when it was unset. */

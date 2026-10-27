@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readStateClassifiedFor, writeStateFor } from "../../src/dimensions/wiki/page-source-seam.js";
 import { readWikiStateFromRows } from "../../src/dimensions/wiki/wiki-state-source.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { testDatabaseUrl } from "../fixtures/test-database.js";
 
 const DSN_ENV = "AKS_DATABASE_URL";
 
@@ -40,7 +41,7 @@ afterEach(async () => {
 function stackEnv(): NodeJS.ProcessEnv {
   return {
     AKS_STACK_ID: harness.stackId,
-    [DSN_ENV]: process.env.LLMWIKI_TEST_DATABASE_URL ?? "",
+    [DSN_ENV]: testDatabaseUrl(),
   } as NodeJS.ProcessEnv;
 }
 

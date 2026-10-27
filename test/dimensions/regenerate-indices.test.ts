@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { regenerateIndices } from "../../src/dimensions/wiki/page-source-seam.js";
 import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { testDatabaseUrl } from "../fixtures/test-database.js";
 
 const ALPHA = "---\ntitle: Alpha\ntags:\n  - search\n---\n\nbody\n";
 
@@ -27,7 +28,7 @@ describe("regenerateIndices from rows", () => {
     root = await mkdtemp(path.join(os.tmpdir(), "no-wiki-idx-"));
     env = {
       AKS_STACK_ID: harness.stackId,
-      AKS_DATABASE_URL: process.env.LLMWIKI_TEST_DATABASE_URL ?? "",
+      AKS_DATABASE_URL: testDatabaseUrl(),
     } as NodeJS.ProcessEnv;
   });
 

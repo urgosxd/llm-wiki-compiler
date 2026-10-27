@@ -9,8 +9,9 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { tryAcquirePostgresLock } from "../src/utils/lock-postgres.js";
+import { testDatabaseUrl } from "./fixtures/test-database.js";
 
-const DSN = process.env.LLMWIKI_TEST_DATABASE_URL ?? "";
+const DSN = testDatabaseUrl();
 const reachable = DSN !== "";
 const suite = reachable ? describe : describe.skip;
 

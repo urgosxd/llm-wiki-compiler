@@ -31,6 +31,7 @@ import { useQuickstartProcessLifecycle } from "./fixtures/run-cli-server.js";
 import { LLMWIKI_DIR, LAST_LINT_FILE } from "../src/utils/constants.js";
 import { countConceptPages, listSourceFilenames } from "./fixtures/source-corpus.js";
 import { useStackEnv } from "./fixtures/stack-env.js";
+import { testDatabaseUrl } from "./fixtures/test-database.js";
 
 // Every suite here drives quickstart end to end, which ingests.
 useStackEnv("quickstart-integration");
@@ -43,7 +44,7 @@ useStackEnv("quickstart-integration");
  * still undefined. The test database URL is present from process start and is what
  * activates the dimensions, so it is the honest signal.
  */
-const stackAlwaysOn = (process.env.LLMWIKI_TEST_DATABASE_URL ?? "") !== "";
+const stackAlwaysOn = testDatabaseUrl() !== "";
 
 const aimock = useAimockLifecycle("quickstart");
 

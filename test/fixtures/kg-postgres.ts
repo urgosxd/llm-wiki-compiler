@@ -19,10 +19,17 @@
 
 import { randomUUID } from "node:crypto";
 import { createClient, createDatabase } from "llmwiki-kg";
+import { testDatabaseUrl } from "./test-database.js";
 
-/** Connection string; defaults to the documented local stack container. */
-export const DATABASE_URL =
-  process.env.LLMWIKI_TEST_DATABASE_URL ?? "postgresql://aks:aks@localhost:5434/aks";
+/**
+ * Connection string every fixture connects to.
+ *
+ * Resolved through {@link testDatabaseUrl} rather than inlined, because the inline
+ * form here and the `?? ""` form in seven other fixtures disagreed: this one fell back
+ * to the test container, those fell back to the PRODUCTION port. One resolver means
+ * the harness and the code under test cannot point at different databases.
+ */
+export const DATABASE_URL = testDatabaseUrl();
 
 /** One suite's private slice of the database. */
 export interface KgPostgresHarness {

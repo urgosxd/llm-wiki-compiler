@@ -14,6 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { testDatabaseUrl } from "../fixtures/test-database.js";
 
 /** A provisioned Stack plus the teardown that removes it. */
 export interface ProbeStack {
@@ -38,7 +39,7 @@ export async function createProbeStack(label: string): Promise<ProbeStack> {
     harness,
     env: () => ({
       AKS_STACK_ID: harness.stackId,
-      AKS_DATABASE_URL: process.env.LLMWIKI_TEST_DATABASE_URL ?? "",
+      AKS_DATABASE_URL: testDatabaseUrl(),
     }) as NodeJS.ProcessEnv,
   };
 }
