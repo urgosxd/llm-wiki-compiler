@@ -3,6 +3,7 @@ import path from "path";
 import { mkdir, rm, writeFile, readFile } from "fs/promises";
 import { tmpdir } from "os";
 import { exec, CLI } from "./fixtures/cli-runner.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
 
 async function cleanupDirectory(directory: string): Promise<void> {
   await rm(directory, { recursive: true, force: true });
@@ -44,6 +45,8 @@ async function createCompileWorkspace(
 }
 
 describe("CLI smoke tests", () => {
+  // Every dimension is Postgres-backed: an ingest without a Stack has no tenant.
+  useStackEnv("cli");
   it("prints help and exits 0", async () => {
     const { stdout } = await exec("node", [CLI, "--help"]);
     expect(stdout).toContain("llmwiki");

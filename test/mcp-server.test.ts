@@ -19,6 +19,8 @@ import {
 } from "./fixtures/mcp-test-env.js";
 import { appendHistory } from "../src/eval/stats.js";
 import { makeEvalReport } from "./fixtures/eval-report.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
+
 
 const rootHandle = useMcpRoot("llmwiki-mcp");
 /**
@@ -98,6 +100,11 @@ describe("MCP server tool registration", () => {
 });
 
 describe("ingest_source tool", () => {
+  // Scoped HERE: an ingest needs a tenant. Hoisting to file scope changed what the
+  // eval and status suites read back (they assert file-shaped snapshots) and broke four
+  // green tests -- the same trap as activity-log.
+  useStackEnv("mcp-ingest-source");
+
   it("returns IngestResult shape for a local file", async () => {
     const sourceFile = path.join(root, "input.md");
     await writeFile(

@@ -16,14 +16,30 @@ import { lint } from "../src/linter/index.js";
 import { compileAndReport } from "../src/compiler/index.js";
 import { AnthropicProvider } from "../src/providers/anthropic.js";
 import { LOG_FILE } from "../src/utils/constants.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
+import { withJournalSource } from "../src/dimensions/wiki/activity-log-source.js";
+import { renderJournal } from "../src/utils/activity-log.js";
+
 
 const LONG_BODY = "This page body is comfortably long enough to clear the empty-page threshold.";
 
+/**
+ * Read the activity log through the ACTIVE backend.
+ *
+ * On a Stack the log is a row, so `readFile(log.md)` would throw ENOENT for the
+ * right reason and prove nothing. These two helpers ask whichever backend is in
+ * play, so a suite can assert "the log says X" without asserting storage.
+ */
 async function readLog(root: string): Promise<string> {
-  return readFile(path.join(root, LOG_FILE), "utf-8");
+  const entry = await withJournalSource(process.env, async (source) =>
+    source === undefined ? null : renderJournal(await source.read()));
+  return entry ?? await readFile(path.join(root, LOG_FILE), "utf-8");
 }
 
+/** Whether any backend holds at least one journal entry for this project. */
 async function logExists(root: string): Promise<boolean> {
+  const rows = await withJournalSource(process.env, (source) => source?.read() ?? Promise.resolve([]));
+  if (rows.length > 0) return true;
   try {
     await stat(path.join(root, LOG_FILE));
     return true;
@@ -51,6 +67,11 @@ describe("lint is not journaled", () => {
 });
 
 describe("ingest journaling: CLI", () => {
+  // Scoped HERE rather than file-wide: the compile suite below reads its journal off
+  // disk and passes without a tenant. Hoisting the Stack to file scope made the shared
+  // compile state answer "nothing to compile", turning a green suite red.
+  useStackEnv("activity-log-ingest");
+
   let root: string;
   let srcFile: string;
   beforeEach(async () => {
@@ -81,6 +102,8 @@ describe("compile journaling: created vs updated", () => {
     );
 
     await compileAndReport(ctx.dir);
+    // Read from AFTER the operation: sibling suites share this Stack, so a whole-log
+    // read would match an earlier entry and pass without this compile writing one.
     expect(await readLog(ctx.dir)).toContain("- Created: [[sample-topic]]");
 
     // Change the source so the next pass recompiles the same concept slug.
