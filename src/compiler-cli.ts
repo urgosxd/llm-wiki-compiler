@@ -37,7 +37,6 @@ export { default as reviewShowCommand } from "./commands/review-show.js";
 export { rmCommand } from "./commands/rm.js";
 export { registerRulesCommand } from "./commands/rules-register.js";
 export { schemaInitCommand, schemaShowCommand } from "./commands/schema.js";
-export { stateResetCommand } from "./commands/state-reset.js";
 export { default as statusCommand } from "./commands/status.js";
 export { default as viewCommand } from "./commands/view.js";
 export { default as hostCommand } from "./commands/host.js";
