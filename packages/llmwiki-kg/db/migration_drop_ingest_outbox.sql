@@ -1,0 +1,56 @@
+-- ============================================================
+-- Migration: drop the ingest outbox
+-- ============================================================
+-- Run once against an existing database:
+--
+--   docker compose exec db psql -U aks -d aks -f /path/to/this/file
+--
+-- This file is NOT part of `schema.sql`, and that is the one place this package's
+-- convention breaks: every other table is created by both, because `schema.sql` has
+-- to be self-sufficient for a clean install. A DROP cannot be self-sufficient -- it
+-- would have to guard against a table that a fresh database never has -- so the
+-- fresh-install path is served by the table no longer being created at all, and this
+-- file exists only for a database that already has it.
+--
+-- A fresh install never needs this file. `scripts/apply-schemas.sh` does not list
+-- it, and it must not: it is idempotent (`if exists`) but its effect is destructive,
+-- so it is applied deliberately by an operator, never by the runner.
+--
+-- ## DESTRUCTIVE — READ THIS BEFORE RUNNING IT
+--
+-- This drops the table AND EVERY ROW IN IT, with no archive and no undo. Before
+-- running it, read anything you would miss:
+--
+--   select ingest_id, stack_id, source, status, created_at, updated_at
+--   from ingest_outbox
+--   where status <> 'committed'
+--   order by created_at asc;
+--
+-- `pending` rows are the reason this warning exists. They are PRE-v3 rows: the
+-- outbox was written INSIDE the coordinator's transaction once dimension port v3
+-- landed, so a rollback erased its own `pending` row and a v3 run could not leave
+-- one behind. Any `pending` row still in the table therefore predates atomic
+-- ingest, and it describes an ingest whose dimensions may be half-applied. Dropping
+-- the table deletes the only record that says so. Read those rows first; once they
+-- are gone nothing in this database remembers the ingest happened.
+--
+-- `failed` rows are diagnosis rather than debt -- the coordinator now writes the
+-- same facts to stderr as one JSON line per failed ingest -- so they can be read
+-- from this table one last time or ignored.
+--
+-- ## Why the table goes
+--
+-- It had stopped carrying a guarantee. Measured against the code before this
+-- change: the row was written inside the transaction so a rollback erased it; the
+-- startup reconciler's outcome was discarded by its only caller, so `pending` had
+-- no reader; the row stored a full copy of every document and body and only the
+-- reconciler swept `committed` rows, so a CLI-only project never would; `failed`
+-- rows were written with `on conflict (ingest_id) do update`, so on an ambiguous
+-- commit a row that HAD landed could be relabelled `failed` and never replayed; and
+-- a replay re-ran `prepare`, which is exactly where the embedding and extraction
+-- provider calls live.
+--
+-- Cross-dimension atomicity comes from the coordinator's single `db.transaction`,
+-- not from this table, so nothing is lost by removing it.
+
+drop table if exists ingest_outbox;

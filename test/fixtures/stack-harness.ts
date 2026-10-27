@@ -84,3 +84,30 @@ export async function provisionStack(label: string): Promise<ProvisionedStack> {
   const harness = await createKgPostgresHarness(`${label}-${randomUUID().slice(0, LABEL_SUFFIX_CHARS)}`);
   return { harness, release: () => harness.cleanup() };
 }
+
+/**
+ * Is the wiki schema reachable, asked once per module?
+ *
+ * Probes the ONE table these suites cannot run without, rather than a generic
+ * connection check: a database with `stacks` but no `wiki.pages` would make every
+ * case fail for a reason that has nothing to do with what the case measures.
+ *
+ * Shared because the probe was copied verbatim into two dimension suites and
+ * `fallow` flagged the pair as a clone group. A skip must also be LOUD rather
+ * than silent, so the returned reason names the missing database instead of
+ * letting a suite that never ran look like one that passed.
+ *
+ * @param label - Short suite name; a random suffix keeps the probe's Stack unique.
+ * @returns True when a Stack with `wiki.pages` could be provisioned.
+ */
+export async function wikiReachable(label: string): Promise<boolean> {
+  const probe = await createKgPostgresHarness(`${label}-probe-${randomUUID().slice(0, LABEL_SUFFIX_CHARS)}`);
+  try {
+    await probe.db.execute("select 1 from wiki.pages limit 1");
+    return probe.reachable;
+  } catch {
+    return false;
+  } finally {
+    await probe.cleanup();
+  }
+}

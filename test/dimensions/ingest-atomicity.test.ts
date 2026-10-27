@@ -5,10 +5,10 @@
  *
  * ## Why this suite is separate from `cross-dimension-rollback.test.ts`
  *
- * That suite uses doubles and can only prove the COORDINATOR'S BOOKKEEPING -- two
- * attempts, the pending record erased, a failed record written afterwards. The
- * doubles run outside the transaction, so they cannot show that Postgres rolls a
- * dimension's rows back.
+ * That suite uses doubles and can only prove the COORDINATOR'S SEQUENCING -- two
+ * attempts, one `prepare`, a `discard` per prepared dimension. The doubles run
+ * outside the transaction, so they cannot show that Postgres rolls a dimension's
+ * rows back.
  *
  * This suite wires the real `createWikiStoreDimension` and `createKgDimension`
  * through the same coordinator and inspects the actual tables. It answers the only
@@ -30,12 +30,14 @@
  * control for the old two-connection topology.
  */
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 
-import { outboxReachable, provisionOutboxStack, type OutboxSetup } from "./outbox-harness.js";
+import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { provisionStack, wikiReachable, type ProvisionedStack } from "../fixtures/stack-harness.js";
 import { ingestDimensions } from "../../src/dimensions/coordinator.js";
-import { loadRecords } from "../../src/dimensions/outbox.js";
 import { createWikiStoreDimension } from "../../src/dimensions/wiki/database.js";
 import type { Dimension, DimensionInput, PreparedWrite } from "../../src/dimensions/types.js";
 
@@ -50,25 +52,25 @@ const INPUT: DimensionInput = {
 /**
  * Can this environment answer the question at all?
  *
- * Delegates to the shared probe instead of repeating the schema lookup that
- * `kg-runtime-*` suites already carry: three copies of the same reachability check
- * drift into three slightly different checks, which is what fallow flagged when the
- * first version of this file grew its own.
+ * Probes the ONE table the suite cannot run without, rather than a generic
+ * connection check: a database with `stacks` but no `wiki.pages` would make every
+ * case below fail for a reason that has nothing to do with atomicity.
  *
  * A skip must be LOUD rather than silent, so the reason names the missing database
- * and a suite that did not run cannot be mistaken for one that passed.
+ * and a suite that did not run cannot be mistaken for one that passed. The shared
+ * harness warns on stderr when provisioning fails.
  */
-const provisioned = await outboxReachable("atomic");
+const provisioned = await wikiReachable("atomic");
 
 describe.skipIf(!provisioned)("atomic ingest across the shipped dimensions", () => {
-  let setup: OutboxSetup;
+  let stack: ProvisionedStack;
 
   beforeEach(async () => {
-    setup = await provisionOutboxStack("atomic");
+    stack = await provisionStack("atomic");
   });
 
   afterEach(async () => {
-    await setup.release();
+    await stack.release();
   });
 
   /**
@@ -90,7 +92,6 @@ describe.skipIf(!provisioned)("atomic ingest across the shipped dimensions", () 
     };
   }
 
-
   /**
    * This Stack's database handle, id, and a fresh wiki dimension over it.
    *
@@ -99,14 +100,15 @@ describe.skipIf(!provisioned)("atomic ingest across the shipped dimensions", () 
    * cases never project markdown into the same `sources/` directory.
    */
   function subject(): {
-    db: typeof setup.harness.db;
+    db: ProvisionedStack["harness"]["db"];
     stackId: string;
+    root: string;
     wiki: Dimension;
   } {
-    const db = setup.harness.db;
-    const stackId = setup.harness.stackId;
+    const db = stack.harness.db;
+    const stackId = stack.harness.stackId;
     const root = `/tmp/atomic-${randomUUID().slice(0, 8)}`;
-    return { db, stackId, wiki: createWikiStoreDimension({ db, stackId, root }) };
+    return { db, stackId, root, wiki: createWikiStoreDimension({ db, stackId, root }) };
   }
 
   /**
@@ -121,14 +123,14 @@ describe.skipIf(!provisioned)("atomic ingest across the shipped dimensions", () 
     sourceDocuments: number;
     graphDocuments: number;
   }> {
-    const stackId = setup.harness.stackId;
-    const [pages] = await setup.harness.db.execute<{ n: number }>(
+    const stackId = stack.harness.stackId;
+    const [pages] = await stack.harness.db.execute<{ n: number }>(
       sql`select count(*)::int as n from wiki.pages where stack_id = ${stackId}`,
     );
-    const [docs] = await setup.harness.db.execute<{ n: number }>(
+    const [docs] = await stack.harness.db.execute<{ n: number }>(
       sql`select count(*)::int as n from wiki.source_documents where stack_id = ${stackId}`,
     );
-    const [graph] = await setup.harness.db.execute<{ n: number }>(
+    const [graph] = await stack.harness.db.execute<{ n: number }>(
       sql`select count(*)::int as n from stack_documents where stack_id = ${stackId}`,
     );
     return {
@@ -175,7 +177,7 @@ describe.skipIf(!provisioned)("atomic ingest across the shipped dimensions", () 
    * A graph double that writes a REAL `stack_documents` row into the shared
    * transaction. Used by the reverse-order case below.
    */
-  function graphRowWriter(db: typeof setup.harness.db, stackId: string): Dimension {
+  function graphRowWriter(db: ProvisionedStack["harness"]["db"], stackId: string): Dimension {
     return {
       name: "kg",
       prepare: async () => ({ unchanged: false, handle: {} }),
@@ -218,16 +220,18 @@ describe.skipIf(!provisioned)("atomic ingest across the shipped dimensions", () 
     expect(counts.pages).toBe(0);
   });
 
-  it("records the failure as diagnosis, not as pending debt", async () => {
-    const { db, stackId, wiki } = subject();
+  it("writes no source markdown when the ingest fails", async () => {
+    // Invariant: a failed ingest leaves no artifact. The projection runs only after
+    // a commit, so the root the wiki dimension was handed must still have no
+    // `sources/` directory. This replaces the outbox assertion that used to live
+    // here -- it checked a `failed` row, and both the row and its table are gone.
+    const { db, stackId, root, wiki } = subject();
 
     await expect(
       ingestDimensions(db, stackId, INPUT, [wiki, failingKg(wiki)]),
     ).rejects.toThrow();
 
-    const { records } = await loadRecords(db, stackId);
-    expect(records).toHaveLength(1);
-    expect(records[0]?.status).toBe("failed");
+    expect(existsSync(path.join(root, "sources"))).toBe(false);
   });
 
   it("commits BOTH dimensions when neither fails", async () => {
@@ -244,8 +248,5 @@ describe.skipIf(!provisioned)("atomic ingest across the shipped dimensions", () 
     expect(counts.pages).toBe(1);
     expect(counts.sourceDocuments).toBe(1);
     expect(counts.graphDocuments).toBe(1);
-    // And the outbox says done rather than pending.
-    const { records } = await loadRecords(db, stackId);
-    expect(records[0]?.status).toBe("committed");
   });
 });

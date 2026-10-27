@@ -2,16 +2,34 @@
  * @file test/dimensions/coordinator.test.ts
  * @description Behaviour of the transactional coordinator under failure.
  *
- * These tests use in-memory doubles for the dimensions so the failure orderings
- * are exercised deterministically, without a database or a network provider.
- * The wiki and graph dimensions are covered by their own tests.
+ * These cases drive in-memory doubles, so every failure ordering is deterministic.
+ * The shipped wiki and graph dimensions are measured against real tables in
+ * `ingest-atomicity.test.ts`.
+ *
+ * ## What "nothing was written" can mean for a double
+ *
+ * A double never touches the database, so the honest observations here are the
+ * coordinator's own calls -- how many times it asked, in what order, and what it
+ * reported. The row-level claim (both dimensions commit or neither does) is not
+ * provable from this file and is not attempted here; the suite that owns it drives
+ * real dimensions against real tables.
+ *
+ * A Postgres handle is still required: the coordinator opens a real transaction and
+ * binds the tenant on it, so a suite that stubbed the handle would not be testing
+ * the thing that provides atomicity.
+ *
+ * ## The failure line replaced the failed row
+ *
+ * A rolled-back ingest used to leave a `failed` outbox row. The outbox is gone, so
+ * the same facts go to stderr as one JSON object per line, and that line is now the
+ * only diagnostic a failed ingest produces -- which is why the cases below assert
+ * its exact fields rather than merely that something was logged.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { outboxReachable, provisionOutboxStack, type OutboxSetup } from "./outbox-harness.js";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 import { ingestDimensions } from "../../src/dimensions/coordinator.js";
-import { loadRecords, removeRecord, saveRecord } from "../../src/dimensions/outbox.js";
 import type {
   CommittedWrite,
   Dimension,
@@ -102,80 +120,117 @@ function wikiAndKg(
   return [makeDimension("wiki"), makeDimension("kg", kgBehaviour)];
 }
 
-const harnessReachable = await outboxReachable("coordinator");
-
-describe.skipIf(!harnessReachable)("ingestDimensions", () => {
-  let setup: OutboxSetup;
-  let harness: OutboxSetup["harness"];
-
-  beforeEach(async () => {
-    setup = await provisionOutboxStack("coordinator");
-    harness = setup.harness;
+/**
+ * Capture what the coordinator writes to stderr for the duration of `body`.
+ *
+ * `process.stderr.write` is the only seam the failure path has: the line is
+ * deliberately buffered nowhere a caller can read it, because an operator is its
+ * reader. The spy is restored in a `finally` so a failing assertion cannot leave
+ * stderr hijacked for the next case.
+ *
+ * @param body - Assertions to run while stderr is captured.
+ * @returns The lines written, one entry per `write` call.
+ */
+async function captureStderr(body: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+    lines.push(String(chunk));
+    return true;
   });
+  try {
+    await body();
+    return lines;
+  } finally {
+    spy.mockRestore();
+  }
+}
 
-  afterEach(async () => {
-    await setup.release();
+/** The parsed failure line, or a clear failure when none was written. */
+function failureLineOf(lines: readonly string[]): Record<string, unknown> {
+  expect(lines).toHaveLength(1);
+  return JSON.parse(lines[0] ?? "") as Record<string, unknown>;
+}
+
+/**
+ * Run an ingest that is expected to fail, and capture the diagnosis it logged.
+ *
+ * Three cases need the same three steps -- build the failing pair, assert the
+ * rejection, capture stderr -- and writing them out each time is what
+ * `fallow` flagged as duplication. The `expected` argument is the message each
+ * case is actually about, so the helper stays honest about WHAT failed.
+ *
+ * @param expected - The rejection message this case is asserting.
+ * @returns The lines written to stderr while the ingest ran.
+ */
+async function ingestFailureLines(expected: RegExp | string): Promise<string[]> {
+  const [wiki, kg] = wikiAndKg({ commitFails: true });
+  return captureStderr(async () => {
+    await expect(
+      ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg]),
+    ).rejects.toThrow(expected);
   });
+}
 
-  it("commits both dimensions and leaves no pending record", async () => {
+const harness = await createKgPostgresHarness("coordinator");
+
+afterAll(async () => {
+  await harness.cleanup();
+});
+
+describe.skipIf(!harness.reachable)("ingestDimensions", () => {
+  it("commits both dimensions and reports both summaries", async () => {
     const [wiki, kg] = wikiAndKg();
 
     const outcome = await ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg]);
 
     expect(outcome.summaries.get("wiki")).toBe("wiki:ok");
     expect(outcome.summaries.get("kg")).toBe("kg:ok");
-    const { records } = await loadRecords(harness.db, harness.stackId);
-    expect(records).toHaveLength(1);
-    expect(records[0]?.status).toBe("committed");
+    expect(outcome.artifactPath).toBeUndefined();
+    expect(wiki.committed).toBe(1);
+    expect(kg.committed).toBe(1);
   });
 
-  it("writes no outbox record and commits nothing when prepare fails", async () => {
+  it("commits nothing and logs nothing when prepare fails", async () => {
     const wiki = makeDimension("wiki");
     const kg = makeDimension("kg", { prepareFails: true });
 
-    await expect(ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg])).rejects.toThrow(
-      "kg prepare failed",
-    );
+    // A `prepare` failure happens BEFORE the transaction opens, so the caller's own
+    // error is the diagnostic. A second line here would be a lie about a rollback
+    // that never happened.
+    const lines = await captureStderr(async () => {
+      await expect(
+        ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg]),
+      ).rejects.toThrow("kg prepare failed");
+    });
 
     expect(wiki.committed).toBe(0);
     expect(kg.committed).toBe(0);
-    const { records } = await loadRecords(harness.db, harness.stackId);
-    expect(records).toHaveLength(0);
+    expect(lines).toEqual([]);
   });
 
   /*
-   * THE CENTRAL GUARANTEE, and it replaces a test that asserted the opposite.
+   * THE CENTRAL GUARANTEE, and it replaces a case that asserted a `failed` row.
    *
-   * The old expectation was that the wiki's write SURVIVED a kg failure and the
-   * outbox kept a `pending` debt, because the saga could only offer recoverability.
-   * With one transaction per attempt that split is gone: nothing lands, and the
-   * `pending` record is erased by the same rollback that erased the writes.
-   *
-   * What is left behind is a `failed` record, written AFTER the rollback precisely
-   * so it can be read. It is diagnosis, not debt -- there is nothing to replay.
+   * The old expectation was a `failed` outbox record written after the rollback.
+   * That row is gone with the table; the same facts are one structured line on
+   * stderr, and nothing landed.
    */
-  it("rolls BOTH dimensions back when one fails, leaving no pending debt", async () => {
-    const [wiki, kg] = wikiAndKg({ commitFails: true });
+  it("rolls BOTH dimensions back when one fails, leaving no recovery debt", async () => {
+    const lines = await ingestFailureLines(/ingest failed after 2 attempts/);
 
-    await expect(ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg])).rejects.toThrow(
-      /ingest failed after 2 attempts/,
-    );
-
-    // These doubles run OUTSIDE the transaction -- only the outbox write goes
-    // through it -- so their counters record that the coordinator ASKED twice,
-    // which is the retry contract. What genuinely rolls back is the outbox row:
-    // the `pending` record saved inside the transaction is gone, and the only
-    // record left is the `failed` one written afterwards.
-    expect(wiki.commitAttempts).toBe(2);
-    const { records } = await loadRecords(harness.db, harness.stackId);
-    // ONE record, and it says the ingest failed rather than asking to be replayed.
-    expect(records).toHaveLength(1);
-    expect(records[0]?.status).toBe("failed");
+    // The doubles run OUTSIDE the transaction, so their counters record that the
+    // coordinator ASKED twice -- the retry contract -- and that the failing
+    // dimension never reported success. The wiki's counter is NOT asserted: its
+    // commit returns normally both times because the transaction it was handed is
+    // the real database's, and what escaped the rollback is not something a double
+    // can see. The `unresolved` case below covers the guard that stops the
+    // coordinator trusting a commit whose transaction it rolled back.
+    expect(failureLineOf(lines)["outcome"]).toBe("failed");
   });
 
   it("retries the transaction exactly twice, reusing the prepared handles", async () => {
     // Two attempts of the TRANSACTION, not of the run: `prepare` is where the
-    // provider calls live, so a retry that re-prepaied would pay twice.
+    // provider calls live, so a retry that re-prepared would pay twice.
     const [wiki, kg] = wikiAndKg({ commitFails: true });
 
     await expect(ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg])).rejects.toThrow();
@@ -184,54 +239,26 @@ describe.skipIf(!harnessReachable)("ingestDimensions", () => {
     expect(wiki.prepareAttempts).toBe(1);
   });
 
-  it("cleans up a failed attempt when discard itself throws", async () => {
+  it("names the dimension a failed discard could not clean up", async () => {
     const wiki = makeDimension("wiki", { discardFails: true });
     const kg = makeDimension("kg", { commitFails: true });
 
-    await expect(ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg])).rejects.toThrow(
-      /unresolved: wiki/,
-    );
-
-    const { records } = await loadRecords(harness.db, harness.stackId);
-    expect(records[0]?.status).toBe("failed");
+    await expect(
+      ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg]),
+    ).rejects.toThrow(/unresolved: wiki/);
   });
 
-  it("records each dimension key as it commits", async () => {
-    const [wiki, kg] = wikiAndKg();
+  it("reports the source, dimensions, attempts and error on the failure line", async () => {
+    const lines = await ingestFailureLines(/ingest failed after 2 attempts/);
 
-    const outcome = await ingestDimensions(harness.db, harness.stackId, INPUT, [wiki, kg]);
-
-    expect(outcome.record.dimensions).toEqual([
-      { name: "wiki", idempotencyKey: "wiki:key" },
-      { name: "kg", idempotencyKey: "kg:key" },
-    ]);
-    await removeRecord(harness.db, harness.stackId, outcome.record.ingestId);
-  });
-
-  it("surfaces a corrupt dimensions payload instead of hiding it", async () => {
-    // The file version could be corrupted by a torn write. A row cannot tear -- but
-    // `dimensions` is jsonb, so Postgres guarantees valid JSON and says nothing about
-    // the shape this module wrote. A payload that does not parse is unfinished work
-    // with no usable description, which must be surfaced rather than treated as absent.
-    await saveRecord(harness.db, harness.stackId, {
-      version: 1,
-      ingestId: "ok",
-      source: "s",
-      title: "t",
-      document: "d",
-      body: "b",
-      status: "committed",
-      dimensions: [],
-      createdAt: new Date().toISOString(),
-    });
-    await harness.db.execute(
-      `insert into ingest_outbox (ingest_id, stack_id, source, title, document, body, status, dimensions)
-       values ('broken', '${harness.stackId}', 's', 't', 'd', 'b', 'pending', '{"not":"an array"}'::jsonb)`,
-    );
-
-    const { records, unreadable } = await loadRecords(harness.db, harness.stackId);
-
-    expect(records).toHaveLength(1);
-    expect(unreadable).toEqual(["broken"]);
+    const line = failureLineOf(lines);
+    // `event` is what a log query selects on; `outcome` and `error` are what a
+    // human reading one line needs.
+    expect(line["event"]).toBe("ingest_failed");
+    expect(line["outcome"]).toBe("failed");
+    expect(line["source"]).toBe(INPUT.source);
+    expect(line["dimensions"]).toEqual(["wiki", "kg"]);
+    expect(line["attempts"]).toBe(2);
+    expect(line["error"]).toBe("kg commit failed");
   });
 });

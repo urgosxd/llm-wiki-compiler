@@ -28,8 +28,8 @@ readonly TARGET="${1:-${DATABASE_URL:-}}"
 readonly CHECK_ONLY="${CHECK_ONLY:-false}"
 
 # Order matters. The knowledge-graph schema first because the wiki schema and the
-# migrations add tenant policies that assume `public.stacks` exists; the outbox and
-# embedding migrations last because they extend tables the earlier files create.
+# migrations add tenant policies that assume `public.stacks` exists; the page
+# embedding migration last because it extends tables the earlier files create.
 # The wiki migrations that used to be applied by hand were MISSING from this list,
 # so a database built from this runner alone had no `wiki.compile_config`, no
 # `wiki.event_log`, no `wiki.relation_edges`, no `wiki.review_candidates`, and none
@@ -51,9 +51,7 @@ readonly SCHEMA_FILES=(
   "src/dimensions/wiki/migration_wiki_derived.sql"
   "src/dimensions/wiki/migration_wiki_profile.sql"
   "src/dimensions/wiki/migration_wiki_artifacts.sql"
-  "src/dimensions/wiki/migration_wiki_template_lock.sql"
   "packages/llmwiki-kg/db/migration_rls_tenancy.sql"
-  "packages/llmwiki-kg/db/migration_ingest_outbox.sql"
   "src/dimensions/wiki/migration_page_embeddings.sql"
 )
 
@@ -64,7 +62,6 @@ readonly REQUIRED_TENANT_TABLES=(
   "public.document_chunks"
   "public.entity_pages"
   "public.entity_source_documents"
-  "public.ingest_outbox"
   "public.ontology_entities"
   "public.ontology_relationships"
   "public.stack_documents"

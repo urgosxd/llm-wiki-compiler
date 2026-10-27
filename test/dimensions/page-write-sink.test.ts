@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { createPageWriteSink, toPage } from "../../src/dimensions/wiki/page-write-sink.js";
 import { getStoredPage, listStoredPages } from "../../src/dimensions/wiki/page-store.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { wikiReachable } from "../fixtures/stack-harness.js";
 
 const RENDERED = `---
 title: Vector Databases
@@ -25,17 +26,7 @@ Vector stores index [[embeddings]] for retrieval.
 
 const request = { directory: "concepts", slug: "vector-db", body: RENDERED };
 
-const harnessReachable = await (async (): Promise<boolean> => {
-  const probe = await createKgPostgresHarness(`sink-probe-${randomUUID().slice(0, 8)}`);
-  try {
-    await probe.db.execute("select 1 from wiki.pages limit 1");
-    return probe.reachable;
-  } catch {
-    return false;
-  } finally {
-    await probe.cleanup();
-  }
-})();
+const harnessReachable = await wikiReachable("sink");
 
 describe.skipIf(!harnessReachable)("page write sink", () => {
   it("stores the parsed page as a row", async () => {

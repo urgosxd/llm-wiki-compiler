@@ -334,35 +334,11 @@ create table if not exists backfeed_queue (
 create index if not exists idx_backfeed_stack on backfeed_queue(stack_id);
 create index if not exists idx_backfeed_status on backfeed_queue(status);
 create index if not exists idx_backfeed_created on backfeed_queue(created_at desc);
--- ------------------------------------------------------------
--- ingest_outbox: durable recovery record for a two-dimension ingest
--- ------------------------------------------------------------
--- Belongs to a STACK, not a project: an ingest is identified by the Stack both
--- dimensions are bound to, so two projects sharing this database cannot reconcile
--- each other's interrupted runs. See migration_ingest_outbox.sql for the RLS
--- policy and the grant, which are applied by the tenancy migration rather than
--- here -- the same split every other table uses.
---
--- The payload is stored rather than re-fetched because a reconciler that runs on
--- the next boot has no network and no caller to ask.
---
--- `failed` (added with atomic ingest, dimension port v3): both transaction attempts
--- failed and were rolled back, so nothing landed and there is no debt to replay. The
--- record is written AFTER the rollback, outside the transaction, purely as
--- diagnosis. See migration_ingest_outbox_failed.sql.
-create table if not exists ingest_outbox (
-    ingest_id    text primary key,
-    stack_id     uuid not null references stacks (id) on delete cascade,
-    source       text not null,
-    title        text not null,
-    document     text not null,
-    body         text not null,
-    status       text not null check (status in ('pending', 'committed', 'failed')),
-    dimensions   jsonb not null,
-    created_at   timestamptz not null default now(),
-    updated_at   timestamptz not null default now()
-);
 
-create index if not exists idx_ingest_outbox_pending
-    on ingest_outbox (stack_id)
-    where status = 'pending';
+-- There is deliberately no `ingest_outbox` table. Cross-dimension atomicity comes
+-- from the single transaction in `src/dimensions/coordinator.ts`, so the table was
+-- dropped rather than kept: it was written inside that transaction (a rollback
+-- erased it), its reconciler's outcome was discarded by the only caller, and it
+-- stored a full copy of every document and body. A database created before the
+-- drop is converted by `migration_drop_ingest_outbox.sql`, which is destructive and
+-- is applied by an operator, never by this file.
