@@ -43,11 +43,12 @@ import {
   type ExtractedRelationship,
 } from "llmwiki-kg";
 import { defaultOntology } from "llmwiki-kg";
-import type { ExtractionResult, Ontology } from "llmwiki-kg";
+import type { Database, ExtractionResult, Ontology } from "llmwiki-kg";
 
 import { loadStoredOntology } from "./ontology-store.js";
 import type {
   CommittedWrite,
+  CommitScope,
   Dimension,
   DimensionInput,
   PreparedWrite,
@@ -203,12 +204,23 @@ function rejectionNote(rejected: readonly KgRejection[]): string {
  *
  * @param options - Stack binding and connection override.
  * @param handle - Prepared chunks and extraction; gains the assigned document id.
+ * @param callerTx - Coordinator's transaction to join, when it owns one.
  * @returns Nothing; `handle.documentId` carries the id back to `commit`.
  */
 async function writeGraph(
   options: KgDimensionOptions,
   handle: KgHandle,
+  callerTx?: Database,
 ): Promise<void> {
+  // JOINING IS THE WHOLE POINT. A commit that received a scope and opened its own
+  // connection instead would commit the graph separately from the wiki, and a
+  // later failure would leave exactly the half state atomic ingest removes. Both
+  // commits succeed, so the break is silent -- this is the one rule the port's
+  // `commit` documentation calls out.
+  if (callerTx !== undefined) {
+    await writeGraphRows(callerTx, options, handle);
+    return;
+  }
   const client = createClient(
     options.databaseUrl ?? kgConfig.DATABASE_URL,
     DB_CONNECT_TIMEOUT_SECONDS,
@@ -216,28 +228,48 @@ async function writeGraph(
   try {
     const db = createDatabase(client);
     await db.transaction(async (tx) => {
-      handle.documentId = await registerDocumentRow(tx, {
-        stackId: options.stackId,
-        source: handle.registration.source,
-        body: handle.registration.body,
-        title: handle.registration.title,
-      });
-      const nameToId = await consolidateEntityRows(
-        tx,
-        options.stackId,
-        handle.documentId,
-        handle.entities,
-      );
-      await consolidateRelationshipRows(
-        tx,
-        options.stackId,
-        handle.relationships,
-        nameToId,
-      );
+      await writeGraphRows(tx as unknown as Database, options, handle);
     });
   } finally {
     await client.end({ timeout: DB_CONNECT_TIMEOUT_SECONDS });
   }
+}
+
+/**
+ * The graph statements themselves, on whichever handle carries the transaction.
+ *
+ * Split out so the connection decision above and the write below cannot drift: the
+ * document row, the entities and the relationships must all land on the SAME
+ * handle (v3 rule), or the foreign key from `entity_source_documents` to
+ * `stack_documents` sees a parent that does not exist yet on that connection.
+ *
+ * @param tx - Transaction bound to this dimension's Stack.
+ * @param options - Stack binding.
+ * @param handle - Prepared chunks and extraction; gains the assigned document id.
+ */
+async function writeGraphRows(
+  tx: Database,
+  options: KgDimensionOptions,
+  handle: KgHandle,
+): Promise<void> {
+  handle.documentId = await registerDocumentRow(tx, {
+    stackId: options.stackId,
+    source: handle.registration.source,
+    body: handle.registration.body,
+    title: handle.registration.title,
+  });
+  const nameToId = await consolidateEntityRows(
+    tx,
+    options.stackId,
+    handle.documentId,
+    handle.entities,
+  );
+  await consolidateRelationshipRows(
+    tx,
+    options.stackId,
+    handle.relationships,
+    nameToId,
+  );
 }
 
 /**
@@ -318,7 +350,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       return { unchanged: chunks.length === 0, handle };
     },
 
-    async commit(prepared: PreparedWrite): Promise<CommittedWrite> {
+    async commit(prepared: PreparedWrite, scope?: CommitScope): Promise<CommittedWrite> {
       const handle = prepared.handle as KgHandle;
       if (options.dryRun === true || handle.chunks.length === 0) {
         return {
@@ -327,7 +359,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
         };
       }
       // `writeGraph` replaces the placeholder with the id Postgres assigned.
-      await writeGraph(options, handle);
+      await writeGraph(options, handle, scope?.tx as Database | undefined);
       return {
         // Keyed on the real row id, so the outbox replay targets the same document
         // rather than the label it was prepared under.

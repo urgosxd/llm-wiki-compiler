@@ -46,8 +46,22 @@ import { sql } from "drizzle-orm";
 import type { Database } from "llmwiki-kg";
 import type { DimensionName } from "./types.js";
 
-/** Lifecycle of one ingest record. */
-export type OutboxStatus = "pending" | "committed";
+/**
+ * Lifecycle of one ingest record.
+ *
+ * `pending` is a DEBT: work the reconciler should finish. It is written before the
+ * first commit and, since atomic ingest, INSIDE the same transaction as the
+ * dimension writes -- so a rollback erases it, which is correct: a rolled-back
+ * ingest left nothing to finish.
+ *
+ * `committed` is a finished ingest, swept on the next reconciliation.
+ *
+ * `failed` is written AFTER both transaction attempts failed and rolled back,
+ * outside the transaction, purely as diagnosis. It is never replayed and never
+ * repaired: it describes an attempt that left nothing behind, and an operator
+ * asking "why did this source never appear?" has no other trail.
+ */
+export type OutboxStatus = "pending" | "committed" | "failed";
 
 /** What one dimension did, or is expected to do, for one ingest. */
 export interface OutboxDimensionEntry {
@@ -134,13 +148,37 @@ export function mintIngestId(now: number = Date.now()): string {
 }
 
 /**
+ * Narrow the raw `status` column to the closed domain this module writes.
+ *
+ * An unrecognised value degrades to `pending` rather than being dropped: a record
+ * the reader cannot classify is exactly the kind of unfinished work the outbox
+ * exists to surface, so it must stay visible to the reconciler.
+ *
+ * @param raw - The column as the driver returned it.
+ * @returns The known status, or `pending` for anything unexpected.
+ */
+function toStatus(raw: string): OutboxStatus {
+  return raw === "committed" || raw === "failed" ? raw : "pending";
+}
+
+/**
  * Persist a record, replacing any existing copy.
  *
  * The insert is the durability boundary that `atomicWrite` used to be: a committed
  * statement is a durable record and a rolled-back one leaves nothing behind, so
  * there is no torn half-record for the reconciler to misread.
  *
- * @param db - Tenant-bound database handle; RLS requires `stackId` to match.
+ * ## This accepts a TRANSACTION handle, deliberately
+ *
+ * The coordinator passes its own transaction so the `pending` record is erased by
+ * the same rollback that erases the dimension writes. That is the point of
+ * atomicity: an ingest that rolled back left nothing to finish, so recording a
+ * debt for it would resurrect work nobody asked for.
+ *
+ * A `failed` record is the one exception and is written OUTSIDE any transaction,
+ * after the rollback, because writing it inside would erase it too.
+ *
+ * @param db - Tenant-bound handle: either a pool or a transaction from the caller.
  * @param stackId - Stack this ingest belongs to.
  * @param record - Record to persist.
  */
@@ -242,7 +280,7 @@ export async function loadRecords(
       title: row.title,
       document: row.document,
       body: row.body,
-      status: row.status === "committed" ? "committed" : "pending",
+      status: toStatus(row.status),
       dimensions,
       createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
     });

@@ -41,6 +41,15 @@ export interface ReconcileOutcome {
   readonly unresolved: readonly UnresolvedIngest[];
   /** Files that exist but are not parseable records. */
   readonly unreadable: readonly string[];
+  /**
+   * Ingest ids whose record says both transaction attempts failed.
+   *
+   * Reported, never retried. With atomic ingest a rollback erases the `pending`
+   * record, so a `failed` record describes an attempt that left NOTHING behind:
+   * replaying it would commit work the caller was told had failed, and the caller
+   * may already have fixed the cause and re-ingested.
+   */
+  readonly failed: readonly string[];
 }
 
 /** Rebuild the dimension input a record retained. */
@@ -106,8 +115,15 @@ export async function reconcileOutbox(
   const { records, unreadable } = await loadRecords(db, stackId);
   const finished: string[] = [];
   const unresolved: UnresolvedIngest[] = [];
+  const failed: string[] = [];
 
   for (const record of records) {
+    if (record.status === "failed") {
+      // KEPT, not swept: this is the only trail an operator has for an ingest that
+      // left nothing behind, and it must survive until someone reads it.
+      failed.push(record.ingestId);
+      continue;
+    }
     if (record.status === "committed") {
       await removeRecord(db, stackId, record.ingestId);
       finished.push(record.ingestId);
@@ -124,5 +140,5 @@ export async function reconcileOutbox(
     }
   }
 
-  return { finished, unresolved, unreadable };
+  return { finished, unresolved, unreadable, failed };
 }

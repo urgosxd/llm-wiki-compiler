@@ -31,23 +31,21 @@
  * slug: with it, "does this source already have a page?" is one indexed lookup
  * instead of reading every page and parsing its frontmatter.
  *
- * ## Why this ALSO writes the source markdown (the L1 bridge)
+ * ## The source markdown is a PROJECTION, run after the commit
  *
- * The page goes to Postgres; the raw markdown still goes to `sources/` through
- * `saveSource`, and its path is returned as `artifactPath`. That looks like the
- * migration failing halfway, and for now it is exactly that -- deliberately.
+ * The rows go to Postgres; the raw markdown still goes to `sources/`. That looks
+ * like the migration failing halfway, and for now it is exactly that --
+ * deliberately. `compile` is not migrated (it discovers work by hashing
+ * `sources/`, `compiler/hasher.ts:34-43`), and the ingest caller refuses an outcome
+ * without an `artifactPath` (`services/ingest/service.ts:120`), so a dimension that
+ * wrote only a row would break both.
  *
- * `compile` is not migrated. It discovers work by hashing `sources/`
- * (`compiler/hasher.ts:34-43`), so a dimension that wrote only a row would be
- * invisible to it and the ingest -> compile path would silently die. And the
- * ingest caller refuses an outcome without an `artifactPath`
- * (`services/ingest/service.ts:120`), so a dimension that returns none breaks
- * every ingest outright.
- *
- * The split is therefore the plan's own layering, not an oversight: L2 (compiled
- * pages) is in the database from here on, and L1 (raw bytes) stays on disk until
- * Wave 4 moves it. `schema.sql` already says the same thing about why `body` is
- * stored inline while L1 waits.
+ * What changed with atomic ingest is WHERE that write happens. It cannot join the
+ * transaction -- no ordering makes a `writeFile` participate in a COMMIT -- so it
+ * runs in `afterCommit`, owned by `source-projection.ts`, and compensates itself if
+ * it fails. The consequence worth naming: when the transaction fails, the file was
+ * never touched, so cleaning up a failed ingest costs nothing instead of deleting
+ * content a previous ingest produced.
  *
  * ## Why prepare/commit is still two steps even though a transaction is atomic
  *
@@ -63,11 +61,12 @@
 import { sql } from "drizzle-orm";
 
 import { slugify } from "../../utils/markdown.js";
-import { saveSource } from "../../utils/source-writer.js";
 import { saveSourceDocument } from "./source-documents-store.js";
+import { projectSourceMarkdown } from "./source-projection.js";
 import type { WriteStatus } from "../../utils/types.js";
 import type {
   CommittedWrite,
+  CommitScope,
   Dimension,
   DimensionInput,
   PreparedWrite,
@@ -80,7 +79,7 @@ import type { Database } from "llmwiki-kg";
 const CONCEPTS_DIRECTORY = "concepts";
 
 /** What `prepare` worked out; carried to `commit` as the opaque handle. */
-interface StoredWriteHandle {
+interface StoredWikiWrite {
   readonly input: DimensionInput;
   readonly slug: string;
   readonly writeStatus: WriteStatus;
@@ -203,6 +202,106 @@ export interface WikiStoreDimensionOptions {
 }
 
 /**
+ * Work out what a write would do, without making anything visible.
+ *
+ * Two lookups: the page this source already owns (identity is the key, so a
+ * re-ingest under a changed title updates in place), and otherwise a slug no OTHER
+ * source holds.
+ *
+ * @param options - Tenant binding and database handle.
+ * @param input - Source identity, title and document.
+ * @returns The handle `commit` acts on, and whether this is a no-op.
+ */
+async function prepareWikiWrite(
+  options: WikiStoreDimensionOptions,
+  input: DimensionInput,
+): Promise<PreparedWrite> {
+  const desired = requireSlug(input.title);
+  const existing = await findPageBySource(options.db, options.stackId, input.source);
+
+  if (existing !== undefined) {
+    const unchanged = existing.body === input.body;
+    const handle: StoredWikiWrite = {
+      input,
+      slug: existing.slug,
+      writeStatus: unchanged ? "unchanged" : "updated",
+    };
+    return { unchanged, handle };
+  }
+
+  const slug = await resolveFreeSlug(options.db, options.stackId, desired, input.source);
+  const handle: StoredWikiWrite = { input, slug, writeStatus: "created" };
+  return { unchanged: false, handle };
+}
+
+/**
+ * Write the source document row -- EVERY ingest, including an unchanged one.
+ *
+ * The two stores start empty relative to each other: a project migrating in has
+ * files but no rows, so skipping the row because the FILE was unchanged would leave
+ * the compiler seeing a Stack with zero documents and retiring every one of them.
+ * `saveSourceDocument` is idempotent and reports `unchanged` on identical bytes, so
+ * this costs one query, not a rewrite.
+ *
+ * @param options - Tenant binding and database handle.
+ * @param handle - What `prepare` worked out.
+ * @param tx - Coordinator's transaction to join, when it owns one.
+ */
+async function commitSourceDocument(
+  options: WikiStoreDimensionOptions,
+  handle: StoredWikiWrite,
+  tx: Database | undefined,
+): Promise<void> {
+  await saveSourceDocument(
+    options.db,
+    options.stackId,
+    {
+      title: handle.input.title,
+      document: handle.input.document,
+      source: handle.input.source,
+    },
+    tx,
+  );
+}
+
+/**
+ * Upsert the compiled page row, unless this ingest is a no-op.
+ *
+ * @param options - Tenant binding and database handle.
+ * @param handle - What `prepare` worked out.
+ * @param tx - Coordinator's transaction to join, when it owns one.
+ */
+async function commitPageRow(
+  options: WikiStoreDimensionOptions,
+  handle: StoredWikiWrite,
+  tx: Database | undefined,
+): Promise<void> {
+  // Reporting `unchanged` is what tells the coordinator this dimension did no work,
+  // so an unchanged ingest writes no page row at all.
+  if (handle.writeStatus === "unchanged") return;
+  await withTenant(
+    options.db,
+    options.stackId,
+    async (tenantTx) => {
+      await tenantTx.execute(sql`
+        insert into wiki.pages
+          (stack_id, page_directory, slug, title, summary, body, source_identity)
+        values (
+          ${options.stackId}, ${CONCEPTS_DIRECTORY}, ${handle.slug},
+          ${handle.input.title}, ${""}, ${handle.input.body}, ${handle.input.source}
+        )
+        on conflict (stack_id, page_directory, slug) do update set
+          title = excluded.title,
+          body = excluded.body,
+          source_identity = excluded.source_identity,
+          updated_at = now()
+      `);
+    },
+    tx,
+  );
+}
+
+/**
  * Build the wiki dimension backed by Postgres for one tenant.
  *
  * @param options - Tenant binding, database handle, and the root for `sources/`.
@@ -212,89 +311,36 @@ export function createWikiStoreDimension(options: WikiStoreDimensionOptions): Di
   return {
     name: "wiki",
 
-    async prepare(input: DimensionInput): Promise<PreparedWrite> {
-      const desired = requireSlug(input.title);
-      const existing = await findPageBySource(options.db, options.stackId, input.source);
+    prepare: async (input: DimensionInput): Promise<PreparedWrite> =>
+      prepareWikiWrite(options, input),
 
-      // An existing page for this source updates in place regardless of title:
-      // the identity is the key, exactly as `saveSource` treats it.
-      if (existing !== undefined) {
-        const unchanged = existing.body === input.body;
-        const handle: StoredWriteHandle = {
-          input,
-          slug: existing.slug,
-          writeStatus: unchanged ? "unchanged" : "updated",
-        };
-        return { unchanged, handle };
-      }
+    async commit(prepared: PreparedWrite, scope?: CommitScope): Promise<CommittedWrite> {
+      const handle = prepared.handle as StoredWikiWrite;
+      const tx = scope?.tx as Database | undefined;
 
-      const slug = await resolveFreeSlug(options.db, options.stackId, desired, input.source);
-      const handle: StoredWriteHandle = { input, slug, writeStatus: "created" };
-      return { unchanged: false, handle };
-    },
-
-    async commit(prepared: PreparedWrite): Promise<CommittedWrite> {
-      const handle = prepared.handle as StoredWriteHandle;
-
-      // THE SOURCE MARKDOWN FIRST, and always -- not only when the page changed.
-      //
-      // Two reasons, both load-bearing while L1 is still on disk. The ingest
-      // caller throws when `artifactPath` is undefined
-      // (`services/ingest/service.ts:120`), so this dimension MUST return one.
-      // And `compile` discovers work by hashing `sources/`
-      // (`compiler/hasher.ts:34-43`), so an ingest that only wrote a row would be
-      // invisible to the compiler and the ingest->compile path would be dead.
-      //
-      // Deliberately before the row insert: `saveSource` owns the empty-slug and
-      // basename-collision guards and can throw, and a throw here must not leave a
-      // page row pointing at a source file that does not exist. `saveSource` is
-      // itself idempotent, so re-writing identical bytes reports "unchanged"
-      // rather than touching the file.
-      const saved = await saveSource(
-        options.root,
-        handle.input.title,
-        handle.input.document,
-        handle.input.source,
-      );
-
-      // Write the row on EVERY ingest, including one the file writer called
-      // unchanged. The two stores start empty relative to each other: a project
-      // migrating in has files but no rows, so skipping the row because the FILE
-      // was unchanged would leave the compiler seeing a Stack with zero documents
-      // and retiring every one of them. `saveSourceDocument` is idempotent and
-      // reports `unchanged` on identical bytes, so this costs one query, not a
-      // rewrite.
-      await saveSourceDocument(options.db, options.stackId, {
-        title: handle.input.title,
-        document: handle.input.document,
-        source: handle.input.source,
-      });
-
-      // An unchanged page still commits, but writes nothing: reporting `unchanged`
-      // is what tells the coordinator this dimension was a no-op.
-      if (handle.writeStatus !== "unchanged") {
-        await withTenant(options.db, options.stackId, async (tx) => {
-          await tx.execute(sql`
-            insert into wiki.pages
-              (stack_id, page_directory, slug, title, summary, body, source_identity)
-            values (
-              ${options.stackId}, ${CONCEPTS_DIRECTORY}, ${handle.slug},
-              ${handle.input.title}, ${""}, ${handle.input.body}, ${handle.input.source}
-            )
-            on conflict (stack_id, page_directory, slug) do update set
-              title = excluded.title,
-              body = excluded.body,
-              source_identity = excluded.source_identity,
-              updated_at = now()
-          `);
-        });
-      }
+      // THE ROWS, inside the coordinator's transaction when it supplied one. Order
+      // between the two statements is free now: the transaction makes both
+      // invisible until COMMIT.
+      await commitSourceDocument(options, handle, tx);
+      await commitPageRow(options, handle, tx);
 
       return {
         idempotencyKey: wikiIdempotencyKey(handle.input),
         summary: `wiki:${handle.writeStatus}`,
         writeStatus: handle.writeStatus,
-        artifactPath: saved.path,
+        // `artifactPath` is deliberately ABSENT: the real one comes from the
+        // PROJECTION below, which runs after the commit because no ordering makes a
+        // writeFile participate in a COMMIT. Setting it here would be a second,
+        // wrong answer to the same question -- the stored filename is not a path.
+        afterCommit: async () => {
+          const projected = await projectSourceMarkdown(options.root, handle.input);
+          return {
+            artifactPath: projected.artifactPath,
+            // The page's verdict stays authoritative for the coordinator's no-op
+            // decision; the projection only reports where the bytes went.
+            writeStatus: handle.writeStatus,
+          };
+        },
       };
     },
 

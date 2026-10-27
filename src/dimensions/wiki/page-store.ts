@@ -141,16 +141,38 @@ function toPage(row: WikiPageRow): Page | undefined {
  * connection that carries a session-level setting from a caller outside this
  * module; without it a "bind to A" could silently inherit an older binding.
  *
+ * ## The `callerTx` parameter, and why it is not optional sugar
+ *
+ * Atomic ingest needs the wiki's row writes and the graph's row writes in ONE
+ * transaction. Opening a nested `db.transaction` here would break that: drizzle's
+ * pool hands the inner call a DIFFERENT connection, so the inner writes commit
+ * separately and a later failure leaves half the ingest visible. Measured in
+ * `test/dimensions/kg-runtime-savepoint-binding.test.ts`, which exists because a
+ * first attempt reached the opposite conclusion by measuring exactly that mistake.
+ *
+ * So when the coordinator supplies a handle, the statements run on IT. The tenant
+ * is still bound here rather than by the caller: this module owns the rule that a
+ * tenanted statement must run bound, and moving the bind out would make it
+ * forgettable at every call site.
+ *
+ * With no handle the behaviour is unchanged -- `db.transaction` opens the scope.
+ *
  * @param db - Database handle (the pooled one, or a test's own).
  * @param stackId - The tenant to bind.
  * @param work - Statements to run under that binding.
+ * @param callerTx - Ambient transaction to join, when the coordinator owns one.
  * @returns Whatever `work` produced.
  */
 export async function withTenant<T>(
   db: Database,
   stackId: string,
   work: (tx: Database) => Promise<T>,
+  callerTx?: Database,
 ): Promise<T> {
+  if (callerTx !== undefined) {
+    await callerTx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+    return work(callerTx);
+  }
   return db.transaction(async (tx) => {
     await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
     return work(tx as unknown as Database);

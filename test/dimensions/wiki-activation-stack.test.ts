@@ -95,10 +95,14 @@ async function assertDimensionWrites(
 
       const prepared = await wiki!.prepare(inputOf("Activation Wrote This", "src://activation"));
       const committed = await wiki!.commit(prepared);
+      // The artifact path comes from the post-commit PROJECTION now (port v3): the
+      // rows commit inside the transaction and the markdown is written after it.
+      // Stopping at `commit` would measure half the contract.
+      const projected = await committed.afterCommit?.({ tx: undefined });
 
       // The dimension must report a write path: ingest throws without one
       // (services/ingest/service.ts:130).
-      expect(committed.artifactPath).toBeDefined();
+      expect(projected?.artifactPath).toBeDefined();
 
       const rows = await probe.execute<{ n: number }>(
         `select count(*)::int as n from wiki.pages where stack_id = '${env.stackId}'`,

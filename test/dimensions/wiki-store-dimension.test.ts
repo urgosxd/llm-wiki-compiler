@@ -63,9 +63,23 @@ function dimension(root = bridgeRoot) {
 }
 
 /** Prepare then commit, the way the coordinator drives a dimension. */
+/**
+ * Drive one full write: prepare, commit, and the post-commit projection.
+ *
+ * `afterCommit` is part of the contract now (dimension port v3): the rows commit
+ * inside the transaction and the markdown is projected afterwards. A helper that
+ * stopped at `commit` would measure half a write and report no artifact path for a
+ * dimension that does produce one.
+ *
+ * @param dim - Dimension under test.
+ * @param input - Source identity, title and document.
+ * @returns What the commit reported, with the projection's effect merged in.
+ */
 async function write(dim: ReturnType<typeof dimension>, input: DimensionInput) {
   const prepared = await dim.prepare(input);
-  return dim.commit(prepared);
+  const committed = await dim.commit(prepared);
+  const effect = await committed.afterCommit?.({ tx: undefined });
+  return effect == null ? committed : { ...committed, ...effect };
 }
 
 describe("the stored wiki dimension", () => {

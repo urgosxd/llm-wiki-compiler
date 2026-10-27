@@ -48,36 +48,42 @@
  * Nothing here knows about any concrete dimension, which is what keeps it
  * freezable: the port names no file path, no database, and no provider.
  *
- * ## An ingest is a SAGA, and this port is its participant contract
+ * ## An ingest is ATOMIC, and this port is its participant contract
  *
- * Once both dimensions became remote, an ingest stopped being one atomic write and
- * became a saga: an ordered sequence of local commits with a compensating action
- * and a durable record to finish what a failure interrupted. There is no shared
- * transaction to fall back on -- `wiki` writes rows through its own tenant-bound
- * transaction and `kg` opens its own connection and commits separately -- so a
- * single transaction spanning both is not available without rebuilding both
- * dimensions around a handle neither currently accepts.
+ * v3 replaced recoverability with atomicity. The earlier revision stated that a
+ * shared transaction was unavailable because `wiki` wrote a local directory and
+ * `kg` a remote database. That premise expired: `wiki.pages`,
+ * `wiki.source_documents`, `stack_documents` and `ingest_outbox` are four tables
+ * of ONE database reached through one pooled client, and
+ * `test/dimensions/kg-runtime-cross-dimension-transaction.test.ts` measures that a
+ * single transaction can span both (with a negative control showing the old
+ * two-connection topology diverging).
  *
- * So the guarantee this port offers is RECOVERABILITY, not atomicity, and every
- * participant is written against that:
+ * So the coordinator opens ONE transaction per attempt, binds the tenant on it,
+ * and hands it to every dimension through {@link CommitScope}. What the port
+ * promises now:
  *
  *   1. `prepare` may fail freely. It must not leave anything a reader can see, so
- *      a failure here needs no compensation and leaves no outbox record.
- *   2. `commit` is the point of no return. A dimension that committed is COMMITTED
- *      even if a later dimension fails; that is accepted, not tolerated.
- *   3. `discard` is best-effort compensation, and a quiet return does not mean the
- *      write is gone -- see {@link Dimension.discard}.
- *   4. The OUTBOX owns the gap. When a dimension committed and a later one failed,
- *      the record stays `pending` and `reconcileOutbox` finishes the ingest by
- *      replaying `commit`. That is why `commit` MUST be idempotent: replay is the
- *      recovery mechanism, not an exceptional path.
+ *      a failure here needs no compensation and leaves no outbox record. It stays
+ *      OUTSIDE the transaction on purpose: it runs provider calls measured in
+ *      seconds, and holding a transaction open across them would pin a connection.
+ *   2. `commit` joins the provided transaction when one is given. A dimension that
+ *      ignores the scope and opens its own connection silently breaks atomicity --
+ *      this is the single rule every implementation must honour.
+ *   3. `commit` must still be idempotent, but for a weaker reason than before: the
+ *      coordinator retries the whole transaction (up to two attempts) reusing the
+ *      prepared handles, so a retried commit re-runs inside a fresh transaction.
+ *   4. `discard` is best-effort compensation for a `prepare` that will not commit.
+ *      Inside one transaction there is usually nothing to undo, which is why both
+ *      shipped dimensions leave it empty.
  *
- * The window this accepts is real and must be stated rather than implied: between
- * the first `commit` and the last, a reader can observe a wiki page whose graph
- * document does not exist yet. That state is recoverable by replay and observable
- * by anyone reading during the window. Choosing atomicity over this would mean
- * coupling both dimensions to one transaction, which buys that window away at the
- * cost of the independence the port exists to provide.
+ * ## What still cannot join: a file write
+ *
+ * The wiki dimension also writes `sources/<slug>.md`, which no Postgres
+ * transaction can cover. That write is a PROJECTION: it runs after the commit
+ * through {@link CommittedWrite.afterCommit}, owned by the dimension that knows
+ * the path, and it compensates itself when it fails. The rows are the truth; the
+ * projection re-runs on the next compile.
  */
 
 /**
@@ -93,8 +99,12 @@ export type DimensionName = "wiki" | "kg";
  * v2 added {@link Dimension.forget}: a source can be REMOVED, and until v2 the
  * port could only express writes, so a deleted source left its graph document and
  * entities behind forever.
+ *
+ * v3 added {@link CommitScope}: `commit` may join a transaction the coordinator
+ * owns, which is what turned the saga into an atomic write, and
+ * {@link CommittedWrite.afterCommit} for the one effect that cannot join one.
  */
-export const DIMENSION_PORT_VERSION = 2 as const;
+export const DIMENSION_PORT_VERSION = 3 as const;
 
 /**
  * Where a document comes from and what it is called. Dimensions receive the
@@ -120,6 +130,41 @@ export interface PreparedWrite {
   readonly unchanged: boolean;
   /** Opaque compensation token, interpreted only by the producing dimension. */
   readonly handle: unknown;
+}
+
+/**
+ * The transaction a dimension's `commit` must join.
+ *
+ * `tx` is `unknown` because the port names no storage: naming a concrete
+ * database type here would import `drizzle-orm` into a contract both dimensions
+ * share, and would make the port unusable by any future dimension that is not
+ * Postgres. Each implementation narrows `tx` to its own handle and fails closed on
+ * a shape it cannot use.
+ *
+ * The TENANT IS DELIBERATELY ABSENT. Both dimensions already hold their Stack from
+ * construction (`options.stackId`) and use it for every `stack_id` value, so a
+ * second copy here would be a field a caller can forget. A tenant captured at
+ * construction cannot be omitted later; a tenant threaded through calls can be
+ * missed at exactly one site and silently write the wrong Stack. The coordinator
+ * owns the bind because it already receives `stackId` as a parameter.
+ */
+export interface CommitScope {
+  /** Opaque transaction handle, narrowed by each implementation. */
+  readonly tx: unknown;
+}
+
+/**
+ * What a post-commit projection produced.
+ *
+ * Separate from {@link CommittedWrite} because it is known at a different time: a
+ * commit that joins a transaction has not produced its file when the transaction
+ * is still open.
+ */
+export interface AfterCommitEffect {
+  /** Path the projection wrote, for the caller that reports a saved filename. */
+  readonly artifactPath?: string;
+  /** Outcome of the projection, in the same vocabulary as a direct write. */
+  readonly writeStatus?: "created" | "updated" | "unchanged";
 }
 
 /** What a committed dimension reports back to the coordinator. */
@@ -153,6 +198,23 @@ export interface CommittedWrite {
    * Optional for the same reason as {@link writeStatus}.
    */
   readonly artifactPath?: string;
+  /**
+   * Work that must run AFTER the transaction commits, when it cannot join one.
+   *
+   * The wiki dimension writes `sources/<slug>.md`, which no Postgres transaction
+   * can cover. Running it post-commit has two consequences that are both wanted:
+   *
+   *   - When the transaction fails, the file was NEVER TOUCHED. "Clean up the
+   *     source after a failed ingest" is therefore a no-op in the case that
+   *     matters, instead of a delete that could destroy good content.
+   *   - When the projection itself fails, the rows are already committed and the
+   *     dimension owns undoing its own half -- see the wiki implementation.
+   *
+   * Omitted by a dimension whose whole write joined the transaction.
+   */
+  readonly afterCommit?: (
+    scope: CommitScope,
+  ) => Promise<AfterCommitEffect | void>;
 }
 
 /**
@@ -175,15 +237,27 @@ export interface Dimension {
   prepare(input: DimensionInput): Promise<PreparedWrite>;
 
   /**
-   * Make a prepared write visible.
+   * Make a prepared write visible, joining `scope.tx` when one is supplied.
    *
-   * MUST be idempotent, and this is stronger than it looks: replay is how a
-   * committed-but-unpaired ingest is recovered, so `reconcileOutbox` calls this
-   * again with the same input after the fact. A second call must report the same
-   * outcome the first would have: no duplicate row, and no forked slug.
+   * ## The one rule: a supplied scope MUST be joined
    *
-   * MUST NOT be relied on to undo itself. Once this returns, the dimension can no
-   * longer compensate; the outbox record is what makes the rest recoverable.
+   * A dimension that receives `scope` and opens its own connection instead breaks
+   * atomicity silently -- the coordinator's transaction commits, this dimension's
+   * writes commit separately, and a later failure leaves exactly the half state
+   * this port exists to prevent. It is silent because both commits succeed.
+   *
+   * With no scope the dimension behaves as it always did: opens its own connection
+   * and commits alone. That keeps the port able to describe a participant that
+   * shares no transaction, which is why the scope is optional rather than
+   * required.
+   *
+   * MUST be idempotent. The coordinator retries the whole transaction up to two
+   * attempts reusing the same prepared handles, so a second `commit` can run
+   * against a transaction that already rolled back. A second call must report the
+   * same outcome the first would have: no duplicate row, and no forked slug.
+   *
+   * MUST NOT be relied on to undo itself. Once the transaction commits, the
+   * dimension can no longer compensate.
    *
    * ## Idempotency is about REPLAY, not about resurrection
    *
@@ -196,32 +270,32 @@ export interface Dimension {
    * The distinction is worth stating because the two cases look alike and behave
    * oppositely. A replay after `forget` leaves exactly one row, because `forget`
    * deleted nothing. A replay after ANOTHER actor deleted the row DOES recreate it,
-   * which is correct: the outbox record says this ingest committed, so reconciliation
+   * which is correct: the record says this ingest committed, so reconciliation
    * restores it. When `forget` gains teeth, that second case must start failing --
    * the wiki store suite pins it precisely so whoever gives `forget` teeth sees it go
    * red instead of discovering the interaction in production.
    */
-  commit(prepared: PreparedWrite): Promise<CommittedWrite>;
+  commit(prepared: PreparedWrite, scope?: CommitScope): Promise<CommittedWrite>;
 
   /**
    * Undo a prepared-but-uncommitted write.
    *
-   * Called by the coordinator when a later dimension fails. Must be idempotent:
+   * Called by the coordinator when the run will not commit. Must be idempotent:
    * discarding an already-discarded handle is not an error.
    *
-   * ## What this does NOT promise, and why the coordinator stopped assuming it
+   * With v3 atomicity this is mostly vacuous, and both shipped dimensions leave it
+   * empty: inside one transaction a rollback already undid everything, and a
+   * `prepare` that only reads and computes left nothing behind. It stays in the
+   * port for a dimension whose `prepare` allocates something outside the
+   * transaction -- a staged upload, a temp file -- which is a real shape even
+   * though neither current implementation has it.
    *
-   * A returned promise means "I did what I could", not "the write is gone". A
-   * database-backed dimension commits inside its own transaction, so its
-   * `discard` is a no-op by design: there is no open transaction to abandon and
-   * nothing it can undo after `commit`. The coordinator therefore treats a
-   * dimension that COMMITTED as unresolved even when `discard` returns quietly,
-   * keeps the outbox record `pending`, and lets `reconcileOutbox` finish the
-   * ingest by replaying the idempotent `commit`.
+   * ## What this does NOT promise
    *
-   * That distinction is load-bearing: reading a quiet return as "rolled back"
-   * once caused the coordinator to delete the only record of a half-applied
-   * ingest, leaving unrecoverable data and no trail. A dimension that can truly
+   * A returned promise means "I did what I could", not "the write is gone". The
+   * coordinator therefore never reads a quiet return as proof of a clean rollback
+   * for a dimension whose writes are already visible -- that misreading once
+   * deleted the only record of a half-applied ingest. A dimension that can truly
    * compensate (the file-backed writer reverts its journal batch) is still safe,
    * because keeping a `pending` record only costs a replay that its idempotency
    * key collapses.

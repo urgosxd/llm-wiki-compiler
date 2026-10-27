@@ -345,6 +345,11 @@ create index if not exists idx_backfeed_created on backfeed_queue(created_at des
 --
 -- The payload is stored rather than re-fetched because a reconciler that runs on
 -- the next boot has no network and no caller to ask.
+--
+-- `failed` (added with atomic ingest, dimension port v3): both transaction attempts
+-- failed and were rolled back, so nothing landed and there is no debt to replay. The
+-- record is written AFTER the rollback, outside the transaction, purely as
+-- diagnosis. See migration_ingest_outbox_failed.sql.
 create table if not exists ingest_outbox (
     ingest_id    text primary key,
     stack_id     uuid not null references stacks (id) on delete cascade,
@@ -352,7 +357,7 @@ create table if not exists ingest_outbox (
     title        text not null,
     document     text not null,
     body         text not null,
-    status       text not null check (status in ('pending', 'committed')),
+    status       text not null check (status in ('pending', 'committed', 'failed')),
     dimensions   jsonb not null,
     created_at   timestamptz not null default now(),
     updated_at   timestamptz not null default now()

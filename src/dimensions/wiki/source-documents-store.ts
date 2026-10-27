@@ -81,6 +81,27 @@ async function bindStack(db: Database, stackId: string): Promise<void> {
 }
 
 /**
+ * Run `work` on the caller's transaction when one is given, or in a new one.
+ *
+ * The distinction matters for atomicity and cannot be left to the caller: a nested
+ * `db.transaction` takes a different pooled connection, so its writes commit on
+ * their own and a later failure in the sibling dimension leaves this one visible.
+ *
+ * @param db - Pooled handle, used only to open a scope when none was supplied.
+ * @param callerTx - Ambient transaction from the coordinator, when there is one.
+ * @param work - Statements to run inside the chosen scope.
+ * @returns Whatever `work` produced.
+ */
+async function runInScope<T>(
+  db: Database,
+  callerTx: Database | undefined,
+  work: (tx: Database) => Promise<T>,
+): Promise<T> {
+  if (callerTx !== undefined) return work(callerTx);
+  return db.transaction(async (tx) => work(tx as unknown as Database));
+}
+
+/**
  * Hash a document for change detection.
  *
  * SHA-256 over the exact bytes, because that is what `detectChanges` compares to
@@ -176,21 +197,31 @@ async function uniqueFilename(
  * Runs inside a transaction so the "did it change" read and the write cannot be
  * interleaved by a concurrent ingest of the same identity.
  *
+ * ## Joining the coordinator's transaction
+ *
+ * When `callerTx` is supplied, the work runs on it instead of opening a nested
+ * `db.transaction`. A nested call would take a DIFFERENT pooled connection, so its
+ * writes would commit separately from the graph's -- which is precisely the half
+ * state atomic ingest removes. The tenant is still bound here, for the reason
+ * {@link bindStack} documents.
+ *
  * @param db - Database handle.
  * @param stackId - Stack that owns this document.
  * @param document - Title, full markdown (frontmatter + body), and source identity.
+ * @param callerTx - Ambient transaction to join, when the coordinator owns one.
  * @returns The stored filename and whether anything changed.
  */
 export async function saveSourceDocument(
   db: Database,
   stackId: string,
   document: { title: string; document: string; source: string },
+  callerTx?: Database,
 ): Promise<{ filename: string; writeStatus: SourceWriteStatus }> {
   const baseFilename = sourceFilename(document.title);
   const contentHash = hashSourceContent(stableSourceContent(document.document));
   const sizeBytes = Buffer.byteLength(document.document, "utf-8");
 
-  return db.transaction(async (tx) => {
+  return runInScope(db, callerTx, async (tx) => {
     await bindStack(tx, stackId);
     const existing = await tx.execute<{ content_hash: string }>(
       sql`select content_hash from wiki.source_documents
