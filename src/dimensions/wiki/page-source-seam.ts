@@ -96,6 +96,11 @@ export async function withPageScan<T>(
  * DERIVED from pages, so its absence never meant "nothing compiled" -- and in a
  * Stack-backed project there is no file to find even when every page is present.
  *
+ * Asks about EVERY page, not just `concepts`. A profile may declare its entities in
+ * any `wiki/<dir>` (`papers`, `articles`, ...), so a project whose pages all live
+ * outside `concepts` is a perfectly compiled project -- and the previous
+ * concepts-only test told `query` it had nothing to ground on.
+ *
  * @param root - Project root, used by the on-disk scan.
  * @param env - Environment to read the Stack from.
  * @returns True when at least one page exists in either backend.
@@ -104,11 +109,16 @@ export async function hasCompiledPages(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
-  return withPageScan(env, async (scan) => {
-    if (scan !== undefined) return (await scan.scan("concepts")).length > 0;
-    const conceptsDir = path.join(root, "wiki", "concepts");
-    const entries = await readdir(conceptsDir).catch(() => [] as string[]);
-    return entries.some((entry) => entry.endsWith(".md"));
+  return withPageSource(env, async (source) => {
+    if (source !== undefined) return (await source.list()).length > 0;
+    const wikiDir = path.join(root, "wiki");
+    const dirs = await readdir(wikiDir, { withFileTypes: true }).catch(() => []);
+    for (const dir of dirs) {
+      if (!dir.isDirectory()) continue;
+      const entries = await readdir(path.join(wikiDir, dir.name)).catch(() => [] as string[]);
+      if (entries.some((entry) => entry.endsWith(".md"))) return true;
+    }
+    return false;
   });
 }
 
