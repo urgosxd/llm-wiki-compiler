@@ -11,6 +11,8 @@ import { createIngestRouter } from "./routes/ingest.js";
 import type { IngestRouterDependencies } from "./routes/ingest.js";
 import { createPagesRouter } from "./routes/pages.js";
 import type { PagesRouterDependencies } from "./routes/pages.js";
+import { createStackGraphRouter } from "./routes/stack_graph.js";
+import type { StackGraphRouterDependencies } from "./routes/stack_graph.js";
 import { createStacksRouter } from "./routes/stacks.js";
 import type { StacksRouterDependencies } from "./routes/stacks.js";
 import { createSynthesizeRouter } from "./routes/synthesize.js";
@@ -217,6 +219,13 @@ function installRouters(
   deps: Parameters<typeof createApp>[0],
 ): void {
   app.use("/stacks", createStacksRouter(deps));
+  // A second mount at the same prefix, holding only the graph read. It cannot
+  // shadow a stacks route (`GET /:stack_id` does not match a three-segment URL)
+  // and it leaves the 405 `Allow` walk untouched: that walk takes the FIRST
+  // partial match, so `PUT /stacks/<uuid>` still reports the stacks router's
+  // methods. Mounted after the stacks router to keep the oracle's layer order
+  // for every path the oracle knows about.
+  app.use("/stacks", createStackGraphRouter(deps));
   app.use("/aks/v1", createAksRouter(deps));
   app.use("/aks/v1/pages", createPagesRouter(deps));
   app.use("/aks/v1/backfeed", createBackfeedRouter(deps));
@@ -279,6 +288,7 @@ function handleError(err: unknown, _req: Request, res: Response, _next: NextFunc
  */
 export function createApp(
   deps?: StacksRouterDependencies &
+    StackGraphRouterDependencies &
     DocumentsRouterDependencies &
     IngestRouterDependencies &
     AksRouterDependencies &

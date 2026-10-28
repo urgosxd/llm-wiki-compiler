@@ -35,6 +35,12 @@ const ORACLE_ALLOW = {
   stackItem: "GET",
   /** `@app.get("/health")`. Nothing is registered for HEAD. */
   health: "GET",
+  /**
+   * `GET /stacks/{stack_id}/graph` — an extension with no oracle counterpart.
+   * Its value is measured from this app, not from Python: only `GET` is declared
+   * here, so any other method reports exactly that one.
+   */
+  stackGraph: "GET",
 } as const;
 
 function expectMethodNotAllowed(
@@ -155,6 +161,42 @@ describe("405 method-not-allowed on existing paths", () => {
 
     expect(response.status).toBe(404);
     expect(response.text).toBe('{"detail":"Not Found"}');
+  });
+
+  /**
+   * The graph router is a SECOND mount at `/stacks`, an extension the oracle
+   * does not know. These cases pin that it is additive: it answers its own path
+   * and changes nothing about the oracle's method axis.
+   */
+  describe("the /stacks graph extension", () => {
+    const stackId = "0f8fad5b-d9cb-469f-a165-70867728950e";
+
+    it("PUT /stacks/<uuid> still reports the stacks router alone", async () => {
+      // The `Allow` walk takes the FIRST partial match. If the graph mount ever
+      // landed ahead of the stacks mount it would answer for `/stacks/<uuid>`
+      // too, and this value would gain a second method.
+      expectMethodNotAllowed(
+        await request(app).put(`/stacks/${stackId}`),
+        ORACLE_ALLOW.stackItem,
+      );
+    });
+
+    it("a method the graph route does not declare answers 405 with allow: GET", async () => {
+      expectMethodNotAllowed(
+        await request(app).put(`/stacks/${stackId}/graph`),
+        ORACLE_ALLOW.stackGraph,
+      );
+    });
+
+    it("the graph path resolves to a full match rather than a 404", () => {
+      // Asserted through the walk instead of a request, because a real GET would
+      // reach the handler and open a transaction — this suite stays database-free
+      // on purpose. A `full` match is what proves the mount is wired, and it is
+      // exactly what a missing route could not produce.
+      expect(resolveMethod(app.router.stack, `/stacks/${stackId}/graph`, "GET")).toEqual({
+        kind: "full",
+      });
+    });
   });
 });
 
