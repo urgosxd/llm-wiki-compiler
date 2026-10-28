@@ -38,6 +38,16 @@ export interface HostCommandOptions extends BindOptions {
    * state, so the same command would serve different routes on different machines.
    */
   readonly noGraph?: boolean;
+  /**
+   * Builds an MCP server per HTTP request, or absent to serve no MCP over HTTP.
+   *
+   * See the note at the call site: the factory cannot be constructed in this module
+   * without feeding a module cycle.
+   */
+  readonly mcpServerFactory?: () => {
+    connect(transport: unknown): Promise<void>;
+    close(): Promise<void>;
+  };
 }
 
 /**
@@ -60,6 +70,16 @@ export default async function hostCommand(options: HostCommandOptions = {}): Pro
     host,
     port,
     projectRoot: root,
+    // Reported to MCP clients over the HTTP mount. The CLI is the only layer that
+    // knows the packaged version, so it is passed down rather than read from
+    // `package.json` inside the host, which the bundle does not sit beside.
+    version: (require("../../package.json") as { version: string }).version,
+    // INJECTED by the caller. This command is re-exported by the `compiler-cli`
+    // barrel, so importing `../mcp/**` here closes a cycle
+    // (`host.ts -> mcp/server.ts -> mcp/tools.ts -> compiler-cli.ts -> host.ts`).
+    // The CLI entry imports the barrel and is imported by nothing, so the factory
+    // can only be built there.
+    ...(options.mcpServerFactory === undefined ? {} : { mcpServerFactory: options.mcpServerFactory }),
     ...(options.noGraph === true ? { includeGraph: false } : {}),
   });
 

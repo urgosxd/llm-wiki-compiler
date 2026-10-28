@@ -57,6 +57,7 @@ import { createApp } from "llmwiki-kg/server";
 type GraphApp = ReturnType<typeof createApp>;
 import { createViewerHandler, type ViewerRequestHandler } from "../viewer/server.js";
 import { handleApiRequest, type ApiDeps } from "./api.js";
+import { handleMcpHttp, isMcpHttpPath } from "./mcp-http.js";
 import { createJobRegistry, type JobRegistry } from "../services/ingest/jobs/registry.js";
 import { createDurableJobRegistry } from "../services/ingest/jobs/durable-registry.js";
 import { listIngestJobs, readIngestJob } from "../services/ingest/jobs/job-store.js";
@@ -94,6 +95,28 @@ export interface HostOptions {
    * ambient state.
    */
   readonly includeGraph?: boolean;
+  /**
+   * Version reported to MCP clients in the initialize handshake.
+   *
+   * Supplied by the caller (the CLI passes its own) so this module never reads
+   * `package.json` at runtime, which would tie the bundled output to a file that is
+   * not next to it. Absent means the MCP surface reports `unknown` rather than a
+   * version it made up.
+   */
+  readonly version?: string;
+  /**
+   * Builds an MCP server for one HTTP request, or absent to serve no MCP over HTTP.
+   *
+   * INJECTED rather than imported. `host/server.ts` cannot reach `../mcp/**` without
+   * closing a cycle through `compiler-cli.ts`, the public barrel that re-exports
+   * `hostCommand` — measured with `fallow`, which reported three cycles (one per
+   * tools barrel) the moment such an import existed. The CLI entry builds it, since
+   * nothing imports the entry back.
+   */
+  readonly mcpServerFactory?: () => {
+    connect(transport: unknown): Promise<void>;
+    close(): Promise<void>;
+  };
   /**
    * Project root whose mutation endpoints are mounted.
    *
@@ -213,6 +236,7 @@ function createDispatcher(
   tenants: ReadonlyMap<string, TenantEntry>,
   tenantViewer: (snapshot: ViewerSnapshot) => ViewerRequestHandler,
   apiDeps: ApiDeps,
+  mcp: ((req: IncomingMessage, res: ServerResponse) => Promise<void>) | undefined,
 ) {
   return (req: IncomingMessage, res: ServerResponse): void => {
     // A tenant-scoped path is resolved BEFORE anything else: the whole point is
@@ -237,6 +261,12 @@ function createDispatcher(
           return tenantViewer(resolved.tenant.snapshot)(req, res).catch(() => writeFallbackError(res));
         })
         .catch(() => writeFallbackError(res));
+      return;
+    }
+    // MCP over HTTP is claimed BEFORE the viewer, which registers no `/mcp` and
+    // would answer its own 404 for a path this listener genuinely serves.
+    if (mcp !== undefined && isMcpHttpPath(req.url)) {
+      void mcp(req, res).catch(() => writeFallbackError(res));
       return;
     }
     if (graph !== undefined && isGraphPath(req.url)) {
@@ -395,6 +425,14 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // exists after `listen`, so this record is filled in below rather than at
   // construction.
   const apiDeps: { ingestJobs?: JobRegistry; viewerConfig?: ApiDeps["viewerConfig"] } = { ingestJobs };
+  // MCP over HTTP, on the same listener. Mounted only when this host serves a
+  // project: the tools operate on a root, and a host with none would accept MCP
+  // calls it cannot answer. Version comes from the caller so this module never
+  // reads package.json at runtime.
+  const mcpHandler = options.projectRoot === undefined || options.mcpServerFactory === undefined
+    ? undefined
+    : (req: IncomingMessage, res: ServerResponse) =>
+        handleMcpHttp(req, res, options.mcpServerFactory as Parameters<typeof handleMcpHttp>[2]);
   const server = http.createServer((req, res) => {
     const handler = viewerHolder.handler;
     if (handler === undefined) {
@@ -406,6 +444,7 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
       graph, handler, options.projectRoot, tenantMap,
       tenantViewerFactory(host, boundPortHolder, options.viewerDeps ?? {}),
       apiDeps,
+      mcpHandler,
     );
     dispatch(req, res);
   });

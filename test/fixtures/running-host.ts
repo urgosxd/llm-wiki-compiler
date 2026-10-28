@@ -30,12 +30,19 @@ export interface RunningHost {
  * Start a host on a fresh scratch project.
  *
  * @param prefix - Distinguishes the temp dirs of suites that run in parallel.
- * @param options - Passed through to `startHost`; `includeGraph` is the usual one.
+ * @param options - Passed through to `startHost`; `includeGraph` and
+ *   `projectRoot` are the usual ones. `projectRoot` decides whether the mutation
+ *   endpoints and the MCP mount exist at all, so a suite that needs either must
+ *   pass it.
  * @returns The handle and `http://host:port`.
  */
 export async function runningHost(
   prefix: string,
-  options: { includeGraph?: boolean } = {},
+  options: {
+    includeGraph?: boolean;
+    projectRoot?: string;
+    mcpServerFactory?: () => { connect(transport: never): Promise<void>; close(): Promise<void> };
+  } = {},
 ): Promise<RunningHost> {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), prefix)));
   const viewerSnapshot = await buildViewerSnapshot(root);
