@@ -280,6 +280,26 @@ export interface CompileOptions {
    * exactly as before.
    */
   jobObserver?: IngestJobObserver;
+  /**
+   * Environment the run should resolve its Stack from; defaults to `process.env`.
+   *
+   * ## Why this exists
+   *
+   * Every storage seam in the pipeline already took an environment as an argument —
+   * `wikiStateRowsBackend`, `resolvePageSeams`, `sourceContentReading` and the rest —
+   * but the pipeline called them all with the literal `process.env`. So a host serving
+   * several Stacks had no way to compile into a chosen one, and had to mutate
+   * `process.env` from outside to do it. That mutation is correct only while no two
+   * runs overlap, which is true today because of locks and is not a property this
+   * pipeline can guarantee.
+   *
+   * Passing the environment collapses that whole class: the caller owns the value, the
+   * pipeline never reads the ambient one, and two runs cannot see each other's Stack.
+   *
+   * Omitted, behaviour is unchanged — the CLI, the SDK and every existing test keep
+   * compiling against the process environment exactly as before.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**

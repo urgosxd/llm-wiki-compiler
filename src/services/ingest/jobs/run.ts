@@ -32,7 +32,7 @@
 import { LockBusyError } from "../../../utils/lock.js";
 import { compileAndReport } from "../../../compiler/index.js";
 import { ingestSource } from "../service.js";
-import { AKS_STACK_ID_ENV_VAR } from "../../../dimensions/activation.js";
+import { buildIngestEnv } from "../../../host/ingest-env.js";
 import { recordJobFailure } from "./failure-log.js";
 import type { JobRegistry } from "./registry.js";
 import type {
@@ -184,6 +184,7 @@ function settleCompile(
 async function runCompileHalf(
   input: RunJobInput,
   now: () => Date,
+  env: NodeJS.ProcessEnv,
 ): Promise<unknown> {
   const { registry, job, root } = input;
   if (!input.compile) {
@@ -195,7 +196,13 @@ async function runCompileHalf(
     return undefined;
   }
   try {
-    const result = await compileAndReport(root, { jobObserver: jobObserverFor(registry, job.id, now) });
+    const result = await compileAndReport(root, {
+      jobObserver: jobObserverFor(registry, job.id, now),
+      // Same env as the ingest half. Without it the source lands in the requested
+      // Stack and its pages land in the bound one, which is the split this route
+      // exists to prevent.
+      env,
+    });
     if (result.busy === true) {
       settleCompile(registry, job.id, "busy", "Another compile holds the lock; retry.", now());
       return undefined;
@@ -219,32 +226,26 @@ async function runCompileHalf(
  * @param input - Project root, registry, job identity, and whether to compile.
  */
 export async function runIngestJob(input: RunJobInput): Promise<void> {
-  if (input.stackId === undefined) return runIngestJobUnder(input);
-  const saved = process.env[AKS_STACK_ID_ENV_VAR];
-  process.env[AKS_STACK_ID_ENV_VAR] = input.stackId;
-  try {
-    return await runIngestJobUnder(input);
-  } finally {
-    if (saved === undefined) delete process.env[AKS_STACK_ID_ENV_VAR];
-    else process.env[AKS_STACK_ID_ENV_VAR] = saved;
-  }
+  await runIngestJobUnder(input);
 }
 
 /**
- * The job body, run with the Stack already applied.
+ * The job body.
  *
- * Split from {@link runIngestJob} so the Stack save/restore wraps exactly one call
- * site instead of nesting the whole pipeline in a `try`.
+ * The Stack travels as an ENVIRONMENT computed from the job, never assigned into
+ * `process.env`: the async route answers 202 before this runs, so a mutation here would
+ * escape into whatever else the process is doing -- including another job.
  *
  * @param input - The job to run.
  */
 async function runIngestJobUnder(input: RunJobInput): Promise<void> {
   const { registry, job, root } = input;
+  const env = buildIngestEnv(input.stackId);
   const now = () => new Date();
   try {
-    const ingested = await ingestSource(root, job.source, jobObserverFor(registry, job.id, now));
+    const ingested = await ingestSource(root, job.source, jobObserverFor(registry, job.id, now), env);
     settleIngestFromResult(registry, job.id, ingested.writeStatus, now());
-    await runCompileHalf(input, now);
+    await runCompileHalf(input, now, env);
   } catch (error) {
     // Lock contention is the caller's retry signal, not a failure of the source:
     // nothing was written, so `failed` with the reason is the honest record.

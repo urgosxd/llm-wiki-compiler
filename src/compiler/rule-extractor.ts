@@ -229,8 +229,9 @@ async function changedSources(
   root: string,
   outputLanguage: string,
   changeSource?: ChangeDetectionSource,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<string[]> {
-  const state = await readRuleState(root);
+  const state = await readRuleState(root, env);
   const changes = await detectChanges(root, state, changeSource);
   return changes
     .filter((c) => c.status === "new" || c.status === "changed" ||
@@ -250,10 +251,11 @@ export async function extractRuleCandidates(
   root: string,
   createdAt: string = new Date().toISOString(),
   corpus?: RuleCorpus,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<RuleExtractionResult> {
   const provenance = buildProvenance();
   const outputLanguage = getOutputLanguage() ?? "";
-  const sources = await changedSources(root, outputLanguage, corpus?.detection);
+  const sources = await changedSources(root, outputLanguage, corpus?.detection, env);
 
   const candidates: RuleCandidate[] = [];
   const notes: string[] = [];
@@ -273,7 +275,7 @@ export async function extractRuleCandidates(
       concepts: [],
       compiledAt: createdAt,
       outputLanguage,
-    });
+    }, env);
   }
 
   return { processedSources: sources, candidates, notes };

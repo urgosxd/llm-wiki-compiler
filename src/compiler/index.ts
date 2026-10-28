@@ -490,12 +490,85 @@ async function seedThenFinalize(
 }
 
 /** Inner pipeline, runs under lock protection. Returns structured CompileResult. */
+/** Everything the no-change path needs; grouped so the call stays one argument. */
+interface NothingToCompileInput {
+  readonly root: string;
+  readonly options: CompileOptions;
+  readonly db: DimensionsDatabaseHandle;
+  readonly env: NodeJS.ProcessEnv;
+  readonly schema: Awaited<ReturnType<typeof loadSchema>>;
+  readonly draft: CompileStateDraft;
+  readonly seams: ReturnType<typeof resolvePageSeams>;
+  readonly stateRows: ReturnType<typeof wikiStateRowsBackend>;
+  readonly reconciliationSlugs: ReadonlySet<string>;
+  readonly unchangedCount: number;
+}
+
+/**
+ * The "all sources up to date" early return.
+ *
+ * Extracted from `runCompilePipeline` because the block is only reached on a run with
+ * nothing to do, and keeping it inline pushed that function past its complexity
+ * ceiling. The behaviour is unchanged, including the seed-page regeneration that makes
+ * a schema edit take effect without touching a source file.
+ *
+ * @param input - The resolved pipeline state this branch needs.
+ * @returns The compile result for a run with no changes.
+ */
+async function finalizeNothingToCompile(
+  input: NothingToCompileInput,
+): Promise<CompileResult> {
+  const { root, options, db, env, schema, draft, seams, stateRows, reconciliationSlugs } = input;
+  output.status("✓", output.success("Nothing to compile — all sources up to date."));
+  // Seed pages are cheap deterministic writes — always run them even when no source
+  // files changed, so adding a seed page to schema.json takes effect on the next
+  // compile without needing a source file edit.
+  if (options.review) {
+    return { ...emptyCompileResult(), skipped: input.unchangedCount };
+  }
+  const hasOwnerlessFrozen = await reconcileOwnerlessFrozen(
+    root, draft, reconciliationSlugs, seams,
+  );
+  const emptyGeneration: PageGenerationResult = {
+    pages: [], writtenPages: [], errors: [], candidates: [],
+    review: { held: [], forced: [] }, seedSlugs: [],
+  };
+  // Ownerless frozen reconciliation mutates the draft; otherwise null keeps the
+  // no-change path from rewriting state unnecessarily.
+  await timeStage("compile.finalize", () => seedThenFinalize(
+    root,
+    schema,
+    emptyGeneration,
+    options,
+    hasOwnerlessFrozen ? draft : null,
+    embeddingStoreLocation(db),
+    resolverSourceReading(db, env),
+    embeddingPageReading(db, env),
+    seams,
+    stateRows,
+  ));
+  return {
+    ...emptyCompileResult(),
+    skipped: input.unchangedCount,
+    // Surface seed-page slugs alongside any errors so downstream consumers (MCP,
+    // embeddings, programmatic callers) can see what landed even on the
+    // no-source-changes early-return path.
+    pages: [...emptyGeneration.seedSlugs],
+    errors: emptyGeneration.errors,
+  };
+}
+
 async function runCompilePipeline(
   root: string,
   options: CompileOptions,
   db: DimensionsDatabaseHandle,
 ): Promise<CompileResult> {
   const startMs = Date.now();
+  // The ONE environment this run reads. Every seam below is handed this value
+  // instead of the ambient one, so a caller can compile into a chosen Stack and two
+  // concurrent runs cannot see each other's. Omitted means `process.env`, which keeps
+  // every existing caller byte-identical.
+  const env = options.env ?? process.env;
   const schema = await loadSchema(root);
   const reviewPolicy = await loadReviewPolicy(root);
   reportSchemaStatus(schema);
@@ -505,18 +578,18 @@ async function runCompilePipeline(
   // Read and write state from the SAME backend. A run that seeded from
   // `state.json` and flushed to rows would report every source as new on the next
   // pass, because the file it compared against was never the one updated.
-  const stateRows = wikiStateRowsBackend(db, process.env);
+  const stateRows = wikiStateRowsBackend(db, env);
   const draft = await CompileStateDraft.load(root, stateRows);
   const state = draft.read();
   const compileReporter = options.jobObserver?.compile;
   const detected = await timeStage("compile.detect-changes", () =>
-    detectChanges(root, state, sourceChangeDetection(db, process.env)),
+    detectChanges(root, state, sourceChangeDetection(db, env)),
     () => reportCompileStage(compileReporter, "compile.detect-changes"));
   const changes = promoteForPromptModifiers(
     applyChangeFilter(detected, options.changeFilter),
     state,
   );
-  await markUnchangedPendingSources(root, changes, sourceContentReading(db, process.env));
+  await markUnchangedPendingSources(root, changes, sourceContentReading(db, env));
   const reusableSources = reusableSourceFiles(state, changes, detected, Boolean(options.review));
   augmentWithAffectedSources(changes, findAffectedSources(state, changes, detected));
   const reconciliationSlugs = findReconciliationSlugs(state, changes);
@@ -525,49 +598,12 @@ async function runCompilePipeline(
   // Resolve every page seam ONCE, from one variable: a run that stores rows while
   // repairing files -- or reads rows while writing `wiki/` -- would split the
   // corpus in half and is the defect this migration kept re-introducing.
-  const seams = resolvePageSeams(db, process.env);
+  const seams = resolvePageSeams(db, env);
   if (buckets.toCompile.length === 0 && buckets.deleted.length === 0) {
-    output.status("✓", output.success("Nothing to compile — all sources up to date."));
-    // Seed pages are cheap deterministic writes — always run them even when
-    // no source files changed, so adding a seed page to schema.json takes
-    // effect on the next compile without needing a source file edit.
-    if (!options.review) {
-      const hasOwnerlessFrozen = await reconcileOwnerlessFrozen(
-        root, draft, reconciliationSlugs, seams,
-      );
-      const emptyGeneration: PageGenerationResult = {
-        pages: [],
-        writtenPages: [],
-        errors: [],
-        candidates: [],
-        review: { held: [], forced: [] },
-        seedSlugs: [],
-      };
-      // Ownerless frozen reconciliation mutates the draft; otherwise null keeps
-      // the no-change path from rewriting state unnecessarily.
-      await timeStage("compile.finalize", () => seedThenFinalize(
-        root,
-        schema,
-        emptyGeneration,
-        options,
-        hasOwnerlessFrozen ? draft : null,
-        embeddingStoreLocation(db),
-        resolverSourceReading(db, process.env),
-        embeddingPageReading(db, process.env),
-        seams,
-        stateRows,
-      ));
-      return {
-        ...emptyCompileResult(),
-        skipped: buckets.unchanged.length,
-        // Surface seed-page slugs alongside any errors so downstream
-        // consumers (MCP, embeddings, programmatic callers) can see what
-        // landed even on the no-source-changes early-return path.
-        pages: [...emptyGeneration.seedSlugs],
-        errors: emptyGeneration.errors,
-      };
-    }
-    return { ...emptyCompileResult(), skipped: buckets.unchanged.length };
+    return await finalizeNothingToCompile({
+      root, options, db, env, schema, draft, seams, stateRows,
+      reconciliationSlugs, unchangedCount: buckets.unchanged.length,
+    });
   }
 
   printChangesSummary(changes);
@@ -595,10 +631,10 @@ async function runCompilePipeline(
   const concurrency = resolveCompileConcurrency(options.concurrency);
   const extractions = await timeStage("compile.extraction", () => runExtractionPhases(
     root, buckets.toCompile, state, { scoped: changes, detected }, concurrency, reusableSources,
-    sourceContentReading(db, process.env),
+    sourceContentReading(db, env),
     // The extraction prompt asks the model not to duplicate an existing concept,
     // which needs each page's title -- the scan shape, not the listing.
-    scanSourceReading(db, process.env),
+    scanSourceReading(db, env),
   ), () => reportCompileStage(compileReporter, "compile.extraction"));
   if (!options.review) {
     freezeFailedExtractions(draft, extractions, frozenSlugs);
@@ -652,8 +688,8 @@ async function runCompilePipeline(
     // commits.
     await timeStage("compile.finalize", () => seedThenFinalize(
       root, schema, generation, options, draft, embeddingStoreLocation(db),
-      resolverSourceReading(db, process.env),
-      embeddingPageReading(db, process.env),
+      resolverSourceReading(db, env),
+      embeddingPageReading(db, env),
       seams,
       stateRows,
     ), () => reportCompileStage(compileReporter, "compile.finalize"));

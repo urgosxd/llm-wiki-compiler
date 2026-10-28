@@ -114,18 +114,19 @@ async function writeToDimensions(
   root: string,
   input: { title: string; source: string; document: string; body: string },
   observer?: IngestJobObserver,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ savedPath: string; writeStatus: NonNullable<IngestResult["writeStatus"]> }> {
   // Pages are rows in Postgres now, so the dimensions need a handle. It is built
   // for this operation and released right after, because an unclosed pool keeps
   // the event loop alive.
-  const dimensionsDb = createDimensionsDatabase();
+  const dimensionsDb = createDimensionsDatabase(env);
   observer?.ingest.stage("preparing");
   const locked = await tryWithOrdinaryMutationLock(root, async () => {
     try {
       observer?.ingest.stage("committing");
       return await ingestDimensions(
         dimensionsDb.db,
-        resolveStackId(),
+        resolveStackId(env),
         input,
         resolveDimensions({ root, db: dimensionsDb.db }),
         { attempts: observer?.attempts },
@@ -158,6 +159,7 @@ export async function ingestSource(
   root: string,
   source: string,
   observer?: IngestJobObserver,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<IngestResult> {
   observer?.ingest.stage("detecting");
   const sourceType = await detectSourceType(source);
@@ -177,7 +179,7 @@ export async function ingestSource(
     source,
     document,
     body: result.content,
-  }, observer);
+  }, observer, env);
   verbose(`saved: ${savedPath} (${result.content.length} chars extracted)`);
 
   // Journal only real writes — a no-op re-ingest must not append a log line.

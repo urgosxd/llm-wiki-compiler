@@ -54,7 +54,7 @@ import { runIngestJob } from "../services/ingest/jobs/run.js";
 import type { IngestJobAccepted } from "../services/ingest/jobs/types.js";
 import type { CompileResult, IngestResult } from "../utils/types.js";
 import { stackIdProblem } from "../utils/stack-id.js";
-import { AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+import { buildIngestEnv } from "./ingest-env.js";
 
 /** Largest request body these endpoints accept, in bytes. */
 const MAX_BODY_BYTES = 1024 * 64;
@@ -277,66 +277,22 @@ async function readIngestRequest(
  * @param request - A validated ingest request.
  * @param res - Response to answer on.
  */
-/**
- * Run `work` with every Stack-resolving read pointed at `stackId`.
- *
- * ## Why an env override, matching the MCP tools
- *
- * The ingest and compile pipelines resolve the Stack from the environment in several
- * places and nowhere accept it as an argument. Threading a parameter through both
- * would mean touching every layer to add a way to disagree with the env; overriding
- * the env for the duration of one request keeps one source of truth.
- *
- * ## The limitation this carries, stated rather than hidden
- *
- * Unlike the MCP tools -- which can hand a COPY of the environment to seams that take
- * one -- the ingest pipeline reads `process.env` directly and accepts no alternative.
- * So this must temporarily ASSIGN to it, which means two ingests naming DIFFERENT
- * Stacks must not overlap in time.
- *
- * That is not a bug being papered over: the async route is the concurrency path, and
- * it runs one job at a time through `runIngestJob`. The synchronous route holds
- * `tryWithOrdinaryMutationLock`, which serialises it against every other mutation. So
- * today no two writers overlap here, and the window is closed by locks that already
- * existed for other reasons rather than by this function.
- *
- * The safe version of this needs the pipeline to accept an environment the way the
- * read seams do. Until then, saying so is better than a comment claiming a copy it
- * does not make -- the first reader to add a second concurrent writer would trust it.
- *
- * @param stackId - A Stack the caller named, or absent to use the bound one.
- * @param work - The request body to run under that Stack.
- * @returns Whatever `work` returned.
- */
-async function withIngestStack<T>(
-  stackId: string | undefined,
-  work: () => Promise<T>,
-): Promise<T> {
-  if (stackId === undefined) return work();
-  const saved = process.env[AKS_STACK_ID_ENV_VAR];
-  process.env[AKS_STACK_ID_ENV_VAR] = stackId;
-  try {
-    return await work();
-  } finally {
-    if (saved === undefined) delete process.env[AKS_STACK_ID_ENV_VAR];
-    else process.env[AKS_STACK_ID_ENV_VAR] = saved;
-  }
-}
-
 async function runSyncIngest(
   root: string,
   request: IngestRequest,
   res: ServerResponse,
 ): Promise<void> {
   try {
-    // The Stack is applied for the WHOLE request, not just the read half: ingest
-    // writes sources and compile writes pages, and letting them resolve the Stack
-    // separately is how a source lands in one tenant and its pages in another.
-    const { ingested, compiled } = await withIngestStack(request.stackId, async () => {
-      const result: IngestResult = await ingestSource(root, request.source);
-      if (request.compile === false) return { ingested: result, compiled: null };
-      return { ingested: result, compiled: await compileAndReport(root) };
-    });
+    // The Stack is passed down as an ENVIRONMENT, not assigned into `process.env`.
+    // One env for the whole request means ingest and compile cannot disagree about the
+    // tenant, and two concurrent requests cannot see each other's Stack -- which the
+    // previous assign-and-restore could not promise.
+    const env = buildIngestEnv(request.stackId);
+    const ingested: IngestResult = await ingestSource(root, request.source, undefined, env);
+    const compiled: CompileResult | null =
+      request.compile === false
+        ? null
+        : await compileAndReport(root, { env });
     if (compiled === null) {
       writeJson(res, 200, { ...ingested, compiled: null });
       return;
