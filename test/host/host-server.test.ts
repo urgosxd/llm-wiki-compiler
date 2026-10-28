@@ -16,21 +16,17 @@
  *     reachable without credentials (fail-open), in the same process.
  */
 import { describe, expect, it } from "vitest";
-import { mkdtemp, realpath } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
-import { startHost, type HostHandle } from "../../src/host/server.js";
+import { runningHost as startRunningHost, type RunningHost } from "../fixtures/running-host.js";
 
-/** Start a host on a scratch project root and hand back its base URL. */
-async function runningHost(options: { includeGraph?: boolean } = {}): Promise<{
-  handle: HostHandle;
-  base: string;
-}> {
-  const root = await realpath(await mkdtemp(path.join(tmpdir(), "host-test-")));
-  const viewerSnapshot = await buildViewerSnapshot(root);
-  const handle = await startHost({ viewerSnapshot, port: 0, ...options });
-  return { handle, base: `http://${handle.host}:${handle.port}` };
+/**
+ * Start a host on a scratch project root.
+ *
+ * Delegates to the shared fixture so this suite and the `/domain` prefix suite boot
+ * their listeners the same way: a host suite that builds its server differently
+ * from its neighbour is asserting against a different server than it thinks.
+ */
+function runningHost(options: { includeGraph?: boolean } = {}): Promise<RunningHost> {
+  return startRunningHost("host-test-", options);
 }
 
 describe("the host serves two sub-apps behind one listener", () => {

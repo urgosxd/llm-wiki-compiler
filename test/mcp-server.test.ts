@@ -67,12 +67,14 @@ function getRegisteredResourceTemplates(server: McpServer): Record<string, unkno
 }
 
 describe("MCP server tool registration", () => {
-  it("registers all 10 expected tools", () => {
+  it("registers all 12 expected tools", () => {
     const server = buildServer();
     const names = Object.keys(getRegisteredTools(server)).sort();
     expect(names).toEqual([
       "compile_wiki",
       "get_context_pack",
+      "ingest_job_status",
+      "ingest_jobs_list",
       "ingest_source",
       "lint_wiki",
       "query_wiki",
@@ -82,6 +84,21 @@ describe("MCP server tool registration", () => {
       "verify_artifact",
       "wiki_status",
     ]);
+  });
+
+  it("exposes job reads that answer without a Stack instead of returning nothing", async () => {
+    // A project with no AKS_STACK_ID has nowhere durable to record a job. The tool
+    // must say so: an empty job list would read as "no ingest ever ran", which is a
+    // different and false claim.
+    const saved = process.env["AKS_STACK_ID"];
+    delete process.env["AKS_STACK_ID"];
+    try {
+      const server = buildServer();
+      const outcome = await callTool(server, "ingest_jobs_list", {});
+      expect(JSON.stringify(outcome)).toContain("AKS_STACK_ID");
+    } finally {
+      if (saved !== undefined) process.env["AKS_STACK_ID"] = saved;
+    }
   });
 
   it("registers all 5 expected resources", () => {

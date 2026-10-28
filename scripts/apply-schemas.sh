@@ -63,6 +63,7 @@ readonly SCHEMA_FILES=(
   "src/dimensions/wiki/migration_wiki_profile.sql"
   "src/dimensions/wiki/migration_wiki_artifacts.sql"
   "src/dimensions/wiki/migration_page_embeddings.sql"
+  "src/dimensions/wiki/migration_wiki_jobs.sql"
 )
 
 # Tenant-isolated relations a complete database must expose. Used by --check to

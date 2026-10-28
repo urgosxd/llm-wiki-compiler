@@ -58,6 +58,11 @@ type GraphApp = ReturnType<typeof createApp>;
 import { createViewerHandler, type ViewerRequestHandler } from "../viewer/server.js";
 import { handleApiRequest, type ApiDeps } from "./api.js";
 import { createJobRegistry, type JobRegistry } from "../services/ingest/jobs/registry.js";
+import { createDurableJobRegistry } from "../services/ingest/jobs/durable-registry.js";
+import {
+  AKS_STACK_ID_ENV_VAR,
+  createDimensionsDatabase,
+} from "../dimensions/activation.js";
 import { resolveTenant, tenantSlugOf, type TenantEntry } from "./tenants.js";
 import { writeJsonError } from "../viewer/respond.js";
 import type { ViewerSnapshot } from "../viewer/types.js";
@@ -115,6 +120,39 @@ export interface HostOptions {
    * read each other's ingest history.
    */
   readonly ingestJobs?: JobRegistry;
+}
+
+/**
+ * Build the job registry this host should use.
+ *
+ * With a Stack configured, the live registry is wrapped so every transition is
+ * also written to `wiki.ingest_job`. That is what lets `llmwiki serve` — a separate
+ * process over stdio — answer job questions the host is running; the memory view is
+ * invisible outside this process.
+ *
+ * The database handle is opened lazily by postgres-js (constructing a client does
+ * not connect), so a host that never runs an async ingest never opens a socket.
+ * A write failure is logged and swallowed: durability serves a later reader and must
+ * never fail the ingest it is describing.
+ *
+ * Without a Stack there is nowhere durable to write, so the plain in-memory registry
+ * is returned and the durable reader answers 503 rather than pretending.
+ *
+ * @param env - Environment carrying the Stack id; defaults to `process.env`.
+ * @returns The registry the host should use.
+ */
+function durableRegistryFor(env: NodeJS.ProcessEnv = process.env): JobRegistry {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return createJobRegistry();
+  const dimensionsDb = createDimensionsDatabase(env);
+  return createDurableJobRegistry(createJobRegistry(), {
+    db: dimensionsDb.db,
+    stackId,
+    onError: (error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[ingest-job] durable mirror failed: ${detail}\n`);
+    },
+  });
 }
 
 /** A running host: both sub-apps behind one listener with one close path. */
@@ -311,7 +349,14 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // One registry per host, built before the listener so the deps object is stable
   // for every request. The viewer reads it through `viewerDeps` (the GET routes) and
   // the mutation mount through `apiDeps` (the 202 route): one store, two readers.
-  const ingestJobs = options.ingestJobs ?? createJobRegistry();
+  //
+  // The live registry is mirrored into Postgres when a Stack is configured, because
+  // the memory view is readable only by THIS process and `llmwiki serve` (MCP) is a
+  // different one. Without the mirror an agent polling over MCP could never see a
+  // job the host is running. A host with no Stack keeps the plain in-memory
+  // registry: there is nowhere durable to write, and the read side already answers
+  // 503 in that configuration rather than pretending.
+  const ingestJobs = options.ingestJobs ?? durableRegistryFor();
   // The read routes are mounted ONLY when this host serves a project to mutate:
   // a viewer without a project root has no jobs, and answering an empty list would
   // claim it looked. Omitting the registry makes the read answer 503 instead.
