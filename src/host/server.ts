@@ -59,6 +59,8 @@ import { createViewerHandler, type ViewerRequestHandler } from "../viewer/server
 import { handleApiRequest, type ApiDeps } from "./api.js";
 import { createJobRegistry, type JobRegistry } from "../services/ingest/jobs/registry.js";
 import { createDurableJobRegistry } from "../services/ingest/jobs/durable-registry.js";
+import { listIngestJobs, readIngestJob } from "../services/ingest/jobs/job-store.js";
+import type { DurableJobReads } from "../viewer/api-ingest-jobs.js";
 import {
   AKS_STACK_ID_ENV_VAR,
   createDimensionsDatabase,
@@ -120,6 +122,25 @@ export interface HostOptions {
    * read each other's ingest history.
    */
   readonly ingestJobs?: JobRegistry;
+}
+
+/**
+ * The durable job reads the viewer needs, or nothing when no Stack is configured.
+ *
+ * `undefined` is the honest answer rather than a stub: the viewer then falls back to
+ * the in-memory registry, which is all a Stack-less host ever had.
+ *
+ * @param env - Environment carrying the Stack id; defaults to `process.env`.
+ * @returns Readers bound to this host's Stack, or `undefined`.
+ */
+function durableJobReadsFor(env: NodeJS.ProcessEnv = process.env): DurableJobReads | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  const dimensionsDb = createDimensionsDatabase(env);
+  return {
+    list: (limit: number) => listIngestJobs(dimensionsDb.db, stackId, limit),
+    get: (jobId: string) => readIngestJob(dimensionsDb.db, stackId, jobId),
+  };
 }
 
 /**
@@ -361,7 +382,15 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // a viewer without a project root has no jobs, and answering an empty list would
   // claim it looked. Omitting the registry makes the read answer 503 instead.
   const jobDeps = options.projectRoot === undefined ? {} : { ingestJobs };
-  const viewerDeps = { ...jobDeps, ...(options.viewerDeps ?? {}) };
+  // Give the HTTP job reads the durable store when there is one, so
+  // `GET /api/ingest/jobs` and the MCP `ingest_jobs_list` tool answer the same
+  // question the same way. Without this the HTTP path kept reading process memory
+  // and an external consumer lost every job on restart, while the MCP path — reading
+  // the mirrored table — did not.
+  const durableJobDeps = options.projectRoot === undefined
+    ? {}
+    : { durableIngestJobs: durableJobReadsFor() };
+  const viewerDeps = { ...jobDeps, ...durableJobDeps, ...(options.viewerDeps ?? {}) };
   // Mutable holder: the origin policy needs the ACTUALLY bound port, which only
   // exists after `listen`, so this record is filled in below rather than at
   // construction.

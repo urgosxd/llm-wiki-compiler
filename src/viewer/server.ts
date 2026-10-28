@@ -231,7 +231,7 @@ async function routeLiveResources(
     return handleApiPage(res, parsedUrl.pathname, snapshot, isLoopback);
   }
   if (isIngestJobsPath(parsedUrl.pathname)) {
-    return handleApiIngestJobs(res, parsedUrl.pathname, deps);
+    return await handleApiIngestJobs(res, parsedUrl.pathname, deps);
   }
   // Unreachable: `isRouteRegistered` is the gate, and every branch
   // there has a matching dispatch above. If it ever fires, the two
