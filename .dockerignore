@@ -1,0 +1,53 @@
+# Keep the build context to what the image actually builds from.
+#
+# `node_modules` is excluded everywhere and reinstalled inside the build stage:
+# copying host dependencies would bake platform-specific binaries into the image
+# and defeat the dependency-layer cache.
+node_modules
+**/node_modules
+
+# Build output. Rebuilt in the image, and a stale `dist/` copied from the host would
+# be indistinguishable from a successful build.
+dist
+**/dist
+coverage
+**/coverage
+
+# Feature worktrees are full checkouts of this repository. Without this line the
+# context would carry every branch's source and the build would copy the wrong tree.
+.worktrees
+**/.worktrees
+
+# Repository metadata and local state: not source, and large.
+.git
+.gitignore
+.llmwiki
+**/.llmwiki
+uploads
+tmp
+*.log
+
+# Documentation, planning records, and agent configuration. None of it is imported
+# by the build, and `odd/` alone is several megabytes of markdown.
+docs
+odd
+**/odd
+.agents
+.claude
+.github
+*.md
+!packages/llmwiki-kg/db/*.sql
+
+# Test suites are not part of the image and would otherwise be type-checked into
+# `dist` for the packages that build with `tsc`.
+**/*.test.ts
+**/test
+test
+vitest.config.ts
+test-typecheck-baseline.json
+.fallowrc.json
+
+# Local secrets. The image reads everything from the environment at run time.
+.env
+.env.*
+!.env.example

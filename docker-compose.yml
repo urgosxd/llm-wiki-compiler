@@ -1,0 +1,121 @@
+# Both dimensions in one container, against one Postgres.
+#
+# WHY THIS COMPOSE IS AT THE ROOT WHILE THE KG ONE STAYS IN `packages/`
+#
+# `packages/llmwiki-kg/docker-compose.yml` builds the KG reference server from
+# `ts/src` alone. That tree has no `src/dimensions/**`, so it cannot serve the wiki
+# dimension at all — the wiki dimension is not there. This file builds the root
+# bundle, which carries both dimensions and the coordinator that commits them
+# together. They read the same database and are not interchangeable.
+#
+# The database service is `pgvector/pgvector:pg16` because `db/schema.sql` declares
+# `embedding vector(768)`; plain `postgres:16` cannot create it.
+#
+# PORT MAPPING: the host side is 5435, not 5432. Two other Postgres containers on
+# this machine already hold 5432 (`agentdoc-postgres`) and 5434 (`llmwiki-kg-db-1`).
+# Only the host side moves — the app container still reaches Postgres as `db:5432`
+# over the compose network, unchanged.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: llmwiki
+      POSTGRES_PASSWORD: llmwiki
+      POSTGRES_DB: llmwiki
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmwiki"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Applies every schema and migration before the app starts.
+  #
+  # A fresh Postgres from the `db` service has NO tables. The image's
+  # `/docker-entrypoint-initdb.d` hook runs only what is mounted there, and no single
+  # file carries both dimensions — measured: a database built from `db/schema.sql`
+  # alone has 0 `wiki` tables and 0 RLS policies, and the app then dies on its first
+  # read with "relation wiki.review_candidates does not exist".
+  #
+  # `scripts/apply-schemas.sh` is the repository's own runner for this: it lists all
+  # fifteen files in dependency order and is idempotent, so running it on every start
+  # is safe and also brings an existing volume up to date. Reusing it here rather
+  # than restating the file order in this compose is what keeps one list authoritative.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    # The runner is the entrypoint; it needs a DSN and psql, both already in the image.
+    # `bash`, not `sh`: the runner uses `set -o pipefail`, and the image's `/bin/sh`
+    # is dash, which rejects it with "Illegal option -o pipefail" and exits 2.
+    entrypoint: ["/bin/bash", "/app/scripts/apply-schemas.sh"]
+    environment:
+      DATABASE_URL: postgresql://llmwiki:llmwiki@db:5432/llmwiki
+
+  llmwiki:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # HOST NETWORKING IS REQUIRED, NOT A PREFERENCE.
+    #
+    # The listener validates the incoming `Host` header against the address it bound,
+    # and the CLI refuses a wildcard bind. That leaves two options, both measured:
+    #
+    #   bridge + -p 4173:4173   container binds 172.x.y.z, but a request published to
+    #                           127.0.0.1 arrives with `Host: 127.0.0.1:4173` -> 403
+    #                           on every wiki route, while the graph routes still work
+    #                           because they do not check Host. A container that is
+    #                           healthy, serves half the product, and looks fine.
+    #
+    #   network_mode: host      the process binds the host's own loopback, so the Host
+    #                           header and the bound address agree. Both dimensions
+    #                           answer 200.
+    #
+    # Host networking also means `-p` is ignored and the service reaches Postgres at
+    # the host-published port (5435), which is why the DSNs below use that port rather
+    # than `db:5432`.
+    network_mode: host
+    depends_on:
+      db:
+        # The app opens a pool during activation; starting before Postgres accepts
+        # connections fails the dimension resolver rather than retrying.
+        condition: service_healthy
+      migrate:
+        # The first read touches `wiki.*`, so the schema must exist before the
+        # listener accepts a request.
+        condition: service_completed_successfully
+    environment:
+      # Both dimensions read the same DSN. `AKS_DATABASE_URL` is what the dimension
+      # resolver consults; `DATABASE_URL` is the reference server's own default. Both
+      # are set so a module reading either one reaches this database instead of the
+      # `localhost:5432` default — and under host networking the database is reachable
+      # on the host-published port 5435, not as `db:5432`.
+      AKS_DATABASE_URL: postgresql://llmwiki:llmwiki@127.0.0.1:5435/llmwiki
+      DATABASE_URL: postgresql://llmwiki:llmwiki@127.0.0.1:5435/llmwiki
+      # Enabling both dimensions is what makes `/api/ingest` commit wiki rows and
+      # graph rows in one transaction.
+      LLMWIKI_DIMENSIONS: wiki,kg
+      AKS_STACK_ID: ${AKS_STACK_ID:?set AKS_STACK_ID to the Stack both dimensions write}
+      AKS_STACK_NAME: ${AKS_STACK_NAME:-llmwiki}
+      # The reference server's own key. Empty means open access, which is the
+      # documented default; set it to require X-API-Key on the graph routes.
+      AKS_API_KEY: ${AKS_API_KEY:-}
+      # The wiki the container compiles is mounted, not baked.
+      LLMWIKI_ROOT: /work
+      # Under host networking the process CAN see the machine's LAN address, and the
+      # entrypoint would bind that instead of loopback — which serves the network but
+      # not `127.0.0.1`, so every published-path check fails. Loopback is the intended
+      # surface for a local wiki; set this to a LAN address to expose it deliberately.
+      LLMWIKI_HOST: ${LLMWIKI_HOST:-127.0.0.1}
+    volumes:
+      - ${LLMWIKI_PROJECT:-.}:/work
+
+volumes:
+  postgres_data:

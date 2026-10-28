@@ -41,6 +41,17 @@ readonly SCHEMA_FILES=(
   "packages/llmwiki-kg/db/schema.sql"
   "packages/llmwiki-kg/db/migration_stack_ontology.sql"
   "packages/llmwiki-kg/db/migration_synthesize_descriptions.sql"
+  # The tenancy migration runs HERE, before the wiki schema, because it is the file
+  # that creates the `llmwiki_app` role and `wiki/schema.sql` GRANTS to that role.
+  # With the two swapped, a fresh database failed on its very first build with
+  # `ERROR: role "llmwiki_app" does not exist` at schema.sql:386 — and the failure
+  # was invisible on any machine whose database already had the role, because the
+  # grant then succeeded. `wiki/schema.sql` says "this file runs AFTER the tenancy
+  # migration" in so many words; the list disagreed with it.
+  #
+  # Its `public` grants still work here: `schema.sql` above already created
+  # `stacks`, which is the table they need.
+  "packages/llmwiki-kg/db/migration_rls_tenancy.sql"
   "src/dimensions/wiki/schema.sql"
   "src/dimensions/wiki/migration_wiki_sources.sql"
   "src/dimensions/wiki/migration_wiki_compile_config.sql"
@@ -51,7 +62,6 @@ readonly SCHEMA_FILES=(
   "src/dimensions/wiki/migration_wiki_derived.sql"
   "src/dimensions/wiki/migration_wiki_profile.sql"
   "src/dimensions/wiki/migration_wiki_artifacts.sql"
-  "packages/llmwiki-kg/db/migration_rls_tenancy.sql"
   "src/dimensions/wiki/migration_page_embeddings.sql"
 )
 
