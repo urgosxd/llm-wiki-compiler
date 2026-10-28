@@ -48,11 +48,30 @@ when the **baseline** concurrency (5) exceeds the ceiling (4), every retry is it
 new concurrent request competing with the load that caused it. Retrying recovers a
 transient spike. It cannot recover a ceiling the steady state already exceeds.
 
+## Why the finding was a method, not a clever reading
+
+Worth recording because it is the reusable part. Two people had the same access to the
+same endpoint on the same evening and reached opposite conclusions: one saw a single
+isolated `429` and inferred an exhausted quota; the other ran a sweep of N=3, 4, 5, 6
+and N=20 and found a hard ceiling at 4. Neither was careless — **one ran a sample and
+the other ran a distribution.** A rate limit and a concurrency cap return the same
+status code and call for opposite actions, so a single observation cannot distinguish
+them, and the instrument is the whole difference.
+
+This is the fifth instance in one session of the same family: the fix is measure the
+distribution, not the instance.
+
 ## Fix options, in order of how much they actually fix
 
 1. **429-aware downshift** — on repeated 429 at the current width, reduce in-flight
    concurrency for the rest of the compile. This is the only option that fixes the
    class rather than one number, and it also survives a provider that changes its cap.
+
+   **Design constraint: the downshift must be STICKY per job, not per call.** A
+   per-call backoff that recovers to the configured width the moment a 429 clears
+   will oscillate against a hard cap — climb, trip, fall, climb — and burn the retry
+   budget rediscovering the same ceiling. The reduced width has to persist for the
+   remainder of the job that learned it.
 2. **Lower the default** — 4 would already fail against a cap of 4 once any retry
    overlaps; a default of 3 leaves headroom. Cheaper, but only correct for providers
    whose cap is at least 4.
