@@ -14,13 +14,16 @@ import { ingestSource } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { compileAndReport } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { generateAnswer } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { lint } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { withPageScan } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { withPageScan, withPageSource } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { collectStatus } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { buildContextPack } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { ensureCompileProviderAvailable, ensureProviderAvailable } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { runEval, DEFAULT_SAMPLE_SIZE } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { readPageRecord } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { pickSearchRefs, loadSelectedRefs, withRegistrySource } from "@atomicstrata/llmwiki-core/compiler-cli";
+import type { PageListingSource, PageRef } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { getPage, pickSearchRefs, loadSelectedRefs, withRegistrySource } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { createDimensionsDatabase } from "../dimensions/activation.js";
+import { createPageListingSource } from "../dimensions/wiki/page-write-sink.js";
 import { loadNonDefaultProfile } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { isSlugSafe } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { resolveArtifactRef, declaresArtifactTypes } from "@atomicstrata/llmwiki-core/compiler-cli";
@@ -146,6 +149,70 @@ function registerSearchTool(server: McpServer, root: string): void {
   );
 }
 
+/**
+ * Resolve one page by slug, from the registry when there is one.
+ *
+ * ## Why both sources are tried, in this order
+ *
+ * `concepts` before `queries` is the contract `read_page` has always documented, and
+ * the registry source is asked in that same order so a slug that exists in both
+ * resolves identically whether it came from a row or a file.
+ *
+ * The fallback is not defensive padding: a project with no database is a supported
+ * deployment, and on it `pageSource` is `undefined` and the on-disk read is the only
+ * correct answer. The two paths cannot disagree about a slug that exists in both,
+ * because the registry is the compiled copy of that file.
+ *
+ * @param root - Absolute path to the wiki project root.
+ * @param slug - Page slug, without the `.md` extension.
+ * @param pageSource - Registry-backed reader, or `undefined` to read from disk.
+ * @returns The page, or `null` when neither source has it.
+ */
+async function readPageBySlug(
+  root: string,
+  slug: string,
+  pageSource: PageListingSource | undefined,
+): Promise<{ slug: string; title: string; summary: string; body: string } | null> {
+  if (pageSource === undefined) return readPageRecord(root, slug);
+  for (const pageDirectory of ["concepts", "queries"] as const) {
+    const ref: PageRef = { pageDirectory, slug };
+    const page = await getPage(root, ref, pageSource);
+    if (page === null) continue;
+    // Orphaned pages are not readable, matching `readPageRecord`, which skips them.
+    // A page that vanished from its sources must 404 rather than serve a body no
+    // compilation claims any more.
+    if (page.orphaned) continue;
+    return { slug: page.slug, title: page.title, summary: page.summary, body: page.body ?? "" };
+  }
+  return null;
+}
+
+/**
+ * Test seam for {@link readPageBySlug}, which builds its own environment lookup.
+ *
+ * Exists so the suite can inject a specific Stack instead of mutating global env, and
+ * so the registry path can be exercised without constructing an MCP server.
+ *
+ * @param root - Absolute path to the wiki project root.
+ * @param slug - Page slug, without the `.md` extension.
+ * @param stackId - Stack whose registry should be read.
+ * @returns The page, or `null` when the registry has no such page.
+ */
+export async function readPageBySlugForTest(
+  root: string,
+  slug: string,
+  stackId: string,
+): Promise<{ slug: string; title: string; summary: string; body: string } | null> {
+  const env = { ...process.env, AKS_STACK_ID: stackId };
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    const source = createPageListingSource(dimensionsDb.db, stackId);
+    return await readPageBySlug(root, slug, source);
+  } finally {
+    await dimensionsDb.close();
+  }
+}
+
 function registerReadTool(server: McpServer, root: string): void {
   server.registerTool(
     "read_page",
@@ -159,8 +226,15 @@ function registerReadTool(server: McpServer, root: string): void {
       },
     },
     async ({ slug }) => {
-      const page = await readPageRecord(root, slug);
-      if (!page) {
+      // Read through the SAME seam the other readers use, falling back to disk only
+      // when there is no registry. Before this, `read_page` called `readPageRecord`
+      // directly, which walks `wiki/concepts` and `wiki/queries` on the filesystem —
+      // so on a deployment whose wiki lives in the database it rejected every slug
+      // that `search_pages` had just returned.
+      const page = await withPageSource(process.env, (pageSource) =>
+        readPageBySlug(root, slug, pageSource),
+      );
+      if (page === null) {
         throw new Error(`Page not found: ${slug}`);
       }
       return jsonResult(page);
