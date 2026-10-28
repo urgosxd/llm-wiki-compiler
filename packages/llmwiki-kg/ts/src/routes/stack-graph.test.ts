@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/stack-graph.test.ts
- * @description `GET /stacks/{stack_id}/graph` — the render payload.
+ * @description `GET /domain/kg/stacks/{stack_id}/graph` — the render payload.
  *
  * The suite asserts the wire contract a renderer consumes: envelope key order,
  * the entity→node and relationship→edge projections, and the three ways a
@@ -28,6 +28,14 @@ import {
 // This file owns its own domain namespace: the split suites run in parallel
 // against one database and the cleanup deletes by prefix.
 useDomainPrefix("stackgraph");
+
+/**
+ * The endpoint under test, in one place.
+ *
+ * The suite asserts the wire contract, so the path is spelled once and appended
+ * to; a literal in each case would let a relocation leave one behind.
+ */
+const GRAPH_BASE = "/domain/kg/stacks";
 
 /** Envelope keys, in the order the response schema declares them. */
 const GRAPH_KEYS = ["stack_id", "node_count", "edge_count", "truncated", "nodes", "edges"] as const;
@@ -90,7 +98,7 @@ describe.skipIf(state.skipReason !== false)("stack graph (live database)", () =>
   ): Promise<GraphBody> {
     const suffix = Object.keys(query).length === 0 ? "" : `?${qs(query)}`;
     const response = await request(app)
-      .get(`/stacks/${stackId}/graph${suffix}`)
+      .get(`${GRAPH_BASE}/${stackId}/graph${suffix}`)
       .expect(200);
     return response.body as GraphBody;
   }
@@ -152,13 +160,15 @@ describe.skipIf(state.skipReason !== false)("stack graph (live database)", () =>
 
   it("answers 404 with the canonical UUID for an unknown Stack", async () => {
     const response = await request(app)
-      .get(`/stacks/${UNKNOWN_UUID}/graph`)
+      .get(`${GRAPH_BASE}/${UNKNOWN_UUID}/graph`)
       .expect(404);
     expect(response.body).toEqual({ detail: `Stack '${UNKNOWN_UUID}' not found` });
   });
 
   it("answers 422 on the path axis for a malformed Stack id", async () => {
-    const response = await request(app).get("/stacks/not-a-uuid/graph").expect(422);
+    const response = await request(app)
+      .get(`${GRAPH_BASE}/not-a-uuid/graph`)
+      .expect(422);
     const detail = (response.body as { detail: Array<Record<string, unknown>> }).detail;
     expect(detail[0]?.["loc"]).toEqual(["path", "stack_id"]);
     expect(detail[0]?.["input"]).toBe("not-a-uuid");
@@ -194,7 +204,7 @@ describe.skipIf(state.skipReason !== false)("stack graph (live database)", () =>
     // invisible until a caller sent a repeated key.
     const body = await getGraph(fixture.stackId, { limit: "1" });
     const repeated = await request(app)
-      .get(`/stacks/${fixture.stackId}/graph?limit=1&limit=3`)
+      .get(`${GRAPH_BASE}/${fixture.stackId}/graph?limit=1&limit=3`)
       .expect(200);
 
     expect((body as GraphBody).node_count).toBe(1);
@@ -205,7 +215,7 @@ describe.skipIf(state.skipReason !== false)("stack graph (live database)", () =>
     const fixture = await createFixture();
     for (const limit of ["0", "2001", "abc"]) {
       const response = await request(app)
-        .get(`/stacks/${fixture.stackId}/graph?${qs({ limit })}`)
+        .get(`${GRAPH_BASE}/${fixture.stackId}/graph?${qs({ limit })}`)
         .expect(422);
       const detail = (response.body as { detail: Array<Record<string, unknown>> }).detail;
       expect(detail[0]?.["loc"]).toEqual(["query", "limit"]);

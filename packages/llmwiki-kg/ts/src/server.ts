@@ -219,13 +219,12 @@ function installRouters(
   deps: Parameters<typeof createApp>[0],
 ): void {
   app.use("/stacks", createStacksRouter(deps));
-  // A second mount at the same prefix, holding only the graph read. It cannot
-  // shadow a stacks route (`GET /:stack_id` does not match a three-segment URL)
-  // and it leaves the 405 `Allow` walk untouched: that walk takes the FIRST
-  // partial match, so `PUT /stacks/<uuid>` still reports the stacks router's
-  // methods. Mounted after the stacks router to keep the oracle's layer order
-  // for every path the oracle knows about.
-  app.use("/stacks", createStackGraphRouter(deps));
+  // Root mount, no prefix: `stack_graph.ts` carries its full absolute path
+  // (`/domain/kg/stacks/{stack_id}/graph`), so a prefix here would move the
+  // endpoint. It sits under `/domain` precisely so it shares no prefix with the
+  // oracle-owned `/stacks`, which is what keeps the 405 `Allow` walk preserving
+  // the oracle's layer order for every path the oracle knows about.
+  app.use(createStackGraphRouter(deps));
   app.use("/aks/v1", createAksRouter(deps));
   app.use("/aks/v1/pages", createPagesRouter(deps));
   app.use("/aks/v1/backfeed", createBackfeedRouter(deps));

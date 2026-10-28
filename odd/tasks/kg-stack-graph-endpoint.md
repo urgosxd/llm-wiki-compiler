@@ -1,4 +1,4 @@
-# Feature: `GET /stacks/{stack_id}/graph` — the KG render payload
+# Feature: `GET /domain/kg/stacks/{stack_id}/graph` — the KG render payload
 
 ## Goal
 
@@ -6,7 +6,7 @@ Open a read endpoint that returns the knowledge graph of **one** Stack as
 node-link JSON, so a client can render it without reading four tables itself.
 
 ```
-GET /stacks/{stack_id}/graph
+GET /domain/kg/stacks/{stack_id}/graph
 {
   "stack_id": "8f2c…",
   "nodes": [{ "id", "label", "type", "confidence", "properties" }],
@@ -33,8 +33,15 @@ So this endpoint is the same rows, reshaped once, on the server.
 | --- | --- |
 | Direction | Server pushes the JSON; the StackId is the whole input (read-only pull) |
 | Scope | Endpoint only — no wiki read door, no routing unification in this change |
-| Route | `GET /stacks/{stack_id}/graph`, StackId in the path |
-| Placement | Its own router mounted at `/stacks`, so `/aks/v1` keeps oracle parity |
+| Route | `GET /domain/kg/stacks/{stack_id}/graph`, StackId in the path |
+| Placement | Its own router, root-mounted with an absolute path under `/domain/kg`, so no oracle-owned prefix is shared |
+
+> **Moved.** This endpoint shipped on `/stacks/{stack_id}/graph` and was then
+> relocated to `/domain/kg/stacks/{stack_id}/graph`. The move is not an alias:
+> the old path now answers 404 (pinned by a test), because a route left on the
+> oracle-owned `/stacks` prefix would still perturb that prefix's measured
+> `Allow` values. `/domain` is a prefix the oracle does not use, so the extension
+> keeps its own namespace and the parity contract is untouched.
 
 ## Non-goals
 
@@ -47,9 +54,12 @@ So this endpoint is the same rows, reshaped once, on the server.
 ## Constraints discovered while exploring
 
 1. **`/stacks` already has a 405 contract.** `http-contract.ts` walks
-   `app.router.stack` and reports the *first* partial match's methods. Mounting a
-   second router at the same prefix keeps `PUT /stacks/<uuid>` at `allow: GET`
-   because the first mount wins the partial match. Pinned by a test.
+   `app.router.stack` and reports the *first* partial match's methods. A second
+   router at that prefix worked only because the first mount won the partial
+   match — a coupling to mount order rather than a property of the route. Moving
+   the endpoint under `/domain/kg` removes the coupling: no oracle path begins
+   with `/domain`, so this router can never be the first partial match for one.
+   Pinned by a test that also asserts the old path is a 404.
 2. **Responses are validated, not hand-built.** Every read path in this package
    hands its assembled object to a Zod schema, which fixes JSON key order. This
    endpoint follows that rule.
@@ -67,9 +77,11 @@ So this endpoint is the same rows, reshaped once, on the server.
 - [x] 1. Write the failing test: route shape, key order, node/edge projection,
       truncation, 404, 422 on a bad UUID and a bad `limit`
 - [x] 2. Add the read module `core/stack_graph.ts` (Zod schemas + the reads)
-- [x] 3. Add the router `routes/stack_graph.ts` and mount it at `/stacks`
+- [x] 3. Add the router `routes/stack_graph.ts`
 - [x] 4. Pin the 405 `Allow` behaviour that the second mount must not perturb
 - [x] 5. Verify: `vitest related`, `tsc --noEmit`, `fallow`
+- [x] 6. Relocate to `/domain/kg/stacks/{stack_id}/graph` and delete the second
+      `/stacks` mount, keeping `/aks/v1` and `/stacks` oracle parity intact
 
 ## Outcome
 

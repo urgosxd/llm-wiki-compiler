@@ -1,8 +1,8 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/stack_graph.ts
- * @description `GET /stacks/{stack_id}/graph` — the KG render payload.
+ * @description `GET /domain/kg/stacks/{stack_id}/graph` — the KG render payload.
  *
- * ## Why this is its own router, mounted beside `/stacks`
+ * ## Why this is its own router, under a `/domain` prefix
  *
  * `/aks/v1` is a 1:1 port of the Python reference server, and
  * `oracle/contracts/openapi.json` plus the 422 corpus pin its path set: a route
@@ -10,19 +10,22 @@
  * port exists to prove. This endpoint has no Python counterpart at all, so it is
  * declared outside that tree.
  *
- * It is mounted at `/stacks` rather than at its own prefix because the resource
- * it reads is a Stack — `GET /stacks/{id}/graph` says what it returns, while
- * `/graph/{id}` would need the reader to already know. The mount is additive: the
- * two routers share a prefix but no path, since `GET /:stack_id` cannot match a
- * three-segment URL.
+ * It lives under `/domain/kg` rather than directly on `/stacks` because `/stacks`
+ * is an oracle-owned prefix: sharing it meant a second mount at the same prefix,
+ * and every such mount is a chance for the 405 walk below to observe a different
+ * layer order than the oracle does. A prefix the oracle does not use cannot
+ * disturb it, so the extension keeps its own addressable namespace instead.
+ *
+ * The router declares its **full absolute path** and is mounted with no prefix,
+ * the same way `documents.ts`, `ingest.ts` and `synthesize.ts` do, so there is no
+ * mount-prefix arithmetic to get wrong.
  *
  * ## The 405 contract is not reopened
  *
  * `http-contract.ts` walks `app.router.stack` and reports the methods of the
- * **first** partial match. `PUT /stacks/<uuid>/graph` therefore reports the
- * methods of the *first* mount that partially matched — this router for the
- * `/graph` path, and the stacks router for `/stacks/<uuid>`. Both keep the same
- * `Allow` value they had before this router existed, which is pinned by a test in
+ * **first** partial match. Because no oracle path begins with `/domain`, this
+ * router can never be the first partial match for one: every `/stacks/...`
+ * `Allow` value is unchanged, which is pinned by a test in
  * `http-contract.test.ts`.
  *
  * ## Query parameters
@@ -125,7 +128,7 @@ function parseQuery(req: Request): QueryParse {
 }
 
 /**
- * `GET /stacks/{stack_id}/graph`.
+ * `GET /domain/kg/stacks/{stack_id}/graph`.
  *
  * Validation runs in the order a caller can act on: the path parameter first
  * (a malformed UUID is a 422 on the path axis), then the query, then the read —
@@ -175,21 +178,29 @@ const DEFAULT_DEPENDENCIES: StackGraphRouterDependencies = {
 };
 
 /**
- * Builds the graph router, mounted at `/stacks`.
+ * The absolute path this router owns.
+ *
+ * Named rather than inlined because a test asserts it is a full match, and a
+ * second copy of the string could drift from the route it describes.
+ */
+export const STACK_GRAPH_PATH = "/domain/kg/stacks/:stack_id/graph";
+
+/**
+ * Builds the graph router, mounted at the root with its absolute path.
  *
  * Auth is on the router for the same reason it is on the stacks router: this
- * reads tenant data, and leaving it open because the sibling router guards its
+ * reads tenant data, and leaving it open because a sibling router guards its
  * own paths would make the guard depend on mount order.
  *
- * The path is `/:stack_id/graph`, and the single handler is wrapped in its own
- * transaction (never a transaction-owning `app.use` middleware — see `db.ts` for
- * why that cannot work on Express 5).
+ * The single handler is wrapped in its own transaction (never a
+ * transaction-owning `app.use` middleware — see `db.ts` for why that cannot work
+ * on Express 5).
  */
 export function createStackGraphRouter(
   deps: StackGraphRouterDependencies = DEFAULT_DEPENDENCIES,
 ): Router {
   const router = Router();
   router.use(deps.apiKey);
-  router.get("/:stack_id/graph", deps.wrap(getStackGraph));
+  router.get(STACK_GRAPH_PATH, deps.wrap(getStackGraph));
   return router;
 }

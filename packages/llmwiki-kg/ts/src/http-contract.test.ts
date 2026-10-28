@@ -36,9 +36,9 @@ const ORACLE_ALLOW = {
   /** `@app.get("/health")`. Nothing is registered for HEAD. */
   health: "GET",
   /**
-   * `GET /stacks/{stack_id}/graph` — an extension with no oracle counterpart.
-   * Its value is measured from this app, not from Python: only `GET` is declared
-   * here, so any other method reports exactly that one.
+   * `GET /domain/kg/stacks/{stack_id}/graph` — an extension with no oracle
+   * counterpart. Its value is measured from this app, not from Python: only
+   * `GET` is declared here, so any other method reports exactly that one.
    */
   stackGraph: "GET",
 } as const;
@@ -164,27 +164,21 @@ describe("405 method-not-allowed on existing paths", () => {
   });
 
   /**
-   * The graph router is a SECOND mount at `/stacks`, an extension the oracle
-   * does not know. These cases pin that it is additive: it answers its own path
-   * and changes nothing about the oracle's method axis.
+   * The graph endpoint lives under `/domain/kg`, a prefix the oracle does not
+   * use. These cases pin that it is additive: it answers its own path, and it
+   * leaves every oracle path's method axis exactly as measured.
    */
-  describe("the /stacks graph extension", () => {
+  describe("the /domain/kg graph extension", () => {
     const stackId = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    const graphPath = `/domain/kg/stacks/${stackId}/graph`;
 
     it("PUT /stacks/<uuid> still reports the stacks router alone", async () => {
-      // The `Allow` walk takes the FIRST partial match. If the graph mount ever
-      // landed ahead of the stacks mount it would answer for `/stacks/<uuid>`
-      // too, and this value would gain a second method.
+      // The `Allow` walk takes the FIRST partial match. The graph router shares
+      // no prefix with `/stacks`, so it cannot become that first match and this
+      // value stays exactly what the oracle measured.
       expectMethodNotAllowed(
         await request(app).put(`/stacks/${stackId}`),
         ORACLE_ALLOW.stackItem,
-      );
-    });
-
-    it("a method the graph route does not declare answers 405 with allow: GET", async () => {
-      expectMethodNotAllowed(
-        await request(app).put(`/stacks/${stackId}/graph`),
-        ORACLE_ALLOW.stackGraph,
       );
     });
 
@@ -193,9 +187,26 @@ describe("405 method-not-allowed on existing paths", () => {
       // reach the handler and open a transaction — this suite stays database-free
       // on purpose. A `full` match is what proves the mount is wired, and it is
       // exactly what a missing route could not produce.
-      expect(resolveMethod(app.router.stack, `/stacks/${stackId}/graph`, "GET")).toEqual({
+      expect(resolveMethod(app.router.stack, graphPath, "GET")).toEqual({
         kind: "full",
       });
+    });
+
+    it("a method the graph route does not declare answers 405 with allow: GET", async () => {
+      expectMethodNotAllowed(
+        await request(app).put(graphPath),
+        ORACLE_ALLOW.stackGraph,
+      );
+    });
+
+    it("the old /stacks/<uuid>/graph path is now a 404", async () => {
+      // The relocation is a move, not an alias: the endpoint must not linger on
+      // the oracle-owned prefix, where it would still perturb that prefix's
+      // `Allow` observations.
+      const response = await request(app).get(`/stacks/${stackId}/graph`);
+
+      expect(response.status).toBe(404);
+      expect(response.text).toBe('{"detail":"Not Found"}');
     });
   });
 });
