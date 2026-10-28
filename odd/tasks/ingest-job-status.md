@@ -116,6 +116,28 @@ inherit the origin policy and security headers the viewer already applies
 | `5be3efc` feat(ingest): report real pipeline stages and transaction attempts | tasks 3, 4 |
 | `8a8e714` feat(host): accept async ingests with 202 and expose job status reads | task 5, plus tests for all of it (task 7) |
 
+### Follow-up: the UI lives in another project
+
+Decided after implementation. The contract is therefore documented as a CONSUMER
+surface in `docs/guides/http-ingest-jobs.mdx`, and the origin requirement is
+stated as a first-class constraint rather than a footnote.
+
+**The constraint, verified in code:** `validateOriginHeaders`
+(`src/viewer/server.ts:333`) requires an exact hostname+port match, the viewer
+sends no CORS headers, and it registers GET only so `OPTIONS` preflight 404s.
+
+| Consumer | Outcome today |
+| --- | --- |
+| Server-side fetch (Node, server action, proxy) | works — sends no `Origin` |
+| Browser `fetch` from another origin | 403, and no preflight |
+
+A browser-direct integration needs a separate mount with explicit CORS and an
+API-key story. That was offered and deliberately NOT done here: the user asked
+for documentation only.
+
+Also corrected `src/host/api.ts`'s header comment, which claimed the origin check
+"already applies" to this mount when it did not.
+
 ### Checks run
 
 - `npx tsc --noEmit` — pass

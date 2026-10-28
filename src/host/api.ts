@@ -15,17 +15,31 @@
  * ## Why they live beside the viewer rather than in the graph app
  *
  * The graph app carries fail-open authentication because the vendored AKS server
- * had none. These endpoints MUTATE the project, so they belong on the viewer's
- * fail-closed side, where the origin check already applies. Mounting them in the
- * graph app would have inherited the wrong trust boundary — the split is per-mount
- * for exactly this reason.
+ * had none. These endpoints MUTATE the project, so they belong on the fail-closed
+ * side. Mounting them in the graph app would have inherited the wrong trust
+ * boundary — the split is per-mount for exactly this reason.
  *
- * ## Synchronous, busy-answerable
+ * ## "Beside" the viewer is NOT "inside" it
  *
- * Both endpoints run the work to completion rather than queueing it. A client that
- * triggers a long compile is not a reason to block OTHER clients: the lock makes
- * contention visible instead of hiding it, and a second caller gets 409 straight
- * away rather than waiting behind an invisible queue.
+ * This mount runs BEFORE the viewer (`src/host/server.ts`), so it does not inherit
+ * the origin policy the viewer applies to the paths it dispatches. An earlier
+ * revision of this comment claimed the check "already applies" here, and it did
+ * not: a cross-origin `POST` with a non-JSON content type reached the mutation
+ * unauthenticated. {@link passesOriginPolicy} now applies the same headers and the
+ * same Host/Origin/Sec-Fetch-Site rules on this side, which is what makes the claim
+ * true rather than merely intended.
+ *
+ * ## Synchronous by default, busy-answerable, optionally asynchronous
+ *
+ * A request without `async` runs the work to completion rather than queueing it. A
+ * client that triggers a long compile is not a reason to block OTHER clients: the
+ * lock makes contention visible instead of hiding it, and a second caller gets 409
+ * straight away rather than waiting behind an invisible queue.
+ *
+ * `{"async": true}` is the opt-in escape from that wait: it answers 202 with a job
+ * identity and runs the work detached, so a caller that cannot hold a connection
+ * open still gets progress. The synchronous contract is untouched for every
+ * existing client.
  */
 
 import type { IncomingMessage, ServerResponse } from "http";

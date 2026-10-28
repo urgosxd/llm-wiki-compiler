@@ -1,0 +1,197 @@
+---
+title: "Async ingest jobs over HTTP"
+sidebarTitle: "HTTP Ingest Jobs"
+description: "Track an ingest across the ingest and compile dimensions from an external UI, with real stage names, visible transaction attempts, and no invented progress percentages."
+---
+
+`POST /api/ingest` runs the whole pipeline inside one response: fetch the source, write both dimensions in one transaction, then compile the wiki. For a large source that is minutes behind a single request, and a client can only learn the outcome by holding the connection open.
+
+Setting `"async": true` changes the question from *did this request succeed* to *where is this upload right now*. The request is accepted immediately with a job identity, and the job reports each dimension separately as the real pipeline moves.
+
+---
+
+## The two dimensions are separate on purpose
+
+An ingest and the compile that follows it fail SEPARATELY, and the synchronous endpoint already proves it: its `compileBusy` flag exists precisely because a compile can fail while the source was successfully ingested.
+
+So a job carries two independent state machines rather than one `status`. A job with a finished ingest and a busy compile is a normal state, and reporting it as `failed` would send you to retry an upload that already landed.
+
+| Dimension | Terminal states |
+| --- | --- |
+| `ingest` | `succeeded`, `unchanged`, `failed` |
+| `compile` | `succeeded`, `busy`, `failed`, `skipped` |
+
+`ingest: unchanged` is NOT the same as `succeeded`: it means identical content was re-ingested, so nothing was written and nothing was journalled.
+
+---
+
+## Start a job
+
+```bash
+curl -sS -X POST http://127.0.0.1:4173/api/ingest \
+  -H 'content-type: application/json' \
+  -d '{"source": "https://example.com/article", "async": true}'
+```
+
+```json
+{
+  "jobId": "ing_01J8Z4Q7X3",
+  "status": "queued",
+  "stage": "queued",
+  "ingest": { "status": "queued", "attempts": [] },
+  "compile": { "status": "queued", "progress": null }
+}
+```
+
+`202 Accepted` means *accepted*, not *done*. The work runs detached from the response.
+
+Omitting `async` keeps the original synchronous `200` answer, byte for byte. The flag is opt-in so existing clients never change behaviour.
+
+Pass `"compile": false` alongside `async` to ingest without compiling; the compile dimension then settles as `skipped`.
+
+---
+
+## Read the job
+
+```bash
+curl -sS http://127.0.0.1:4173/api/ingest/jobs/ing_01J8Z4Q7X3
+curl -sS http://127.0.0.1:4173/api/ingest/jobs          # newest first
+```
+
+A job in flight:
+
+```json
+{
+  "id": "ing_01J8Z4Q7X3",
+  "source": "https://example.com/article",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "updatedAt": "2026-01-01T00:00:12.480Z",
+  "ingest": {
+    "status": "running",
+    "stage": "committing",
+    "startedAt": "2026-01-01T00:00:00.010Z",
+    "attempts": [
+      { "attempt": 1, "startedAt": "...", "endedAt": "...", "error": "connection reset" },
+      { "attempt": 2, "startedAt": "..." }
+    ]
+  },
+  "compile": { "status": "queued", "progress": null }
+}
+```
+
+`attempt 2` has no `endedAt` while it is in flight. An entry with `error` is an attempt that rolled back.
+
+| Status | Meaning |
+| --- | --- |
+| `200` | the job snapshot |
+| `404` | this host tracks jobs and has never seen that id |
+| `503` | this host does not track jobs at all — no `--root` was mounted |
+
+`404` and `503` are deliberately different. Treating "this host does not track jobs" as "no such job" would make a poller stop on a job that exists.
+
+---
+
+## Progress is never invented
+
+There is **no percentage field**. `progress` is either `null` or an exact pair:
+
+```json
+{ "completed": 3, "total": 8 }
+```
+
+`null` means the pipeline does not know its denominator. Render an indeterminate indicator and show `stage`; do not compute a number from it.
+
+Only two stages know a real total today: `page_generation` (merged concepts to generate) and `finalize` (pages written). Every other stage reports `null`.
+
+---
+
+## Stage vocabulary
+
+These are the pipeline's own boundaries, not a friendlier renaming of them, so a reported stage can never describe work that did not happen.
+
+**`ingest.stage`** — in execution order:
+
+```
+detecting → fetching → extracting → preparing → committing → projecting → journaling
+```
+
+`journaling` is skipped when nothing was written (`unchanged`).
+
+**`compile.stage`** — matches the pipeline's measured stages:
+
+```
+detect_changes → extraction → page_generation → finalize → embeddings
+```
+
+The compile may have no stage yet while `compile.status` is `queued` or `skipped`.
+
+---
+
+## Failures survive a restart
+
+A running job lives in the host process; if it dies, the job is gone. A **failure** does not follow that rule, because *"why did this upload never appear"* is a question asked the next day.
+
+Every failed job appends one JSON line to `.llmwiki/ingest-failures.jsonl`:
+
+```json
+{"kind":"ingest_job_failed","jobId":"ing_01J8Z4Q7X3","source":"https://example.com/article","stage":"committing","error":"ingest failed after 2 attempts: ...","at":"2026-01-01T00:00:12.480Z"}
+```
+
+```bash
+grep ingest_job_failed .llmwiki/ingest-failures.jsonl | tail -5
+```
+
+The record carries the source identity, the stage it died in, and the error message. It never contains source text or page content.
+
+---
+
+## Connecting from another project
+
+**This is the part that decides whether your integration works at all.** The job reads and the mutation endpoint apply the viewer's origin policy, which requires the request's `Origin` to match the host's bound hostname and port **exactly**. The viewer sends no CORS headers and does not answer `OPTIONS` preflight.
+
+| How you call it | Result |
+| --- | --- |
+| **Server-side** — your backend, server action, or Node proxy calls the host | **Works as-is.** A server-side fetch sends no `Origin` and no `sec-fetch-site`, so the policy has nothing to reject. |
+| **Browser direct** — client-side `fetch` from `http://localhost:3000` to `http://127.0.0.1:4173` | **Rejected with `403`.** The origins differ, and there is no preflight for a JSON `POST`. |
+
+The supported pattern is a thin server-side proxy: your UI talks to your own backend, your backend talks to the host. That keeps the token out of the browser as well, since the host has no bearer-token surface of its own.
+
+If you need direct browser access, that is a different change — a separate mount with explicit CORS and an API-key story — not a configuration flag on this one.
+
+---
+
+## Polling
+
+There is no SSE or WebSocket stream. Poll, and back off once the job settles:
+
+```ts
+async function poll(jobId: string, base: string) {
+  for (let delay = 250; ; delay = Math.min(delay * 2, 2000)) {
+    const res = await fetch(`${base}/api/ingest/jobs/${jobId}`);
+    if (res.status === 503) throw new Error("this host does not track jobs");
+    if (res.status === 404) throw new Error("job unknown or expired");
+    const job = await res.json();
+    render(job);                       // stage + indeterminate-or-exact progress
+    if (isSettled(job)) return job;    // both dimensions terminal
+    await new Promise((r) => setTimeout(r, delay));
+  }
+}
+```
+
+A job is settled only when **both** dimensions are terminal-or-absent. `compile.running` with `ingest.succeeded` is still work in progress.
+
+---
+
+## Retention
+
+Settled jobs are retained for one hour and capped at 200 entries per host; the oldest settled job is dropped first. An in-flight job is never evicted — dropping one would orphan a running ingest from its own status surface.
+
+Poll a job's snapshot if you need to keep a record beyond that window; the failure log is the durable record for failures specifically.
+
+---
+
+## Limits worth knowing
+
+- **One ingest at a time.** Ingestion takes the project mutation lock and fails fast rather than queueing, so a second `POST /api/ingest` while one is running answers `409 busy`. That is a retry signal, not a failure.
+- **`compile: busy` is not a failure.** The source is on disk; only the compile needs a retry.
+- **No cancellation.** A running job is a process inside a transaction; cancelling it would mean killing a half-applied write. A retry is a new `POST`.

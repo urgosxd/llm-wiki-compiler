@@ -90,6 +90,7 @@
             "group": "Guides",
             "pages": [
               "guides/mcp-agent-integration",
+              "guides/http-ingest-jobs",
               "guides/viewer-themes",
               "guides/sdk",
               "guides/sdk-packages",
