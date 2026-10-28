@@ -147,19 +147,51 @@ The record carries the source identity, the stage it died in, and the error mess
 
 ## Connecting from another project
 
-**This is the part that decides whether your integration works at all.** The job reads and the mutation endpoint apply the viewer's origin policy, which requires the request's `Origin` to match the host's bound hostname and port **exactly**. The viewer sends no CORS headers and does not answer `OPTIONS` preflight.
+**This is the part that decides whether your integration works at all.** Both the job reads and the mutation endpoint apply the viewer's origin policy, and that policy checks **two** things on every request. The viewer sends no CORS headers and does not answer `OPTIONS` preflight.
 
-| How you call it | Result |
+1. **`Host` must match the bind exactly.** The accepted values are the address the host actually bound, plus `localhost` when that bind is loopback. There is no wildcard and no `0.0.0.0` mode.
+2. **`Origin`, when present, must match the same host and port.** A request that sends no `Origin` at all passes this half.
+
+Measured against a host bound to `127.0.0.1`:
+
+| `Host` sent by the client | Result |
 | --- | --- |
-| **Server-side** — your backend, server action, or Node proxy calls the host | **Works as-is.** A server-side fetch sends no `Origin` and no `sec-fetch-site`, so the policy has nothing to reject. |
-| **Browser direct** — client-side `fetch` from `http://localhost:3000` to `http://127.0.0.1:4173` | **Rejected with `403`.** The origins differ, and there is no preflight for a JSON `POST`. |
+| `127.0.0.1:<port>` | `200` |
+| `localhost:<port>` | `200` |
+| `host.docker.internal:<port>` | `403` |
+| `172.17.0.1:<port>` | `403` |
+| any other address | `403` |
 
-The supported pattern is a thin server-side proxy: your UI talks to your own backend, your backend talks to the host. That keeps the token out of the browser as well, since the host has no bearer-token surface of its own.
+So "server-side works as-is" is only true when the caller also sends an acceptable `Host`. A process in another machine, container, or VM namespace does not: it reaches the host under a different name and is rejected.
 
-If you need direct browser access, that is a different change — a separate mount with explicit CORS and an API-key story — not a configuration flag on this one.
+### The configuration that works
+
+Bind the host to the exact address the caller will use, then have the caller address it identically.
+
+```bash
+# Bind to the Docker bridge gateway, the address a container reaches the host on.
+llmwiki host --allow-lan --host 172.17.0.1 --port 4173
+```
+
+```bash
+# From inside the container, address that same string. Both halves then match.
+curl -sS -X POST http://172.17.0.1:4173/api/ingest \
+  -H 'content-type: application/json' \
+  -d '{"source":"https://example.com/article","async":true}'
+```
+
+Verified: with the host bound to `172.17.0.1`, a request sent with `Host: 172.17.0.1:<port>` answers `200`, while `Host: host.docker.internal:<port>` answers `403` against the same bind.
+
+Two consequences worth planning around:
+
+- **The bind address is part of the contract.** Changing it changes what every client must send. `0.0.0.0` is not a shortcut: it makes the accepted `Host` header the literal `0.0.0.0:<port>`, which no client sends, so every request is rejected including loopback.
+- **`--allow-lan` binds beyond loopback**, which exposes the project to the network. Combine it with the origin policy deliberately rather than by accident.
+
+### What is not supported
+
+Direct browser access from a different origin. That needs CORS headers and a preflight branch, which this mount does not have, plus a bearer-token story this host does not offer. It is a separate change — a new mount — not a flag on this one.
 
 ---
-
 ## Polling
 
 There is no SSE or WebSocket stream. Poll, and back off once the job settles:
