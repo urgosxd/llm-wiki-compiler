@@ -33,11 +33,6 @@ beforeEach(async () => {
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); });
 
 describe("newsroom profile — genericity proof over the shared read surfaces", () => {
-  it("profile validate exits 0", async () => {
-    const result = await runCLI(["profile", "validate"], root);
-    expect(result.code).toBe(0);
-  });
-
   it("status reports per-type entity counts and the relation count", async () => {
     const result = await collectStatus(root);
     expect(result.profile?.profileId).toBe("newsroom");

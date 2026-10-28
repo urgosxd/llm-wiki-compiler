@@ -12,6 +12,7 @@ import type { PageId } from "./page-id.js";
 import type { SelectedPageRef } from "../search/retrieval.js";
 import type { AnswerCitationReport } from "../citations/answer-types.js";
 import type { AnswerCitationManifest, ValidatedAnswerKind } from "../citations/answer-manifest.js";
+import type { IngestJobObserver } from "../services/ingest/jobs/types.js";
 
 /**
  * Lifecycle state of a concept or page's provenance.
@@ -132,11 +133,29 @@ export interface WikiState {
   promptModifiers?: string;
 }
 
-/** Change detection result for a single source file. */
+/**
+ * Change detection result for a single source DOCUMENT.
+ *
+ * ## Why `file` carries a source identity and not a filename
+ *
+ * The key used to be a filename because the corpus was a directory. Two things
+ * break that now that documents are rows:
+ *
+ *  - A filename is not unique. `alpha` and `Alpha!` both slugify to `alpha.md`,
+ *    and the file writer's collision disambiguation is what kept them apart on
+ *    disk. A row has no such side channel.
+ *  - A deletion has to name the document it retires, and by then the file is
+ *    gone -- `SourceState.source` exists precisely to remember the identity for
+ *    that case.
+ *
+ * So the field keeps its name (eight call sites read it as the key) and carries
+ * the identity, which IS unique per Stack.
+ */
 export interface SourceChange {
+  /** Source identity (URL, path, or `manual:<sha>`), unique within the Stack. */
   file: string;
   status: "new" | "changed" | "unchanged" | "deleted";
-  /** Contribution retirement caused by selection policy, not a file unlink. */
+  /** Contribution retirement caused by selection policy, not a document removal. */
   reason?: "deselected";
 }
 
@@ -252,6 +271,15 @@ export interface CompileOptions {
    * pending-embedding retries.
    */
   embeddings?: boolean;
+  /**
+   * Observe the run as the stages of an async ingest job.
+   *
+   * Carried on the OPTIONS rather than as a separate parameter because it is an
+   * observation of this run, not an input to it: it changes no page, no prompt, no
+   * digest and no outcome. The CLI, the MCP server and the SDK omit it and behave
+   * exactly as before.
+   */
+  jobObserver?: IngestJobObserver;
 }
 
 /**

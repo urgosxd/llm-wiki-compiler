@@ -218,6 +218,22 @@ function resolveWiki(options: ResolveDimensionsOptions, env: NodeJS.ProcessEnv):
  * @param options - Project root plus optional environment and dry-run flag.
  * @throws {DimensionActivationError} on an unknown dimension or missing stack id.
  */
+/**
+ * The Stack these dimensions will write to, resolved the same way they resolve it.
+ *
+ * The outbox needs this and must not re-derive it. The dimemensions take their
+ * Stack from the environment through {@link requireStackId}, so a second reader --
+ * parsing `AKS_STACK_ID` again in the caller -- would be a second answer to the same
+ * question, and the two would disagree the moment one of them changed.
+ *
+ * @param env - Environment to read the Stack id from.
+ * @returns The Stack id every enabled dimension is bound to.
+ * @throws {DimensionActivationError} when `AKS_STACK_ID` is missing.
+ */
+export function resolveStackId(env: NodeJS.ProcessEnv = process.env): string {
+  return requireStackId(env, "wiki");
+}
+
 export function resolveDimensions(options: ResolveDimensionsOptions): Dimension[] {
   const env = options.env ?? process.env;
   const names = parseNames(env[DIMENSIONS_ENV_VAR]);

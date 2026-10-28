@@ -13,27 +13,19 @@
  * `page-store.ts`: RLS alone was inert under the harness's role, so only a real
  * cross-tenant read proves the filter is there.
  */
+import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { createWikiPageReader } from "../../src/dimensions/wiki/database.js";
 import { upsertStoredPage } from "../../src/dimensions/wiki/page-store.js";
 import type { Page } from "../../src/pages/list.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { wikiTablesPresent } from "../fixtures/rls-probe.js";
 
-const harness = await createKgPostgresHarness("wiki-reader");
-const other = await createKgPostgresHarness("wiki-reader-other");
+const harness = await createKgPostgresHarness(`wiki-reader-${randomUUID().slice(0, 8)}`);
+const other = await createKgPostgresHarness(`wiki-reader-other-${randomUUID().slice(0, 8)}`);
 
-const provisioned = await (async (): Promise<boolean> => {
-  if (!harness.reachable) return false;
-  try {
-    const rows = await harness.db.execute<{ n: number }>(
-      "select count(*)::int as n from information_schema.tables where table_schema = 'wiki'",
-    );
-    return (rows[0] as { n: number } | undefined)?.n === 2;
-  } catch {
-    return false;
-  }
-})();
+const provisioned = await (harness.reachable && (await wikiTablesPresent(harness.db, ["pages", "concept_aliases"])));
 
 afterAll(async () => {
   await harness.cleanup();

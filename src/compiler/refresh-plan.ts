@@ -9,10 +9,11 @@
 
 import { listSelectedSourceFiles } from "../sources/scan.js";
 import path from "path";
-import { readStateClassified } from "../utils/state.js";
+import { readStateClassifiedFor } from "../dimensions/wiki/page-source-seam.js";
 import { buildFreshnessSnapshot } from "../freshness/index.js";
 import { findAffectedSources } from "./deps.js";
 import { scanWikiPages } from "./indexgen.js";
+import type { PageScanSource } from "../dimensions/wiki/page-scan-source.js";
 import { CONCEPTS_DIR } from "../utils/constants.js";
 import type { SourceChange, WikiState } from "../utils/types.js";
 import type { FreshnessSnapshot } from "../freshness/types.js";
@@ -140,15 +141,22 @@ const sorted = (xs: Iterable<string>): string[] => [...xs].sort();
  * Returns stateStatus and a RefreshPlan (null when state is missing or corrupt).
  * @param root - Absolute path to the llmwiki project root.
  */
-export async function resolveStaleRefresh(root: string): Promise<RefreshResolution> {
-  const classified = await readStateClassified(root);
+export async function resolveStaleRefresh(
+  root: string,
+  scanSource?: PageScanSource,
+): Promise<RefreshResolution> {
+  const classified = await readStateClassifiedFor(root);
   if (classified.status !== "ok") {
     return { stateStatus: classified.status, plan: null };
   }
 
   const snapshot = await buildFreshnessSnapshot(root, classified);
   const state = classified.state;
-  const pages = await scanWikiPages(path.join(root, CONCEPTS_DIR));
+  // Rows when they are the corpus. `classifyPages` already takes the scan shape, so
+  // the classification below is unchanged -- only where the page list came from.
+  const pages = scanSource === undefined
+    ? await scanWikiPages(path.join(root, CONCEPTS_DIR))
+    : await scanSource.scan("concepts");
   const c = classifyPages(pages, snapshot);
 
   return {

@@ -28,13 +28,16 @@ import { parseEntityId, EntityIdError } from "../profile/identity.js";
 import { readConfinedGraphStore, splitStoreRecords } from "../utils/jsonl-store.js";
 import { isOperationBinding, type OperationBinding } from "../utils/operation-binding.js";
 import type { RelationRef, RelationRecord } from "./types.js";
+import { recordChecksum } from "./store-record.js";
+import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+import { readRelationEdges } from "../dimensions/wiki/relation-edge-store.js";
 import {
   RELATION_STORE_SCHEMA_VERSION,
   RelationStoreTooNewError,
   RelationStoreCorruptError,
   RelationStoreSymlinkError,
 } from "./types.js";
-import { recordChecksum } from "./store-record.js";
+
 
 /** One parsed relation plus the operation binding it carries (when bundle-produced). */
 export interface BoundRelationRecord {
@@ -78,11 +81,9 @@ function readStoreFile(root: string): Promise<string | null> {
 
 /**
  * Read the exact raw store bytes (or null when absent) through the same confined,
- * no-follow, capped primitive the parser uses. The store-version upgrade seam
- * consumes these bytes to rewrite only the header while preserving every record
- * byte and its order.
+ * no-follow, capped primitive the parser uses.
  */
-export function readRelationStoreRaw(root: string): Promise<string | null> {
+function readRelationStoreRaw(root: string): Promise<string | null> {
   return readStoreFile(root);
 }
 
@@ -211,7 +212,44 @@ export async function readRelationRecords(root: string): Promise<ReadRelationRec
  * @param root - Absolute project root.
  * @returns The latest relation per id and a list of tolerated problems.
  */
+/**
+ * Read this Stack's edges from rows, or report that no Stack is configured.
+ *
+ * The per-record checksum is verified over the rows with the SAME `recordChecksum`
+ * the file reader uses, so a tampered row fails here exactly as a tampered line
+ * failed there. A checksum mismatch is reported as a PROBLEM rather than thrown,
+ * matching `readRelations`: the file path treats it as corruption to surface, and
+ * callers decide.
+ *
+ * @param env - Environment to read the Stack from.
+ * @returns The live edges plus problems, or null when no Stack is configured.
+ */
+async function readRelationsFromRows(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ReadRelationsResult | null> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return null;
+  const dimensionsDb = createDimensionsDatabase(env);
+  let edges;
+  try {
+    edges = await readRelationEdges(dimensionsDb.db, stackId);
+  } finally {
+    await dimensionsDb.close();
+  }
+  const problems: string[] = [];
+  const relations: RelationRef[] = [];
+  for (const edge of edges) {
+    if (recordChecksum(edge.ref, edge.operationBinding) !== edge.checksum) {
+      problems.push(`checksum mismatch for relation ${edge.ref.id}`);
+    }
+    relations.push(edge.ref);
+  }
+  return { relations, problems };
+}
+
 export async function readRelations(root: string): Promise<ReadRelationsResult> {
+  const viaRows = await readRelationsFromRows();
+  if (viaRows !== null) return viaRows;
   const { records, problems } = await readRelationRecords(root);
   return { relations: latestPerId(records).map((record) => record.ref), problems };
 }

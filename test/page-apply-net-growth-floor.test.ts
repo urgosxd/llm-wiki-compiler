@@ -27,6 +27,7 @@ import { openBatch, commitBatch, JournalPreStateUnreadableError } from "../src/t
 import type { PagePlannedMutation } from "../src/trust/planner.js";
 import { MAX_SOURCE_CHARS } from "../src/utils/constants.js";
 import { makeResearchLiteProjectRoot, RESEARCH_LITE_PROFILE } from "./fixtures/profile-fixtures.js";
+import { transitionLifecycle } from "../src/trust/lifecycle-transition.js";
 
 /** A research-lite profile (ideas lifecycle: proposed→testing→tested→…). */
 function profile(): ProfilePack {
@@ -62,8 +63,9 @@ describe("net-growth floor exemption for page updates", () => {
     const pagePath = path.join(root, "wiki/ideas/sparse-routing.md");
     // status FIRST so flipping proposed(8)→testing(7) shrinks the body — no growth.
     await writeFile(pagePath, `---\nstatus: proposed\n---\n\n${overCapProse()}\n`, "utf8");
-    const wiki = createWiki({ root });
-    await wiki.transitionLifecycle({ entityType: "ideas", slug: "sparse-routing", toState: "testing" });
+    // Repointed from the SDK method (gone with the staging facade) to the surviving
+    // writer, so the "the floor does not over-block a shrinking transition" tooth stays.
+    await transitionLifecycle(root, "ideas", "sparse-routing", "testing");
     expect(await readFile(pagePath, "utf8")).toContain("status: testing");
   });
 

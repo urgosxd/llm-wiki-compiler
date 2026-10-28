@@ -9,7 +9,7 @@
 import { CitationPublicationError, validateCitationPublication, type CitationPublicationMode } from "../citations/answer-publication.js";
 import type { AnswerCitationReport } from "../citations/answer-types.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
-import { acquireMutationLockBlocking } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLockBlocking } from "../utils/mutation-lock.js";
 import { releaseLock } from "../utils/lock.js";
 import type { QueryResult } from "../utils/types.js";
 import * as output from "../utils/output.js";

@@ -9,9 +9,15 @@
 import { readdir } from "fs/promises";
 import path from "path";
 import { atomicWrite, parseFrontmatter } from "../utils/markdown.js";
+import { withDerivedSource } from "../dimensions/wiki/derived-artifact-source.js";
 import { readWikiPageInDirOrWarn } from "./confined-wiki-read.js";
 import { toPosixPath } from "../utils/path-confine.js";
+import { projectSummaries } from "../dimensions/wiki/page-scan-source.js";
 import { CONCEPTS_DIR, QUERIES_DIR, INDEX_FILE } from "../utils/constants.js";
+import {
+  summarizeScanned,
+  type PageScanSource,
+} from "../dimensions/wiki/page-scan-source.js";
 import * as output from "../utils/output.js";
 import type { PageSummary } from "../utils/types.js";
 import { loadNonDefaultProfile, collectEntityPagesWithMessages } from "../profile/block.js";
@@ -28,21 +34,40 @@ import type { EntityPage } from "../profile/types.js";
  *
  * @param root - Project root directory.
  */
-export async function generateIndex(root: string): Promise<void> {
+export async function generateIndex(
+  root: string,
+  scanSource?: PageScanSource,
+): Promise<void> {
   output.status("*", output.info("Generating index..."));
 
-  const conceptsPath = path.join(root, CONCEPTS_DIR);
-  const queriesPath = path.join(root, QUERIES_DIR);
-  const concepts = await collectPageSummaries(conceptsPath);
-  const queries = await collectPageSummaries(queriesPath);
+  const [concepts, queries] = scanSource === undefined
+    ? await Promise.all([
+      collectPageSummaries(path.join(root, CONCEPTS_DIR)),
+      collectPageSummaries(path.join(root, QUERIES_DIR)),
+    ])
+    // Rows when they are the corpus: the file path would summarize an empty
+    // directory and write an index listing nothing.
+    : await Promise.all([
+      scanSource.scan("concepts").then(summarizeScanned),
+      scanSource.scan("queries").then(summarizeScanned),
+    ]);
 
   concepts.sort((a, b) => a.title.localeCompare(b.title));
   queries.sort((a, b) => a.title.localeCompare(b.title));
 
   const entityPages = await collectTypedPages(root);
   const indexContent = buildIndexContent(concepts, queries, entityPages);
-  const indexPath = path.join(root, INDEX_FILE);
-  await atomicWrite(indexPath, indexContent, { confineRoot: root });
+  // A Stack stores the render; the file is what a project without one gets, byte for
+  // byte as before. `index.md` is DERIVED -- nothing reads it back -- so there is no
+  // reader to keep in sync, only the write to redirect.
+  const stored = await withDerivedSource(process.env, async (source) => {
+    if (source === undefined) return false;
+    await source.save("index", indexContent);
+    return true;
+  });
+  if (!stored) {
+    await atomicWrite(path.join(root, INDEX_FILE), indexContent, { confineRoot: root });
+  }
 
   // Typed pages are rendered in the index, so the count must include them too
   // (empty for a DEFAULT project → unchanged "concepts + queries" total).
@@ -109,14 +134,9 @@ export async function scanWikiPages(dirPath: string): Promise<ScannedPage[]> {
 export async function collectPageSummaries(
   conceptsPath: string,
 ): Promise<PageSummary[]> {
-  const scanned = await scanWikiPages(conceptsPath);
-  return scanned
-    .filter(({ meta }) => meta.title && typeof meta.title === "string" && !meta.orphaned)
-    .map(({ slug, meta }) => ({
-      title: meta.title as string,
-      slug,
-      summary: typeof meta.summary === "string" ? meta.summary : "",
-    }));
+  // The projection is SHARED with the row-backed scan, so an index built from files
+  // and one built from rows cannot disagree about which pages are listable.
+  return projectSummaries(await scanWikiPages(conceptsPath));
 }
 
 /** Strip [[wikilink]] brackets from text, leaving the inner text intact. */

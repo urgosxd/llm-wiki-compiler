@@ -18,6 +18,7 @@ import {
 import { candidateFileId } from "../src/utils/candidate-store.js";
 import { RULE_STATE_FILE } from "../src/utils/constants.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
+import { withStackEnv } from "./fixtures/stack-env.js";
 import {
   restoreProviderEnvAfterEach,
   seedRuleSource as seedSource,
@@ -38,7 +39,7 @@ afterEach(() => {
 describe("rule extraction state cursor", () => {
   const ctx = useTempRoot(["sources"]);
 
-  it("does not re-process an unchanged source on a second run", async () => {
+  it("does not re-process an unchanged source on a second run", () => withStackEnv("rule-state", async () => {
     await seedSource(ctx.dir);
     await stubRuleExtraction();
     const first = await extractRuleCandidates(ctx.dir, NOW);
@@ -47,20 +48,36 @@ describe("rule extraction state cursor", () => {
     const second = await extractRuleCandidates(ctx.dir, NOW);
     expect(second.processedSources).toEqual([]);
     expect(second.candidates).toHaveLength(0);
-  });
+    // The cursor lives in rows now. A file here would mean the run silently fell
+    // back to the backend this change removes.
+    const { access } = await import("node:fs/promises");
+    const onDisk = await access(path.join(ctx.dir, ".llmwiki", RULE_STATE_FILE))
+      .then(() => true, () => false);
+    expect(onDisk).toBe(false);
+  }));
 });
 
 describe("approval preservation", () => {
   const ctx = useTempRoot(["sources"]);
 
-  it("does not overwrite an approved candidate when the source is re-extracted", async () => {
+  it("does not overwrite an approved candidate when the source is re-extracted", () => withStackEnv("rule-state", async () => {
     await seedSource(ctx.dir);
     await stubRuleExtraction();
     const { candidates } = await extractRuleCandidates(ctx.dir, NOW);
     await setRuleCandidateStatus(ctx.dir, candidateFileId(candidates[0]!.id), "approved");
 
-    // Force re-extraction of the same (unchanged) source by clearing the cursor.
-    await rm(path.join(ctx.dir, RULE_STATE_FILE), { force: true });
+    // Force re-extraction by clearing the cursor. It is a ROW now, so this deletes
+    // the row -- unlinking a file would be a no-op and the assertion would prove
+    // nothing. The Stack is the one this test provisioned, so the clear is scoped.
+    const { createDimensionsDatabase } = await import("../src/dimensions/activation.js");
+    const { clearRuleExtractorState } = await import("../src/dimensions/wiki/marker-store.js");
+    const stackId = process.env.AKS_STACK_ID!;
+    const handle = createDimensionsDatabase();
+    try {
+      await clearRuleExtractorState(handle.db, stackId);
+    } finally {
+      await handle.close();
+    }
     const rerun = await extractRuleCandidates(ctx.dir, NOW);
 
     const listed = await listRuleCandidates(ctx.dir);
@@ -68,13 +85,13 @@ describe("approval preservation", () => {
     expect(listed[0]!.status).toBe("approved");
     expect(rerun.candidates).toHaveLength(0);
     expect(rerun.notes.some((n) => n.includes("approved"))).toBe(true);
-  });
+  }));
 });
 
 describe("evidence span bounding + category sanitization", () => {
   const ctx = useTempRoot(["sources"]);
 
-  it("drops an out-of-bounds evidence line and emits an import-valid id", async () => {
+  it("drops an out-of-bounds evidence line and emits an import-valid id", () => withStackEnv("rule-state", async () => {
     await seedSource(ctx.dir);
     await stubRuleExtraction("Code Review", OUT_OF_BOUNDS_END);
     const { candidates } = await extractRuleCandidates(ctx.dir, NOW);
@@ -86,5 +103,5 @@ describe("evidence span bounding + category sanitization", () => {
     const ref = candidate.evidence[0]!;
     expect(ref.kind).toBe("file");
     expect("lineEnd" in ref ? ref.lineEnd : undefined).toBeUndefined();
-  });
+  }));
 });

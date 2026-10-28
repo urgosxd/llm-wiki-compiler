@@ -12,6 +12,7 @@ import path from "path";
 import { collectAllPages } from "../linter/rules.js";
 import { parseFrontmatter } from "../utils/markdown.js";
 import { readStoredEmbeddings } from "../utils/embeddings-storage.js";
+import type { EmbeddingStoreSource } from "../utils/embeddings-load.js";
 import { listSelectedSourceFiles } from "../sources/scan.js";
 import type { StatsResult, EvalReport } from "./types.js";
 
@@ -30,10 +31,17 @@ const HISTORY_FILE = path.join(HISTORY_DIR, "history.jsonl");
  * (outdated) store reports `available: false` — a DISTINCT degrade signal, never
  * silently `0`. A corpus-size snapshot must degrade, not crash.
  */
-async function readEmbeddingSnapshot(root: string): Promise<EmbeddingSnapshot> {
+async function readEmbeddingSnapshot(
+  root: string,
+  source?: EmbeddingStoreSource,
+): Promise<EmbeddingSnapshot> {
   let result: Awaited<ReturnType<typeof readStoredEmbeddings>>;
   try {
-    result = await readStoredEmbeddings(root);
+    // A store may live in the database now, so stats must read where the writer
+    // wrote. Reading only the file would report `embeddingsAvailable: false` for a
+    // corpus that is fully embedded -- measured: a vector written to the table came
+    // back as `embeddingCount: 0`.
+    result = source === undefined ? await readStoredEmbeddings(root) : await source.read();
   } catch {
     return { available: false, entries: 0, chunks: 0 };
   }
@@ -48,11 +56,14 @@ async function readEmbeddingSnapshot(root: string): Promise<EmbeddingSnapshot> {
  * Collect a corpus size snapshot for the current project state.
  * @param root - Absolute path to the project root.
  */
-export async function collectStats(root: string): Promise<StatsResult> {
+export async function collectStats(
+  root: string,
+  embeddingStoreSource?: EmbeddingStoreSource,
+): Promise<StatsResult> {
   const [sources, pages, embeddings] = await Promise.all([
     listSelectedSourceFiles(root),
     collectAllPages(root),
-    readEmbeddingSnapshot(root),
+    readEmbeddingSnapshot(root, embeddingStoreSource),
   ]);
 
   let totalWikiChars = 0;

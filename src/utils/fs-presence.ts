@@ -46,7 +46,7 @@ export async function readDirectoryNames(
  * whole listing `unavailable` rather than being skipped — a real unit moved aside and
  * replaced by a link must never read as "gone".
  */
-export async function listUnitDirectories(
+async function listUnitDirectories(
   registry: string,
 ): Promise<{ status: "ok"; unitIds: readonly string[] } | { status: "unavailable" }> {
   const rootLeaf = await lstatLeaf(registry);

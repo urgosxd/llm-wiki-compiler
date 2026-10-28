@@ -27,6 +27,8 @@ import { isLiteralMarkdown } from "./link-repair-code.js";
 import { listLinkResolvablePendingSlugs } from "./candidate-read.js";
 import { applyCompilePageWritesLocked } from "./compile-write.js";
 import type { CompilePageNamespace, CompilePageWrite } from "./compile-write.js";
+import type { PageContentSource, PageScanSource } from "../dimensions/wiki/page-scan-source.js";
+import { pageStoreOptions, type PageRemover, type PageSink } from "../trust/page-apply.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import * as output from "../utils/output.js";
 
@@ -44,19 +46,142 @@ const SLUG_SEPARATOR = "-";
 const MIN_REPAIRABLE_SLUG_LENGTH = 3;
 
 /**
- * Resolve a broken link slug to the single page it prefixes, or null when it
- * prefixes none or more than one.
+ * Candidate slugs an exact-modulo-morphology match would accept, or null.
+ *
+ * Extraction names a concept in the singular while its page title often lands in
+ * the plural (or vice versa), so `[[graph]]` misses `graphs` and `[[weighted-graph]]`
+ * misses `weighted-graphs`. Both name the same thing, and the link sits broken
+ * pointing at a page that is right there.
+ *
+ * Only the LAST word is inflected: `graph-theory` and `graphs-theory` are not the
+ * same concept, but `weighted-graph`/`weighted-graphs` are.
+ */
+function morphologyVariants(targetSlug: string): string[] {
+  const separatorIndex = targetSlug.lastIndexOf(SLUG_SEPARATOR);
+  const head = separatorIndex === -1 ? "" : targetSlug.slice(0, separatorIndex + 1);
+  const lastWord = separatorIndex === -1 ? targetSlug : targetSlug.slice(separatorIndex + 1);
+  if (lastWord.length < MIN_REPAIRABLE_SLUG_LENGTH) return [];
+  return singularForms(head, lastWord).concat(pluralForms(head, lastWord));
+}
+
+/**
+ * Plural -> singular candidates for one word, in decreasing specificity.
+ *
+ * Both directions are needed: which one the link uses depends on how the extractor
+ * phrased it, so a rule that only stripped an `s` would miss `studies` -> `study`.
+ *
+ * @param head - Everything up to and including the last separator.
+ * @param lastWord - The final word of the slug.
+ * @returns Candidate singular slugs; possibly empty.
+ */
+function singularForms(head: string, lastWord: string): string[] {
+  const forms: string[] = [];
+  if (lastWord.endsWith("ies") && lastWord.length > 4) forms.push(head + lastWord.slice(0, -3) + "y");
+  if (lastWord.endsWith("es") && lastWord.length > 3) forms.push(head + lastWord.slice(0, -2));
+  // `ss` is not a plural marker, so `class` must not become `clas`.
+  if (lastWord.endsWith("s") && !lastWord.endsWith("ss")) forms.push(head + lastWord.slice(0, -1));
+  return forms;
+}
+
+/**
+ * Singular -> plural candidates for one word.
+ *
+ * Empty when the word already reads as a plural: the singular forms in
+ * {@link singularForms} are then the only candidates, and adding `-s` to `graphs`
+ * would propose `graphss`.
+ *
+ * @param head - Everything up to and including the last separator.
+ * @param lastWord - The final word of the slug.
+ * @returns Candidate plural slugs; possibly empty.
+ */
+function pluralForms(head: string, lastWord: string): string[] {
+  if (lastWord.endsWith("s") && !lastWord.endsWith("ss")) return [];
+  return [head + lastWord + "s", head + lastWord + "es"];
+}
+
+/**
+ * Resolve a broken link slug to the single page it identifies, or null.
+ *
+ * Tried in order of certainty: an exact match, then a unique prefix (the original
+ * rule), then a unique singular/plural variant. Null when a step finds none or
+ * more than one -- an ambiguous target is still left alone rather than guessed at,
+ * because a wrong link is worse than a visibly missing one.
  */
 function resolveUniquePrefix(targetSlug: string, slugs: string[]): string | null {
   if (targetSlug.length < MIN_REPAIRABLE_SLUG_LENGTH) return null;
+  const existing = new Set(slugs);
+  // Morphology BEFORE prefix. `[[graph]]` beside both `graphs` and `graph-theory`
+  // is far more likely to mean the plural of itself than a longer unrelated page:
+  // inflection is a naming difference, while a prefix match is a truncation, and
+  // truncations are what produce wrong links. Both still require exactly ONE
+  // candidate, so an ambiguous inflection falls through to the prefix rule rather
+  // than being guessed at.
+  const inflected = uniqueInflection(targetSlug, existing);
+  if (inflected.slug !== null) return inflected.slug;
+  if (inflected.status === "ambiguous") return null;
+  const prefixed = uniquePrefixMatch(targetSlug, slugs);
+  if (prefixed.slug !== null) return prefixed.slug;
+  if (prefixed.status === "ambiguous") return null;
+  return exactWithoutExtension(targetSlug, existing);
+}
+
+/** Outcome of one repair rule: a single answer, ambiguity, or no candidate. */
+type RepairAnswer =
+  | { readonly status: "found"; readonly slug: string }
+  | { readonly status: "ambiguous"; readonly slug: null }
+  | { readonly status: "none"; readonly slug: null };
+
+/**
+ * The ONE inflection of this slug that exists, or nothing.
+ *
+ * Ambiguity is not resolved here: two existing inflections means the link names
+ * something the corpus cannot decide, and a wrong link is worse than a visibly
+ * missing one.
+ *
+ * @param targetSlug - The broken slug.
+ * @param existing - Every slug the corpus has.
+ * @returns The single match, an ambiguity, or no candidate.
+ */
+function uniqueInflection(targetSlug: string, existing: ReadonlySet<string>): RepairAnswer {
+  const inflected = morphologyVariants(targetSlug).filter((variant) => existing.has(variant));
+  if (inflected.length === 1) return { status: "found", slug: inflected[0]! };
+  if (inflected.length > 1) return { status: "ambiguous", slug: null };
+  return { status: "none", slug: null };
+}
+
+/**
+ * The ONE page whose slug extends this one with a separator, or nothing.
+ *
+ * @param targetSlug - The broken slug.
+ * @param slugs - Every slug the corpus has.
+ * @returns The single match, an ambiguity, or no candidate.
+ */
+function uniquePrefixMatch(targetSlug: string, slugs: readonly string[]): RepairAnswer {
   const prefix = targetSlug + SLUG_SEPARATOR;
   let match: string | null = null;
   for (const slug of slugs) {
     if (!slug.startsWith(prefix)) continue;
-    if (match) return null;
+    if (match) return { status: "ambiguous", slug: null };
     match = slug;
   }
-  return match;
+  return match === null ? { status: "none", slug: null } : { status: "found", slug: match };
+}
+
+/**
+ * Recover a slug from which `slugify` already stripped the `.md` extension.
+ *
+ * A link written as `[[algorithms.md]]` slugifies to `algorithmsmd`: `slugify` drops
+ * the dot and joins the words, because a dot is not a separator it knows about. So a
+ * trailing `md` is split back off and the exact lookup is retried.
+ *
+ * @param targetSlug - The broken slug.
+ * @param existing - Every slug the corpus has.
+ * @returns The extension-free slug when it exists, else null.
+ */
+function exactWithoutExtension(targetSlug: string, existing: ReadonlySet<string>): string | null {
+  if (!targetSlug.endsWith("md") || targetSlug.length <= MIN_REPAIRABLE_SLUG_LENGTH + 2) return null;
+  const withoutExtension = targetSlug.slice(0, -2);
+  return existing.has(withoutExtension) ? withoutExtension : null;
 }
 
 /** Reuse the production retained-only prefix rule, including pending ambiguity. */
@@ -64,8 +189,14 @@ export function createRepairResolver(slugs: string[], pending: Set<string>): (ta
   const existing = new Set(slugs);
   const possible = [...slugs, ...[...pending].filter(slug => !existing.has(slug))];
   // Exact pending targets must not be redirected to a different retained page.
-  return (targetSlug: string): string | null => {
-    if (existing.has(targetSlug) || pending.has(targetSlug)) return null;
+  return (writtenTarget: string): string | null => {
+    const targetSlug = slugify(writtenTarget);
+    // An EXISTING slug is the page this link names -- return it so the caller can
+    // normalise a title-shaped target (`[[Some Concept]]`) to its slug. Returning
+    // null here would mean "nothing to do", which is only true when the link is
+    // already written as that slug.
+    if (existing.has(targetSlug)) return targetSlug;
+    if (pending.has(targetSlug)) return null;
     const match = resolveUniquePrefix(targetSlug, possible);
     return match && existing.has(match) ? match : null;
   };
@@ -79,27 +210,110 @@ function splitWikilink(inner: string): { target: string; alias: string } {
   return { target, alias };
 }
 
-/** Rewrite every repairable link in a body; returns the body and a repair count. */
+/**
+ * Normalise every wikilink that names a page to ONE form: `[[slug|label]]`.
+ *
+ * A wiki may not have two ways to spell a link. Generation writes concept TITLES
+ * (`[[Betweenness Centrality]]`) while pages are stored under SLUGS
+ * (`betweenness-centrality`), and a reader tolerates that inconsistency only by
+ * guessing -- matching case-insensitively, folding spaces to hyphens, hoping no
+ * two titles collide once folded. Every one of those guesses is a way for a link
+ * to be silently wrong.
+ *
+ * So the CANONICAL form is the slug, always, with the original words kept as the
+ * alias: `[[betweenness-centrality|Betweenness Centrality]]`. The page reads the
+ * same, the target is exact, and nothing downstream has to reconstruct which page
+ * a link meant. A link is left alone only when it already IS its own slug.
+ *
+ * @param body - Page markdown with the frontmatter already stripped.
+ * @param identify - Maps a written target to the ONE page it names, or null.
+ * @returns The rewritten body and how many links changed.
+ */
 function repairBody(
   body: string,
-  resolve: (targetSlug: string) => string | null,
+  identify: (writtenTarget: string) => string | null,
 ): { body: string; repaired: number } {
   let repaired = 0;
   const literal = isLiteralMarkdown(body);
   const next = body.replace(WIKILINK_PATTERN, (match, inner: string, offset: number) => {
     if (literal(offset)) return match;
     const { target, alias } = splitWikilink(inner);
-    const resolved = resolve(slugify(target));
-    if (!resolved) return match;
+    const slug = identify(target);
+    if (!slug) return match;
+    // Compare the RESULT, not the inputs. A link already written as
+    // `[[slug|Original Title]]` re-derives to exactly the same bytes, and counting
+    // that as a repair would make every pass rewrite every page -- re-embedding the
+    // whole wiki each compile for output identical to what was already there.
+    const canonical = `[[${slug}|${alias}]]`;
+    if (canonical === match) return match;
     repaired += 1;
-    return `[[${resolved}|${alias}]]`;
+    return canonical;
   });
   return { body: next, repaired };
 }
 
+/**
+ * The pages a repair pass rewrites, keyed by the identity its writes need.
+ *
+ * `namespace` and `slug` are carried alongside the text because a row has no path:
+ * deriving a namespace by splitting a path only works on the file branch, and doing
+ * it there and something else here is how the two backends drift apart.
+ */
+interface RepairPage {
+  namespace: CompilePageNamespace;
+  slug: string;
+  content: string;
+}
+
 /** Read only pages whose opened bytes remain within their expected directory. */
-async function collectRepairPages(root: string): Promise<Array<{ filePath: string; content: string }>> {
-  const pages: Array<{ filePath: string; content: string }> = [];
+async function collectRepairPages(
+  root: string,
+  source: PageContentSource | undefined,
+  scan: PageScanSource | undefined,
+): Promise<RepairPage[]> {
+  if (source !== undefined && scan !== undefined) {
+    return await collectRepairPagesFromRows(source, scan);
+  }
+  return await collectRepairPagesFromDisk(root);
+}
+
+/**
+ * Collect the pages a repair pass must consider from a row corpus.
+ *
+ * The scan supplies the identities and the content source supplies each body, which
+ * is the same split the disk branch performs by listing a directory and reading each
+ * entry. Both directories are read because a `concepts` page may link to a `queries`
+ * page.
+ *
+ * @param source - Per-page reader for the Stack.
+ * @param scan - Listing source for the Stack.
+ * @returns Every page with a body that could be read.
+ */
+async function collectRepairPagesFromRows(
+  source: PageContentSource,
+  scan: PageScanSource,
+): Promise<RepairPage[]> {
+  const pages: RepairPage[] = [];
+  for (const namespace of ["concepts", "queries"] as const) {
+    for (const scanned of await scan.scan(namespace)) {
+      const content = await source.read(namespace, scanned.slug);
+      // A listing entry whose body cannot be read is skipped rather than repaired
+      // against empty text, which would rewrite a page into nothing.
+      if (content === undefined) continue;
+      pages.push({ namespace, slug: scanned.slug, content });
+    }
+  }
+  return pages;
+}
+
+/**
+ * Collect the pages a repair pass must consider from `wiki/` on disk.
+ *
+ * @param root - Absolute project root the reads are confined under.
+ * @returns Every page whose opened bytes stay inside its expected directory.
+ */
+async function collectRepairPagesFromDisk(root: string): Promise<RepairPage[]> {
+  const pages: RepairPage[] = [];
   for (const dir of [CONCEPTS_DIR, QUERIES_DIR]) {
     const files = await readdir(path.join(root, dir)).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return [];
@@ -112,7 +326,7 @@ async function collectRepairPages(root: string): Promise<Array<{ filePath: strin
         await warnDroppedWikiReadIfPresent(filePath, path.join(dir, file), result.dropped);
         continue;
       }
-      pages.push({ filePath, content: result.content });
+      pages.push({ namespace: namespaceForPage(filePath), slug: file.slice(0, -3), content: result.content });
     }
   }
   return pages;
@@ -132,13 +346,19 @@ function namespaceForPage(filePath: string): CompilePageNamespace {
  * and calls no model, so the cost is the same order as `llmwiki lint`.
  *
  * @param root - Absolute project root the reads and writes are confined under.
+ * @param source - Row-backed page reader, or undefined to read `wiki/`.
+ * @param scan - Row-backed listing, or undefined to list `wiki/`.
  * @returns One write per page whose body actually changed.
  */
-export async function repairLinks(root: string): Promise<CompilePageWrite[]> {
-  const pages = await collectRepairPages(root);
+export async function repairLinks(
+  root: string,
+  source?: PageContentSource,
+  scan?: PageScanSource,
+): Promise<CompilePageWrite[]> {
+  const pages = await collectRepairPages(root, source, scan);
   if (pages.length === 0) return [];
 
-  const slugs = pages.map((page) => path.basename(page.filePath, ".md").toLowerCase());
+  const slugs = pages.map((page) => page.slug.toLowerCase());
   const pending = await listLinkResolvablePendingSlugs(root);
   const resolve = createRepairResolver(slugs, pending);
 
@@ -150,8 +370,8 @@ export async function repairLinks(root: string): Promise<CompilePageWrite[]> {
     if (result.repaired === 0) continue;
     repairedLinks += result.repaired;
     writes.push({
-      namespace: namespaceForPage(page.filePath),
-      slug: path.basename(page.filePath, ".md"),
+      namespace: page.namespace,
+      slug: page.slug,
       body: page.content.replace(body, () => result.body),
     });
   }
@@ -175,7 +395,17 @@ export async function repairLinks(root: string): Promise<CompilePageWrite[]> {
  * interlink resolution is applied from the same place in the pipeline.
  *
  * @param root - Absolute project root the writes are confined under.
+ * @param source - Row-backed page reader, or undefined to read `wiki/`.
+ * @param scan - Row-backed listing, or undefined to list `wiki/`.
+ * @param sink - Row writer, or undefined to write files.
  */
-export async function repairAndApplyLinks(root: string): Promise<void> {
-  await applyCompilePageWritesLocked(root, await repairLinks(root));
+export async function repairAndApplyLinks(
+  root: string,
+  source?: PageContentSource,
+  scan?: PageScanSource,
+  sink?: PageSink,
+  remover?: PageRemover,
+): Promise<void> {
+  await applyCompilePageWritesLocked(
+    root, await repairLinks(root, source, scan), pageStoreOptions(sink, remover));
 }

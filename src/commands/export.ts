@@ -46,6 +46,7 @@ import { runOkfExport } from "../export/okf/run.js";
 import { EXPORT_DIR } from "../utils/constants.js";
 import { EXPORT_TARGETS, DEFAULT_EXPORT_TARGETS, MARP_SOURCES } from "../export/types.js";
 import type { ExportPage, ExportTarget, MarpSource } from "../export/types.js";
+import { withRawPageSource } from "../dimensions/wiki/page-source-seam.js";
 
 const require = createRequire(import.meta.url);
 
@@ -214,7 +215,7 @@ function computeReportedPageCount(
 export async function runExport(root: string, options: ExportOptions = {}): Promise<ExportResult> {
   const projectId =
     options.projectId !== undefined ? validateProjectId(options.projectId) : undefined;
-  const pages = await collectExportPages(root);
+  const pages = await withRawPageSource(root, process.env, (source) => collectExportPages(root, source));
   const projectTitle = resolveProjectTitle(root);
   const profile = await buildExportProfileBlock(root);
   const warnings = await collectExportWarnings(root);
@@ -272,7 +273,7 @@ export async function exportJson(
   root: string,
   options: ExportJsonOptions = {},
 ): Promise<JsonExportDocument> {
-  const pages = await collectExportPages(root);
+  const pages = await withRawPageSource(root, process.env, (source) => collectExportPages(root, source));
   const profile = await buildExportProfileBlock(root);
   const warnings = await collectExportWarnings(root);
   // Reconstruct build options from ONLY the public knob so a forged `profile` or

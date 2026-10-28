@@ -16,6 +16,8 @@ import path from "path";
 import { mkdir, writeFile, readdir, readFile } from "fs/promises";
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
 import { useIngestWorkspaces } from "./fixtures/ingest-workspace.js";
+import { listSourceFilenames, readSourceBodies } from "./fixtures/source-corpus.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
 
 const workspaces = useIngestWorkspaces("collision");
 
@@ -48,7 +50,7 @@ async function makeCollidingWorkspace(): Promise<{
  * for collision disambiguation, used by every test that exercises it.
  */
 async function expectBareAndHashedNotes(cwd: string): Promise<string[]> {
-  const files = (await readdir(path.join(cwd, "sources"))).sort();
+  const files = await listSourceFilenames(cwd);
   expect(files.length).toBe(2);
   expect(files).toContain("notes.md");
   expect(files.some((f) => /^notes-[0-9a-f]{8}\.md$/.test(f))).toBe(true);
@@ -56,6 +58,9 @@ async function expectBareAndHashedNotes(cwd: string): Promise<string[]> {
 }
 
 describe("ingest — basename collision (#36)", () => {
+  // Scoped to this suite: it is the one that ingests.
+  useStackEnv("ingest-basename-collision");
+
   it("two distinct sources with the same basename produce two distinct files", { timeout: CLI_INTEGRATION_TIMEOUT_MS }, async () => {
     const { cwd, pathA, pathB } = await makeCollidingWorkspace();
 
@@ -67,10 +72,8 @@ describe("ingest — basename collision (#36)", () => {
     const files = await expectBareAndHashedNotes(cwd);
 
     // Both contents are present — no silent overwrite.
-    const contents = await Promise.all(
-      files.map((f) => readFile(path.join(cwd, "sources", f), "utf-8")),
-    );
-    const joined = contents.join("\n");
+    const bodies = await readSourceBodies(cwd);
+    const joined = files.map((f) => bodies.get(f) ?? "").join("\n");
     expect(joined).toContain("Content from a/notes.md.");
     expect(joined).toContain("Content from b/notes.md.");
   });
@@ -82,9 +85,8 @@ describe("ingest — basename collision (#36)", () => {
     expectCLIExit(await runCLI(["ingest", pathA], cwd), 0);
     expectCLIExit(await runCLI(["ingest", pathA], cwd), 0);
 
-    const files = await readdir(path.join(cwd, "sources"));
-    // Three ingests of the same file → still exactly one source on disk.
-    expect(files).toEqual(["notes.md"]);
+    // Three ingests of the same file → still exactly one source.
+    expect(await listSourceFilenames(cwd)).toEqual(["notes.md"]);
   });
 
   it("disambiguation hash is stable across runs (same source → same suffix)", { timeout: CLI_INTEGRATION_TIMEOUT_MS }, async () => {
@@ -92,7 +94,7 @@ describe("ingest — basename collision (#36)", () => {
 
     expectCLIExit(await runCLI(["ingest", pathA], cwd), 0);
     expectCLIExit(await runCLI(["ingest", pathB], cwd), 0);
-    const firstRun = (await readdir(path.join(cwd, "sources"))).sort();
+    const firstRun = await listSourceFilenames(cwd);
 
     // Re-ingest pathB — should hit the same hashed filename, not generate a new one.
     expectCLIExit(await runCLI(["ingest", pathB], cwd), 0);
@@ -104,25 +106,12 @@ describe("ingest — basename collision (#36)", () => {
   // Edge case: an existing sources/X.md without llmwiki frontmatter (or with
   // missing `source` field) should never be silently overwritten — the
   // resolver must fall through to the hash suffix path.
-  it("falls through cleanly when an existing same-basename file is malformed", { timeout: CLI_INTEGRATION_TIMEOUT_MS }, async () => {
-    const { cwd, pathA } = await makeCollidingWorkspace();
-
-    // Pre-seed sources/notes.md with a file that has no llmwiki frontmatter
-    // at all — could be a user's hand-written file or stray content.
-    await mkdir(path.join(cwd, "sources"), { recursive: true });
-    await writeFile(
-      path.join(cwd, "sources", "notes.md"),
-      "Pre-existing notes with no frontmatter.\n",
-      "utf-8",
-    );
-
-    const result = await runCLI(["ingest", pathA], cwd);
-    expectCLIExit(result, 0);
-
-    await expectBareAndHashedNotes(cwd);
-
-    // The pre-existing file is preserved verbatim — no silent overwrite.
-    const original = await readFile(path.join(cwd, "sources", "notes.md"), "utf-8");
-    expect(original).toBe("Pre-existing notes with no frontmatter.\n");
-  });
+  // REMOVED: "falls through cleanly when an existing same-basename file is malformed".
+  //
+  // That test hand-seeded `sources/notes.md` with frontmatter-less text and asserted
+  // the ingest stepped aside and preserved it verbatim. It is a property of the FILE
+  // backend only: a Stack-backed project has no "pre-existing stray file" for an
+  // ingest to discover, because the corpus is rows and a row without frontmatter is
+  // not a state that can exist. Keeping it would have meant seeding a file the
+  // product no longer reads.
 });

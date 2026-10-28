@@ -23,6 +23,7 @@ import { compileAndReport } from "./index.js";
 import { collectExportPages } from "../export/collect.js";
 import type { ExportPage } from "../export/types.js";
 import type { CompileOptions, ReviewedCandidateRef } from "../utils/types.js";
+import { withRawPageSource } from "../dimensions/wiki/page-source-seam.js";
 
 /** Options for {@link compileDelta}. Pass-through to the compile pipeline. */
 export type CompileDeltaOptions = CompileOptions;
@@ -81,7 +82,7 @@ export async function compileDelta(
   // `result.pages` are concept/seed slugs, all written under wiki/concepts.
   // Match on (pageDirectory, slug), not bare slug, so a saved query that
   // happens to share a slug with a changed concept is never mis-included.
-  const allPages = await collectExportPages(root);
+  const allPages = await withRawPageSource(root, process.env, (s) => collectExportPages(root, s));
   const changedPages = allPages.filter(
     (page) => page.pageDirectory === "concepts" && changedSlugSet.has(page.slug),
   );

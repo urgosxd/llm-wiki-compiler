@@ -53,29 +53,18 @@ describe("content HTTP API", () => {
     expect(content.status).toBe(403);
     expect(content.body).not.toContain("remote secret");
   });
-  it.each([
-    { host: "127.0.0.1", enabled: undefined, advertised: false },
-    { host: "127.0.0.1", enabled: true, advertised: true },
-    { host: "0.0.0.0", enabled: true, advertised: false },
-  ])("advertises journey navigation only when enabled and local: %j", async ({ host, enabled, advertised }) => {
-    const base = await start(host, enabled);
-    const envelope = host === "0.0.0.0"
-      ? JSON.parse((await lanRequest(handle!.port, "/api/workflow-runs")).body)
-      : await (await fetch(`${base}/api/workflow-runs`)).json();
-    expect(envelope.runs).toEqual([]);
-    if (advertised) expect(envelope.workflowJourneys).toBe(true);
-    else expect(envelope).not.toHaveProperty("workflowJourneys");
-  });
-  it.each([
-    "/api/workflows/build/runs/run-1",
-    "/api/workflows/build/runs/run-1/stage/draft/output",
-    "/api/workflows/build/runs/run-1/pdf",
-  ])("denies remote workflow content through %s before reading the run", async pathname => {
-    await start("0.0.0.0");
-    const response = await lanRequest(handle!.port, pathname);
-    expect(response.status).toBe(403);
-    expect(JSON.parse(response.body)).toMatchObject({ error: { code: "loopback_only" } });
-  });
+  /**
+   * REMOVED: the journey-navigation and workflow-content `it.each` blocks.
+   *
+   * Both drove `/api/workflow-runs` and `/api/workflows/...`, which the viewer still
+   * LISTED as registered after the workflow subsystem was buried while having no
+   * dispatch branch -- so `routeLiveResources` threw its drift error and answered 500
+   * where the origin policy's 403 belonged. Removing them from the registry made the
+   * paths honest 404s, so these assertions belong to a surface that does not exist.
+   *
+   * The 403-on-remote property is still covered above against
+   * `/api/source/paper.md/content`, a route that exists.
+   */
 });
 
 /** Match the LAN bind's required Host header without relying on fetch overriding it. */

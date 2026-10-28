@@ -15,6 +15,23 @@ import { candidateJudgeConfig } from "./candidate-judge-config.js";
 import { createCitationJudge, selectDeterministicSample, type CitationPair } from "./citation-support.js";
 import type { CandidateAssessment, CandidateEvalReport, CandidateReference } from "./candidate-types.js";
 import type { ReviewCandidate } from "../utils/types.js";
+import { withCandidateSource } from "../dimensions/wiki/candidate-source.js";
+
+/**
+ * The serialized form the evaluator hashes.
+ *
+ * `revision` and the generation hashes are computed from the record's TEXT, and the
+ * file path got that text by reading the leaf. A row has no leaf, so the same shape
+ * is reproduced here with the writer's own serialization. Without this the evaluator
+ * would hash a different string for the same candidate depending on the backend, and
+ * a cached verdict would look stale on every run.
+ *
+ * @param candidate - The candidate as stored.
+ * @returns The text the file backend would have written.
+ */
+function serializedFor(candidate: ReviewCandidate): string {
+  return JSON.stringify(candidate, null, 2);
+}
 
 /** The directory approval writes to: any value other than "queries" routes to concepts. */
 function approvalDirectory(candidate: ReviewCandidate): "concepts" | "queries" {
@@ -49,26 +66,63 @@ function skipReason(candidate: ReviewCandidate | undefined, id: string): string 
 
 /** Inventory candidate snapshots without mutating the queue or compile state. */
 async function collectPending(root: string, report: CandidateEvalReport): Promise<void> {
-  const dir = await resolveConfinedCandidatesDir(root, CANDIDATES_DIR);
-  const ids = dir ? (await listCandidateFileIds(dir)).sort() : [];
+  // Rows when a Stack is configured. The file walk below answers "no candidates" on a
+  // Stack-backed project because the directory does not exist, so the whole evaluation
+  // silently reported an empty queue instead of assessing anything.
+  const fromRows = await withCandidateSource(process.env, async (source) => {
+    if (source === undefined) return undefined;
+    const pending = (await source.list())
+      .map((candidate) => ({ candidate, raw: serializedFor(candidate), id: candidate.id }))
+      .sort((a, b) => a.candidate.id.localeCompare(b.candidate.id));
+    return pending;
+  });
+  const snapshots = fromRows ?? await readFileSnapshots(root);
   const read = currentEvidenceReader(root);
-  for (const id of ids) {
-    const snapshot = await readCandidateSnapshot(root, id);
-    const candidate = snapshot?.candidate;
-    const reason = skipReason(candidate, id);
-    if (reason || !candidate) {
-      report.skippedCandidates.push({ id, reason: reason! });
+  for (const snapshot of snapshots) {
+    const { candidate, raw } = snapshot;
+    // A leaf that failed to parse has no candidate at all; report it by id so the
+    // skip message is the same one the file backend produced.
+    if (candidate === undefined) {
+      report.skippedCandidates.push({ id: snapshot.id, reason: skipReason(undefined, snapshot.id)! });
       continue;
     }
-    const reference = referenceFor(candidate, snapshot!.raw);
+    const reason = skipReason(candidate, candidate.id);
+    if (reason) {
+      report.skippedCandidates.push({ id: candidate.id, reason });
+      continue;
+    }
+    const reference = referenceFor(candidate, raw);
     report.candidates.push(reference);
     const { assessments, prose, cited } = await candidateAssessments(
-      { body: candidate.body, hashes: generationHashes(snapshot!.raw) }, reference, read);
+      { body: candidate.body, hashes: generationHashes(raw) }, reference, read);
     report.assessments.push(...assessments);
     report.coverage.proseParagraphs += prose;
     report.coverage.citedParagraphs += cited;
-    if (!prose) report.skippedCandidates.push({ id, reason: "No prose paragraphs in the evaluator's scope." });
+    if (!prose) report.skippedCandidates.push({ id: candidate.id, reason: "No prose paragraphs in the evaluator's scope." });
   }
+}
+
+/** One loaded candidate plus the text the evaluator hashes it from. */
+interface CandidateSnapshot {
+  /** Absent when the leaf could not be read or parsed. */
+  candidate: ReviewCandidate | undefined;
+  raw: string;
+  /** The id under which a failed leaf was listed. */
+  id: string;
+}
+
+/** Read the queue from the file backend, in the same id order rows use. */
+async function readFileSnapshots(root: string): Promise<CandidateSnapshot[]> {
+  const dir = await resolveConfinedCandidatesDir(root, CANDIDATES_DIR);
+  const ids = dir ? (await listCandidateFileIds(dir)).sort() : [];
+  const snapshots: CandidateSnapshot[] = [];
+  for (const id of ids) {
+    const snapshot = await readCandidateSnapshot(root, id);
+    // An unreadable or malformed leaf is reported as a skip, exactly as before; the
+    // caller decides the reason so the message stays identical.
+    snapshots.push({ candidate: snapshot?.candidate, raw: snapshot?.raw ?? "", id });
+  }
+  return snapshots;
 }
 
 /** Convert one eligible observation to the shared engine's input. */

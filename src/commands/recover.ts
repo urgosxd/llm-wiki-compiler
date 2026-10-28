@@ -23,7 +23,7 @@ import {
   type RecoveryStatus,
 } from "../trust/journal-recovery.js";
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import * as output from "../utils/output.js";
 
 /**

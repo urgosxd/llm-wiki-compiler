@@ -16,6 +16,8 @@ import path from "path";
 import { readdir, writeFile } from "fs/promises";
 import { runCLI, expectCLIExit, expectCLIFailure } from "./fixtures/run-cli.js";
 import { useIngestWorkspaces } from "./fixtures/ingest-workspace.js";
+import { listSourceFilenames } from "./fixtures/source-corpus.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
 
 const workspaces = useIngestWorkspaces("unicode-ingest");
 const makeWorkspace = workspaces.makeWorkspace;
@@ -34,11 +36,13 @@ async function expectIngestProducesUnicodeFilename(
   const { cwd, fixturePath } = await makeWorkspace(fixtureName, fixtureContent);
   const result = await runCLI(["ingest", fixturePath], cwd);
   expectCLIExit(result, 0);
-  const files = await readdir(path.join(cwd, "sources"));
-  expect(files).toEqual([expectedSourcesEntry]);
+  expect(await listSourceFilenames(cwd)).toEqual([expectedSourcesEntry]);
 }
 
 describe("ingest — non-ASCII filenames (#35)", () => {
+  // Scoped to this suite: it is the one that ingests.
+  useStackEnv("ingest-unicode-filenames");
+
   it("CJK-named file is written under sources/ with a Unicode slug", async () => {
     // Exactly one file, named after the CJK title — not the silent ".md" dotfile.
     await expectIngestProducesUnicodeFilename(
@@ -72,7 +76,7 @@ describe("ingest — non-ASCII filenames (#35)", () => {
     const result2 = await runCLI(["ingest", pathB], cwdA);
     expectCLIExit(result2, 0);
 
-    const files = (await readdir(path.join(cwdA, "sources"))).sort();
+    const files = await listSourceFilenames(cwdA);
     expect(files).toEqual(["另一个文档.md", "测试文档.md"]);
   });
 
@@ -88,7 +92,7 @@ describe("ingest — non-ASCII filenames (#35)", () => {
     // Critically: no .md dotfile was written — the ingest aborted.
     let files: string[] = [];
     try {
-      files = await readdir(path.join(cwd, "sources"));
+      files = await listSourceFilenames(cwd);
     } catch {
       // sources/ may not have been created; either outcome is acceptable.
     }

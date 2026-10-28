@@ -31,7 +31,7 @@ import { countCandidates } from "../compiler/candidates.js";
 import { listSelectedSourceFiles } from "../sources/scan.js";
 import { LINT_CACHE_TIMESTAMP_PATTERN } from "../linter/cache.js";
 import type { LintCacheEntry } from "../linter/cache.js";
-import { readStateClassified } from "../utils/state.js";
+import { readStateClassifiedFor } from "../dimensions/wiki/page-source-seam.js";
 import type { StateStatus } from "../utils/state.js";
 
 /** Markdown extension treated as a wiki page for counting purposes. */
@@ -95,7 +95,7 @@ export async function collectProjectState(root: string): Promise<ProjectState> {
   const lint = await collectLintCacheStatus(root);
   const mtimes = await collectMtimes(root, dirs);
   // Read-only; never writes a .bak file — safe for the cheap orientation command.
-  const stateStatus = (await readStateClassified(root)).status;
+  const stateStatus = (await readStateClassifiedFor(root)).status;
   return assembleState({ root, dirs, counts, lint, mtimes, stateStatus });
 }
 

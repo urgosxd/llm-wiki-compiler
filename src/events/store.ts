@@ -42,7 +42,7 @@ import path from "path";
 import { EVENTS_FILE, EVENTS_HEAD_FILE, MAX_EVENT_RECORD_BYTES, MAX_EVENT_STORE_BYTES } from "../utils/constants.js";
 import { assertOperationBinding, type OperationBinding } from "../utils/operation-binding.js";
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLockBlocking } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLockBlocking } from "../utils/mutation-lock.js";
 import { atomicWrite } from "../utils/markdown.js";
 import { ulid } from "../relations/ulid.js";
 import type { EventContent, EventId, EventRecord, EventType } from "./types.js";
@@ -57,6 +57,8 @@ import {
   type EventChecksumInput,
 } from "./store-record.js";
 import { eventPrevHash } from "./event-digest.js";
+import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+import { appendEventRow } from "../dimensions/wiki/event-log-store.js";
 import { prepareEventStoreForAppend } from "./store-read.js";
 import { ensureEventOperationVersionLocked } from "./store-version.js";
 
@@ -207,6 +209,36 @@ async function eventFileSize(file: string): Promise<number> {
  * @param input - The new event's content.
  * @returns The persisted {@link EventRecord}.
  */
+/**
+ * Append this event to ROWS when a Stack is configured, or report that it is not.
+ *
+ * Returns `null` when there is no Stack, so the caller falls through to the file.
+ * `null` rather than a boolean because "wrote a row" and "no database" are different
+ * outcomes and collapsing them would make a Stack-less project look like a failed
+ * write.
+ *
+ * Opens and closes its own handle: the append sites are scattered across connectors,
+ * artifacts and trust, none of which owns a database, and threading one through
+ * would change twenty signatures to move one append.
+ *
+ * @param input - The event content to persist.
+ * @param env - Environment to read the Stack from.
+ * @returns The appended record, or null when no Stack is configured.
+ */
+async function appendEventToRows(
+  input: AppendEventInput,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<EventRecord | null> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return null;
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    return await appendEventRow(dimensionsDb.db, stackId, input as never);
+  } finally {
+    await dimensionsDb.close();
+  }
+}
+
 export async function appendEventLocked(root: string, input: AppendEventInput): Promise<EventRecord> {
   // WRITE precondition (verify-then-repair): prepareEventStoreForAppend VERIFIES
   // the chain FIRST, so a broken/reordered chain or a non-recoverable head/log
@@ -216,6 +248,8 @@ export async function appendEventLocked(root: string, input: AppendEventInput): 
   // line and corrupts the log) and the bounded one-record-AHEAD crash state (a
   // complete record the head never sealed — dropped, since the seal is the commit
   // point). Typed errors (corrupt / too-new / symlink) still throw.
+  const viaRows = await appendEventToRows(input);
+  if (viaRows !== null) return viaRows;
   const events = await prepareEventStoreForAppend(root); // under the caller's lock
   const record = buildEventRecord(input, prevHashFor(events));
   await appendLine(root, record);
@@ -241,6 +275,8 @@ export async function appendBoundEventLocked(
   binding: OperationBinding,
 ): Promise<EventRecord> {
   const checked = assertOperationBinding(binding);
+  const viaRows = await appendEventToRows({ ...input, operationBinding: checked } as never);
+  if (viaRows !== null) return viaRows;
   const events = await prepareEventStoreForAppend(root); // under the caller's lock
   await ensureEventOperationVersionLocked(root); // upgrade header, records preserved
   const record = buildEventRecord(input, prevHashFor(events), checked);

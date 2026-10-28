@@ -34,7 +34,7 @@ import { validateEntityFields } from "./field-contract.js";
 import type { ProfilePack, EntityPage, EntityTypeDef } from "./types.js";
 
 /** Error raised only for the programming-error default-profile guard. */
-export class EntityCollectError extends Error {
+class EntityCollectError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "EntityCollectError";

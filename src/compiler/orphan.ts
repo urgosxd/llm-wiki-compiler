@@ -22,6 +22,8 @@ import { CONCEPTS_DIR } from "../utils/constants.js";
 import { isSafeFilenameComponent } from "../profile/identity.js";
 import { applyCompilePageWritesLocked, type CompilePageWrite } from "./compile-write.js";
 import type { CompileStateDraft } from "./compile-state-draft.js";
+import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
+import { pageStoreOptions, type PageRemover, type PageSink } from "../trust/page-apply.js";
 
 /**
  * Mark wiki pages as orphaned when their source is deleted.
@@ -37,6 +39,9 @@ export async function markOrphaned(
   root: string,
   sourceFile: string,
   draft: CompileStateDraft,
+  source?: PageContentSource,
+  sink?: PageSink,
+  remover?: PageRemover,
 ): Promise<void> {
   const state = draft.read();
   const sourceEntry = state.sources[sourceFile];
@@ -53,10 +58,10 @@ export async function markOrphaned(
       output.status("i", output.dim(`Kept: ${slug}.md (shared with other sources)`));
       continue;
     }
-    const write = await orphanPage(root, slug, "source deleted");
+    const write = await orphanPage(root, slug, "source deleted", source);
     if (write) writes.push(write);
   }
-  await applyCompilePageWritesLocked(root, writes);
+  await applyCompilePageWritesLocked(root, writes, pageStoreOptions(sink, remover));
 
   draft.removeSource(sourceFile);
 }
@@ -75,6 +80,9 @@ export async function orphanUnownedFrozenPages(
   root: string,
   draft: CompileStateDraft,
   frozenSlugs: Set<string>,
+  source?: PageContentSource,
+  sink?: PageSink,
+  remover?: PageRemover,
 ): Promise<void> {
   // Read-after-write: reflects the compiled markers set earlier this run via
   // the same draft, so a slug re-claimed by a just-compiled source is NOT
@@ -89,10 +97,10 @@ export async function orphanUnownedFrozenPages(
   const writes: CompilePageWrite[] = [];
   for (const slug of frozenSlugs) {
     if (ownedSlugs.has(slug)) continue;
-    const write = await orphanPage(root, slug, "no remaining sources");
+    const write = await orphanPage(root, slug, "no remaining sources", source);
     if (write) writes.push(write);
   }
-  await applyCompilePageWritesLocked(root, writes);
+  await applyCompilePageWritesLocked(root, writes, pageStoreOptions(sink, remover));
 }
 
 /**
@@ -112,21 +120,18 @@ export async function orphanUnownedFrozenPages(
  * @param root - Project root directory.
  * @param slug - Concept slug to orphan.
  * @param reason - Human-readable reason for the log message.
+ * @param source - Row-backed page reader, or undefined to read `wiki/concepts`.
  * @returns The page write to apply, or `null` when any guard skips it.
  */
-async function orphanPage(root: string, slug: string, reason: string): Promise<CompilePageWrite | null> {
+async function orphanPage(
+  root: string,
+  slug: string,
+  reason: string,
+  source?: PageContentSource,
+): Promise<CompilePageWrite | null> {
   if (!isSafeFilenameComponent(slug)) return null;
-  const pagePath = path.join(root, CONCEPTS_DIR, `${slug}.md`);
-  const read = await readConfinedWikiPage(root, CONCEPTS_DIR, slug);
-  if (!("content" in read)) {
-    await warnDroppedWikiReadIfPresent(
-      pagePath,
-      path.join(CONCEPTS_DIR, `${slug}.md`),
-      read.dropped,
-    );
-    return null;
-  }
-  const content = read.content;
+  const content = await readPageForOrphan(root, slug, source);
+  if (content === null) return null;
 
   const { meta } = parseFrontmatter(content);
   if (meta.orphaned === true) return null;
@@ -134,4 +139,34 @@ async function orphanPage(root: string, slug: string, reason: string): Promise<C
   const updated = content.replace("---\n", "---\norphaned: true\n");
   output.status("⚠", output.warn(`Orphaned: ${slug}.md (${reason})`));
   return { namespace: "concepts", slug, body: updated };
+}
+
+/**
+ * Read the page an orphan pass is about to mark, from the configured backend.
+ *
+ * A row corpus has no path to drop, so the confinement result and its warning only
+ * exist on the file branch. Both branches answer `null` for "nothing to orphan",
+ * which is the same SKIP the three guards encode.
+ *
+ * @param root - Project root directory.
+ * @param slug - Concept slug to orphan.
+ * @param source - Row-backed page reader, or undefined to read `wiki/concepts`.
+ * @returns The page's markdown, or null when it is absent, dropped, or unreadable.
+ */
+async function readPageForOrphan(
+  root: string,
+  slug: string,
+  source: PageContentSource | undefined,
+): Promise<string | null> {
+  if (source !== undefined) return (await source.read("concepts", slug)) ?? null;
+  const read = await readConfinedWikiPage(root, CONCEPTS_DIR, slug);
+  if (!("content" in read)) {
+    await warnDroppedWikiReadIfPresent(
+      path.join(root, CONCEPTS_DIR, `${slug}.md`),
+      path.join(CONCEPTS_DIR, `${slug}.md`),
+      read.dropped,
+    );
+    return null;
+  }
+  return read.content;
 }

@@ -19,6 +19,7 @@ import { collectViewerPages } from "../viewer/collect.js";
 import { buildGraphData } from "../viewer/graph.js";
 import type { ViewerPage, GraphData, GraphNode, GraphNodeId } from "../viewer/types.js";
 import type { GraphHealthResult, HubPage } from "./types.js";
+import { withRawPageSource } from "../dimensions/wiki/page-source-seam.js";
 
 
 
@@ -93,7 +94,7 @@ function topDanglingTargets(graph: GraphData): GraphHealthResult["topDangling"] 
 export async function evaluateGraphHealth(
   root: string,
 ): Promise<GraphHealthResult | null> {
-  const pages = await collectViewerPages(root);
+  const pages = await withRawPageSource(root, process.env, (s) => collectViewerPages(root, s));
   if (pages.length === 0) return null;
 
   const graph = buildGraphData(pages);

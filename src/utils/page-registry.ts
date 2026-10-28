@@ -41,6 +41,95 @@ import { CONCEPTS_DIR, QUERIES_DIR } from "./constants.js";
 import type { PageRecord } from "../pages/read.js";
 import type { ProfilePack, LoadedProfile, EntityTypeDef } from "../profile/types.js";
 
+
+/**
+ * A row-backed alternative to the directory scans and confined reads this module
+ * performs. Every method answers a question the disk path answers by scanning a
+ * directory or opening a file, so the two backends can be swapped per call site
+ * without any consumer learning which one it got.
+ *
+ * Defined HERE rather than beside the row adapter on purpose: the adapter imports
+ * this module's eligibility predicates, so a type declared over there would make
+ * the dependency a cycle.
+ */
+export interface RegistryPageSource {
+  /**
+   * Embed-eligible page ids across `namespaces`, metadata only.
+   *
+   * @param namespaces - Namespace names to include.
+   * @param namespaceDirs - Namespace→directory map; the adapter must apply the
+   *   same namespace eligibility as the directory scan.
+   * @param profile - Active profile; typed namespaces are gated by it.
+   */
+  liveIds(namespaces: string[], namespaceDirs: Map<string, string>, profile?: LoadedProfile): Promise<Set<string>>;
+
+  /**
+   * Live hashes for one page, or null when it is absent or ineligible.
+   *
+   * @param pageId - Qualified page id.
+   * @param namespaceDirs - Namespace→directory map.
+   */
+  liveEntry(pageId: string, namespaceDirs: Map<string, string>): Promise<LiveHashes | null>;
+
+  /**
+   * Full records for the given ids, dropping absent ones.
+   *
+   * @param pageIds - Qualified page ids.
+   */
+  records(pageIds: string[]): Promise<PageRecord[]>;
+
+  /**
+   * Records paired with the id each came from.
+   *
+   * @param pageIds - Qualified page ids.
+   */
+  recordPairs(pageIds: string[]): Promise<Array<{ pageId: string; record: PageRecord }>>;
+
+  /**
+   * Surface-eligible candidates carrying title and summary only.
+   *
+   * @param surface - Retrieval surface whose flag gates typed namespaces.
+   * @param namespaces - Namespace names to include.
+   * @param namespaceDirs - Namespace→directory map.
+   * @param profile - Active profile; typed namespaces are gated by it.
+   */
+  surfaceCandidates(
+    surface: SurfaceName,
+    namespaces: string[],
+    namespaceDirs: Map<string, string>,
+    profile?: LoadedProfile,
+  ): Promise<SurfaceCandidate[]>;
+}
+
+/** The live hashes a freshness check compares a stored vector against. */
+export interface LiveHashes {
+  /** SHA-256 prefix of `buildEmbeddingText({title, summary})`. */
+  embeddingTextHash: string;
+  /** Ordered hashes of `splitIntoChunks(body.trim())`, one per chunk. */
+  chunkHashes: string[];
+}
+
+/**
+ * Present row-backed hashes as a {@link LiveRegistryEntry}.
+ *
+ * The realpath pair is empty because a row has no path and no confinement to
+ * perform -- isolation is the tenant boundary, not a directory. Nothing on the
+ * search path reads those fields; the one consumer that does
+ * (`live-target.ts`) never receives a row source, so it keeps its realpath.
+ *
+ * @param live - Hashes from a row source, or null when the page is absent.
+ * @returns An entry equivalent for freshness comparison, or null.
+ */
+function asRegistryEntry(live: LiveHashes | null): LiveRegistryEntry | null {
+  if (live === null) return null;
+  return {
+    capturedRealpath: "",
+    expectedCanonicalDir: "",
+    embeddingTextHash: live.embeddingTextHash,
+    chunkHashes: live.chunkHashes,
+  };
+}
+
 /** Immutable realpath + confinement anchor for one live page. */
 export interface LiveRegistryEntry {
   /** Realpath captured at resolve time; used as the `readConfinedPage` argument. */
@@ -74,7 +163,7 @@ export function buildNamespaceDirs(profile?: ProfilePack): Map<string, string> {
 }
 
 /** Reserved namespace names that use the legacy concept/query eligibility gate. */
-const RESERVED_NAMESPACES = new Set(["concepts", "queries"]);
+export const RESERVED_NAMESPACES = new Set(["concepts", "queries"]);
 
 /**
  * True when a concept/query scan passes the legacy eligibility gate: the page
@@ -82,7 +171,7 @@ const RESERVED_NAMESPACES = new Set(["concepts", "queries"]);
  * `readConfinedPageRecord` so orphaned/untitled pages cannot resurrect from a
  * stale or forged v3 store (F2).
  */
-function isLegacyScanEligible(scan: RawEntityScan): boolean {
+export function isLegacyScanEligible(scan: RawEntityScan): boolean {
   return scan.parseStatus.orphaned !== true && scan.parseStatus.hasTitle;
 }
 
@@ -109,7 +198,7 @@ function isTypedScanProfileValid(scan: RawEntityScan, def: EntityTypeDef): boole
  * (context) flag is not `false`. Routes through `pageEmbedSurfaces` so the
  * read-side fallback and the write gate share one truth table (F2/F3).
  */
-function isTypedScanSurfaceEligible(scan: RawEntityScan, def: EntityTypeDef, surface: SurfaceName): boolean {
+export function isTypedScanSurfaceEligible(scan: RawEntityScan, def: EntityTypeDef, surface: SurfaceName): boolean {
   if (!isTypedScanProfileValid(scan, def)) return false;
   const surfaces = pageEmbedSurfaces({ meta: scan.frontmatter, pageKind: "typed", retrieval: def.retrieval, isProfileInvalid: false });
   return surface === "search" ? surfaces.inSearch : surfaces.inContext;
@@ -155,8 +244,12 @@ export async function buildLiveIdSet(
   namespaces: string[],
   namespaceDirs?: Map<string, string>,
   profile?: LoadedProfile,
+  source?: RegistryPageSource,
 ): Promise<Set<PageId>> {
   const dirs = namespaceDirs ?? buildNamespaceDirs();
+  // Rows answer the same eligibility question without a directory scan. Passing the
+  // same `dirs` keeps the namespace→directory mapping authoritative in one place.
+  if (source) return (await source.liveIds(namespaces, dirs, profile)) as Set<PageId>;
   const ids = new Set<PageId>();
   await Promise.all(
     namespaces.map(async (ns) => {
@@ -177,7 +270,7 @@ export async function buildLiveIdSet(
  * reserved namespaces use the legacy gate; typed namespaces use the profile gate.
  * A typed namespace with no profile is treated as eligible (no gate to apply).
  */
-function isScanEligible(scan: RawEntityScan, ns: string, profile?: LoadedProfile): boolean {
+export function isScanEligible(scan: RawEntityScan, ns: string, profile?: LoadedProfile): boolean {
   if (RESERVED_NAMESPACES.has(ns)) return isLegacyScanEligible(scan);
   if (!profile) return true; // no profile → no gate for typed namespaces
   const def = profile.profile.entities[ns];
@@ -204,7 +297,9 @@ export async function buildLiveRegistryEntry(
   root: string,
   pageId: PageId,
   namespaceDirs?: Map<string, string>,
+  source?: RegistryPageSource,
 ): Promise<LiveRegistryEntry | null> {
+  if (source) return asRegistryEntry(await source.liveEntry(pageId, namespaceDirs ?? buildNamespaceDirs()));
   const parsed = parseQualifiedPageId(pageId);
   if (!parsed) return null;
   const { namespace, pagePart } = parsed;
@@ -250,7 +345,9 @@ export async function loadPageRecordsByPageId(
   root: string,
   pageIds: PageId[],
   namespaceDirs?: Map<string, string>,
+  source?: RegistryPageSource,
 ): Promise<PageRecord[]> {
+  if (source) return source.records(pageIds) as Promise<PageRecord[]>;
   const dirs = namespaceDirs ?? buildNamespaceDirs();
   const records: PageRecord[] = [];
   for (const pageId of pageIds) {
@@ -274,8 +371,9 @@ export async function loadSelectedPagesByPageId(
   root: string,
   refs: PageId[],
   namespaceDirs?: Map<string, string>,
+  source?: RegistryPageSource,
 ): Promise<PageRecord[]> {
-  return loadPageRecordsByPageId(root, refs, namespaceDirs);
+  return loadPageRecordsByPageId(root, refs, namespaceDirs, source);
 }
 
 /** A resolved page record paired with the qualified `pageId` it was loaded from. */
@@ -300,7 +398,9 @@ export async function loadPageRecordPairsByPageId(
   root: string,
   pageIds: PageId[],
   namespaceDirs?: Map<string, string>,
+  source?: RegistryPageSource,
 ): Promise<PageRecordWithId[]> {
+  if (source) return source.recordPairs(pageIds) as Promise<PageRecordWithId[]>;
   const dirs = namespaceDirs ?? buildNamespaceDirs();
   const pairs: PageRecordWithId[] = [];
   for (const pageId of pageIds) {
@@ -419,8 +519,10 @@ export async function buildSurfaceEligibleCandidates(
   namespaces: string[],
   namespaceDirs?: Map<string, string>,
   profile?: LoadedProfile,
+  source?: RegistryPageSource,
 ): Promise<SurfaceCandidate[]> {
   const dirs = namespaceDirs ?? buildNamespaceDirs();
+  if (source) return source.surfaceCandidates(surface, namespaces, dirs, profile);
   const perNamespace = await Promise.all(
     namespaces.map((ns) => {
       const relDir = dirs.get(ns);

@@ -27,13 +27,14 @@
  * rethrows after settlement so automation can detect a broken provider.
  */
 
-import { updateEmbeddingsLockedCore } from "./embeddings.js";
+import { updateEmbeddingsLockedCore, type EmbeddingStoreLocation } from "./embeddings.js";
 import { handleSafeEmbeddingFailure } from "./embeddings-batch.js";
 import { embeddingsDisabled } from "./embeddings-config.js";
 import { ENV_EMBEDDINGS } from "./constants.js";
 import { verbose } from "./output.js";
 import type { PageId } from "./page-id.js";
 import { loadEmbeddingRetry } from "./embeddings-retry.js";
+import type { EmbeddingPageSource } from "../dimensions/wiki/page-scan-source.js";
 
 /**
  * Refresh embeddings for `changedPageIds` while DRAINING the durable pending
@@ -68,6 +69,8 @@ import { loadEmbeddingRetry } from "./embeddings-retry.js";
 export async function refreshEmbeddingsDrainingPending(
   root: string,
   changedPageIds: PageId[],
+  store?: EmbeddingStoreLocation,
+  pageSource?: EmbeddingPageSource,
 ): Promise<void> {
   if (embeddingsDisabled()) {
     verbose(`embeddings: skipped because ${ENV_EMBEDDINGS} disables refreshes`);
@@ -80,7 +83,7 @@ export async function refreshEmbeddingsDrainingPending(
   await retry.recordPending();
   try {
     const { embedded, eligible, pruned } = await updateEmbeddingsLockedCore(
-      root, retry.pageIds, (ids) => retry.prepare(ids),
+      root, retry.pageIds, (ids) => retry.prepare(ids), store, pageSource,
     );
     await retry.succeed([...embedded, ...pruned], eligible);
   } catch (err) {

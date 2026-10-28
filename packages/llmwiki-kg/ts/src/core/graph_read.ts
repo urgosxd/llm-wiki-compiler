@@ -36,7 +36,7 @@ import { sql } from "drizzle-orm";
 
 import type { Database } from "../db.js";
 import { apiError, type ApiError } from "../errors.js";
-import { AKSTraverseResponseDto } from "../dto.js";
+import type { AKSTraverseResponseDto } from "../dto.js";
 import {
   ENTITY_COLUMNS,
   fetchContributingDocuments,

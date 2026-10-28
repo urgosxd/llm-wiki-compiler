@@ -19,6 +19,8 @@ import {
 } from "./fixtures/mcp-test-env.js";
 import { appendHistory } from "../src/eval/stats.js";
 import { makeEvalReport } from "./fixtures/eval-report.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
+
 
 const rootHandle = useMcpRoot("llmwiki-mcp");
 /**
@@ -98,6 +100,11 @@ describe("MCP server tool registration", () => {
 });
 
 describe("ingest_source tool", () => {
+  // Scoped HERE: an ingest needs a tenant. Hoisting to file scope changed what the
+  // eval and status suites read back (they assert file-shaped snapshots) and broke four
+  // green tests -- the same trap as activity-log.
+  useStackEnv("mcp-ingest-source");
+
   it("returns IngestResult shape for a local file", async () => {
     const sourceFile = path.join(root, "input.md");
     await writeFile(
@@ -234,10 +241,12 @@ describe("wiki_status tool", () => {
 });
 
 describe("error handling", () => {
-  it("query_wiki throws when wiki state is missing", async () => {
+  it("query_wiki throws when the wiki has no compiled pages", async () => {
     process.env.ANTHROPIC_API_KEY = "test-key";
     const server = buildServer();
-    await expect(callTool(server, "query_wiki", { question: "anything" })).rejects.toThrow(/index not found/);
+    // The precondition is "no compiled pages", not "no index.md": the index is a
+    // projection that may legitimately be absent while pages exist in rows.
+    await expect(callTool(server, "query_wiki", { question: "anything" })).rejects.toThrow(/No compiled pages found/);
   });
 
   it("compile_wiki surfaces missing-credential errors", async () => {

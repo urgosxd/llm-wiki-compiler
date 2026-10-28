@@ -154,15 +154,7 @@ describe("superset proof — six bullets over one research project via dist/cli.
     }
   });
 
-  it("bullet 2: the literature → idea → experiment stage model runs to completion", async () => {
-    await installResearchProfile(root);
-    const runId = await driveResearchToComplete(root, RESEARCH_GRANT, IDEA_SLUG);
-    const done = await driveStage(root, runId, await completeExperimentSubmit(root, runId), RESEARCH_GRANT);
-    expectCompleted(done);
-    const status = await runCLI(["workflow", "status", runId], root, RESEARCH_GRANT);
-    expect(status.stdout).toMatch(/completed/i);
-  }, SLOW_CLI_TIMEOUT_MS);
-
+  // bullet 2 removed: it drove the `workflow` command (stage progression).
   it("bullet 3: artifacts are hash-pinned and required evidence is a runtime approval gate", async () => {
     await writeProfileFile(root, researchArtifactPreconditionProfile());
     const goodId = await stageCompleteExperimentCandidate(root, "good", await writeArtifact("good"));
@@ -185,11 +177,10 @@ describe("superset proof — six bullets over one research project via dist/cli.
     await expect(access(path.join(root, CROSSREF_LIVE_PAGE)), "connector wrote a live page").rejects.toThrow();
   });
 
-  it("bullet 5: a relation precondition is a runtime write gate, not a prompt convention", async () => {
-    await buildResearchProject(root);
-    const runId = await driveManuscriptWritingToSubmit(root, RESEARCH_GRANT, "no-such-paper");
-    await expectManuscriptSubmitDenied(root, runId, RESEARCH_GRANT);
-  });
+  // bullet 5 removed: it drove the `workflow` command, gone with that subsystem.
+  // The property it proved -- a relation precondition is a RUNTIME write gate, not a
+  // prompt convention -- still holds and is covered directly by
+  // test/relation-precondition-enforce.test.ts against trust/lifecycle-apply.ts.
 
   it("bullet 6: context surfaces live pages, hides unapproved candidates, and warns about staged work", async () => {
     await buildResearchProject(root);

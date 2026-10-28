@@ -14,8 +14,13 @@
 import path from "path";
 import { listSelectedSourceFiles } from "../sources/scan.js";
 import { collectPageSummaries, scanWikiPages } from "../compiler/indexgen.js";
+import {
+  summarizeScanned,
+  type PageScanSource,
+} from "../dimensions/wiki/page-scan-source.js";
 import { countCandidates } from "../compiler/candidates.js";
-import { readStateClassified, isPlainObject } from "../utils/state.js";
+import { isPlainObject } from "../utils/state.js";
+import { readStateClassifiedFor } from "../dimensions/wiki/page-source-seam.js";
 import type { StateStatus } from "../utils/state.js";
 import { buildFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
@@ -181,15 +186,39 @@ function capPendingChanges(
   return changes.slice().sort((a, b) => a.file.localeCompare(b.file)).slice(0, MAX_STATUS_LIST);
 }
 
+/**
+ * Options for {@link collectStatus}.
+ *
+ * `pageScan` is optional so every existing caller keeps the on-disk scan. Supplied,
+ * the page counts and the stale/orphaned classification read rows instead, which is
+ * what lets a Stack-backed project report status with no `wiki/` on disk.
+ */
+export interface CollectStatusOptions {
+  /** Row-backed scan source; omit to read `wiki/` from disk. */
+  pageScan?: PageScanSource;
+}
+
 /** Build a read-only status snapshot used by the `wiki_status` MCP tool. */
-export async function collectStatus(root: string): Promise<WikiStatus> {
-  const classified = await readStateClassified(root);
+export async function collectStatus(
+  root: string,
+  options: CollectStatusOptions = {},
+): Promise<WikiStatus> {
+  const classified = await readStateClassifiedFor(root);
   const snapshot = await buildFreshnessSnapshot(root, classified);
 
+  const scan = options.pageScan;
   const [conceptSummaries, queries, scannedConcepts, pendingCandidates, sourceFilesOnDisk] = await Promise.all([
-    collectPageSummaries(path.join(root, CONCEPTS_DIR)),
-    collectPageSummaries(path.join(root, QUERIES_DIR)),
-    scanWikiPages(path.join(root, CONCEPTS_DIR)),
+    // Summaries are DERIVED from the same scan the classification uses, so a row
+    // listing cannot report a page count that disagrees with its own stale list.
+    scan === undefined
+      ? collectPageSummaries(path.join(root, CONCEPTS_DIR))
+      : scan.scan("concepts").then(summarizeScanned),
+    scan === undefined
+      ? collectPageSummaries(path.join(root, QUERIES_DIR))
+      : scan.scan("queries").then(summarizeScanned),
+    scan === undefined
+      ? scanWikiPages(path.join(root, CONCEPTS_DIR))
+      : scan.scan("concepts"),
     countCandidates(root),
     listSelectedSourceFiles(root),
   ]);

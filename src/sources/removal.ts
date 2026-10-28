@@ -54,20 +54,18 @@ import {
 } from "./removal-plan.js";
 import { deleteWikiPagesLocked, type SkippedDelete } from "../wiki/delete-page.js";
 import {
-  readStateClassified,
-  writeState,
   removeSourceFrom,
   applyFrozenSlugs,
   StateTooNewError,
 } from "../utils/state.js";
+import { readStateClassifiedFor, withPageRemover, writeStateFor } from "../dimensions/wiki/page-source-seam.js";
 import { collectAllPages } from "../linter/rules.js";
 import { listCandidates } from "../compiler/candidate-read.js";
-import { generateIndex } from "../compiler/indexgen.js";
-import { generateMOC } from "../compiler/obsidian.js";
 import { updateEmbeddingsLockedCore } from "../utils/embeddings.js";
 import { handleSafeEmbeddingFailure } from "../utils/embeddings-batch.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
 import type { WikiState } from "../utils/types.js";
+import { regenerateIndices } from "../dimensions/wiki/page-source-seam.js";
 
 export type { RemovalPlan } from "./removal-plan.js";
 
@@ -131,7 +129,7 @@ function toSourceId(ref: string): string | null {
  *   than guess.
  */
 async function readStateFailClosed(root: string): Promise<WikiState> {
-  const classified = await readStateClassified(root);
+  const classified = await readStateClassifiedFor(root);
   if (classified.status === "too-new") {
     throw new StateTooNewError(classified.state.version as number);
   }
@@ -300,13 +298,19 @@ export async function applyRemovalLocked(root: string, plan: RemovalPlan): Promi
   // skips as errors (src/compiler/index.ts:225), and a page the user asked to
   // remove that silently stayed on disk is exactly the failure `rm` exists to
   // prevent.
-  const { skipped } = await deleteWikiPagesLocked(root, current.deleteSlugs);
+  // Resolve the page remover from the environment for THIS delete. With a Stack the
+  // page is a row, so the file path would unlink a file that does not exist and
+  // report success while the row survived. Resolved here rather than threaded from
+  // the caller so the CLI stays free of the dimensions graph, and scoped to this one
+  // call because the handle must be closed before the rest of the apply.
+  const { skipped } = await withPageRemover(process.env, (pageRemover) =>
+    deleteWikiPagesLocked(root, current.deleteSlugs, { pageRemover }));
   const deleted = withoutSkipped(current.deleteSlugs, skipped);
 
   const frozen = new Set(fresh.frozenSlugs ?? []);
   for (const slug of current.keptSlugs) frozen.add(slug);
   const next = applyFrozenSlugs(removeSourceFrom(fresh, plan.sourceFile), frozen);
-  await writeState(root, next);
+  await writeStateFor(root, next);
 
   return { deleted, skipped, sourceDeleted };
 }
@@ -412,8 +416,7 @@ function sameSlugs(left: string[], right: string[]): boolean {
  * @param root - Absolute project root.
  */
 export async function regenerateDerivedLocked(root: string): Promise<void> {
-  await generateIndex(root);
-  await generateMOC(root);
+  await regenerateIndices(root, process.env);
   try {
     await updateEmbeddingsLockedCore(root, []);
   } catch (err) {

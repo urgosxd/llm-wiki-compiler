@@ -20,6 +20,7 @@ import {
   findRelevantChunksV3,
   findRelevantPagesV3,
   type EmbeddingWarning,
+  type EmbeddingStoreSource,
 } from "../utils/embeddings-load.js";
 import type { EmbeddingStoreV3 } from "../utils/embeddings-store.js";
 import {
@@ -29,6 +30,7 @@ import {
   buildSurfaceEligibleCandidates,
   type SurfaceCandidate,
   type PageRecordWithId,
+  type RegistryPageSource,
 } from "../utils/page-registry.js";
 import type { PageId } from "../utils/page-id.js";
 import { loadProfile } from "../profile/load.js";
@@ -65,6 +67,23 @@ export interface SearchSelection {
 /** Opt-in recovery from embedder failures; omitted preserves public error semantics. */
 export interface RetrievalOptions {
   embeddingFailure?: "throw" | "fallback";
+  /**
+   * Where to read the embedding store from.
+   *
+   * Omitted reads the on-disk store, which is the existing behaviour. A caller that
+   * holds a database handle passes one here, so the choice of authoritative store is
+   * made by the process that knows it rather than guessed inside the loader.
+   */
+  embeddingStoreSource?: EmbeddingStoreSource;
+  /**
+   * Where to read page bodies and live hashes from.
+   *
+   * Omitted reads the files, which is the existing behaviour. A caller holding a
+   * database handle passes one here: the pages a query hydrates must come from the
+   * same backend that ranked them, or a hit's freshness is checked against a file
+   * that no longer exists while its row sits right there.
+   */
+  registrySource?: RegistryPageSource;
 }
 
 /** Deduplicate refs by pageId, preserving first-seen ordering. */
@@ -90,7 +109,7 @@ function dedupeRefs(refs: SelectedPageRef[]): SelectedPageRef[] {
  */
 export async function pickSearchRefs(root: string, question: string, options: RetrievalOptions = {}): Promise<SearchSelection> {
   const profile = await loadProfile(root);
-  const outcome = await loadEmbeddingsForSearch(root);
+  const outcome = await loadEmbeddingsForSearch(root, options.embeddingStoreSource);
   // A pending/unavailable compile journal applies to the whole result regardless
   // of which retrieval branch wins, so prepend it to the base warnings ONCE. An
   // ok journal contributes nothing, so the default warnings list is unchanged.
@@ -106,7 +125,7 @@ export async function pickSearchRefs(root: string, question: string, options: Re
     warnings = withStaleWarning(withDegrade, semantic.stalePageIds);
     if (semantic.refs.length > 0) return { refs: dedupeRefs(semantic.refs), warnings };
   }
-  const { refs } = await selectFallbackRefs(root, question, "search", profile);
+  const { refs } = await selectFallbackRefs(root, question, "search", profile, undefined, options.registrySource);
   return { refs, warnings };
 }
 
@@ -149,13 +168,13 @@ async function selectViaEmbeddings(
 ): Promise<SemanticSelection> {
   try {
     const { hits: chunkHits, stalePageIds: chunkStale } =
-      await findRelevantChunksV3(root, store, "search", question, CHUNK_TOP_K, profile);
+      await findRelevantChunksV3(root, store, "search", question, CHUNK_TOP_K, profile, options.registrySource);
     if (chunkHits.length > 0) {
       const refs = chunkHits.map((c) => ({ pageId: c.pageId, slug: c.slug, title: "", kind: "chunk" as const }));
       return { refs, stalePageIds: chunkStale };
     }
     const { hits: pageHits, stalePageIds: pageStale } =
-      await findRelevantPagesV3(root, store, "search", question, EMBEDDING_TOP_K, profile);
+      await findRelevantPagesV3(root, store, "search", question, EMBEDDING_TOP_K, profile, options.registrySource);
     const refs = pageHits.map((p) => ({ pageId: p.pageId, slug: p.slug, title: p.title, kind: "page" as const }));
     return { refs, stalePageIds: pageStale };
   } catch (err) {
@@ -199,10 +218,11 @@ export async function selectFallbackRefs(
   surface: "search" | "context",
   profile: LoadedProfile,
   pageScope?: readonly string[],
+  source?: RegistryPageSource,
 ): Promise<{ refs: SelectedPageRef[]; reasoning: string }> {
   const namespaces = ["concepts", "queries", ...Object.keys(profile.profile.entities)];
   const dirs = buildNamespaceDirs(profile.profile);
-  const eligible = await buildSurfaceEligibleCandidates(root, surface, namespaces, dirs, profile);
+  const eligible = await buildSurfaceEligibleCandidates(root, surface, namespaces, dirs, profile, source);
   // D-GROUNDING-SCOPE: a scoped caller may only be offered in-scope pages, here too.
   const candidates = pageScope === undefined ? eligible : eligible.filter((candidate) => pageScope.includes(candidate.pageId));
   if (candidates.length === 0) {
@@ -241,10 +261,14 @@ export async function pickSearchSlugs(root: string, question: string): Promise<s
  * @param refs - Selected page refs to hydrate.
  * @returns Populated page records for all found pages.
  */
-export async function loadSelectedRefs(root: string, refs: SelectedPageRef[]): Promise<PageRecord[]> {
+export async function loadSelectedRefs(
+  root: string,
+  refs: SelectedPageRef[],
+  source?: RegistryPageSource,
+): Promise<PageRecord[]> {
   const profile = await loadProfile(root);
   const namespaceDirs = buildNamespaceDirs(profile.profile);
-  return loadSelectedPagesByPageId(root, refs.map((r) => r.pageId), namespaceDirs);
+  return loadSelectedPagesByPageId(root, refs.map((r) => r.pageId), namespaceDirs, source);
 }
 
 /**
@@ -257,8 +281,12 @@ export async function loadSelectedRefs(root: string, refs: SelectedPageRef[]): P
  * @param refs - Selected page refs to hydrate.
  * @returns `{pageId, record}` pairs for all found pages.
  */
-export async function loadSelectedRefRecords(root: string, refs: SelectedPageRef[]): Promise<PageRecordWithId[]> {
+export async function loadSelectedRefRecords(
+  root: string,
+  refs: SelectedPageRef[],
+  source?: RegistryPageSource,
+): Promise<PageRecordWithId[]> {
   const profile = await loadProfile(root);
   const namespaceDirs = buildNamespaceDirs(profile.profile);
-  return loadPageRecordPairsByPageId(root, refs.map((r) => r.pageId), namespaceDirs);
+  return loadPageRecordPairsByPageId(root, refs.map((r) => r.pageId), namespaceDirs, source);
 }

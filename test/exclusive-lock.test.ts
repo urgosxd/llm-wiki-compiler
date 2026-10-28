@@ -6,7 +6,7 @@
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { withExclusiveLock, type LockPaths } from "../src/utils/exclusive-lock.js";
-import { publisherTempRoots } from "./fixtures/publisher-workspace.js";
+import { managedTempRoots as publisherTempRoots } from "./fixtures/managed-temp-roots.js";
 
 const roots = publisherTempRoots();
 afterEach(roots.cleanup);

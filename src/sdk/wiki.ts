@@ -5,7 +5,6 @@
  */
 import path from "node:path";
 import { withQuiet, createWikiCoreAtRoot } from "@atomicstrata/llmwiki-core/compiler-sdk";
-import { buildWorkflowFacade } from "./workflow-facade.js";
 import type { CreateWikiOptions, Wiki } from "./types.js";
 
 /** Preserve rejected-promise behavior for synchronous delegate failures. */
@@ -18,6 +17,5 @@ export function createWiki(options: CreateWikiOptions): Wiki {
   const root = path.resolve(options.root);
   return {
     ...createWikiCoreAtRoot(root, options),
-    ...buildWorkflowFacade(root, runQuiet),
   };
 }

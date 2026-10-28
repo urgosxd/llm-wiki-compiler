@@ -41,6 +41,60 @@ const APPLY_ALLOWED_DECISIONS = new Set(["allow", "allow-with-warning"]);
 export type WriteOne = (filePath: string, content: string) => Promise<void>;
 
 /**
+ * Store one page without touching the filesystem.
+ *
+ * Declared HERE rather than in the executor because the executor depends on this
+ * module and not the reverse (see the file header) -- the lifecycle handler imports
+ * this primitive too, and a type living on the other side would drag the executor
+ * into that import graph. Structural on purpose: the trust path stays usable with no
+ * database and no Stack, which is how every current caller runs.
+ */
+export type PageSink = (request: {
+  directory: string;
+  slug: string;
+  body: string;
+}) => Promise<void>;
+
+/**
+ * Remove one page from a store, without touching the filesystem.
+ *
+ * SEPARATE FROM {@link PageSink} rather than a method on it, for two reasons. The
+ * sink is a bare function at five call sites, so widening it to an object would
+ * churn all of them for one extra capability. And a store can legitimately support
+ * writing without supporting deletion — the same way an object can be write-only —
+ * so a caller that supplies no remover must get a clear refusal rather than a sink
+ * whose `delete` silently does nothing.
+ */
+export type PageRemover = (request: { directory: string; slug: string }) => Promise<void>;
+
+/**
+ * Both page-store options a batch call takes, narrowed together.
+ *
+ * `ApplyOptions` declares both fields OPTIONAL, and under `exactOptionalPropertyTypes`
+ * passing `{ pageSink: undefined }` is not the same as passing `{}`: the former
+ * asserts the key exists holding undefined. Five compile stages forward a writer and a
+ * remover they may not have, so the narrowing lives here once instead of being
+ * retyped at each call.
+ *
+ * The two travel together on purpose. A writer without a remover is a shape worth
+ * making hard to express: it stores a page and then cannot remove it, so a `delete`
+ * unlinks a file that does not exist and reports success.
+ *
+ * @param pageSink - The row writer, or undefined to keep writing files.
+ * @param pageRemover - The row remover, or undefined to keep unlinking files.
+ * @returns Options carrying only the capabilities that were supplied.
+ */
+export function pageStoreOptions(
+  pageSink: PageSink | undefined,
+  pageRemover: PageRemover | undefined,
+): { pageSink?: PageSink; pageRemover?: PageRemover } {
+  return {
+    ...(pageSink === undefined ? {} : { pageSink }),
+    ...(pageRemover === undefined ? {} : { pageRemover }),
+  };
+}
+
+/**
  * Thrown when a `create` target — free at plan time — has appeared on disk by
  * the time the batch runs under the lock. Aborting before any write closes the
  * plan→apply TOCTOU so a create never clobbers a concurrently-created file.
@@ -236,24 +290,131 @@ async function assertFloorAtApply(root: string, mutation: PagePlannedMutation, a
  * present"; something else reaching it first does not make this batch a
  * failure, and refusing would strand a retry after a partial apply.
  */
-async function deletePageLocked(abs: string, batch: JournalBatch): Promise<void> {
+async function deletePageLocked(
+  abs: string,
+  batch: JournalBatch | undefined,
+  remover: PageRemover | undefined,
+  mutation: PagePlannedMutation,
+): Promise<void> {
+  if (remover !== undefined) {
+    // Same reasoning as the write path: a row has no previous bytes to snapshot, so
+    // the journal is skipped and durability belongs to the transaction.
+    await remover(pageRemoveRequest(mutation));
+    return;
+  }
   if (!(await targetExists(abs))) return;
-  await recordPreState(batch, abs);
+  await recordPreState(requireJournal(batch), abs);
   await unlink(abs);
+}
+
+/**
+ * The identity a remover needs, taken from the mutation's own structured target.
+ *
+ * Mirrors {@link pageWriteRequest}: the planner already validated the identity, and
+ * re-splitting the path would reintroduce the escaping concerns `confineUnderRoot`
+ * exists to settle.
+ *
+ * @param mutation - The page mutation being removed.
+ * @returns Directory and slug.
+ */
+function pageRemoveRequest(mutation: PagePlannedMutation): { directory: string; slug: string } {
+  const target = mutation.target;
+  if ("id" in target) {
+    const { entityType, slug } = parseEntityId(target.id);
+    return { directory: entityType, slug };
+  }
+  return { directory: target.directory, slug: target.slug };
 }
 
 export async function applyPageMutationLocked(
   root: string,
   mutation: PagePlannedMutation,
-  batch: JournalBatch,
+  batch: JournalBatch | undefined,
   writeOne: WriteOne = atomicWrite,
+  pageSink?: PageSink,
+  pageRemover?: PageRemover,
 ): Promise<void> {
   const abs = await confineUnderRoot(pageRelPath(mutation), root, { mustExist: false });
-  if (mutation.operation === "delete") return deletePageLocked(abs, batch);
+  if (mutation.operation === "delete") {
+    return deletePageLocked(abs, batch, pageRemover, mutation);
+  }
+  // The floor runs BEFORE the branch and for both backends: it validates the BYTES
+  // (size, frontmatter shape), which is a property of the content rather than of
+  // where the content lands.
+  await assertFloorAtApply(root, mutation, abs);
+  if (pageSink !== undefined) {
+    return storeRowLocked(mutation, pageSink);
+  }
   if (mutation.operation === "create" && (await targetExists(abs))) {
     throw new CreateCollisionError(abs);
   }
-  await assertFloorAtApply(root, mutation, abs);
-  await recordPreState(batch, abs);
+  await recordPreState(requireJournal(batch), abs);
   await writeOne(abs, mutation.body);
+}
+
+/**
+ * Assert a batch is present, for the file-backend branches only.
+ *
+ * Those branches record a pre-state and therefore REQUIRE a batch. The batch is
+ * optional at the call site because a row-backed apply has nothing to journal;
+ * reaching a file-branch without one means the caller decided no journal was
+ * needed while still writing files -- a planner/dispatch disagreement that must
+ * fail loudly rather than skip the write-ahead record.
+ *
+ * @param batch - The batch supplied by the executor, possibly absent.
+ * @returns The same batch, narrowed to non-undefined.
+ */
+function requireJournal(batch: JournalBatch | undefined): JournalBatch {
+  if (batch === undefined) {
+    throw new Error("file-backed page mutation requires an open journal batch");
+  }
+  return batch;
+}
+
+/**
+ * Store one page as a row, skipping both the file write and the journal entry.
+ *
+ * THE JOURNAL IS SKIPPED ON PURPOSE, and that is the one behaviour that changes
+ * with the backend rather than travelling with it. A journal entry records the
+ * target's PREVIOUS BYTES so replay can restore them; a row write has no file to
+ * snapshot, and recording a path this function never touches would make the batch
+ * claim a revert capability it does not have -- turning a recoverable batch into a
+ * silently unrecoverable one. Row durability is the transaction's job, not the
+ * journal's.
+ *
+ * The create-collision re-probe is also skipped, and correctly: it exists to stop a
+ * `create` clobbering a file that appeared between plan and apply, and the row path
+ * never opens that file. A row's create/update distinction is the upsert's own.
+ *
+ * @param mutation - The approved page mutation to store.
+ * @param pageSink - The row writer.
+ */
+async function storeRowLocked(
+  mutation: PagePlannedMutation,
+  pageSink: PageSink,
+): Promise<void> {
+  await pageSink(pageWriteRequest(mutation));
+}
+
+/**
+ * The identity and markdown a sink needs, taken from the mutation's own target.
+ *
+ * Read from the structured target rather than re-parsed from the path: the planner
+ * already validated it, and splitting a path back apart would re-introduce exactly
+ * the escaping concerns `confineUnderRoot` exists to settle.
+ *
+ * @param mutation - The page mutation being stored.
+ * @returns Directory, slug and rendered markdown.
+ */
+function pageWriteRequest(mutation: PagePlannedMutation): {
+  directory: string;
+  slug: string;
+  body: string;
+} {
+  const target = mutation.target;
+  if ("id" in target) {
+    const { entityType, slug } = parseEntityId(target.id);
+    return { directory: entityType, slug, body: mutation.body };
+  }
+  return { directory: target.directory, slug: target.slug, body: mutation.body };
 }

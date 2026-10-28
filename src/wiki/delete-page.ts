@@ -30,6 +30,19 @@ import { lstat } from "fs/promises";
 import { CONCEPTS_DIR } from "../utils/constants.js";
 import { isSafeFilenameComponent } from "../profile/identity.js";
 import { openBatch, recordPreState, commitBatch, replayJournal, confinedUnlink } from "../trust/journal.js";
+import type { PageRemover } from "../trust/page-apply.js";
+import type { PageDirectory } from "../export/types.js";
+
+/**
+ * The row store's directory for concept pages.
+ *
+ * NOT the same value as {@link CONCEPTS_DIR}. `CONCEPTS_DIR` is the project-relative
+ * FILESYSTEM path (`wiki/concepts`); `wiki.pages.page_directory` stores the bare
+ * namespace (`concepts`). Passing the path form to the remover compiles — both are
+ * strings — and silently deletes nothing, because the predicate simply matches no
+ * row. Named separately so the two can never be confused at a call site.
+ */
+const CONCEPT_PAGE_DIRECTORY: PageDirectory = "concepts";
 
 /** The unlink primitive, injectable so a crash mid-batch is testable. */
 export type UnlinkOne = (targetPath: string) => Promise<void>;
@@ -46,6 +59,19 @@ export interface SkippedDelete {
 export interface DeleteOptions {
   /** Override the unlink primitive (fault injection). Defaults to `confinedUnlink`. */
   unlinkOne?: UnlinkOne;
+  /**
+   * Remove the page from a ROW store instead of unlinking a file.
+   *
+   * Optional and absent by default, so every caller without a Stack keeps the file
+   * path unchanged. The remover is INJECTED rather than resolved from the
+   * environment, exactly as `applyApprovedMutationsLocked` takes a `pageRemover`:
+   * this module must not pull the dimensions database into its import graph.
+   *
+   * When present, no file is unlinked and NO journal batch is opened: a row has no
+   * previous bytes to snapshot, and the delete is already inside a transaction, so
+   * the all-or-nothing is the database's rather than the journal's.
+   */
+  pageRemover?: PageRemover;
 }
 
 /**
@@ -81,6 +107,9 @@ export async function deleteWikiPagesLocked(
   const { allowed, skipped } = partitionBySlugFloor(slugs);
   if (allowed.length === 0) return { skipped };
 
+  if (opts.pageRemover !== undefined) {
+    return deleteRows(allowed, skipped, opts.pageRemover);
+  }
   const unlinkOne = opts.unlinkOne ?? ((target: string) => confinedUnlink(target, root));
   const batch = await openBatch(root);
   for (const slug of allowed) {
@@ -111,6 +140,32 @@ async function assertUnlinked(target: string, slug: string): Promise<void> {
     throw error; // an unexpected lstat fault is a real problem, not "still there"
   }
   throw new Error(`failed to delete wiki page "${slug}": file still exists after unlink`);
+}
+
+/**
+ * Delete each allowed slug from the row store, opening no journal batch.
+ *
+ * The unlink verification that the file path needs has NO row counterpart. That
+ * `assertUnlinked` exists because `confinedUnlink` swallows EACCES/EROFS/EBUSY,
+ * leaving a page on disk after a delete that would otherwise report success. A row
+ * DELETE cannot half-fail: it runs in a transaction that either commits or does not,
+ * so a rejected statement propagates here and the caller learns the delete failed.
+ * There is likewise no pre-state to record — replay exists to restore prior BYTES.
+ *
+ * @param allowed - Slugs that passed the filename floor.
+ * @param skipped - The floor-skipped slugs, returned unchanged.
+ * @param pageRemover - The row-backed page remover.
+ * @returns The floor-skipped slugs.
+ */
+async function deleteRows(
+  allowed: string[],
+  skipped: SkippedDelete[],
+  pageRemover: PageRemover,
+): Promise<{ skipped: SkippedDelete[] }> {
+  for (const slug of allowed) {
+    await pageRemover({ directory: CONCEPT_PAGE_DIRECTORY, slug });
+  }
+  return { skipped };
 }
 
 /**

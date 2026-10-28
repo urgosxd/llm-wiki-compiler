@@ -20,7 +20,7 @@
  */
 
 /** The operator-set env var listing the project(s) granted trusted auto-apply. */
-export const TRUSTED_WRITE_ENV_VAR = "LLMWIKI_TRUSTED_WRITE";
+const TRUSTED_WRITE_ENV_VAR = "LLMWIKI_TRUSTED_WRITE";
 
 /** The wildcard grant value: every project is granted trusted auto-apply. */
 const GRANT_ALL = "*";

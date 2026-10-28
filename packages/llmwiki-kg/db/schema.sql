@@ -334,3 +334,11 @@ create table if not exists backfeed_queue (
 create index if not exists idx_backfeed_stack on backfeed_queue(stack_id);
 create index if not exists idx_backfeed_status on backfeed_queue(status);
 create index if not exists idx_backfeed_created on backfeed_queue(created_at desc);
+
+-- There is deliberately no `ingest_outbox` table. Cross-dimension atomicity comes
+-- from the single transaction in `src/dimensions/coordinator.ts`, so the table was
+-- dropped rather than kept: it was written inside that transaction (a rollback
+-- erased it), its reconciler's outcome was discarded by the only caller, and it
+-- stored a full copy of every document and body. A database created before the
+-- drop is converted by `migration_drop_ingest_outbox.sql`, which is destructive and
+-- is applied by an operator, never by this file.

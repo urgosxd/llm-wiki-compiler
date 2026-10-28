@@ -28,6 +28,7 @@ import { hashChunkText, splitIntoChunks } from "./retrieval.js";
 import { parseQualifiedPageId, qualifiedPageId, type PageId } from "./page-id.js";
 import { pageEmbedSurfaces } from "./embed-eligibility.js";
 import { collectEntityPages, invalidEntityPagePaths } from "../profile/collect.js";
+import type { EmbeddingPageSource } from "../dimensions/wiki/page-scan-source.js";
 import { isDefaultProfile } from "../profile/default.js";
 import type { LoadedProfile } from "../profile/types.js";
 import type { EligibleLivePage } from "./embeddings-migrate.js";
@@ -57,8 +58,14 @@ export interface CollectedPage extends EligibleLivePage {
 export async function collectEligibleLivePages(
   root: string,
   profile: LoadedProfile,
+  pageSource?: EmbeddingPageSource,
 ): Promise<CollectedPage[]> {
-  const reserved = await collectReservedPages(root);
+  const reserved = pageSource === undefined
+    ? await collectReservedPages(root)
+    // Rows when they are the corpus: the directory scan would return nothing and
+    // every page would be re-embedded as new, or nothing embedded at all.
+    : (await pageSource.collectNamespaced()).map(({ namespace, record }) =>
+      toCollectedPage(qualifiedPageId(namespace, record.slug), record));
   if (isDefaultProfile(profile.profile)) return reserved;
   const typed = await collectTypedPages(root, profile);
   return [...reserved, ...typed];
@@ -80,8 +87,17 @@ const ABSENT_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR"]);
  * retry. An id whose namespace no profile entity or reserved directory owns cannot
  * exist, so it is absent.
  */
-export async function requestedPagesExistence(root: string, profile: LoadedProfile, requested: PageId[]): Promise<Map<PageId, PageExistence>> {
+export async function requestedPagesExistence(
+  root: string,
+  profile: LoadedProfile,
+  requested: PageId[],
+  pageSource?: EmbeddingPageSource,
+): Promise<Map<PageId, PageExistence>> {
   const out = new Map<PageId, PageExistence>();
+  if (pageSource !== undefined) {
+    for (const pageId of requested) out.set(pageId, await pageSource.exists(pageId));
+    return out;
+  }
   for (const pageId of requested) {
     const parsed = parseQualifiedPageId(pageId);
     const directory = parsed === null ? null : pageDirectoryFor(parsed.namespace, profile);

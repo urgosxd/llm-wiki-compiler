@@ -45,6 +45,8 @@ import {
   eventHeaderLine,
 } from "./store-record.js";
 import { eventPrevHash } from "./event-digest.js";
+import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+import { readEventLog } from "../dimensions/wiki/event-log-store.js";
 
 /** The substring {@link readEvents} prefixes onto a tolerated torn-trailing-line problem. */
 const TORN_TAIL_MARKER = "torn trailing line";
@@ -201,6 +203,12 @@ export async function verifyHeadAnchor(
   root: string,
   events: EventRecord[],
 ): Promise<{ ok: boolean; problem?: string }> {
+  // A row-backed store has no head anchor FILE, and its absence is not a fault: the
+  // committed row IS the seal that anchor represented. `readEventsFromRows` already
+  // says so in its own docstring and skips the check; this public function has to
+  // agree, or every caller that verifies an anchor reports a healthy row store as
+  // broken. Returning ok is not "skipping a check" -- there is nothing to compare.
+  if (eventsAreRowBacked()) return { ok: true };
   const anchor = await readHeadAnchor(root);
   const expected = events.length === 0 ? null : eventPrevHash(events[events.length - 1]);
   if (anchor === expected) return { ok: true };
@@ -216,6 +224,52 @@ async function appendChainProblems(root: string, events: EventRecord[], problems
 }
 
 /**
+ * Read this Stack's events from rows, or report that no Stack is configured.
+ *
+ * The chain is verified over the rows exactly as it is over the file: same
+ * `eventPrevHash` link check, same GENESIS anchor for the first record. The head
+ * anchor has no row analogue and is deliberately NOT consulted — a committed row IS
+ * the seal that anchor represented, so there is nothing left to compare against.
+ *
+ * @param env - Environment to read the Stack from.
+ * @returns The events plus problems, or null when no Stack is configured.
+ */
+async function readEventsFromRows(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ReadEventsResult | null> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return null;
+  const dimensionsDb = createDimensionsDatabase(env);
+  let records;
+  try {
+    records = await readEventLog(dimensionsDb.db, stackId);
+  } finally {
+    await dimensionsDb.close();
+  }
+  const problems: string[] = [];
+  let prev = GENESIS_PREV_HASH;
+  for (const { seq, checksum, ...record } of records) {
+    // The same link rule the file reader enforces: a record must point at its
+    // predecessor, so a deleted or reordered row is reported rather than trusted.
+    if (record.prevHash !== prev) {
+      problems.push(`chain break at seq ${seq}: prevHash does not match the prior record`);
+    }
+    // Verified over EXACTLY the fields that were checksummed. `seq` is a storage
+    // column the file never had, so including it would change the digest and report
+    // every record as corrupt. `operationBinding`/`decision` are OMITTED by
+    // `eventChecksum`'s canonicalization when undefined, and `toEventRecord` omits
+    // them too, so the shapes already agree.
+    if (eventChecksum(record as never) !== checksum) {
+      problems.push(`checksum mismatch at seq ${seq}`);
+    }
+    // The NEXT record links on this record's CONTENT digest, not on its checksum.
+    // Chaining on the checksum here would compare a value the writer never used.
+    prev = eventPrevHash(record as never);
+  }
+  return { events: records.map(({ seq, ...rest }) => rest as never), problems };
+}
+
+/**
  * Read the event store into the ordered events plus any problems. Corruption /
  * too-new / symlink fail CLOSED (throw); a torn trailing line, a broken chain,
  * and a head-anchor mismatch are returned as `problems` (PR2 surfaces them).
@@ -224,6 +278,8 @@ async function appendChainProblems(root: string, events: EventRecord[], problems
  * @returns The events in append order and a list of problems.
  */
 export async function readEvents(root: string): Promise<ReadEventsResult> {
+  const viaRows = await readEventsFromRows();
+  if (viaRows !== null) return viaRows;
   const raw = await readStoreFile(root); // throws on symlink/too-new/corrupt
   const recordLines = splitStoreRecords(raw, parseHeader);
   // An ABSENT or header-only log yields ZERO events — but if the sealed head
@@ -371,12 +427,32 @@ function classifyHeadState(anchor: string | null, events: EventRecord[]): HeadSt
  * @returns The verified events (for chaining the next record's `prevHash`).
  * @throws {EventStoreChainError} When the chain is broken or the head anchor mismatches.
  */
+/**
+ * Whether this run's event store is the row backend.
+ *
+ * Same predicate the read and append paths use to choose a backend, named here so the
+ * write precondition can skip file-only machinery instead of duplicating the check.
+ *
+ * @param env - Environment naming the Stack.
+ * @returns True when a Stack is configured, i.e. rows are the backend.
+ */
+function eventsAreRowBacked(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env[AKS_STACK_ID_ENV_VAR] ?? "").trim() !== "";
+}
+
 export async function prepareEventStoreForAppend(root: string): Promise<EventRecord[]> {
   const { events, problems } = await readEvents(root); // throws on corrupt/too-new/symlink
   // VERIFY BEFORE REPAIR: a broken/reordered chain must be rejected with the file
   // left BYTE-IDENTICAL — never truncate (write to) a store we are about to refuse.
   const chain = verifyEventChain(events);
   if (!chain.ok) throw new EventStoreChainError(chain.problem ?? "chain verification failed");
+  // The head anchor exists only to seal a FILE. A `.llmwiki/events.head` file is the
+  // commit point that distinguishes "a record the head never sealed" from "a committed
+  // record", and a torn trailing line is the other half of that same file-only hazard.
+  // A committed ROW already IS its own seal: there is no anchor to reconcile and no
+  // partial line to repair, so running the classifier against a `null` anchor would
+  // report every row-backed store as tampered.
+  if (await eventsAreRowBacked()) return events;
   const state = classifyHeadState(await readHeadAnchor(root), events);
   if (state === "tamper") {
     throw new EventStoreChainError(`head anchor does not match a committable store state`);

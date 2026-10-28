@@ -18,7 +18,9 @@ import {
 import { callClaude } from "../utils/llm.js";
 import { buildSeedPagePrompt } from "./prompts.js";
 import { type SchemaConfig, type SeedPage } from "../schema/index.js";
-import { readWikiPageContentOrWarn } from "./confined-wiki-read.js";
+import { readWikiPageFrom } from "./confined-wiki-read.js";
+import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
+import { pageStoreOptions, type PageRemover, type PageSink } from "../trust/page-apply.js";
 import { addObsidianMeta } from "./obsidian.js";
 import { addModelProvenanceMeta } from "./provenance.js";
 import {
@@ -45,6 +47,9 @@ export async function generateSeedPages(
   root: string,
   schema: SchemaConfig,
   generation: PageGenerationResult,
+  source?: PageContentSource,
+  sink?: PageSink,
+  remover?: PageRemover,
 ): Promise<void> {
   if (schema.seedPages.length === 0) return;
   // Dedup seeds by slug FIRST-SEEN-WINS before rendering, mirroring
@@ -60,14 +65,14 @@ export async function generateSeedPages(
   // an error and is excluded from the batch (skip-not-abort, like generation).
   const writes: CompilePageWrite[] = [];
   for (const seed of dedupedSeeds) {
-    const result = await generateSingleSeedPage(root, schema, seed);
+    const result = await generateSingleSeedPage(root, schema, seed, source);
     if (result.error) {
       generation.errors.push(result.error);
       continue;
     }
     if (result.write) writes.push(result.write);
   }
-  const { skipped } = await applyCompilePageWritesLocked(root, writes);
+  const { skipped } = await applyCompilePageWritesLocked(root, writes, pageStoreOptions(sink, remover));
   reportSeedOutcome(generation, writes, skipped);
 }
 
@@ -136,9 +141,10 @@ async function generateSingleSeedPage(
   root: string,
   schema: SchemaConfig,
   seed: SeedPage,
+  source?: PageContentSource,
 ): Promise<SeedPageOutcome> {
   const slug = slugify(seed.title);
-  const relatedContent = await loadSeedRelatedPages(root, seed.relatedSlugs ?? []);
+  const relatedContent = await loadSeedRelatedPages(root, seed.relatedSlugs ?? [], source);
   const rule = schema.kinds[seed.kind];
   const system = buildSeedPagePrompt(seed, rule, relatedContent);
   const pageBody = await callClaude({
@@ -147,8 +153,8 @@ async function generateSingleSeedPage(
   });
 
   const now = new Date().toISOString();
-  const existing = await readWikiPageContentOrWarn(
-    root, CONCEPTS_DIR, slug, false /* first compile — absence is normal */,
+  const existing = await readWikiPageFrom(
+    root, CONCEPTS_DIR, slug, source, false /* first compile — absence is normal */,
   );
   const existingMeta = existing ? parseFrontmatter(existing).meta : null;
   const createdAt = typeof existingMeta?.createdAt === "string" ? existingMeta.createdAt : now;
@@ -179,12 +185,16 @@ async function generateSingleSeedPage(
  * never enter the seed prompt or the re-emitted seed body. A related slug that
  * points at no page is silently skipped, as before.
  */
-async function loadSeedRelatedPages(root: string, slugs: string[]): Promise<string> {
+async function loadSeedRelatedPages(
+  root: string,
+  slugs: string[],
+  source?: PageContentSource,
+): Promise<string> {
   if (slugs.length === 0) return "";
   const contents: string[] = [];
   for (const slug of slugs) {
-    const content = await readWikiPageContentOrWarn(
-      root, CONCEPTS_DIR, slug, false /* related slug may name no page — absence is normal */,
+    const content = await readWikiPageFrom(
+      root, CONCEPTS_DIR, slug, source, false /* related slug may name no page — absence is normal */,
     );
     if (content) contents.push(content);
   }

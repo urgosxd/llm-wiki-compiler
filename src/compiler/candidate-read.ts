@@ -41,6 +41,7 @@ import type { ReviewCandidate } from "../utils/types.js";
 import { readFile } from "fs/promises";
 import type { StrictIoOptions } from "../utils/path-confine.js";
 import { assertAnswerCandidateMetadata, InvalidCandidateMetadataError } from "../citations/answer-manifest.js";
+import { withCandidateSource } from "../dimensions/wiki/candidate-source.js";
 
 /** Targeted review reads report invalid metadata; collection reads warn and skip. */
 interface CandidateReadOptions extends StrictIoOptions { rejectInvalidMetadata?: boolean }
@@ -176,6 +177,13 @@ export async function readCandidate(
   id: string,
   opts: CandidateReadOptions = {},
 ): Promise<ReviewCandidate | null> {
+  // Rows when a Stack is configured. A candidate is the review workflow's durable
+  // state, so it must live where the rest of that Stack's state lives: two hosts
+  // reviewing one Stack kept two file queues and neither saw the other's work.
+  const fromRows = await withCandidateSource(process.env, async (source) =>
+    source === undefined ? undefined : (await source.get(id)) ?? null,
+  );
+  if (fromRows !== undefined) return fromRows ?? null;
   return (await readCandidateSnapshot(root, id, opts))?.candidate ?? null;
 }
 
@@ -407,7 +415,12 @@ async function readCandidatesByIds(root: string, ids: string[], opts: StrictIoOp
  * @returns All pending review candidates.
  */
 export async function listCandidates(root: string, opts: StrictIoOptions = {}): Promise<ReviewCandidate[]> {
-  const candidates = await readCandidatesByIds(root, await pendingCandidateFileIds(root), opts);
+  const fromRows = await withCandidateSource(process.env, async (source) =>
+    source === undefined ? undefined : await source.list(),
+  );
+  const candidates = fromRows ?? await readCandidatesByIds(root, await pendingCandidateFileIds(root), opts);
+  // Plain sort on the timestamp string: the file path sorted the same way, so the
+  // queue order does not change with the backend.
   candidates.sort((a, b) => a.generatedAt.localeCompare(b.generatedAt));
   return candidates;
 }
@@ -446,6 +459,15 @@ export interface CandidatePage {
  * @returns The bounded slice and the true pending total.
  */
 export async function listCandidatePage(root: string, limit: number): Promise<CandidatePage> {
+  // Rows answer the whole page in one query, so there is no slice to reconcile and
+  // no malformed leaf to inflate the total: a row either parses or was never stored.
+  const fromRows = await withCandidateSource(process.env, async (source) => {
+    if (source === undefined) return undefined;
+    const all = await source.list();
+    return { candidates: all.slice(0, limit), total: all.length };
+  });
+  if (fromRows !== undefined) return fromRows;
+
   // Plain sort: lexicographic by UTF-16 code unit, so the slice is identical on
   // every machine. `localeCompare` would make it depend on the host locale.
   const ids = (await pendingCandidateFileIds(root)).sort();

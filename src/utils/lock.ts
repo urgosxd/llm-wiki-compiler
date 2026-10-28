@@ -40,6 +40,11 @@ import { serializeOwner, parseOwner, isLockRecordStale } from "./lock-owner.js";
 import { publishLockRecord, type LockPublicationHooks } from "./lock-publication.js";
 import { acquireKeyedFifo } from "./keyed-fifo.js";
 import * as output from "./output.js";
+import { tryAcquirePostgresLock, lockRegistry, type HeldPostgresLock } from "./lock-postgres.js";
+import { AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+
+/** Environment variable carrying the lock database connection string. */
+const AKS_DATABASE_URL_ENV_VAR = "AKS_DATABASE_URL";
 
 /**
  * Derive the lock file path inside an already-confined private dir.
@@ -72,6 +77,14 @@ export interface BlockingLockOptions {
   timeoutMs?: number;
   /** Delay between retries (ms). */
   intervalMs?: number;
+  /**
+   * Environment to read the lock database from; defaults to `process.env`.
+   *
+   * Carried on the blocking options as well as the fail-fast ones, because the
+   * blocking path reaches the lock through {@link pollForLock}, which would
+   * otherwise ignore a database the caller had selected.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** Thrown when a bounded-blocking lock acquire times out without acquiring. */
@@ -100,7 +113,9 @@ function delay(ms: number): Promise<void> {
  * @throws {LockBusyError} When the lock stays held past `timeoutMs`.
  */
 export async function acquireLockBlocking(root: string, options: BlockingLockOptions = {}): Promise<void> {
-  const queueKey = await realpath(root).catch(() => path.resolve(root));
+  // Same identity as acquire and release: the FIFO serializes waiters for one Stack,
+  // not for one checkout of it.
+  const queueKey = await lockKeyFor(root, options.env ?? process.env);
   const timeoutMs = options.timeoutMs ?? DEFAULT_BLOCKING_TIMEOUT_MS;
   const releaseQueue = await acquireKeyedFifo(queueKey, timeoutMs, () => new LockBusyError(timeoutMs));
   try {
@@ -122,16 +137,100 @@ async function pollForLock(root: string, options: BlockingLockOptions): Promise<
     // state while we poll, so the per-attempt "Another compilation is running."
     // warning would spam SDK/MCP callers that retry by design. The final
     // LockBusyError is the clear signal on timeout.
-    if (await acquireLock(root, { quiet: true })) return;
+    if (await acquireLock(root, { quiet: true, env: options.env })) return;
     if (Date.now() >= deadline) throw new LockBusyError(timeoutMs);
     await delay(intervalMs);
   }
+}
+
+/**
+ * Acquire the lock through Postgres, or report that the database is not in play.
+ *
+ * Returns `undefined` -- not `false` -- when there is no database to consult, so the
+ * caller falls through to the file. `false` would be indistinguishable from "busy"
+ * and would refuse to lock a project that simply has no Stack.
+ *
+ * @param root - Project root, used as the lock identity when no Stack is set.
+ * @param options - Lock options; `quiet` suppresses the busy warning.
+ * @returns Whether the lock was taken, or undefined when no database is configured.
+ */
+async function acquireDatabaseLock(
+  root: string,
+  options: AcquireLockOptions,
+): Promise<boolean | undefined> {
+  const env = options.env ?? process.env;
+  const dsn = databaseUrlFor(env);
+  if (dsn === undefined) return undefined;
+  const lockKey = await lockKeyFor(root, env);
+  let held: HeldPostgresLock | null;
+  try {
+    held = await tryAcquirePostgresLock(dsn, lockKey);
+  } catch {
+    // An unreachable database is NOT a free lock. Treating it as one would hand the
+    // lock to every contender the moment the database blips.
+    if (!options.quiet) output.status("!", output.warn("Could not reach the lock database."));
+    return false;
+  }
+  if (held === null) {
+    if (!options.quiet) output.status("!", output.warn("Another compilation is running."));
+    return false;
+  }
+  lockRegistry.set(lockKey, held);
+  return true;
+}
+
+/** The Stack this run is bound to, or undefined when the environment names none. */
+function stackIdOf(env: NodeJS.ProcessEnv): string | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  return stackId === "" ? undefined : stackId;
+}
+
+/**
+ * The ONE identity a lock is keyed by, wherever it is looked up.
+ *
+ * Acquire stores under it, release reads under it, and the same-process FIFO queues
+ * on it. Deriving "the lock key" in more than one place is how a release silently
+ * misses the entry an acquire just stored -- which is exactly what happened when the
+ * key moved from the path to the Stack id and only the acquire site was updated.
+ *
+ * ## Why the Stack, not the path
+ *
+ * Keying on `realpath(root)` reproduced the file lock's defect with more steps: two
+ * hosts serving one Stack have different paths, so both acquired and both compiled
+ * the same corpus. A Stack id is the same string on every host, which is the whole
+ * reason the advisory lock exists.
+ *
+ * @param root - Project root, used only when the environment names no Stack.
+ * @param env - Environment to read the Stack from.
+ * @returns The lock identity.
+ */
+async function lockKeyFor(root: string, env: NodeJS.ProcessEnv): Promise<string> {
+  return stackIdOf(env) ?? await realpath(root).catch(() => path.resolve(root));
+}
+
+/**
+ * The connection string to lock on, or undefined when no database is configured.
+ *
+ * Gated on `AKS_STACK_ID` rather than the DSN alone. `config.ts` defaults the DSN
+ * to a production localhost port, so a project with no Stack would otherwise try to
+ * lock against a database it never uses -- and, worse, succeed against the default
+ * one.
+ *
+ * @param env - Environment to read; defaults to `process.env`.
+ * @returns The DSN, or undefined for the file-backed path.
+ */
+function databaseUrlFor(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (stackIdOf(env) === undefined) return undefined;
+  const configured = (env[AKS_DATABASE_URL_ENV_VAR] ?? "").trim();
+  return configured === "" ? undefined : configured;
 }
 
 /** Options for {@link acquireLock}. `quiet` suppresses the busy warning. */
 export interface AcquireLockOptions {
   /** Suppress the "Another compilation is running." warning on a busy lock. */
   quiet?: boolean;
+  /** Environment to read the lock database from; defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
   /**
    * Publication seams, supplied only by tests. The double-ownership window this
    * lock once had lived entirely inside one acquisition, so a regression test
@@ -158,6 +257,13 @@ export interface AcquireLockOptions {
  *   silent). The fail-fast CLI path leaves it unset and still prints the warning.
  */
 export async function acquireLock(root: string, options: AcquireLockOptions = {}): Promise<boolean> {
+  // The database first, when one is configured. Advisory locks are visible across
+  // machines, which is what the file lock could never be: two hosts sharing a
+  // Stack would each hold "the" lock on their own disk and compile concurrently.
+  // The file path stays as the fallback for a project with no Stack.
+  const viaDatabase = await acquireDatabaseLock(root, options);
+  if (viaDatabase !== undefined) return viaDatabase;
+
   // FAIL CLOSED on a `.llmwiki` (or ancestor) that symlinks outside the root:
   // resolving + creating the confined private dir throws on escape, so the lock
   // file is NEVER created out-of-tree (the lock writer runs FIRST in the page
@@ -347,12 +453,34 @@ async function isLockStale(lockPath: string): Promise<boolean> {
  *
  * @param root - Absolute project root.
  */
-export async function releaseLock(root: string): Promise<void> {
-  const queueKey = await realpath(root).catch(() => path.resolve(root));
+export async function releaseLock(root: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  // Resolve the entry under every key acquire could have used. Acquire keys on the
+  // Stack when one is configured, but a release site (a `finally` block in a helper,
+  // a test's `afterEach`) may not carry that environment -- so both derivations are
+  // checked rather than assuming the caller passes the same one.
+  const stackKey = await lockKeyFor(root, env);
+  const pathKey = await realpath(root).catch(() => path.resolve(root));
+  const queueKey = lockRegistry.has(stackKey) ? stackKey : pathKey;
   const releaseQueue = (): void => {
-    blockingQueueReleases.get(queueKey)?.();
-    blockingQueueReleases.delete(queueKey);
+    for (const key of [stackKey, pathKey]) {
+      blockingQueueReleases.get(key)?.();
+      blockingQueueReleases.delete(key);
+    }
   };
+  // A lock this process took through Postgres is released on the connection that
+  // took it, then we return: the file path below would look for a lock file that was
+  // never written. A registry miss falls through unchanged, which keeps the old
+  // no-op behaviour for a foreign owner.
+  const held = lockRegistry.get(queueKey);
+  if (held !== undefined) {
+    lockRegistry.delete(queueKey);
+    try {
+      await held.release();
+    } finally {
+      releaseQueue();
+    }
+    return;
+  }
   let privateDir: string | null;
   try {
     privateDir = await resolveExistingConfinedPrivateDir(root);

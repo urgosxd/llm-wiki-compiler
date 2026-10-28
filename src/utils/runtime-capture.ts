@@ -71,7 +71,7 @@ export function captureOwnDataRecord(value: unknown): Readonly<Record<string, un
  * a decision about the value, and reporting a fault as "this input does not
  * qualify" is the collapse this narrow catch exists to prevent.
  */
-export function tryCaptureOwnDataRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+function tryCaptureOwnDataRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return capturedOr(() => captureOwnDataRecord(value), () => null);
 }
 
@@ -97,7 +97,7 @@ export function tryCaptureOwnDataRecord(value: unknown): Readonly<Record<string,
  * @param onRefusal - How this boundary expresses "the value does not qualify".
  * @returns The captured value, or whatever `onRefusal` returns.
  */
-export function capturedOr<T, R>(capture: () => T, onRefusal: () => R): T | R {
+function capturedOr<T, R>(capture: () => T, onRefusal: () => R): T | R {
   try {
     return capture();
   } catch (error) {
@@ -201,7 +201,7 @@ function deepCapture(value: unknown, budget: { nodes: number }, depth: number): 
  * so a later mutation of the original cannot change what a validated snapshot
  * executes or is digested against (the trust-boundary primitive for RC-A).
  */
-export function deepCaptureData(value: unknown): unknown {
+function deepCaptureData(value: unknown): unknown {
   return deepCapture(value, { nodes: MAX_DEEP_CAPTURE_NODES }, 0);
 }
 

@@ -14,6 +14,7 @@ import {
 } from "../compiler/refresh-plan.js";
 import * as output from "../utils/output.js";
 import type { CompileResult } from "../utils/types.js";
+import { withPageScan } from "../dimensions/wiki/page-source-seam.js";
 
 interface RefreshCommandOptions {
   stale?: boolean;
@@ -43,7 +44,9 @@ export default async function refreshCommand(
     return 1;
   }
   const root = process.cwd();
-  const { stateStatus, plan } = await resolveStaleRefresh(root);
+  const { stateStatus, plan } = await withPageScan(
+    process.env, (scanSource) => resolveStaleRefresh(root, scanSource),
+  );
   const stateExit = checkStateStatus(stateStatus);
   if (stateExit !== null) return stateExit;
   // The "ok" branch always carries a plan; this guard narrows the type

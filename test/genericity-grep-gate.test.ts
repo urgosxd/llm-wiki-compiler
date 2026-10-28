@@ -22,15 +22,15 @@ const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../s
 /** The sole file allowed to compare `profileId` to the built-in `default` sentinel. */
 const DEFAULT_PROFILE_ALLOWLIST = "profile/default.ts";
 
-const TEMPLATE_DATA_FILES = new Set([
-  "profile/templates/builtin/default.ts",
-  "profile/templates/builtin/autosci/entities.ts",
-  "profile/templates/builtin/autosci/relations.ts",
-  "profile/templates/builtin/autosci/artifacts.ts",
-  "profile/templates/builtin/autosci/workflows.ts",
-  "profile/templates/builtin/autosci.ts",
-  "profile/templates/builtin/newsroom.ts",
-]);
+/**
+ * Files that MAY spell entity/relation vocabulary because they ARE the vocabulary.
+ *
+ * Empty: the builtin profile templates were buried once publishing had no CLI, and
+ * the data moved to `test/fixtures/builtin-profile-data.ts`. Nothing in `src/` is
+ * allowed to name a specific entity type any more -- if this set needs an entry
+ * again, some product code started branching on profile vocabulary.
+ */
+const TEMPLATE_DATA_FILES = new Set<string>();
 
 /** Every declared research + newsroom entity-type name (a branch on any is an abstraction failure). */
 const ENTITY_TYPES = ["experiments", "papers", "manuscripts", "ideas", "methods", "foundations", "reviews", "topics", "people", "research-outputs", "articles", "desks", "bylines", "stories"];

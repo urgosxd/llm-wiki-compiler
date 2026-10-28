@@ -13,7 +13,7 @@ const shared = {
   outDir: "dist",
   splitting: false,
   sourcemap: true,
-  external: ["@atomicstrata/llmwiki-core", "@atomicstrata/llmwiki-core/*", "@atomicstrata/llmwiki-local-workflows"],
+  external: ["@atomicstrata/llmwiki-core", "@atomicstrata/llmwiki-core/*"],
 } satisfies Options;
 
 export default defineConfig(async (options) => {

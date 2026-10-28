@@ -4,6 +4,22 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { ingestSource, ingestTextSource } from "../../src/commands/ingest.js";
 import { LOG_FILE } from "../../src/utils/constants.js";
+import { useStackEnv } from "../fixtures/stack-env.js";
+import { withJournalSource } from "../../src/dimensions/wiki/activity-log-source.js";
+import { renderJournal } from "../../src/utils/activity-log.js";
+
+/**
+ * Read the activity log through the ACTIVE backend.
+ *
+ * On a Stack the log is a row, so `readFile(log.md)` throws ENOENT for the right
+ * reason and proves nothing. The property here is "did a journal line get
+ * appended", which both backends answer.
+ */
+async function readLog(root: string): Promise<string> {
+  const rendered = await withJournalSource(process.env, async (source) =>
+    source === undefined ? null : renderJournal(await source.read()));
+  return rendered ?? readFile(path.join(root, LOG_FILE), "utf-8");
+}
 import { provisionEnvStack } from "../fixtures/env-stack.js";
 
 // Ingest writes a wiki page row, so it needs a real Stack. Provisioned per FILE:
@@ -17,6 +33,7 @@ afterAll(async () => {
 });
 
 describe("ingestTextSource writeStatus + journaling", () => {
+  useStackEnv("ingest-status");
   it.skipIf(!env.reachable)("created/updated/unchanged; unchanged writes no journal entry and no rewrite", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ingest-status-"));
     const body = "Enough body content to satisfy the minimum source length requirement.";
@@ -27,13 +44,13 @@ describe("ingestTextSource writeStatus + journaling", () => {
     const r2 = await ingestTextSource(root, { title: "N", text: body + " more", source: "manual:fixed" });
     expect(r2.writeStatus).toBe("updated");
 
-    const logBefore = await readFile(path.join(root, LOG_FILE), "utf-8");
+    const logBefore = await readLog(root);
     const fileBefore = await stat(path.join(root, "sources", r2.filename));
     await new Promise((res) => setTimeout(res, 5));
 
     const r3 = await ingestTextSource(root, { title: "N", text: body + " more", source: "manual:fixed" });
     expect(r3.writeStatus).toBe("unchanged");
-    expect(await readFile(path.join(root, LOG_FILE), "utf-8")).toBe(logBefore); // no new journal line
+    expect(await readLog(root)).toBe(logBefore); // no new journal line
     expect((await stat(path.join(root, "sources", r3.filename))).mtimeMs).toBe(fileBefore.mtimeMs);
   });
 
@@ -43,9 +60,9 @@ describe("ingestTextSource writeStatus + journaling", () => {
     await writeFile(src, "Enough body content to satisfy the minimum source length requirement.", "utf-8");
     const a = await ingestSource(root, src);
     expect(a.writeStatus).toBe("created");
-    const logAfterFirst = await readFile(path.join(root, LOG_FILE), "utf-8");
+    const logAfterFirst = await readLog(root);
     const b = await ingestSource(root, src);
     expect(b.writeStatus).toBe("unchanged");
-    expect(await readFile(path.join(root, LOG_FILE), "utf-8")).toBe(logAfterFirst); // no new entry
+    expect(await readLog(root)).toBe(logAfterFirst); // no new entry
   });
 });

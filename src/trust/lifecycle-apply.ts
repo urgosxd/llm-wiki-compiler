@@ -283,7 +283,7 @@ function refuseNonLiveWrite(
 }
 
 /** Predict the exact lifecycle postimage under the caller's project lock. */
-export async function previewLifecycleLocked(root: string, m: LifecycleTransitionPlannedMutation) {
+async function previewLifecycleLocked(root: string, m: LifecycleTransitionPlannedMutation) {
   const ctx = await resolvePageContext(root, m);
   const { nextMeta, accepted, decision } = decideTransition(ctx, m);
   if (!LIVE_WRITE_DECISIONS.has(decision)) refuseNonLiveWrite(ctx, m, nextMeta);

@@ -96,7 +96,7 @@ export class AtomicWriteNoReplaceDurabilityUnsupportedError extends Error {
 }
 
 /** Rename succeeded, but subsequent verification or durability did not complete. */
-export class AtomicWritePostCommitError extends Error {
+class AtomicWritePostCommitError extends Error {
   constructor(cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.name = "AtomicWritePostCommitError";

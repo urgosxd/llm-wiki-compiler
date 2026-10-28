@@ -124,8 +124,7 @@ async function requirementVerdict(
   // admitted digest vouching for bytes the store cannot even resolve would be
   // provenance over nothing.
   if (req.executionProvenance !== undefined) {
-    const provenance = await verifyExecutionProvenance(
-      args.root, req.executionProvenance, args.slug, `sha256:${ref.sha256}`);
+    const provenance = await verifyExecutionProvenance(req.executionProvenance);
     if (provenance.verdict !== "pass") {
       return { verdict: provenance.verdict, message: `field ${JSON.stringify(req.field)} artifact ${ref.slug}: ${provenance.detail}` };
     }

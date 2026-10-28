@@ -42,7 +42,7 @@ export function assertOperationBinding(value: unknown): OperationBinding {
 }
 
 /** Whether two bindings name the same bundle, run, and mutation. */
-export function operationBindingEquals(left: OperationBinding, right: OperationBinding): boolean {
+function operationBindingEquals(left: OperationBinding, right: OperationBinding): boolean {
   return left.bundleId === right.bundleId && left.runId === right.runId
     && left.mutationId === right.mutationId;
 }

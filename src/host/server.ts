@@ -42,6 +42,10 @@
  * No snapshot refresh: the frozen snapshot is a security property, not a
  * performance choice — a reloaded snapshot would authorize serving bytes that
  * changed after startup.
+ * No ingest-state repair at startup: the coordinator's single transaction is the
+ * sole ingest mechanism, so a boot has nothing pending to finish. Startup used to
+ * reconcile an `ingest_outbox` row under the mutation lock; both the table and the
+ * reconciler are gone, and the returned outcome was discarded anyway.
  */
 import http from "node:http";
 import { listenOn } from "../utils/http-listen.js";
@@ -52,18 +56,11 @@ import { createApp } from "llmwiki-kg/server";
 /** The graph sub-app type, derived so this module needs no direct express import. */
 type GraphApp = ReturnType<typeof createApp>;
 import { createViewerHandler, type ViewerRequestHandler } from "../viewer/server.js";
-import { handleApiRequest } from "./api.js";
+import { handleApiRequest, type ApiDeps } from "./api.js";
+import { createJobRegistry, type JobRegistry } from "../services/ingest/jobs/registry.js";
 import { resolveTenant, tenantSlugOf, type TenantEntry } from "./tenants.js";
 import { writeJsonError } from "../viewer/respond.js";
 import type { ViewerSnapshot } from "../viewer/types.js";
-import {
-  createDimensionsDatabase,
-  reconcileOutbox,
-  resolveDimensions,
-  type ReconcileOutcome,
-} from "../dimensions/index.js";
-import { tryWithOrdinaryMutationLock } from "../operation-bundles/with-mutation-lock.js";
-import type { ViewerDeps } from "../viewer/workflow-run-projection.js";
 
 /** Default port when the caller does not pin one. `0` asks the OS for a free port. */
 const DEFAULT_HOST_PORT = 4173;
@@ -79,7 +76,7 @@ export interface HostOptions {
   /** Bind port; `0` lets the OS pick one. */
   readonly port?: number;
   /** Viewer collaborator overrides, passed straight through. */
-  readonly viewerDeps?: ViewerDeps;
+  readonly viewerDeps?: Record<string, unknown>;
   /**
    * Mount the graph sub-app.
    *
@@ -91,9 +88,11 @@ export interface HostOptions {
    */
   readonly includeGraph?: boolean;
   /**
-   * Project root whose pending ingests are reconciled before serving.
+   * Project root whose mutation endpoints are mounted.
    *
-   * Omitted means no reconciliation.
+   * Startup does NOT touch ingest state: the coordinator's transaction is the sole
+   * ingest mechanism, so there is no pending work for a boot to finish. Omitted
+   * means the mutation mount is absent.
    */
   readonly projectRoot?: string;
   /**
@@ -108,6 +107,14 @@ export interface HostOptions {
    * count and one unreadable project does not prevent the others from serving.
    */
   readonly tenants?: readonly TenantEntry[];
+  /**
+   * Job registry the async ingest route creates jobs in.
+   *
+   * Defaults to a fresh per-host registry, deliberately NOT a module singleton: a
+   * shared one would mix two hosts' jobs in one process, and two projects would
+   * read each other's ingest history.
+   */
+  readonly ingestJobs?: JobRegistry;
 }
 
 /** A running host: both sub-apps behind one listener with one close path. */
@@ -146,6 +153,7 @@ function createDispatcher(
   projectRoot: string | undefined,
   tenants: ReadonlyMap<string, TenantEntry>,
   tenantViewer: (snapshot: ViewerSnapshot) => ViewerRequestHandler,
+  apiDeps: ApiDeps,
 ) {
   return (req: IncomingMessage, res: ServerResponse): void => {
     // A tenant-scoped path is resolved BEFORE anything else: the whole point is
@@ -183,7 +191,7 @@ function createDispatcher(
     // would silently never run. Without a project root there is nothing to mutate,
     // so the mount is simply absent rather than failing at request time.
     if (projectRoot !== undefined) {
-      handleApiRequest(projectRoot, req, res)
+      handleApiRequest(projectRoot, req, res, apiDeps)
         .then((handled) => {
           if (handled) return;
           viewer(req, res).catch(() => writeFallbackError(res));
@@ -209,7 +217,7 @@ function createDispatcher(
 function tenantViewerFactory(
   host: string,
   portHolder: { port?: number },
-  deps: ViewerDeps,
+  deps: Record<string, unknown>,
 ) {
   // `deps` is threaded through for the same reason as the default viewer: a product
   // operator injects one, and a tenant silently losing it would serve a different
@@ -283,6 +291,19 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // bound, so a tenant viewer cannot be built before binding resolves `port: 0`.
   const boundPortHolder: { port?: number } = {};
   const tenantMap = new Map((options.tenants ?? []).map((entry) => [entry.slug, entry]));
+  // One registry per host, built before the listener so the deps object is stable
+  // for every request. The viewer reads it through `viewerDeps` (the GET routes) and
+  // the mutation mount through `apiDeps` (the 202 route): one store, two readers.
+  const ingestJobs = options.ingestJobs ?? createJobRegistry();
+  // The read routes are mounted ONLY when this host serves a project to mutate:
+  // a viewer without a project root has no jobs, and answering an empty list would
+  // claim it looked. Omitting the registry makes the read answer 503 instead.
+  const jobDeps = options.projectRoot === undefined ? {} : { ingestJobs };
+  const viewerDeps = { ...jobDeps, ...(options.viewerDeps ?? {}) };
+  // Mutable holder: the origin policy needs the ACTUALLY bound port, which only
+  // exists after `listen`, so this record is filled in below rather than at
+  // construction.
+  const apiDeps: { ingestJobs?: JobRegistry; viewerConfig?: ApiDeps["viewerConfig"] } = { ingestJobs };
   const server = http.createServer((req, res) => {
     const handler = viewerHolder.handler;
     if (handler === undefined) {
@@ -291,7 +312,9 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
       return;
     }
     const dispatch = createDispatcher(
-      graph, handler, options.projectRoot, tenantMap, tenantViewerFactory(host, boundPortHolder, options.viewerDeps ?? {}),
+      graph, handler, options.projectRoot, tenantMap,
+      tenantViewerFactory(host, boundPortHolder, options.viewerDeps ?? {}),
+      apiDeps,
     );
     dispatch(req, res);
   });
@@ -300,15 +323,12 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   const address = server.address() as AddressInfo | null;
   if (address === null) throw new Error("host bound but address is null");
   boundPortHolder.port = address.port;
-  viewerHolder.handler = createViewerHandler(
-    options.viewerSnapshot,
-    { host, port: address.port },
-    options.viewerDeps ?? {},
-  );
-
-  if (options.projectRoot !== undefined) {
-    await reconcilePendingIngests(options.projectRoot);
-  }
+  const boundConfig = { host, port: address.port };
+  viewerHolder.handler = createViewerHandler(options.viewerSnapshot, boundConfig, viewerDeps);
+  // The origin policy compares against the address ACTUALLY bound, which is why it
+  // is captured here rather than at construction: `port: 0` is only resolved after
+  // `listen`, and a stale `0` would reject every legitimate request.
+  apiDeps.viewerConfig = boundConfig;
 
   return {
     host,
@@ -320,30 +340,3 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   };
 }
 
-/**
- * Finish any ingest that a previous process left half-committed.
- *
- * The reconciler was written and tested but never invoked outside tests, which made
- * the outbox's durable trail write-only: a crash left a `pending` record nobody
- * read, so the compensating work it described never ran. Startup is the only safe
- * place to close that loop — a per-request call would reconcile the same record
- * concurrently with itself.
- *
- * It runs under the mutation lock so two processes starting at once cannot
- * reconcile the same record. Being busy is not an error: the holder is doing the
- * same work and its result is equally valid.
- *
- * @param root - Project root whose outbox is inspected.
- * @returns What was finished and what remains unresolved, or undefined when busy.
- */
-async function reconcilePendingIngests(root: string): Promise<ReconcileOutcome | undefined> {
-  const locked = await tryWithOrdinaryMutationLock(root, async () => {
-    const dimensionsDb = createDimensionsDatabase();
-    try {
-      return await reconcileOutbox(root, resolveDimensions({ root, db: dimensionsDb.db }));
-    } finally {
-      await dimensionsDb.close();
-    }
-  });
-  return locked.busy ? undefined : locked.value;
-}

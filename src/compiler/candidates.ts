@@ -19,6 +19,7 @@
 
 import { realpath, unlink } from "fs/promises";
 import { atomicWrite } from "../utils/markdown.js";
+import { withCandidateSource, type CandidateRowsSource } from "../dimensions/wiki/candidate-source.js";
 import {
   assertCandidateSlug,
   assertWritableCandidateId,
@@ -192,6 +193,16 @@ export async function writeCandidate(
   draft: CandidateDraft,
   options: CandidateWriteOptions = {},
 ): Promise<ReviewCandidate> {
+  // Rows when a Stack is configured. The whole custody dance below -- target-key
+  // canonicalisation, duplicate reconciliation, exclusive allocation -- exists to
+  // give a DIRECTORY the identity a row has for free. A Stack's queue is keyed by
+  // (stack_id, candidate_id), so the same write is one upsert.
+  const viaRows = await withCandidateSource(process.env, async (source) => {
+    if (source === undefined) return undefined;
+    return await publishCandidateToRows(source, draft, options);
+  });
+  if (viaRows !== undefined) return viaRows;
+
   // Validated answers always take a fresh id: a later import or generic write
   // for the same target must never rewrite an answer under its id or delete it.
   if (Object.hasOwn(draft, "candidateKind")) return writeFreshCandidate(root, draft, options);
@@ -215,6 +226,18 @@ export async function writeFreshCandidate(
   draft: CandidateDraft,
   options: FreshCandidateWriteOptions = {},
 ): Promise<ReviewCandidate> {
+  // The typed-staging and validated-answer paths call this directly, bypassing
+  // writeCandidate, so it needs the same backend decision rather than falling through
+  // to the filesystem allocator.
+  const viaRows = await withCandidateSource(process.env, async (source) => {
+    if (source === undefined) return undefined;
+    const id = writableCandidateId(draft.slug, 0, options);
+    const candidate = buildCandidate(draft, id);
+    await source.save(candidate);
+    return candidate;
+  });
+  if (viaRows !== undefined) return viaRows;
+
   const firstId = writableCandidateId(draft.slug, 0, options);
   return publishNewCandidate(root, draft, firstId, options);
 }
@@ -264,6 +287,65 @@ function serializeCandidate(candidate: ReviewCandidate): string {
 }
 
 /** Build a ReviewCandidate from a draft and chosen id. */
+/**
+ * Publish one candidate straight to a Stack's row queue.
+ *
+ * ## What this deliberately does NOT do
+ *
+ * The file path below spends its complexity on making a DIRECTORY behave like an
+ * identity: it canonicalises by target key, reconciles duplicate leaves, allocates an
+ * id exclusively and captures custody. None of that is a property of the candidate —
+ * it is a property of storing one record per file. `(stack_id, candidate_id)` is the
+ * identity, so a target-key match is an UPDATE of the row already holding that key,
+ * not a search through a directory.
+ *
+ * A validated answer still takes a FRESH id: it must never overwrite the candidate
+ * that produced it, which is the one rule that survives the move unchanged.
+ *
+ * @param source - The Stack's candidate source.
+ * @param draft - The candidate fields to persist.
+ * @param options - Write options; `idForAttemptForTest` is honoured for determinism.
+ * @returns The candidate as stored.
+ */
+async function publishCandidateToRows(
+  source: CandidateRowsSource,
+  draft: CandidateDraft,
+  options: CandidateWriteOptions,
+): Promise<ReviewCandidate> {
+  const isAnswer = Object.hasOwn(draft, "candidateKind");
+  const id = isAnswer
+    ? writableCandidateId(draft.slug, 0, options)
+    : await reuseOrMintRowId(source, draft, options);
+  const candidate = buildCandidate(draft, id);
+  await source.save(candidate);
+  return candidate;
+}
+
+/**
+ * Reuse the id of a pending candidate for the same target, or mint a new one.
+ *
+ * Reusing the id is what makes a re-proposal an UPDATE rather than a second entry in
+ * the queue, which is the same outcome the file path reached by searching the
+ * directory for a matching target key.
+ *
+ * @param source - The Stack's candidate source.
+ * @param draft - The candidate being written.
+ * @param options - Write options.
+ * @returns The id to store under.
+ */
+async function reuseOrMintRowId(
+  source: CandidateRowsSource,
+  draft: CandidateDraft,
+  options: CandidateWriteOptions,
+): Promise<string> {
+  const targetKey = candidateTargetKey(draft);
+  const existing = await source.list();
+  const match = existing.find(
+    (candidate) => !candidate.candidateKind && candidateTargetKey(candidate) === targetKey,
+  );
+  return match?.id ?? writableCandidateId(draft.slug, 0, options);
+}
+
 function buildCandidate(draft: CandidateDraft, id: string): ReviewCandidate {
   assertAnswerCandidateMetadata({ ...draft, id, reviewMode: draft.reviewMode ?? "forced" }, id);
   const candidate: ReviewCandidate = {
@@ -348,6 +430,13 @@ export async function deleteCandidate(
   id: string,
   hooks: CandidateDeletionHooks = {},
 ): Promise<boolean> {
+  // A row has no inode to capture and no parent directory to validate, so the
+  // custody preconditions below are vacuous; the delete is the whole operation.
+  const viaRows = await withCandidateSource(process.env, async (source) =>
+    source === undefined ? undefined : await source.remove(id),
+  );
+  if (viaRows !== undefined) return viaRows;
+
   await assertCandidateNamespacesHealthy(root);
   const custody = await captureCandidateCustody(root, id, undefined, "public");
   if (custody === null) return false;
@@ -373,6 +462,21 @@ export async function deleteCandidateBySlug(
   hooks: CandidateDeletionHooks = {},
 ): Promise<boolean> {
   assertCandidateSlug(slug);
+
+  // Rows answer the whole match in one query: the slug is an indexed comparison, not
+  // a directory walk filtered by a parsed target key. Every match is removed, which is
+  // what the file path reached by collecting entries first.
+  const viaRows = await withCandidateSource(process.env, async (source) => {
+    if (source === undefined) return undefined;
+    const target = `concepts/${slug}`;
+    const matching = (await source.list()).filter(
+      (candidate) => candidateTargetKey(candidate) === target,
+    );
+    for (const candidate of matching) await source.remove(candidate.id);
+    return matching.length > 0;
+  });
+  if (viaRows !== undefined) return viaRows;
+
   const matching = await selectReadableCandidateEntriesForMutation(
     root,
     (candidate) => candidateTargetKey(candidate) === `concepts/${slug}`,

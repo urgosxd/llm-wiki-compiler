@@ -15,14 +15,8 @@
       "@atomicstrata/llmwiki-core/compiler-cli": [
         "./src/compiler-cli.ts"
       ],
-      "@atomicstrata/llmwiki-core/compiler-legacy-workflows": [
-        "./src/local-workflow-host/legacy-composition.ts"
-      ],
       "@atomicstrata/llmwiki-core/compiler-sdk": [
         "./src/sdk/compiler-composition.ts"
-      ],
-      "@atomicstrata/llmwiki-local-workflows": [
-        "./src/local-workflows/index.ts"
       ],
       "@atomicstrata/llmwiki-core/local-workflow-host": [
         "./src/local-workflow-host/index.ts"

@@ -19,10 +19,17 @@
 
 import { randomUUID } from "node:crypto";
 import { createClient, createDatabase } from "llmwiki-kg";
+import { testDatabaseUrl } from "./test-database.js";
 
-/** Connection string; defaults to the documented local stack container. */
-export const DATABASE_URL =
-  process.env.LLMWIKI_TEST_DATABASE_URL ?? "postgresql://aks:aks@localhost:5434/aks";
+/**
+ * Connection string every fixture connects to.
+ *
+ * Resolved through {@link testDatabaseUrl} rather than inlined, because the inline
+ * form here and the `?? ""` form in seven other fixtures disagreed: this one fell back
+ * to the test container, those fell back to the PRODUCTION port. One resolver means
+ * the harness and the code under test cannot point at different databases.
+ */
+export const DATABASE_URL = testDatabaseUrl();
 
 /** One suite's private slice of the database. */
 export interface KgPostgresHarness {
@@ -37,10 +44,31 @@ export interface KgPostgresHarness {
 }
 
 /**
+ * Coerce a suite label into a value `stacks.domain` will accept.
+ *
+ * The schema constrains `domain` to `^[a-z0-9-]+$`, but suite labels are written for
+ * HUMANS and routinely carry capitals -- `useStackEnv("classA")` is the natural thing
+ * to type. Passing the label straight through made provisioning fail on the CHECK,
+ * and because a failed provision only warns on stderr, every affected suite looked
+ * like a "missing Stack" failure instead of a fixture bug. That poisoned recovery
+ * measurements before it was found.
+ *
+ * @param label - The human-facing suite label.
+ * @returns A domain-safe slug derived from it.
+ */
+function domainFor(label: string): string {
+  const slug = label.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  // A label of pure punctuation would slugify to empty, and `domain` is NOT NULL with
+  // no default, so fall back to a fixed stem rather than insert an invalid row.
+  return slug === "" ? "stack" : slug;
+}
+
+/**
  * Provision a private stack and hand back a bound database handle.
  *
- * `stacks.domain` is supplied explicitly because it is NOT NULL with no default —
- * omitting it was exactly the invalid insert that produced the silent green.
+ * `stacks.domain` is supplied explicitly because it is NOT NULL with no default --
+ * omitting it was exactly the invalid insert that produced the silent green. It is
+ * DERIVED from the label rather than copied, because the label is not domain-safe.
  *
  * @param name - Short label recorded as the stack name, for debuggability.
  * @returns The harness; check `reachable` before asserting anything.
@@ -49,12 +77,13 @@ export async function createKgPostgresHarness(name: string): Promise<KgPostgresH
   const stackId = randomUUID();
   const client = createClient(DATABASE_URL, 10);
   const db = createDatabase(client);
+  const domain = domainFor(name);
 
   const reachable = await (async (): Promise<boolean> => {
     try {
       await db.execute("select 1");
       await db.execute(
-        `insert into stacks (id, name, domain) values ('${stackId}', '${name}', '${name}')`,
+        `insert into stacks (id, name, domain) values ('${stackId}', '${name}', '${domain}')`,
       );
       return true;
     } catch (error) {

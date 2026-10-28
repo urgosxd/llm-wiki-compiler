@@ -31,6 +31,8 @@ import { lstat } from "fs/promises";
 import { safeRealpath, isInsideDir } from "../utils/path-confine.js";
 import { readConfinedPage } from "../utils/confined-read.js";
 import * as output from "../utils/output.js";
+import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
+import type { PageDirectory } from "../pages/list.js";
 
 /** A confined read outcome: either the file's bytes, or a drop reason. */
 export type ConfinedReadResult = { content: string } | { dropped: string };
@@ -252,4 +254,40 @@ export async function readConfinedWikiFile(
   const expectedDir = path.join(canonicalRoot, path.dirname(relPath));
   const filePath = path.join(canonicalRoot, relPath);
   return readConfinedExactFile(expectedDir, filePath);
+}
+
+/**
+ * Read one page by identity from whichever backend holds it.
+ *
+ * The compile pipeline reads single pages in several places -- a page being
+ * re-rendered, a seed's related pages, a seed's own previous version. Each of those
+ * used {@link readWikiPageContentOrWarn}, which resolves a PATH: with a row corpus
+ * there is no path, so the read returned `""` and the stage silently worked against
+ * no context at all. Worse for seed pages, the empty result reset `createdAt` on
+ * every recompilation.
+ *
+ * Both branches answer `""` for "there is no such page", which is a NORMAL answer
+ * at every one of these call sites: a brand-new page has no previous version and a
+ * related slug may name nothing. The file branch keeps its drop warning; a row has
+ * no path to escape, so the row branch has nothing to warn about.
+ *
+ * @param root - Project root the page must resolve under (file branch only).
+ * @param relDir - Wiki namespace, e.g. `wiki/concepts`.
+ * @param slug - Page slug (`<slug>.md` is read on the file branch).
+ * @param source - Row-backed reader, or undefined to read the file.
+ * @param warnAlways - Drop-warning policy, forwarded to the file branch.
+ * @returns The page's markdown, or `""` when absent.
+ */
+export async function readWikiPageFrom(
+  root: string,
+  relDir: string,
+  slug: string,
+  source: PageContentSource | undefined,
+  warnAlways = true,
+): Promise<string> {
+  if (source !== undefined) {
+    const namespace = path.basename(relDir);
+    return (await source.read(namespace as PageDirectory, slug)) ?? "";
+  }
+  return await readWikiPageContentOrWarn(root, relDir, slug, warnAlways);
 }

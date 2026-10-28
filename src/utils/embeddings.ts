@@ -23,6 +23,9 @@ import {
   STORE_VERSION,
   writeEmbeddingStore,
   readStoreForUpdate,
+  readStoreForUpdateFrom,
+  type EmbeddingStoreLocation,
+  type EmbeddingStoreSink,
   resolveEmbeddingModel,
   resolveEmbeddingFingerprint,
   storeMatchesActiveEmbedding,
@@ -31,10 +34,11 @@ import {
 import { resolveEmbedBatchSize } from "./embeddings-batch.js";
 import { getActiveEmbeddingProviderName } from "./embedding-provider.js";
 import { releaseLock } from "./lock.js";
-import { acquireMutationLockBlocking } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLockBlocking } from "../utils/mutation-lock.js";
 import { loadProfile } from "../profile/load.js";
 import { migrateEmbeddingStore } from "./embeddings-migrate.js";
 import { collectEligibleLivePages, requestedPagesExistence, type PageExistence, type CollectedPage } from "./embeddings-collect.js";
+import type { EmbeddingPageSource } from "../dimensions/wiki/page-scan-source.js";
 import { reembedIntoStore, type ReembedReport } from "./embeddings-write.js";
 import type { PageId } from "./page-id.js";
 import { ENV_EMBEDDINGS } from "./constants.js";
@@ -88,6 +92,8 @@ export async function updateEmbeddingsLockedCore(
   root: string,
   changedPageIds: PageId[],
   prepare?: (pageIds: PageId[]) => Promise<PageId[]>,
+  store?: EmbeddingStoreLocation,
+  pageSource?: EmbeddingPageSource,
 ): Promise<{ embedded: PageId[]; eligible: PageId[]; pruned: PageId[] }> {
   if (embeddingsDisabled()) {
     output.verbose(`embeddings: skipped because ${ENV_EMBEDDINGS} disables refreshes`);
@@ -95,9 +101,13 @@ export async function updateEmbeddingsLockedCore(
   }
   const model = resolveEmbeddingModel();
   const profile = await loadProfile(root);
-  const collected = await collectEligibleLivePages(root, profile);
+  const collected = await collectEligibleLivePages(root, profile, pageSource);
   const eligible = collected.map((p) => p.pageId);
-  const parsedOld = await readStoreForUpdate(root);
+  // Read and write must go through the SAME location: reading rows while writing
+  // the file would make every compile update a store nothing consults, and reading
+  // the file while writing rows would rank vectors that no longer describe the
+  // corpus. `store` supplies both or neither.
+  const parsedOld = store === undefined ? await readStoreForUpdate(root) : await readStoreForUpdateFrom(store.source);
   const onDiskVersion = parsedOld?.version ?? 0;
 
   // A store whose vectors came from a DIFFERENT embedding configuration — other
@@ -112,7 +122,11 @@ export async function updateEmbeddingsLockedCore(
   // removes quarantined ids. Direct callers retain the existing refresh contract.
   const reembed = prepare ? new Set(await prepare([...discovered])) : discovered;
   retainDeferredEmbeddings(preservable, migrated, new Set([...discovered].filter(id => !reembed.has(id))));
-  const pruned = absentRequestedPageIds(changedPageIds, await requestedPagesExistence(root, profile, changedPageIds), migrated);
+  const pruned = absentRequestedPageIds(
+    changedPageIds,
+    await requestedPagesExistence(root, profile, changedPageIds, pageSource),
+    migrated,
+  );
 
   // Persist when there is real work: something to re-embed, a sub-v3 store to
   // upgrade (version-driven migration, S1), OR a prune that shrank the store
@@ -120,7 +134,7 @@ export async function updateEmbeddingsLockedCore(
   // with nothing eligible stays clean — never materialize an empty store.
   if (!shouldPersist(parsedOld, migrated, reembed, onDiskVersion)) return { embedded: [], eligible, pruned };
 
-  await embedAndPersist(root, migrated, collected, reembed, onDiskVersion);
+  await embedAndPersist(root, migrated, collected, reembed, onDiskVersion, store?.sink);
   // The re-embed INTENT set (what we attempted). It may over-include an id the
   // writer skips — see the @returns note; the marker lifecycle tolerates that.
   return { embedded: [...reembed], eligible, pruned };
@@ -187,6 +201,7 @@ async function embedAndPersist(
   collected: CollectedPage[],
   reembed: Set<PageId>,
   onDiskVersion: number,
+  sink?: EmbeddingStoreSink,
 ): Promise<void> {
   const batchSize = resolveEmbedBatchSize(getActiveEmbeddingProviderName());
   const expectedDim = migrated.dimensions > 0 ? migrated.dimensions : undefined;
@@ -195,7 +210,7 @@ async function embedAndPersist(
   // Done here, at the single write boundary, so no path can persist a store whose
   // provenance is unrecorded — that is what the next read gates preservation on.
   const stamped: EmbeddingStoreV3 = { ...store, fingerprint: resolveEmbeddingFingerprint() };
-  await writeEmbeddingStore(root, stamped);
+  await writeEmbeddingStore(root, stamped, sink);
   reportPersist(stamped, report, onDiskVersion);
 }
 
@@ -223,15 +238,9 @@ export {
   readEmbeddingStore,
   writeEmbeddingStore,
   resolveEmbeddingModel,
-  type EmbeddingEntry,
   type ChunkEmbeddingEntry,
-  type EmbeddingStore,
+  type EmbeddingStoreV3,
+  type ChunkEmbeddingV3,
+  type EmbeddingStoreLocation,
 } from "./embeddings-store.js";
-export {
-  cosineSimilarity,
-  findTopK,
-  findTopKChunks,
-  findRelevantPages,
-  findRelevantChunks,
-  resetStaleEmbeddingWarnings,
-} from "./embeddings-search.js";
+export { cosineSimilarity, resetStaleEmbeddingWarnings } from "./embeddings-search.js";

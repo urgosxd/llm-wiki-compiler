@@ -13,7 +13,7 @@
 import packageJson from "../../package.json";
 import { buildFrontmatter } from "../utils/markdown.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { appendEventLocked, preflightEventAppend } from "../events/store.js";
 import { releaseLock } from "../utils/lock.js";
 import { getConnectorDef } from "./registry.js";

@@ -12,7 +12,7 @@
 
 import path from "path";
 import { readFile } from "fs/promises";
-import { acquireMutationLockBlocking } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLockBlocking } from "../utils/mutation-lock.js";
 import { releaseLock } from "../utils/lock.js";
 import { planLintFixes, type LintFixEditV1 } from "../linter/fix-plan.js";
 import { writeCandidate } from "../compiler/candidates.js";

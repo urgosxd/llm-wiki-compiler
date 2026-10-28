@@ -11,6 +11,7 @@
 
 import path from "path";
 import { collectRawWikiPages, extractWikilinkSlugs } from "../wiki/collect.js";
+import type { RawPageSource } from "../dimensions/wiki/page-scan-source.js";
 import type { RawWikiPage } from "../wiki/collect.js";
 import { readConnectorBlock } from "../connectors/fence.js";
 import { buildFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
@@ -207,8 +208,11 @@ function toExportPage(
  * viewer, not exported. The freshness snapshot is built once and shared across
  * all pages. Returns the surviving pages sorted by title.
  */
-export async function collectExportPages(root: string): Promise<ExportPage[]> {
-  const raw = await collectRawWikiPages(root);
+export async function collectExportPages(
+  root: string,
+  source?: RawPageSource,
+): Promise<ExportPage[]> {
+  const raw = source === undefined ? await collectRawWikiPages(root) : await source.collect();
   const snapshot = await buildFreshnessSnapshot(root);
   const sourceHashes = sourceHashLookupFromSnapshot(snapshot);
   const kept = raw.filter((page) => page.parseStatus.hasTitle && !page.parseStatus.orphaned);

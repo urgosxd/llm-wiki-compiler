@@ -13,8 +13,11 @@ import { mkdtemp, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createWiki } from "../../src/sdk/wiki.js";
+import { useStackEnv } from "../fixtures/stack-env.js";
 
 describe("createWiki root validation", () => {
+  // Every dimension is Postgres-backed, so a Stack is required before any ingest.
+  useStackEnv("create-wiki-root");
   it("accepts a non-existent root and ingestText creates sources/ under it", async () => {
     const base = await mkdtemp(path.join(tmpdir(), "wiki-sdk-root-missing-"));
     // Use a sub-path that does not exist yet

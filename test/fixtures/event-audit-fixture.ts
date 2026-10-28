@@ -13,7 +13,7 @@ import os from "node:os";
 import type { EntityId, ProfilePack } from "../../src/profile/types.js";
 import type { EventRecord } from "../../src/events/types.js";
 import type { RelationRef } from "../../src/relations/types.js";
-import { createWiki } from "../../src/index.js";
+import { appendRelation } from "../../src/relations/store.js";
 import { readEvents, verifyEventChain, verifyHeadAnchor } from "../../src/events/store-read.js";
 import { buildResearchLiteRelationsProject, RESEARCH_LITE_RELATIONS_PROFILE } from "./profile-fixtures.js";
 
@@ -38,13 +38,17 @@ export async function cleanupRoot(root: string): Promise<void> {
 }
 
 /**
- * Create a `tests` relation through the SDK trust path and return the single
- * emitted `relation-create` event (asserting exactly one event landed). The two
+ * Write a `tests` relation through the surviving relation store and return the
+ * single emitted `relation-create` event (asserting exactly one landed). The two
  * suites then assert their distinct property of it (`decision` vs `payload`).
+ *
+ * This used to go through `wiki.createRelation`, which the SDK stopped exposing
+ * with the staging facade. `appendRelation` is the path the CLI and the rest of
+ * the relations dimension use, so the event-emission property is asserted against
+ * the real writer rather than dropped with the SDK method.
  */
 export async function createTestRelationEvent(root: string): Promise<{ ref: RelationRef; event: EventRecord }> {
-  const wiki = createWiki({ root });
-  const ref = await wiki.createRelation({ type: "tests", from: EXP, to: IDEA });
+  const ref = await appendRelation(root, RESEARCH_LITE_RELATIONS_PROFILE, { type: "tests", from: EXP, to: IDEA });
   const { events } = await readEvents(root);
   expect(events).toHaveLength(1);
   expect(events[0].type).toBe("relation-create");

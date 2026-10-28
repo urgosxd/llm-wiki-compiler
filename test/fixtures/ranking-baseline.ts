@@ -10,8 +10,8 @@
  *
  * The four captured sections match what `query`/`search` and `context` actually
  * consume at runtime:
- *   (i)  pageTopK — `findTopK` page-level scores
- *   (ii) chunkTopK — `findTopKChunks` chunk-level scores
+ *   (i)  pageTopK — cosine page-level scores
+ *   (ii) chunkTopK — cosine chunk-level scores
  *   (iii) collapsedPageOrder — `pickSearchSlugs` BM25-reranked page order
  *   (iv) contextPrimary — `rankPages` context-pack primary entries
  */
@@ -21,13 +21,14 @@ import path from "path";
 import { vi } from "vitest";
 import * as providerMod from "../../src/utils/provider.js";
 import {
-  findTopK,
-  findTopKChunks,
   writeEmbeddingStore,
   resetStaleEmbeddingWarnings,
   updateEmbeddings,
   type EmbeddingStore,
 } from "../../src/utils/embeddings.js";
+import { buildEmbeddingText } from "../../src/utils/embeddings-pages.js";
+import { hashChunkText } from "../../src/utils/retrieval.js";
+import { cosineSimilarity } from "../../src/utils/embeddings-search.js";
 import { pickSearchSlugs } from "../../src/search/retrieval.js";
 import { retrieveSemanticChunks } from "../../src/context/retrieval.js";
 import { rankPages } from "../../src/context/ranking.js";
@@ -59,10 +60,17 @@ export const BASELINE_MODEL = "test-embed";
 /** Minimum context-pack primaries to freeze (covers semantic + lexical paths). */
 const CONTEXT_TOP_PAGES = 8;
 
-/** The hand-crafted v2 embedding store used by all sections. */
-export function buildBaselineStore(): EmbeddingStore {
+/**
+ * The hand-crafted v3 embedding store used by all sections.
+ *
+ * Keyed by qualified `pageId` and stamped with `embeddingTextHash`, because those
+ * are what v3 reconciliation matches on. The page entries carry the hash of the
+ * text this fixture's own pages produce, so a later `updateEmbeddings` keeps them
+ * instead of re-embedding.
+ */
+export function buildBaselineStoreV3(): EmbeddingStoreV3 {
   return {
-    version: 2,
+    version: 3,
     model: BASELINE_MODEL,
     dimensions: 3,
     entries: buildPageEntries(),
@@ -71,14 +79,19 @@ export function buildBaselineStore(): EmbeddingStore {
 }
 
 /** Four page entries with distinct cosine scores against QUERY_VECTOR. */
-function buildPageEntries(): EmbeddingStore["entries"] {
+function buildPageEntries(): PageEmbeddingV3[] {
   // Scores (cosine against [1,0,0]) = first component when normalized.
-  return [
-    { slug: "alpha", title: "Alpha", summary: "The core idea.", vector: [0.95, 0.31, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
-    { slug: "beta", title: "Beta", summary: "Beta concept.", vector: [0.6, 0.8, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
-    { slug: "gamma", title: "Gamma", summary: "Gamma concept.", vector: [0.3, 0.95, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
-    { slug: "what-is-alpha", title: "What is Alpha?", summary: "Generated answer.", vector: [0.8, 0.6, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
+  const pages: Array<{ pageId: string; title: string; summary: string; vector: number[] }> = [
+    { pageId: "concepts/alpha", title: "Alpha", summary: "The core idea.", vector: [0.95, 0.31, 0] },
+    { pageId: "concepts/beta", title: "Beta", summary: "Beta concept.", vector: [0.6, 0.8, 0] },
+    { pageId: "concepts/gamma", title: "Gamma", summary: "Gamma concept.", vector: [0.3, 0.95, 0] },
+    { pageId: "queries/what-is-alpha", title: "What is Alpha?", summary: "Generated answer.", vector: [0.8, 0.6, 0] },
   ];
+  return pages.map((page) => ({
+    ...page,
+    embeddingTextHash: hashChunkText(buildEmbeddingText({ title: page.title, summary: page.summary })),
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  }));
 }
 
 /**
@@ -94,24 +107,24 @@ function buildPageEntries(): EmbeddingStore["entries"] {
  * hashes match the stored `contentHash` values here — so the vectors are
  * preserved rather than queued for re-embedding.
  */
-function buildChunkEntries(): NonNullable<EmbeddingStore["chunks"]> {
+function buildChunkEntries(): ChunkEmbeddingV3[] {
   return [
     // alpha chunk 0 — text = splitIntoChunks(alphaBody)[0]; hash = hashChunkText(text)
-    { slug: "alpha", title: "Alpha", chunkIndex: 0, contentHash: "dfb0fa7719a3cd21", text: "Alpha establishes the core idea and forms the foundation of the entire knowledge base. It represents the starting point from which all concepts in this system derive their meaning, and understanding Alpha is the prerequisite for understanding any other element in the knowledge base. Alpha defines the primary abstractions and establishes the vocabulary that subsequent concepts build upon. The core idea encapsulated in Alpha predates all other components and serves as the axiomatic foundation for all reasoning. Alpha is referenced by every other page in the wiki, directly or transitively.", vector: [0.98, 0.2, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
+    { pageId: "concepts/alpha", title: "Alpha", chunkIndex: 0, contentHash: "dfb0fa7719a3cd21", text: "Alpha establishes the core idea and forms the foundation of the entire knowledge base. It represents the starting point from which all concepts in this system derive their meaning, and understanding Alpha is the prerequisite for understanding any other element in the knowledge base. Alpha defines the primary abstractions and establishes the vocabulary that subsequent concepts build upon. The core idea encapsulated in Alpha predates all other components and serves as the axiomatic foundation for all reasoning. Alpha is referenced by every other page in the wiki, directly or transitively.", vector: [0.98, 0.2, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
     // alpha chunk 1 — text = splitIntoChunks(alphaBody)[1]
-    { slug: "alpha", title: "Alpha", chunkIndex: 1, contentHash: "ee56cbdc37dbaf1f", text: "Alpha is fundamental to understanding the system. Every derived concept, every query, and every relationship in the knowledge base ultimately traces back to Alpha as its origin. The primacy of Alpha ensures that all other knowledge is coherent and mutually consistent, since they all share the same foundational assumptions and definitions established here.", vector: [0.9, 0.44, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
+    { pageId: "concepts/alpha", title: "Alpha", chunkIndex: 1, contentHash: "ee56cbdc37dbaf1f", text: "Alpha is fundamental to understanding the system. Every derived concept, every query, and every relationship in the knowledge base ultimately traces back to Alpha as its origin. The primacy of Alpha ensures that all other knowledge is coherent and mutually consistent, since they all share the same foundational assumptions and definitions established here.", vector: [0.9, 0.44, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
     // what-is-alpha chunk 0
-    { slug: "what-is-alpha", title: "What is Alpha?", chunkIndex: 0, contentHash: "b922663fc87a4c56", text: "What is Alpha? Alpha is the core concept in this knowledge base, representing the foundational abstraction from which all other concepts derive their meaning and structure. Alpha was established as the primary definition because it captures the essential nature of the domain in the most concise and generalizable way possible. Every other page in the wiki either builds upon Alpha or references it as a definitional anchor for their own explanations and derivations. The answer to this question is the gateway to understanding the entire knowledge base and its interconnected structure of concepts, queries, and relationships.", vector: [0.85, 0.53, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
+    { pageId: "queries/what-is-alpha", title: "What is Alpha?", chunkIndex: 0, contentHash: "b922663fc87a4c56", text: "What is Alpha? Alpha is the core concept in this knowledge base, representing the foundational abstraction from which all other concepts derive their meaning and structure. Alpha was established as the primary definition because it captures the essential nature of the domain in the most concise and generalizable way possible. Every other page in the wiki either builds upon Alpha or references it as a definitional anchor for their own explanations and derivations. The answer to this question is the gateway to understanding the entire knowledge base and its interconnected structure of concepts, queries, and relationships.", vector: [0.85, 0.53, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
     // what-is-alpha chunk 1
-    { slug: "what-is-alpha", title: "What is Alpha?", chunkIndex: 1, contentHash: "83b97b038ab87994", text: "See the Alpha page for more details about the full definition, examples, and relationships to other concepts. The Alpha page is the authoritative source and contains all known properties, derived concepts, and references to source materials that informed the original synthesis of this core idea.", vector: [0.75, 0.66, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
+    { pageId: "queries/what-is-alpha", title: "What is Alpha?", chunkIndex: 1, contentHash: "83b97b038ab87994", text: "See the Alpha page for more details about the full definition, examples, and relationships to other concepts. The Alpha page is the authoritative source and contains all known properties, derived concepts, and references to source materials that informed the original synthesis of this core idea.", vector: [0.75, 0.66, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
     // beta chunk 0
-    { slug: "beta", title: "Beta", chunkIndex: 0, contentHash: "0a5937763c710c4e", text: "Beta is a related concept that builds directly on the foundations established by Alpha. It extends the core abstractions into a secondary tier of the knowledge hierarchy, providing concrete implementations and specialized derivatives of the primary ideas. Beta inherits the fundamental properties of Alpha while adding its own distinct characteristics that make it applicable to a broader range of scenarios and use cases within the system. Beta is the second most important concept in this knowledge base, and serves as the primary bridge between the core foundations and more peripheral concepts such as Gamma.", vector: [0.7, 0.71, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
+    { pageId: "concepts/beta", title: "Beta", chunkIndex: 0, contentHash: "0a5937763c710c4e", text: "Beta is a related concept that builds directly on the foundations established by Alpha. It extends the core abstractions into a secondary tier of the knowledge hierarchy, providing concrete implementations and specialized derivatives of the primary ideas. Beta inherits the fundamental properties of Alpha while adding its own distinct characteristics that make it applicable to a broader range of scenarios and use cases within the system. Beta is the second most important concept in this knowledge base, and serves as the primary bridge between the core foundations and more peripheral concepts such as Gamma.", vector: [0.7, 0.71, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
     // beta chunk 1
-    { slug: "beta", title: "Beta", chunkIndex: 1, contentHash: "489c12da9bc0ce5e", text: "Beta extends from the baseline established by Alpha and introduces new patterns that are referenced by downstream concepts. Understanding Beta requires familiarity with Alpha, but Beta's unique contributions stand on their own as a distinct tier of abstraction within the system.", vector: [0.5, 0.87, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
+    { pageId: "concepts/beta", title: "Beta", chunkIndex: 1, contentHash: "489c12da9bc0ce5e", text: "Beta extends from the baseline established by Alpha and introduces new patterns that are referenced by downstream concepts. Understanding Beta requires familiarity with Alpha, but Beta's unique contributions stand on their own as a distinct tier of abstraction within the system.", vector: [0.5, 0.87, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
     // gamma chunk 0
-    { slug: "gamma", title: "Gamma", chunkIndex: 0, contentHash: "255a65b63bf69d77", text: "Gamma is a peripheral concept that occupies the outer layers of the knowledge hierarchy. While it is less central than Alpha or Beta, Gamma still plays an important role in capturing edge cases and specialized knowledge domains that fall outside the primary abstractions. Gamma concepts are typically queried less frequently but provide essential context when dealing with boundary conditions and advanced topics in the knowledge base. Its semantic embedding is important for comprehensive retrieval even though direct queries for Gamma are infrequent compared to Alpha and Beta.", vector: [0.4, 0.92, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
+    { pageId: "concepts/gamma", title: "Gamma", chunkIndex: 0, contentHash: "255a65b63bf69d77", text: "Gamma is a peripheral concept that occupies the outer layers of the knowledge hierarchy. While it is less central than Alpha or Beta, Gamma still plays an important role in capturing edge cases and specialized knowledge domains that fall outside the primary abstractions. Gamma concepts are typically queried less frequently but provide essential context when dealing with boundary conditions and advanced topics in the knowledge base. Its semantic embedding is important for comprehensive retrieval even though direct queries for Gamma are infrequent compared to Alpha and Beta.", vector: [0.4, 0.92, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
     // gamma chunk 1
-    { slug: "gamma", title: "Gamma", chunkIndex: 1, contentHash: "80bbf4f27813b791", text: "Gamma is rarely queried in typical use cases, yet it remains a necessary part of a complete knowledge base. The peripheral nature of Gamma concepts means they are often discovered through related searches rather than direct queries, and they serve as useful disambiguation anchors for the retrieval system when borderline cases arise.", vector: [0.2, 0.98, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
+    { pageId: "concepts/gamma", title: "Gamma", chunkIndex: 1, contentHash: "80bbf4f27813b791", text: "Gamma is rarely queried in typical use cases, yet it remains a necessary part of a complete knowledge base. The peripheral nature of Gamma concepts means they are often discovered through related searches rather than direct queries, and they serve as useful disambiguation anchors for the retrieval system when borderline cases arise.", vector: [0.2, 0.98, 0], updatedAt: "2026-01-01T00:00:00.000Z" },
   ];
 }
 
@@ -244,7 +257,7 @@ export interface RankingBaseline {
  * temporarily replaced to return QUERY_VECTOR; the spy is restored after.
  *
  * @param root - Absolute path to a project built by {@link buildBaselineProject}.
- * @param store - The pre-populated v2 embedding store from {@link buildBaselineStore}.
+ * @param store - The pre-populated v3 embedding store from {@link buildBaselineStoreV3}.
  */
 export async function computeRankingBaseline(
   root: string,
@@ -257,12 +270,16 @@ export async function computeRankingBaseline(
   } as unknown as ReturnType<typeof providerMod.getProvider>);
 
   try {
-    // A1: flip the on-disk v2 store to v3 via the REAL writer before capturing.
-    // The fixture's chunk/page hashes are the live content hashes, so migration
-    // preserves every vector (no re-embed, no provider embed call), and the v3
-    // consumers (pickSearchSlugs / retrieveSemanticChunks) read the SAME vectors
-    // — making the post-migration ranking equal the frozen golden.
-    await updateEmbeddings(root, []);
+    // The store is written as v3 DIRECTLY, because the v2→v3 migration no longer
+    // exists. This fixture used to depend on it: it wrote a v2 store and then ran
+    // `updateEmbeddings`, trusting the migration to re-key every vector while
+    // preserving it. Once legacy stores began rebuilding from live pages instead of
+    // migrating, that call discarded all the fixture's hand-tuned vectors, and the
+    // semantic sections silently fell back to lexical ranking.
+    //
+    // Writing v3 skips the question entirely and states what the fixture actually
+    // wants: these exact vectors, read by the v3 consumers.
+    await writeEmbeddingStore(root, buildBaselineStoreV3());
     const sections = await captureAllSections(root, store);
     return sections;
   } finally {
@@ -287,22 +304,31 @@ function teardownProviderEnv(): void {
 }
 
 /** Capture all four sections using the real retrieval/ranking functions. */
-async function captureAllSections(root: string, store: EmbeddingStore): Promise<RankingBaseline> {
+async function captureAllSections(root: string, store: EmbeddingStoreV3): Promise<RankingBaseline> {
   const [snapshot, semantic] = await Promise.all([
     buildViewerSnapshot(root),
     retrieveSemanticChunks(root, BASELINE_QUERY, CHUNK_TOP_K),
   ]);
 
-  const pageTopK = findTopK(QUERY_VECTOR, store, EMBEDDING_TOP_K).map((e) => ({
-    slug: e.slug,
-    score: round4(e.vector[0] / Math.sqrt(e.vector.reduce((s, v) => s + v * v, 0))),
-  }));
+  // Scored through `cosineSimilarity` over the v3 records directly. The former
+  // `findTopK` / `findTopKChunks` helpers read a bare `slug`, a v1/v2 shape the v3
+  // records do not carry, and they had no production caller. The scores are the
+  // same cosine values; only the field they are keyed by moved to `pageId`.
+  const pageTopK = [...store.entries]
+    .map((e) => ({ pageId: e.pageId, score: cosineSimilarity(QUERY_VECTOR, e.vector) }))
+    .sort((left, right) => right.score - left.score)
+    .slice(0, EMBEDDING_TOP_K)
+    .map((entry) => ({ slug: entry.pageId, score: round4(entry.score) }));
 
-  const chunkTopK = findTopKChunks(QUERY_VECTOR, store.chunks ?? [], CHUNK_TOP_K).map((r) => ({
-    slug: r.chunk.slug,
-    chunkIndex: r.chunk.chunkIndex,
-    score: round4(r.score),
-  }));
+  const chunkTopK = [...(store.chunks ?? [])]
+    .map((chunk) => ({ chunk, score: cosineSimilarity(QUERY_VECTOR, chunk.vector) }))
+    .sort((left, right) => right.score - left.score)
+    .slice(0, CHUNK_TOP_K)
+    .map((r) => ({
+      slug: r.chunk.pageId,
+      chunkIndex: r.chunk.chunkIndex,
+      score: round4(r.score),
+    }));
 
   const collapsedPageOrder = await pickSearchSlugs(root, BASELINE_QUERY);
 
@@ -328,7 +354,7 @@ function round4(n: number): number {
  * @param root - Absolute path to an empty directory (created by caller).
  */
 export async function buildRankingBaseline(root: string): Promise<RankingBaseline> {
-  const store = buildBaselineStore();
+  const store = buildBaselineStoreV3();
   await buildBaselineProject(root);
   await writeEmbeddingStore(root, store);
   return computeRankingBaseline(root, store);

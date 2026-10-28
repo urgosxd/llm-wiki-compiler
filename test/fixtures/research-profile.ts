@@ -58,12 +58,9 @@ import path from "node:path";
 import { PROFILE_FILE } from "../../src/utils/constants.js";
 import { appendRelation } from "../../src/relations/store.js";
 import type { ProfilePack } from "../../src/profile/types.js";
-import { autosciArtifacts } from "../../src/profile/templates/builtin/autosci/artifacts.js";
-import { autosciEntities } from "../../src/profile/templates/builtin/autosci/entities.js";
-import { autosciRelations } from "../../src/profile/templates/builtin/autosci/relations.js";
-import { autosciWorkflowActions, autosciWorkflows } from "../../src/profile/templates/builtin/autosci/workflows.js";
 import { SEED_PAGES, SEED_RELATIONS } from "./research-seeds.js";
 import { writeSeedPage } from "./seed-page.js";
+import { autosciArtifacts, autosciEntities, autosciRelations, autosciWorkflowActions, autosciWorkflows, newsroomEntities, newsroomRelations, newsroomWorkflowActions, newsroomWorkflows } from "./builtin-profile-data.js";
 
 /**
  * The `research` profile pack. `profileId: "research"` is allowed (only

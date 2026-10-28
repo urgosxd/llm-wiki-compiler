@@ -59,11 +59,11 @@
  */
 
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { atomicWrite } from "../utils/markdown.js";
 import { openBatch, commitBatch, replayJournal, type JournalBatch } from "./journal.js";
 import { type ApplyResult, CrossStoreBatchUnsupportedError } from "./apply-result.js";
-import { applyPageMutationLocked, type WriteOne } from "./page-apply.js";
+import { applyPageMutationLocked, type PageRemover, type PageSink, type WriteOne } from "./page-apply.js";
 import { applyRelationLocked } from "./relation-apply.js";
 import { applyLifecycleLocked } from "./lifecycle-apply.js";
 import { applyArtifactLocked } from "../artifacts/apply.js";
@@ -75,7 +75,31 @@ export type { WriteOne } from "./page-apply.js";
 export interface ApplyOptions {
   /** Per-target write primitive (defaults to {@link atomicWrite}). */
   writeOne?: WriteOne;
+  /**
+   * Store a page as a row instead of writing a file.
+   *
+   * Optional and absent by default, so every caller without a Stack keeps the file
+   * path unchanged. When present, a page mutation is stored through it and NO file
+   * is written for it: writing both would let the two copies drift, and the point of
+   * the row is to be the page.
+   *
+   * The journal is skipped for these writes. `recordPreState` reads the target's
+   * current BYTES so a rollback can restore them; a row has no such pre-state to
+   * capture, and recording a path that the write never touches would make the
+   * journal claim a revert capability it does not have.
+   */
+  pageSink?: PageSink;
+  /**
+   * Remove a page from a store instead of unlinking a file.
+   *
+   * Needed alongside {@link pageSink} or a `delete` mutation becomes a complete
+   * no-op in a Stack-backed project: the file it would unlink does not exist, and
+   * the row it should remove survives. Supplying the writer without this one used to
+   * be silently wrong, which is why the two travel together.
+   */
+  pageRemover?: PageRemover;
 }
+
 
 /**
  * Error thrown when a mutation targets a store the executor does not handle.
@@ -127,12 +151,32 @@ function assertBatchShape(planned: PlannedMutation[]): void {
 async function applyBatch(
   root: string,
   planned: PagePlannedMutation[],
-  batch: JournalBatch,
+  batch: JournalBatch | undefined,
   writeOne: WriteOne,
+  pageSink: PageSink | undefined,
+  pageRemover: PageRemover | undefined,
 ): Promise<void> {
   for (const mutation of planned) {
-    await applyPageMutationLocked(root, mutation, batch, writeOne);
+    await applyPageMutationLocked(root, mutation, batch, writeOne, pageSink, pageRemover);
   }
+}
+
+/**
+ * Whether this apply has anything to journal at all.
+ *
+ * A journal entry records a target's PREVIOUS BYTES. Only the FILE backend has
+ * such bytes; a row-backed page routes through {@link PageSink} and records
+ * nothing. So a sink-bearing apply journals only if it also deletes — a delete
+ * falls back to the file remover when no `pageRemover` was supplied.
+ *
+ * @param opts - The apply options under which the batch would run.
+ * @returns True when at least one target can produce a pre-state.
+ */
+function needsJournal(planned: PagePlannedMutation[], opts: ApplyOptions): boolean {
+  if (opts.pageSink === undefined) return true;
+  // A row-backed page records nothing, but a DELETE without a row remover falls
+  // back to unlinking the file -- and that branch journals a pre-state.
+  return opts.pageRemover === undefined && planned.some((m) => m.operation === "delete");
 }
 
 /**
@@ -171,9 +215,17 @@ export async function applyApprovedMutationsLocked(
   if (planned.length === 0) return [];
   if (planned.every((m) => m.kind === "page")) {
     const writeOne = opts.writeOne ?? atomicWrite;
-    const batch = await openBatch(root);
-    await applyBatch(root, planned as PagePlannedMutation[], batch, writeOne);
-    await commitBatch(batch);
+    // A batch is only opened when something will actually journal. With a page sink
+    // every page lands in a row, and `applyPageMutationLocked` deliberately records
+    // NO pre-state for a row (there are no previous bytes to snapshot, and the
+    // transaction already gives all-or-nothing). Opening and committing a batch
+    // anyway would create then delete `.llmwiki/journal/<id>.json` on every apply of
+    // a project that is otherwise entirely row-backed -- a filesystem effect on the
+    // one backend that must not have any.
+    const batch = needsJournal(planned as PagePlannedMutation[], opts) ? await openBatch(root) : undefined;
+    await applyBatch(
+      root, planned as PagePlannedMutation[], batch, writeOne, opts.pageSink, opts.pageRemover);
+    if (batch !== undefined) await commitBatch(batch);
     return planned.map(() => ({ kind: "page" as const }));
   }
   if (planned.length === 1 && planned[0].kind === "relation") {

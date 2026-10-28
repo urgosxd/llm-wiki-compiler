@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import path from "node:path";
+import { readdirSync } from "node:fs";
 import { classifyTests, partition, spawnsChildProcess } from "../scripts/test-partition.js";
 
 const ROOT = path.resolve(".");
@@ -41,7 +42,12 @@ describe("classifyTests", () => {
   const classified = classifyTests(ROOT);
 
   it("classifies every test file in the suite", () => {
-    expect(classified.length).toBeGreaterThan(1000);
+    // The defensive property is "the classifier did not silently return nothing or
+    // lose files", not a fixed suite size. A literal 1000 broke the moment subsystems
+    // were buried; tying it to the directory it reads keeps the same guarantee.
+    const onDisk = readdirSync(path.join(ROOT, "test"), { recursive: true })
+      .filter((entry) => typeof entry === "string" && entry.endsWith(".test.ts"));
+    expect(classified.length).toBe(onDisk.length);
   });
 
   it("splits the suite with no file lost and no file duplicated", () => {
@@ -53,10 +59,13 @@ describe("classifyTests", () => {
 
   it("puts known spawn-heavy suites in the integration tier", () => {
     const { integration } = partition(classified);
+    // Both entries used to name suites the purge removed (`products/product-cli`,
+    // `workflow-submit-cli`). Repointed at suites that still spawn a child and are
+    // still classified integration, so this keeps asserting the behaviour and not
+    // just the absence of crashes.
     const known = [
       "test/context-integration.test.ts",
-      "test/workflow-submit-cli.test.ts",
-      "test/products/product-cli.test.ts",
+      "test/activity-log-integration.test.ts",
     ];
     for (const file of known) expect(integration).toContain(file);
   });

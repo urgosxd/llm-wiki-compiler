@@ -51,18 +51,17 @@ import {
 import { UnsafeCandidateDirError } from "../compiler/candidate-store-paths.js";
 import { sha256Text } from "../connectors/hash.js";
 import { isConnectorCandidate } from "../connectors/origin.js";
-import { generateIndex } from "../compiler/indexgen.js";
-import { generateMOC } from "../compiler/obsidian.js";
 import { resolveAndApplyLinks } from "../compiler/resolver.js";
 import { repairAndApplyLinks } from "../compiler/link-repair.js";
 import { qualifiedPageId, type PageId } from "../utils/page-id.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
-import { readState, updateSourceState } from "../utils/state.js";
+import { readStateClassifiedFor, withPageSeams, writeStateFor } from "../dimensions/wiki/page-source-seam.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import * as output from "../utils/output.js";
 import type { ReviewCandidate } from "../utils/types.js";
 import { runReviewUnderLock, readCandidateUnderLock } from "./review-helpers.js";
 import { checkCandidatePublication, checkAnswerPlan, isValidatedAnswer } from "./review-publication.js";
+import { regenerateIndices } from "../dimensions/wiki/page-source-seam.js";
 
 /** CLI/API options accepted by `review approve`. */
 export interface ReviewApproveOptions {
@@ -384,14 +383,20 @@ async function addApprovedSlugToSourceState(
   approvedSlug: string,
   sourceHash: string,
 ): Promise<void> {
-  const currentState = await readState(root);
+  // Read and write the SAME backend. Reading `state.json` while the compile
+  // persists to rows would merge the approved slug into a file nothing loads, and
+  // the next compile would re-derive the page as unapproved.
+  const { status, state: currentState } = await readStateClassifiedFor(root);
+  if (status === "too-new") return; // fail closed, as every sibling surface does
   const existing = currentState.sources[sourceFile];
   const concepts = existing?.concepts ?? [];
   const merged = Array.from(new Set([...concepts, approvedSlug]));
-  await updateSourceState(root, sourceFile, {
-    hash: sourceHash,
-    concepts: merged,
-    compiledAt: new Date().toISOString(),
+  await writeStateFor(root, {
+    ...currentState,
+    sources: {
+      ...currentState.sources,
+      [sourceFile]: { hash: sourceHash, concepts: merged, compiledAt: new Date().toISOString() },
+    },
   });
 }
 
@@ -401,11 +406,15 @@ async function refreshWikiAfterApproval(root: string, candidate: ReviewCandidate
   // approveUnderLock runs under the held project lock (runReviewUnderLock), so
   // this routes through the lock-free resolution seam.
   if (!isValidatedAnswer(candidate)) {
-    await resolveAndApplyLinks(root, [slug], [slug]);
-    await repairAndApplyLinks(root);
+    // Seams, not bare root: on a Stack the pages live in rows, and a call without
+    // them lists `wiki/<ns>` from disk (finding nothing) and writes repaired links
+    // to files nothing reads. Both halves must address the SAME backend.
+    await withPageSeams(process.env, async (seams) => {
+      await resolveAndApplyLinks(root, [slug], [slug], seams.resolver, seams.sink, seams.remover);
+      await repairAndApplyLinks(root, seams.content, seams.scan, seams.sink, seams.remover);
+    });
   }
-  await generateIndex(root);
-  await generateMOC(root);
+  await regenerateIndices(root, process.env);
   await safelyUpdateEmbeddings(root, candidatePageId(candidate));
 }
 

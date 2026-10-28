@@ -46,9 +46,9 @@
 import { open, mkdir, rename, stat } from "fs/promises";
 import { randomBytes } from "node:crypto";
 import path from "path";
+import { withOrdinaryMutationLock as underLock } from "../utils/mutation-lock.js";
 import { RELATIONS_FILE, MAX_RELATION_RECORD_BYTES, MAX_RELATION_STORE_BYTES } from "../utils/constants.js";
 import type { OperationBinding } from "../utils/operation-binding.js";
-import { withOrdinaryMutationLock as underLock } from "../operation-bundles/with-mutation-lock.js";
 import type { EntityId, ProfilePack, RelationTypeDef } from "../profile/types.js";
 import type { CitationRef, RelationRef } from "./types.js";
 import { RelationEndpointError, RelationStoreFullError } from "./types.js";
@@ -59,6 +59,10 @@ import { readRelations, readRelationRecords } from "./store-read.js";
 import { validateRelationAttributes, validateRelationEndpoints, validateRelationEvidence, validateRelationAgainstProfile } from "./relation-contract.js";
 import { validateArtifactRefsAgainstProfile } from "../profile/artifact-ref-validate.js";
 import { appendEventLocked, preflightEventAppend, type AppendEventInput } from "../events/store.js";
+import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+import { readRelationEdges, upsertRelationEdge } from "../dimensions/wiki/relation-edge-store.js";
+import { appendEventRow } from "../dimensions/wiki/event-log-store.js";
+
 import { prepareEventStoreForAppend } from "../events/store-read.js";
 import type { EventType } from "../events/types.js";
 
@@ -194,7 +198,7 @@ export function buildRelationRef(
  * store can never be driven past the read cap into an unreadable-yet-appendable
  * state. {@link compactRelations} is the escape valve.
  */
-export async function appendLine(root: string, ref: RelationRef, binding?: OperationBinding): Promise<void> {
+async function appendLine(root: string, ref: RelationRef, binding?: OperationBinding): Promise<void> {
   const { dir } = await resolveGraphDir(root); // throws on symlink escape (DIR defense)
   await mkdir(dir, { recursive: true });
   const file = path.join(dir, path.basename(RELATIONS_FILE));
@@ -295,6 +299,11 @@ export async function appendRelationLocked(
   decision?: string,
 ): Promise<RelationRef> {
   const ref = buildRelationRef(profile, input); // throws before any write
+  // Rows when a Stack is configured. The dedup check and the event emit both move
+  // with it: a relation recorded in rows while its event went to a file would leave
+  // the audit trail describing a store nobody reads.
+  const viaRows = await appendRelationToRows(ref, decision);
+  if (viaRows !== null) return viaRows;
   await prepareEventStoreForAppend(root); // FIX F2 pre-flight (under the held lock): REPAIR a torn tail, else fail closed on a tampered/symlinked/corrupt audit store
   const { relations } = await readRelations(root); // under the caller's lock
   const duplicate = relations.find((rel) => rel.contentHash === ref.contentHash);
@@ -304,6 +313,61 @@ export async function appendRelationLocked(
   await appendLine(root, ref);
   await emitRelationEvent(root, event); // the SAME pre-flighted event object
   return ref;
+}
+
+/**
+ * Record this relation, and its event, in rows — or report no Stack is configured.
+ *
+ * Idempotency is preserved: the store's dedup index rejects the same
+ * `(type, from, to, contentHash)` and reports "already present", in which case the
+ * caller gets the existing row's id back and NOTHING is emitted. That matches the
+ * file path's FIX #6 behaviour exactly — an idempotent create appends no event.
+ *
+ * @param ref - The validated relation to record.
+ * @param decision - Composed trust decision, when the caller has one.
+ * @param env - Environment to read the Stack from.
+ * @returns The persisted ref, or null when no Stack is configured.
+ */
+async function appendRelationToRows(
+  ref: RelationRef,
+  decision: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<RelationRef | null> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return null;
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    const inserted = await upsertRelationEdge(dimensionsDb.db, stackId, ref);
+    if (!inserted) {
+      // Idempotent create: the edge was already there. Emit nothing, as the file
+      // path does — a duplicate must not add a second audit event.
+      const existing = await readRelationEdges(dimensionsDb.db, stackId);
+      const match = existing.find((edge) => edge.ref.contentHash === ref.contentHash);
+      return match?.ref ?? ref;
+    }
+    await appendRelationEventToRows(dimensionsDb.db, stackId, ref, decision);
+    return ref;
+  } finally {
+    await dimensionsDb.close();
+  }
+}
+
+/**
+ * Emit the `relation-create` event for a newly recorded edge.
+ *
+ * @param db - Database handle.
+ * @param stackId - The Stack that owns the edge.
+ * @param ref - The edge just recorded.
+ * @param decision - Composed trust decision, when the caller has one.
+ */
+async function appendRelationEventToRows(
+  db: Parameters<typeof upsertRelationEdge>[0],
+  stackId: string,
+  ref: RelationRef,
+  decision: string | undefined,
+): Promise<void> {
+  const event = buildRelationEvent("relation-create", ref, decision);
+  await appendEventRow(db, stackId, event as never);
 }
 
 /**

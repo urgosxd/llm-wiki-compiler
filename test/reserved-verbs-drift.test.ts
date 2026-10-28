@@ -38,7 +38,11 @@ describe("reserved-verbs drift guard", () => {
     const result = await runCLI(["--help"], process.cwd());
     expect(result.code).toBe(0);
     const verbs = parseTopLevelVerbs(result.stdout);
-    expect(verbs).toContain("workflow");
+    // Sanity-check that the parser actually found the command block: `workflow` was
+    // the verb here until the workflow subsystem was buried. Any always-present verb
+    // serves the same purpose -- what this suite enforces is the line below, that NO
+    // registered verb escapes RESERVED_CORE_VERBS.
+    expect(verbs).toContain("ingest");
     expect(verbs.length).toBeGreaterThan(5);
     const unreserved = verbs.filter((verb) => !RESERVED_CORE_VERBS.has(verb));
     expect(unreserved).toEqual([]);

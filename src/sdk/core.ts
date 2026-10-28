@@ -39,13 +39,10 @@ import {
 import { collectStatus } from "../status/collect.js";
 import { pickSearchRefs, loadSelectedRefs } from "../search/retrieval.js";
 import { getPage, listPages } from "../pages/list.js";
+import { withPageSource, withRegistrySource } from "../dimensions/wiki/page-source-seam.js";
 import { listSources, getSource, deleteSource } from "../sources/store.js";
 import { runOkfExport } from "../export/okf/run.js";
 import { runOkfImport } from "../import/run.js";
-import { buildStagingFacade } from "./staging-facade.js";
-import { buildPreparationFacade } from "./preparation-facade.js";
-import { buildProductFacade } from "./product-facade.js";
-import { buildOperationsFacade } from "./operations-facade.js";
 import { applyApprovedMutations } from "../trust/executor.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
 import { resolveArtifactRef, declaresArtifactTypes, ArtifactVerifyUnavailableError, type ArtifactHealth } from "../artifacts/resolve.js";
@@ -92,7 +89,6 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
   }
 
   return {
-    operations: buildOperationsFacade(root, runQuiet, options),
     ingest: ({ source }) => runQuiet(() => ingestSource(root, source)),
 
     ingestText: (input) => runQuiet(() => ingestTextSource(root, input)),
@@ -106,21 +102,34 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     search: (question, opts = {}) =>
       runQuiet(async () => {
         ensureProviderAvailable();
-        const { refs, warnings } = await pickSearchRefs(root, question, opts);
-        const pages = await loadSelectedRefs(root, refs);
-        return { pages, refs, warnings };
+        // One source for ranking AND hydration: selecting against rows and then
+        // reading files would drop every ref of a Stack-backed wiki as absent.
+        const selected = await withRegistrySource(process.env, async (registrySource) => {
+          const { refs, warnings } = await pickSearchRefs(root, question, { ...opts, registrySource });
+          return { refs, warnings, pages: await loadSelectedRefs(root, refs, registrySource) };
+        });
+        return selected;
       }),
 
     query: (question, opts = {}) =>
       runQuiet(() => {
         assertQuerySaveOptions(opts);
         ensureProviderAvailable();
-        return generateAnswer(root, question, opts);
+        // The registry source is an internal handle, never part of the public SDK
+        // options, so the facade resolves it here for every embedder.
+        return withRegistrySource(process.env, (registrySource) =>
+          generateAnswer(root, question, { ...opts, registrySource }),
+        );
       }),
 
-    getPage: (ref) => runQuiet(() => getPage(root, ref)),
+    // Pages come from rows when a Stack is configured. Both go through the same
+    // seam so a listing and a single-page read can never disagree about which
+    // backend they are looking at.
+    getPage: (ref) =>
+      runQuiet(() => withPageSource(process.env, (source) => getPage(root, ref, source))),
 
-    listPages: (opts) => runQuiet(() => listPages(root, opts)),
+    listPages: (opts) =>
+      runQuiet(() => withPageSource(process.env, (source) => listPages(root, { ...opts, pageSource: source }))),
 
     listSources: (opts) => runQuiet(() => listSources(root, opts)),
 
@@ -224,8 +233,6 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
       return discoverArtifact(root, await requireArtifactProfile(root), captured);
     }),
 
-    // @experimental non-default staging slice — factored into staging-facade.ts.
-    ...buildStagingFacade(root, runQuiet),
 
     // @experimental preparation slice — factored into preparation-facade.ts.
     // The embedder's preparation identity and grants are read HERE, at
@@ -233,24 +240,5 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     // exactly the grants it was given, so an embedder that names none can read
     // preparations and not mutate them.
     //
-    // `Object.hasOwn`, not `options.preparation`. The plain read walks the
-    // prototype chain, so with `Object.prototype.preparation` planted a caller
-    // who passed `{ root }` alone was handed a full grant set — the fail-closed
-    // default silently inverted. Own-property only, so an absent option is
-    // absent.
-    ...buildPreparationFacade(
-      root, runQuiet,
-      Object.hasOwn(options, "preparation") ? options.preparation : undefined,
-    ),
-
-    // @experimental product slice — factored into product-facade.ts. It reads
-    // the SAME own-property preparation options the preparation facade does,
-    // and for the same reason: `product.invoke` stages and drives a durable
-    // preparation, so it must cost the `preparation.run` grant staging costs.
-    // An embedder that named none can preview a product action and not run one.
-    ...buildProductFacade(
-      root, runQuiet,
-      Object.hasOwn(options, "preparation") ? options.preparation : undefined,
-    ),
   };
 }

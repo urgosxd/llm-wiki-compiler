@@ -92,30 +92,46 @@ function v2Store(entries: unknown[]): ParsedStore {
   return { version: 2, store: { version: 2, model: MODEL, dimensions: 2, entries, chunks: [] } };
 }
 
-describe("v2→v3 ranking parity — pillar 1: content-verified preserve", () => {
-  // Two UNAMBIGUOUS bare slugs (alpha→concepts, beta→queries): each maps to
-  // exactly one eligible live pageId, and the title/summary still hashes equal.
+describe("ranking parity — pillar 1: v3 records rank as intended", () => {
+  // The vectors are supplied directly as v3 records. An earlier version of this
+  // pillar migrated a v2 store to obtain them, which tested a re-key from a bare
+  // slug that no longer exists: that path was retired because a wrong slug→page
+  // pairing attaches one page's vector to another and nothing downstream can
+  // detect it. What still matters -- and what these cases assert -- is that v3
+  // consumers rank these pages in the intended order.
   const ALPHA_VEC = [0.96, 0.28];
   const BETA_VEC = [0.6, 0.8];
   const pages = [live("concepts/alpha", "alpha", "Alpha", "core"), live("queries/beta", "beta", "Beta", "edge")];
-  const old = v2Store([v2Entry("alpha", "Alpha", "core", ALPHA_VEC), v2Entry("beta", "Beta", "edge", BETA_VEC)]);
+  const healthy: ParsedStore = {
+    version: 3,
+    store: {
+      version: 3,
+      model: MODEL,
+      dimensions: 2,
+      entries: [
+        { pageId: "concepts/alpha", title: "Alpha", summary: "core", embeddingTextHash: pages[0]!.embeddingTextHash, vector: ALPHA_VEC, updatedAt: "2026-01-01T00:00:00.000Z" },
+        { pageId: "queries/beta", title: "Beta", summary: "edge", embeddingTextHash: pages[1]!.embeddingTextHash, vector: BETA_VEC, updatedAt: "2026-01-01T00:00:00.000Z" },
+      ],
+      chunks: [],
+    },
+  };
 
-  it("re-keys each unambiguous v2 vector byte-identical under its qualified pageId, no re-embed", () => {
-    const { store, reembedPageIds } = migrateEmbeddingStore(old, pages, MODEL);
-    expect(reembedPageIds).toHaveLength(0); // hash matched → preserved, not re-embedded
+  it("keeps both authoritative records instead of re-embedding them", () => {
+    const { store, reembedPageIds } = migrateEmbeddingStore(healthy, pages, MODEL);
+    // Both hashes match, so no provider work is requested.
+    expect(reembedPageIds).toHaveLength(0);
     const byId = new Map(store.entries.map((e) => [e.pageId, e]));
-    expect(byId.get("concepts/alpha")?.vector).toEqual(ALPHA_VEC); // array-identical
+    expect(byId.get("concepts/alpha")?.vector).toEqual(ALPHA_VEC);
     expect(byId.get("queries/beta")?.vector).toEqual(BETA_VEC);
-    expect(byId.get("concepts/alpha")?.embeddingTextHash).toBe(hashChunkText("Alpha\n\ncore"));
   });
 
-  it("a v3 consumer ranks the migrated pages in the intended (pre-collision) order", async () => {
+  it("a v3 consumer ranks the pages in the intended order", async () => {
     const root = await makeTempRoot("rank-preserve");
     try {
       await seedPreserveCorpus(root);
       setProviderEnv();
       mockQueryVector([1, 0]); // ranks the vector closest to [1,0] (alpha) first
-      const { store } = migrateEmbeddingStore(old, pages, MODEL);
+      const { store } = migrateEmbeddingStore(healthy, pages, MODEL);
       await writeEmbeddingStore(root, store);
       const profile = await loadProfile(root);
       const { hits } = await findRelevantPagesV3(root, store, "search", "core?", 5, profile);

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The wiki stores its state in Postgres, per Stack.** Pages, the event chain,
+  relation edges, compile state, the review-candidate queue, the embedding corpus,
+  and the rule-extraction cursor all live in rows scoped to a Stack, instead of
+  directories under `.llmwiki/` and `wiki/`. Two hosts serving one Stack now share
+  one queue and one corpus; previously each checkout kept its own, so a reviewer on
+  one host could approve work another had already superseded.
+
+  The review-candidate queue is the completion of that move: `review list`,
+  `review show`, `review approve`, `review reject` and the template-update gate all
+  read and write `wiki.review_candidates`. A rejected candidate leaves the queue
+  rather than moving to an archive directory — a row has no file to move, and
+  "pending" is the only state the queue exposes.
+
+  Two things this fixed, both of which failed silently before:
+  `review reject` could not archive at all on a Stack-backed project (it asked a
+  filesystem for a leaf a row does not have), and a template update would proceed
+  while review candidates were pending, because the gate inspected a directory that
+  did not exist and read that absence as an empty queue.
+
+- **The advisory lock is keyed on the Stack, not the checkout path.** It hashed the
+  canonical project path, so two hosts serving one Stack held different keys, both
+  acquired, and both compiled the same corpus — the collision the lock exists to
+  prevent.
+
+- **`wiki.review_candidates` gained the five columns a candidate actually has**
+  (`candidate_kind`, `citation_manifest`, `connector_provenance`, `confidence`,
+  `contradicted`). Without `citation_manifest` in particular, the integrity check
+  that refuses an answer edited after staging had nothing to compare against.
+
 ### Added
 
 - Validated answer publication: `query --save --review` and SDK `review: true`

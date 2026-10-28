@@ -5,12 +5,26 @@
  * the same concurrency cap as `compile`/`refresh`/`watch`. This mocks
  * compileAndReport to capture the CompileOptions it receives while running a
  * real local-file ingest (no provider calls reach the network).
+ *
+ * ## Why a Stack is bound here
+ *
+ * The ingest that precedes compile writes pages as ROWS now, so it needs a Stack
+ * identity to key them by. Without `AKS_STACK_ID` the ingest refuses before compile
+ * is ever reached:
+ *
+ *   LLMWIKI_DIMENSIONS enables "wiki" but AKS_STACK_ID is not set.
+ *
+ * Measured: that is exactly what happened here -- `compileAndReport` received ZERO
+ * calls, so the assertion failed on a run that never got as far as the option under
+ * test. Binding a Stack is what the rest of the ingest suites already do; the option
+ * being forwarded is unchanged.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
+import { useStackEnv } from "./fixtures/stack-env.js";
 
 const compileSpy = vi.hoisted(() => vi.fn());
 vi.mock("../src/compiler/index.js", async (importActual) => ({
@@ -19,6 +33,9 @@ vi.mock("../src/compiler/index.js", async (importActual) => ({
 }));
 
 import quickstartCommand from "../src/commands/quickstart.js";
+
+// The ingest step cannot run without a Stack; see the file header.
+useStackEnv("quickstart-concurrency");
 
 describe("quickstart concurrency forwarding", () => {
   let cwd = "";

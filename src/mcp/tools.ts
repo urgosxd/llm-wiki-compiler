@@ -14,12 +14,13 @@ import { ingestSource } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { compileAndReport } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { generateAnswer } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { lint } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { withPageScan } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { collectStatus } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { buildContextPack } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { ensureCompileProviderAvailable, ensureProviderAvailable } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { runEval, DEFAULT_SAMPLE_SIZE } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { readPageRecord } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { pickSearchRefs, loadSelectedRefs } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { pickSearchRefs, loadSelectedRefs, withRegistrySource } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { loadNonDefaultProfile } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { isSlugSafe } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { resolveArtifactRef, declaresArtifactTypes } from "@atomicstrata/llmwiki-core/compiler-cli";
@@ -105,7 +106,9 @@ function registerQueryTool(server: McpServer, root: string): void {
     },
     async ({ question, save, debug }) => {
       ensureProviderAvailable();
-      const result = await generateAnswer(root, question, { save, debug });
+      const result = await withRegistrySource(process.env, (registrySource) =>
+        generateAnswer(root, question, { save, debug, registrySource }),
+      );
       return jsonResult(result);
     },
   );
@@ -126,8 +129,12 @@ function registerSearchTool(server: McpServer, root: string): void {
     },
     async ({ question }) => {
       ensureProviderAvailable();
-      const { refs, warnings } = await pickSearchRefs(root, question);
-      const records = await loadSelectedRefs(root, refs);
+      // One source for ranking AND hydration, or a Stack-backed wiki ranks against
+      // rows and then finds none of them on disk.
+      const { records, refs, warnings } = await withRegistrySource(process.env, async (registrySource) => {
+        const selected = await pickSearchRefs(root, question, { registrySource });
+        return { ...selected, records: await loadSelectedRefs(root, selected.refs, registrySource) };
+      });
       // S6: surface degrade warnings in the RESULT payload (not a log) so an
       // agent SEES that an outdated index meant lexical-only contribution.
       return jsonResult({ pages: records, refs, warnings });
@@ -191,7 +198,7 @@ function registerStatusTool(server: McpServer, root: string): void {
         "the true totals. Read-only — never modifies the workspace.",
       inputSchema: {},
     },
-    async () => jsonResult(await collectStatus(root)),
+    async () => jsonResult(await withPageScan(process.env, (pageScan) => collectStatus(root, { pageScan }))),
   );
 }
 

@@ -45,7 +45,7 @@ import {
 } from "../compiler/candidates.js";
 import { assertCandidateSlug } from "../compiler/candidate-paths.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
-import { acquireMutationLockBlocking } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLockBlocking } from "../utils/mutation-lock.js";
 import { assertBodyFieldContract, assertBodyLifecycle } from "./typed-page-validate.js";
 import { releaseLock } from "../utils/lock.js";
 import type { ProfilePack } from "../profile/types.js";
@@ -289,7 +289,7 @@ export interface SdkStageEntityPageInput {
  * @returns The persisted {@link StagedChange}.
  * @throws {StagingRequiresProfileError} When the project has no non-default profile.
  */
-export async function stageEntityPageForProject(
+async function stageEntityPageForProject(
   root: string,
   input: SdkStageEntityPageInput,
 ): Promise<StagedChange> {

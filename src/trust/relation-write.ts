@@ -23,7 +23,7 @@
  */
 
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLockBlocking } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLockBlocking } from "../utils/mutation-lock.js";
 import { type AppendRelationInput } from "../relations/store.js";
 import { applyApprovedMutationsLocked } from "./executor.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
@@ -100,7 +100,7 @@ export class RelationsRequireProfileError extends Error {
  * @throws {RelationsRequireProfileError} When the project has no non-default profile.
  * @throws {RelationWriteDeniedError} When the planner denies the write.
  */
-export async function createRelationForProject(
+async function createRelationForProject(
   root: string,
   input: AppendRelationInput,
 ): Promise<RelationRef> {

@@ -21,8 +21,8 @@ import path from "node:path";
 import { PROFILE_FILE } from "../../src/utils/constants.js";
 import { appendRelation } from "../../src/relations/store.js";
 import type { EntityId, ProfilePack } from "../../src/profile/types.js";
-import { newsroomEntities, newsroomRelations, newsroomWorkflowActions, newsroomWorkflows } from "../../src/profile/templates/builtin/newsroom.js";
 import { writeSeedPage, type SeedPage } from "./seed-page.js";
+import { autosciArtifacts, autosciEntities, autosciRelations, autosciWorkflowActions, autosciWorkflows, newsroomEntities, newsroomRelations, newsroomWorkflowActions, newsroomWorkflows } from "./builtin-profile-data.js";
 
 /** The `newsroom` profile pack — no vocabulary shared with the research pack. */
 export const NEWSROOM_PROFILE: ProfilePack = {

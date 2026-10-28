@@ -89,6 +89,8 @@ import {
   MAX_PENDING_EMBEDDING_ATTEMPTS,
 } from "./constants.js";
 import * as output from "./output.js";
+import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+import { readRefreshMarkers, replaceRefreshMarkers } from "../dimensions/wiki/marker-store.js";
 import { atomicWrite } from "./markdown.js";
 import { parseQualifiedPageId } from "./page-id.js";
 import {
@@ -294,6 +296,8 @@ export async function readPendingMarker(
   root: string,
   markerFile: EmbeddingMarkerFile = PENDING_EMBEDDINGS_FILE,
 ): Promise<PendingMarkerRead> {
+  const viaRows = await readMarkerFromRows(markerFile);
+  if (viaRows !== null) return viaRows;
   let privateDir: string | null;
   try {
     privateDir = await resolveExistingConfinedPrivateDir(root);
@@ -320,6 +324,81 @@ export async function readPendingMarker(
  * @param root - Absolute project root.
  * @returns The valid, bounded pending entries; `[]` on absent/escape/oversize/corrupt.
  */
+/** Stack id this run is bound to, or undefined for the file backend. */
+function markerStackId(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  return stackId === "" ? undefined : stackId;
+}
+
+/** Which stored state a marker file maps onto. */
+function markerStateOf(markerFile: EmbeddingMarkerFile): "pending" | "quarantined" {
+  return markerFile === QUARANTINED_EMBEDDINGS_FILE ? "quarantined" : "pending";
+}
+
+/**
+ * Read one marker set from rows, or report that no Stack is configured.
+ *
+ * Answers the SAME three states the file reader answers, because four callers branch
+ * on them: `ok` with entries, `absent` for a Stack that queued nothing, and
+ * `unavailable` when the read failed. Collapsing `unavailable` into `absent` would
+ * make a database blip look like a clean queue, which is how a broken deployment
+ * silently stops retrying.
+ *
+ * @param markerFile - Which marker this is.
+ * @param env - Environment to read the Stack from.
+ * @returns The read outcome, or null when no Stack is configured.
+ */
+async function readMarkerFromRows(
+  markerFile: EmbeddingMarkerFile,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<PendingMarkerRead | null> {
+  const stackId = markerStackId(env);
+  if (stackId === undefined) return null;
+  const handle = createDimensionsDatabase(env);
+  try {
+    const entries = await readRefreshMarkers(handle.db, stackId, markerStateOf(markerFile));
+    if (entries.length === 0) return { status: "absent", entries: [] };
+    return {
+      status: "ok",
+      entries: entries.map((entry) => ({ pageId: entry.pageId, attempts: entry.attempts })),
+    };
+  } catch {
+    return { status: "unavailable", entries: [], detail: "unreadable" };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Replace one marker set in rows, or report that no Stack is configured.
+ *
+ * A marker written to a file while reads come from rows would make every run retry
+ * work that already settled, so the two move together.
+ *
+ * @param entries - The complete set for this marker.
+ * @param markerFile - Which marker this is.
+ * @param env - Environment to read the Stack from.
+ * @returns True when the set was written to rows.
+ */
+async function writeMarkerToRows(
+  entries: PendingEmbedding[],
+  markerFile: EmbeddingMarkerFile,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  const stackId = markerStackId(env);
+  if (stackId === undefined) return false;
+  const handle = createDimensionsDatabase(env);
+  try {
+    await replaceRefreshMarkers(
+      handle.db, stackId, markerStateOf(markerFile),
+      entries.map((entry) => ({ pageId: entry.pageId, attempts: entry.attempts })),
+    );
+    return true;
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function loadPendingEmbeddings(
   root: string,
   markerFile: EmbeddingMarkerFile = PENDING_EMBEDDINGS_FILE,
@@ -444,8 +523,9 @@ export function warnQuarantined(quarantined: PendingEmbedding[]): void {
  * @param entries - The full pending set to persist.
  */
 /** Persist the operation executor's write-ahead marker, surfacing every write failure. */
-export async function writePendingEmbeddingsStrict(root: string, entries: PendingEmbedding[]): Promise<void> {
+async function writePendingEmbeddingsStrict(root: string, entries: PendingEmbedding[]): Promise<void> {
   const normalized = normalizeMarker(entries);
+  if (await writeMarkerToRows(normalized, PENDING_EMBEDDINGS_FILE)) return;
   const privateDir = await resolveConfinedPrivateDir(root);
   if (normalized.length === 0) {
     await clearPendingEmbeddings(root);
@@ -461,6 +541,7 @@ export async function writePendingEmbeddings(
   markerFile: EmbeddingMarkerFile = PENDING_EMBEDDINGS_FILE,
 ): Promise<void> {
   const normalized = normalizeMarker(entries);
+  if (await writeMarkerToRows(normalized, markerFile)) return;
   if (normalized.length === 0) {
     await clearPendingEmbeddings(root, markerFile);
     return;
@@ -528,6 +609,10 @@ export async function clearPendingEmbeddings(
   root: string,
   markerFile: EmbeddingMarkerFile = PENDING_EMBEDDINGS_FILE,
 ): Promise<void> {
+  // Clearing must reach the same backend the read and write use. A clear that only
+  // unlinks a file is a COMPLETE NO-OP when the marker is a row, silently leaving
+  // every id queued for a retry that already succeeded.
+  if (await writeMarkerToRows([], markerFile)) return;
   let privateDir: string | null;
   try {
     privateDir = await resolveExistingConfinedPrivateDir(root);

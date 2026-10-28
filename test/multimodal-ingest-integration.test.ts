@@ -38,6 +38,11 @@ import path from "path";
 import { mkdtemp, rm, readdir, readFile, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { runCLI, expectCLIExit, expectCLIFailure, formatCLIFailure } from "./fixtures/run-cli.js";
+import { readSourceBodies } from "./fixtures/source-corpus.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
+
+// Every suite in this file ingests, and ingest needs a tenant.
+useStackEnv("multimodal-ingest");
 
 /** Number of distinct fixture files ingested in the bulk-ingest test. */
 const BULK_INGEST_COUNT = 3;
@@ -94,13 +99,21 @@ afterEach(async () => {
   }
 });
 
-/** Read the first .md file found in sources/ within cwd. */
+/**
+ * Read the markdown the ingest stored, from whichever backend holds it.
+ *
+ * On a Stack the corpus is rows, so the old `readdir("sources")` would throw for
+ * the right reason. What these suites assert is the CONVERTED MARKDOWN -- that a
+ * PDF, image or audio file became a source with text -- and that text is the same
+ * on both backends.
+ */
 async function readIngestedMarkdown(cwd: string): Promise<string> {
-  const sourcesDir = path.join(cwd, "sources");
-  const files = await readdir(sourcesDir);
-  const mdFile = files.find((f) => f.endsWith(".md"));
-  if (!mdFile) throw new Error(`No .md file in ${sourcesDir}; found: ${files.join(", ")}`);
-  return readFile(path.join(sourcesDir, mdFile), "utf-8");
+  const bodies = await readSourceBodies(cwd);
+  const mdName = [...bodies.keys()].find((name) => name.endsWith(".md"));
+  if (mdName === undefined) {
+    throw new Error(`No .md source found; found: ${[...bodies.keys()].join(", ")}`);
+  }
+  return bodies.get(mdName) ?? "";
 }
 
 /** Run ingest on a workspace and return the CLI result plus written markdown. */

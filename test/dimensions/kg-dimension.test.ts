@@ -162,6 +162,43 @@ describe("the kg dimension adapter", () => {
     expect(createClient).toHaveBeenCalledWith("postgres://explicit", expect.any(Number));
   });
 
+  /**
+   * THE RULE ATOMIC INGEST DEPENDS ON, previously untested on this dimension.
+   *
+   * Every other case here calls `commit(prepared)` with NO scope, which exercises the
+   * standalone path -- the one that opens its own client. The coordinator's path,
+   * `commit(prepared, { tx })`, had no test against the shipped dimension at all:
+   * `ingest-atomicity.test.ts` proves the cross-dimension property with a graph
+   * DOUBLE, so `writeGraph`'s `if (callerTx !== undefined)` branch was unmeasured.
+   *
+   * The assertion that matters is the NEGATIVE one. A scoped commit that quietly
+   * opened its own connection would commit the graph outside the coordinator's
+   * transaction, and both commits would succeed, so the break would be SILENT --
+   * exactly the failure mode atomic ingest exists to remove.
+   */
+  it("joins the coordinator's transaction instead of opening its own connection", async () => {
+    const prepared = await dimension().prepare(INPUT);
+    const coordinatorTx = { name: "coordinator-tx" };
+
+    await dimension().commit(prepared, { tx: coordinatorTx });
+
+    expect(createClient).not.toHaveBeenCalled();
+    expect(createDatabase).not.toHaveBeenCalled();
+    // And every write landed on the handle it was GIVEN, not on a fresh one. The
+    // document row is the one the foreign key depends on, so it is the one worth
+    // pinning.
+    expect(registerDocumentRow).toHaveBeenCalledWith(
+      coordinatorTx,
+      expect.objectContaining({ stackId: "stack-1", source: INPUT.source }),
+    );
+    expect(consolidateEntityRows).toHaveBeenCalledWith(
+      coordinatorTx, "stack-1", "row-id-from-postgres", [ENTITY],
+    );
+    expect(consolidateRelationshipRows).toHaveBeenCalledWith(
+      coordinatorTx, "stack-1", [RELATIONSHIP], expect.any(Map),
+    );
+  });
+
   it("closes the database client even when the transaction fails", async () => {
     const end = vi.fn().mockResolvedValue(undefined);
     createClient.mockReturnValue({ end });

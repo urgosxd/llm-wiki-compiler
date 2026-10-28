@@ -11,6 +11,7 @@
  * The suite provisions through the shared harness and skips loudly when the
  * database or the `wiki` schema is absent, rather than passing vacuously.
  */
+import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
@@ -21,8 +22,9 @@ import {
 } from "../../src/dimensions/wiki/page-store.js";
 import type { Page } from "../../src/pages/list.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { wikiTablesPresent } from "../fixtures/rls-probe.js";
 
-const harness = await createKgPostgresHarness("wiki-store");
+const harness = await createKgPostgresHarness(`wiki-store-${randomUUID().slice(0, 8)}`);
 
 /**
  * Is the `wiki` schema applied?
@@ -30,24 +32,10 @@ const harness = await createKgPostgresHarness("wiki-store");
  * The store is useless without it, and a missing schema would otherwise surface as
  * a confusing "relation does not exist" per test instead of one honest skip.
  */
-const provisioned = await (async (): Promise<boolean> => {
-  if (!harness.reachable) return false;
-  try {
-    const rows = await harness.db.execute<{ n: number }>(
-      "select count(*)::int as n from information_schema.tables where table_schema = 'wiki'",
-    );
-    const present = (rows[0] as { n: number } | undefined)?.n === 2;
-    if (!present) {
-      console.warn("wiki-page-store: schema missing; run src/dimensions/wiki/schema.sql");
-    }
-    return present;
-  } catch {
-    return false;
-  }
-})();
+const provisioned = await (harness.reachable && (await wikiTablesPresent(harness.db, ["pages", "concept_aliases"])));
 
 /** A second tenant, so cross-tenant isolation is testable. */
-const otherHarness = await createKgPostgresHarness("wiki-store-other");
+const otherHarness = await createKgPostgresHarness(`wiki-store-other-${randomUUID().slice(0, 8)}`);
 
 afterAll(async () => {
   await harness.cleanup();

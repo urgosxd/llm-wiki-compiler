@@ -28,15 +28,15 @@ import { mkdir, rm, writeFile } from "fs/promises";
 import path from "path";
 import os from "os";
 import {
-  findRelevantChunks,
-  findTopKChunks,
   readEmbeddingStore,
   resetStaleEmbeddingWarnings,
   updateEmbeddings,
   writeEmbeddingStore,
-  type ChunkEmbeddingEntry,
-  type EmbeddingStore,
+  type ChunkEmbeddingV3,
+  type EmbeddingStoreV3,
 } from "../src/utils/embeddings.js";
+import { cosineSimilarity } from "../src/utils/embeddings-search.js";
+import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
 import { rerankWithBm25 } from "../src/utils/retrieval.js";
 import { readV3Store, conceptId } from "./fixtures/v3-store.js";
 import { OpenAIProvider } from "../src/providers/openai.js";
@@ -62,9 +62,9 @@ function makeChunkEntry(
   chunkIndex: number,
   text: string,
   vector: number[],
-): ChunkEmbeddingEntry {
+): ChunkEmbeddingV3 {
   return {
-    slug,
+    pageId: `concepts/${slug}`,
     title: slug,
     chunkIndex,
     contentHash: `hash-${slug}-${chunkIndex}`,
@@ -74,9 +74,9 @@ function makeChunkEntry(
   };
 }
 
-function makeV2Store(chunks: ChunkEmbeddingEntry[]): EmbeddingStore {
+function makeV3Store(chunks: ChunkEmbeddingV3[]): EmbeddingStoreV3 {
   return {
-    version: 2,
+    version: 3,
     model: "test-embed",
     dimensions: 2,
     entries: [],
@@ -116,7 +116,7 @@ function stubOpenAIProvider(vector = [0.5, 0.5]): void {
  * Stub the OpenAI provider and write a v2 store to disk.
  * Returns the root and its cleanup function.
  */
-async function setupOpenAIWithV2Store(
+async function setupOpenAIWithV3Store(
   label: string,
   chunks: ChunkEmbeddingEntry[],
   queryVector: number[],
@@ -126,7 +126,7 @@ async function setupOpenAIWithV2Store(
   process.env.LLMWIKI_EMBEDDING_MODEL = "test-embed";
   process.env.OPENAI_API_KEY = "test-key";
   vi.spyOn(OpenAIProvider.prototype, "embed").mockResolvedValue(queryVector);
-  await writeEmbeddingStore(root, makeV2Store(chunks));
+  await writeEmbeddingStore(root, makeV3Store(chunks));
   return { root, cleanup: () => cleanupRoot(root) };
 }
 
@@ -142,6 +142,28 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 // CLI smoke: --help and credential guard
 // ---------------------------------------------------------------------------
+
+/**
+ * Rank chunks against a query vector, highest cosine first.
+ *
+ * `findTopKChunks` was a v1/v2 helper keyed by bare slug and has no production
+ * caller, so the cases assert the property on the records instead. That made the same
+ * five-line ranking appear three times, which fallow flagged; sharing it also keeps
+ * the sort direction in one place, since an inverted comparator would still "pass" a
+ * single-element assertion.
+ *
+ * @param chunks - Chunk records to rank.
+ * @param queryVector - Vector to score against.
+ * @returns The chunks, best first.
+ */
+function rankChunks<T extends { vector: number[] }>(
+  chunks: readonly T[],
+  queryVector: number[],
+): { chunk: T; score: number }[] {
+  return [...chunks]
+    .map((chunk) => ({ chunk, score: cosineSimilarity(queryVector, chunk.vector) }))
+    .sort((left, right) => right.score - left.score);
+}
 
 describe("query --help (CLI level)", () => {
   it("shows --debug flag in query help output", async () => {
@@ -182,31 +204,39 @@ describe("query --debug credential guard (CLI level)", () => {
 // Programmatic: chunk ranking over a v2 fixture (no LLM)
 // ---------------------------------------------------------------------------
 
-describe("chunk ranking over v2 fixture (programmatic)", () => {
-  it("findTopKChunks returns the most-similar chunk first", () => {
+describe("chunk ranking over a v3 store (programmatic)", () => {
+  it("cosine scoring over v3 chunks puts the most similar first", () => {
     const chunks = [
       makeChunkEntry("ml-basics", 0, "machine learning fundamentals", [1, 0]),
       makeChunkEntry("retrieval", 0, "retrieval augmented generation", [0, 1]),
       makeChunkEntry("ml-basics", 1, "neural network training", [0.8, 0.2]),
     ];
     // Query vector pointing at the first dimension → ml-basics/0 is closest.
-    const top = findTopKChunks([1, 0], chunks, 2);
-    expect(top[0].chunk.slug).toBe("ml-basics");
-    expect(top[0].chunk.chunkIndex).toBe(0);
+    // Scored directly: `findTopKChunks` was a v1/v2 helper keyed by bare slug and
+    // has no production caller, so the property is asserted on the records.
+    const top = rankChunks(chunks, [1, 0]);
+    expect(top[0]?.chunk.pageId).toBe("concepts/ml-basics");
+    expect(top[0]?.chunk.chunkIndex).toBe(0);
   });
 
-  it("findRelevantChunks reads a v2 store from disk and ranks by query vector", async () => {
-    // Query vector [1, 0] → closest chunk should be slug "a" (also [1, 0]).
-    const { root, cleanup } = await setupOpenAIWithV2Store("v2-rank", [
+  it("a v3 store read from disk ranks by query vector", async () => {
+    // Query vector [1, 0] → closest chunk should be concepts/a (also [1, 0]).
+    // Asserted through `loadEmbeddingsForSearch`, the function production calls.
+    // `findRelevantChunks` was the v1/v2 equivalent and has been removed.
+    const { root, cleanup } = await setupOpenAIWithV3Store("v3-rank", [
       makeChunkEntry("a", 0, "alpha text", [1, 0]),
       makeChunkEntry("b", 0, "beta text", [0, 1]),
     ], [1, 0]);
 
-    const results = await findRelevantChunks(root, "alpha", 2);
-    expect(results[0].chunk.slug).toBe("a");
-    expect(results[0].score).toBeGreaterThan(results[1].score);
-
-    await cleanup();
+    try {
+      const outcome = await loadEmbeddingsForSearch(root);
+      expect(outcome.store).not.toBeNull();
+      const ranked = rankChunks(outcome.store?.chunks ?? [], [1, 0]);
+      expect(ranked[0]?.chunk.pageId).toBe("concepts/a");
+      expect(ranked[0]!.score).toBeGreaterThan(ranked[1]!.score);
+    } finally {
+      await cleanup();
+    }
   });
 
   it("rerankWithBm25 boosts chunks whose text contains query terms", () => {
@@ -220,22 +250,26 @@ describe("chunk ranking over v2 fixture (programmatic)", () => {
       chunk,
     }));
     const ranked = rerankWithBm25("chunked retrieval", candidates);
-    expect(ranked[0].candidate.chunk.slug).toBe("specific");
+    // Keyed by pageId: the v3 chunk record has no bare `slug`.
+    expect(ranked[0].candidate.chunk.pageId).toBe("concepts/specific");
   });
 
-  it("debug snapshot includes slug and score for each page", async () => {
+  it("the debug snapshot exposes a pageId and a numeric score per chunk hit", async () => {
     // Query vector [1, 0] → page-one should score highest.
-    const { root, cleanup } = await setupOpenAIWithV2Store("debug-snap", [
+    const { root, cleanup } = await setupOpenAIWithV3Store("debug-snap", [
       makeChunkEntry("page-one", 0, "relevant content here", [1, 0]),
       makeChunkEntry("page-two", 0, "unrelated material", [0, 1]),
     ], [1, 0]);
 
-    const results = await findRelevantChunks(root, "relevant", 2);
-    // Verify the debug-visible fields (slug + score) are populated.
-    expect(results[0].chunk.slug).toBe("page-one");
-    expect(typeof results[0].score).toBe("number");
-
-    await cleanup();
+    try {
+      const outcome = await loadEmbeddingsForSearch(root);
+      const ranked = rankChunks(outcome.store?.chunks ?? [], [1, 0]);
+      // The fields a debug view renders: a qualified identity and a real score.
+      expect(ranked[0]?.chunk.pageId).toBe("concepts/page-one");
+      expect(typeof ranked[0]?.score).toBe("number");
+    } finally {
+      await cleanup();
+    }
   });
 });
 
@@ -273,16 +307,18 @@ describe("v1 → v3 store upgrade (programmatic)", () => {
     expect(v1.version).toBe(1);
   });
 
-  it("v2 store with chunks round-trips through write + read", async () => {
-    const root = await makeTempRoot("v2-roundtrip");
-    const original = makeV2Store([
+  it("a v3 store with chunks round-trips through write + read", async () => {
+    // The writer persists v3, so this asserts the round trip on the version that
+    // actually gets written. A v2 round trip no longer exists to guard.
+    const root = await makeTempRoot("v3-roundtrip");
+    const original = makeV3Store([
       makeChunkEntry("alpha", 0, "first chunk", [0.1, 0.9]),
       makeChunkEntry("alpha", 1, "second chunk", [0.9, 0.1]),
     ]);
     await writeEmbeddingStore(root, original);
     const loaded = await readEmbeddingStore(root);
 
-    expect(loaded?.version).toBe(2);
+    expect(loaded?.version).toBe(3);
     expect(loaded?.chunks).toHaveLength(2);
     expect(loaded?.chunks?.[0].contentHash).toMatch(/^hash-/);
 

@@ -12,12 +12,12 @@
 import path from "path";
 import { atomicWrite, slugify } from "../utils/markdown.js";
 export { summarizeAnswer } from "./query-document.js";
-import { generateIndex } from "../compiler/indexgen.js";
 import { updateEmbeddingsLockedCore } from "../utils/embeddings.js";
 import { qualifiedPageId } from "../utils/page-id.js";
 import { handleSafeEmbeddingFailure } from "../utils/embeddings-batch.js";
 import { QUERIES_DIR } from "../utils/constants.js";
 import * as output from "../utils/output.js";
+import { regenerateIndices } from "../dimensions/wiki/page-source-seam.js";
 
 /**
  * Save a query answer as a wiki page in the queries/ directory,
@@ -43,7 +43,7 @@ export async function saveQueryPageLocked(root: string, question: string, docume
 
   // Regenerate the index so the saved query is immediately discoverable
   // by the next query's page-selection step.
-  await generateIndex(root);
+  await regenerateIndices(root, process.env, { skipMoc: true });
 
   // Index the new query so semantic search retrieves it on the next question.
   // maybeSaveQueryPage already holds the project lock, so call the lock-free

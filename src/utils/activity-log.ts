@@ -23,6 +23,10 @@ import {
   LOG_DESCRIPTION_MAX_CHARS,
   LOG_MAX_PAGE_LINKS,
 } from "./constants.js";
+import {
+  withJournalSource,
+  type JournalEntry,
+} from "../dimensions/wiki/activity-log-source.js";
 import * as output from "./output.js";
 
 /** Unicode ellipsis appended when a description is truncated. */
@@ -112,6 +116,26 @@ export function formatLogEntry(
  * @param description - Human-readable heading detail for the entry.
  * @param opts - Optional bullet body and entry date.
  */
+/**
+ * Render a whole journal the way `log.md` holds it: entries blank-line separated.
+ *
+ * Both backends go through this. A Stack stores FIELDS, so its read path needs the
+ * same renderer the file path uses; reusing it is what keeps the two byte-identical
+ * instead of "visually similar" — a subtle divergence would break the OKF bundle's
+ * `parseLlmwikiLog`, which matches headings with a regex.
+ *
+ * Details are NOT re-sanitized: the writer already sanitized them into the stored
+ * fields, and sanitizing twice would truncate a second time at a different offset.
+ *
+ * @param entries - The entries, oldest first.
+ * @returns The rendered journal, or an empty string when there are no entries.
+ */
+export function renderJournal(entries: readonly JournalEntry[]): string {
+  return entries
+    .map((entry) => `${formatLogEntry(entry.operation, entry.description, entry.at, [...entry.details])}\n\n`)
+    .join("");
+}
+
 export async function appendLog(
   root: string,
   operation: string,
@@ -119,7 +143,22 @@ export async function appendLog(
   opts: LogEntryOptions = {},
 ): Promise<void> {
   try {
-    const entry = formatLogEntry(operation, description, opts.date ?? new Date(), opts.details);
+    const at = opts.date ?? new Date();
+    // A Stack stores the FIELDS and re-renders on read, so the sanitizer has to run
+    // here: it is part of what the entry means, not part of how the file is written.
+    const sanitized: JournalEntry = {
+      operation,
+      description: sanitizeDescription(description),
+      details: opts.details ?? [],
+      at,
+    };
+    const viaRows = await withJournalSource(process.env, async (source) => {
+      if (source === undefined) return false;
+      await source.append(sanitized);
+      return true;
+    });
+    if (viaRows) return;
+    const entry = formatLogEntry(operation, description, at, opts.details);
     await appendFile(path.join(root, LOG_FILE), `${entry}\n\n`, "utf-8");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

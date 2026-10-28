@@ -8,6 +8,7 @@
  * sources are processed through the LLM pipeline.
  */
 
+import { createHash } from "node:crypto";
 import { readdir } from "fs/promises";
 import path from "path";
 import { CompileStateDraft } from "./compile-state-draft.js";
@@ -23,7 +24,7 @@ import {
   slugify,
 } from "../utils/markdown.js";
 import { releaseLock } from "../utils/lock.js";
-import { acquireMutationLock } from "../operation-bundles/lock-gate.js";
+import { acquireMutationLock } from "../utils/mutation-lock.js";
 import {
   parseConcepts,
 } from "./prompts.js";
@@ -44,8 +45,6 @@ import {
 import { markOrphaned, orphanUnownedFrozenPages } from "./orphan.js";
 import { resolveAndApplyLinks } from "./resolver.js";
 import { repairAndApplyLinks } from "./link-repair.js";
-import { generateIndex } from "./indexgen.js";
-import { generateMOC } from "./obsidian.js";
 import { qualifiedPageId } from "../utils/page-id.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
 import { listCandidates } from "./candidates.js";
@@ -100,8 +99,30 @@ import type {
  */
 type DimensionsDatabaseHandle = ReturnType<typeof createDimensionsDatabase>["db"];
 
-import { createDimensionsDatabase, resolveDimensions } from "../dimensions/index.js";
+import { createDimensionsDatabase, resolveDimensions, AKS_STACK_ID_ENV_VAR } from "../dimensions/index.js";
+import type { EmbeddingStoreLocation } from "../utils/embeddings.js";
+import { databaseEmbeddingLocation } from "../utils/embeddings-database.js";
+import {
+  sourceDocumentsChangeSource,
+  sourceDocumentsContentSource,
+} from "../dimensions/wiki/source-documents-store.js";
+import type { ChangeDetectionSource, SourceContentSource } from "./hasher.js";
+import { pageStoreOptions, type PageRemover, type PageSink } from "../trust/page-apply.js";
+import { createPageWriteSink } from "../dimensions/wiki/page-write-sink.js";
+import {
+  createEmbeddingPageSource,
+  createPageScanSource,
+  createResolverPageSource,
+  type EmbeddingPageSource,
+  type PageScanSource,
+} from "../dimensions/wiki/page-scan-source.js";
+import type { ResolverPageSource } from "./resolver.js";
 import { timeStage } from "../utils/stage-timing.js";
+import { reportCompileStage, reportCompileProgress } from "../services/ingest/jobs/compile-observer.js";
+import type { IngestJobObserver } from "../services/ingest/jobs/types.js";
+import { regenerateIndices, resolvePageSeams, type PageSeams } from "../dimensions/wiki/page-source-seam.js";
+import { createWikiStateRowsBackend } from "../dimensions/wiki/wiki-state-source.js";
+import type { WikiStateRowsBackend } from "./compile-state-draft.js";
 
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
 function emptyCompileResult(): CompileResult {
@@ -194,6 +215,8 @@ async function generatePagesPhase(
   options: CompileOptions,
   policy: ReviewPolicy,
   concurrency: number,
+  pageSink: PageSink | undefined,
+  pageRemover: PageRemover | undefined,
 ): Promise<PageGenerationResult> {
   const merged = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs);
   // Build the per-source state snapshot once so each candidate can carry the
@@ -226,7 +249,8 @@ async function generatePagesPhase(
   // Apply every live page as ONE journalled executor batch under the held lock,
   // then derive writtenPages from what ACTUALLY committed (skipped pages folded
   // into errors), so finalizeWiki never resolves/embeds an uncommitted page.
-  const { writtenPages, batchErrors } = await commitLivePageWrites(root, outcomes);
+  const { writtenPages, batchErrors } = await commitLivePageWrites(
+    root, outcomes, pageSink, pageRemover);
   errors.push(...batchErrors);
   return { pages, writtenPages, errors, candidates, review, seedSlugs: [] };
 }
@@ -251,11 +275,14 @@ interface GeneratedOutcome {
 async function commitLivePageWrites(
   root: string,
   outcomes: GeneratedOutcome[],
+  pageSink: PageSink | undefined,
+  pageRemover: PageRemover | undefined,
 ): Promise<{ writtenPages: MergedConcept[]; batchErrors: string[] }> {
   const live = outcomes.filter((o) => o.result.liveWrite);
   const { skipped } = await applyCompilePageWritesLocked(
     root,
     live.map((o) => o.result.liveWrite!),
+    pageStoreOptions(pageSink, pageRemover),
   );
   const skippedKeys = new Set(skipped.map((s) => `${s.item.namespace}/${s.item.slug}`));
   const writtenPages = live
@@ -298,8 +325,7 @@ async function persistExtractionStates(
       if (retained.has(slug)) liveSlugs.add(slug);
     }
     await persistSourceStateFiltered(
-      draft, result.sourcePath, result.sourceFile, result.concepts, liveSlugs,
-      result.sourceContent,
+      draft, result.sourceFile, result.concepts, liveSlugs, result.sourceContent,
     );
     draft.setSource(result.sourceFile, withExtractionSnapshot(
       draft.read().sources[result.sourceFile], result, liveSlugsForSource.get(result.sourceFile),
@@ -323,13 +349,15 @@ function buildLiveSlugsForSource(writtenPages: MergedConcept[]): Map<string, str
 /** Persist source state, filtering concepts to only those in the live set. */
 async function persistSourceStateFiltered(
   draft: CompileStateDraft,
-  sourcePath: string,
   sourceFile: string,
   concepts: ReturnType<typeof parseConcepts>,
   liveSlugs: Set<string>,
   sourceContent: string,
 ): Promise<void> {
-  const hash = await hashFile(sourcePath);
+  // Hash the content already in memory instead of re-reading the file. Same digest
+  // -- `hashFile` is sha256 of the same bytes -- and it removes a disk read that
+  // would fail outright for a document whose bytes live only in a table.
+  const hash = createHash("sha256").update(sourceContent, "utf-8").digest("hex");
   const entry: SourceState = {
     hash,
     concepts: concepts.map((c) => slugify(c.concept)).filter((s) => liveSlugs.has(s)),
@@ -402,9 +430,11 @@ async function reconcileOwnerlessFrozen(
   root: string,
   draft: CompileStateDraft,
   reconciliationSlugs: ReadonlySet<string>,
+  seams: PageSeams = {},
 ): Promise<boolean> {
   if (reconciliationSlugs.size === 0) return false;
-  await orphanUnownedFrozenPages(root, draft, new Set(reconciliationSlugs));
+  await orphanUnownedFrozenPages(
+    root, draft, new Set(reconciliationSlugs), seams.content, seams.sink, seams.remover);
   draft.setFrozen(new Set());
   return true;
 }
@@ -419,9 +449,10 @@ async function maybeSeedPages(
   schema: SchemaConfig,
   generation: PageGenerationResult,
   options: CompileOptions,
+  seams: PageSeams,
 ): Promise<void> {
   if (!options.review && !options.skipSeedPages) {
-    await generateSeedPages(root, schema, generation);
+    await generateSeedPages(root, schema, generation, seams.content, seams.sink, seams.remover);
   }
 }
 
@@ -439,11 +470,22 @@ async function seedThenFinalize(
   generation: PageGenerationResult,
   options: CompileOptions,
   draft: CompileStateDraft | null,
+  embeddingStore?: EmbeddingStoreLocation,
+  resolverSource?: ResolverPageSource,
+  embeddingPageSource?: EmbeddingPageSource,
+  seams: PageSeams = {},
+  stateRows?: WikiStateRowsBackend,
 ): Promise<void> {
-  await maybeSeedPages(root, schema, generation, options);
+  await maybeSeedPages(root, schema, generation, options, seams);
   await finalizeWiki(root, draft, generation.writtenPages, generation.seedSlugs, {
     scoped: options.changeFilter !== undefined,
     embeddings: options.embeddings !== false,
+    embeddingStore,
+    resolverSource,
+    embeddingPageSource,
+    seams,
+    stateRows,
+    jobObserver: options.jobObserver,
   });
 }
 
@@ -460,19 +502,30 @@ async function runCompilePipeline(
   // Single in-memory draft of state.json for the whole run. Every intra-compile
   // state read/write goes through it; the durable marker advances only at the
   // SINGLE flush after the resolution phase commits (see finalizeWiki below).
-  const draft = await CompileStateDraft.load(root);
+  // Read and write state from the SAME backend. A run that seeded from
+  // `state.json` and flushed to rows would report every source as new on the next
+  // pass, because the file it compared against was never the one updated.
+  const stateRows = wikiStateRowsBackend(db, process.env);
+  const draft = await CompileStateDraft.load(root, stateRows);
   const state = draft.read();
-  const detected = await timeStage("compile.detect-changes", () => detectChanges(root, state));
+  const compileReporter = options.jobObserver?.compile;
+  const detected = await timeStage("compile.detect-changes", () =>
+    detectChanges(root, state, sourceChangeDetection(db, process.env)),
+    () => reportCompileStage(compileReporter, "compile.detect-changes"));
   const changes = promoteForPromptModifiers(
     applyChangeFilter(detected, options.changeFilter),
     state,
   );
-  await markUnchangedPendingSources(root, changes);
+  await markUnchangedPendingSources(root, changes, sourceContentReading(db, process.env));
   const reusableSources = reusableSourceFiles(state, changes, detected, Boolean(options.review));
   augmentWithAffectedSources(changes, findAffectedSources(state, changes, detected));
   const reconciliationSlugs = findReconciliationSlugs(state, changes);
 
   const buckets = bucketChanges(changes);
+  // Resolve every page seam ONCE, from one variable: a run that stores rows while
+  // repairing files -- or reads rows while writing `wiki/` -- would split the
+  // corpus in half and is the defect this migration kept re-introducing.
+  const seams = resolvePageSeams(db, process.env);
   if (buckets.toCompile.length === 0 && buckets.deleted.length === 0) {
     output.status("✓", output.success("Nothing to compile — all sources up to date."));
     // Seed pages are cheap deterministic writes — always run them even when
@@ -480,7 +533,7 @@ async function runCompilePipeline(
     // effect on the next compile without needing a source file edit.
     if (!options.review) {
       const hasOwnerlessFrozen = await reconcileOwnerlessFrozen(
-        root, draft, reconciliationSlugs,
+        root, draft, reconciliationSlugs, seams,
       );
       const emptyGeneration: PageGenerationResult = {
         pages: [],
@@ -498,6 +551,11 @@ async function runCompilePipeline(
         emptyGeneration,
         options,
         hasOwnerlessFrozen ? draft : null,
+        embeddingStoreLocation(db),
+        resolverSourceReading(db, process.env),
+        embeddingPageReading(db, process.env),
+        seams,
+        stateRows,
       ));
       return {
         ...emptyCompileResult(),
@@ -522,7 +580,7 @@ async function runCompilePipeline(
   // compiles.
   const forgetErrors: string[] = [];
   if (!options.review) {
-    await markDeletedAsOrphaned(root, buckets.deleted, draft);
+    await markDeletedAsOrphaned(root, buckets.deleted, draft, seams);
     // Graph retirement follows the same review rule: a held-back run must not
     // retire documents the wiki has not stopped serving yet.
     forgetErrors.push(...(await forgetDeletedSources(root, buckets.deleted, state, db)));
@@ -537,7 +595,11 @@ async function runCompilePipeline(
   const concurrency = resolveCompileConcurrency(options.concurrency);
   const extractions = await timeStage("compile.extraction", () => runExtractionPhases(
     root, buckets.toCompile, state, { scoped: changes, detected }, concurrency, reusableSources,
-  ));
+    sourceContentReading(db, process.env),
+    // The extraction prompt asks the model not to duplicate an existing concept,
+    // which needs each page's title -- the scan shape, not the listing.
+    scanSourceReading(db, process.env),
+  ), () => reportCompileStage(compileReporter, "compile.extraction"));
   if (!options.review) {
     freezeFailedExtractions(draft, extractions, frozenSlugs);
     reportFrozenSlugs(frozenSlugs);
@@ -546,6 +608,11 @@ async function runCompilePipeline(
   // Snapshot pages on disk before generation so the journal can tell which
   // produced pages are new (created) versus overwritten (updated).
   const existingIds = await listExistingPageIds(root);
+  // The ONLY stage with a real denominator the pipeline computes before the work:
+  // one merged concept becomes one generated page, so the count of concepts IS the
+  // total. Reported on entry and again on exit, never interpolated in between --
+  // generation runs under p-limit, so a half-finished count would be a guess.
+  reportCompileProgress(compileReporter, 0, extractions.length);
   const generation = await timeStage("compile.page-generation", () => generatePagesPhase(
     root,
     extractions,
@@ -555,7 +622,14 @@ async function runCompilePipeline(
     options,
     reviewPolicy,
     concurrency,
-  ));
+    seams.sink,
+    seams.remover,
+  ), () => reportCompileProgress(compileReporter, 0, extractions.length));
+  reportCompileProgress(
+    compileReporter,
+    generation.writtenPages.length,
+    Math.max(extractions.length, generation.writtenPages.length),
+  );
 
   if (!options.review) {
     const written = new Set(generation.writtenPages.map((entry) => entry.slug));
@@ -565,7 +639,8 @@ async function runCompilePipeline(
     await persistExtractionStates(draft, extractions, generation.writtenPages, retained);
     const orphanCandidates = new Set([...reconciliationSlugs, ...frozenSlugs]);
     if (orphanCandidates.size > 0) {
-      await orphanUnownedFrozenPages(root, draft, orphanCandidates);
+      await orphanUnownedFrozenPages(
+        root, draft, orphanCandidates, seams.content, seams.sink, seams.remover);
     }
     persistFrozenSlugs(draft, frozenSlugs, extractions, {
       pending: reconciliationSlugs,
@@ -575,7 +650,13 @@ async function runCompilePipeline(
     // no-source-changes branch (see seedThenFinalize). The draft flush is the
     // single durable state write, done inside finalizeWiki after resolution
     // commits.
-    await timeStage("compile.finalize", () => seedThenFinalize(root, schema, generation, options, draft));
+    await timeStage("compile.finalize", () => seedThenFinalize(
+      root, schema, generation, options, draft, embeddingStoreLocation(db),
+      resolverSourceReading(db, process.env),
+      embeddingPageReading(db, process.env),
+      seams,
+      stateRows,
+    ), () => reportCompileStage(compileReporter, "compile.finalize"));
     await logCompile(root, buckets, generation, existingIds);
   }
   verbose(`compile finished in ${Date.now() - startMs} ms`);
@@ -597,7 +678,11 @@ async function runCompilePipeline(
  * clearing a modifier look like no change, because "none selected" is exactly
  * what an absent digest means.
  */
-async function markUnchangedPendingSources(root: string, changes: SourceChange[]): Promise<void> {
+async function markUnchangedPendingSources(
+  root: string,
+  changes: SourceChange[],
+  contentSource?: SourceContentSource,
+): Promise<void> {
   const pending = await collectPendingSourceStates(root);
   if (pending.size === 0) return;
   const requested = promptModifiersDigest();
@@ -605,7 +690,9 @@ async function markUnchangedPendingSources(root: string, changes: SourceChange[]
     if (change.status !== "new" && change.status !== "changed") continue;
     const entry = pending.get(change.file);
     if (!entry || entry.modifiers !== requested) continue;
-    const currentHash = await hashFile(path.join(root, SOURCES_DIR, change.file));
+    const currentHash = contentSource === undefined
+      ? await hashFile(path.join(root, SOURCES_DIR, change.file))
+      : await currentContentHash(contentSource, change.file);
     if (currentHash === entry.hash) change.status = "unchanged";
   }
 }
@@ -642,9 +729,10 @@ async function markDeletedAsOrphaned(
   root: string,
   deleted: SourceChange[],
   draft: CompileStateDraft,
+  seams: PageSeams = {},
 ): Promise<void> {
   for (const del of deleted) {
-    await markOrphaned(root, del.file, draft);
+    await markOrphaned(root, del.file, draft, seams.content, seams.sink, seams.remover);
   }
 }
 
@@ -724,11 +812,61 @@ interface FinalizeFlags {
    */
   embeddings?: boolean;
   /**
+   * Where link resolution reads page text from.
+   *
+   * Carried on the flags because finalize is three levels below the pipeline that
+   * owns the database handle, and threading a second parameter through every level
+   * for one optional seam would obscure the call sites more than this does.
+   */
+  resolverSource?: ResolverPageSource;
+  /**
+   * Where the post-compile embeddings refresh reads pages from.
+   *
+   * Paired with the write sink and the resolver on the same variable: an embeddings
+   * pass that scanned an empty directory would compute no vectors and store none,
+   * leaving semantic search silently empty while reporting success.
+   */
+  embeddingPageSource?: EmbeddingPageSource;
+  /**
    * The run recompiled a SUBSET by design (`refresh --stale` supplies a
    * `changeFilter`), so it must not record the prompt-modifier selection as
    * true of the whole project — see the flush below.
    */
   scoped?: boolean;
+  /**
+   * Where the embedding store lives, when the caller holds a database handle.
+   *
+   * Omitted keeps the on-disk store, which is what every existing caller wants.
+   * Supplied makes the compile write vectors into the tables, matching where a
+   * serving process reads them -- without it, a compile would keep filling a file
+   * that no longer feeds retrieval.
+   */
+  embeddingStore?: EmbeddingStoreLocation;
+  /**
+   * The page seams resolution and repair read and write through.
+   *
+   * Carried here rather than as three parameters on {@link finalizeWiki} because
+   * they always travel together: a run that resolves against rows must write the
+   * rewrites back to rows, and a repair pass that read rows must not write files.
+   */
+  seams?: PageSeams;
+  /**
+   * Where the compile state is persisted, when it is a row.
+   *
+   * Carried beside {@link seams} rather than inside it because it is not a PAGE
+   * seam: it stores the compile's bookkeeping, not pages. Kept in the same flags
+   * object so a caller cannot thread one and forget the other.
+   */
+  stateRows?: WikiStateRowsBackend;
+  /**
+   * Job observer for the stages finalize itself runs.
+   *
+   * Finalize is where the embeddings refresh happens, and that refresh is a
+   * `timeStage` boundary the caller two levels up cannot see. Carrying the
+   * observer on the same flags object is what lets the innermost stage report
+   * without threading a sixth parameter through every level.
+   */
+  jobObserver?: IngestJobObserver;
 }
 
 /**
@@ -746,7 +884,10 @@ async function finalizeWiki(
   seedSlugs: string[] = [],
   flags: FinalizeFlags = {},
 ): Promise<void> {
-  const { scoped = false, embeddings = true } = flags;
+  const {
+    scoped = false, embeddings = true, embeddingStore, resolverSource,
+    embeddingPageSource, seams = {}, stateRows, jobObserver,
+  } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
   const conceptNewSlugs = pages
     .filter((entry) => entry.concept.is_new)
@@ -758,12 +899,14 @@ async function finalizeWiki(
     output.status("🔗", output.info("Resolving interlinks..."));
     // Compute + apply the resolution rewrites as ONE journalled batch. compile
     // holds the project lock for its whole pipeline → the lock-free seam.
-    await resolveAndApplyLinks(root, allChangedSlugs, allNewSlugs);
+    await resolveAndApplyLinks(
+      root, allChangedSlugs, allNewSlugs, resolverSource, seams.sink, seams.remover,
+    );
     // Resolution adds links for titles it recognises; repair fixes links the
     // model already wrote against a page whose slug is longer than the name it
     // used. Ordered after resolution so a link resolution has just created is
     // already valid and never looks repairable.
-    await repairAndApplyLinks(root);
+    await repairAndApplyLinks(root, seams.content, seams.scan, seams.sink, seams.remover);
   }
 
   // SINGLE durable state write of the whole compile: the buffered draft is
@@ -785,12 +928,15 @@ async function finalizeWiki(
   // full compile, which is the safe direction to be wrong in.
   if (draft) {
     if (!scoped) draft.setPromptModifiers(promptModifiersDigest());
-    await draft.flush(root);
+    await draft.flush(root, stateRows);
   }
 
-  await generateIndex(root);
-  await generateMOC(root);
-  if (embeddings) await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(root, allChangedSlugs));
+  await regenerateIndices(root, process.env);
+  if (embeddings) {
+    await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(
+      root, allChangedSlugs, embeddingStore, embeddingPageSource,
+    ), () => reportCompileStage(jobObserver?.compile, "compile.embeddings"));
+  }
 }
 
 /**
@@ -825,8 +971,187 @@ async function finalizeWiki(
  * project lock → the shared drain calls the reentrancy-safe Core (the
  * self-locking wrapper would deadlock here).
  */
-async function safelyUpdateEmbeddings(root: string, changedSlugs: string[]): Promise<void> {
+/**
+ * Where this compile should persist embedding vectors.
+ *
+ * Returns `undefined` when no Stack is configured, which keeps the on-disk store:
+ * a project that never opted into the knowledge backend must not start requiring a
+ * database to compile. When a Stack IS configured, both halves of the
+ * read-modify-write point at the same place, so the compile cannot read one store
+ * and write another.
+ *
+ * @param db - The run's database handle.
+ * @returns The location, or undefined to keep using the file.
+ */
+/**
+ * Hash a document's current text, reading it by identity when rows are the corpus.
+ *
+ * Extracted so the pending-candidate check never builds a path out of a key that may
+ * be a URL. A missing document yields an empty hash, which never equals a recorded
+ * one and so leaves the change marked as real work.
+ *
+ * @param contentSource - Row reader.
+ * @param sourceIdentity - Identity of the document to hash.
+ * @returns Its current content hash.
+ */
+async function currentContentHash(
+  contentSource: SourceContentSource,
+  sourceIdentity: string,
+): Promise<string> {
+  const document = await contentSource.read(sourceIdentity);
+  return document === undefined
+    ? ""
+    : createHash("sha256").update(document.content, "utf-8").digest("hex");
+}
+
+/**
+ * Where this compile should WRITE the pages it generates.
+ *
+ * Returns `undefined` when no Stack is configured, which keeps the on-disk write.
+ * Paired with {@link sourceChangeDetection} on the same variable because a run that
+ * read rows and wrote files would be reading one corpus and publishing another.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The row sink, or undefined to keep writing `wiki/concepts/*.md`.
+ */
+function sourcePageSink(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): PageSink | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return createPageWriteSink(db, stackId);
+}
+
+/**
+ * Where this compile should read the page index shown to the extraction prompt.
+ *
+ * `index.md` was a projection of the pages; deriving it from the same rows the
+ * compile already reads keeps the prompt identical while removing the file as a
+ * requirement.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The scan source, or undefined to read `wiki/index.md`.
+ */
+function scanSourceReading(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): PageScanSource | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return createPageScanSource(db, stackId);
+}
+
+/**
+ * Where this compile should read page text for LINK RESOLUTION.
+ *
+ * Resolution is read-modify-write over the pages themselves, so it has to agree with
+ * what compile just wrote. Paired with the write sink on the same variable: reading
+ * rows while writing files (or the reverse) would rewrite pages against a body that
+ * does not match the one being published.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The resolver source, or undefined to read `wiki/concepts` from disk.
+ */
+function embeddingPageReading(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): EmbeddingPageSource | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return createEmbeddingPageSource(db, stackId);
+}
+
+function resolverSourceReading(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): ResolverPageSource | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return createResolverPageSource(db, stackId);
+}
+
+/**
+ * Where this compile should read document text from.
+ *
+ * Paired with {@link sourceChangeDetection} and gated on the same variable, because
+ * the two must agree: reading rows that were discovered in a directory -- or the
+ * reverse -- would leave every document unreadable.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The content source, or undefined to keep reading `sources/`.
+ */
+function sourceContentReading(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): SourceContentSource | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return sourceDocumentsContentSource(db, stackId);
+}
+
+/**
+ * Where this compile should read its source corpus from.
+ *
+ * Returns `undefined` when no Stack is configured, which keeps the on-disk scan:
+ * a project that never opted into the knowledge backend must not start requiring a
+ * database to compile. When a Stack IS configured, change detection reads rows, so
+ * an ingest that wrote a row is visible to the compiler.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The detection source, or undefined to keep scanning `sources/`.
+ */
+function sourceChangeDetection(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): ChangeDetectionSource | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return sourceDocumentsChangeSource(db, stackId);
+}
+
+/**
+ * Where this compile should read and write its incremental state.
+ *
+ * Returns `undefined` when no Stack is configured, which keeps `state.json`. Gated
+ * on the same variable as every other seam because the state a run reads must be the
+ * state it writes: an ingest and a compile that disagreed about the backend would
+ * each see the other's work as missing.
+ *
+ * @param db - The run's database handle.
+ * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @returns The rows backend, or undefined to keep `.llmwiki/state.json`.
+ */
+function wikiStateRowsBackend(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): WikiStateRowsBackend | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return createWikiStateRowsBackend(db, stackId);
+}
+
+function embeddingStoreLocation(
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv = process.env,
+): EmbeddingStoreLocation | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  return databaseEmbeddingLocation(db, stackId);
+}
+
+async function safelyUpdateEmbeddings(
+  root: string,
+  changedSlugs: string[],
+  embeddingStore?: EmbeddingStoreLocation,
+  pageSource?: EmbeddingPageSource,
+): Promise<void> {
   const conceptsNamespace = path.basename(CONCEPTS_DIR);
   const changedPageIds = changedSlugs.map((slug) => qualifiedPageId(conceptsNamespace, slug));
-  await refreshEmbeddingsDrainingPending(root, changedPageIds);
+  await refreshEmbeddingsDrainingPending(root, changedPageIds, embeddingStore, pageSource);
 }

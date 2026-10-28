@@ -90,7 +90,7 @@ export function parseEntityId(id: EntityId): { entityType: string; slug: SlugSaf
  * The raw stem of a file path: the basename minus a trailing `.md`, returned
  * UNCHANGED. No slugification. Shared by the page collectors.
  */
-export function stemFromBasename(filePath: string): string {
+function stemFromBasename(filePath: string): string {
   return path.basename(filePath).replace(/\.md$/, "");
 }
 
@@ -106,7 +106,7 @@ export function suggestSlugFromBasename(filePath: string): string {
  * Assert that a declared frontmatter `slug` field, if present, equals the file
  * stem. A mismatch means the page's identity is ambiguous, which is an error.
  */
-export function assertSlugMatchesFrontmatter(stem: string, frontmatterSlug?: string): void {
+function assertSlugMatchesFrontmatter(stem: string, frontmatterSlug?: string): void {
   if (frontmatterSlug !== undefined && frontmatterSlug !== stem) {
     throw new EntityIdError(
       `Declared slug ${JSON.stringify(frontmatterSlug)} does not match file stem ${JSON.stringify(stem)}`,

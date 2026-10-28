@@ -1,17 +1,31 @@
 # Feature: Stack-only storage — Postgres as the only backend
 
+> **SUPERSEDED AS A PLAN — `odd/tasks/wiki-on-postgres.md` is the current plan.**
+> This file is kept because it is the measurement and correction log: every number,
+> every falsified premise and every defect found on the way lives here and is still
+> cited. What it is NOT is a sequence: its remaining tasks (T5, T7) block each other
+> by their own words, and T7's premise does not survive measurement. Read it for
+> evidence. Work from `wiki-on-postgres.md`.
+>
+> Landed since this was written: pages read AND written as rows, the page write
+> removal, T4 closed on evidence, T6 closed, and a delete-mutation defect fixed.
+
 ## Goal
 
 Decide, measure, and design the removal of the local filesystem as a storage
 medium, so every layer of the wiki lives in Postgres keyed by **Stack** — the name
 the code already uses. The `wiki` dimension stops having a file-backed sibling.
 
-Status: **MEASUREMENT + DESIGN ONLY. NO PRODUCT CODE.** The human selected
-"Postgres obligatorio: se borra el camino local" and "Stack, y corregir los docs"
-in this session, and then selected "medición + diseño ejecutable para main" as the
-deliverable. Nothing here is implemented, because the surface this plan needs is
-`shared-read-only` to this role (see `## Scope verdict`), and because the plan
-retires a ratified requirement that has to be recorded before anyone writes code.
+Status when written: **MEASUREMENT + DESIGN ONLY. NO PRODUCT CODE** — the surface
+this plan needed was `shared-read-only` to that role (see `## Scope verdict`).
+
+Status now: **much of it IS implemented.** That status line was true of the role
+that wrote it, not of the work. Pages are read and written as rows, the file write
+is gone, T4 and T6 are closed, and the multi-tenant properties below were confirmed
+against the live database (16 tables, RLS enabled AND forced on all 16). The
+sections that follow are preserved as written so the corrections stay auditable;
+where a claim is now false, the correction section below it says so. For what is
+left and in what order, see `wiki-on-postgres.md`.
 
 ## Decision record
 
@@ -267,7 +281,7 @@ fork a duplicate on the next ingest. It does not, and there is now a test saying
 - **Must not**: rename the `stacks` table, or rename `DimensionName` ("wiki" stays
   the name of the SOURCE dimension even though its backend changed).
 
-#### T4 — Advisory lock for L3 mutual exclusion
+#### T4 — Advisory lock for L3 mutual exclusion — **CLOSED (2026-02), see below**
 
 - **Seams**: `src/utils/lock.ts` (4 exports: `acquireLock`, `acquireLockBlocking`,
   `releaseLock`, `LockBusyError`) and **52 source callers**.
@@ -284,18 +298,194 @@ fork a duplicate on the next ingest. It does not, and there is now a test saying
 - **Must not**: delete a test to make the suite green. A deleted assertion is a lost
   requirement, not a passing build.
 
+##### T4 closed — the decision was already made by the mechanism (2026-02)
+
+T4 did not start from zero: **W2.1 (`e12c663`) had already shipped** the advisory
+lock behind the unchanged four signatures, with the file lock as the fallback for a
+project with no Stack. What this document still listed as open was the liveness
+decision. It is not open, and no human choice is needed, because the question it
+posed was answered by measurement.
+
+**The liveness question.** The document offered two options: a `lock_holder` table
+with `heartbeat_at`, or accepting that a crashed holder blocks until timeout.
+Measured with a real `SIGKILL` against a live database:
+
+```
+PROBE while child alive -> BLOCKED     (a live holder excludes others)
+PROBE after SIGKILL     -> ACQUIRED    (Postgres drops the lock with the session)
+```
+
+A session-scoped advisory lock is RELEASED BY THE SERVER when its session dies.
+Neither option is required: there is no heartbeat to add and no timeout to wait out.
+
+**What that costs, stated plainly.** The file protocol answered a question an
+advisory lock does not: "is the holder alive or a corpse?" It could because the
+holder was a PID on the same machine. An advisory lock cannot answer it and does not
+need to — the SERVER knows, and acts. The consequence is a real semantic change that
+the six adversarial suites below encode the OLD answer to: a crashed holder now
+frees the lock immediately instead of being classified, and a crashed holder is not
+distinguishable from a released one. That is accepted, not overlooked.
+
+**A false result worth recording.** The first probe reported `STILL BLOCKED` after
+`SIGKILL`. It was wrong: it killed the `npx` WRAPPER, leaving the node child alive
+and still holding the connection (three orphan processes were found afterwards).
+Re-run killing the child's own reported PID, it reported `ACQUIRED`. A cross-process
+lock probe that kills the wrong process proves nothing positive — it agrees with the
+hypothesis that nothing was released.
+
+**Verification (all green, database live):**
+
+| Suite group | Result |
+|---|---|
+| The six adversarial suites named above | 6 files / **43 tests** |
+| The Postgres path + confinement + identity suites | 8 files / **37 tests** |
+| `lock-postgres-crossprocess` | 1 test, real spawned child excluded |
+
+**Must-not honoured:** no test was deleted or softened. All six adversarial suites
+pass unchanged, because they exercise the FILE path, which is still exactly what it
+was — the fallback for a project with no Stack.
+
+##### Open defect found while closing T4 — NOT fixed, recorded here
+
+The lock is keyed by **path**, not by Stack:
+
+```ts
+// src/utils/lock.ts:161
+const lockKey = await realpath(root).catch(() => path.resolve(root));
+```
+
+Measured with two different checkout directories and ONE Stack id:
+
+```
+PROBE same Stack, two hosts -> A: true B: true
+PROBE verdict -> BOTH ACQUIRED: the lock is per-PATH, not per-Stack
+```
+
+**Why this matters more than it looks.** `lock-postgres.ts` justifies the whole
+migration as "visibility across machines ... two hosts sharing one Stack each held
+the lock on their own disk and could compile concurrently". Two hosts have different
+paths, so the key differs, so both acquire. The property that motivated W2.1 is
+still not delivered: an advisory lock keyed by path reproduces the file lock's
+defect with more steps.
+
+**Not fixed here** because it changes the identity every one of the 52 callers
+serializes on, which is a contract decision rather than a defect fix, and because
+the human chose to close T4 on evidence. Candidate fix: key on the Stack id when one
+is configured, and on the resolved path only for the file fallback.
+
+**A second, smaller observation.** `databaseUrlFor` (`lock.ts:191`) requires
+`AKS_STACK_ID` *and* a non-empty `AKS_DATABASE_URL`, but `config.ts` already defaults
+the DSN. So a Stack-configured project that never sets `AKS_DATABASE_URL` silently
+falls back to the FILE lock — the one path W2.1 was meant to replace. This is
+deliberate per the doc comment ("gated on AKS_STACK_ID rather than the DSN alone"),
+but the effect is worth stating: with a Stack and no explicit DSN, the lock stays
+local, which is the failure mode the migration exists to remove.
+
 #### T5 — Journal as a table (the risky one)
 
 - **Seams**: `src/trust/journal.ts:92` (entry shape), `src/trust/executor.ts:169`
   (replay), **25 source files**, **35 test files**.
-- **Shape**: `JournalEntry.targetPath` is an absolute path and `JournalBatch`
+- **Shape**: ~~`JournalEntry.targetPath` is an absolute path and `JournalBatch`
   carries `root` (`journal.ts:103-107`), so a target becomes a
-  `(stack_id, page_directory, slug)` tuple. This cannot be designed before T2
-  settles page identity.
+  `(stack_id, page_directory, slug)` tuple.~~ **MEASURED FALSE — see below.**
+  This cannot be designed before T2 settles page identity.
+- **CORRECTION (measured)**: the journal is not a page journal. Its recorded
+  targets belong to FOUR classes, and three are not pages: artifact
+  `bytesPath`/`manifestPath` (`artifacts/apply.ts:91-92`), content-addressed
+  binary members (`artifacts/apply-members.ts:117-120`), and
+  `TEMPLATE_LOCK_FILE`/`PROFILE_FILE` (`profile/templates/update-apply.ts:107-108`).
+  Only `page-apply.ts:258` records a page.
+  `JournalEntry` has no identity fields at all — just `targetPath: string` and a
+  `preState` — and `journal.ts` carries **13** uses of
+  `confineUnderRoot`/`isInsideDir`/`safeRealpath`. The mechanism IS path
+  confinement: 9 of its 35 test files deliberately record paths that escape the
+  root (`journal-prestate`, `journal-recordprestate-confined`,
+  `journal-revert-confined`, `trust-planner`) because refusing them is the
+  property under test. A row tuple cannot "escape the root", so converting it to
+  a table deletes the security property those files exist to protect.
+- **Consequence**: T5 is DOWNSTREAM of T6 and T7, not upstream. A table-shaped
+  journal only makes sense once the file writes it guards are gone.
+- **Also measured**: `page-apply.ts:258` still writes pages via `atomicWrite`,
+  so approval writes files even though `compile` writes `wiki.pages`. That gap
+  must close before a page-target journal could exist at all.
 - **Verification**: crash-recovery must prove a pending batch reverts across a
   simulated restart. Load-bearing suites: `journal-strict-recovery`,
   `journal-revert-confined`, `atomic-write-post-commit-recovery`.
 - **Must not**: land in the same change as the removal of `atomic-write.ts`.
+
+##### T5 status after paso 4 — one blocker fell, one defect appeared (2026-02)
+
+Re-measured after the page write removal. **T5 is still not implementable, and the
+reason changed.**
+
+**The blocker the document named is gone.** It said T5 was downstream of T7 because
+`page-apply.ts` still wrote pages via `atomicWrite`. That is no longer true: with a
+sink the file write does not happen. Page-target journal entries are now only
+recorded on the file path.
+
+**The core objection is untouched, and is why T5 stays design-only.** The journal
+is not a page journal. Measured again on today's tree — all four target classes
+still record paths:
+
+| Class | Site | Ever a row? |
+|---|---|---|
+| artifact bytes + manifest | `artifacts/apply.ts:91-92` | no |
+| artifact + binary members | `artifacts/apply-members.ts:117-120` | no |
+| `TEMPLATE_LOCK_FILE`, `PROFILE_FILE` | `profile/templates/update-apply.ts:107-108` | no |
+| a page | `page-apply.ts` | only when no sink |
+
+`JournalEntry` still has no identity fields — it is `targetPath: string` plus a
+`preState`. `journal.ts` still carries **13** confinement uses
+(`confineUnderRoot`/`isInsideDir`/`safeRealpath`). The mechanism IS path confinement,
+so converting it to a table does not migrate the journal — it deletes the security
+property for three classes that will never be rows, and leaves them with no home.
+
+**Volume unchanged**: 24 source files import the journal, 35 test files cover it.
+
+**A no-op batch, measured.** A row-only page batch still opens and commits a journal
+with ZERO entries (`.llmwiki/journal` is empty afterwards). Harmless noise, not a
+defect, but it means the batch layer is now partly ceremony for a Stack-backed run.
+
+##### Defect found in paso 4 and FIXED here
+
+`deletePageLocked` never received the sink. Measured before the fix:
+
+```
+PROBE delete -> row:  STILL THERE
+PROBE delete -> file: REMOVED
+```
+
+In a Stack-backed project a `delete` mutation was a **complete no-op that reported
+success**: it unlinked a file that does not exist and left the row alive. Reachable
+in principle through `applyApprovedMutationsLocked`'s six sink-less callers and the
+page-delete pack mutation kind; not reachable from `compile`, which orphans pages
+rather than deleting them.
+
+**What closed it:** `deleteStoredPage` (`page-store.ts`),
+`createPageRemoveSink`/`PageRemover` (`page-write-sink.ts`, `page-apply.ts`), a
+`pageRemover` on `ApplyOptions` threaded through the executor and the `PageSeams`
+bundle to all five compile writers, and `pageStoreOptions` collapsing the two
+optional flags into one narrowing helper.
+
+**Red-then-green, mutation-verified**: forcing `deletePageLocked` to ignore the
+remover fails the new test with `expected { slug: 'doomed', … } to be undefined` —
+the row survives, which is the defect. Restored by checksum. The file branch is
+asserted too, because the fix must not change it.
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | 0 |
+| `npm run build` (DTS) | 0 |
+| `test/dimensions/` + compile-write | 37 files / **235 tests** |
+| `fallow` | 0 above threshold, no dead exports |
+| `test:affected` | 30 failures, **byte-identical list** to the baseline (diffed) |
+
+**T5 remains DESIGN-ONLY.** A table-shaped journal needs a product decision the
+executor cannot make: what "revert" means when three of four target classes stay
+files. Two candidate shapes, neither chosen: a polymorphic journal target (path OR
+row identity), or two journals with one recovery pass over both. Both need the
+`journal.ts` confinement contract re-specified, which is a contract change, not a
+port.
 
 #### T6 — Raw bytes to the Stack (L1)
 
@@ -314,6 +504,86 @@ fork a duplicate on the next ingest. It does not, and there is now a test saying
   end to end.
 - **Must not**: run before T5. This is the step where the second safety net
   disappears.
+
+##### T5 and T7 block each other — measured, and the cycle was never registered (2026-02)
+
+The plan as written is not a sequence. Every remaining task waits on a task that
+waits back, and both prohibitions are in this document:
+
+- **T5** says `T5 is DOWNSTREAM of T6 and T7, not upstream. A table-shaped journal
+  only makes sense once the file writes it guards are gone.`
+- **T7** says `Must not: run before T5. This is the step where the second safety net
+  disappears.`
+
+Each is blocked by the other, by the plan's own words. T4 is closed and T6 is closed,
+so those two references resolve to each other and to nothing else. `src/trust/journal.ts`
+already imports `trust/journal` from 24 source files and the write primitive from the
+other side, so there is no third task that breaks the tie.
+
+**This is a plan defect, not an implementation obstacle.** It should have been caught
+when the T5 correction was written — the correction moved T5 downstream without
+re-checking what was upstream of it.
+
+##### T7's premise is measurably false: `atomic-write.ts` is not a page writer
+
+T7's title is "Delete `atomic-write.ts` and the file-backed paths", which reads as the
+last step of the PAGE migration. Measured, it is the durability primitive of the whole
+project:
+
+| Measure | Command | Value |
+|---|---|---|
+| `atomicWrite(` call sites under `src/` | `grep -rn 'atomicWrite(' src/ --include=*.ts \| wc -l` | 50 raw, **49 real** (one is the def in `atomic-write.ts`) |
+| Files importing `atomic-write` | `grep -rl 'atomic-write' src/ --include=*.ts \| wc -l` | **46** |
+| Lines across the three modules | `wc -l src/utils/atomic-write*.ts` | **1,072** |
+| Test files | `ls test/ \| grep -c atomic-write` | **13** |
+| Call sites passing `confineRoot` | grep the calls | **26** |
+| Call sites passing `durable: true` | grep the calls | **12** |
+| **Call sites that write a PAGE** | grep the calls for page/concept/wiki | **1** — `src/import/run.ts:76` |
+
+The other 48, by module (`grep -rn 'atomicWrite(' src/ --include=*.ts | grep -v
+'atomic-write.ts' | sed 's|src/\([^/]*\)/.*|\1|' | sort | uniq -c`):
+
+```
+ 7 profile            6 compiler           4 utils
+ 4 operation-bundles  4 capability-providers
+ 3 local-workflow-host  3 events          3 commands
+ 3 artifacts          2 trust              2 products
+ 1 relations  1 preparations  1 local-workflows
+ 1 linter     1 import        1 export   1 eval   1 connectors
+```
+
+That sums to **49**. The single page write is `src/import/run.ts:76`;
+`trust/page-apply.ts` dispatches through an injected `writeOne` whose DEFAULT is
+`atomicWrite`, and that path is already bypassed whenever a sink is supplied.
+
+So: **1 page, 48 not pages.**
+
+`atomic-write.ts` is not "the second safety net for pages". It is the atomic,
+symlink-confined, parent-swap-defended, optionally `fsync`-durable writer that 19
+modules rely on (`artifacts capability-providers commands compiler connectors eval
+events export import linter local-workflow-host local-workflows operation-bundles
+preparations products profile relations trust utils`). Deleting it is not finishing a
+migration — it is removing the durability primitive from everything that is NOT a
+page, and the page case is the one that has already moved.
+
+**Consequence: T7 as written has no valid target.** There is no "file-backed page
+path" left to delete beyond one import call site, and the module itself cannot go
+while **48 non-page writes across 19 modules** depend on it. What T7 would actually
+mean has to be re-scoped before it can be scheduled: most likely "stop using it for
+pages" (already done by paso 4) plus "move the remaining state stores to Postgres
+one at a time", which is W2.3/W2.4 work under a different name.
+
+##### The honest remaining order
+
+1. **T5 needs a product decision, not an implementation.** A table-shaped journal
+   requires answering what "revert" means when three of four target classes stay
+   files. Two candidate shapes are recorded in the T5 status section; neither is
+   chosen. No amount of code resolves this.
+2. **T7 needs a new scope, not a deletion.** Its current form is void per the
+   measurement above.
+3. **Neither is schedulable today.** T4 and T6 are closed, paso 4 is closed, and what
+   remains is a decision plus a re-scoping. The plan is honest about where it stops
+   rather than pretending a sequence exists.
 
 ## Measurement — results
 
@@ -444,3 +714,272 @@ Two decisions are not the executor's to make, and both block the risky half:
    revert path changes with it. This cannot be designed before T2 lands.
 
 Until both are answered, T1–T3 are safe to schedule and T4–T7 are not.
+
+### T6 status (measured)
+
+| Step | Commit | State |
+|---|---|---|
+| Tables | `39cbbab` | done |
+| Row store | `8200361` | done |
+| Detection by query | `acff82c` | done |
+| Writer writes rows | `2db3edf` | done |
+| Extraction reads rows | `2db3edf` | done |
+
+Two ends are wired and agree: detection hashes a key, extraction reads by that same
+key. Five disk reads were removed from the compile path by hashing content already in
+memory.
+
+**Writer runs on every ingest, including a no-op file write.** The two stores start
+empty relative to each other: a project migrating in has files but no rows, so
+skipping the row when the FILE was unchanged would leave the compiler seeing an empty
+Stack and retiring every document.
+
+#### Remaining before `sources/` can be deleted
+
+1. **Rule extractor** (`extractRuleCandidates` -> `changedSources` -> `extractForSource`
+   -> `readFile`). No `db` anywhere in that chain; single caller `commands/rules.ts:64`.
+2. **Citation validation** (`linter/rules-citations.ts:115`) does
+   `path.join(sourcesDir, filename)` and reads the file to count lines. Found during
+   T6, not in the original W4 map. It is the review path.
+
+### T6 closed — decision (2026-02)
+
+T6 is closed with `sources/` still on disk. The COMPILE path no longer needs a
+directory; other paths still do. That split is deliberate, not a postponement.
+
+#### What reads rows now (compile path)
+
+| Stage | Commit |
+|---|---|
+| Ingest writes a row | `2db3edf` |
+| Change detection lists rows | `acff82c` |
+| Extraction reads a row | `2db3edf` |
+| Rule extraction reads a row | `fb03607` |
+
+Verified pairing: detection hashes a key and extraction reads by that same key.
+A test reads from root `/nonexistent-root` to prove no directory is consulted.
+
+#### What still reads `sources/` — measured
+
+29 files reference `SOURCES_DIR`. The ones that read CONTENT, and so genuinely
+block removal:
+
+| File | disk reads |
+|---|---|
+| `src/mcp/resources.ts` | 6 |
+| `src/eval/citation-support.ts` | 5 |
+| `src/linter/rules-citations.ts` | 4 |
+| `src/freshness/index.ts` | 3 |
+| `src/eval/source-utilization.ts` | 3 |
+| `src/eval/candidate-evidence.ts` | 2 |
+
+#### Why citation validation is its own job, not a T6 step
+
+`checkBrokenCitations` validates `^[file.md:42-58]` spans by reading the cited file
+to count its lines. It cannot do that once bytes are rows.
+
+The blocker is structural, not mechanical:
+
+```
+type LintRule = (root: string) => Promise<LintResult[]>
+```
+
+The signature carries no `db` and no options, and ~15 rules are registered in an
+array of that shape. Threading a source reader means changing the shared `LintRule`
+type and every entry, or opening a handle inside the rule itself.
+
+It is also the REVIEW path, not compile. Wiring a compiler seam and redesigning the
+linter contract are two concerns; mixing them would put an unrelated interface
+change in a storage commit.
+
+Semantics to preserve when it is done: a citation names a FILENAME, so the lookup
+must be `(stack_id, filename)` — not identity. That is only sound because the row
+store now disambiguates basename collisions (`b412d1d`); before that fix, filename
+was ambiguous and the lookup would have had no correct answer.
+
+#### The guarantee that was lost and restored
+
+`8200361` claimed the row store preserved every `saveSource` guarantee. It did not:
+basename-collision disambiguation (#36) was dropped, so `alpha` and `Alpha!` both
+became `alpha.md` in one Stack. Latent while the table is empty; a silent ambiguity
+in every citation once populated. Restored in `b412d1d`, proven red-then-green.
+
+### W2 deployment: what a fresh database actually needs
+
+Measured on a real fresh database, not inferred from the files:
+
+| Step | Fresh DB before | Fresh DB after |
+|---|---|---|
+| `wiki` schema tables | 0 | 18 |
+| RLS policies | **0** | 16 |
+| Tenant tables enforcing RLS | 0 | 16 |
+
+The container's init script is ONE file (`packages/llmwiki-kg/db/schema.sql`). It
+creates the knowledge-graph tables and nothing else, so a database built from it
+alone has no wiki schema, no tenant policies, and no ingress tables. Every part
+existed as a separate file with no runner tying them together, which is why the
+dev database drifted upward by hand and nothing reported it.
+
+`scripts/apply-schemas.sh` is that runner. Idempotent, ordered, and with a
+`--check` mode that reports per-table drift and exits non-zero:
+
+```
+PSQL="docker exec -i llmwiki-kg-db-1 psql -U aks -d <db>" ./scripts/apply-schemas.sh
+PSQL="..." CHECK_ONLY=true ./scripts/apply-schemas.sh   # verify only
+```
+
+Verified both ways: a virgin database ends with policies IDENTICAL to the live one
+(16/16), and `--check` on an incomplete database names each missing table and exits 1.
+
+#### The role, which is deliberately NOLOGIN
+
+`llmwiki_app` exists with `rolcanlogin=f`, no password, `rolsuper=f`,
+`rolbypassrls=f`. `migration_rls_tenancy.sql:53` says so on purpose: the operator
+sets the password, the repo never holds one.
+
+To activate:
+
+1. Set the password out of band: `alter role llmwiki_app with login password '...'`
+2. Point `DATABASE_URL` at that role.
+3. Verify RLS is no longer inert: `aks` is `rolsuper=t` AND the table owner, so it
+   bypasses every policy. Confirmed working under `set local role llmwiki_app` in
+   `e3e3c0c`.
+
+### Search chain wired to rows — `48c5d24` (2026-02)
+
+The blocker recorded above under T6 was the `page-registry`: six disk readers, two
+I/O classes (single-record hydration and directory scans), ~1,650 code lines across
+seven call sites. It is now wired.
+
+**What was built.** `src/dimensions/wiki/page-registry-source.ts` answers all five
+registry questions from `wiki.pages` and takes no root at all, so a passing
+assertion cannot be the directory having been found. Eligibility is *not*
+reimplemented: rows are projected onto the same `RawEntityScan` shape the disk
+walker produces and handed to the exported predicates, so the read gate cannot drift
+from the write gate.
+
+**How it threads.** Additive only — every registry function gained an optional
+trailing `source`, `undefined` means files. Retrieval carries it in `RetrievalOptions`
+beside the existing embedding-store source; `GenerateAnswerOptions` carries it to
+hydration; one `withRegistrySource` seam resolves it per answer so ranking,
+hydration and citation checks cannot disagree about the backend. Four entry points
+wired: SDK `search`, SDK `query`, MCP `search_pages`, MCP `query_wiki`, CLI `query`.
+
+**Red-then-green.** Disabling the seam makes the new test fail with
+`expected [] to include 'concepts/alpha'` — the right reason. Restored by checksum.
+
+**Three row limits, documented not papered over:**
+1. Typed namespaces are unanswerable from rows — `page_directory` is `CHECK`
+   constrained to `('concepts','queries')`, so typed entity pages have no rows.
+   Fails closed.
+2. Orphan exclusion here matches the embedding collector (`readConfinedPageRecord`)
+   and is stricter than the registry's own disk loader (`resolvePageRecord`, which
+   does not test orphaned).
+3. `title: ""` is indistinguishable from an absent title in a row; falls back to the
+   slug, which is what `buildPage` already stamps.
+
+**A correction to `7370f09`.** That commit's message claims an untrimmed body
+produces different chunk hashes. It does not: `extractParagraphs` trims every
+paragraph and drops whitespace-only ones, so edge whitespace never reaches a chunk.
+The trim is still correct, for a different reason — it protects the body text answer
+grounding renders. The code comment now says the true reason; the commit message
+remains as historical record.
+
+**Also fixed:** `test/mcp-server.test.ts` expected `/index not found/`, a message
+that no longer exists since `888fe7f` changed the precondition from "`index.md`
+exists" to "pages exist". The test was stale, not the code.
+
+**Still open before paso 4:** the file write in `applyPageMutationLocked`
+(`src/trust/page-apply.ts`) is untouched, so writes remain dual.
+
+---
+
+## Paso 4 closed — reads wired, then the file write removed (2026-02)
+
+Paso 4 was written down as "remove the file write in `applyPageMutationLocked`".
+Measured against the code, that was **one line away from a silent regression**: the
+write was the only thing still producing files, and five compile stages still READ
+those files. Removing it first would have left each of them returning empty and
+reporting success.
+
+### The five readers, found by running them rather than reading them
+
+A temporary probe (deleted afterwards) called `resolveLinks` with a row source and
+no files on disk. The OUTBOUND pass worked; the INBOUND pass returned `[]` where the
+disk control returned one rewrite. The same shape appeared four more times:
+
+| Reader | What it did with rows | Effect |
+|---|---|---|
+| `resolver.ts` `resolveInboundLinks` | re-read the page from disk | **proven**: zero inbound wikilinks |
+| `link-repair.ts` `collectRepairPages` | `readdir`; took no source at all | no link ever repaired |
+| `orphan.ts` `orphanPage` | confined disk read → `null` | no page ever orphaned |
+| `page-renderer.ts` existing page | disk read | lost prior version; `createdAt` reset every recompile |
+| `page-renderer.ts` related pages | `readdir` + disk reads | no cross-reference context |
+
+The inbound defect was the subtlest: `linkPage` (outbound) already used the content
+the title index carried, and `resolveInboundLinks` re-read the same page from disk.
+Two passes over one index, disagreeing about where the bytes come from — the
+mixed-backend defect this migration had already recorded twice.
+
+### What was built
+
+- **`PageContentSource`** (`page-scan-source.ts`) — `read(directory, slug)` and
+  `listSlugs(directory)`. The listing-shaped sources cannot answer a per-page
+  question, and enumerating everything to fetch one page is a different query.
+- **`resolvePageSeams(db, env)`** (`page-source-seam.ts`) — one bundle, resolved
+  from ONE variable. Five writers and seven readers now cannot disagree about the
+  backend, which was the recurring defect shape.
+- **`readWikiPageFrom`** (`confined-wiki-read.ts`) — the backend-aware per-page read,
+  so seeding and re-rendering stopped hardcoding the file.
+- **`sinkOptions(sink)`** (`page-apply.ts`) — `{ pageSink: undefined }` is not `{}`
+  under `exactOptionalPropertyTypes`, and five call sites needed the narrowing.
+
+### The write removal, and the one behaviour that changes with the backend
+
+`applyPageMutationLocked` now stores the row and writes NO file. Two things are
+skipped on that branch, both deliberate:
+
+1. **The journal entry.** `recordPreState` snapshots a target's PREVIOUS BYTES so
+   replay can restore them. A row write has no file to snapshot, so recording the
+   path would make the batch claim a revert capability it does not have. Row
+   durability is the transaction's job.
+2. **The create-collision re-probe.** It exists to stop a `create` clobbering a file
+   that appeared between plan and apply. The row path never opens that file.
+
+### Evidence
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | exit 0 |
+| `npm run build` (incl. DTS) | exit 0 |
+| `test/dimensions/` | 35 files / 231 tests green |
+| New inbound test, buggy version | `expected [] to deeply equal [ 'alpha' ]` — right reason |
+| New inbound test, fixed version | 3/3 green |
+| `fallow` | exit 0, 0 above threshold |
+| `test:affected` | 30 failures, **identical before and after** (20 of 20 and 12 of 12 re-measured under `git stash`) |
+
+The 30 pre-existing failures are the `LLMWIKI_DIMENSIONS`-without-`AKS_STACK_ID`
+ingest path plus `test/sdk/` and `test/host/`, all recorded in
+`odd/tasks/orchestrator-main-role.md`. They were verified NOT to be regressions by
+stashing the change and re-running the same files twice.
+
+### Two corrections to earlier statements in this document
+
+1. **The T2 dual-write contract is retired, not violated.** `test/compile-write-dual.test.ts`
+   pinned "stores the row AND still writes the file". That was correct while reads
+   came from disk; it is now the defect. Renamed to `compile-write-backend.test.ts`
+   with the assertion inverted, plus the no-sink case preserved byte-identically
+   because that is what every project without a Stack still runs.
+2. **`ApplyOptions.pageSink` documentation was already right and is unchanged.**
+   `executor.ts` said a sink means "no file is written"; `page-apply.ts` said "DUAL
+   WRITE, deliberately". The executor comment was the accurate one and the executor
+   was the one NOT doing what its comment said — the action lived in `page-apply`.
+   Both now agree with the code.
+
+### What is still open (unchanged by this step)
+
+T4 (`lock.ts`), T5 (journal as a table) and T7 (`atomic-write.ts`) are untouched.
+`src/compiler/indexgen.ts` and `obsidian.ts` still read pages through
+`readWikiPageInDirOrWarn` — they are wired through `PageScanSource` for their
+CONTENT but read the index/MOC files themselves, which is correct because those two
+artifacts are deliberately still written to disk (see the `48c5d24` note above).

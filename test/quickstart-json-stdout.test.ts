@@ -13,6 +13,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { runCLI, expectCLIExit, type CLIResult } from "./fixtures/run-cli.js";
 import { stripAnsi } from "./fixtures/cli-runner.js";
+import { useStackEnv } from "./fixtures/stack-env.js";
 
 const INVALID_WARNING = (value: string): string =>
   `--concurrency value "${value}" is not a positive integer; ignoring it.`;
@@ -40,6 +41,8 @@ afterEach(async () => {
 });
 
 describe("quickstart invalid --concurrency diagnostics", () => {
+  // Every dimension is Postgres-backed: an ingest without a Stack has no tenant.
+  useStackEnv("quickstart-json-stdout");
   it.each(["eight", "0", "2.5", "-1"])(
     "keeps --json stdout as one envelope and writes the warning to stderr for %s",
     async (value) => {

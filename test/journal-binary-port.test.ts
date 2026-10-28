@@ -16,7 +16,11 @@ beforeEach(async () => { root = await makeTrustRoot("binary-port-"); });
 afterEach(async () => { await cleanupTrustRoot(root); });
 
 describe("binary-safe journal promotion", () => {
-  it("replays a multi-megabyte binary prestate without exhausting the stack", async () => {
+  // 4 MiB through a real journal round trip. Measured 11.6s alone and past 30s under
+  // the full suite's parallel load, so the DEFAULT timeout is too tight here: this is
+  // a slow test, not a hanging one. Raised explicitly rather than globally, so a
+  // genuine hang elsewhere still fails fast.
+  it("replays a multi-megabyte binary prestate without exhausting the stack", { timeout: 120_000 }, async () => {
     const bytes = Buffer.alloc(4 * 1024 * 1024, 0xff);
     const target = path.join(root, WIKI, "large-image.bin");
     await writeFile(target, bytes);

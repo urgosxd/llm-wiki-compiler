@@ -23,8 +23,11 @@ import { safeReadFile, parseFrontmatter } from "../utils/markdown.js";
 import { languageDirective } from "../utils/output-language.js";
 import * as output from "../utils/output.js";
 import { verbose } from "../utils/output.js";
-import { INDEX_FILE, CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
+import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
+import { hasCompiledPages, withEmbeddingStoreSource, withRegistrySource } from "../dimensions/wiki/page-source-seam.js";
 import { loadSelectedRefRecords } from "../search/retrieval.js";
+import type { EmbeddingStoreSource } from "../utils/embeddings-load.js";
+import type { RegistryPageSource } from "../utils/page-registry.js";
 import { slugFromPageId, type PageId } from "../utils/page-id.js";
 import type { PageRecordWithId } from "../utils/page-registry.js";
 import { selectRelevantPages, type SelectedPages } from "./query-selection.js";
@@ -123,6 +126,16 @@ function buildChunkProvenance(chunks: ChunkCitation[]): string {
 interface GenerateAnswerOptions {
   /** Opt into embedding-error recovery; scoped/review queries default to fallback. */
   embeddingFailure?: "throw" | "fallback";
+  /**
+   * Where page bodies come from, when the caller holds a database handle.
+   *
+   * One value serves both retrieval and hydration on purpose: ranking against rows
+   * and hydrating from files would validate a hit's freshness against a file that
+   * may not exist, and silently drop every page of a Stack-backed wiki.
+   */
+  registrySource?: RegistryPageSource;
+  /** Row-backed embedding store; without it retrieval only searches the file store. */
+  embeddingStoreSource?: EmbeddingStoreSource;
   /** Report/filter to hydrated grounding. Scoped/review queries always use this mode. */
   grounding?: "hydrated";
   /** Persist the answer as a wiki query page when set. */
@@ -166,14 +179,19 @@ export async function generateAnswer(
   // CLI action, `queryCommand`, and the SDK facade's `wiki.query`). This lower-
   // level function is also exported for compatibility, and here `review` alone
   // only selects review-mode grounding; nothing is published unless `save` is set.
-  if (!existsSync(path.join(root, INDEX_FILE))) {
-    throw new Error("Wiki index not found. Run `llmwiki compile` first.");
+  // Ask whether PAGES exist, not whether the derived index file does. The index is
+  // a projection of the pages; requiring it refused a Stack-backed project whose
+  // pages are all present but whose filesystem is empty.
+  if (!(await hasCompiledPages(root))) {
+    throw new Error("No compiled pages found. Run `llmwiki compile` first.");
   }
 
   const scopedOrReview = options.pageScope !== undefined || options.review === true;
   const hydratedGrounding = scopedOrReview || options.grounding === "hydrated";
   const selection = await timeStage("query.retrieval", () => selectRelevantPages(root, question, Boolean(options.debug), options.pageScope, {
     embeddingFailure: options.embeddingFailure ?? (scopedOrReview ? "fallback" : "throw"),
+    registrySource: options.registrySource,
+    embeddingStoreSource: options.embeddingStoreSource,
   }));
   // Human/log surfaces use the QUALIFIED pageId so same-slug pages
   // (`concepts/foo` vs `papers/foo`) are distinguishable; the structured
@@ -186,7 +204,7 @@ export async function generateAnswer(
   // a `papers/foo` ref loads wiki/<papers-dir>/foo.md, never wiki/concepts/foo.md.
   // Scoped/review and explicitly hydrated queries use the live pairs as their
   // grounding identity. Ordinary public queries retain their selected-ref contract.
-  const hydratedPairs = await loadSelectedRefRecords(root, selection.refs);
+  const hydratedPairs = await loadSelectedRefRecords(root, selection.refs, options.registrySource);
   const pagesContent = renderRefRecords(hydratedPairs);
   verbose(`context pack: ${pagesContent.length} chars`);
 
@@ -299,24 +317,32 @@ export default async function queryCommand(
   options: { save?: boolean; debug?: boolean; review?: boolean },
 ): Promise<void> {
   assertQuerySaveOptions(options);
-  if (!existsSync(path.join(root, INDEX_FILE))) {
-    output.status("!", output.error("Wiki index not found. Run `llmwiki compile` first."));
+  if (!(await hasCompiledPages(root))) {
+    output.status("!", output.error("No compiled pages found. Run `llmwiki compile` first."));
     return;
   }
 
   output.header("Selecting relevant pages");
 
-  const result = await generateAnswer(root, question, {
-    save: options.save,
-    review: options.review,
-    debug: options.debug,
-    onToken: (text) => process.stdout.write(text),
-    onPageSelection: (pages, reasoning) => {
-      output.status("i", output.dim(`Reasoning: ${reasoning}`));
-      output.status("*", output.info(`Selected ${pages.length} page(s): ${pages.join(", ")}`));
-      output.header("Generating answer");
-    },
-  });
+  // Resolved once for the whole answer: retrieval, hydration and citation checks
+  // all address the same backend, so a Stack-backed wiki cannot rank a page from
+  // a row and then fail to read it from a file that was never written.
+  const result = await withRegistrySource(process.env, (registrySource) =>
+    withEmbeddingStoreSource(process.env, (embeddingStoreSource) =>
+    generateAnswer(root, question, {
+      save: options.save,
+      review: options.review,
+      debug: options.debug,
+      registrySource,
+      embeddingStoreSource,
+      onToken: (text) => process.stdout.write(text),
+      onPageSelection: (pages, reasoning) => {
+        output.status("i", output.dim(`Reasoning: ${reasoning}`));
+        output.status("*", output.info(`Selected ${pages.length} page(s): ${pages.join(", ")}`));
+        output.header("Generating answer");
+      },
+    })),
+  );
 
   // Newline after streamed answer so subsequent terminal output formats cleanly.
   process.stdout.write("\n");

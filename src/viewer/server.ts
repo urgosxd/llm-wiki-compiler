@@ -28,17 +28,16 @@ import { handleApiSource } from "./api-sources.js";
 import { loadShellTemplate } from "./shell.js";
 import { ASSETS_DIR, handleAsset } from "./static-assets.js";
 import { searchPages } from "./search.js";
-import { workflowStatus } from "../workflow-history/status.js";
-import { buildWorkflowRunsEnvelope } from "./workflow-runs.js";
 import { listCandidatePage } from "../compiler/candidates.js";
 import { buildReviewsEnvelope, REVIEW_LIST_LIMIT } from "./reviews.js";
+import { handleApiIngestJobs, isIngestJobsPath, INGEST_JOBS_PREFIX, INGEST_JOBS_PATH } from "./api-ingest-jobs.js";
 import { tryRenderBody, writeJson, writeJsonError, writeRenderFailed } from "./respond.js";
 import type { ViewerSnapshot } from "./types.js";
 import { listenOn } from "../utils/http-listen.js";
+
+/** Host-supplied viewer dependencies. */
+type ViewerDeps = Record<string, unknown>;
 import { buildViewerSnapshot } from "./snapshot.js";
-import { handleApiWorkflowRun, type ViewerDeps } from "./workflow-run-projection.js";
-import { handleApiStageOutput, parseStageOutputPath } from "./workflow-artifact.js";
-import { handleApiWorkflowPdf, parsePdfPath } from "./workflow-pdf.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
 
@@ -49,7 +48,7 @@ const CONTENT_SECURITY_POLICY =
   "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'none'";
 
 /** Configuration knobs accepted by `startViewerServer`. */
-interface ViewerServerConfig {
+export interface ViewerServerConfig {
   /** Opt-in journey navigation; never advertised on a non-loopback bind. */
   workflowJourneys?: boolean;
   /** Listening host. `--allow-lan` callers set this to a non-loopback bind address. */
@@ -224,10 +223,6 @@ async function routeLiveResources(
   config: ViewerServerConfig, deps: ViewerDeps,
 ): Promise<void> {
   const isLoopback = LOOPBACK_HOSTS.has(config.host);
-  if (parsedUrl.pathname === "/api/workflow-runs") {
-    const journeys = workflowJourneysEnabled(config, deps);
-    return handleApiWorkflowRuns(res, snapshot.root, journeys);
-  }
   if (parsedUrl.pathname === "/api/index") return handleApiIndex(res, snapshot, isLoopback);
   if (parsedUrl.pathname === "/api/search") return handleApiSearch(res, parsedUrl, snapshot);
   if (ARTIFACT_PATHS.has(parsedUrl.pathname)) return handleApiArtifact(res, snapshot, parsedUrl, isLoopback);
@@ -235,8 +230,8 @@ async function routeLiveResources(
   if (parsedUrl.pathname.startsWith("/api/page/")) {
     return handleApiPage(res, parsedUrl.pathname, snapshot, isLoopback);
   }
-  if (parsedUrl.pathname.startsWith("/api/workflows/")) {
-    return dispatchWorkflowRoute(res, parsedUrl.pathname, snapshot.root, deps, config);
+  if (isIngestJobsPath(parsedUrl.pathname)) {
+    return handleApiIngestJobs(res, parsedUrl.pathname, deps);
   }
   // Unreachable: `isRouteRegistered` is the gate, and every branch
   // there has a matching dispatch above. If it ever fires, the two
@@ -250,24 +245,6 @@ function workflowJourneysEnabled(config: ViewerServerConfig, deps: ViewerDeps): 
     (config.workflowJourneys === true || deps.liveStageProjectionProvider !== undefined);
 }
 
-/**
- * The `/api/workflows/` family: the more specific `.../stage/:stageId/output` sub-path serves
- * artifact bytes, `.../runs/:runId/pdf` serves the run's final PDF member (P9.6) with its own
- * CSP, and the `.../runs/:runId` shape serves the per-run projection.
- */
-function dispatchWorkflowRoute(
-  res: http.ServerResponse, pathname: string, root: string, deps: ViewerDeps, config: ViewerServerConfig,
-): Promise<void> {
-  if (!LOOPBACK_HOSTS.has(config.host)) {
-    writeJsonError(res, 403, "loopback_only", "Workflow content is available on loopback only.");
-    return Promise.resolve();
-  }
-  if (parseStageOutputPath(pathname) !== null) return handleApiStageOutput(res, pathname, root);
-  if (parsePdfPath(pathname) !== null) {
-    return handleApiWorkflowPdf(res, pathname, root, { provider: deps.liveStageProjectionProvider, timeoutMs: config.providerTimeoutMs });
-  }
-  return handleApiWorkflowRun(res, pathname, root, deps.liveStageProjectionProvider, config.providerTimeoutMs);
-}
 
 /**
  * Exact-path API routes whose handler needs only `(res, snapshot)` — collapsed
@@ -301,13 +278,41 @@ const REGISTERED_EXACT_PATHS: ReadonlySet<string> = new Set([
   "/api/health",
   "/api/search",
   "/api/graph",
-  "/api/workflow-runs",
   "/api/reviews",
+  INGEST_JOBS_PATH,
   ...ARTIFACT_PATHS,
 ]);
 
-/** Prefix routes preserve public resources and add product workflow projections. */
-const REGISTERED_PATH_PREFIXES: readonly string[] = ["/assets/", "/api/page/", "/api/source/", "/api/workflows/"];
+/**
+ * Prefix routes that actually have a dispatch branch in `routeLiveResources`.
+ *
+ * `/api/workflows/` sat here after the workflow subsystem was buried, so
+ * `isRouteRegistered` called it a v1 route while no branch existed -- and
+ * `routeLiveResources` threw its drift error, surfacing as a 500 where the origin
+ * policy's 403 belonged.
+ */
+const REGISTERED_PATH_PREFIXES: readonly string[] = [
+  "/assets/", "/api/page/", "/api/source/", INGEST_JOBS_PREFIX,
+];
+
+/**
+ * Every exact path must have a dispatch branch. Checked at module load so a route
+ * cannot be registered without a handler -- the alternative is a 500 that reads as
+ * a server fault when the real fault is a stale registry.
+ */
+const DISPATCHED_EXACT_PATHS: ReadonlySet<string> = new Set([
+  "/",
+  ...SNAPSHOT_ONLY_HANDLERS.keys(),
+  "/api/index",
+  "/api/search",
+  INGEST_JOBS_PATH,
+  ...ARTIFACT_PATHS,
+]);
+for (const path of REGISTERED_EXACT_PATHS) {
+  if (!DISPATCHED_EXACT_PATHS.has(path)) {
+    throw new Error(`registered route without a handler: ${path}`);
+  }
+}
 
 /** True when (method, path) is one of the v1 registered routes. */
 function isRouteRegistered(method: string | undefined, pathname: string): boolean {
@@ -321,7 +326,7 @@ function isRouteRegistered(method: string | undefined, pathname: string): boolea
  * first in `handleRequest` so unregistered-route 404s and bad-origin
  * 403s carry the same hardening as the v1 API responses.
  */
-function applySecurityHeaders(res: ServerResponse): void {
+export function applySecurityHeaders(res: ServerResponse): void {
   res.setHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY);
   res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -333,7 +338,7 @@ function applySecurityHeaders(res: ServerResponse): void {
  * §Non-Negotiable Security Requirements. Returns false when a request
  * should be rejected with 403; the caller writes the error envelope.
  */
-function validateOriginHeaders(req: IncomingMessage, config: ViewerServerConfig): boolean {
+export function validateOriginHeaders(req: IncomingMessage, config: ViewerServerConfig): boolean {
   const host = req.headers.host;
   if (!host || !isAcceptableHost(host, config)) return false;
   const origin = req.headers.origin;
@@ -470,10 +475,6 @@ function handleApiGraph(res: ServerResponse, snapshot: ViewerSnapshot): void {
  * empty list. Strictly read-only: no run-state mutation, status fields only
  * (no machine-local paths).
  */
-async function handleApiWorkflowRuns(res: ServerResponse, root: string, journeys: boolean): Promise<void> {
-  const envelope = buildWorkflowRunsEnvelope(await workflowStatus(root));
-  writeJson(res, 200, journeys ? { ...envelope, workflowJourneys: true } : envelope);
-}
 
 /**
  * `/api/reviews` — read-only projection of the pending review queue.

@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { useStackEnv } from "../fixtures/stack-env.js";
 
 /** Roots created by this suite, so each test cleans up after itself. */
 const created: string[] = [];
@@ -75,6 +76,8 @@ async function startHostCommand(): Promise<{ url: string; stop: () => Promise<vo
 }
 
 describe("the host command", () => {
+  // Every dimension is Postgres-backed: `host` cannot start without a tenant.
+  useStackEnv("host-command");
   it("binds a listener and serves the mutation endpoints", async () => {
     process.chdir(await scratchProject());
     const host = await startHostCommand();

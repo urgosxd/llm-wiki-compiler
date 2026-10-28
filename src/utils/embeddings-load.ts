@@ -34,7 +34,7 @@ import {
   type PageEmbeddingV3,
   type ChunkEmbeddingV3,
 } from "./embeddings-store.js";
-import { readStoredEmbeddings } from "./embeddings-storage.js";
+import { readStoredEmbeddings, type StoredEmbeddingRead } from "./embeddings-storage.js";
 import { cosineSimilarity } from "./embeddings-search.js";
 import {
   buildLiveIdSet,
@@ -47,9 +47,26 @@ import { splitIntoChunks } from "./retrieval.js";
 import { parseQualifiedPageId, type PageId } from "./page-id.js";
 import type { LoadedProfile } from "../profile/types.js";
 import type { PageRecord } from "../pages/read.js";
+import type { RegistryPageSource } from "./page-registry.js";
 
 /** Namespace→directory map resolved from the active profile (or reserved-only). */
 type NamespaceDirs = Map<string, string>;
+
+/**
+ * The three things every freshness walk needs to resolve a page.
+ *
+ * Bundled because threading `root`, `namespaceDirs` and `source` separately put
+ * five positional arguments on every rehydrator, and an argument added later
+ * would sit in the same shape as one already there -- the kind of mistake the
+ * compiler cannot catch.
+ */
+interface PageReader {
+  root: string;
+  namespaceDirs: NamespaceDirs;
+  source?: RegistryPageSource;
+}
+
+
 
 /** Which surface flag a load filters by (each surface filters independently). */
 export type RetrievalSurface = "search" | "context";
@@ -76,6 +93,37 @@ export interface EmbeddingLoadOutcome {
   stalePageIds: PageId[];
 }
 
+/**
+ * Where a load reads its store from.
+ *
+ * ## Why this seam exists
+ *
+ * The store used to have exactly one home -- a file under `.llmwiki` -- so the
+ * loaders took a `root` and read it. It now has two possible homes, and which one
+ * is authoritative is the CALLER's business: a serving process holds a database
+ * handle, while a one-shot compile reads whatever is on disk. Threading that choice
+ * as a parameter keeps the decision visible at each call site instead of burying a
+ * default that silently reads the wrong place.
+ *
+ * ## Why the file is still the default
+ *
+ * Retiring the file outright would make every read depend on a live database before
+ * the write path is converted, and a query would start failing for a reason that has
+ * nothing to do with the query. The default is therefore the existing behaviour, and
+ * a caller opts into the database explicitly. When the write path moves over, this
+ * default moves with it, and the seam disappears.
+ */
+export interface EmbeddingStoreSource {
+  /**
+   * Read the raw parsed store.
+   *
+   * Returns the same discriminated result the file reader returns: the gate above
+   * needs to tell "absent" from "unavailable" from "parsed", because each degrades
+   * with a different warning.
+   */
+  read(): Promise<StoredEmbeddingRead>;
+}
+
 /** A live-rehydrated page hit carrying its qualified id (spec §4.7). */
 export interface PageHitV3 {
   pageId: PageId;
@@ -100,16 +148,22 @@ export interface ChunkHitV3 {
  * by `includeInSearch` later, in {@link findRelevantPagesV3}/{@link findRelevantChunksV3}
  * — the load itself only version/integrity/model-gates (degrade-on-read).
  */
-export async function loadEmbeddingsForSearch(root: string): Promise<EmbeddingLoadOutcome> {
-  return gateActiveStore(root);
+export async function loadEmbeddingsForSearch(
+  root: string,
+  source?: EmbeddingStoreSource,
+): Promise<EmbeddingLoadOutcome> {
+  return gateActiveStore(root, source);
 }
 
 /**
  * Load the active store for the CONTEXT surface. Filtering by `includeInContext`
  * happens in the pipeline functions; the load is surface-agnostic gating only.
  */
-export async function loadEmbeddingsForContext(root: string): Promise<EmbeddingLoadOutcome> {
-  return gateActiveStore(root);
+export async function loadEmbeddingsForContext(
+  root: string,
+  source?: EmbeddingStoreSource,
+): Promise<EmbeddingLoadOutcome> {
+  return gateActiveStore(root, source);
 }
 
 /**
@@ -119,8 +173,11 @@ export async function loadEmbeddingsForContext(root: string): Promise<EmbeddingL
  * gate (corrupt vectors / over-cap), was built by a different embedding
  * configuration (provider, endpoint, or model), or is absent.
  */
-async function gateActiveStore(root: string): Promise<EmbeddingLoadOutcome> {
-  const result = await readStoredEmbeddings(root);
+async function gateActiveStore(
+  root: string,
+  source?: EmbeddingStoreSource,
+): Promise<EmbeddingLoadOutcome> {
+  const result = source === undefined ? await readStoredEmbeddings(root) : await source.read();
   if (result.kind === "absent") return degraded("embedding-index-outdated", "No embedding index found.");
   if (result.kind === "unavailable") return degraded("embedding-store-unavailable", result.reason);
   const parsed = result.parsed;
@@ -169,6 +226,38 @@ function degraded(code: EmbeddingWarning["code"], message: string): EmbeddingLoa
  * Returns the K freshest top-scoring page hits with live-rehydrated text plus
  * the ids dropped for staleness this read (reported, never written).
  */
+/**
+ * Build the reader and the candidate set shared by BOTH retrieval pipelines.
+ *
+ * The page and chunk pipelines differ only in what they filter and how they verify
+ * freshness; everything up to that point was duplicated line for line, and fallow
+ * flagged the copies. Sharing it also keeps one answer to "which pages are live",
+ * which is the step a divergence would silently corrupt.
+ *
+ * @param root - Project root the reader resolves against.
+ * @param entries - Store entries (pages or chunks) to prefilter.
+ * @param surface - Retrieval surface deciding eligibility.
+ * @param profile - Loaded profile, when one is in play.
+ * @param source - Registry page source, when rows back the corpus.
+ * @returns The reader plus the entries that passed the prefilter.
+ */
+async function buildRankingScope<T extends { readonly pageId: PageId }>(
+  root: string,
+  entries: readonly T[],
+  surface: RetrievalSurface,
+  profile: LoadedProfile | undefined,
+  source: RegistryPageSource | undefined,
+): Promise<{ readonly reader: PageReader; readonly eligible: T[] }> {
+  const namespaceDirs = buildNamespaceDirs(profile?.profile);
+  const reader: PageReader = { root, namespaceDirs, source };
+  const liveIds = await buildLiveIdSet(
+    root, await activeNamespaces(root, profile), namespaceDirs, profile, source,
+  );
+  const eligible = entries.filter((e) => passesPrefilter(e.pageId, liveIds, surface, profile));
+  // Copied into a mutable array because the scoring helpers take `T[]`.
+  return { reader, eligible: [...eligible] };
+}
+
 export async function findRelevantPagesV3(
   root: string,
   store: EmbeddingStoreV3,
@@ -176,16 +265,17 @@ export async function findRelevantPagesV3(
   question: string,
   k: number,
   profile?: LoadedProfile,
+  source?: RegistryPageSource,
 ): Promise<{ hits: PageHitV3[]; stalePageIds: PageId[] }> {
-  const namespaceDirs = buildNamespaceDirs(profile?.profile);
-  const liveIds = await buildLiveIdSet(root, await activeNamespaces(root, profile), namespaceDirs, profile);
-  const eligible = store.entries.filter((e) => passesPrefilter(e.pageId, liveIds, surface, profile));
+  const { reader, eligible } = await buildRankingScope(
+    root, store.entries, surface, profile, source,
+  );
   // Nothing to rank against — return before embedding. Skips a billed provider
   // round-trip whose result could only be scored against an empty pool.
   if (eligible.length === 0) return { hits: [], stalePageIds: [] };
   const queryVec = await embedQuery(question, store.dimensions);
   const ranked = scorePageEntries(queryVec, eligible);
-  return walkFreshPages(root, ranked, k, namespaceDirs);
+  return walkFreshPages(reader, ranked, k);
 }
 
 /**
@@ -200,16 +290,16 @@ export async function findRelevantChunksV3(
   question: string,
   k: number,
   profile?: LoadedProfile,
+  source?: RegistryPageSource,
 ): Promise<{ hits: ChunkHitV3[]; stalePageIds: PageId[] }> {
-  const chunks = store.chunks ?? [];
-  const namespaceDirs = buildNamespaceDirs(profile?.profile);
-  const liveIds = await buildLiveIdSet(root, await activeNamespaces(root, profile), namespaceDirs, profile);
-  const eligible = chunks.filter((c) => passesPrefilter(c.pageId, liveIds, surface, profile));
+  const { reader, eligible } = await buildRankingScope(
+    root, store.chunks ?? [], surface, profile, source,
+  );
   // See findRelevantPagesV3 — no candidates means no reason to embed the query.
   if (eligible.length === 0) return { hits: [], stalePageIds: [] };
   const queryVec = await embedQuery(question, store.dimensions);
   const ranked = scoreChunkEntries(queryVec, eligible);
-  return walkFreshChunks(root, ranked, k, namespaceDirs);
+  return walkFreshChunks(reader, ranked, k);
 }
 
 /**
@@ -307,17 +397,16 @@ type FreshnessFill<E, H> = (
  * crowding out a lower-score fresh one.
  */
 async function walkRankedFresh<E extends { pageId: PageId }, H>(
-  root: string,
+  reader: PageReader,
   ranked: Array<{ entry: E; score: number }>,
   k: number,
-  namespaceDirs: NamespaceDirs,
   fill: FreshnessFill<E, H>,
 ): Promise<{ hits: H[]; stalePageIds: PageId[] }> {
   const hits: H[] = [];
   const stalePageIds: PageId[] = [];
   for (const { entry, score } of ranked) {
     if (hits.length >= k) break;
-    const live = await buildLiveRegistryEntry(root, entry.pageId, namespaceDirs);
+    const live = await buildLiveRegistryEntry(reader.root, entry.pageId, reader.namespaceDirs, reader.source);
     const hit = live ? await fill(entry, score, live) : null;
     if (hit === null) stalePageIds.push(entry.pageId);
     else hits.push(hit);
@@ -327,39 +416,36 @@ async function walkRankedFresh<E extends { pageId: PageId }, H>(
 
 /** Walk page candidates, keeping a hit only when its `embeddingTextHash` is live. */
 function walkFreshPages(
-  root: string,
+  reader: PageReader,
   ranked: Array<{ entry: PageEmbeddingV3; score: number }>,
   k: number,
-  namespaceDirs: NamespaceDirs,
 ): Promise<{ hits: PageHitV3[]; stalePageIds: PageId[] }> {
-  return walkRankedFresh(root, ranked, k, namespaceDirs, async (entry, score, live) =>
-    live.embeddingTextHash === entry.embeddingTextHash ? rehydratePageHit(root, entry, score, namespaceDirs) : null,
+  return walkRankedFresh(reader, ranked, k, async (entry, score, live) =>
+    live.embeddingTextHash === entry.embeddingTextHash ? rehydratePageHit(reader, entry, score) : null,
   );
 }
 
 /** Walk chunk candidates, keeping a hit only when its `contentHash` is live. */
 function walkFreshChunks(
-  root: string,
+  reader: PageReader,
   ranked: Array<{ entry: ChunkEmbeddingV3; score: number }>,
   k: number,
-  namespaceDirs: NamespaceDirs,
 ): Promise<{ hits: ChunkHitV3[]; stalePageIds: PageId[] }> {
-  return walkRankedFresh(root, ranked, k, namespaceDirs, async (entry, score, live) =>
+  return walkRankedFresh(reader, ranked, k, async (entry, score, live) =>
     live.chunkHashes[entry.chunkIndex] === entry.contentHash
-      ? rehydrateChunkHit(root, entry, score, live.chunkHashes[entry.chunkIndex], namespaceDirs)
+      ? rehydrateChunkHit(reader, entry, score, live.chunkHashes[entry.chunkIndex])
       : null,
   );
 }
 
 /** Rehydrate a page hit's title/summary from the LIVE file, never the store (S12). */
 async function rehydratePageHit(
-  root: string,
+  reader: PageReader,
   entry: PageEmbeddingV3,
   score: number,
-  namespaceDirs: NamespaceDirs,
 ): Promise<PageHitV3> {
   const slug = parseQualifiedPageId(entry.pageId)?.pagePart ?? "";
-  const live = await loadLivePage(root, entry.pageId, namespaceDirs);
+  const live = await loadLivePage(reader, entry.pageId);
   return {
     pageId: entry.pageId,
     slug,
@@ -376,13 +462,12 @@ async function rehydratePageHit(
  * poisoned cached value cannot reach output even if its hash matched live.
  */
 async function rehydrateChunkHit(
-  root: string,
+  reader: PageReader,
   entry: ChunkEmbeddingV3,
   score: number,
   liveContentHash: string,
-  namespaceDirs: NamespaceDirs,
 ): Promise<ChunkHitV3> {
-  const live = await loadLivePage(root, entry.pageId, namespaceDirs);
+  const live = await loadLivePage(reader, entry.pageId);
   const liveText = live ? splitIntoChunks(live.body)[entry.chunkIndex] ?? "" : "";
   return {
     pageId: entry.pageId,
@@ -395,11 +480,7 @@ async function rehydrateChunkHit(
 }
 
 /** Resolve one live page record via the confined registry loader (absent → null). */
-async function loadLivePage(
-  root: string,
-  pageId: PageId,
-  namespaceDirs: NamespaceDirs,
-): Promise<PageRecord | null> {
-  const records = await loadPageRecordsByPageId(root, [pageId], namespaceDirs);
+async function loadLivePage(reader: PageReader, pageId: PageId): Promise<PageRecord | null> {
+  const records = await loadPageRecordsByPageId(reader.root, [pageId], reader.namespaceDirs, reader.source);
   return records[0] ?? null;
 }

@@ -48,7 +48,7 @@ describe("offline provider — the shipped keyless path", () => {
     await wiki.compile(); // drains the marker under the offline provider
     expect(await loadPendingEmbeddings(root)).toEqual([]);
     const store = JSON.parse(await readFile(path.join(root, ".llmwiki", "embeddings.json"), "utf8")) as { model: string; dimensions: number; chunks: unknown[] };
-    expect(store).toMatchObject({ model: "offline-bow-64", dimensions: 64 });
+    expect(store).toMatchObject({ model: "offline-bow-768", dimensions: 768 });
     expect(store.chunks).toHaveLength(2);
     const answer = await wiki.query("how does sparse attention handle long contexts");
     // The chunk path ranked the overlapping page FIRST; the fallback would have selected nothing.
@@ -114,7 +114,7 @@ describe("offline provider — the shipped keyless path", () => {
     await writePendingEmbeddings(root, mergeFreshAttempts(await loadPendingEmbeddings(root), [...PAGE_IDS]));
     await createWiki({ root }).compile();
     const store = JSON.parse(await readFile(storePath, "utf8")) as { model: string; dimensions: number; chunks: unknown[] };
-    expect(store).toMatchObject({ model: "offline-bow-64", dimensions: 64 });
+    expect(store).toMatchObject({ model: "offline-bow-768", dimensions: 768 });
     expect(store.chunks).toHaveLength(2);
     expect(await loadPendingEmbeddings(root)).toEqual([]);
   }, 120_000);

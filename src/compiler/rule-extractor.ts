@@ -16,6 +16,7 @@
 import { readFile } from "fs/promises";
 import path from "path";
 import { detectChanges } from "./hasher.js";
+import type { ChangeDetectionSource, SourceContentSource } from "./hasher.js";
 import { parseFrontmatter, slugify } from "../utils/markdown.js";
 import { callClaude } from "../utils/llm.js";
 import { resolveActiveModelId } from "../utils/provider.js";
@@ -155,15 +156,56 @@ function candidateForRule(
   );
 }
 
+/**
+ * Where rule extraction reads its corpus from.
+ *
+ * Both halves are supplied together: the source that lists what changed and the one
+ * that reads a document's text must agree, or the loop asks for content under a key
+ * the other never produced.
+ */
+export interface RuleCorpus {
+  /** Listing used to decide which documents need re-extraction. */
+  detection: ChangeDetectionSource;
+  /** Reader used to obtain each document's text. */
+  content: SourceContentSource;
+}
+
+/**
+ * Obtain a document's text, from the table when the run is Stack-backed.
+ *
+ * Keyed by source identity, which is what change detection returns once rows are the
+ * corpus. A run that discovered rows and then read a directory would look for a file
+ * named after a URL and fail on every document.
+ *
+ * @param root - Project root, used only by the file path.
+ * @param sourceFile - Source identity, or filename when no corpus is supplied.
+ * @param contentSource - Row reader, or undefined to read the file.
+ * @returns The document's full text, frontmatter included.
+ */
+async function loadSourceText(
+  root: string,
+  sourceFile: string,
+  contentSource: SourceContentSource | undefined,
+): Promise<string> {
+  if (contentSource === undefined) {
+    return readFile(path.join(root, SOURCES_DIR, sourceFile), "utf-8");
+  }
+  const document = await contentSource.read(sourceFile);
+  if (document === undefined) {
+    throw new Error(`source document ${sourceFile} disappeared before rule extraction`);
+  }
+  return document.content;
+}
+
 /** Process one source file end-to-end: read, number, extract, build candidates. */
 async function extractForSource(
   root: string,
   sourceFile: string,
   provenance: RuleProvenance,
   createdAt: string,
+  contentSource?: SourceContentSource,
 ): Promise<{ candidates: RuleCandidate[]; note?: string; hash: string }> {
-  const sourcePath = path.join(root, SOURCES_DIR, sourceFile);
-  const raw = await readFile(sourcePath, "utf-8");
+  const raw = await loadSourceText(root, sourceFile, contentSource);
   const hash = createHash("sha256").update(raw).digest("hex");
   const { meta } = parseFrontmatter(raw);
   const numbered = budgetAndNumberSource(sourceFile, raw);
@@ -183,9 +225,13 @@ async function extractForSource(
  * Compares against `.llmwiki/rule-state.json` — NOT the concept compiler's
  * state — so extraction has an independent change-detection cursor.
  */
-async function changedSources(root: string, outputLanguage: string): Promise<string[]> {
+async function changedSources(
+  root: string,
+  outputLanguage: string,
+  changeSource?: ChangeDetectionSource,
+): Promise<string[]> {
   const state = await readRuleState(root);
-  const changes = await detectChanges(root, state);
+  const changes = await detectChanges(root, state, changeSource);
   return changes
     .filter((c) => c.status === "new" || c.status === "changed" ||
       (c.status === "unchanged" && (state.sources[c.file]?.outputLanguage ?? "") !== outputLanguage))
@@ -203,15 +249,18 @@ async function changedSources(root: string, outputLanguage: string): Promise<str
 export async function extractRuleCandidates(
   root: string,
   createdAt: string = new Date().toISOString(),
+  corpus?: RuleCorpus,
 ): Promise<RuleExtractionResult> {
   const provenance = buildProvenance();
   const outputLanguage = getOutputLanguage() ?? "";
-  const sources = await changedSources(root, outputLanguage);
+  const sources = await changedSources(root, outputLanguage, corpus?.detection);
 
   const candidates: RuleCandidate[] = [];
   const notes: string[] = [];
   for (const sourceFile of sources) {
-    const outcome = await extractForSource(root, sourceFile, provenance, createdAt);
+    const outcome = await extractForSource(
+      root, sourceFile, provenance, createdAt, corpus?.content,
+    );
     if (outcome.note) notes.push(outcome.note);
     for (const candidate of outcome.candidates) {
       if (await persistCandidate(root, candidate, notes)) candidates.push(candidate);

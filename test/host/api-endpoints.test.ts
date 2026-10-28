@@ -20,6 +20,7 @@ import path from "node:path";
 import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
 import { startHost } from "../../src/host/server.js";
 import { acquireLock, releaseLock } from "../../src/utils/lock.js";
+import { useStackEnv } from "../fixtures/stack-env.js";
 
 /** A scratch project with the sources/ directory the services expect. */
 async function projectRoot(): Promise<string> {
@@ -42,6 +43,8 @@ async function startFor(root: string) {
 }
 
 describe("the mutation endpoints", () => {
+  // Every dimension is Postgres-backed: an ingest without a Stack has no tenant.
+  useStackEnv("host-api-endpoints");
   it("answers 400 when ingest is missing its source", async () => {
     const root = await projectRoot();
     const { handle, post } = await startFor(root);
@@ -108,6 +111,10 @@ describe("the mutation endpoints", () => {
     try {
       const res = await fetch(`http://${handle.host}:${handle.port}/api/compile`, { method: "POST" });
       expect(res.status).toBe(404);
+      // The job READS must agree with the absent mutation mount. Answering an empty
+      // list would claim the host looked; 503 says it has nothing to look with.
+      const jobs = await fetch(`http://${handle.host}:${handle.port}/api/ingest/jobs`);
+      expect(jobs.status).toBe(503);
     } finally {
       await handle.close();
     }
