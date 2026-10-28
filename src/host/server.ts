@@ -259,8 +259,25 @@ function writeFallbackError(res: ServerResponse): void {
  * depths including absolute root paths, so enumerating them here would duplicate
  * knowledge the graph itself already encodes. Prefixes are matched on segment
  * boundaries so `/healthz` is not mistaken for `/health`.
+ *
+ * `/domain` is first because it is the newest namespace and the only one that is
+ * deliberately NOT oracle parity: `GET /domain/kg/stacks/{stack_id}/graph` reads
+ * one Stack's graph as node-link JSON, a payload the AKS contract has no shape
+ * for. It lives under its own prefix so the oracle paths above stay untouched —
+ * a coordinator-side test pins that `/stacks` still reports the oracle's 405
+ * `Allow`, and this entry is what keeps the endpoint reachable in the host at all:
+ * without it the request falls through to the viewer and 404s, even though a
+ * package-level test mounting `createApp()` directly would pass.
  */
-const GRAPH_PATH_PREFIXES = ["/health", "/stacks", "/aks", "/documents", "/ingest", "/synthesize"] as const;
+const GRAPH_PATH_PREFIXES = [
+  "/domain",
+  "/health",
+  "/stacks",
+  "/aks",
+  "/documents",
+  "/ingest",
+  "/synthesize",
+] as const;
 
 /** Does the graph sub-app own this URL? */
 function isGraphPath(url: string | undefined): boolean {
