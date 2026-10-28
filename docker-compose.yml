@@ -107,6 +107,44 @@ services:
       # The reference server's own key. Empty means open access, which is the
       # documented default; set it to require X-API-Key on the graph routes.
       AKS_API_KEY: ${AKS_API_KEY:-}
+
+      # ---- provider: OpenAI-compatible endpoint -----------------------------------
+      #
+      # This is an OpenAI-LIKE provider, not api.openai.com. The two halves of the
+      # product read the endpoint from DIFFERENT variables, and both must be set or
+      # one half keeps calling the real vendors:
+      #
+      #   root side (src/utils/provider.ts)
+      #     LLMWIKI_PROVIDER=openai + OPENAI_BASE_URL + OPENAI_BASE_URL for
+      #     embeddings. Without LLMWIKI_PROVIDER the root defaults to ANTHROPIC and
+      #     ignores these entirely — measured: an ingest failed with the Anthropic
+      #     SDK's "Could not resolve authentication method" while the endpoint was
+      #     correctly pointed at a local OpenAI-compatible mock.
+      #
+      #   KG side (packages/llmwiki-kg config.ts)
+      #     EMBEDDING_PROVIDER=gateway + EXTRACTION_PROVIDER=gateway + GATEWAY_URL,
+      #     which resolves to `${GATEWAY_URL}/chat/completions` and
+      #     `${GATEWAY_URL}/embeddings` — the OpenAI wire format.
+      #
+      # Verified end-to-end against a local OpenAI-compatible mock: ingest returned
+      # 200 and the mock received /v1/chat/completions and /v1/embeddings.
+      LLMWIKI_PROVIDER: ${LLMWIKI_PROVIDER:-openai}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:?set OPENAI_BASE_URL to your OpenAI-compatible /v1 endpoint}
+      OPENAI_EMBEDDINGS_BASE_URL: ${OPENAI_EMBEDDINGS_BASE_URL:-${OPENAI_BASE_URL}}
+      OPENAI_API_KEY: ${PROVIDER_API_KEY:?set PROVIDER_API_KEY to your endpoint's key}
+      OPENAI_EMBEDDINGS_API_KEY: ${PROVIDER_API_KEY}
+      LLMWIKI_MODEL: ${LLMWIKI_MODEL:-gpt-4o-mini}
+      LLMWIKI_EMBEDDING_MODEL: ${LLMWIKI_EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-gateway}
+      EXTRACTION_PROVIDER: ${EXTRACTION_PROVIDER:-gateway}
+      GATEWAY_URL: ${OPENAI_BASE_URL}
+      GATEWAY_API_KEY: ${PROVIDER_API_KEY}
+      EMBEDDING_MODEL: ${LLMWIKI_EMBEDDING_MODEL:-text-embedding-3-small}
+      # Must match the `vector(N)` column in `db/schema.sql`, which is 768. A
+      # mismatch is not caught by the schema and produces vectors the store refuses
+      # to compare.
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+      EXTRACTION_MODEL: ${LLMWIKI_MODEL:-gpt-4o-mini}
       # The wiki the container compiles is mounted, not baked.
       LLMWIKI_ROOT: /work
       # Under host networking the process CAN see the machine's LAN address, and the
