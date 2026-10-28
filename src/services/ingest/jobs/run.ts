@@ -230,8 +230,51 @@ export async function runIngestJob(input: RunJobInput): Promise<void> {
       },
       now(),
     );
+    settleCompileWithoutIngest(registry, job.id, busy, now);
   }
   await recordIfFailed(root, registry, job.id);
+}
+
+/**
+ * Settle the compile half when the ingest never produced anything to compile.
+ *
+ * ## Why leaving it `queued` is a defect, not a neutral default
+ *
+ * The compile starts only after a successful ingest, so an ingest that throws means
+ * no compile will ever run. Leaving it at `queued` is a claim that work is pending,
+ * and nothing will ever advance it. Two consequences, both measured:
+ *
+ *   - A client polling the job sees `compile: queued` with a FROZEN `updatedAt`
+ *     forever. A UI reasonably renders a moving "working" indicator for that — the
+ *     one thing a status endpoint must never cause — for a job that is dead.
+ *   - `isSettled` in `registry.ts` requires the compile to be terminal, so the job
+ *     can never be evicted from the registry either. An ingest-failed job would pin
+ *     a slot against the retention bound for the life of the process.
+ *
+ * `skipped` is the honest terminal state: it never ran, and it never will. It is NOT
+ * `failed`, because the compile did not fail — the distinction is what tells a user
+ * whether to wait or to act. Lock contention is reported as `busy` instead, matching
+ * how a compile that could not start for the same reason is already recorded.
+ *
+ * @param registry - The registry the job lives in.
+ * @param jobId - The job whose ingest failed.
+ * @param busy - True when the failure was lock contention rather than the source.
+ * @param now - Clock, so the settled timestamp matches the ingest's.
+ */
+function settleCompileWithoutIngest(
+  registry: JobRegistry,
+  jobId: string,
+  busy: boolean,
+  now: () => Date,
+): void {
+  const message = busy
+    ? "Compile did not start: another mutation held the project lock."
+    : "Compile never started: the ingest failed, so there was nothing to compile.";
+  registry.patchCompile(
+    jobId,
+    { status: busy ? "busy" : "skipped", progress: null, message },
+    now(),
+  );
 }
 
 /** Append the durable failure record when the settled job ended failed. */
