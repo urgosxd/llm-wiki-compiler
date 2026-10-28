@@ -114,6 +114,14 @@ services:
       # not `127.0.0.1`, so every published-path check fails. Loopback is the intended
       # surface for a local wiki; set this to a LAN address to expose it deliberately.
       LLMWIKI_HOST: ${LLMWIKI_HOST:-127.0.0.1}
+      # MCP is the image default, but a stdio server under `up -d` has no stdin and
+      # exits immediately, which reads as a crash loop. Compose therefore asks for the
+      # HTTP listener explicitly. To drive MCP instead, do not use `up -d`:
+      #   docker run -i --rm -v $(pwd):/work llmwiki-both:test
+      LLMWIKI_MODE: host
+    # Kept open even though the default image surface is stdio: it costs nothing here
+    # and makes `docker compose run llmwiki` behave like plain `docker run -i`.
+    stdin_open: true
     volumes:
       - ${LLMWIKI_PROJECT:-.}:/work
 

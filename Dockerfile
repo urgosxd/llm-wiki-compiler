@@ -104,12 +104,17 @@ USER node
 WORKDIR /work
 VOLUME ["/work"]
 
-# `llmwiki host` serves both dimensions over HTTP; `serve` is MCP over stdio and is
-# reached with `docker run -i`. HTTP is the default because a detached container
-# with a stdio server exits immediately, which reads as a crash.
+# DEFAULT SURFACE: MCP over stdio with `docker run -i`.
+#
+# The product is consumed by agents, so MCP is the default and HTTP is the opt-in.
+# `llmwiki host` still serves both dimensions over one listener when asked:
+# `docker run -e LLMWIKI_MODE=host -p 4173:4173 ...`, or pass the command yourself.
+#
+# EXPOSE documents the port the HTTP mode uses; it is not opened unless that mode
+# runs, and Docker opens nothing by default regardless.
 EXPOSE 4173
 
-# THE BIND ADDRESS IS DELIBERATELY A PLACEHOLDER, AND `0.0.0.0` IS REFUSED
+# WHY THE HTTP BIND ADDRESS IS RESOLVED AT START
 #
 # `resolveBindConfig` rejects wildcard binds on purpose: the viewer's origin gate
 # accepts only the exact Host it bound to, so `--host 0.0.0.0` makes the accepted
@@ -118,7 +123,5 @@ EXPOSE 4173
 #
 # The container therefore binds a specific interface address, which is the only
 # configuration that serves both dimensions. `entry.sh` resolves it at start time
-# because the address does not exist when the image is built. Passing `--host` and
-# `--allow-lan` yourself overrides it, which is what a compose file does when it
-# wants a fixed address: `command: ["node", "/app/dist/cli.js", "host", "--host", "172.18.0.2", "--allow-lan"]`.
+# because the address does not exist when the image is built.
 ENTRYPOINT ["/usr/local/bin/entry.sh"]
