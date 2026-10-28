@@ -11,6 +11,8 @@ import { createIngestRouter } from "./routes/ingest.js";
 import type { IngestRouterDependencies } from "./routes/ingest.js";
 import { createPagesRouter } from "./routes/pages.js";
 import type { PagesRouterDependencies } from "./routes/pages.js";
+import { createStackGraphRouter } from "./routes/stack_graph.js";
+import type { StackGraphRouterDependencies } from "./routes/stack_graph.js";
 import { createStacksRouter } from "./routes/stacks.js";
 import type { StacksRouterDependencies } from "./routes/stacks.js";
 import { createSynthesizeRouter } from "./routes/synthesize.js";
@@ -217,6 +219,12 @@ function installRouters(
   deps: Parameters<typeof createApp>[0],
 ): void {
   app.use("/stacks", createStacksRouter(deps));
+  // Root mount, no prefix: `stack_graph.ts` carries its full absolute path
+  // (`/domain/kg/stacks/{stack_id}/graph`), so a prefix here would move the
+  // endpoint. It sits under `/domain` precisely so it shares no prefix with the
+  // oracle-owned `/stacks`, which is what keeps the 405 `Allow` walk preserving
+  // the oracle's layer order for every path the oracle knows about.
+  app.use(createStackGraphRouter(deps));
   app.use("/aks/v1", createAksRouter(deps));
   app.use("/aks/v1/pages", createPagesRouter(deps));
   app.use("/aks/v1/backfeed", createBackfeedRouter(deps));
@@ -279,6 +287,7 @@ function handleError(err: unknown, _req: Request, res: Response, _next: NextFunc
  */
 export function createApp(
   deps?: StacksRouterDependencies &
+    StackGraphRouterDependencies &
     DocumentsRouterDependencies &
     IngestRouterDependencies &
     AksRouterDependencies &
