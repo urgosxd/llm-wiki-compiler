@@ -19,7 +19,11 @@
  */
 
 import { sql } from "drizzle-orm";
-import { createDimensionsDatabase, resolveStackId } from "../dimensions/activation.js";
+import {
+  AKS_STACK_ID_ENV_VAR,
+  createDimensionsDatabase,
+  resolveStackId,
+} from "../dimensions/activation.js";
 import { stackIdProblem } from "../utils/stack-id.js";
 import { stackExists } from "../services/stacks/stack-store.js";
 
@@ -77,6 +81,37 @@ export async function withTenantDatabase<T>(
   } finally {
     await dimensionsDb.close();
   }
+}
+
+/**
+ * Run `work` with an environment that points every seam at `requestedStackId`.
+ *
+ * ## Why an env override rather than new seam signatures
+ *
+ * Every reader in `src/dimensions/wiki/page-source-seam.ts` already takes the
+ * environment as its first argument and resolves the Stack from it. Threading a
+ * second "or this Stack" parameter through each one would add a way to disagree with
+ * itself — an env saying A and an argument saying B — to a set of functions whose
+ * whole job is reading the environment. Overriding the env once, here, keeps a single
+ * source of truth for the duration of one call.
+ *
+ * ## Why the process env is restored rather than mutated in place
+ *
+ * Two tools may be in flight at once over streamable HTTP. Assigning to
+ * `process.env` would let one call's Stack leak into the other's read, which is the
+ * precise cross-tenant failure this surface exists to prevent. A copy is handed to
+ * the seams instead, so the ambient environment is never written.
+ *
+ * @param requestedStackId - A Stack the caller named, or absent to use the bound one.
+ * @param work - Receives the environment to pass to the seams.
+ * @returns Whatever `work` returned.
+ */
+export async function withRequestEnv<T>(
+  requestedStackId: string | undefined,
+  work: (env: NodeJS.ProcessEnv) => Promise<T>,
+): Promise<T> {
+  if (requestedStackId === undefined) return work(process.env);
+  return work({ ...process.env, [AKS_STACK_ID_ENV_VAR]: requestedStackId });
 }
 
 /** True when a helper handed back the "no such Stack" marker. */

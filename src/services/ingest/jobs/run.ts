@@ -32,6 +32,7 @@
 import { LockBusyError } from "../../../utils/lock.js";
 import { compileAndReport } from "../../../compiler/index.js";
 import { ingestSource } from "../service.js";
+import { AKS_STACK_ID_ENV_VAR } from "../../../dimensions/activation.js";
 import { recordJobFailure } from "./failure-log.js";
 import type { JobRegistry } from "./registry.js";
 import type {
@@ -49,6 +50,15 @@ export interface RunJobInput {
   readonly job: IngestJob;
   /** Whether to compile after ingesting. Mirrors the synchronous endpoint's flag. */
   readonly compile: boolean;
+  /**
+   * Stack this job writes into, when it is not the one the process was started with.
+   *
+   * A job runs in the background, AFTER the HTTP response is answered, so the Stack
+   * cannot be read from the request any more. It has to travel on the job: without it
+   * every async ingest lands in whichever Stack the host booted with, and the caller
+   * reads back an empty Stack with no error to explain it.
+   */
+  readonly stackId?: string;
 }
 
 /** Swallow an observer call's failure; a status bug must not fail the ingest. */
@@ -209,6 +219,26 @@ async function runCompileHalf(
  * @param input - Project root, registry, job identity, and whether to compile.
  */
 export async function runIngestJob(input: RunJobInput): Promise<void> {
+  if (input.stackId === undefined) return runIngestJobUnder(input);
+  const saved = process.env[AKS_STACK_ID_ENV_VAR];
+  process.env[AKS_STACK_ID_ENV_VAR] = input.stackId;
+  try {
+    return await runIngestJobUnder(input);
+  } finally {
+    if (saved === undefined) delete process.env[AKS_STACK_ID_ENV_VAR];
+    else process.env[AKS_STACK_ID_ENV_VAR] = saved;
+  }
+}
+
+/**
+ * The job body, run with the Stack already applied.
+ *
+ * Split from {@link runIngestJob} so the Stack save/restore wraps exactly one call
+ * site instead of nesting the whole pipeline in a `try`.
+ *
+ * @param input - The job to run.
+ */
+async function runIngestJobUnder(input: RunJobInput): Promise<void> {
   const { registry, job, root } = input;
   const now = () => new Date();
   try {

@@ -52,17 +52,15 @@ import type { ArtifactRef } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { jsonResult, errorResult } from "./result.js";
 import { registerJobTools } from "./job-tools.js";
 import { registerStackTools } from "./stack-tools.js";
+import { registerWikiReadTools } from "./wiki-read-tools.js";
+import { STACK_ID_SCHEMA } from "./stack-arg.js";
+import { withRequestEnv } from "./tenant-db.js";
 
 /** Register all 10 wiki tools on the given MCP server instance. */
 export function registerWikiTools(server: McpServer, root: string): void {
   registerIngestTool(server, root);
   registerCompileTool(server, root);
-  registerQueryTool(server, root);
-  registerSearchTool(server, root);
-  registerReadTool(server, root);
-  registerLintTool(server, root);
-  registerStatusTool(server, root);
-  registerContextPackTool(server, root);
+  registerWikiReadTools(server, root);
   registerEvalTool(server, root);
   registerVerifyArtifactTool(server, root);
   registerJobTools(server);
@@ -76,7 +74,9 @@ function registerIngestTool(server: McpServer, root: string): void {
       title: "Ingest Source",
       description:
         "Fetch a URL or copy a local file into sources/. Returns the saved filename, " +
-        "character count, and whether content was truncated to fit the size limit.",
+        "character count, and whether content was truncated to fit the size limit. " +
+        "Sources are project files, not Stack rows, so this tool takes no stackId. " +
+        "Call compile_wiki with a stackId to land the derived pages in a Stack.",
       inputSchema: {
         source: z
           .string()
@@ -99,376 +99,17 @@ function registerCompileTool(server: McpServer, root: string): void {
         "Run the incremental compile pipeline: extract concepts from new/changed " +
         "sources, generate wiki pages, resolve interlinks, and rebuild the index. " +
         "Requires an LLM provider with credentials.",
-      inputSchema: {},
+      inputSchema: { stackId: STACK_ID_SCHEMA },
     },
-    async () => {
+    async ({ stackId }) => {
       ensureCompileProviderAvailable();
-      const result = await compileAndReport(root);
+      // Compile WRITES pages, so the Stack it is given decides which tenant the output
+      // lands in. Wrapped rather than threaded because the writer already resolves the
+      // Stack from the environment, and inventing a second argument would let a compile
+      // write to one Stack while its reads came from another.
+      const result = await withRequestEnv(stackId, () => compileAndReport(root));
       return jsonResult(result);
     },
-  );
-}
-
-function registerQueryTool(server: McpServer, root: string): void {
-  server.registerTool(
-    "query_wiki",
-    {
-      title: "Query Wiki",
-      description:
-        "Ask a natural-language question. Selects relevant pages with the LLM, " +
-        "loads them, and returns a grounded answer with citations. Set save=true " +
-        "to request publication as a wiki page; citation or profile refusals " +
-        "return the answer with publicationRefusal and no saved slug. Set debug=true to include the " +
-        "selected chunks and their scores. Requires an LLM provider.",
-      inputSchema: {
-        question: z
-          .string()
-          .describe("The natural-language question to answer."),
-        save: z
-          .boolean()
-          .optional()
-          .describe(
-            "Request a wiki/queries/ page; publication requires fresh citation validation.",
-          ),
-        debug: z
-          .boolean()
-          .optional()
-          .describe(
-            "Include retrieval debug info (selected chunks/pages + scores).",
-          ),
-      },
-    },
-    async ({ question, save, debug }) => {
-      ensureProviderAvailable();
-      const result = await withRegistrySource(process.env, (registrySource) =>
-        generateAnswer(root, question, { save, debug, registrySource }),
-      );
-      return jsonResult(result);
-    },
-  );
-}
-
-function registerSearchTool(server: McpServer, root: string): void {
-  server.registerTool(
-    "search_pages",
-    {
-      title: "Search Pages",
-      description:
-        "Select pages relevant to a question and return their full content. " +
-        "Uses semantic embeddings when available, falling back to LLM-based " +
-        "selection over the wiki index. Requires an LLM provider.",
-      inputSchema: {
-        question: z.string().describe("The query used to rank pages."),
-      },
-    },
-    async ({ question }) => {
-      ensureProviderAvailable();
-      // One source for ranking AND hydration, or a Stack-backed wiki ranks against
-      // rows and then finds none of them on disk.
-      const { records, refs, warnings } = await withRegistrySource(
-        process.env,
-        async (registrySource) => {
-          const selected = await pickSearchRefs(root, question, {
-            registrySource,
-          });
-          return {
-            ...selected,
-            records: await loadSelectedRefs(
-              root,
-              selected.refs,
-              registrySource,
-            ),
-          };
-        },
-      );
-      // S6: surface degrade warnings in the RESULT payload (not a log) so an
-      // agent SEES that an outdated index meant lexical-only contribution.
-      return jsonResult({ pages: records, refs, warnings });
-    },
-  );
-}
-
-/**
- * Resolve one page by slug, from the registry when there is one.
- *
- * ## Why both sources are tried, in this order
- *
- * `concepts` before `queries` is the contract `read_page` has always documented, and
- * the registry source is asked in that same order so a slug that exists in both
- * resolves identically whether it came from a row or a file.
- *
- * The fallback is not defensive padding: a project with no database is a supported
- * deployment, and on it `pageSource` is `undefined` and the on-disk read is the only
- * correct answer. The two paths cannot disagree about a slug that exists in both,
- * because the registry is the compiled copy of that file.
- *
- * @param root - Absolute path to the wiki project root.
- * @param slug - Page slug, without the `.md` extension.
- * @param pageSource - Registry-backed reader, or `undefined` to read from disk.
- * @returns The page, or `null` when neither source has it.
- */
-async function readPageBySlug(
-  root: string,
-  slug: string,
-  pageSource: PageListingSource | undefined,
-): Promise<{
-  slug: string;
-  title: string;
-  summary: string;
-  body: string;
-} | null> {
-  if (pageSource === undefined) return readPageRecord(root, slug);
-  for (const pageDirectory of ["concepts", "queries"] as const) {
-    const ref: PageRef = { pageDirectory, slug };
-    const page = await getPage(root, ref, pageSource);
-    if (page === null) continue;
-    // Orphaned pages are not readable, matching `readPageRecord`, which skips them.
-    // A page that vanished from its sources must 404 rather than serve a body no
-    // compilation claims any more.
-    if (page.orphaned) continue;
-    return {
-      slug: page.slug,
-      title: page.title,
-      summary: page.summary,
-      body: page.body ?? "",
-    };
-  }
-  return null;
-}
-
-/**
- * Test seam for {@link readPageBySlug}, which builds its own environment lookup.
- *
- * Exists so the suite can inject a specific Stack instead of mutating global env, and
- * so the registry path can be exercised without constructing an MCP server.
- *
- * @param root - Absolute path to the wiki project root.
- * @param slug - Page slug, without the `.md` extension.
- * @param stackId - Stack whose registry should be read.
- * @returns The page, or `null` when the registry has no such page.
- */
-export async function readPageBySlugForTest(
-  root: string,
-  slug: string,
-  stackId: string,
-): Promise<{
-  slug: string;
-  title: string;
-  summary: string;
-  body: string;
-} | null> {
-  const env = { ...process.env, AKS_STACK_ID: stackId };
-  const dimensionsDb = createDimensionsDatabase(env);
-  try {
-    const source = createPageListingSource(dimensionsDb.db, stackId);
-    return await readPageBySlug(root, slug, source);
-  } finally {
-    await dimensionsDb.close();
-  }
-}
-
-function registerReadTool(server: McpServer, root: string): void {
-  server.registerTool(
-    "read_page",
-    {
-      title: "Read Page",
-      description:
-        "Read a single wiki page by slug. Searches concepts/ first, then queries/. " +
-        "Returns the parsed frontmatter and body. No LLM call required.",
-      inputSchema: {
-        slug: z.string().describe("Page slug, without .md extension."),
-      },
-    },
-    async ({ slug }) => {
-      // Read through the SAME seam the other readers use, falling back to disk only
-      // when there is no registry. Before this, `read_page` called `readPageRecord`
-      // directly, which walks `wiki/concepts` and `wiki/queries` on the filesystem —
-      // so on a deployment whose wiki lives in the database it rejected every slug
-      // that `search_pages` had just returned.
-      const page = await withPageSource(process.env, (pageSource) =>
-        readPageBySlug(root, slug, pageSource),
-      );
-      if (page === null) {
-        throw new Error(`Page not found: ${slug}`);
-      }
-      return jsonResult(page);
-    },
-  );
-}
-
-function registerLintTool(server: McpServer, root: string): void {
-  server.registerTool(
-    "lint_wiki",
-    {
-      title: "Lint Wiki",
-      description:
-        "Run rule-based quality checks (broken wikilinks, orphans, duplicates, " +
-        "empty pages, broken citations). Returns structured diagnostics. No LLM call.",
-      inputSchema: {},
-    },
-    async () => {
-      const summary = await lint(root);
-      return jsonResult(summary);
-    },
-  );
-}
-
-function registerStatusTool(server: McpServer, root: string): void {
-  server.registerTool(
-    "wiki_status",
-    {
-      title: "Wiki Status",
-      description:
-        "Summarize the wiki: page count, source count, last compile time, pending source " +
-        "changes, and freshness-derived page health. stalePages lists concept slugs whose " +
-        "source changed or partially disappeared since last compile. orphanedPages lists " +
-        "concept slugs whose every owning source was deleted OR that are frontmatter-flagged " +
-        "orphaned (superset of prior behavior). stateStatus reports state.json readability " +
-        "(ok | missing | corrupt) so corrupt state is never silent. Each list (stalePages, " +
-        "orphanedPages, pendingChanges) is capped at 100 entries for response size; the " +
-        "corresponding *Count fields (staleCount, orphanedCount, pendingChangesCount) give " +
-        "the true totals. Read-only — never modifies the workspace.",
-      inputSchema: {},
-    },
-    async () =>
-      jsonResult(
-        await withPageScan(process.env, (pageScan) =>
-          collectStatus(root, { pageScan }),
-        ),
-      ),
-  );
-}
-
-/**
- * Register the `get_context_pack` tool. Delegates to the same
- * `buildContextPack()` helper as the CLI so the returned JSON matches
- * `llmwiki context --json` byte-for-byte (modulo prompt content).
- *
- * No provider guard runs here: semantic retrieval is opportunistic
- * inside `buildContextPack` and falls back to lexical with a stable
- * warning when credentials are missing. The pack is read-only and
- * never mutates the workspace, so the MCP layer needs no extra checks.
- *
- * The body is split into `contextPackToolConfig` (static metadata) and
- * `buildContextPackFromArgs` (the per-call adapter) so this function
- * stays inside the project's 40-line function ceiling.
- */
-function registerContextPackTool(server: McpServer, root: string): void {
-  server.registerTool(
-    "get_context_pack",
-    contextPackToolConfig(),
-    async (args) => jsonResult(await buildContextPackFromArgs(root, args)),
-  );
-}
-
-/** Inline arg shape for {@link buildContextPackFromArgs}; matches `contextPackInputSchema`. */
-interface ContextPackToolArgs {
-  prompt: string;
-  budget?: number;
-  depth?: number;
-  topPages?: number;
-  topChunks?: number;
-  omitRoot?: boolean;
-  includeSources?: boolean;
-}
-
-/** Static `registerTool` metadata for `get_context_pack`. */
-function contextPackToolConfig(): {
-  title: string;
-  description: string;
-  inputSchema: ReturnType<typeof contextPackInputSchema>;
-} {
-  return {
-    title: "Get Context Pack",
-    description:
-      "Build an agent-ready evidence pack for `prompt` over the compiled " +
-      "wiki: primary pages, semantic chunks, graph neighbors, citations, " +
-      "warnings, and suggested next actions. Returns the same v1 JSON " +
-      "envelope as `llmwiki context --json`. Read-only; no provider " +
-      "credentials required. Use this to PREPARE evidence; use " +
-      "`query_wiki` to GENERATE a grounded natural-language answer.",
-    inputSchema: contextPackInputSchema(),
-  };
-}
-
-/**
- * Zod schema for the `get_context_pack` tool arguments. Extracted so
- * the registration function stays under the project's per-function
- * line ceiling and so the schema can be unit-tested in isolation if
- * we ever need to.
- */
-function contextPackInputSchema(): {
-  prompt: z.ZodString;
-  budget: z.ZodOptional<z.ZodNumber>;
-  depth: z.ZodOptional<z.ZodNumber>;
-  topPages: z.ZodOptional<z.ZodNumber>;
-  topChunks: z.ZodOptional<z.ZodNumber>;
-  omitRoot: z.ZodOptional<z.ZodBoolean>;
-  includeSources: z.ZodOptional<z.ZodBoolean>;
-} {
-  return {
-    prompt: z
-      .string()
-      .describe("Free-text task or topic to assemble context for."),
-    budget: z
-      .number()
-      .optional()
-      .describe("Approximate output token budget (default 8000)."),
-    depth: z
-      .number()
-      .optional()
-      .describe(
-        "Graph neighborhood depth, 0..2 (default 1, 0 disables expansion).",
-      ),
-    topPages: z
-      .number()
-      .optional()
-      .describe("Max primary pages (default 5, max 20)."),
-    topChunks: z
-      .number()
-      .optional()
-      .describe("Max semantic chunks to surface (default 8, max 50)."),
-    omitRoot: z
-      .boolean()
-      .optional()
-      .describe("Emit `project.root` as null instead of the absolute path."),
-    includeSources: z
-      .boolean()
-      .optional()
-      .describe(
-        "Materialize `primary[].sourceWindows` from claim-level citations " +
-          "(reads files under `sources/` only; path-confined).",
-      ),
-  };
-}
-
-/**
- * Per-call adapter that fans the tool args into `buildContextPack`.
- *
- * Wrapped in `withEmbeddingStoreSource` for the same reason `query_wiki` is: on a
- * Stack the vectors live in `wiki.page_embeddings`, and a pack built without the
- * source returns an empty `chunks` array that reads as "nothing was relevant".
- * With no Stack configured the seam passes `undefined` and the disk path is unchanged.
- */
-async function buildContextPackFromArgs(
-  root: string,
-  args: ContextPackToolArgs,
-): Promise<Awaited<ReturnType<typeof buildContextPack>>> {
-  return withRegistrySource(process.env, (registryPageSource) =>
-    withEmbeddingStoreSource(process.env, (embeddingStoreSource) =>
-      buildContextPack({
-        root,
-        prompt: args.prompt,
-        budget: args.budget,
-        depth: args.depth,
-        topPages: args.topPages,
-        topChunks: args.topChunks,
-        omitRoot: args.omitRoot,
-        includeSources: args.includeSources,
-        embeddingStoreSource,
-        registryPageSource,
-      }),
-    ),
   );
 }
 
@@ -506,14 +147,14 @@ function registerEvalTool(server: McpServer, root: string): void {
           .describe(
             "Append results to eval history (default false; set true to persist a checkpoint)",
           ),
+        stackId: STACK_ID_SCHEMA,
       },
     },
-    async ({ suite, sampleSize, record }) => {
-      const report = await runEval(
-        root,
-        suite,
-        sampleSize ?? DEFAULT_SAMPLE_SIZE,
-        record ?? false,
+    async ({ suite, sampleSize, record, stackId }) => {
+      // `runEval` reads the project through the same env the seams use, so wrapping it
+      // is enough to make the eval describe the named Stack instead of the bound one.
+      const report = await withRequestEnv(stackId, () =>
+        runEval(root, suite, sampleSize ?? DEFAULT_SAMPLE_SIZE, record ?? false),
       );
       return jsonResult(report);
     },

@@ -22,7 +22,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { rm } from "node:fs/promises";
 import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { readPageBySlugForTest } from "../../src/mcp/tools.js";
+import { readPageBySlugForTest } from "../../src/mcp/wiki-read-tools.js";
 import { provisionStack, type ProvisionedStack } from "../fixtures/stack-harness.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 

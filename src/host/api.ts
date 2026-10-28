@@ -53,6 +53,8 @@ import type { JobRegistry } from "../services/ingest/jobs/registry.js";
 import { runIngestJob } from "../services/ingest/jobs/run.js";
 import type { IngestJobAccepted } from "../services/ingest/jobs/types.js";
 import type { CompileResult, IngestResult } from "../utils/types.js";
+import { stackIdProblem } from "../utils/stack-id.js";
+import { AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
 
 /** Largest request body these endpoints accept, in bytes. */
 const MAX_BODY_BYTES = 1024 * 64;
@@ -70,6 +72,15 @@ interface IngestRequest {
    * a 200 into a 202 would break all of them to serve one new client.
    */
   readonly async?: boolean;
+  /**
+   * Stack the ingest should write into, when it is not the bound one.
+   *
+   * On the request rather than the process because a single host now serves several
+   * Stacks: without it, every ingest from this endpoint landed in whichever Stack the
+   * process was started with, so a caller reading Stack A could only ever write to A's
+   * sibling. Validated before it reaches the database -- see `stackIdProblem`.
+   */
+  readonly stackId?: string;
 }
 
 /**
@@ -163,11 +174,12 @@ export interface ApiDeps {
  */
 function acceptAsyncIngest(
   root: string,
-  source: string,
-  compile: boolean,
+  request: IngestRequest,
   res: ServerResponse,
   deps: ApiDeps,
 ): void {
+  const { source, stackId } = request;
+  const compile = request.compile !== false;
   const registry = deps.ingestJobs;
   if (registry === undefined) {
     writeJsonError(res, 503, "jobs_unavailable", "this host does not track ingest jobs");
@@ -182,7 +194,9 @@ function acceptAsyncIngest(
     compile: job.compile,
   };
   writeJson(res, 202, accepted);
-  void runIngestJob({ root, registry, job, compile });
+  // The Stack travels ON the job: the work starts after this response is answered, so
+  // the request is gone by then and the job is the only thing that can carry it.
+  void runIngestJob({ root, registry, job, compile, stackId });
 }
 
 /**
@@ -210,7 +224,7 @@ async function handleIngest(
   const request = await readIngestRequest(req, res);
   if (request === undefined) return;
   if (request.async === true) {
-    acceptAsyncIngest(root, request.source, request.compile !== false, res, deps);
+    acceptAsyncIngest(root, request, res, deps);
     return;
   }
   await runSyncIngest(root, request, res);
@@ -241,7 +255,15 @@ async function readIngestRequest(
     writeJsonError(res, 400, "invalid_request", "body must be {\"source\": \"<url-or-path>\"}");
     return undefined;
   }
-  return { ...request, source };
+  const stackId = request?.stackId;
+  if (stackId !== undefined) {
+    const problem = stackIdProblem(stackId);
+    if (problem !== undefined) {
+      writeJsonError(res, 400, "invalid_request", problem);
+      return undefined;
+    }
+  }
+  return { ...request, source, ...(stackId === undefined ? {} : { stackId }) };
 }
 
 /**
@@ -255,18 +277,70 @@ async function readIngestRequest(
  * @param request - A validated ingest request.
  * @param res - Response to answer on.
  */
+/**
+ * Run `work` with every Stack-resolving read pointed at `stackId`.
+ *
+ * ## Why an env override, matching the MCP tools
+ *
+ * The ingest and compile pipelines resolve the Stack from the environment in several
+ * places and nowhere accept it as an argument. Threading a parameter through both
+ * would mean touching every layer to add a way to disagree with the env; overriding
+ * the env for the duration of one request keeps one source of truth.
+ *
+ * ## The limitation this carries, stated rather than hidden
+ *
+ * Unlike the MCP tools -- which can hand a COPY of the environment to seams that take
+ * one -- the ingest pipeline reads `process.env` directly and accepts no alternative.
+ * So this must temporarily ASSIGN to it, which means two ingests naming DIFFERENT
+ * Stacks must not overlap in time.
+ *
+ * That is not a bug being papered over: the async route is the concurrency path, and
+ * it runs one job at a time through `runIngestJob`. The synchronous route holds
+ * `tryWithOrdinaryMutationLock`, which serialises it against every other mutation. So
+ * today no two writers overlap here, and the window is closed by locks that already
+ * existed for other reasons rather than by this function.
+ *
+ * The safe version of this needs the pipeline to accept an environment the way the
+ * read seams do. Until then, saying so is better than a comment claiming a copy it
+ * does not make -- the first reader to add a second concurrent writer would trust it.
+ *
+ * @param stackId - A Stack the caller named, or absent to use the bound one.
+ * @param work - The request body to run under that Stack.
+ * @returns Whatever `work` returned.
+ */
+async function withIngestStack<T>(
+  stackId: string | undefined,
+  work: () => Promise<T>,
+): Promise<T> {
+  if (stackId === undefined) return work();
+  const saved = process.env[AKS_STACK_ID_ENV_VAR];
+  process.env[AKS_STACK_ID_ENV_VAR] = stackId;
+  try {
+    return await work();
+  } finally {
+    if (saved === undefined) delete process.env[AKS_STACK_ID_ENV_VAR];
+    else process.env[AKS_STACK_ID_ENV_VAR] = saved;
+  }
+}
+
 async function runSyncIngest(
   root: string,
   request: IngestRequest,
   res: ServerResponse,
 ): Promise<void> {
   try {
-    const ingested: IngestResult = await ingestSource(root, request.source);
-    if (request.compile === false) {
+    // The Stack is applied for the WHOLE request, not just the read half: ingest
+    // writes sources and compile writes pages, and letting them resolve the Stack
+    // separately is how a source lands in one tenant and its pages in another.
+    const { ingested, compiled } = await withIngestStack(request.stackId, async () => {
+      const result: IngestResult = await ingestSource(root, request.source);
+      if (request.compile === false) return { ingested: result, compiled: null };
+      return { ingested: result, compiled: await compileAndReport(root) };
+    });
+    if (compiled === null) {
       writeJson(res, 200, { ...ingested, compiled: null });
       return;
     }
-    const compiled: CompileResult = await compileAndReport(root);
     // `busy` means the compile never started (another holds the lock). The source
     // IS ingested, so this is a retryable compile outcome, not a failed request.
     writeJson(res, 200, { ...ingested, compiled, compileBusy: compiled.busy === true });
