@@ -30,6 +30,7 @@ import { ASSETS_DIR, handleAsset } from "./static-assets.js";
 import { searchPages } from "./search.js";
 import { listCandidatePage } from "../compiler/candidates.js";
 import { buildReviewsEnvelope, REVIEW_LIST_LIMIT } from "./reviews.js";
+import { handleApiIngestJobs, isIngestJobsPath, INGEST_JOBS_PREFIX, INGEST_JOBS_PATH } from "./api-ingest-jobs.js";
 import { tryRenderBody, writeJson, writeJsonError, writeRenderFailed } from "./respond.js";
 import type { ViewerSnapshot } from "./types.js";
 import { listenOn } from "../utils/http-listen.js";
@@ -47,7 +48,7 @@ const CONTENT_SECURITY_POLICY =
   "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'none'";
 
 /** Configuration knobs accepted by `startViewerServer`. */
-interface ViewerServerConfig {
+export interface ViewerServerConfig {
   /** Opt-in journey navigation; never advertised on a non-loopback bind. */
   workflowJourneys?: boolean;
   /** Listening host. `--allow-lan` callers set this to a non-loopback bind address. */
@@ -229,6 +230,9 @@ async function routeLiveResources(
   if (parsedUrl.pathname.startsWith("/api/page/")) {
     return handleApiPage(res, parsedUrl.pathname, snapshot, isLoopback);
   }
+  if (isIngestJobsPath(parsedUrl.pathname)) {
+    return handleApiIngestJobs(res, parsedUrl.pathname, deps);
+  }
   // Unreachable: `isRouteRegistered` is the gate, and every branch
   // there has a matching dispatch above. If it ever fires, the two
   // functions have drifted — fail loudly rather than silently 404.
@@ -275,6 +279,7 @@ const REGISTERED_EXACT_PATHS: ReadonlySet<string> = new Set([
   "/api/search",
   "/api/graph",
   "/api/reviews",
+  INGEST_JOBS_PATH,
   ...ARTIFACT_PATHS,
 ]);
 
@@ -286,7 +291,9 @@ const REGISTERED_EXACT_PATHS: ReadonlySet<string> = new Set([
  * `routeLiveResources` threw its drift error, surfacing as a 500 where the origin
  * policy's 403 belonged.
  */
-const REGISTERED_PATH_PREFIXES: readonly string[] = ["/assets/", "/api/page/", "/api/source/"];
+const REGISTERED_PATH_PREFIXES: readonly string[] = [
+  "/assets/", "/api/page/", "/api/source/", INGEST_JOBS_PREFIX,
+];
 
 /**
  * Every exact path must have a dispatch branch. Checked at module load so a route
@@ -298,6 +305,7 @@ const DISPATCHED_EXACT_PATHS: ReadonlySet<string> = new Set([
   ...SNAPSHOT_ONLY_HANDLERS.keys(),
   "/api/index",
   "/api/search",
+  INGEST_JOBS_PATH,
   ...ARTIFACT_PATHS,
 ]);
 for (const path of REGISTERED_EXACT_PATHS) {
@@ -318,7 +326,7 @@ function isRouteRegistered(method: string | undefined, pathname: string): boolea
  * first in `handleRequest` so unregistered-route 404s and bad-origin
  * 403s carry the same hardening as the v1 API responses.
  */
-function applySecurityHeaders(res: ServerResponse): void {
+export function applySecurityHeaders(res: ServerResponse): void {
   res.setHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY);
   res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -330,7 +338,7 @@ function applySecurityHeaders(res: ServerResponse): void {
  * §Non-Negotiable Security Requirements. Returns false when a request
  * should be rejected with 403; the caller writes the error envelope.
  */
-function validateOriginHeaders(req: IncomingMessage, config: ViewerServerConfig): boolean {
+export function validateOriginHeaders(req: IncomingMessage, config: ViewerServerConfig): boolean {
   const host = req.headers.host;
   if (!host || !isAcceptableHost(host, config)) return false;
   const origin = req.headers.origin;

@@ -111,6 +111,10 @@ describe("the mutation endpoints", () => {
     try {
       const res = await fetch(`http://${handle.host}:${handle.port}/api/compile`, { method: "POST" });
       expect(res.status).toBe(404);
+      // The job READS must agree with the absent mutation mount. Answering an empty
+      // list would claim the host looked; 503 says it has nothing to look with.
+      const jobs = await fetch(`http://${handle.host}:${handle.port}/api/ingest/jobs`);
+      expect(jobs.status).toBe(503);
     } finally {
       await handle.close();
     }
