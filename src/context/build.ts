@@ -23,7 +23,11 @@
 import { buildViewerSnapshot } from "../viewer/snapshot.js";
 import { narrowSnapshotToContextPool } from "./typed-pages.js";
 import { applyContentTiers } from "./content-tiers.js";
-import { loadNonDefaultProfile, resolveNonDefaultProfile, type PreloadedProfile } from "../profile/block.js";
+import {
+  loadNonDefaultProfile,
+  resolveNonDefaultProfile,
+  type PreloadedProfile,
+} from "../profile/block.js";
 import {
   appendArtifactWarning,
   appendJournalWarning,
@@ -33,12 +37,20 @@ import {
 } from "./pack-warnings.js";
 import { collectProjectState } from "../project/state.js";
 import { recommendNextAction } from "../project/recommendations.js";
-import type { Recommendation, RecommendedAction } from "../project/recommendations.js";
+import type {
+  Recommendation,
+  RecommendedAction,
+} from "../project/recommendations.js";
 import type { ProjectState } from "../project/state.js";
 import type { ViewerSnapshot } from "../viewer/types.js";
 import { rankPages } from "./ranking.js";
 import { retrieveSemanticChunks } from "./retrieval.js";
-import type { SemanticRetrievalOutcome, SemanticRetrievalWarning } from "./retrieval.js";
+import type { EmbeddingStoreSource } from "../utils/embeddings-load.js";
+import type { RegistryPageSource } from "../utils/page-registry.js";
+import type {
+  SemanticRetrievalOutcome,
+  SemanticRetrievalWarning,
+} from "./retrieval.js";
 import { expandGraphNeighborhood } from "./graph.js";
 import type { GraphExpansionOutput } from "./graph.js";
 import {
@@ -57,11 +69,7 @@ import {
   MAX_TOP_PAGES,
   PROMPT_ECHO_MAX_LENGTH,
 } from "./types.js";
-import type {
-  ContextPack,
-  ContextProject,
-  ContextWarning,
-} from "./types.js";
+import type { ContextPack, ContextProject, ContextWarning } from "./types.js";
 
 /** Caller-supplied build options; all fields except `prompt` are optional. */
 interface BuildContextPackOptions {
@@ -83,6 +91,24 @@ interface BuildContextPackOptions {
   neighbors?: boolean;
   /** When true, populate `primary[].sourceWindows` from claim-level citation spans. */
   includeSources?: boolean;
+  /**
+   * Vector store to search, or `undefined` to read `.llmwiki/embeddings.json`.
+   *
+   * Without this the semantic half of the pack is dead on any Stack: the retriever
+   * takes the disk branch, finds no page files, and returns `chunks: []` with an
+   * `embedding-index-outdated` warning while the vectors sit in
+   * `wiki.page_embeddings`. `withEmbeddingStoreSource` supplies the row-backed one.
+   */
+  embeddingStoreSource?: EmbeddingStoreSource;
+  /**
+   * Registry source used to decide which page ids are LIVE during chunk ranking.
+   *
+   * Separate from `embeddingStoreSource` and not implied by it: the store says which
+   * vectors exist, this says which of their pages still exist. Omitting it makes the
+   * prefilter read live ids from disk, so on a Stack every chunk is filtered out as
+   * stale and the search returns nothing while both halves are perfectly healthy.
+   */
+  registryPageSource?: RegistryPageSource;
 }
 
 /**
@@ -90,7 +116,9 @@ interface BuildContextPackOptions {
  * issues — the project-state collector returns conservative defaults
  * (`broken-project` state) which the orchestrator faithfully surfaces.
  */
-export async function buildContextPack(options: BuildContextPackOptions): Promise<ContextPack> {
+export async function buildContextPack(
+  options: BuildContextPackOptions,
+): Promise<ContextPack> {
   const normalized = normalizeOptions(options);
   const baseSnapshot = await buildViewerSnapshot(options.root);
   // Resolve the active non-default profile ONCE and thread it through the pool
@@ -98,12 +126,17 @@ export async function buildContextPack(options: BuildContextPackOptions): Promis
   // two mid-swapped profiles (and re-loads/re-validates are avoided). `null` marks
   // the built-in default so both steps stay a no-op and the default pack is
   // byte-identical.
-  const preloadedProfile: PreloadedProfile = (await loadNonDefaultProfile(options.root)) ?? null;
+  const preloadedProfile: PreloadedProfile =
+    (await loadNonDefaultProfile(options.root)) ?? null;
   // The snapshot already carries the profile's typed entity pages, so they are
   // lexically rankable + graph-reachable here without further work; this step
   // applies the pool's own `retrieval.includeInContext` policy on top. A DEFAULT
   // project gets the snapshot back unchanged (byte-identical context pack).
-  const snapshot = await narrowSnapshotToContextPool(options.root, baseSnapshot, preloadedProfile);
+  const snapshot = await narrowSnapshotToContextPool(
+    options.root,
+    baseSnapshot,
+    preloadedProfile,
+  );
   const state = await collectProjectState(options.root);
   const recommendation = recommendNextAction(state);
   // Semantic retrieval is opportunistic — failures surface as stable
@@ -114,12 +147,20 @@ export async function buildContextPack(options: BuildContextPackOptions): Promis
     options.root,
     normalized.rankingPrompt,
     normalized.topChunks,
+    options.embeddingStoreSource,
+    options.registryPageSource,
   );
   // POST-ranking, per-record content-depth projection (CLP 6.2). Reads the same
   // non-default profile the pool augmentation loads; for the built-in default it
   // is a no-op, so the default pack stays byte-identical.
   const draft = await projectContentTiers(
-    assembleDraft({ snapshot, state, recommendation, options: normalized, semantic }),
+    assembleDraft({
+      snapshot,
+      state,
+      recommendation,
+      options: normalized,
+      semantic,
+    }),
     snapshot,
     options.root,
     preloadedProfile,
@@ -135,34 +176,51 @@ export async function buildContextPack(options: BuildContextPackOptions): Promis
   // primary list, so they land after attachSourceWindows and BEFORE
   // budget trimming. Trimming may drop sourceWindows for budget
   // reasons; the warning still correctly reports "windows missing".
-  const withProjectWarnings = appendProjectWarnings(withSources, state, normalized);
+  const withProjectWarnings = appendProjectWarnings(
+    withSources,
+    state,
+    normalized,
+  );
   // The viewer snapshot's `profile` summary already carries a fail-closed
   // relation-store problem (the same one `status` surfaces). Lift it into a
   // top-level warning so an agent SEES typed relations are unavailable rather
   // than receiving a silently relation-less pack. A default/healthy project's
   // snapshot has no such problem, so the pack is byte-identical.
-  const withRelationWarning = appendRelationStoreWarning(withProjectWarnings, snapshot);
+  const withRelationWarning = appendRelationStoreWarning(
+    withProjectWarnings,
+    snapshot,
+  );
   // The snapshot's profile summary also carries any `artifact-store` problem: a
   // hash-pinned artifactRef (page field or relation attribute) that no longer
   // verifies. Lift it into a top-level warning so an agent SEES the unhealthy ref
   // rather than a silently-thinner pack. A project with no artifacts or no
   // unresolved ref has none, so the pack stays byte-identical.
-  const withArtifactWarning = appendArtifactWarning(withRelationWarning, snapshot);
+  const withArtifactWarning = appendArtifactWarning(
+    withRelationWarning,
+    snapshot,
+  );
   // The snapshot's profile summary also carries any STANDING relation-precondition
   // violation (a page still in a gated state whose precondition drifted) and any
   // "cannot verify" store-read failure of that check. Lift them into top-level
   // warnings so an agent SEES a drifted/unverifiable lifecycle gate rather than a
   // silently-degraded pack. A healthy/non-gated snapshot has neither, so the pack
   // stays byte-identical.
-  const withStandingWarning = appendStandingRelationWarnings(withArtifactWarning, snapshot);
+  const withStandingWarning = appendStandingRelationWarnings(
+    withArtifactWarning,
+    snapshot,
+  );
   // A pending/unavailable compile journal means the pack may reflect partial
   // post-crash or tampered state; surface it as a top-level warning (mirroring
   // appendRelationStoreWarning) so an agent SEES it. A cleanly-compiled project
   // adds nothing, so the pack stays byte-identical.
-  const withJournalWarning = await appendJournalWarning(withStandingWarning, options.root);
-  const graph = normalized.neighborsEnabled && normalized.depth >= 1
-    ? snapshot.graph
-    : null;
+  const withJournalWarning = await appendJournalWarning(
+    withStandingWarning,
+    options.root,
+  );
+  const graph =
+    normalized.neighborsEnabled && normalized.depth >= 1
+      ? snapshot.graph
+      : null;
   return finalizeBudget(withJournalWarning, normalized.budget, graph);
 }
 
@@ -174,14 +232,21 @@ export async function buildContextPack(options: BuildContextPackOptions): Promis
  * return empty windows; the global 20-window cap is enforced as the
  * walk progresses.
  */
-async function attachSourceWindows(pack: ContextPack, root: string): Promise<ContextPack> {
+async function attachSourceWindows(
+  pack: ContextPack,
+  root: string,
+): Promise<ContextPack> {
   const budget = createSourceWindowBudget();
   // Serial loop — `budget.remaining` is mutated between awaits inside
   // `materializeSourceWindows`, so running pages in parallel would
   // race on the shared counter and overshoot the 20-window cap.
   const primary: ContextPack["primary"] = [];
   for (const entry of pack.primary) {
-    const windows = await materializeSourceWindows(root, entry.citations, budget);
+    const windows = await materializeSourceWindows(
+      root,
+      entry.citations,
+      budget,
+    );
     primary.push({ ...entry, sourceWindows: windows });
   }
   return { ...pack, primary };
@@ -229,7 +294,11 @@ function normalizeOptions(options: BuildContextPackOptions): NormalizedOptions {
     budget: clampPositive(options.budget, DEFAULT_BUDGET_TOKENS),
     depth: clampDepth(options.depth),
     topPages: clampBounded(options.topPages, DEFAULT_TOP_PAGES, MAX_TOP_PAGES),
-    topChunks: clampBounded(options.topChunks, DEFAULT_TOP_CHUNKS, MAX_TOP_CHUNKS),
+    topChunks: clampBounded(
+      options.topChunks,
+      DEFAULT_TOP_CHUNKS,
+      MAX_TOP_CHUNKS,
+    ),
     omitRoot: options.omitRoot === true,
     // `--no-neighbors` is a Commander negated flag: absence means
     // expansion is ON; only `options.neighbors === false` disables it.
@@ -241,7 +310,8 @@ function normalizeOptions(options: BuildContextPackOptions): NormalizedOptions {
 
 /** Truncate the echoed prompt without mutating the prompt used for ranking. */
 function truncatePrompt(raw: string): { display: string; truncated: boolean } {
-  if (raw.length <= PROMPT_ECHO_MAX_LENGTH) return { display: raw, truncated: false };
+  if (raw.length <= PROMPT_ECHO_MAX_LENGTH)
+    return { display: raw, truncated: false };
   return { display: raw.slice(0, PROMPT_ECHO_MAX_LENGTH), truncated: true };
 }
 
@@ -252,7 +322,11 @@ function clampPositive(value: number | undefined, fallback: number): number {
 }
 
 /** Clamp a numeric option into `[0, max]` with a fallback default. */
-function clampBounded(value: number | undefined, fallback: number, max: number): number {
+function clampBounded(
+  value: number | undefined,
+  fallback: number,
+  max: number,
+): number {
   return Math.min(max, clampPositive(value, fallback));
 }
 
@@ -277,7 +351,12 @@ function assembleDraft(input: AssembleInput): ContextPack {
   const project = buildProject(snapshot, state, options.omitRoot);
   // Rank against the ORIGINAL prompt — the truncated echo is a
   // display-only courtesy and must not silently drop ranking signal.
-  const primary = rankPages(snapshot, options.rankingPrompt, options.topPages, semantic.hits);
+  const primary = rankPages(
+    snapshot,
+    options.rankingPrompt,
+    options.topPages,
+    semantic.hits,
+  );
   const graphEnabled = options.neighborsEnabled && options.depth >= 1;
   const expansion = graphEnabled
     ? expandGraphNeighborhood({
@@ -358,7 +437,9 @@ function annotateGraphNeighbors(
   return primary.map((entry) => {
     if (!connected.has(entry.id)) return entry;
     if (entry.reasons.includes("graph-neighbor")) return entry;
-    const widened = Array.from(new Set([...entry.reasons, "graph-neighbor" as const])).sort();
+    const widened = Array.from(
+      new Set([...entry.reasons, "graph-neighbor" as const]),
+    ).sort();
     return { ...entry, reasons: widened };
   });
 }
@@ -490,7 +571,8 @@ interface ContextActionInput {
 /** Context-specific suffix: rebuild embeddings when pages exist but no store is usable. */
 const CONTEXT_COMPILE_ACTION: RecommendedAction = {
   command: "llmwiki compile",
-  reason: "Refresh compiled pages and rebuild the embedding store for semantic context.",
+  reason:
+    "Refresh compiled pages and rebuild the embedding store for semantic context.",
   executable: { binary: "llmwiki", args: ["compile"] },
 };
 
@@ -504,7 +586,8 @@ const CONTEXT_VIEW_ACTION: RecommendedAction = {
 /** Context-specific suffix: use the same prompt to generate an answer after reviewing evidence. */
 const CONTEXT_QUERY_ACTION: RecommendedAction = {
   command: 'llmwiki query "<prompt>"',
-  reason: "Generate an answer with the same prompt after reviewing this context pack.",
+  reason:
+    "Generate an answer with the same prompt after reviewing this context pack.",
   executable: { binary: "llmwiki", args: ["query"], placeholders: ["prompt"] },
 };
 
@@ -513,7 +596,10 @@ function collectSuggestedActions(
   input: ContextActionInput,
 ): RecommendedAction[] {
   const actions: RecommendedAction[] = [];
-  for (const action of [recommendation.recommended, ...recommendation.otherActions]) {
+  for (const action of [
+    recommendation.recommended,
+    ...recommendation.otherActions,
+  ]) {
     appendUniqueAction(actions, action);
   }
   if (input.hasPages && input.semanticWarning === "embedding-store-missing") {
@@ -527,8 +613,12 @@ function collectSuggestedActions(
 }
 
 /** Add `candidate` unless an equivalent executable action is already present. */
-function appendUniqueAction(actions: RecommendedAction[], candidate: RecommendedAction): void {
-  if (actions.some((action) => actionKey(action) === actionKey(candidate))) return;
+function appendUniqueAction(
+  actions: RecommendedAction[],
+  candidate: RecommendedAction,
+): void {
+  if (actions.some((action) => actionKey(action) === actionKey(candidate)))
+    return;
   actions.push(candidate);
 }
 
@@ -566,9 +656,10 @@ function finalizeBudget(
   graph: GraphData | null = null,
 ): ContextPack {
   const initialEstimate = estimatePackTokens(draft);
-  const trim = initialEstimate <= requestedTokens
-    ? { pack: draft, trimmedSections: [] as string[] }
-    : trimToBudget(draft, requestedTokens);
+  const trim =
+    initialEstimate <= requestedTokens
+      ? { pack: draft, trimmedSections: [] as string[] }
+      : trimToBudget(draft, requestedTokens);
   const trimmedAny = trim.trimmedSections.length > 0;
   const reconciledPack = reconcileGraphNeighborReasons(trim.pack, graph);
   // First pass: write the eventual `truncated`/`trimmedSections`
@@ -578,14 +669,18 @@ function finalizeBudget(
   // so the reported value converges on the digit-count fixed point.
   const e1 = estimatePackTokens(
     applyBudget(reconciledPack, {
-      requestedTokens, estimatedTokens: 0,
-      truncated: trimmedAny, trimmedSections: trim.trimmedSections,
+      requestedTokens,
+      estimatedTokens: 0,
+      truncated: trimmedAny,
+      trimmedSections: trim.trimmedSections,
     }),
   );
   const e2 = estimatePackTokens(
     applyBudget(reconciledPack, {
-      requestedTokens, estimatedTokens: e1,
-      truncated: trimmedAny, trimmedSections: trim.trimmedSections,
+      requestedTokens,
+      estimatedTokens: e1,
+      truncated: trimmedAny,
+      trimmedSections: trim.trimmedSections,
     }),
   );
   const truncated = trimmedAny || e2 > requestedTokens;
@@ -598,6 +693,9 @@ function finalizeBudget(
 }
 
 /** Replace `pack.budget` with `budget`, returning a fresh shallow-cloned envelope. */
-function applyBudget(pack: ContextPack, budget: ContextPack["budget"]): ContextPack {
+function applyBudget(
+  pack: ContextPack,
+  budget: ContextPack["budget"],
+): ContextPack {
   return { ...pack, budget };
 }

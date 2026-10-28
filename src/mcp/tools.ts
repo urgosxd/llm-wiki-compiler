@@ -14,19 +14,40 @@ import { ingestSource } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { compileAndReport } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { generateAnswer } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { lint } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { withPageScan, withPageSource } from "@atomicstrata/llmwiki-core/compiler-cli";
+import {
+  withEmbeddingStoreSource,
+  withPageScan,
+  withPageSource,
+} from "@atomicstrata/llmwiki-core/compiler-cli";
 import { collectStatus } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { buildContextPack } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { ensureCompileProviderAvailable, ensureProviderAvailable } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { runEval, DEFAULT_SAMPLE_SIZE } from "@atomicstrata/llmwiki-core/compiler-cli";
+import {
+  ensureCompileProviderAvailable,
+  ensureProviderAvailable,
+} from "@atomicstrata/llmwiki-core/compiler-cli";
+import {
+  runEval,
+  DEFAULT_SAMPLE_SIZE,
+} from "@atomicstrata/llmwiki-core/compiler-cli";
 import { readPageRecord } from "@atomicstrata/llmwiki-core/compiler-cli";
-import type { PageListingSource, PageRef } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { getPage, pickSearchRefs, loadSelectedRefs, withRegistrySource } from "@atomicstrata/llmwiki-core/compiler-cli";
+import type {
+  PageListingSource,
+  PageRef,
+} from "@atomicstrata/llmwiki-core/compiler-cli";
+import {
+  getPage,
+  pickSearchRefs,
+  loadSelectedRefs,
+  withRegistrySource,
+} from "@atomicstrata/llmwiki-core/compiler-cli";
 import { createDimensionsDatabase } from "../dimensions/activation.js";
 import { createPageListingSource } from "../dimensions/wiki/page-write-sink.js";
 import { loadNonDefaultProfile } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { isSlugSafe } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { resolveArtifactRef, declaresArtifactTypes } from "@atomicstrata/llmwiki-core/compiler-cli";
+import {
+  resolveArtifactRef,
+  declaresArtifactTypes,
+} from "@atomicstrata/llmwiki-core/compiler-cli";
 import type { ArtifactRef } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { jsonResult, errorResult } from "./result.js";
 import { registerJobTools } from "./job-tools.js";
@@ -100,15 +121,21 @@ function registerQueryTool(server: McpServer, root: string): void {
         "return the answer with publicationRefusal and no saved slug. Set debug=true to include the " +
         "selected chunks and their scores. Requires an LLM provider.",
       inputSchema: {
-        question: z.string().describe("The natural-language question to answer."),
+        question: z
+          .string()
+          .describe("The natural-language question to answer."),
         save: z
           .boolean()
           .optional()
-          .describe("Request a wiki/queries/ page; publication requires fresh citation validation."),
+          .describe(
+            "Request a wiki/queries/ page; publication requires fresh citation validation.",
+          ),
         debug: z
           .boolean()
           .optional()
-          .describe("Include retrieval debug info (selected chunks/pages + scores)."),
+          .describe(
+            "Include retrieval debug info (selected chunks/pages + scores).",
+          ),
       },
     },
     async ({ question, save, debug }) => {
@@ -138,10 +165,22 @@ function registerSearchTool(server: McpServer, root: string): void {
       ensureProviderAvailable();
       // One source for ranking AND hydration, or a Stack-backed wiki ranks against
       // rows and then finds none of them on disk.
-      const { records, refs, warnings } = await withRegistrySource(process.env, async (registrySource) => {
-        const selected = await pickSearchRefs(root, question, { registrySource });
-        return { ...selected, records: await loadSelectedRefs(root, selected.refs, registrySource) };
-      });
+      const { records, refs, warnings } = await withRegistrySource(
+        process.env,
+        async (registrySource) => {
+          const selected = await pickSearchRefs(root, question, {
+            registrySource,
+          });
+          return {
+            ...selected,
+            records: await loadSelectedRefs(
+              root,
+              selected.refs,
+              registrySource,
+            ),
+          };
+        },
+      );
       // S6: surface degrade warnings in the RESULT payload (not a log) so an
       // agent SEES that an outdated index meant lexical-only contribution.
       return jsonResult({ pages: records, refs, warnings });
@@ -172,7 +211,12 @@ async function readPageBySlug(
   root: string,
   slug: string,
   pageSource: PageListingSource | undefined,
-): Promise<{ slug: string; title: string; summary: string; body: string } | null> {
+): Promise<{
+  slug: string;
+  title: string;
+  summary: string;
+  body: string;
+} | null> {
   if (pageSource === undefined) return readPageRecord(root, slug);
   for (const pageDirectory of ["concepts", "queries"] as const) {
     const ref: PageRef = { pageDirectory, slug };
@@ -182,7 +226,12 @@ async function readPageBySlug(
     // A page that vanished from its sources must 404 rather than serve a body no
     // compilation claims any more.
     if (page.orphaned) continue;
-    return { slug: page.slug, title: page.title, summary: page.summary, body: page.body ?? "" };
+    return {
+      slug: page.slug,
+      title: page.title,
+      summary: page.summary,
+      body: page.body ?? "",
+    };
   }
   return null;
 }
@@ -202,7 +251,12 @@ export async function readPageBySlugForTest(
   root: string,
   slug: string,
   stackId: string,
-): Promise<{ slug: string; title: string; summary: string; body: string } | null> {
+): Promise<{
+  slug: string;
+  title: string;
+  summary: string;
+  body: string;
+} | null> {
   const env = { ...process.env, AKS_STACK_ID: stackId };
   const dimensionsDb = createDimensionsDatabase(env);
   try {
@@ -276,7 +330,12 @@ function registerStatusTool(server: McpServer, root: string): void {
         "the true totals. Read-only — never modifies the workspace.",
       inputSchema: {},
     },
-    async () => jsonResult(await withPageScan(process.env, (pageScan) => collectStatus(root, { pageScan }))),
+    async () =>
+      jsonResult(
+        await withPageScan(process.env, (pageScan) =>
+          collectStatus(root, { pageScan }),
+        ),
+      ),
   );
 }
 
@@ -348,7 +407,9 @@ function contextPackInputSchema(): {
   includeSources: z.ZodOptional<z.ZodBoolean>;
 } {
   return {
-    prompt: z.string().describe("Free-text task or topic to assemble context for."),
+    prompt: z
+      .string()
+      .describe("Free-text task or topic to assemble context for."),
     budget: z
       .number()
       .optional()
@@ -356,8 +417,13 @@ function contextPackInputSchema(): {
     depth: z
       .number()
       .optional()
-      .describe("Graph neighborhood depth, 0..2 (default 1, 0 disables expansion)."),
-    topPages: z.number().optional().describe("Max primary pages (default 5, max 20)."),
+      .describe(
+        "Graph neighborhood depth, 0..2 (default 1, 0 disables expansion).",
+      ),
+    topPages: z
+      .number()
+      .optional()
+      .describe("Max primary pages (default 5, max 20)."),
     topChunks: z
       .number()
       .optional()
@@ -376,21 +442,34 @@ function contextPackInputSchema(): {
   };
 }
 
-/** Per-call adapter that fans the tool args into `buildContextPack`. */
+/**
+ * Per-call adapter that fans the tool args into `buildContextPack`.
+ *
+ * Wrapped in `withEmbeddingStoreSource` for the same reason `query_wiki` is: on a
+ * Stack the vectors live in `wiki.page_embeddings`, and a pack built without the
+ * source returns an empty `chunks` array that reads as "nothing was relevant".
+ * With no Stack configured the seam passes `undefined` and the disk path is unchanged.
+ */
 async function buildContextPackFromArgs(
   root: string,
   args: ContextPackToolArgs,
 ): Promise<Awaited<ReturnType<typeof buildContextPack>>> {
-  return buildContextPack({
-    root,
-    prompt: args.prompt,
-    budget: args.budget,
-    depth: args.depth,
-    topPages: args.topPages,
-    topChunks: args.topChunks,
-    omitRoot: args.omitRoot,
-    includeSources: args.includeSources,
-  });
+  return withRegistrySource(process.env, (registryPageSource) =>
+    withEmbeddingStoreSource(process.env, (embeddingStoreSource) =>
+      buildContextPack({
+        root,
+        prompt: args.prompt,
+        budget: args.budget,
+        depth: args.depth,
+        topPages: args.topPages,
+        topChunks: args.topChunks,
+        omitRoot: args.omitRoot,
+        includeSources: args.includeSources,
+        embeddingStoreSource,
+        registryPageSource,
+      }),
+    ),
+  );
 }
 
 function registerEvalTool(server: McpServer, root: string): void {
@@ -404,16 +483,38 @@ function registerEvalTool(server: McpServer, root: string): void {
         "(requires an LLM provider). " +
         "Set record: true to append results to eval history (default false — read-only).",
       inputSchema: {
-        suite: z.enum(["fast", "full"]).optional().default("fast")
-          .describe("fast=no LLM calls, full=includes citation support (requires LLM provider)"),
-        sampleSize: z.number().int().min(1).max(100).optional()
-          .describe(`Citations to sample for citation support (full suite only, default ${DEFAULT_SAMPLE_SIZE})`),
-        record: z.boolean().optional().default(false)
-          .describe("Append results to eval history (default false; set true to persist a checkpoint)"),
+        suite: z
+          .enum(["fast", "full"])
+          .optional()
+          .default("fast")
+          .describe(
+            "fast=no LLM calls, full=includes citation support (requires LLM provider)",
+          ),
+        sampleSize: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe(
+            `Citations to sample for citation support (full suite only, default ${DEFAULT_SAMPLE_SIZE})`,
+          ),
+        record: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "Append results to eval history (default false; set true to persist a checkpoint)",
+          ),
       },
     },
     async ({ suite, sampleSize, record }) => {
-      const report = await runEval(root, suite, sampleSize ?? DEFAULT_SAMPLE_SIZE, record ?? false);
+      const report = await runEval(
+        root,
+        suite,
+        sampleSize ?? DEFAULT_SAMPLE_SIZE,
+        record ?? false,
+      );
       return jsonResult(report);
     },
   );
@@ -429,10 +530,17 @@ const ARTIFACT_SHA256_PATTERN = /^[0-9a-f]{64}$/;
  * `artifact-hash-mismatch` or `artifact-dangling`, which mean store corruption,
  * not a caller typo.
  */
-function invalidArtifactRefInput(args: { artifactType: string; slug: string; sha256: string }): string | null {
-  if (!isSlugSafe(args.artifactType)) return `invalid artifactType: ${JSON.stringify(args.artifactType)} is not slug-safe`;
-  if (!isSlugSafe(args.slug)) return `invalid slug: ${JSON.stringify(args.slug)} is not slug-safe`;
-  if (!ARTIFACT_SHA256_PATTERN.test(args.sha256)) return "invalid sha256: expected 64 lowercase hex chars";
+function invalidArtifactRefInput(args: {
+  artifactType: string;
+  slug: string;
+  sha256: string;
+}): string | null {
+  if (!isSlugSafe(args.artifactType))
+    return `invalid artifactType: ${JSON.stringify(args.artifactType)} is not slug-safe`;
+  if (!isSlugSafe(args.slug))
+    return `invalid slug: ${JSON.stringify(args.slug)} is not slug-safe`;
+  if (!ARTIFACT_SHA256_PATTERN.test(args.sha256))
+    return "invalid sha256: expected 64 lowercase hex chars";
   return null;
 }
 
@@ -457,9 +565,15 @@ function registerVerifyArtifactTool(server: McpServer, root: string): void {
         "bytes, contentKind, writtenAt) plus a health verdict — NEVER the artifact " +
         "body. Read-only; no write or store-wide list tool is exposed over MCP.",
       inputSchema: {
-        artifactType: z.string().describe("The profile-declared artifact type."),
+        artifactType: z
+          .string()
+          .describe("The profile-declared artifact type."),
         slug: z.string().describe("The artifact's slug."),
-        sha256: z.string().describe("The 64-character lowercase-hex sha256 digest to verify against."),
+        sha256: z
+          .string()
+          .describe(
+            "The 64-character lowercase-hex sha256 digest to verify against.",
+          ),
       },
     },
     async ({ artifactType, slug, sha256 }) => {
@@ -475,7 +589,11 @@ function registerVerifyArtifactTool(server: McpServer, root: string): void {
       // `resolveArtifactRef` already reads+parses the manifest to compute health;
       // its `manifest` (populated whenever the file parsed, independent of the
       // verdict) IS the metadata this tool projects — one read, not two.
-      const { health, manifest } = await resolveArtifactRef(root, loaded.profile, ref);
+      const { health, manifest } = await resolveArtifactRef(
+        root,
+        loaded.profile,
+        ref,
+      );
       return jsonResult({ ...(manifest ?? {}), health });
     },
   );

@@ -31,7 +31,7 @@ or, worse, a healthy-looking empty result — is reading disk.
 | `ingest_source` | writes sources by design | **works** — sources are the filesystem case |
 | `read_page` | `readPageRecord(root, slug)` (tools.ts:162) | **BROKEN** — "Page not found: architecture", and `architecture` exists in the DB |
 | `lint_wiki` | `lint(root)` (tools.ts:182), no seam | **SILENTLY EMPTY** — `{errors: 0, warnings: 0, results: []}` on a 73-page wiki |
-| `get_context_pack` | `buildContextPack` (tools.ts:310), no page seam | **SILENTLY EMPTY** — `pages: 0, chunks: 0` |
+| `get_context_pack` | `buildViewerSnapshot` → `withRawPageSource` (snapshot.ts:68) | **PARTLY WORKS** — `project.pages: 73` read from the registry, `primary: 5`, `neighbors: 10`; but `chunks: []` because the embedding seam is not wired |
 | `run_eval` | `runAllLintRules(root)` (eval/health.ts:88) | **MISLEADING** — `health.score: 100` on a wiki it cannot see |
 | `compile_wiki` | compile pipeline | not exercised here; see below |
 | `verify_artifact` | artifact store by ref | not page-derived |
@@ -40,14 +40,41 @@ or, worse, a healthy-looking empty result — is reading disk.
 
 1. **`read_page` fails loudly.** It says "Page not found". Annoying, but honest — the
    caller knows the tool declined.
-2. **`lint_wiki` and `get_context_pack` fail silently.** They return a well-formed
-   success containing nothing. A client cannot distinguish "no findings" from "I looked
-   at an empty directory", and the second is a lie dressed as a clean bill of health.
+2. **`lint_wiki` fails silently.** It returns a well-formed success containing
+   nothing. A client cannot distinguish "no findings" from "I looked at an empty
+   directory", and the second is a lie dressed as a clean bill of health.
+
+> **Correction, measured after the first draft of this table.** `get_context_pack`
+> was recorded here as "silently empty — `pages: 0, chunks: 0`". That was wrong, and
+> the error was mine: I read the top-level JSON for `pages` and `chunks`, keys the v1
+> envelope does not have. The real keys are `primary` and `neighbors`. Against the
+> DB-only Stack the tool returns 73 pages, 5 primary and 10 neighbors, all from the
+> registry — because `buildViewerSnapshot` has used `withRawPageSource` all along
+> (`src/viewer/snapshot.ts:68`). The audit table inherited a shape mistake and then
+> repeated it as a finding.
+>
+> What IS broken there is narrower and was hidden by the same mistake: `chunks` is
+> genuinely empty, and the warning is `embedding-index-outdated` — "No embedding index
+> found" — while the Stack holds **73 rows in `wiki.page_embeddings` and 217 in
+> `wiki.page_chunk_embeddings`**. `retrieveSemanticChunks` accepts an
+> `EmbeddingStoreSource` (`src/context/retrieval.ts:82`) and `withEmbeddingStoreSource`
+> exists to supply it (`page-source-seam.ts:220`), but `buildContextPack` never asks for
+> one: its options type has no such field and `build.ts:113` calls the retriever with
+> three arguments. So the pack answers with lexical ranking only, on a corpus whose
+> vectors are fully present. The failure is silent in the worst way — the pack looks
+> complete, and its `chunks: []` is indistinguishable from "nothing was relevant".
 3. **`run_eval` fails misleadingly.** `health.score: 100` is the most confident wrong
    answer in the surface: it reports a perfect score for a wiki it never opened.
 
 The reported `read_page` bug was the *least* dangerous of the three, because at least it
 admitted failure. That is the finding worth acting on.
+
+`get_context_pack` now belongs in shape 2 rather than shape 3, and for a specific reason
+worth naming: it does look in the right place for PAGES, so a caller who checks
+`primary` sees a plausible pack and has no reason to look further. The missing
+half is `chunks`. That is a quieter wrongness than `run_eval`'s perfect score — the pack
+is real, only narrower than it claims — and it is the reason the `chunks: []` row is
+followed all the way down to the row counts instead of being read as "no matches".
 
 ## Why the tests did not catch any of this
 
@@ -76,7 +103,7 @@ missing infrastructure; it is three call sites that never adopted it.
 
 ## Open question the audit cannot settle
 
-`lint_wiki`, `get_context_pack` and `run_eval` take only `root`. Making them page-source
+`lint_wiki` and `run_eval` take only `root`. Making them page-source
 aware is not a drop-in: `lint` walks categories and rules that may legitimately depend on
 files that are *not* pages (schema, freshness snapshots), and `run_eval` aggregates those
 same rules. Deciding which of their inputs become seam-aware is a contract question about

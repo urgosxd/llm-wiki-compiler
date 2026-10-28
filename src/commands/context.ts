@@ -14,6 +14,10 @@
  */
 
 import path from "path";
+import {
+  withEmbeddingStoreSource,
+  withRegistrySource,
+} from "../dimensions/wiki/page-source-seam.js";
 import { buildContextPack } from "../context/build.js";
 import type {
   ContextPack,
@@ -89,20 +93,32 @@ async function runContext(
   options: ContextCommandOptions,
   format: "json" | "markdown",
 ): Promise<number> {
-  const pack = await buildContextPack({
-    root: process.cwd(),
-    prompt,
-    budget: coerceNumber(options.budget, DEFAULT_BUDGET_TOKENS),
-    depth: coerceNumber(options.depth, DEFAULT_DEPTH),
-    topPages: coerceNumber(options.topPages, DEFAULT_TOP_PAGES),
-    topChunks: coerceNumber(options.topChunks, DEFAULT_TOP_CHUNKS),
-    omitRoot: options.omitRoot === true,
-    neighbors: options.neighbors,
-    includeSources: options.includeSources === true,
-  });
+  // Same seam the `get_context_pack` tool uses. `llmwiki context` and the MCP tool
+  // share one builder, so leaving this unwrapped would have fixed the tool and left
+  // the CLI quietly answering with lexical-only evidence on the same Stack.
+  const pack = await withRegistrySource(process.env, (registryPageSource) =>
+    withEmbeddingStoreSource(process.env, (embeddingStoreSource) =>
+      buildContextPack({
+        root: process.cwd(),
+        prompt,
+        budget: coerceNumber(options.budget, DEFAULT_BUDGET_TOKENS),
+        depth: coerceNumber(options.depth, DEFAULT_DEPTH),
+        topPages: coerceNumber(options.topPages, DEFAULT_TOP_PAGES),
+        topChunks: coerceNumber(options.topChunks, DEFAULT_TOP_CHUNKS),
+        omitRoot: options.omitRoot === true,
+        neighbors: options.neighbors,
+        includeSources: options.includeSources === true,
+        embeddingStoreSource,
+        registryPageSource,
+      }),
+    ),
+  );
   verbose(`primary pages: ${pack.primary.length}`);
   verbose(`graph neighbors: ${pack.neighbors.length}`);
-  const totalCitations = pack.primary.reduce((sum, p) => sum + p.citations.length, 0);
+  const totalCitations = pack.primary.reduce(
+    (sum, p) => sum + p.citations.length,
+    0,
+  );
   verbose(`citations gathered: ${totalCitations}`);
   const serialized = JSON.stringify(pack);
   verbose(`pack size: ${serialized.length} chars`);
@@ -111,7 +127,10 @@ async function runContext(
 }
 
 /** Coerce a Commander string/number into a non-NaN number, falling back to `fallback`. */
-function coerceNumber(raw: string | number | undefined, fallback: number): number {
+function coerceNumber(
+  raw: string | number | undefined,
+  fallback: number,
+): number {
   if (raw === undefined) return fallback;
   const value = typeof raw === "number" ? raw : Number(raw);
   return Number.isFinite(value) ? value : fallback;
@@ -172,7 +191,9 @@ function appendHeader(lines: string[], pack: ContextPack): void {
   lines.push("# Context Pack");
   lines.push("");
   lines.push(`Prompt: ${pack.prompt}`);
-  lines.push(`Budget: ${pack.budget.estimatedTokens} / ${pack.budget.requestedTokens} estimated tokens`);
+  lines.push(
+    `Budget: ${pack.budget.estimatedTokens} / ${pack.budget.requestedTokens} estimated tokens`,
+  );
 }
 
 /** `## Primary Pages` section or an empty-state placeholder. */
@@ -189,7 +210,11 @@ function appendPrimaryPages(lines: string[], primary: ContextPrimary[]): void {
 
 /** Render one `### Title` block with the page filename + ranking reasons. */
 function appendPrimaryPage(lines: string[], page: ContextPrimary): void {
-  const pageFile = path.join("wiki", page.pageDirectory, `${slugFromId(page.id)}.md`);
+  const pageFile = path.join(
+    "wiki",
+    page.pageDirectory,
+    `${slugFromId(page.id)}.md`,
+  );
   lines.push(`### ${page.title} (\`${pageFile}\`)`);
   lines.push("");
   lines.push(`Why included: ${page.reasons.join(", ") || "(no signals)"}`);
@@ -245,7 +270,10 @@ function appendWarnings(lines: string[], warnings: ContextWarning[]): void {
 }
 
 /** `## Suggested Next Actions`; surfaces the recommendation prefix. */
-function appendSuggestedActions(lines: string[], actions: RecommendedAction[]): void {
+function appendSuggestedActions(
+  lines: string[],
+  actions: RecommendedAction[],
+): void {
   if (actions.length === 0) return;
   lines.push("## Suggested Next Actions");
   lines.push("");

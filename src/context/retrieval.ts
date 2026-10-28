@@ -22,6 +22,7 @@ import {
   type ChunkHitV3,
   type EmbeddingStoreSource,
 } from "../utils/embeddings-load.js";
+import type { RegistryPageSource } from "../utils/page-registry.js";
 import { loadProfile } from "../profile/load.js";
 import { CHUNK_TOP_K } from "../utils/constants.js";
 
@@ -80,18 +81,33 @@ export async function retrieveSemanticChunks(
   prompt: string,
   topChunks: number,
   embeddingStoreSource?: EmbeddingStoreSource,
+  registryPageSource?: RegistryPageSource,
 ): Promise<SemanticRetrievalOutcome> {
   if (topChunks <= 0) return emptyOutcome(null);
   const outcome = await loadEmbeddingsForContext(root, embeddingStoreSource);
-  if (!outcome.store) return emptyOutcome(mapLoadWarning(outcome.warnings[0]?.code));
+  if (!outcome.store)
+    return emptyOutcome(mapLoadWarning(outcome.warnings[0]?.code));
 
   try {
     const k = Math.min(topChunks, CHUNK_TOP_K);
     const profile = await loadProfile(root);
-    const { hits, stalePageIds } = await findRelevantChunksV3(root, outcome.store, "context", prompt, k, profile);
+    const { hits, stalePageIds } = await findRelevantChunksV3(
+      root,
+      outcome.store,
+      "context",
+      prompt,
+      k,
+      profile,
+      registryPageSource,
+    );
     const staleEntriesDetected = stalePageIds.length > 0;
-    if (hits.length === 0) return emptyOutcome("embedding-store-missing", staleEntriesDetected);
-    return { hits: hits.map(toSemanticChunkHit), warning: null, staleEntriesDetected };
+    if (hits.length === 0)
+      return emptyOutcome("embedding-store-missing", staleEntriesDetected);
+    return {
+      hits: hits.map(toSemanticChunkHit),
+      warning: null,
+      staleEntriesDetected,
+    };
   } catch (err) {
     return emptyOutcome(classifyRetrievalError(err));
   }
@@ -121,8 +137,9 @@ function classifyRetrievalError(err: unknown): SemanticRetrievalWarning {
 
 /** Known provider/config/network failures that should keep the legacy warning code. */
 function looksLikeProviderFailure(message: string): boolean {
-  return /api[_ -]?key|auth|credential|token|provider|voyage|openai|ollama|timeout|fetch|econn|enotfound/i
-    .test(message);
+  return /api[_ -]?key|auth|credential|token|provider|voyage|openai|ollama|timeout|fetch|econn|enotfound/i.test(
+    message,
+  );
 }
 
 /** Project a v3 chunk hit onto the ranking-facing shape. */
