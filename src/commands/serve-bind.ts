@@ -108,12 +108,21 @@ function isValidPort(value: number): boolean {
  */
 export function registerShutdown(close: () => Promise<void>): void {
   const shutdown = async (): Promise<void> => {
+    // The exit code is decided first and the process exits ONCE, outside the try.
+    //
+    // `process.exit(0)` must not sit inside the block that catches `close()`
+    // failures: anything `process.exit` throws would then be caught and reported
+    // as a failed close, which is a different fact. Vitest replaces `process.exit`
+    // with a stub that throws, so the old shape exited 1 on a shutdown that had
+    // actually succeeded and raised an unhandled rejection in every test worker
+    // that stopped a host.
+    let exitCode = 0;
     try {
       await close();
-      process.exit(0);
     } catch {
-      process.exit(1);
+      exitCode = 1;
     }
+    process.exit(exitCode);
   };
   process.once("SIGINT", () => void shutdown());
   process.once("SIGTERM", () => void shutdown());

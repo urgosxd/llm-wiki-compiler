@@ -13,7 +13,7 @@
  * rather than calling `startHost` directly — the command is the thing made of new
  * behaviour.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -47,6 +47,22 @@ function readyUrl(lines: readonly string[]): string {
   return (line.match(/http:\/\/\S+/) ?? [])[0] ?? "";
 }
 
+/**
+ * The real `process.exit` for the duration of one case.
+ *
+ * A CLI shutdown ends in `process.exit`, which is correct in production and fatal
+ * in a worker: Vitest replaces `process.exit` with a stub that THROWS, and an
+ * escaping throw is an unhandled error, so `test:affected` exits non-zero on a
+ * suite whose every assertion passed. The spy is held here so `stop()` can wait
+ * until the shutdown actually reached it — restoring it on a timer would race a
+ * fire-and-forget signal handler and let the real exit run.
+ */
+let exitSpy: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -71,6 +87,11 @@ async function startHostCommand(): Promise<{ url: string; stop: () => Promise<vo
     stop: async () => {
       process.emit("SIGTERM");
       await running.catch(() => undefined);
+      // `registerShutdown` installs with `process.once` and closes the listener
+      // asynchronously, so the exit is not synchronous with the signal. Waiting for
+      // the spy to be reached is what keeps the mock installed exactly until the
+      // last thing the shutdown does, instead of guessing with a timeout.
+      await vi.waitFor(() => expect(exitSpy).toHaveBeenCalled(), { timeout: 20_000 });
     },
   };
 }
