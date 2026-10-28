@@ -15,19 +15,31 @@ Both halves are load-bearing, and the second is why more retries would not help.
 
 ## What was measured
 
-Against a provider that answers `429 "Too many concurrent requests"`:
+Against a provider that answers `429 "Too many concurrent requests"`, three trials per
+width, measured 2026-10-28 across the hour:
 
-| concurrent requests | succeeded |
-| --- | --- |
-| 3 | 3 / 3 |
-| 4 | 4 / 4 |
-| 5 | 4 / 5 |
+| concurrent requests | first sweep | 3-trial re-run |
+| --- | --- | --- |
+| 3 | 3 / 3 | — |
+| 4 | 4 / 4 | 12 / 12 |
+| 5 | 4 / 5 | 14 / 15 |
+| 6 | — | 17 / 18 |
 
-The ceiling is exactly 4. A single isolated request also succeeds, so this is a
-concurrency cap, **not** a quota — a distinction worth measuring rather than
-inferring, because the two produce the same status code and call for opposite
-actions. (An earlier reading of a single `429` was generalised to "quota
-exhausted"; the sweep above is what corrected it.)
+**The ceiling is approximately 5, with variance — not a hard 4.** An earlier single
+trial showed 4-of-5 and was generalised to "exactly 4"; re-running three trials per
+width showed 5 usually passing and 6 usually losing one. The first number was a
+single-trial artefact in the direction of over-precision, which is the same defect as
+the isolated-429 reading it was meant to correct — one trial, confident generalisation.
+
+A single isolated request also succeeds, so this is a concurrency cap, **not** a quota.
+The two produce the same status code and call for opposite actions, which is why one
+observation cannot distinguish them.
+
+**A provider cap is a fact that expires, and this one moved inside a single hour.**
+That strengthens the argument below rather than weakening it: a default cannot be
+tuned to a ceiling that is not stable, which is the strongest reason to prefer the
+adaptive option over a different constant. It also means the numbers above are
+evidence of a method, not a specification — re-measure before relying on any of them.
 
 ## Why retrying does not save it
 
@@ -72,9 +84,11 @@ distribution, not the instance.
    will oscillate against a hard cap — climb, trip, fall, climb — and burn the retry
    budget rediscovering the same ceiling. The reduced width has to persist for the
    remainder of the job that learned it.
-2. **Lower the default** — 4 would already fail against a cap of 4 once any retry
-   overlaps; a default of 3 leaves headroom. Cheaper, but only correct for providers
-   whose cap is at least 4.
+2. **Lower the default** — a default of 3 leaves headroom under every measurement
+   above, including the widths that pass most of the time. Cheaper, but it is a guess
+   at a ceiling that has been observed to move within the hour: it is correct only for
+   providers whose cap happens to be above whatever is chosen, and it silently stops
+   being correct the moment that provider lowers it.
 3. Document the ceiling and leave the default. Cheapest, and wrong: the failure is
    silent in the sense that matters — extraction dies partway and the user is told
    nothing about why.
