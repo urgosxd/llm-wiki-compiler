@@ -1,6 +1,10 @@
 /** Pin that a caller-named Stack that does not exist is an ERROR, not an empty list. */
 import { describe, it, expect } from "vitest";
-import { stackIdProblem, stackExists, isUnknownStack, withTenantDatabase } from "../../src/mcp/tenant-db.js";
+import { isUnknownStack, withTenantDatabase } from "../../src/mcp/tenant-db.js";
+// These two moved out of `tenant-db` into shared homes so the viewport route can use
+// them without importing from `src/mcp/**`; the import here follows them.
+import { stackIdProblem } from "../../src/utils/stack-id.js";
+import { stackExists } from "../../src/services/stacks/stack-store.js";
 
 describe("stackId guard", () => {
   it("rejects a malformed id before it reaches Postgres", () => {

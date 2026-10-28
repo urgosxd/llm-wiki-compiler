@@ -61,6 +61,7 @@ import { handleMcpHttp, isMcpHttpPath } from "./mcp-http.js";
 import { createJobRegistry, type JobRegistry } from "../services/ingest/jobs/registry.js";
 import { createDurableJobRegistry } from "../services/ingest/jobs/durable-registry.js";
 import { listIngestJobs, readIngestJob } from "../services/ingest/jobs/job-store.js";
+import { stackExists } from "../services/stacks/stack-store.js";
 import type { DurableJobReads } from "../viewer/api-ingest-jobs.js";
 import {
   AKS_STACK_ID_ENV_VAR,
@@ -163,6 +164,16 @@ function durableJobReadsFor(env: NodeJS.ProcessEnv = process.env): DurableJobRea
   return {
     list: (limit: number) => listIngestJobs(dimensionsDb.db, stackId, limit),
     get: (jobId: string) => readIngestJob(dimensionsDb.db, stackId, jobId),
+    // Only present when there IS a database, which is what makes the route able to
+    // distinguish "no such Stack" (404) from "this host cannot check" (503). A
+    // Stack-less host returns undefined here and keeps answering 503, because
+    // claiming a Stack does not exist when the truth is "I cannot look" would be a
+    // fabricated answer.
+    forStack: (requested: string) => ({
+      list: (limit: number) => listIngestJobs(dimensionsDb.db, requested, limit),
+      get: (jobId: string) => readIngestJob(dimensionsDb.db, requested, jobId),
+      exists: () => stackExists(dimensionsDb.db, requested),
+    }),
   };
 }
 

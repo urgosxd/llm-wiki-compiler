@@ -20,6 +20,8 @@
 
 import { sql } from "drizzle-orm";
 import { createDimensionsDatabase, resolveStackId } from "../dimensions/activation.js";
+import { stackIdProblem } from "../utils/stack-id.js";
+import { stackExists } from "../services/stacks/stack-store.js";
 
 /** Every tool that needs a Stack says this when the project has none. */
 const NO_STACK_MESSAGE =
@@ -33,8 +35,7 @@ const NO_STACK_MESSAGE =
  * `uuid` cast raise, and that error surfaces to the caller as an internal failure
  * when the honest answer is "that is not a Stack id".
  */
-const STACK_ID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 
 /** The handle type, taken from the factory so it cannot drift from it. */
 export type TenantDatabase = ReturnType<typeof createDimensionsDatabase>["db"];
@@ -76,36 +77,6 @@ export async function withTenantDatabase<T>(
   } finally {
     await dimensionsDb.close();
   }
-}
-
-/**
- * Is this Stack id well formed?
- *
- * @param stackId - The id a caller supplied.
- * @returns A caller-facing explanation when it is not, or `undefined` when it is.
- */
-export function stackIdProblem(stackId: string): string | undefined {
-  if (STACK_ID_PATTERN.test(stackId)) return undefined;
-  return (
-    `'${stackId}' is not a Stack id. Stack ids are UUIDs — call list_stacks to see ` +
-    "the ones this endpoint can reach."
-  );
-}
-
-/**
- * Does this Stack exist?
- *
- * Asked for every caller-named Stack, because zero rows is ambiguous without it: a
- * Stack that does not exist and a Stack that has simply never run a job both return
- * an empty list, and a client would render the first as a valid empty Stack.
- *
- * @param db - Handle from `createDimensionsDatabase`.
- * @param stackId - A validated Stack id.
- * @returns True when a row exists.
- */
-export async function stackExists(db: TenantDatabase, stackId: string): Promise<boolean> {
-  const rows = await db.execute<{ id: string }>(sql`select id from stacks where id = ${stackId}`);
-  return rows.length > 0;
 }
 
 /** True when a helper handed back the "no such Stack" marker. */

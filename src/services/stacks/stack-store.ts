@@ -105,6 +105,23 @@ function toStackSummary(row: StackRow, currentStackId: string): StackSummary {
 }
 
 /**
+ * Does this Stack exist?
+ *
+ * Lives here rather than beside a caller because both surfaces that accept a
+ * caller-named Stack need it, and neither may import the other: the viewer must stay
+ * free of the MCP SDK, and the host must not reach into `src/mcp/**` (that direction
+ * already caused a module cycle once).
+ *
+ * @param db - Handle from `createDimensionsDatabase`.
+ * @param stackId - A validated Stack id.
+ * @returns True when a row exists.
+ */
+export async function stackExists(db: Database, stackId: string): Promise<boolean> {
+  const rows = await db.execute<{ id: string }>(sql`select id from stacks where id = ${stackId}`);
+  return rows.length > 0;
+}
+
+/**
  * List the reachable Stacks, most recently updated first.
  *
  * Ordering is contractual, not cosmetic: without it Postgres may return heap order,

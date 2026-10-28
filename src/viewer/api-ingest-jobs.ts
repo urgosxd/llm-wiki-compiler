@@ -27,6 +27,7 @@
 import type { ServerResponse } from "node:http";
 import { writeJson, writeJsonError } from "./respond.js";
 import type { JobRegistry } from "../services/ingest/jobs/registry.js";
+import { stackIdProblem } from "../utils/stack-id.js";
 
 /** How many jobs a durable listing returns. Matches the MCP tool default. */
 const DURABLE_LIST_LIMIT = 50;
@@ -55,6 +56,21 @@ export interface DurableJobReads {
   list(limit: number): Promise<readonly unknown[]>;
   /** One job by id, or `undefined` when this Stack never had it. */
   get(jobId: string): Promise<unknown | undefined>;
+  /**
+   * The same reads for a Stack the caller NAMED.
+   *
+   * Separate from `list`/`get` because those bake the bound Stack in at
+   * construction: they are the host's own view, and a caller naming another Stack
+   * must not be served that one by accident. Absent when the host cannot reach a
+   * database at all, which is the honest reason the route then answers 503 instead
+   * of pretending a Stack does not exist.
+   */
+  forStack?(stackId: string): {
+    list(limit: number): Promise<readonly unknown[]>;
+    get(jobId: string): Promise<unknown | undefined>;
+    /** True when the Stack exists, so an unknown id can be 404 rather than empty. */
+    exists(): Promise<boolean>;
+  };
 }
 
 /** Resolve the durable reads from the dependency bag, when the host supplied them. */
@@ -75,6 +91,37 @@ function registryFrom(deps: Record<string, unknown>): JobRegistry | undefined {
   return candidate === undefined ? undefined : (candidate as JobRegistry);
 }
 
+/** The per-Stack reads a caller named, or `undefined` when they named none. */
+function namedStackReads(
+  durable: DurableJobReads | undefined,
+  requestedStackId: string,
+): ReturnType<NonNullable<DurableJobReads["forStack"]>> | undefined {
+  if (requestedStackId === "" || durable?.forStack === undefined) return undefined;
+  return durable.forStack(requestedStackId);
+}
+
+/**
+ * Jobs for the collection route.
+ *
+ * ## Why a named Stack does NOT merge the live registry
+ *
+ * `registry.list()` is stack-agnostic: it returns every job this process holds, with
+ * no attribution at all. The existing live+durable merge is coherent only because
+ * exactly one Stack is in play. Merging the live view into an answer about a
+ * DIFFERENT Stack would attach this host's jobs to that Stack — a wrong answer that
+ * looks right, which is worse than the empty list the caller was trying to avoid.
+ *
+ * A live job for another Stack does not exist in this process, so that Stack's
+ * durable rows are the whole truth.
+ *
+ * @param reads - The sources for this request.
+ * @returns Jobs with no duplicate ids.
+ */
+async function collectionJobs(reads: Reads): Promise<readonly unknown[]> {
+  if (reads.named !== undefined) return reads.named.list(DURABLE_LIST_LIMIT);
+  return mergedJobs(reads.registry, reads.durable);
+}
+
 /**
  * Answer a job read.
  *
@@ -84,12 +131,12 @@ function registryFrom(deps: Record<string, unknown>): JobRegistry | undefined {
  * that exists.
  *
  * @param res - Response to write.
- * @param pathname - Request path, already known to be a jobs path.
+ * @param url - Request URL, already known to address a jobs path.
  * @param deps - Viewer dependencies, carrying the registry when one is mounted.
  */
 export async function handleApiIngestJobs(
   res: ServerResponse,
-  pathname: string,
+  url: URL,
   deps: Record<string, unknown>,
 ): Promise<void> {
   const registry = registryFrom(deps);
@@ -97,37 +144,85 @@ export async function handleApiIngestJobs(
     writeJsonError(res, 503, "jobs_unavailable", "this host does not track ingest jobs");
     return;
   }
-
-  // MERGE LIVE AND DURABLE, do not prefer one.
-  //
-  // Both sources know something the other does not, and picking either alone gets a
-  // real case wrong:
-  //
-  //   durable only  -> a job created microseconds ago is invisible, because its
-  //                    mirror is fire-and-forget (measured: two jobs created, list
-  //                    returned 0) — the write must not block the ingest, so the
-  //                    read has to tolerate it not having landed yet.
-  //   live only     -> every job is lost on restart, which is the defect that made
-  //                    the mirrored table exist in the first place.
-  //
-  // So the live registry is authoritative for the ids it holds, and the durable
-  // record supplies the rest — the jobs from before this process started.
   const durable = durableFrom(deps);
-  if (pathname === INGEST_JOBS_PATH) {
-    writeJson(res, 200, { jobs: await mergedJobs(registry, durable) });
+  const request = jobRequest(url, durable);
+  if (request === undefined) {
+    writeJsonError(res, 400, "invalid_stack_id", stackIdProblem(namedIdOf(url)) ?? "");
     return;
   }
+  const reads: Reads = { registry, durable, named: request.named };
+  if (request.named !== undefined && !(await request.named.exists())) {
+    writeJsonError(res, 404, "stack_not_found", `no Stack '${request.stackId}'`);
+    return;
+  }
+  if (request.jobId === undefined) {
+    writeJson(res, 200, { jobs: await collectionJobs(reads) });
+    return;
+  }
+  await writeOneJob(res, request.jobId, reads);
+}
 
-  const id = pathname.slice(INGEST_JOBS_PREFIX.length);
-  const decoded = id === "" ? "" : decodeURIComponent(id);
-  if (decoded === "") {
-    writeJsonError(res, 404, "job_not_found", `no ingest job '${id}'`);
+/** The two read sources a request works from, resolved once. */
+interface Reads {
+  readonly registry: JobRegistry;
+  readonly durable: DurableJobReads | undefined;
+  readonly named: ReturnType<NonNullable<DurableJobReads["forStack"]>> | undefined;
+}
+
+/** What the caller asked for: a Stack (maybe), and a job id (maybe). */
+interface JobRequest {
+  readonly stackId: string;
+  readonly named: ReturnType<NonNullable<DurableJobReads["forStack"]>> | undefined;
+  readonly jobId: string | undefined;
+}
+
+/** The raw `stackId` the caller sent, trimmed; `""` when absent. */
+function namedIdOf(url: URL): string {
+  return (url.searchParams.get("stackId") ?? "").trim();
+}
+
+/**
+ * Parse the request, or `undefined` when the Stack id is malformed.
+ *
+ * A caller may name the Stack explicitly. Absent means the bound one, so the
+ * behaviour every existing poller relies on is unchanged.
+ *
+ * @param url - Request URL.
+ * @param durable - The mirrored table, when the host has one.
+ * @returns The parsed request, or `undefined` for a malformed Stack id.
+ */
+function jobRequest(url: URL, durable?: DurableJobReads): JobRequest | undefined {
+  const stackId = namedIdOf(url);
+  if (stackId !== "" && stackIdProblem(stackId) !== undefined) return undefined;
+  const remainder = url.pathname.slice(INGEST_JOBS_PREFIX.length);
+  return {
+    stackId,
+    named: namedStackReads(durable, stackId),
+    jobId: url.pathname === INGEST_JOBS_PATH ? undefined : decodeURIComponent(remainder),
+  };
+}
+
+/**
+ * Answer the single-job route.
+ *
+ * A named Stack skips the LIVE lookup entirely: the registry is stack-agnostic, so a
+ * job id belonging to ANOTHER Stack would otherwise be served as if it were this
+ * one's. Only the durable rows know which Stack they belong to.
+ *
+ * @param res - Response to write.
+ * @param jobId - The decoded job id.
+ * @param reads - The sources for this request.
+ */
+async function writeOneJob(res: ServerResponse, jobId: string, reads: Reads): Promise<void> {
+  if (jobId === "") {
+    writeJsonError(res, 404, "job_not_found", "no ingest job ''");
     return;
   }
-  const live = registry.get(decoded);
-  const job = live ?? (durable === undefined ? undefined : await durable.get(decoded));
+  const live = reads.named === undefined ? reads.registry.get(jobId) : undefined;
+  const source = reads.named ?? reads.durable;
+  const job = live ?? (source === undefined ? undefined : await source.get(jobId));
   if (job === undefined) {
-    writeJsonError(res, 404, "job_not_found", `no ingest job '${id}'`);
+    writeJsonError(res, 404, "job_not_found", `no ingest job '${jobId}'`);
     return;
   }
   writeJson(res, 200, job);
