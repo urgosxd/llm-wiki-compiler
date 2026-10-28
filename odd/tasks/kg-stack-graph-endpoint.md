@@ -64,9 +64,52 @@ So this endpoint is the same rows, reshaped once, on the server.
 
 ## Tasks
 
-- [ ] 1. Write the failing test: route shape, key order, node/edge projection,
+- [x] 1. Write the failing test: route shape, key order, node/edge projection,
       truncation, 404, 422 on a bad UUID and a bad `limit`
-- [ ] 2. Add the read module `core/stack_graph.ts` (Zod schemas + the two reads)
-- [ ] 3. Add the router `routes/stack_graph.ts` and mount it at `/stacks`
-- [ ] 4. Pin the 405 `Allow` behaviour that the second mount must not perturb
-- [ ] 5. Verify: `vitest related`, `tsc --noEmit`, `fallow`
+- [x] 2. Add the read module `core/stack_graph.ts` (Zod schemas + the reads)
+- [x] 3. Add the router `routes/stack_graph.ts` and mount it at `/stacks`
+- [x] 4. Pin the 405 `Allow` behaviour that the second mount must not perturb
+- [x] 5. Verify: `vitest related`, `tsc --noEmit`, `fallow`
+
+## Outcome
+
+Commit `9b18f63` on `feat/orchestrator-b`.
+
+The endpoint shipped with two bounded query parameters the request did not name:
+`min_confidence` (`[0, 1]`, default `0`) and `limit` (`[1, 2000]`, default `500`).
+The default is 500 rather than the AKS entity default of 100 because a graph view
+is unreadable past a few hundred nodes anyway, while 100 would truncate an
+ordinary Stack on the first request. The upper bound is what keeps one response
+from materializing an unbounded Stack in memory.
+
+### Verification (scope and result reported together)
+
+| Check | Scope | Result |
+| --- | --- | --- |
+| `npx vitest run` (package) | all 78 files in `packages/llmwiki-kg/ts` | 764 passed, 4 skipped, 0 failed |
+| `npx vitest run src/routes/stack-graph.test.ts` | the new suite | 10 passed |
+| `npx vitest run src/http-contract.test.ts` | the 405 contract | 46 passed |
+| `npx tsc --noEmit` (package) | whole package | 21 errors, all pre-existing, none in the new files |
+| `npm run build` | repo root | succeeded |
+| `npx fallow` | repo root | no dead code, no duplication, 0 above threshold |
+| `npm run test:affected` | repo root, 1203 files | 21 failed — **all pre-existing and environmental** |
+
+The `test:affected` failures are not from this change. They are
+`DimensionActivationError: LLMWIKI_DIMENSIONS enables "wiki" but AKS_STACK_ID is
+not set`, an ambient-environment requirement of this worktree, and they were
+measured identical with the change stashed (`8` of `8` in `test/host` and
+`test/commands/host-command.test.ts`, `24` of `24` across the five CLI/quickstart
+suites sampled). Zero new failures, zero fixed.
+
+### What was deliberately left out
+
+- No wiki read door. The asymmetry you described is real —
+  `createWikiPageReader` exists and no production caller uses it — but it is a
+  different dimension and would have doubled the review surface.
+- No routing unification. `src/host/server.ts` still dispatches by prefix and
+  `src/viewer/server.ts` still has its hand-written `if` table. That is the
+  movement with the highest payoff and the highest risk, and it deserves its own
+  change with its own tests.
+- No `openapi.json` entry. The file under `oracle/contracts/` is the Python
+  server's measured contract; adding a TypeScript-only route to it would make the
+  oracle comparison lie.
