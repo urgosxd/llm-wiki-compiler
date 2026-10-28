@@ -118,6 +118,8 @@ import {
 } from "../dimensions/wiki/page-scan-source.js";
 import type { ResolverPageSource } from "./resolver.js";
 import { timeStage } from "../utils/stage-timing.js";
+import { reportCompileStage, reportCompileProgress } from "../services/ingest/jobs/compile-observer.js";
+import type { IngestJobObserver } from "../services/ingest/jobs/types.js";
 import { regenerateIndices, resolvePageSeams, type PageSeams } from "../dimensions/wiki/page-source-seam.js";
 import { createWikiStateRowsBackend } from "../dimensions/wiki/wiki-state-source.js";
 import type { WikiStateRowsBackend } from "./compile-state-draft.js";
@@ -483,6 +485,7 @@ async function seedThenFinalize(
     embeddingPageSource,
     seams,
     stateRows,
+    jobObserver: options.jobObserver,
   });
 }
 
@@ -505,8 +508,10 @@ async function runCompilePipeline(
   const stateRows = wikiStateRowsBackend(db, process.env);
   const draft = await CompileStateDraft.load(root, stateRows);
   const state = draft.read();
+  const compileReporter = options.jobObserver?.compile;
   const detected = await timeStage("compile.detect-changes", () =>
-    detectChanges(root, state, sourceChangeDetection(db, process.env)));
+    detectChanges(root, state, sourceChangeDetection(db, process.env)),
+    () => reportCompileStage(compileReporter, "compile.detect-changes"));
   const changes = promoteForPromptModifiers(
     applyChangeFilter(detected, options.changeFilter),
     state,
@@ -594,7 +599,7 @@ async function runCompilePipeline(
     // The extraction prompt asks the model not to duplicate an existing concept,
     // which needs each page's title -- the scan shape, not the listing.
     scanSourceReading(db, process.env),
-  ));
+  ), () => reportCompileStage(compileReporter, "compile.extraction"));
   if (!options.review) {
     freezeFailedExtractions(draft, extractions, frozenSlugs);
     reportFrozenSlugs(frozenSlugs);
@@ -603,6 +608,11 @@ async function runCompilePipeline(
   // Snapshot pages on disk before generation so the journal can tell which
   // produced pages are new (created) versus overwritten (updated).
   const existingIds = await listExistingPageIds(root);
+  // The ONLY stage with a real denominator the pipeline computes before the work:
+  // one merged concept becomes one generated page, so the count of concepts IS the
+  // total. Reported on entry and again on exit, never interpolated in between --
+  // generation runs under p-limit, so a half-finished count would be a guess.
+  reportCompileProgress(compileReporter, 0, extractions.length);
   const generation = await timeStage("compile.page-generation", () => generatePagesPhase(
     root,
     extractions,
@@ -614,7 +624,12 @@ async function runCompilePipeline(
     concurrency,
     seams.sink,
     seams.remover,
-  ));
+  ), () => reportCompileProgress(compileReporter, 0, extractions.length));
+  reportCompileProgress(
+    compileReporter,
+    generation.writtenPages.length,
+    Math.max(extractions.length, generation.writtenPages.length),
+  );
 
   if (!options.review) {
     const written = new Set(generation.writtenPages.map((entry) => entry.slug));
@@ -641,7 +656,7 @@ async function runCompilePipeline(
       embeddingPageReading(db, process.env),
       seams,
       stateRows,
-    ));
+    ), () => reportCompileStage(compileReporter, "compile.finalize"));
     await logCompile(root, buckets, generation, existingIds);
   }
   verbose(`compile finished in ${Date.now() - startMs} ms`);
@@ -843,6 +858,15 @@ interface FinalizeFlags {
    * object so a caller cannot thread one and forget the other.
    */
   stateRows?: WikiStateRowsBackend;
+  /**
+   * Job observer for the stages finalize itself runs.
+   *
+   * Finalize is where the embeddings refresh happens, and that refresh is a
+   * `timeStage` boundary the caller two levels up cannot see. Carrying the
+   * observer on the same flags object is what lets the innermost stage report
+   * without threading a sixth parameter through every level.
+   */
+  jobObserver?: IngestJobObserver;
 }
 
 /**
@@ -862,7 +886,7 @@ async function finalizeWiki(
 ): Promise<void> {
   const {
     scoped = false, embeddings = true, embeddingStore, resolverSource,
-    embeddingPageSource, seams = {}, stateRows,
+    embeddingPageSource, seams = {}, stateRows, jobObserver,
   } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
   const conceptNewSlugs = pages
@@ -911,7 +935,7 @@ async function finalizeWiki(
   if (embeddings) {
     await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(
       root, allChangedSlugs, embeddingStore, embeddingPageSource,
-    ));
+    ), () => reportCompileStage(jobObserver?.compile, "compile.embeddings"));
   }
 }
 

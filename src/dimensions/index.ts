@@ -51,7 +51,7 @@ export { createKgReader } from "./kg/reader.js";
 export type { KgReaderOptions } from "./kg/reader.js";
 
 export { ingestDimensions } from "./coordinator.js";
-export type { IngestOutcome } from "./coordinator.js";
+export type { IngestDimensionsOptions, IngestOutcome } from "./coordinator.js";
 
 export {
   AKS_STACK_ID_ENV_VAR,

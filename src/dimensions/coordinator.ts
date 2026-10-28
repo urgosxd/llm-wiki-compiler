@@ -72,6 +72,7 @@
 import { sql } from "drizzle-orm";
 import type { Database } from "llmwiki-kg";
 import type { AfterCommitEffect, CommittedWrite, Dimension, DimensionInput, PreparedWrite } from "./types.js";
+import type { AttemptReporter } from "../services/ingest/jobs/types.js";
 
 /** How many times the transaction body is attempted before the ingest fails. */
 const MAX_TX_ATTEMPTS = 2;
@@ -89,6 +90,25 @@ interface DimensionRun {
   readonly dimension: Dimension;
   prepared: PreparedWrite | null;
   committed: CommittedWrite | null;
+}
+
+/**
+ * Optional observation hooks for one ingest run.
+ *
+ * Optional as a WHOLE, with every member optional individually, because the only
+ * thing that must never happen is a caller passing attempts without a clock: a run
+ * would then record timestamps from a source the caller cannot control. The CLI and
+ * the MCP server pass nothing at all and behave exactly as before.
+ *
+ * Nothing here can change the run's outcome. An observer that throws is the
+ * observer's bug, not the ingest's failure, and `service.ts` is what guarantees
+ * that by wrapping every call.
+ */
+export interface IngestDimensionsOptions {
+  /** Observe the transaction's retry attempts. */
+  readonly attempts?: AttemptReporter;
+  /** ISO-8601 clock, injected so a test can pin attempt timestamps. */
+  readonly now?: () => string;
 }
 
 /** Result of a successful two-dimension ingest. */
@@ -186,19 +206,35 @@ async function attemptWithRetry(
   db: Database,
   stackId: string,
   runs: readonly DimensionRun[],
+  attempts: AttemptReporter | undefined,
+  now: () => string,
 ): Promise<void> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= MAX_TX_ATTEMPTS; attempt += 1) {
     // A failed attempt leaves partial `committed` values behind; clearing them
     // keeps the post-mortem honest about what actually landed (nothing).
     for (const run of runs) run.committed = null;
+    attempts?.attemptStarted(attempt, now());
     try {
-      return await commitInOneTransaction(db, stackId, runs);
+      await commitInOneTransaction(db, stackId, runs);
+      attempts?.attemptSettled(attempt, now());
+      return;
     } catch (error) {
+      attempts?.attemptSettled(attempt, now(), errorMessageOf(error));
       lastError = error;
     }
   }
   throw lastError;
+}
+
+/**
+ * Reduce a thrown value to the message a job record can serialize.
+ *
+ * A job record travels as JSON, so it cannot carry the error OBJECT; the message
+ * is the part an operator reads and the only part that survives the wire.
+ */
+function errorMessageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -312,9 +348,11 @@ async function commitOrReport(
   stackId: string,
   runs: readonly DimensionRun[],
   input: DimensionInput,
+  attempts: AttemptReporter | undefined,
+  now: () => string,
 ): Promise<void> {
   try {
-    await attemptWithRetry(db, stackId, runs);
+    await attemptWithRetry(db, stackId, runs, attempts, now);
   } catch (error) {
     const unresolved = await discardPreparedWrites(runs);
     const reason = error instanceof Error ? error.message : String(error);
@@ -364,15 +402,17 @@ export async function ingestDimensions(
   stackId: string,
   input: DimensionInput,
   dimensions: readonly Dimension[],
+  options: IngestDimensionsOptions = {},
 ): Promise<IngestOutcome> {
   const runs: DimensionRun[] = dimensions.map((dimension) => ({
     dimension,
     prepared: null,
     committed: null,
   }));
+  const now = options.now ?? (() => new Date().toISOString());
 
   await prepareEveryDimension(runs, input);
-  await commitOrReport(db, stackId, runs, input);
+  await commitOrReport(db, stackId, runs, input, options.attempts, now);
 
   const projected = await runProjections(runs);
   return {

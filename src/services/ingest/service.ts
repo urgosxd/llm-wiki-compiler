@@ -44,6 +44,7 @@ import ingestImage from "../../ingest/image.js";
 import ingestTranscript from "../../ingest/transcript.js";
 import { buildDocument, enforceCharLimit, enforceMinContent } from "./document.js";
 import { detectSourceType } from "./source-detection.js";
+import type { IngestJobObserver } from "./jobs/types.js";
 import type { IngestResult, SourceType } from "../../utils/types.js";
 
 /** Input shape for raw-text ingestion. */
@@ -112,18 +113,22 @@ async function journalIngest(
 async function writeToDimensions(
   root: string,
   input: { title: string; source: string; document: string; body: string },
+  observer?: IngestJobObserver,
 ): Promise<{ savedPath: string; writeStatus: NonNullable<IngestResult["writeStatus"]> }> {
   // Pages are rows in Postgres now, so the dimensions need a handle. It is built
   // for this operation and released right after, because an unclosed pool keeps
   // the event loop alive.
   const dimensionsDb = createDimensionsDatabase();
+  observer?.ingest.stage("preparing");
   const locked = await tryWithOrdinaryMutationLock(root, async () => {
     try {
+      observer?.ingest.stage("committing");
       return await ingestDimensions(
         dimensionsDb.db,
         resolveStackId(),
         input,
         resolveDimensions({ root, db: dimensionsDb.db }),
+        { attempts: observer?.attempts },
       );
     } finally {
       await dimensionsDb.close();
@@ -137,6 +142,7 @@ async function writeToDimensions(
   if (outcome.artifactPath === undefined) {
     throw new Error(`no file-backed dimension reported a write path for ${input.source}`);
   }
+  observer?.ingest.stage("projecting");
   return { savedPath: outcome.artifactPath, writeStatus: outcome.writeStatus ?? "created" };
 }
 
@@ -148,14 +154,21 @@ async function writeToDimensions(
  * @returns Saved filename, character count, truncation flag, source URI, and source type.
  * @throws {LockBusyError} When another mutation holds the project lock.
  */
-export async function ingestSource(root: string, source: string): Promise<IngestResult> {
+export async function ingestSource(
+  root: string,
+  source: string,
+  observer?: IngestJobObserver,
+): Promise<IngestResult> {
+  observer?.ingest.stage("detecting");
   const sourceType = await detectSourceType(source);
   output.status("*", output.info(`Ingesting [${sourceType}]: ${source}`));
   verbose(`source type: ${sourceType}`);
 
+  observer?.ingest.stage("fetching");
   const { title, content } = await fetchContent(source, sourceType);
   verbose(`fetched: ${content.length} chars`);
 
+  observer?.ingest.stage("extracting");
   const result = enforceCharLimit(content);
   enforceMinContent(result.content);
   const document = buildDocument(title, source, result, sourceType);
@@ -164,11 +177,12 @@ export async function ingestSource(root: string, source: string): Promise<Ingest
     source,
     document,
     body: result.content,
-  });
+  }, observer);
   verbose(`saved: ${savedPath} (${result.content.length} chars extracted)`);
 
   // Journal only real writes — a no-op re-ingest must not append a log line.
   if (writeStatus !== "unchanged") {
+    observer?.ingest.stage("journaling");
     await journalIngest(root, title, source, savedPath, result.content.length);
   }
 

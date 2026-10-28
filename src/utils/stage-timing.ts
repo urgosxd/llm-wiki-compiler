@@ -61,8 +61,18 @@ async function record(file: string, stage: TimedStage, ms: number, ok: boolean):
  * Run `work` as one named stage. With timing off this is a plain `await work()`;
  * with timing on, the duration is recorded whether the stage resolves or throws,
  * and the original result or error is returned unchanged.
+ *
+ * `onStart` runs BEFORE `work`, and is deliberately OUTSIDE the timing window and
+ * outside the try: it lets an observer announce a stage without being measured as
+ * part of it, and an observer that throws must not be mistaken for the stage it was
+ * watching failing. A caller that passes nothing gets byte-identical behaviour.
  */
-export async function timeStage<T>(stage: TimedStage, work: () => Promise<T>): Promise<T> {
+export async function timeStage<T>(
+  stage: TimedStage,
+  work: () => Promise<T>,
+  onStart?: () => void,
+): Promise<T> {
+  onStart?.();
   const file = timingFile();
   if (file === null) return work();
   const started = performance.now();

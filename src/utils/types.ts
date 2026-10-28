@@ -12,6 +12,7 @@ import type { PageId } from "./page-id.js";
 import type { SelectedPageRef } from "../search/retrieval.js";
 import type { AnswerCitationReport } from "../citations/answer-types.js";
 import type { AnswerCitationManifest, ValidatedAnswerKind } from "../citations/answer-manifest.js";
+import type { IngestJobObserver } from "../services/ingest/jobs/types.js";
 
 /**
  * Lifecycle state of a concept or page's provenance.
@@ -270,6 +271,15 @@ export interface CompileOptions {
    * pending-embedding retries.
    */
   embeddings?: boolean;
+  /**
+   * Observe the run as the stages of an async ingest job.
+   *
+   * Carried on the OPTIONS rather than as a separate parameter because it is an
+   * observation of this run, not an input to it: it changes no page, no prompt, no
+   * digest and no outcome. The CLI, the MCP server and the SDK omit it and behave
+   * exactly as before.
+   */
+  jobObserver?: IngestJobObserver;
 }
 
 /**
