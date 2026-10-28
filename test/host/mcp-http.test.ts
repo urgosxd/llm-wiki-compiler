@@ -23,6 +23,11 @@ import { runningHost } from "../fixtures/running-host.js";
 import { MCP_HTTP_PATH } from "../../src/host/mcp-http.js";
 import { createWikiMcpServer } from "../../src/mcp/server.js";
 
+/** Read a server's registered-tool map, so tool sets can be compared directly. */
+function registeredToolNames(server: { _registeredTools?: Record<string, unknown> }): string[] {
+  return Object.keys(server._registeredTools ?? {}).sort();
+}
+
 /** The factory the CLI injects; tests must supply it for the same reason. */
 function mcpFactory(root: string): () => ReturnType<typeof createWikiMcpServer> {
   return () => createWikiMcpServer({ root, version: "test" });
@@ -86,11 +91,20 @@ describe("the host serves MCP over streamable HTTP", () => {
       const payload = await rpc(base, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
       const result = payload.result as { tools: { name: string }[] };
       const names = result.tools.map((tool) => tool.name);
+      // Compared against the stdio server itself rather than a literal count. The
+      // number goes stale whenever a tool is added — it did, silently, when
+      // `list_stacks` landed — and a pinned digit then says "drift" for a change
+      // that is exactly the intended one. Deriving it keeps the assertion about what
+      // it is for: the HTTP mount serves the SAME set as stdio, not a subset.
+      const stdioNames = registeredToolNames(
+        createWikiMcpServer({ root: process.cwd(), version: "test" }) as unknown as {
+          _registeredTools?: Record<string, unknown>;
+        },
+      );
+      expect([...names].sort()).toEqual(stdioNames);
       expect(names).toContain("ingest_job_status");
       expect(names).toContain("ingest_jobs_list");
-      // 14 is the stdio count; a lower number here means the HTTP mount registered
-      // a different (or partial) tool set, which is the drift this test exists for.
-      expect(names.length).toBe(14);
+      expect(names).toContain("list_stacks");
     } finally {
       await handle.close();
     }

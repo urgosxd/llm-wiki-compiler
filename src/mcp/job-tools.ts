@@ -39,47 +39,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // resolves the package fine, so reaching the source directly keeps both builds green
 // without widening the core's surface.
 import { listIngestJobs, readIngestJob } from "../services/ingest/jobs/job-store.js";
-import { createDimensionsDatabase, resolveStackId } from "../dimensions/activation.js";
 import { jsonResult, errorResult } from "./result.js";
-
-/** Every tool result carries this shape, so a client can branch on `ok`. */
-const NO_STACK_MESSAGE =
-  "This project has no AKS_STACK_ID, so ingest jobs are not recorded durably. " +
-  "Set AKS_STACK_ID to the Stack the ingest writes to.";
-
-/**
- * Run `work` against the dimensions database, closing the handle afterwards.
- *
- * Mirrors how the ingest service itself opens a connection per operation: a
- * long-lived pool would keep the event loop alive for an MCP server that may only
- * ever answer one status question.
- *
- * @param work - Receives the handle and the Stack id.
- * @returns Whatever `work` returned.
- */
-async function withJobsDatabase<T>(
-  work: (db: ReturnType<typeof createDimensionsDatabase>["db"], stackId: string) => Promise<T>,
-): Promise<T | { readonly unavailable: string }> {
-  let stackId: string;
-  try {
-    stackId = resolveStackId(process.env);
-  } catch {
-    return { unavailable: NO_STACK_MESSAGE };
-  }
-  const dimensionsDb = createDimensionsDatabase(process.env);
-  try {
-    return await work(dimensionsDb.db, stackId);
-  } finally {
-    await dimensionsDb.close();
-  }
-}
-
-/** True when the helper handed back the "cannot answer" marker. */
-function isUnavailable(
-  value: unknown,
-): value is { readonly unavailable: string } {
-  return typeof value === "object" && value !== null && "unavailable" in value;
-}
+import { isUnavailable, withTenantDatabase } from "./tenant-db.js";
 
 /** Register the durable job read tools. */
 export function registerJobTools(server: McpServer): void {
@@ -97,7 +58,7 @@ export function registerJobTools(server: McpServer): void {
       },
     },
     async ({ jobId }) => {
-      const result = await withJobsDatabase((db, stackId) => readIngestJob(db, stackId, jobId));
+      const result = await withTenantDatabase((db, stackId) => readIngestJob(db, stackId, jobId));
       if (isUnavailable(result)) return errorResult(result.unavailable);
       if (result === undefined) return errorResult(`No ingest job '${jobId}' for this Stack.`);
       return jsonResult(result);
@@ -123,7 +84,7 @@ export function registerJobTools(server: McpServer): void {
       },
     },
     async ({ limit }) => {
-      const result = await withJobsDatabase((db, stackId) => listIngestJobs(db, stackId, limit ?? 50));
+      const result = await withTenantDatabase((db, stackId) => listIngestJobs(db, stackId, limit ?? 50));
       if (isUnavailable(result)) return errorResult(result.unavailable);
       return jsonResult({ jobs: result, count: result.length });
     },

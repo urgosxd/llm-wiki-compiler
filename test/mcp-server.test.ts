@@ -67,7 +67,7 @@ function getRegisteredResourceTemplates(server: McpServer): Record<string, unkno
 }
 
 describe("MCP server tool registration", () => {
-  it("registers all 12 expected tools", () => {
+  it("registers all 13 expected tools", () => {
     const server = buildServer();
     const names = Object.keys(getRegisteredTools(server)).sort();
     expect(names).toEqual([
@@ -77,6 +77,7 @@ describe("MCP server tool registration", () => {
       "ingest_jobs_list",
       "ingest_source",
       "lint_wiki",
+      "list_stacks",
       "query_wiki",
       "read_page",
       "run_eval",

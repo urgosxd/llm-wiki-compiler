@@ -27,6 +27,7 @@ import { resolveArtifactRef, declaresArtifactTypes } from "@atomicstrata/llmwiki
 import type { ArtifactRef } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { jsonResult, errorResult } from "./result.js";
 import { registerJobTools } from "./job-tools.js";
+import { registerStackTools } from "./stack-tools.js";
 
 /** Register all 10 wiki tools on the given MCP server instance. */
 export function registerWikiTools(server: McpServer, root: string): void {
@@ -41,6 +42,7 @@ export function registerWikiTools(server: McpServer, root: string): void {
   registerEvalTool(server, root);
   registerVerifyArtifactTool(server, root);
   registerJobTools(server);
+  registerStackTools(server);
 }
 
 function registerIngestTool(server: McpServer, root: string): void {
