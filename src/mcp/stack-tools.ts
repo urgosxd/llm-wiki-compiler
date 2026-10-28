@@ -25,8 +25,8 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { listStacks } from "../services/stacks/stack-store.js";
 // Relative, not through `compiler-cli`, for the reason recorded in `job-tools.ts`.
-import { jsonResult, errorResult } from "./result.js";
-import { isUnavailable, withTenantDatabase } from "./tenant-db.js";
+import { jsonResult } from "./result.js";
+import { isRefusal, refusalResult, withTenantDatabase } from "./tenant-db.js";
 
 /** Register the Stack discovery tool. */
 export function registerStackTools(server: McpServer): void {
@@ -46,13 +46,21 @@ export function registerStackTools(server: McpServer): void {
           .max(200)
           .optional()
           .describe("How many Stacks to return (default 50, max 200)."),
+        stackId: z
+          .string()
+          .optional()
+          .describe(
+            "Stack to treat as the current one. This does NOT narrow the listing — " +
+              "it only decides which entry is marked isCurrent. Omit for the bound Stack.",
+          ),
       },
     },
-    async ({ limit }) => {
-      const result = await withTenantDatabase((db, stackId) =>
-        listStacks(db, stackId, limit ?? 50),
+    async ({ limit, stackId }) => {
+      const result = await withTenantDatabase(
+        (db, resolved) => listStacks(db, resolved, limit ?? 50),
+        stackId,
       );
-      if (isUnavailable(result)) return errorResult(result.unavailable);
+      if (isRefusal(result)) return refusalResult(result);
       return jsonResult({ stacks: result, count: result.length });
     },
   );

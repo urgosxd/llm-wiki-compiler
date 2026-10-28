@@ -40,7 +40,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // without widening the core's surface.
 import { listIngestJobs, readIngestJob } from "../services/ingest/jobs/job-store.js";
 import { jsonResult, errorResult } from "./result.js";
-import { isUnavailable, withTenantDatabase } from "./tenant-db.js";
+import { isRefusal, refusalResult, withTenantDatabase } from "./tenant-db.js";
 
 /** Register the durable job read tools. */
 export function registerJobTools(server: McpServer): void {
@@ -55,11 +55,21 @@ export function registerJobTools(server: McpServer): void {
         "another process. Read-only.",
       inputSchema: {
         jobId: z.string().describe("Job id, of the form ing_<ULID>."),
+        stackId: z
+          .string()
+          .optional()
+          .describe(
+            "Stack to read from, when it is not the one this endpoint is bound to. " +
+              "Omit for the bound Stack.",
+          ),
       },
     },
-    async ({ jobId }) => {
-      const result = await withTenantDatabase((db, stackId) => readIngestJob(db, stackId, jobId));
-      if (isUnavailable(result)) return errorResult(result.unavailable);
+    async ({ jobId, stackId }) => {
+      const result = await withTenantDatabase(
+        (db, resolved) => readIngestJob(db, resolved, jobId),
+        stackId,
+      );
+      if (isRefusal(result)) return refusalResult(result);
       if (result === undefined) return errorResult(`No ingest job '${jobId}' for this Stack.`);
       return jsonResult(result);
     },
@@ -81,11 +91,21 @@ export function registerJobTools(server: McpServer): void {
           .max(200)
           .optional()
           .describe("How many jobs to return (default 50, max 200)."),
+        stackId: z
+          .string()
+          .optional()
+          .describe(
+            "Stack to read from, when it is not the one this endpoint is bound to. " +
+              "Omit for the bound Stack.",
+          ),
       },
     },
-    async ({ limit }) => {
-      const result = await withTenantDatabase((db, stackId) => listIngestJobs(db, stackId, limit ?? 50));
-      if (isUnavailable(result)) return errorResult(result.unavailable);
+    async ({ limit, stackId }) => {
+      const result = await withTenantDatabase(
+        (db, resolved) => listIngestJobs(db, resolved, limit ?? 50),
+        stackId,
+      );
+      if (isRefusal(result)) return refusalResult(result);
       return jsonResult({ jobs: result, count: result.length });
     },
   );

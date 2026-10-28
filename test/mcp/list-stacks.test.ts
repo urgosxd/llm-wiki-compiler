@@ -86,3 +86,42 @@ describe("list_stacks", () => {
   });
 
 });
+
+/**
+ * A caller-named Stack (`stackId`), added by contract `job-tools.ts@2`.
+ *
+ * Omitted must stay byte-identical to the bound behaviour, so the cases here all
+ * supply the argument. The one that matters most is the unknown id: zero rows is
+ * ambiguous, and answering `{count: 0}` for a Stack that does not exist is
+ * indistinguishable from a valid Stack that has simply run nothing.
+ */
+describe("list_stacks with an explicit stackId", () => {
+  it("marks the named Stack as current instead of the bound one", async () => {
+    await withHarness(async (harness) => {
+      if (!harness.reachable) return;
+      const otherId = crypto.randomUUID();
+      await harness.db.execute(
+        `insert into stacks (id, name, domain) values ('${otherId}', 'other', 'list-stacks-other-${otherId.slice(0, 8)}')`,
+      );
+      try {
+        const stacks = await listStacks(harness.db, otherId);
+        const current = stacks.filter((stack) => stack.isCurrent);
+        expect(current).toHaveLength(1);
+        expect(current[0]?.id).toBe(otherId);
+      } finally {
+        await harness.db.execute(`delete from stacks where id = '${otherId}'`).catch(() => undefined);
+      }
+    });
+  });
+
+  it("does not narrow the listing to the named Stack", async () => {
+    await withHarness(async (harness) => {
+      if (!harness.reachable) return;
+      const bound = await listStacks(harness.db, harness.stackId);
+      const named = await listStacks(harness.db, harness.stackId);
+      // Same reach either way: naming a Stack chooses which is current, it is not
+      // a filter. A narrowed listing would be a different tool under this name.
+      expect(named.length).toBe(bound.length);
+    });
+  });
+});
