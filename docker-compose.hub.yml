@@ -1,0 +1,109 @@
+# Compose de despliegue: consume la imagen publicada en Docker Hub.
+#
+# POR QUE ESTE ARCHIVO EXISTE APARTE DE `docker-compose.yml`
+#
+# El compose del repo usa `build:` porque es el entorno de desarrollo: compila el
+# bundle raiz desde `src/`. En un servidor no hay codigo fuente ni toolchain, y
+# compilar ahi seria reconstruir lo que ya esta publicado. Este archivo usa
+# `image:` y no tiene `build:`, asi que `docker compose up` solo hace pull.
+#
+# `network_mode: host` NO ES PREFERENCIA
+#
+# El listener valida el header `Host` contra la direccion que bindeo y rechaza el
+# wildcard. Con bridge + `-p 4173:4173`, el proceso bindea su IP interna pero un
+# request llega con `Host: <host>:4173`, no coincide, y responde 403 en todas las
+# rutas del wiki -- mientras las rutas del grafo siguen andando porque no validan
+# Host. Resultado medido: un contenedor sano que sirve medio producto.
+#
+# Con host networking el proceso bindea una direccion real del host y el Host
+# coincide. Como efecto secundario, `ports:` se ignora y la base se alcanza por el
+# puerto publicado en el host, no por el nombre `db`. Los DSN de abajo lo reflejan.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-llmwiki}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-llmwiki}
+      POSTGRES_DB: ${POSTGRES_DB:-llmwiki}
+    # Publicado en el host porque la app corre con host networking y no puede
+    # resolver `db` por DNS de red. El puerto interno queda en 5432.
+    ports:
+      - "${POSTGRES_HOST_PORT:-5435}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llmwiki}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Aplica los 15 esquemas en orden de dependencia antes de que arranque la app.
+  # Un Postgres recien creado NO tiene tablas: sin esto la app muere en su primera
+  # lectura con "relation wiki.review_candidates does not exist". El runner es
+  # idempotente, asi que correrlo en cada `up` tambien pone al dia un volumen viejo.
+  migrate:
+    image: ${LLMWIKI_IMAGE:-urgosxd7/llmwiki:latest}
+    network_mode: host
+    depends_on:
+      db:
+        condition: service_healthy
+    # `bash`, no `sh`: el runner usa `set -o pipefail` y el /bin/sh de la imagen es
+    # dash, que lo rechaza con "Illegal option -o pipefail" y sale con 2.
+    entrypoint: ["/bin/bash", "/app/scripts/apply-schemas.sh"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-llmwiki}:${POSTGRES_PASSWORD:-llmwiki}@127.0.0.1:${POSTGRES_HOST_PORT:-5435}/${POSTGRES_DB:-llmwiki}
+    restart: "no"
+
+  llmwiki:
+    image: ${LLMWIKI_IMAGE:-urgosxd7/llmwiki:latest}
+    network_mode: host
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      # MCP es el default de la imagen, pero un servidor stdio bajo `up -d` no tiene
+      # stdin y sale al instante, lo que se lee como crash loop. Se pide HTTP.
+      LLMWIKI_MODE: host
+      LLMWIKI_PORT: ${LLMWIKI_PORT:-4173}
+      # Con host networking el entrypoint veria la IP de red del servidor y bindearia
+      # esa; loopback es la superficie correcta para poner un reverse proxy adelante.
+      # Cambiar a 0.0.0.0 NO funciona: el gate de origen rechaza el wildcard.
+      LLMWIKI_HOST: ${LLMWIKI_HOST:-127.0.0.1}
+      AKS_DATABASE_URL: postgresql://${POSTGRES_USER:-llmwiki}:${POSTGRES_PASSWORD:-llmwiki}@127.0.0.1:${POSTGRES_HOST_PORT:-5435}/${POSTGRES_DB:-llmwiki}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-llmwiki}:${POSTGRES_PASSWORD:-llmwiki}@127.0.0.1:${POSTGRES_HOST_PORT:-5435}/${POSTGRES_DB:-llmwiki}
+      # Las dos dimensiones en una sola transaccion.
+      LLMWIKI_DIMENSIONS: wiki,kg
+      AKS_STACK_ID: ${AKS_STACK_ID:?defini AKS_STACK_ID en .env}
+      AKS_STACK_NAME: ${AKS_STACK_NAME:-llmwiki}
+      AKS_API_KEY: ${AKS_API_KEY:-}
+      # Endpoint compatible con OpenAI, no necesariamente api.openai.com.
+      LLMWIKI_PROVIDER: ${LLMWIKI_PROVIDER:-openai}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:?defini OPENAI_BASE_URL en .env}
+      OPENAI_EMBEDDINGS_BASE_URL: ${OPENAI_EMBEDDINGS_BASE_URL:-${OPENAI_BASE_URL}}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?defini OPENAI_API_KEY en .env}
+      OPENAI_EMBEDDINGS_API_KEY: ${OPENAI_API_KEY}
+      LLMWIKI_MODEL: ${LLMWIKI_MODEL:-gpt-4o-mini}
+      LLMWIKI_EMBEDDING_MODEL: ${LLMWIKI_EMBEDDING_MODEL:-text-embedding-3-small}
+      # El lado KG lee estas tres, NO las de arriba. Si faltan sigue llamando a su
+      # vendor por defecto y falla con "Could not resolve authentication method".
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-gateway}
+      EXTRACTION_PROVIDER: ${EXTRACTION_PROVIDER:-gateway}
+      GATEWAY_URL: ${OPENAI_BASE_URL}
+      GATEWAY_API_KEY: ${OPENAI_API_KEY}
+      EMBEDDING_MODEL: ${LLMWIKI_EMBEDDING_MODEL:-text-embedding-3-small}
+      # Debe coincidir con el `vector(N)` del schema (768). El schema NO lo valida:
+      # una diferencia guarda vectores que el store no puede comparar.
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+      EXTRACTION_MODEL: ${LLMWIKI_MODEL:-gpt-4o-mini}
+      LLMWIKI_ROOT: /work
+    stdin_open: true
+    volumes:
+      - ${LLMWIKI_PROJECT:-./wiki}:/work
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
