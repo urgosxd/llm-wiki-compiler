@@ -98,6 +98,12 @@ function registerQueryTool(server: McpServer, root: string): void {
               debug,
               registrySource,
               embeddingStoreSource,
+              // The gate inside generateAnswer asks whether pages exist through a
+              // DIFFERENT route than the source above: it builds its own page source
+              // from an environment. Passing it the same one is what stops a named
+              // Stack from being told "nothing is compiled" while its 73 pages sit in
+              // the source that was just opened.
+              env,
             }),
           ),
         ),

@@ -136,6 +136,16 @@ interface GenerateAnswerOptions {
   registrySource?: RegistryPageSource;
   /** Row-backed embedding store; without it retrieval only searches the file store. */
   embeddingStoreSource?: EmbeddingStoreSource;
+  /**
+   * Environment the run should resolve its Stack from; defaults to `process.env`.
+   *
+   * Threaded rather than read from the ambient process because `hasCompiledPages`
+   * below asks the SAME question via a DIFFERENT route: it builds its own page source
+   * from an environment. Without this the two halves of one answer can address
+   * different Stacks -- the source says "73 pages" while the gate says "nothing is
+   * compiled" -- and the caller gets a confident wrong answer instead of an error.
+   */
+  env?: NodeJS.ProcessEnv;
   /** Report/filter to hydrated grounding. Scoped/review queries always use this mode. */
   grounding?: "hydrated";
   /** Persist the answer as a wiki query page when set. */
@@ -182,7 +192,7 @@ export async function generateAnswer(
   // Ask whether PAGES exist, not whether the derived index file does. The index is
   // a projection of the pages; requiring it refused a Stack-backed project whose
   // pages are all present but whose filesystem is empty.
-  if (!(await hasCompiledPages(root))) {
+  if (!(await hasCompiledPages(root, options.env))) {
     throw new Error("No compiled pages found. Run `llmwiki compile` first.");
   }
 
@@ -335,6 +345,11 @@ export default async function queryCommand(
       debug: options.debug,
       registrySource,
       embeddingStoreSource,
+      // Same environment the two seams above were opened with. `process.env` here is
+      // correct -- this is the CLI, whose Stack IS the process -- but it must be
+      // passed rather than left to the default, or the gate and the source it guards
+      // resolve independently.
+      env: process.env,
       onToken: (text) => process.stdout.write(text),
       onPageSelection: (pages, reasoning) => {
         output.status("i", output.dim(`Reasoning: ${reasoning}`));
