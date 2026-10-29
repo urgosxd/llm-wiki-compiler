@@ -15,6 +15,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { stableContent } from "../utils/source-writer.js";
 import { slugify } from "../utils/markdown.js";
 import type { ExtractionResult } from "./deps.js";
 import type { SourceState } from "../utils/types.js";
@@ -51,14 +52,17 @@ export async function buildExtractionSourceStates(
  * Build a single SourceState entry for one extraction result.
  *
  * Hashes the content the extraction already carries rather than re-reading the
- * file: `hashFile` is sha256 of those same bytes, and a document whose text lives
- * only in a table has no path to read.
+ * file: a document whose text lives only in a table has no path to read. The
+ * digest MUST use the same basis as change detection (`hashFile`) and the Stack's
+ * stored `content_hash` — `stableContent`, frontmatter minus the volatile
+ * `ingestedAt` — or a source recorded here never matches on the next compile and
+ * gets re-extracted every time.
  */
 async function buildEntry(
   result: ExtractionResult,
   compiledAt: string,
 ): Promise<SourceState> {
-  const hash = createHash("sha256").update(result.sourceContent, "utf-8").digest("hex");
+  const hash = createHash("sha256").update(stableContent(result.sourceContent), "utf-8").digest("hex");
   return {
     hash,
     concepts: result.concepts.map((concept) => slugify(concept.concept)),

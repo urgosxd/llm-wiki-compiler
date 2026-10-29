@@ -23,6 +23,7 @@ import {
   parseFrontmatter,
   slugify,
 } from "../utils/markdown.js";
+import { stableContent } from "../utils/source-writer.js";
 import { releaseLock } from "../utils/lock.js";
 import { acquireMutationLock } from "../utils/mutation-lock.js";
 import {
@@ -354,10 +355,13 @@ async function persistSourceStateFiltered(
   liveSlugs: Set<string>,
   sourceContent: string,
 ): Promise<void> {
-  // Hash the content already in memory instead of re-reading the file. Same digest
-  // -- `hashFile` is sha256 of the same bytes -- and it removes a disk read that
-  // would fail outright for a document whose bytes live only in a table.
-  const hash = createHash("sha256").update(sourceContent, "utf-8").digest("hex");
+  // Hash the content already in memory instead of re-reading the file. MUST use
+  // the same basis as change detection (`hashFile`) and the Stack's stored
+  // `content_hash`, both of which hash `stableContent` — frontmatter minus the
+  // volatile `ingestedAt`. Recording a raw-bytes digest here made the persisted
+  // hash unequal to the one detection compares against, so every source looked
+  // changed forever and extraction re-ran on every compile.
+  const hash = createHash("sha256").update(stableContent(sourceContent), "utf-8").digest("hex");
   const entry: SourceState = {
     hash,
     concepts: concepts.map((c) => slugify(c.concept)).filter((s) => liveSlugs.has(s)),

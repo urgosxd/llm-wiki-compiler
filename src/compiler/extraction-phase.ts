@@ -25,7 +25,8 @@ import type {
 import {
   CONCEPT_EXTRACTION_TOOL,
   buildExtractionPrompt,
-  parseConcepts,
+  parseConceptsResult,
+  type ParsedConcepts,
 } from "./prompts.js";
 import {
   findLateAffectedSources,
@@ -189,14 +190,19 @@ async function extractForSource(
   const chars = sourceContent.length;
   verbose(`source ${sourceFile}: ${lines} lines, ${chars} chars`);
   const existingIndex = await readConfinedExtractionIndex(root, scanSource);
-  const concepts = await extractConcepts(sourceContent, existingIndex);
+  const parsed = await extractConcepts(sourceContent, existingIndex);
+  const { concepts } = parsed;
 
   if (concepts.length > 0) {
     const names = concepts.map((c) => c.concept).join(", ");
     output.status("*", output.dim(`  Found ${concepts.length} concepts: ${names}`));
   }
-  return { sourceFile, ...sourcePath, sourceContent, concepts,
-    previousConcepts: reuse.state.sources[sourceFile]?.concepts ?? [] };
+  return {
+    sourceFile, ...sourcePath, sourceContent, concepts,
+    // A readable empty list is settled work; only an unreadable response retries.
+    ...(parsed.settled ? { settled: true as const } : {}),
+    previousConcepts: reuse.state.sources[sourceFile]?.concepts ?? [],
+  };
 }
 
 /**
@@ -254,7 +260,7 @@ async function readConfinedExtractionIndex(
 async function extractConcepts(
   sourceContent: string,
   existingIndex: string,
-): Promise<ExtractedConcept[]> {
+): Promise<ParsedConcepts> {
   const system = buildExtractionPrompt(sourceContent, existingIndex);
   const rawOutput = await callClaude({
     system,
@@ -262,5 +268,5 @@ async function extractConcepts(
     tools: [CONCEPT_EXTRACTION_TOOL],
   });
 
-  return parseConcepts(rawOutput);
+  return parseConceptsResult(rawOutput);
 }

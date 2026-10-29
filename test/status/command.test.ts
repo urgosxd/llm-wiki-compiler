@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import statusCommand from "../../src/commands/status.js";
 import { setVerbose } from "../../src/utils/output.js";
+import { stableContent } from "../../src/utils/source-writer.js";
 
 /** Seed a minimal compiled project: one source, one concept page, valid state. */
 async function seedProject(root: string): Promise<void> {
@@ -23,7 +24,7 @@ async function seedProject(root: string): Promise<void> {
   const sourceContent = "# Topic\n\nAbout the topic.";
   await writeFile(path.join(root, "sources", "a.md"), sourceContent, "utf-8");
   const { createHash } = await import("node:crypto");
-  const hash = createHash("sha256").update(sourceContent).digest("hex");
+  const hash = createHash("sha256").update(stableContent(sourceContent)).digest("hex");
   await writeFile(
     path.join(root, ".llmwiki", "state.json"),
     JSON.stringify({
