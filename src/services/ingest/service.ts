@@ -128,7 +128,13 @@ async function writeToDimensions(
         dimensionsDb.db,
         resolveStackId(env),
         input,
-        resolveDimensions({ root, db: dimensionsDb.db }),
+        // `env` is threaded here for the same reason it reaches `resolveStackId` above:
+        // `resolveDimensions` defaults to `process.env`, and the WIKI dimension takes its
+        // Stack from there. Omitting it made the job row and the source CONTENT
+        // disagree -- the job landed in the requested Stack while the document went to
+        // the host's bound one, so a caller was told "unchanged, nothing to do" about a
+        // Stack that did not contain the file at all.
+        resolveDimensions({ root, db: dimensionsDb.db, env }),
         { attempts: observer?.attempts },
       );
     } finally {
