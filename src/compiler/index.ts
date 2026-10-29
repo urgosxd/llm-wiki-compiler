@@ -222,6 +222,11 @@ async function generatePagesPhase(
   progressSink?: CompileProgressReporter,
 ): Promise<PageGenerationResult> {
   const merged = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs);
+  // Publish the denominator as soon as the stage owns it. Announcing the stage
+  // clears progress to "unknown" first (reportCompileStage does that on purpose so
+  // one stage never inherits another's counts), so the opening 0/N has to be
+  // published here, after the transition, or the bar starts blank.
+  reportCompileProgress(progressSink, 0, merged.length);
   // Build the per-source state snapshot once so each candidate can carry the
   // exact data needed to mark its sources compiled on approval.
   const shouldBuildSourceStates = options.review || !isPolicyOff(policy);
@@ -673,7 +678,6 @@ async function runCompilePipeline(
   // "1", so the job sat at "0 of 1" for the entire run. The count is published on
   // entry and advanced per committed page by the phase itself.
   const mergedTotal = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs).length;
-  reportCompileProgress(compileReporter, 0, mergedTotal);
   const generation = await timeStage("compile.page-generation", () => generatePagesPhase(
     root,
     extractions,
@@ -686,7 +690,7 @@ async function runCompilePipeline(
     seams.sink,
     seams.remover,
     compileReporter,
-  ), () => undefined);
+  ), () => reportCompileStage(compileReporter, "compile.page-generation"));
   reportCompileProgress(
     compileReporter,
     generation.writtenPages.length,
