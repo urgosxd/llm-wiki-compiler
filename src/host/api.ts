@@ -55,6 +55,8 @@ import type { IngestJobAccepted } from "../services/ingest/jobs/types.js";
 import type { CompileResult, IngestResult } from "../utils/types.js";
 import { stackIdProblem } from "../utils/stack-id.js";
 import { buildIngestEnv } from "./ingest-env.js";
+import { AKS_DATABASE_URL_ENV_VAR, createDimensionsDatabase } from "../dimensions/activation.js";
+import { stackExists } from "../services/stacks/stack-store.js";
 
 /** Largest request body these endpoints accept, in bytes. */
 const MAX_BODY_BYTES = 1024 * 64;
@@ -264,8 +266,49 @@ async function readIngestRequest(
       writeJsonError(res, 400, "invalid_request", problem);
       return undefined;
     }
+    // Shape is not enough. A well-formed id naming no Stack used to be accepted with
+    // a 202 and a job id, and the durable mirror then failed on a foreign key while the
+    // HTTP caller was told the work had started. Answering 202 for work that cannot be
+    // recorded is the same class as answering 200 for a Stack that does not exist.
+    const absent = await unknownStackRefusal(stackId);
+    if (absent !== undefined) {
+      writeJsonError(res, absent.status, absent.code, absent.message);
+      return undefined;
+    }
   }
   return { ...request, source, ...(stackId === undefined ? {} : { stackId }) };
+}
+
+/** The HTTP answer for a Stack this deployment cannot serve, or `undefined`. */
+interface StackRefusal {
+  readonly status: number;
+  readonly code: string;
+  readonly message: string;
+}
+
+/**
+ * Refuse a `stackId` that names no Stack, before any work is accepted.
+ *
+ * Skipped when no database is configured: a file-backed project has no Stacks to look
+ * up, and refusing there would break a supported deployment. A FAILED lookup is still a
+ * refusal, because an unreachable database must not read as a valid Stack.
+ *
+ * @param stackId - The Stack id taken from the request.
+ * @returns The refusal to send, or `undefined` when the Stack may be used.
+ */
+async function unknownStackRefusal(stackId: string): Promise<StackRefusal | undefined> {
+  const configured = (process.env[AKS_DATABASE_URL_ENV_VAR] ?? "").trim();
+  if (configured === "") return undefined;
+  const dimensionsDb = createDimensionsDatabase();
+  try {
+    if (await stackExists(dimensionsDb.db, stackId)) return undefined;
+    return { status: 404, code: "unknown_stack", message: `No Stack '${stackId}' exists.` };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { status: 503, code: "stack_lookup_failed", message: `Could not verify Stack '${stackId}': ${detail}` };
+  } finally {
+    await dimensionsDb.close();
+  }
 }
 
 /**
