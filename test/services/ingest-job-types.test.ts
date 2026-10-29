@@ -17,18 +17,21 @@ import {
   reportCompileProgress,
   reportCompileStage,
 } from "../../src/services/ingest/jobs/compile-observer.js";
-import type { CompileStage, JobProgress } from "../../src/services/ingest/jobs/types.js";
+import type { CompileDetail, CompileStage, JobProgress } from "../../src/services/ingest/jobs/types.js";
 
 /** A reporter that records what it was told, instead of writing a job. */
 function recordingReporter() {
   const stages: CompileStage[] = [];
   const progress: (JobProgress | null)[] = [];
+  const details: (CompileDetail | null)[] = [];
   return {
     stages,
     progress,
+    details,
     reporter: {
       stage: (stage: CompileStage) => stages.push(stage),
       progress: (next: JobProgress | null) => progress.push(next),
+      detail: (next: CompileDetail | null) => details.push(next),
     },
   };
 }

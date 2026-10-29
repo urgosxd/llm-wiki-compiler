@@ -98,6 +98,11 @@ function jobObserverFor(
     progress(progress) {
       guarded(() => registry.patchCompile(jobId, { progress }, clock()));
     },
+    detail(detail) {
+      // Passing `undefined` through deletes the field (see `mergeCompile`), which
+      // is how a cleared detail becomes genuinely absent instead of empty.
+      guarded(() => registry.patchCompile(jobId, { detail: detail ?? undefined }, clock()));
+    },
   };
 
   return {

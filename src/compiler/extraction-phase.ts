@@ -25,7 +25,8 @@ import type {
 import {
   CONCEPT_EXTRACTION_TOOL,
   buildExtractionPrompt,
-  parseConcepts,
+  parseConceptsResult,
+  type ParsedConcepts,
 } from "./prompts.js";
 import {
   findLateAffectedSources,
@@ -60,8 +61,14 @@ async function extractSourcesLimited(
   reuse: ExtractionReuse,
   contentSource?: SourceContentSource,
   scanSource?: PageScanSource,
+  progress?: { readonly report: (completed: number, total: number) => void },
 ): Promise<ExtractionResult[]> {
   let aborted = false;
+  // Count sources as they settle so the job shows movement during extraction,
+  // which is routinely the longest stage on a dense document. A rejected source
+  // still counts as attempted: the failure is reported through the error, and a
+  // counter that stopped on it would look frozen rather than failed.
+  let settled = 0;
   return Promise.all(files.map((file) => limit(async () => {
     if (aborted) throw new Error(`extraction skipped for ${file}: a prior source failed`);
     try {
@@ -69,6 +76,9 @@ async function extractSourcesLimited(
     } catch (err) {
       aborted = true;
       throw err;
+    } finally {
+      settled += 1;
+      progress?.report(settled, files.length);
     }
   })));
 }
@@ -107,11 +117,12 @@ export async function runExtractionPhases(
   reusableSources: ReadonlySet<string> = new Set(),
   contentSource?: SourceContentSource,
   scanSource?: PageScanSource,
+  progress?: { readonly report: (completed: number, total: number) => void },
 ): Promise<ExtractionResult[]> {
   const limit = pLimit(concurrency);
   const reuse = { state, eligible: reusableSources };
   const extractions = await extractSourcesLimited(
-    root, toCompile.map((c) => c.file), limit, reuse, contentSource, scanSource,
+    root, toCompile.map((c) => c.file), limit, reuse, contentSource, scanSource, progress,
   );
 
   while (true) {
@@ -189,14 +200,19 @@ async function extractForSource(
   const chars = sourceContent.length;
   verbose(`source ${sourceFile}: ${lines} lines, ${chars} chars`);
   const existingIndex = await readConfinedExtractionIndex(root, scanSource);
-  const concepts = await extractConcepts(sourceContent, existingIndex);
+  const parsed = await extractConcepts(sourceContent, existingIndex);
+  const { concepts } = parsed;
 
   if (concepts.length > 0) {
     const names = concepts.map((c) => c.concept).join(", ");
     output.status("*", output.dim(`  Found ${concepts.length} concepts: ${names}`));
   }
-  return { sourceFile, ...sourcePath, sourceContent, concepts,
-    previousConcepts: reuse.state.sources[sourceFile]?.concepts ?? [] };
+  return {
+    sourceFile, ...sourcePath, sourceContent, concepts,
+    // A readable empty list is settled work; only an unreadable response retries.
+    ...(parsed.settled ? { settled: true as const } : {}),
+    previousConcepts: reuse.state.sources[sourceFile]?.concepts ?? [],
+  };
 }
 
 /**
@@ -254,7 +270,7 @@ async function readConfinedExtractionIndex(
 async function extractConcepts(
   sourceContent: string,
   existingIndex: string,
-): Promise<ExtractedConcept[]> {
+): Promise<ParsedConcepts> {
   const system = buildExtractionPrompt(sourceContent, existingIndex);
   const rawOutput = await callClaude({
     system,
@@ -262,5 +278,5 @@ async function extractConcepts(
     tools: [CONCEPT_EXTRACTION_TOOL],
   });
 
-  return parseConcepts(rawOutput);
+  return parseConceptsResult(rawOutput);
 }

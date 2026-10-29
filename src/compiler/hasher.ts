@@ -12,16 +12,25 @@ import path from "path";
 import { SOURCES_DIR } from "../utils/constants.js";
 import type { WikiState, SourceChange } from "../utils/types.js";
 import { listSelectedSourceFiles } from "../sources/scan.js";
+import { stableContent } from "../utils/source-writer.js";
 import { isSourceSelected, loadSourceSelection, type SourceSelection } from "../sources/selection.js";
 
 /**
- * Read a file and compute its SHA-256 hash.
+ * Read a file and compute its SHA-256 hash over its STABLE content.
+ *
+ * Every change-detection route must hash on the SAME basis or a source can never
+ * look unchanged. The Stack route stores `wiki.source_documents.content_hash`,
+ * which is computed over `stableContent` — frontmatter minus the volatile
+ * `ingestedAt`, which moves on every ingest. Hashing raw bytes here disagreed with
+ * that value, so a Stack-backed compile reported every source "changed" and re-ran
+ * extraction (the expensive stage) on every run.
+ *
  * @param filePath - Absolute path to the file to hash.
- * @returns Hex-encoded SHA-256 digest of the file contents.
+ * @returns Hex-encoded SHA-256 digest of the file's stable content.
  */
 export async function hashFile(filePath: string): Promise<string> {
   const content = await readFile(filePath, "utf-8");
-  return createHash("sha256").update(content).digest("hex");
+  return createHash("sha256").update(stableContent(content)).digest("hex");
 }
 
 /**

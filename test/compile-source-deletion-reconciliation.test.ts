@@ -43,7 +43,11 @@ async function arrangeReconciliation(): Promise<ReconciliationProbe> {
   const pageSystems: string[] = [];
   vi.spyOn(AnthropicProvider.prototype, "toolCall").mockImplementation(async (system) => {
     extractionSystems.push(system);
-    return phase === "failed" ? JSON.stringify({ concepts: [] }) : EXTRACTION;
+    // A FAILED extraction is an unreadable response, not an empty concept list.
+    // An empty list is a valid answer (the model reporting nothing new), and it
+    // is settled work that must not be retried; see
+    // test/compile-empty-extraction-state.test.ts.
+    return phase === "failed" ? "not a concept payload" : EXTRACTION;
   });
   vi.spyOn(AnthropicProvider.prototype, "complete").mockImplementation(async (system) => {
     pageSystems.push(system);

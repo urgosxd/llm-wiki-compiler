@@ -176,8 +176,40 @@ export interface CompileDimensionState {
    * stage has no known denominator.
    */
   readonly progress: JobProgress | null;
+  /**
+   * Settled work counts that are real but cannot form a ratio.
+   *
+   * The embeddings stage embeds pages AND, separately, the chunks those pages
+   * split into — one measured run turned 93 pages into 442 chunks. A single
+   * {@link JobProgress} pair cannot carry both without inventing a merged number,
+   * so the bar keeps the unit a caller can reason about (pages) and these counts
+   * ride alongside as text.
+   *
+   * Absent, never zero. A consumer must not read a missing field as "zero chunks":
+   * that is the same class of lie as a fabricated `progress`. Present-and-zero is
+   * also never emitted, because a stage that embedded nothing did no work worth
+   * naming.
+   *
+   * Never summed into, or compared against, {@link progress}. The two describe
+   * different units, and a renderer that adds them would imply the bar is about
+   * chunks.
+   */
+  readonly detail?: CompileDetail;
   readonly message?: string;
   readonly error?: string;
+}
+
+/**
+ * Real cardinalities for a stage whose ratio cannot express them.
+ *
+ * Every field is optional and omitted rather than zeroed, for the reason
+ * {@link CompileDimensionState.detail} documents.
+ */
+export interface CompileDetail {
+  /** Chunk records embedded (or, at the end of the stage, settled). */
+  readonly chunks?: number;
+  /** Batched provider requests issued. */
+  readonly requests?: number;
 }
 
 /** A complete job, as the wire sees it. Immutable: every transition replaces it. */
@@ -226,6 +258,13 @@ export interface CompileProgressReporter {
   stage(stage: CompileStage): void;
   /** Publish real `completed`/`total` counts for the current stage. */
   progress(progress: JobProgress | null): void;
+  /**
+   * Publish cardinalities the stage ratio cannot carry; see {@link CompileDetail}.
+   *
+   * `null` REMOVES the field rather than emptying it, so a cleared detail is
+   * genuinely absent and a consumer can never mistake it for "zero chunks".
+   */
+  detail(detail: CompileDetail | null): void;
 }
 
 /**

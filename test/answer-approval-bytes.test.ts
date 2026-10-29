@@ -39,14 +39,18 @@ it("publishes exact direct-save bytes, leaves same-slug concept unchanged and re
   //
   // What must survive is the original claim, WHICH page got embedded by the approve
   // path. Widening this to "called at all" would lose exactly that, so the call is
-  // selected by its argument vector instead: the trailing `undefined, undefined` says
-  // this caller holds no row backend and must use the file store, which is the same
-  // claim `embeddings-disabled.test.ts` pins for the refresh path.
+  // selected by its argument vector instead: the trailing undefineds say this caller
+  // holds no row backend and must use the file store, which is the same claim
+  // `embeddings-disabled.test.ts` pins for the refresh path.
+  //
+  // The LAST of them is the optional job-progress sink: undefined here because approval
+  // tracks no job. Extending the signature again means updating this expected tail on
+  // purpose, not widening it to `expect.anything()`.
   const approvedPageEmbeddings = vi
     .mocked(updateEmbeddingsLockedCore)
     .mock.calls.filter((call) => JSON.stringify(call[1]) === JSON.stringify(["queries/answer"]));
   expect(approvedPageEmbeddings).toHaveLength(1);
-  expect(approvedPageEmbeddings[0]?.slice(3)).toEqual([undefined, undefined]);
+  expect(approvedPageEmbeddings[0]?.slice(3)).toEqual([undefined, undefined, undefined, undefined]);
   await expect(candidateBytes(root.dir, candidate.id)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
