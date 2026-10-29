@@ -120,6 +120,7 @@ import {
 import type { ResolverPageSource } from "./resolver.js";
 import { timeStage } from "../utils/stage-timing.js";
 import { reportCompileStage, reportCompileProgress } from "../services/ingest/jobs/compile-observer.js";
+import type { CompileProgressReporter } from "../services/ingest/jobs/types.js";
 import type { IngestJobObserver } from "../services/ingest/jobs/types.js";
 import { regenerateIndices, resolvePageSeams, type PageSeams } from "../dimensions/wiki/page-source-seam.js";
 import { createWikiStateRowsBackend } from "../dimensions/wiki/wiki-state-source.js";
@@ -218,6 +219,7 @@ async function generatePagesPhase(
   concurrency: number,
   pageSink: PageSink | undefined,
   pageRemover: PageRemover | undefined,
+  progressSink?: CompileProgressReporter,
 ): Promise<PageGenerationResult> {
   const merged = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs);
   // Build the per-source state snapshot once so each candidate can carry the
@@ -230,10 +232,20 @@ async function generatePagesPhase(
   // Collect per-outcome errors and candidate info into the ordered outcomes array
   // AFTER Promise.all, then derive candidates/review by iterating outcomes in source order.
   // This ensures stable, source-order ordering regardless of parallel completion timing.
+  // Advance the job's counter as each page SETTLES, not as it starts. A page that
+  // threw still counts as attempted work, so the count never stalls on a failure;
+  // the failure itself is reported through `errors`. Without this the job showed
+  // "0 of N" for the whole generation, which is the longest stage.
+  let settledPages = 0;
   const outcomes = await Promise.all(
     merged.map((entry) => limit(async () => {
-      const result = await generateMergedPage(root, entry, schema, options, sourceStates, policy);
-      return { entry, result };
+      try {
+        const result = await generateMergedPage(root, entry, schema, options, sourceStates, policy);
+        return { entry, result };
+      } finally {
+        settledPages += 1;
+        reportCompileProgress(progressSink, settledPages, merged.length);
+      }
     })),
   );
   const errors: string[] = [];
@@ -639,6 +651,12 @@ async function runCompilePipeline(
     // The extraction prompt asks the model not to duplicate an existing concept,
     // which needs each page's title -- the scan shape, not the listing.
     scanSourceReading(db, env),
+    // Extraction is often the longest stage, so it reports its own per-source
+    // count instead of sitting at "working" for minutes.
+    {
+      report: (completed, total) =>
+        reportCompileProgress(compileReporter, completed, total),
+    },
   ), () => reportCompileStage(compileReporter, "compile.extraction"));
   if (!options.review) {
     freezeFailedExtractions(draft, extractions, frozenSlugs);
@@ -649,10 +667,13 @@ async function runCompilePipeline(
   // produced pages are new (created) versus overwritten (updated).
   const existingIds = await listExistingPageIds(root);
   // The ONLY stage with a real denominator the pipeline computes before the work:
-  // one merged concept becomes one generated page, so the count of concepts IS the
-  // total. Reported on entry and again on exit, never interpolated in between --
-  // generation runs under p-limit, so a half-finished count would be a guess.
-  reportCompileProgress(compileReporter, 0, extractions.length);
+  // one merged concept becomes one generated page, so the number of MERGED entries
+  // is the total -- not the number of SOURCE files. Counting sources understated
+  // the work by orders of magnitude: one document yielding 92 concepts reported
+  // "1", so the job sat at "0 of 1" for the entire run. The count is published on
+  // entry and advanced per committed page by the phase itself.
+  const mergedTotal = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs).length;
+  reportCompileProgress(compileReporter, 0, mergedTotal);
   const generation = await timeStage("compile.page-generation", () => generatePagesPhase(
     root,
     extractions,
@@ -664,12 +685,14 @@ async function runCompilePipeline(
     concurrency,
     seams.sink,
     seams.remover,
-  ), () => reportCompileProgress(compileReporter, 0, extractions.length));
+    compileReporter,
+  ), () => undefined);
   reportCompileProgress(
     compileReporter,
     generation.writtenPages.length,
-    Math.max(extractions.length, generation.writtenPages.length),
+    Math.max(mergedTotal, generation.writtenPages.length),
   );
+
 
   if (!options.review) {
     const written = new Set(generation.writtenPages.map((entry) => entry.slug));

@@ -61,8 +61,14 @@ async function extractSourcesLimited(
   reuse: ExtractionReuse,
   contentSource?: SourceContentSource,
   scanSource?: PageScanSource,
+  progress?: { readonly report: (completed: number, total: number) => void },
 ): Promise<ExtractionResult[]> {
   let aborted = false;
+  // Count sources as they settle so the job shows movement during extraction,
+  // which is routinely the longest stage on a dense document. A rejected source
+  // still counts as attempted: the failure is reported through the error, and a
+  // counter that stopped on it would look frozen rather than failed.
+  let settled = 0;
   return Promise.all(files.map((file) => limit(async () => {
     if (aborted) throw new Error(`extraction skipped for ${file}: a prior source failed`);
     try {
@@ -70,6 +76,9 @@ async function extractSourcesLimited(
     } catch (err) {
       aborted = true;
       throw err;
+    } finally {
+      settled += 1;
+      progress?.report(settled, files.length);
     }
   })));
 }
@@ -108,11 +117,12 @@ export async function runExtractionPhases(
   reusableSources: ReadonlySet<string> = new Set(),
   contentSource?: SourceContentSource,
   scanSource?: PageScanSource,
+  progress?: { readonly report: (completed: number, total: number) => void },
 ): Promise<ExtractionResult[]> {
   const limit = pLimit(concurrency);
   const reuse = { state, eligible: reusableSources };
   const extractions = await extractSourcesLimited(
-    root, toCompile.map((c) => c.file), limit, reuse, contentSource, scanSource,
+    root, toCompile.map((c) => c.file), limit, reuse, contentSource, scanSource, progress,
   );
 
   while (true) {
