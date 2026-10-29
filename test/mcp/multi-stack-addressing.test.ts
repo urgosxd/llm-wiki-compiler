@@ -97,14 +97,16 @@ describe("multi-Stack addressing", () => {
     if (!first.harness.reachable) return;
     process.env.AKS_STACK_ID = first.harness.stackId;
     try {
-      const seen = await withRequestEnv("00000000-0000-4000-8000-000000000000", async (env) => ({
+      // A REAL Stack: `withRequestEnv` now refuses an id that exists nowhere, so an
+      // invented one would exercise the refusal path and prove nothing about the env.
+      const seen = await withRequestEnv(second.harness.stackId, async (env) => ({
         inside: env.AKS_STACK_ID,
         // The process env must NOT have been written: two concurrent tools would
         // otherwise read each other's Stack.
         ambient: process.env.AKS_STACK_ID,
       }));
 
-      expect(seen.inside).toBe("00000000-0000-4000-8000-000000000000");
+      expect(seen.inside).toBe(second.harness.stackId);
       expect(seen.ambient).toBe(first.harness.stackId);
       expect(process.env.AKS_STACK_ID).toBe(first.harness.stackId);
     } finally {

@@ -20,6 +20,7 @@
 
 import { sql } from "drizzle-orm";
 import {
+  AKS_DATABASE_URL_ENV_VAR,
   AKS_STACK_ID_ENV_VAR,
   createDimensionsDatabase,
   resolveStackId,
@@ -109,9 +110,54 @@ export async function withTenantDatabase<T>(
 export async function withRequestEnv<T>(
   requestedStackId: string | undefined,
   work: (env: NodeJS.ProcessEnv) => Promise<T>,
-): Promise<T> {
+): Promise<T | Refusal> {
   if (requestedStackId === undefined) return work(process.env);
+  const problem = await namedStackProblem(requestedStackId, process.env);
+  if (problem !== undefined) return problem;
   return work({ ...process.env, [AKS_STACK_ID_ENV_VAR]: requestedStackId });
+}
+
+/**
+ * Refuse a Stack the caller named that this deployment cannot serve.
+ *
+ * ## Why this is asked HERE rather than in each tool
+ *
+ * The tools answer a nonexistent Stack with a well-formed empty result -- `wiki_status`
+ * reporting `0 pages`, `search_pages` returning `[]`. Both read as facts about a wiki
+ * and are really a fact about the id: the caller was told "this Stack is empty" when
+ * the truth is "there is no such Stack". That is the failure mode this codebase keeps
+ * finding, a wrong answer delivered confidently instead of an error.
+ *
+ * Validating once, on the way in, means a tool added later cannot forget it. The job
+ * tools already did this through `withTenantDatabase`; this is the same check for the
+ * tools that read pages.
+ *
+ * ## Why a missing database is not a refusal
+ *
+ * A project with no database is a supported deployment: pages live on disk and there
+ * are no Stacks to look up. Refusing there would break the file-backed case that works
+ * today, so the check is skipped when nothing is configured, and a FAILED lookup is
+ * still a refusal -- an unreachable database must not look like a valid Stack.
+ *
+ * @param stackId - The Stack the caller named.
+ * @param env - Environment to open the lookup with.
+ * @returns A refusal, or `undefined` when the Stack may be used.
+ */
+async function namedStackProblem(
+  stackId: string,
+  env: NodeJS.ProcessEnv,
+): Promise<Refusal | undefined> {
+  const configured = (env[AKS_DATABASE_URL_ENV_VAR] ?? "").trim();
+  if (configured === "") return undefined;
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    return (await stackExists(dimensionsDb.db, stackId)) ? undefined : { unknownStack: stackId };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { unavailable: `Could not verify Stack '${stackId}': ${detail}` };
+  } finally {
+    await dimensionsDb.close();
+  }
 }
 
 /** True when a helper handed back the "no such Stack" marker. */

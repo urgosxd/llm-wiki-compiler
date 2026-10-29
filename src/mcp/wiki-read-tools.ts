@@ -43,7 +43,8 @@ import type { PageListingSource } from "@atomicstrata/llmwiki-core/compiler-cli"
 import { createDimensionsDatabase } from "../dimensions/activation.js";
 import { createPageListingSource } from "../dimensions/wiki/page-write-sink.js";
 import { jsonResult } from "./result.js";
-import { withRequestEnv } from "./tenant-db.js";
+import { isRefusal, refusalResult, withRequestEnv } from "./tenant-db.js";
+import type { Refusal } from "./tenant-db.js";
 import { STACK_ID_SCHEMA } from "./stack-arg.js";
 
 /** The namespaces `read_page` searches, in the order it has always documented. */
@@ -108,6 +109,7 @@ function registerQueryTool(server: McpServer, root: string): void {
           ),
         ),
       );
+      if (isRefusal(result)) return refusalResult(result);
       return jsonResult(result);
     },
   );
@@ -131,7 +133,7 @@ function registerSearchTool(server: McpServer, root: string): void {
       ensureProviderAvailable();
       // One source for ranking AND hydration, or a Stack-backed wiki ranks against
       // rows and then finds none of them on disk.
-      const { records, refs, warnings } = await withRequestEnv(stackId, (env) =>
+      const found = await withRequestEnv(stackId, (env) =>
         withRegistrySource(env, async (registrySource) => {
           const selected = await pickSearchRefs(root, question, { registrySource });
           return {
@@ -140,9 +142,11 @@ function registerSearchTool(server: McpServer, root: string): void {
           };
         }),
       );
+      if (isRefusal(found)) return refusalResult(found);
+      // `records` is the internal name; the envelope has always called it `pages`.
       // S6: surface degrade warnings in the RESULT payload (not a log) so an
       // agent SEES that an outdated index meant lexical-only contribution.
-      return jsonResult({ pages: records, refs, warnings });
+      return jsonResult({ pages: found.records, refs: found.refs, warnings: found.warnings });
     },
   );
 }
@@ -226,6 +230,10 @@ function registerReadTool(server: McpServer, root: string): void {
       const page = await withRequestEnv(stackId, (env) =>
         withPageSource(env, (pageSource) => readPageBySlug(root, slug, pageSource)),
       );
+      // A nonexistent Stack is a REFUSAL, distinct from a missing page: the caller
+      // asked about a wiki that is not there, so "Page not found" would be true and
+      // misleading at once.
+      if (isRefusal(page)) return refusalResult(page);
       // Thrown, not returned as an isError result: this tool has always surfaced a
       // missing page as a rejection, and a caller that switches on the outcome would
       // silently start seeing "success" for a slug that does not exist.
@@ -251,6 +259,7 @@ function registerLintTool(server: McpServer, root: string): void {
       // argument here would promise an isolation it does not deliver. The parameter is
       // present for surface consistency and documented in the audit as unwired.
       const summary = await withRequestEnv(stackId, () => lint(root));
+      if (isRefusal(summary)) return refusalResult(summary);
       return jsonResult(summary);
     },
   );
@@ -273,12 +282,13 @@ function registerStatusTool(server: McpServer, root: string): void {
         "the true totals. Read-only — never modifies the workspace.",
       inputSchema: { stackId: STACK_ID_SCHEMA },
     },
-    async ({ stackId }) =>
-      jsonResult(
-        await withRequestEnv(stackId, (env) =>
-          withPageScan(env, (pageScan) => collectStatus(root, { pageScan })),
-        ),
-      ),
+    async ({ stackId }) => {
+      const status = await withRequestEnv(stackId, (env) =>
+        withPageScan(env, (pageScan) => collectStatus(root, { pageScan })),
+      );
+      if (isRefusal(status)) return refusalResult(status);
+      return jsonResult(status);
+    },
   );
 }
 
@@ -342,7 +352,7 @@ interface ContextPackToolArgs {
 async function buildContextPackFromArgs(
   root: string,
   args: ContextPackToolArgs,
-): Promise<Awaited<ReturnType<typeof buildContextPack>>> {
+): Promise<Awaited<ReturnType<typeof buildContextPack>> | Refusal> {
   return withRequestEnv(args.stackId, (env) =>
     withRegistrySource(env, (registryPageSource) =>
       withEmbeddingStoreSource(env, (embeddingStoreSource) =>
@@ -377,6 +387,10 @@ function registerContextPackTool(server: McpServer, root: string): void {
         "`query_wiki` to GENERATE a grounded natural-language answer.",
       inputSchema: contextPackInputSchema(),
     },
-    async (args) => jsonResult(await buildContextPackFromArgs(root, args)),
+    async (args) => {
+      const pack = await buildContextPackFromArgs(root, args);
+      if (isRefusal(pack)) return refusalResult(pack);
+      return jsonResult(pack);
+    },
   );
 }

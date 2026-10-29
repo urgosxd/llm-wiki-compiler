@@ -54,7 +54,7 @@ import { registerJobTools } from "./job-tools.js";
 import { registerStackTools } from "./stack-tools.js";
 import { registerWikiReadTools } from "./wiki-read-tools.js";
 import { STACK_ID_SCHEMA } from "./stack-arg.js";
-import { withRequestEnv } from "./tenant-db.js";
+import { isRefusal, refusalResult, withRequestEnv } from "./tenant-db.js";
 
 /** Register all 10 wiki tools on the given MCP server instance. */
 export function registerWikiTools(server: McpServer, root: string): void {
@@ -108,6 +108,7 @@ function registerCompileTool(server: McpServer, root: string): void {
       // Stack from the environment, and inventing a second argument would let a compile
       // write to one Stack while its reads came from another.
       const result = await withRequestEnv(stackId, () => compileAndReport(root));
+      if (isRefusal(result)) return refusalResult(result);
       return jsonResult(result);
     },
   );
@@ -156,6 +157,7 @@ function registerEvalTool(server: McpServer, root: string): void {
       const report = await withRequestEnv(stackId, () =>
         runEval(root, suite, sampleSize ?? DEFAULT_SAMPLE_SIZE, record ?? false),
       );
+      if (isRefusal(report)) return refusalResult(report);
       return jsonResult(report);
     },
   );
