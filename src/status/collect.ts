@@ -212,8 +212,8 @@ export interface CollectStatusOptions {
 
 /** The Stack's own documents, as the status needs them. */
 export interface SourceDocumentListing {
-  /** Source identities, i.e. the `source` values a compile compares against. */
-  list(): Promise<Array<{ sourceIdentity: string }>>;
+  /** Source identities and their stored hashes, as a compile compares them. */
+  list(): Promise<Array<{ sourceIdentity: string; contentHash: string }>>;
 }
 
 /** Build a read-only status snapshot used by the `wiki_status` MCP tool. */
@@ -222,15 +222,20 @@ export async function collectStatus(
   options: CollectStatusOptions = {},
 ): Promise<WikiStatus> {
   const classified = await readStateClassifiedFor(root);
-  const snapshot = await buildFreshnessSnapshot(root, classified);
+  // The corpus comes from the Stack when one is configured, for the snapshot as well as
+  // for the pending list: a snapshot that judges `exists` against `sources/` reported
+  // every Stack source as deleted, because its keys are capability URLs and no such
+  // file is ever on disk.
+  const stackDocuments = options.sourceDocuments === undefined
+    ? undefined
+    : await options.sourceDocuments.list();
+  const snapshot = await buildFreshnessSnapshot(root, classified, stackDocuments);
 
   const scan = options.pageScan;
   // Rows are authoritative when a Stack is configured, exactly as in `detectChanges`.
   // The directory is consulted only when it is not, so a project that never opted into
   // the backend keeps reporting the same numbers it always did.
-  const sourceFilesOnDisk = options.sourceDocuments === undefined
-    ? undefined
-    : (await options.sourceDocuments.list()).map((doc) => doc.sourceIdentity);
+  const sourceFilesOnDisk = stackDocuments?.map((doc) => doc.sourceIdentity);
   const [conceptSummaries, queries, scannedConcepts, pendingCandidates, filesFromDisk] = await Promise.all([
     // Summaries are DERIVED from the same scan the classification uses, so a row
     // listing cannot report a page count that disagrees with its own stale list.
