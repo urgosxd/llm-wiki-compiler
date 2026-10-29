@@ -59,7 +59,7 @@ export type { AppendRelationInput } from "./relations/store.js";
 export { pickSearchRefs, loadSelectedRefs } from "./search/retrieval.js";
 export { listSelectedSourceFiles } from "./sources/scan.js";
 export { collectStatus } from "./status/collect.js";
-export { withPageScan, withPageSource, withRegistrySource, withEmbeddingStoreSource, readStateClassifiedFor } from "./dimensions/wiki/page-source-seam.js";
+export { withPageScan, withPageSource, withRegistrySource, withEmbeddingStoreSource, withSourceDocuments, readStateClassifiedFor } from "./dimensions/wiki/page-source-seam.js";
 export { getPage, listPages } from "./pages/list.js";
 export type { Page, PageRef, PageDirectory, PageListingSource } from "./pages/list.js";
 export type { TrustDecision } from "./trust/decision.js";

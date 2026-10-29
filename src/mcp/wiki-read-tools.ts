@@ -38,6 +38,7 @@ import {
   withPageScan,
   withPageSource,
   withRegistrySource,
+  withSourceDocuments,
 } from "@atomicstrata/llmwiki-core/compiler-cli";
 import type { PageListingSource } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { createDimensionsDatabase } from "../dimensions/activation.js";
@@ -284,7 +285,11 @@ function registerStatusTool(server: McpServer, root: string): void {
     },
     async ({ stackId }) => {
       const status = await withRequestEnv(stackId, (env) =>
-        withPageScan(env, (pageScan) => collectStatus(root, { pageScan })),
+        withPageScan(env, (pageScan) =>
+          withSourceDocuments(env, (sourceDocuments) =>
+            collectStatus(root, { pageScan, sourceDocuments }),
+          ),
+        ),
       );
       if (isRefusal(status)) return refusalResult(status);
       return jsonResult(status);

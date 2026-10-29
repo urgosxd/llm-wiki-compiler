@@ -32,6 +32,8 @@ import type { WikiState } from "../../utils/types.js";
 import { readStateClassifiedFromRows, writeWikiStateToRows } from "./wiki-state-source.js";
 import { createRegistryPageSource } from "./page-registry-source.js";
 import { databaseEmbeddingSource } from "../../utils/embeddings-database.js";
+import { listSourceDocuments } from "./source-documents-store.js";
+import type { SourceDocumentListing } from "../../status/collect.js";
 import type { EmbeddingStoreSource } from "../../utils/embeddings-load.js";
 import type { RegistryPageSource } from "../../utils/page-registry.js";
 import {
@@ -88,6 +90,41 @@ export async function withPageScan<T>(
   const dimensionsDb = createDimensionsDatabase(env);
   try {
     return await fn(createPageScanSource(dimensionsDb.db, stackId));
+  } finally {
+    await dimensionsDb.close();
+  }
+}
+
+/**
+ * Run `fn` with the row-backed SOURCE DOCUMENT listing, or `undefined` for the directory.
+ *
+ * ## Why this is separate from `withPageScan`
+ *
+ * Sources and pages live in different tables and answer different questions. The
+ * status surface needs both, and it had only adopted the page one: `wiki_status`
+ * reported a Stack's pages from rows while computing its pending changes against the
+ * repository's own `sources/` directory. Measured consequence on a one-document Stack:
+ * `pages: 1, sources: 1` beside `pendingChanges: 23`, every one of the 23 an unrelated
+ * file in the checkout that the Stack had never contained.
+ *
+ * `detectChanges` already reads rows when a Stack is configured; this exposes the same
+ * authority to the read surfaces so the two cannot disagree.
+ *
+ * @param env - Environment to read the Stack from.
+ * @param fn - Receives the listing, or `undefined` to read `sources/` from disk.
+ * @returns Whatever `fn` returns.
+ */
+export async function withSourceDocuments<T>(
+  env: NodeJS.ProcessEnv,
+  fn: (listing: SourceDocumentListing | undefined) => Promise<T>,
+): Promise<T> {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return fn(undefined);
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    return await fn({
+      list: async () => listSourceDocuments(dimensionsDb.db, stackId),
+    });
   } finally {
     await dimensionsDb.close();
   }
