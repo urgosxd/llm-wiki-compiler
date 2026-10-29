@@ -27,6 +27,28 @@ uploads
 tmp
 *.log
 
+# Local analysis caches. Both are listed in `.gitignore` because they are
+# regenerable state, and both were missing here: `.codegraph` alone is 146 MB of
+# index data that the build never reads, so every build shipped it to the daemon.
+.codegraph
+**/.codegraph
+.fallow
+**/.fallow
+.atl
+**/.atl
+
+# Remaining `.gitignore` entries that describe local state rather than source.
+# Kept in one block so the two ignore files can be diffed against each other and
+# the next one nobody notices is visible as a missing line rather than as a slow
+# build.
+.llm-wiki
+localdocs
+*-wiki
+.sisyphus
+.DS_Store
+*.tmp
+log.md
+
 # Documentation, planning records, and agent configuration. None of it is imported
 # by the build, and `odd/` alone is several megabytes of markdown.
 docs
