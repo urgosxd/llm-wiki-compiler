@@ -1,4 +1,10 @@
+# Every real environment file, not just the bare `.env`. A committed `.env.prod`
+# would carry provider keys and database passwords; `.dockerignore` already
+# excludes `.env.*`, and this keeps git from disagreeing with it.
 .env
+.env.*
+!.env.example
+!.env.synthetic.example
 node_modules/
 dist/
 .llmwiki/

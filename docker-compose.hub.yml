@@ -99,6 +99,19 @@ services:
       # una diferencia guarda vectores que el store no puede comparar.
       EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
       EXTRACTION_MODEL: ${LLMWIKI_MODEL:-gpt-4o-mini}
+      # These four are read by the code but were missing here, so setting them in
+      # `.env` had no effect inside the container: compose passes only what it
+      # declares. Defaults below mirror the source constants so an unset value
+      # behaves exactly as it does outside Docker.
+      #   COMPILE_CONCURRENCY   src/utils/constants.ts (5, clamped to 50)
+      #   MAX_TOKENS            src/utils/llm.ts (4096)
+      #   EMBED_BATCH_SIZE      src/utils/constants.ts (per-provider fallback 64)
+      # Empty REASONING_EFFORT is safe: the provider returns the model's default
+      # when the value is blank, and rejects anything outside the known set.
+      LLMWIKI_COMPILE_CONCURRENCY: ${LLMWIKI_COMPILE_CONCURRENCY:-5}
+      LLMWIKI_MAX_TOKENS: ${LLMWIKI_MAX_TOKENS:-4096}
+      LLMWIKI_EMBED_BATCH_SIZE: ${LLMWIKI_EMBED_BATCH_SIZE:-64}
+      LLMWIKI_OPENAI_REASONING_EFFORT: ${LLMWIKI_OPENAI_REASONING_EFFORT:-}
       LLMWIKI_ROOT: /work
     stdin_open: true
     volumes:
