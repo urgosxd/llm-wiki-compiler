@@ -225,6 +225,7 @@ export async function embedTextBatch(
   batchSize: number,
   expectedDim?: number,
   inputType: EmbeddingInputType = "document",
+  onSettled?: (completed: number, total: number) => void,
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
   const out: number[][] = [];
@@ -238,6 +239,10 @@ export async function embedTextBatch(
       }
       throw err;
     }
+    // Report per settled SUB-BATCH, not per item: the provider answers a whole
+    // batch at once, so items within one are not individually observable, and
+    // claiming per-item resolution would be fabricated progress.
+    onSettled?.(out.length, texts.length);
   }
   return out;
 }
@@ -263,9 +268,12 @@ export async function embedWorkItems<T>(
   pass: "page" | "chunk",
   batchSize: number,
   expectedDim?: number,
+  onSettled?: (completed: number, total: number) => void,
 ): Promise<number[][]> {
   try {
-    return await embedTextBatch(provider, items.map(getText), batchSize, expectedDim);
+    return await embedTextBatch(
+      provider, items.map(getText), batchSize, expectedDim, "document", onSettled,
+    );
   } catch (err) {
     throw enrichEmbedError(err, pass, getLabel);
   }

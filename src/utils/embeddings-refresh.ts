@@ -28,6 +28,7 @@
  */
 
 import { updateEmbeddingsLockedCore, type EmbeddingStoreLocation } from "./embeddings.js";
+import type { EmbeddingProgressCallback } from "./embeddings-write.js";
 import { handleSafeEmbeddingFailure } from "./embeddings-batch.js";
 import { embeddingsDisabled } from "./embeddings-config.js";
 import { ENV_EMBEDDINGS } from "./constants.js";
@@ -64,6 +65,9 @@ import type { EmbeddingPageSource } from "../dimensions/wiki/page-scan-source.js
  * @param root - Absolute project root the marker is confined under.
  * @param changedPageIds - Qualified page-ids changed this run (may be empty —
  *   the prior pending entries are still drained).
+ * @param onProgress - Optional page-record progress sink. Forwarded only; the drain
+ *   never inspects it, so a caller's progress contract cannot leak into the durable
+ *   marker lifecycle. Optional so callers with no progress surface are unaffected.
  * @precondition The caller MUST hold the project lock across this call.
  */
 export async function refreshEmbeddingsDrainingPending(
@@ -71,6 +75,7 @@ export async function refreshEmbeddingsDrainingPending(
   changedPageIds: PageId[],
   store?: EmbeddingStoreLocation,
   pageSource?: EmbeddingPageSource,
+  onProgress?: EmbeddingProgressCallback,
 ): Promise<void> {
   if (embeddingsDisabled()) {
     verbose(`embeddings: skipped because ${ENV_EMBEDDINGS} disables refreshes`);
@@ -83,7 +88,7 @@ export async function refreshEmbeddingsDrainingPending(
   await retry.recordPending();
   try {
     const { embedded, eligible, pruned } = await updateEmbeddingsLockedCore(
-      root, retry.pageIds, (ids) => retry.prepare(ids), store, pageSource,
+      root, retry.pageIds, (ids) => retry.prepare(ids), store, pageSource, onProgress,
     );
     await retry.succeed([...embedded, ...pruned], eligible);
   } catch (err) {

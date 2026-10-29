@@ -39,7 +39,7 @@ import { loadProfile } from "../profile/load.js";
 import { migrateEmbeddingStore } from "./embeddings-migrate.js";
 import { collectEligibleLivePages, requestedPagesExistence, type PageExistence, type CollectedPage } from "./embeddings-collect.js";
 import type { EmbeddingPageSource } from "../dimensions/wiki/page-scan-source.js";
-import { reembedIntoStore, type ReembedReport } from "./embeddings-write.js";
+import { reembedIntoStore, type EmbeddingProgressCallback, type ReembedReport } from "./embeddings-write.js";
 import type { PageId } from "./page-id.js";
 import { ENV_EMBEDDINGS } from "./constants.js";
 import { embeddingsDisabled } from "./embeddings-config.js";
@@ -87,6 +87,9 @@ export async function updateEmbeddings(root: string, changedPageIds: PageId[]): 
  *   ground-truth "persisted". `eligible` = the live-eligible universe the core
  *   considered. (For the pending-marker lifecycle the over-inclusion is benign — an
  *   over-cleared id that is still eligible is simply re-queued on the next compile.)
+ * @param onProgress - Optional page-record progress sink, forwarded to the writer so a
+ *   caller that publishes job progress can show the embedding pass advancing. Optional
+ *   so every existing caller keeps compiling.
  */
 export async function updateEmbeddingsLockedCore(
   root: string,
@@ -94,6 +97,7 @@ export async function updateEmbeddingsLockedCore(
   prepare?: (pageIds: PageId[]) => Promise<PageId[]>,
   store?: EmbeddingStoreLocation,
   pageSource?: EmbeddingPageSource,
+  onProgress?: EmbeddingProgressCallback,
 ): Promise<{ embedded: PageId[]; eligible: PageId[]; pruned: PageId[] }> {
   if (embeddingsDisabled()) {
     output.verbose(`embeddings: skipped because ${ENV_EMBEDDINGS} disables refreshes`);
@@ -134,7 +138,7 @@ export async function updateEmbeddingsLockedCore(
   // with nothing eligible stays clean — never materialize an empty store.
   if (!shouldPersist(parsedOld, migrated, reembed, onDiskVersion)) return { embedded: [], eligible, pruned };
 
-  await embedAndPersist(root, migrated, collected, reembed, onDiskVersion, store?.sink);
+  await embedAndPersist(root, migrated, collected, reembed, onDiskVersion, store?.sink, onProgress);
   // The re-embed INTENT set (what we attempted). It may over-include an id the
   // writer skips — see the @returns note; the marker lifecycle tolerates that.
   return { embedded: [...reembed], eligible, pruned };
@@ -202,10 +206,13 @@ async function embedAndPersist(
   reembed: Set<PageId>,
   onDiskVersion: number,
   sink?: EmbeddingStoreSink,
+  onProgress?: EmbeddingProgressCallback,
 ): Promise<void> {
   const batchSize = resolveEmbedBatchSize(getActiveEmbeddingProviderName());
   const expectedDim = migrated.dimensions > 0 ? migrated.dimensions : undefined;
-  const { store, report } = await reembedIntoStore(migrated, collected, reembed, batchSize, expectedDim);
+  const { store, report } = await reembedIntoStore(
+    migrated, collected, reembed, batchSize, expectedDim, onProgress,
+  );
   // Stamp the identity of the configuration that actually produced these vectors.
   // Done here, at the single write boundary, so no path can persist a store whose
   // provenance is unrecorded — that is what the next read gates preservation on.

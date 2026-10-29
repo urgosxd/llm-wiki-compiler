@@ -114,10 +114,14 @@ describe("LLMWIKI_EMBEDDINGS", () => {
     // The arity was stale rather than the intent being wrong. `updateEmbeddingsLockedCore`
     // gained a fifth parameter (`pageSource`) when the wiki began reading pages from
     // `wiki.source_documents`; the call this asserts is
-    // `(root, ids, prepare, store, pageSource)`, so pinning four arguments failed on a
-    // shape that is still correct. Naming both undefineds keeps the original claim --
-    // no handle, no row backend -- and now covers the seam that was added.
-    expect(provider).toHaveBeenCalledWith(root, [], expect.any(Function), undefined, undefined);
+    // `(root, ids, prepare, store, pageSource, onProgress)`, so pinning four arguments
+    // failed on a shape that is still correct. Naming every undefined keeps the original
+    // claim -- no handle, no row backend -- and now covers the seams that were added.
+    //
+    // The trailing argument is the optional job-progress sink. It is undefined here
+    // because this refresh has no observer; extending the signature again means
+    // updating this exact list on purpose, not loosening it.
+    expect(provider).toHaveBeenCalledWith(root, [], expect.any(Function), undefined, undefined, undefined);
     expect(existsSync(pendingPath())).toBe(false);
   });
 

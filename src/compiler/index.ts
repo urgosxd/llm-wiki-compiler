@@ -1001,7 +1001,7 @@ async function finalizeWiki(
   await regenerateIndices(root, process.env);
   if (embeddings) {
     await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(
-      root, allChangedSlugs, embeddingStore, embeddingPageSource,
+      root, allChangedSlugs, embeddingStore, embeddingPageSource, jobObserver?.compile,
     ), () => reportCompileStage(jobObserver?.compile, "compile.embeddings"));
   }
 }
@@ -1217,8 +1217,39 @@ async function safelyUpdateEmbeddings(
   changedSlugs: string[],
   embeddingStore?: EmbeddingStoreLocation,
   pageSource?: EmbeddingPageSource,
+  progressReporter?: CompileProgressReporter,
 ): Promise<void> {
   const conceptsNamespace = path.basename(CONCEPTS_DIR);
   const changedPageIds = changedSlugs.map((slug) => qualifiedPageId(conceptsNamespace, slug));
-  await refreshEmbeddingsDrainingPending(root, changedPageIds, embeddingStore, pageSource);
+  const onProgress = progressCallbackFor(progressReporter);
+  await refreshEmbeddingsDrainingPending(root, changedPageIds, embeddingStore, pageSource, onProgress);
+}
+
+/**
+ * Build the embeddings-stage progress sink, or `undefined` when no job is tracked.
+ *
+ * WHY an undefined sink rather than a no-op: reporting nothing and reporting into a
+ * throwaway object are different claims, and the refresh layer must be able to tell
+ * "no observer" from "observer that discards" when it decides to skip the work the
+ * callback implies. Delegating to {@link reportCompileProgress} keeps the `total <= 0`
+ * and clamping rules in the one place that already owns them.
+ *
+ * The sink swallows a reporter failure on purpose: telemetry is not a compile input,
+ * and a throwing progress consumer must not abort an embedding pass whose vectors
+ * were already paid for.
+ *
+ * @param reporter - The compile half of the job observer, when a job is tracked.
+ * @returns A page-record progress sink, or `undefined` when there is nothing to report to.
+ */
+function progressCallbackFor(
+  reporter: CompileProgressReporter | undefined,
+): ((completed: number, total: number) => void) | undefined {
+  if (reporter === undefined) return undefined;
+  return (completed, total) => {
+    try {
+      reportCompileProgress(reporter, completed, total);
+    } catch {
+      // A progress sink failing says nothing about the embeddings themselves.
+    }
+  };
 }
