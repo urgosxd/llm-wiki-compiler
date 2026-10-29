@@ -50,7 +50,7 @@ it("publishes exact direct-save bytes, leaves same-slug concept unchanged and re
     .mocked(updateEmbeddingsLockedCore)
     .mock.calls.filter((call) => JSON.stringify(call[1]) === JSON.stringify(["queries/answer"]));
   expect(approvedPageEmbeddings).toHaveLength(1);
-  expect(approvedPageEmbeddings[0]?.slice(3)).toEqual([undefined, undefined, undefined]);
+  expect(approvedPageEmbeddings[0]?.slice(3)).toEqual([undefined, undefined, undefined, undefined]);
   await expect(candidateBytes(root.dir, candidate.id)).rejects.toMatchObject({ code: "ENOENT" });
 });
 

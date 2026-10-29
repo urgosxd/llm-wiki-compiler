@@ -1222,7 +1222,36 @@ async function safelyUpdateEmbeddings(
   const conceptsNamespace = path.basename(CONCEPTS_DIR);
   const changedPageIds = changedSlugs.map((slug) => qualifiedPageId(conceptsNamespace, slug));
   const onProgress = progressCallbackFor(progressReporter);
-  await refreshEmbeddingsDrainingPending(root, changedPageIds, embeddingStore, pageSource, onProgress);
+  await refreshEmbeddingsDrainingPending(
+    root, changedPageIds, embeddingStore, pageSource, onProgress, detailCallbackFor(progressReporter),
+  );
+}
+
+/**
+ * Build the sink that publishes chunk/request cardinalities, or `undefined` with
+ * no job tracked.
+ *
+ * Kept apart from {@link progressCallbackFor} rather than folded into one sink:
+ * these numbers are totals for the finished stage, not a position inside it, and
+ * a consumer must be able to render the cardinality without implying the bar is
+ * about chunks. Omits a count that is zero instead of sending `0`, because
+ * "absent" and "zero chunks embedded" are different facts and only one of them
+ * is worth telling an operator.
+ *
+ * @param reporter - The compile half of the job observer, when a job is tracked.
+ * @returns A detail sink, or `undefined` when there is nothing to report to.
+ */
+function detailCallbackFor(
+  reporter: CompileProgressReporter | undefined,
+): ((detail: { chunks: number; requests: number }) => void) | undefined {
+  if (reporter === undefined) return undefined;
+  return ({ chunks, requests }) => {
+    try {
+      reporter.detail({ ...(chunks > 0 ? { chunks } : {}), ...(requests > 0 ? { requests } : {}) });
+    } catch {
+      // Telemetry is not a compile input; a throwing consumer must not fail the run.
+    }
+  };
 }
 
 /**

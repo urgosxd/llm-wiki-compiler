@@ -121,7 +121,7 @@ describe("LLMWIKI_EMBEDDINGS", () => {
     // The trailing argument is the optional job-progress sink. It is undefined here
     // because this refresh has no observer; extending the signature again means
     // updating this exact list on purpose, not loosening it.
-    expect(provider).toHaveBeenCalledWith(root, [], expect.any(Function), undefined, undefined, undefined);
+    expect(provider).toHaveBeenCalledWith(root, [], expect.any(Function), undefined, undefined, undefined, undefined);
     expect(existsSync(pendingPath())).toBe(false);
   });
 

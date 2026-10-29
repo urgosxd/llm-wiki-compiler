@@ -75,6 +75,7 @@ describe("ingest job progress", () => {
           progress: (value) => {
             if (value !== null) seen.push(value);
           },
+          detail: () => undefined,
         },
       },
     });

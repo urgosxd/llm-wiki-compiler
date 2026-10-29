@@ -49,6 +49,15 @@ export interface ReembedReport {
 export type EmbeddingProgressCallback = (completed: number, total: number) => void;
 
 /**
+ * Reports the settled cardinalities once the embedding pass finishes.
+ *
+ * Separate from {@link EmbeddingProgressCallback} because these are totals, not a
+ * running position: chunks are only known after the chunk pass, and a consumer
+ * must be able to tell a final cardinality from a ratio it can divide.
+ */
+export type EmbeddingDetailCallback = (detail: { chunks: number; requests: number }) => void;
+
+/**
  * Re-embed `reembedIds` against `collected`, returning a v3 store whose page and
  * chunk records for those ids are freshly embedded and merged over `migrated`.
  * Ids absent from `collected` (deleted / ineligible) are skipped — never embedded.
@@ -67,6 +76,7 @@ export async function reembedIntoStore(
   batchSize: number,
   expectedDim: number | undefined,
   onProgress?: EmbeddingProgressCallback,
+  onDetail?: EmbeddingDetailCallback,
 ): Promise<{ store: EmbeddingStoreV3; report: ReembedReport }> {
   const byId = new Map(collected.map((p) => [p.pageId, p]));
   const targets = [...reembedIds].map((id) => byId.get(id)).filter((p): p is CollectedPage => Boolean(p));
@@ -81,10 +91,15 @@ export async function reembedIntoStore(
 
   const reembedSet = new Set(targets.map((p) => p.pageId));
   const store = mergeReembedded(migrated, pageEntries, chunkEntries, reembedSet);
-  return {
-    store,
-    report: { pagesEmbedded: pageEntries.length, chunksEmbedded: chunkEntries.length, requests: requestCount() },
+  const report = {
+    pagesEmbedded: pageEntries.length,
+    chunksEmbedded: chunkEntries.length,
+    requests: requestCount(),
   };
+  // Chunks are only knowable after the chunk pass, so the cardinality is
+  // published once here rather than interpolated during the page pass.
+  onDetail?.({ chunks: report.chunksEmbedded, requests: report.requests });
+  return { store, report };
 }
 
 /** Embed the page-level vector for each target, keyed by pageId with its text hash. */
