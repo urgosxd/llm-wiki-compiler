@@ -185,7 +185,9 @@ function acceptAsyncIngest(
     writeJsonError(res, 503, "jobs_unavailable", "this host does not track ingest jobs");
     return;
   }
-  const job = registry.create(source, new Date());
+  // The Stack travels into the MIRROR, not only into the pipeline: the durable row is
+  // what a client reads back by id, so a job named in B must be findable under B.
+  const job = registry.create(source, new Date(), stackId);
   const accepted: IngestJobAccepted = {
     jobId: job.id,
     status: job.ingest.status,
@@ -255,7 +257,7 @@ async function readIngestRequest(
     writeJsonError(res, 400, "invalid_request", "body must be {\"source\": \"<url-or-path>\"}");
     return undefined;
   }
-  const stackId = request?.stackId;
+  const stackId = resolveRequestStack(req, request);
   if (stackId !== undefined) {
     const problem = stackIdProblem(stackId);
     if (problem !== undefined) {
@@ -264,6 +266,26 @@ async function readIngestRequest(
     }
   }
   return { ...request, source, ...(stackId === undefined ? {} : { stackId }) };
+}
+
+/**
+ * The Stack an ingest request names, from the query string or the body.
+ *
+ * Query first because the routes that READ jobs take `?stackId=`. A client that writes
+ * and reads with one shape would otherwise have to know that create alone wants it in
+ * the body -- and silently writing to the host's Stack looks like success until the
+ * read 404s with the row somewhere else.
+ *
+ * @param req - The incoming request, for its query string.
+ * @param request - The parsed body, when it parsed.
+ * @returns The named Stack, or `undefined` to use the host's binding.
+ */
+function resolveRequestStack(
+  req: IncomingMessage,
+  request: IngestRequest | undefined,
+): string | undefined {
+  const fromQuery = new URL(req.url ?? "/", "http://localhost").searchParams.get("stackId");
+  return fromQuery ?? request?.stackId;
 }
 
 /**

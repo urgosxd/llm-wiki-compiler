@@ -74,8 +74,14 @@ function isSettled(job: IngestJob): boolean {
 
 /** The registry surface the HTTP layer and the pipelines use. */
 export interface JobRegistry {
-  /** Mint and store a job in its `queued` state. */
-  create(source: string, now: Date): IngestJob;
+  /**
+   * Mint and store a job in its `queued` state.
+   *
+   * `stackId` is the Stack the caller named, when it named one. It rides on the
+   * creation call rather than on the registry because one host serves several Stacks
+   * and the choice belongs to the request. Omitted, the host's bound Stack applies.
+   */
+  create(source: string, now: Date, stackId?: string): IngestJob;
   /** Current snapshot of `id`, or `undefined` when unknown, evicted, or expired. */
   get(id: string): IngestJob | undefined;
   /** Every retained job, newest first. */
@@ -142,7 +148,7 @@ export function createJobRegistry(): JobRegistry {
   const jobs = new Map<string, IngestJob>();
 
   return {
-    create(source, now) {
+    create(source, now, stackId) {
       const at = now.toISOString();
       const job: IngestJob = {
         id: `ing_${ulid()}`,

@@ -39,7 +39,19 @@ import type { Database } from "llmwiki-kg";
 export interface DurableRegistryOptions {
   /** Handle used for the mirror. */
   readonly db: Database;
-  /** Tenant every job of this host belongs to. */
+  /**
+   * The Stack a job belongs to, when the caller names one.
+   *
+   * A function rather than a string because ONE host now serves several Stacks: the
+   * request decides which, and the decision arrives with the job rather than with the
+   * registry. Binding a single Stack here made `stackId` on `POST /api/ingest` a lie --
+   * the live registry got the requested Stack while the durable row went to the host's
+   * startup Stack, so reading the job back under the requested id returned 404.
+   *
+   * Absent, the host's bound Stack is used, which is the single-tenant behaviour.
+   */
+  readonly stackIdFor?: (job: IngestJob) => string | undefined;
+  /** Tenant every job of this host belongs to, when none is named. */
   readonly stackId: string;
   /** Called when a mirror write fails. Never rethrown: see the file header. */
   readonly onError?: (error: unknown) => void;
@@ -60,17 +72,34 @@ export function createDurableJobRegistry(
     if (options.onError !== undefined) options.onError(error);
   };
 
+  /**
+   * Stack each job was created in.
+   *
+   * Remembered from creation because the transitions that follow carry no Stack of
+   * their own -- `patchIngest`/`patchCompile` name a job id and nothing else. Without
+   * this, a job created in B would mirror its first transition back into A, which is
+   * the same wrong-tenant write one step later.
+   */
+  const stacksByJob = new Map<string, string>();
+
+  /** The Stack this job belongs to: the caller's when named, else the bound one. */
+  const stackIdOf = (job: IngestJob): string =>
+    stacksByJob.get(job.id) ?? options.stackIdFor?.(job) ?? options.stackId;
+
   /** Persist whatever `inner` now holds for `id`, if it holds anything. */
   const mirror = (id: string): void => {
     const job: IngestJob | undefined = inner.get(id);
     if (job === undefined) return;
-    void saveIngestJob(options.db, options.stackId, job).catch(report);
+    void saveIngestJob(options.db, stackIdOf(job), job).catch(report);
   };
 
   return {
-    create(source, now) {
-      const job = inner.create(source, now);
-      void saveIngestJob(options.db, options.stackId, job).catch(report);
+    create(source, now, stackId) {
+      const job = inner.create(source, now, stackId);
+      if (stackId !== undefined) stacksByJob.set(job.id, stackId);
+      // The Stack comes from THIS call, not from the wrapper's construction: a host
+      // that booted bound to A must still mirror a job the caller created in B.
+      void saveIngestJob(options.db, stackId ?? options.stackId, job).catch(report);
       return job;
     },
     get(id) {
