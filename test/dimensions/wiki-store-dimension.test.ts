@@ -21,6 +21,7 @@ import path from "node:path";
 
 import { createWikiStoreDimension } from "../../src/dimensions/wiki/database.js";
 import { listStoredPages } from "../../src/dimensions/wiki/page-store.js";
+import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
 import type { DimensionInput } from "../../src/dimensions/types.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 
@@ -115,6 +116,63 @@ describe("the stored wiki dimension", () => {
     const forSource = pages.filter((page) => page.slug === "original-name" || page.slug === "new-name");
     expect(forSource).toHaveLength(1);
     expect(forSource[0]?.title).toBe("New Name");
+  }, 30_000);
+
+  it.skipIf(!provisioned)("updates the stored title when ONLY the title changed", async () => {
+    // The case `inputOf` cannot build, because it derives the body from the title.
+    // With the body held constant, a retitle used to report `unchanged` and skip
+    // the write, leaving `wiki.pages.title` on the old value while
+    // `wiki.source_documents.title` and the projected markdown both moved on. Two
+    // stores agreed and one disagreed; this pins the fix.
+    const constantBody = "a body that does not change with the title";
+    const doc = (title: string) => `---\ntitle: ${title}\n---\n${constantBody}`;
+    const at = (title: string): DimensionInput => ({
+      source: "src://title-only",
+      title,
+      document: doc(title),
+      body: constantBody,
+    });
+
+    await write(dimension(), at("Before Retitle"));
+    const committed = await write(dimension(), at("After Retitle"));
+
+    expect(committed.writeStatus).toBe("updated");
+    const pages = await listStoredPages(harness.db, harness.stackId, 200);
+    const stored = pages.filter((page) => page.slug === "before-retitle");
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.title).toBe("After Retitle");
+  }, 30_000);
+
+  it.skipIf(!provisioned)("keeps the compile-written summary across a title-only rename", async () => {
+    // `prepare` and `commit` must not disagree with the other writer: compile owns
+    // `summary`, `tags` and `links` through `upsertStoredPage`, and ingest owns
+    // `title`, `body` and `source_identity`. A rename now reaches the `do update`
+    // where it previously skipped it, so this pins that the narrower update clause
+    // leaves the other writer's columns alone.
+    const constantBody = "body shared by both writers";
+    const at = (title: string): DimensionInput => ({
+      source: "src://writer-split",
+      title,
+      document: `---\ntitle: ${title}\n---\n${constantBody}`,
+      body: constantBody,
+    });
+
+    await write(dimension(), at("Writer Split"));
+    const sink = createPageWriteSink(harness.db, harness.stackId);
+    await sink({
+      directory: "concepts",
+      slug: "writer-split",
+      body: `---\ntitle: Writer Split\nsummary: Written by compile\ntags:\n  - alpha\n---\n${constantBody}`,
+    });
+
+    await write(dimension(), at("Writer Split Renamed"));
+
+    const after = (await listStoredPages(harness.db, harness.stackId, 200)).find(
+      (page) => page.slug === "writer-split",
+    );
+    expect(after?.title).toBe("Writer Split Renamed");
+    expect(after?.summary).toBe("Written by compile");
+    expect(after?.tags).toEqual(["alpha"]);
   }, 30_000);
 
   it.skipIf(!provisioned)("reports unchanged without writing when content is identical", async () => {

@@ -88,6 +88,7 @@ interface StoredWikiWrite {
 /** What a stack's existing page for one source identity looks like. */
 interface ExistingPage {
   readonly slug: string;
+  readonly title: string;
   readonly body: string;
 }
 
@@ -132,8 +133,8 @@ async function findPageBySource(
   source: string,
 ): Promise<ExistingPage | undefined> {
   return withTenant(db, stackId, async (tx) => {
-    const rows = await tx.execute<{ slug: string; body: string }>(sql`
-      select slug, body from wiki.pages
+    const rows = await tx.execute<{ slug: string; title: string; body: string }>(sql`
+      select slug, title, body from wiki.pages
       where stack_id = ${stackId}
         and page_directory = ${CONCEPTS_DIRECTORY}
         and source_identity = ${source}
@@ -220,7 +221,15 @@ async function prepareWikiWrite(
   const existing = await findPageBySource(options.db, options.stackId, input.source);
 
   if (existing !== undefined) {
-    const unchanged = existing.body === input.body;
+    // BOTH fields, because the row stores both and either can change alone.
+    // Comparing only the body made a retitle a silent no-op: the row kept the
+    // old title forever while `wiki.source_documents` and the projected
+    // `sources/<slug>.md` both showed the new one, so the page read differently
+    // depending on which store a caller asked.
+    //
+    // `unchanged` stays the conjunction of both, so a genuinely identical
+    // re-ingest is still a no-op and its journaling is still suppressed.
+    const unchanged = existing.body === input.body && existing.title === input.title;
     const handle: StoredWikiWrite = {
       input,
       slug: existing.slug,
