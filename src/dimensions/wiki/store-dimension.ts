@@ -88,8 +88,33 @@ interface StoredWikiWrite {
 /** What a stack's existing page for one source identity looks like. */
 interface ExistingPage {
   readonly slug: string;
-  readonly title: string;
   readonly body: string;
+}
+
+/**
+ * The title the last INGEST wrote for this source, from the ingest's own table.
+ *
+ * `wiki.pages.title` cannot answer this: `compile` writes those rows too, so the
+ * title there may be compile's rather than the source's. `wiki.source_documents`
+ * is written only by `saveSourceDocument`, which only ingest calls.
+ *
+ * @param db - Database handle.
+ * @param stackId - The tenant.
+ * @param source - Source identity.
+ * @returns The stored title, or `undefined` when this source has no document row.
+ */
+async function findIngestedTitle(
+  db: Database,
+  stackId: string,
+  source: string,
+): Promise<string | undefined> {
+  return withTenant(db, stackId, async (tx) => {
+    const rows = await tx.execute<{ title: string }>(sql`
+      select title from wiki.source_documents
+      where stack_id = ${stackId} and source_identity = ${source}
+    `);
+    return rows[0]?.title;
+  });
 }
 
 /**
@@ -133,8 +158,8 @@ async function findPageBySource(
   source: string,
 ): Promise<ExistingPage | undefined> {
   return withTenant(db, stackId, async (tx) => {
-    const rows = await tx.execute<{ slug: string; title: string; body: string }>(sql`
-      select slug, title, body from wiki.pages
+    const rows = await tx.execute<{ slug: string; body: string }>(sql`
+      select slug, body from wiki.pages
       where stack_id = ${stackId}
         and page_directory = ${CONCEPTS_DIRECTORY}
         and source_identity = ${source}
@@ -221,15 +246,25 @@ async function prepareWikiWrite(
   const existing = await findPageBySource(options.db, options.stackId, input.source);
 
   if (existing !== undefined) {
-    // BOTH fields, because the row stores both and either can change alone.
-    // Comparing only the body made a retitle a silent no-op: the row kept the
-    // old title forever while `wiki.source_documents` and the projected
-    // `sources/<slug>.md` both showed the new one, so the page read differently
-    // depending on which store a caller asked.
+    // Compare against the row's BODY and against the title THIS INGEST last wrote,
+    // not against whatever title the row currently shows.
     //
-    // `unchanged` stays the conjunction of both, so a genuinely identical
-    // re-ingest is still a no-op and its journaling is still suppressed.
-    const unchanged = existing.body === input.body && existing.title === input.title;
+    // `wiki.pages.title` is not ingest's alone: `compile` writes the same row
+    // through `upsertStoredPage`, and a page it retitles would otherwise look
+    // like an ingest-side change on the next re-ingest. Treating that as `updated`
+    // made `commitPageRow` run and revert compile's title back to the source's on
+    // every re-ingest. `wiki.source_documents.title` is the ingest's own record of
+    // what it wrote, so it is the honest term for "did this ingest change
+    // anything".
+    //
+    // `unchanged` stays the conjunction, so a genuinely identical re-ingest is
+    // still a no-op and its journaling is still suppressed.
+    const lastIngestedTitle = await findIngestedTitle(
+      options.db, options.stackId, input.source,
+    );
+    const unchanged =
+      existing.body === input.body &&
+      (lastIngestedTitle === undefined || lastIngestedTitle === input.title);
     const handle: StoredWikiWrite = {
       input,
       slug: existing.slug,

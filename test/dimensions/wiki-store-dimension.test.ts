@@ -175,6 +175,40 @@ describe("the stored wiki dimension", () => {
     expect(after?.tags).toEqual(["alpha"]);
   }, 30_000);
 
+  it.skipIf(!provisioned)("does not revert a compile-set title on a no-op re-ingest", async () => {
+    // The trap the conjunction above can fall into: `wiki.pages.title` is not
+    // ingest's alone. When compile retitles the row, comparing the page's title
+    // to the source's would look like an ingest-side change on the next re-ingest;
+    // the row would then be rewritten and compile's title reverted, on every
+    // re-ingest, forever. Comparing against `wiki.source_documents.title` (the
+    // ingest's own record) is what keeps a no-op a no-op.
+    const constantBody = "body both writers share";
+    const at: DimensionInput = {
+      source: "src://compile-retitle",
+      title: "Source Title",
+      document: `---\ntitle: Source Title\n---\n${constantBody}`,
+      body: constantBody,
+    };
+
+    await write(dimension(), at);
+    const sink = createPageWriteSink(harness.db, harness.stackId);
+    await sink({
+      directory: "concepts",
+      slug: "source-title",
+      body: `---\ntitle: Compiled Title\nsummary: From compile\n---\n${constantBody}`,
+    });
+
+    // An identical re-ingest: same source, same bytes, same title as before.
+    const again = await write(dimension(), at);
+
+    expect(again.writeStatus).toBe("unchanged");
+    const after = (await listStoredPages(harness.db, harness.stackId, 200)).find(
+      (page) => page.slug === "source-title",
+    );
+    expect(after?.title).toBe("Compiled Title");
+    expect(after?.summary).toBe("From compile");
+  }, 30_000);
+
   it.skipIf(!provisioned)("reports unchanged without writing when content is identical", async () => {
     await write(dimension(), inputOf("Idempotent", "src://idem"));
     const again = await write(dimension(), inputOf("Idempotent", "src://idem"));
