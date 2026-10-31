@@ -155,6 +155,35 @@ describe("the kg dimension adapter", () => {
     expect(committed.idempotencyKey).toBe("kg:row-id-from-postgres");
   });
 
+  it("fails prepare when extraction fails, so the coordinator commits nothing", async () => {
+    // This is the atomic-transaction contract: `prepare` throwing is what stops
+    // the whole ingest. Before this, a provider outage produced an empty graph
+    // and the document was committed anyway.
+    extractGraphFromChunks.mockRejectedValue(new Error("provider unavailable after 3 attempts"));
+
+    await expect(dimension().prepare(INPUT)).rejects.toThrow(/provider unavailable/);
+    // Nothing was written, because nothing reached `commit`.
+    expect(registerDocumentRow).not.toHaveBeenCalled();
+  });
+
+  it("reports partially failed extraction in the summary instead of hiding it", async () => {
+    // A document survives a few bad chunks (oracle tolerance), but the commit
+    // summary must say so: 'thin extraction' and 'impaired extraction' are not
+    // the same fact.
+    extractGraphFromChunks.mockResolvedValue({
+      entities: [ENTITY],
+      relationships: [RELATIONSHIP],
+      failedChunks: 2,
+    });
+
+    const prepared = await dimension().prepare(INPUT);
+    const committed = await dimension().commit(prepared);
+
+    expect(committed.summary).toContain("2 chunks failed extraction");
+    // The entities it DID extract are still written.
+    expect(consolidateEntityRows).toHaveBeenCalled();
+  });
+
   it("prefers an explicit database url over the vendored config default", async () => {
     const prepared = await dimension({ databaseUrl: "postgres://explicit" }).prepare(INPUT);
     await dimension({ databaseUrl: "postgres://explicit" }).commit(prepared);

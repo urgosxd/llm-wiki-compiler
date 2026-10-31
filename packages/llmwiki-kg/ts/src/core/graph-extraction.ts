@@ -2,14 +2,25 @@
  * @file packages/llmwiki-kg/ts/src/core/graph-extraction.ts
  * @description Graph extraction: chunk batch → triplets → entities and edges.
  *
+ * ## Two failures, two different answers
+ *
  * A provider failure or an unparseable response for ONE chunk yields no triplets
  * for that chunk and extraction continues, mirroring the oracle's
  * `except (ValueError, TypeError, AttributeError)` around its structured predict.
- * One bad chunk must not fail a document.
+ * One bad chunk must not fail a document, and that tolerance is what lets a
+ * forty-chunk document survive one odd response.
+ *
+ * But when EVERY chunk failed there is no partial result left to protect: either
+ * the provider is down or the credential is wrong. Returning an empty result
+ * there is how the `kg` dimension committed a document with an empty graph while
+ * reporting success -- indistinguishable from a corpus with nothing to extract.
+ * So all-failed raises, and some-failed reports the count in `failedChunks` so
+ * the degradation is visible instead of silent.
  */
 
 import { config } from "../config.js";
 import { callTool } from "./llm_clients.js";
+import { ProviderUnavailableError, withProviderRetry } from "./llm/retry.js";
 import { buildExtractionPrompt, buildToolSchema } from "./graph-prompt.js";
 import {
   parseStandaloneEntities,
@@ -55,14 +66,38 @@ interface ChunkOutput {
    * audit report counts them separately.
    */
   readonly rescued: readonly StandaloneEntity[];
+  /**
+   * Why this chunk produced nothing, or `undefined` when it answered.
+   *
+   * Separate from "returned zero triplets", which is a legitimate answer a model
+   * gives for prose with no facts in it. Collapsing the two is what made an
+   * outage look like a thin corpus. The error itself is carried, not just a flag,
+   * because the caller that decides an outage is fatal has to report WHY.
+   */
+  readonly failure?: unknown;
+}
+
+/** An answer carrying either a result or the reason there is none. */
+function emptyOutput(failure?: unknown): ChunkOutput {
+  return {
+    triplets: [],
+    rejected: [],
+    standalone: [],
+    rescued: [],
+    ...(failure === undefined ? {} : { failure }),
+  };
 }
 
 /**
- * Asks the model for one chunk's triplets, never throwing.
+ * Asks the model for one chunk's triplets, retrying a transient failure.
  *
- * llama_index's `except (ValueError, TypeError, AttributeError)` around
- * `astructured_predict`: a provider failure or a response with no tool call
- * yields no triplets for this chunk, and extraction continues.
+ * The retry wrapper is the first half of the fix for a silent empty graph: one
+ * transient response must not cost a chunk. The `catch` is the second half — it
+ * marks the chunk as failed rather than reporting an empty contribution, so
+ * `extractGraphFromChunks` can tell an outage from a document with no facts.
+ *
+ * A permanent failure (a bad credential) is not retried by the policy and lands
+ * here immediately, which is correct: the answer would not change.
  */
 async function chunkTriplets(
   chunk: ChunkResult,
@@ -71,16 +106,19 @@ async function chunkTriplets(
 ): Promise<ChunkOutput> {
   const prompt = buildExtractionPrompt(chunk.content, chunk.chunkIndex, stackName);
   try {
-    const argumentsJson = await callTool(prompt, buildToolSchema(ontology));
+    const argumentsJson = await withProviderRetry(() =>
+      callTool(prompt, buildToolSchema(ontology)),
+    );
     const standalone = standaloneFor(argumentsJson, ontology);
     if (ontology === undefined) {
       return { triplets: parseTriplets(argumentsJson), rejected: [], standalone, rescued: [] };
     }
     return { ...parseTripletsWithOntology(argumentsJson, ontology), standalone };
-  } catch {
-    // A provider failure yields nothing for this chunk and extraction continues,
-    // exactly as the oracle's `except (ValueError, TypeError, AttributeError)`.
-    return { triplets: [], rejected: [], standalone: [], rescued: [] };
+  } catch (error) {
+    // The retries are spent. Report WHY the chunk produced nothing; whether that
+    // is fatal is decided by the caller, the only place that knows how many
+    // chunks succeeded.
+    return emptyOutput(error);
   }
 }
 
@@ -200,9 +238,11 @@ export async function extractGraphFromChunks(
   const entityMap = new Map<string, ExtractedEntity>();
   const relationshipList: ExtractedRelationship[] = [];
   const rejected: RejectedTriplet[] = [];
+  const failures: unknown[] = [];
 
   for (const chunk of chunks) {
     const batch = await chunkTriplets(chunk, stackName, ontology);
+    if (batch.failure !== undefined) failures.push(batch.failure);
     rejected.push(...batch.rejected);
     for (const triplet of batch.triplets) {
       absorbEndpoints(entityMap, triplet, chunk.chunkIndex);
@@ -224,6 +264,18 @@ export async function extractGraphFromChunks(
     }
   }
 
+  // EVERY chunk failed: there is no partial result to protect, so this is an
+  // outage rather than a thin extraction. Throwing here is what makes the kg
+  // dimension's `prepare` fail, which is what stops the coordinator committing a
+  // document whose graph is empty. Every failure travels with the error, so the
+  // operator sees the endpoint and status rather than only a count.
+  if (failures.length === chunks.length) {
+    throw new ProviderUnavailableError(
+      `extraction failed for all ${chunks.length} chunk(s)`,
+      failures,
+    );
+  }
+
   return {
     entities: [...entityMap.values()],
     relationships: [...mergeRelationships(relationshipList).values()],
@@ -232,5 +284,7 @@ export async function extractGraphFromChunks(
     // Reported only when an ontology was enforced, so a default run keeps the
     // oracle's result shape instead of carrying a permanently empty array.
     ...(ontology === undefined ? {} : { rejected }),
+    // Absent when nothing failed, so the healthy path keeps the oracle's shape.
+    ...(failures.length === 0 ? {} : { failedChunks: failures.length }),
   };
 }

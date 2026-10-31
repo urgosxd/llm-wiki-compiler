@@ -59,8 +59,17 @@ export class ProviderUnavailableError extends Error {
   /** Every failure the run saw, oldest first. */
   readonly failures: readonly unknown[];
 
+  /**
+   * @param message - What the run failed to do, named in the caller's terms.
+   * @param failures - Every failure the run saw, oldest first.
+   */
   constructor(message: string, failures: readonly unknown[]) {
-    super(message);
+    // The FIRST failure is appended, not the last: it is the one that describes
+    // the condition the provider was in when the run started, before retries had
+    // a chance to change it. A caller that wants all of them reads `failures`.
+    const cause = failures[0];
+    const reason = cause instanceof Error ? cause.message : cause === undefined ? "" : String(cause);
+    super(reason === "" ? message : `${message}: ${reason}`);
     this.name = "ProviderUnavailableError";
     this.failures = failures;
   }
