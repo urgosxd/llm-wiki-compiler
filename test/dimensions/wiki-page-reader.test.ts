@@ -20,6 +20,7 @@ import { createWikiPageReader } from "../../src/dimensions/wiki/database.js";
 import { upsertStoredPage } from "../../src/dimensions/wiki/page-store.js";
 import type { Page } from "../../src/pages/list.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { expectNotFoundCode } from "../fixtures/reader-assertions.js";
 import { wikiTablesPresent } from "../fixtures/rls-probe.js";
 
 const harness = await createKgPostgresHarness(`wiki-reader-${randomUUID().slice(0, 8)}`);
@@ -67,9 +68,7 @@ describe("the database-backed wiki reader", () => {
   it.skipIf(!provisioned)("reports an unknown name as not_found", async () => {
     const reader = createWikiPageReader({ stackId: harness.stackId, db: harness.db });
     const result = await reader.read({ name: "nothing-like-this" });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.code).toBe("not_found");
+    expectNotFoundCode(result);
   }, 30_000);
 
   it.skipIf(!provisioned)("finds a page by exact title, then by substring", async () => {
