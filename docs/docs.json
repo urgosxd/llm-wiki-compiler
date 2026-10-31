@@ -37,7 +37,8 @@
               "concepts/wiki-model",
               "concepts/configurable-lifecycle-profiles",
               "concepts/page-types",
-              "concepts/citations"
+              "concepts/citations",
+              "concepts/tenant-isolation"
             ]
           },
           {

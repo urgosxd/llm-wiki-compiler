@@ -10,9 +10,29 @@
  * run through it passes for the wrong reason -- the trap `kg-runtime-rls-trap.test.ts`
  * pins as measured fact.
  *
- * The probe therefore drops to `llmwiki_app`, the non-superuser role production uses,
- * with a transaction-scoped `set local role`. If that role is absent the suite must
- * skip loudly instead of claiming a guarantee it cannot test.
+ * The probe therefore drops to `llmwiki_app`, the non-superuser role production is
+ * MEANT to run as once the DSN is switched, with a transaction-scoped
+ * `set local role`. If that role is absent the suite must skip loudly instead of
+ * claiming a guarantee it cannot test.
+ *
+ * ## What the probe measures is the FUTURE state, not the current one
+ *
+ * `llmwiki_app` is NOT the role production uses today. It has no `LOGIN`, inherits
+ * from nothing, and no production code issues a `SET ROLE`, while the only role
+ * that can actually connect (`aks`) is a BYPASSRLS superuser. So every policy on
+ * the 22 `wiki` tables is currently INERT, and isolation rests entirely on the
+ * explicit `where stack_id = ...` predicates in each query.
+ *
+ * Measured on this database as `aks`, with no predicate at all:
+ *
+ *   select count(*), count(distinct stack_id) from wiki.source_documents
+ *   -> 32 rows across 8 Stacks
+ *
+ * Nothing in that result was stopped by row-level security. The guarantee is real
+ * only once the deployment switches to a policied role, which is what the 22 tables
+ * with `relforcerowsecurity = true` and the `grant ... to llmwiki_app` statements
+ * exist to enable. Treating that apparatus as active today is the same mistake as
+ * reading a mechanism's presence as its operation.
  *
  * ## Why this is shared
  *
