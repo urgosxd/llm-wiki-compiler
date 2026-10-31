@@ -16,6 +16,7 @@
  */
 import { afterAll, describe, expect, it } from "vitest";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { expectNotFoundCode } from "../fixtures/reader-assertions.js";
 import {
   consolidateEntityRows,
   consolidateRelationshipRows,
@@ -107,10 +108,9 @@ describe("the graph read layer answers without an HTTP request", () => {
     const result = await db.transaction((tx) =>
       readEntityByName(tx, stackId, null, "Nonexistent"),
     );
-    // A missing entity is an EXPECTED answer; a transport maps the code onto 404.
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.code).toBe("not_found");
+    // A missing entity is an EXPECTED answer carrying a code; a transport maps
+    // that code onto 404, so the assertion is shared with the reader suites.
+    expectNotFoundCode(result);
   }, 30_000);
 
   it.skipIf(!reachable)("walks relationships from an anchor and counts distinct entities", async () => {
