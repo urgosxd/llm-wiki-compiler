@@ -146,3 +146,55 @@ feature fixes. Recording it so it is not rediscovered from scratch.
 
 | Task | Commit | Checks |
 | --- | --- | --- |
+| tests: skipIf guard | `0d1ce24` | 16/16 in the three migrated files |
+| retry policy | `204ece2` | 14/14 retry tests; package suite 781 passed, 4 skipped; tsc clean; fallow 0 issues |
+| defect 1: fail on total extraction failure | `ba8dcc1` | 31/31 extraction + retry; package 781 passed; `test:affected` 3445 passed |
+| defect 2: cut chunk retrieval | `c1ceccf` | 77/77 kg + wiki reader suites; build OK; fallow 0 issues |
+
+### Measured before and after, against live Postgres and a fake gateway
+
+Provider down (chat 500, embeddings working):
+
+```
+BEFORE: COMMIT: kg:1 chunks, 0 entities
+        ROWS:   { docs: 1, entities: 0 }
+AFTER:  PREPARE THREW: extraction failed for all 1 chunk(s): provider unavailable
+          after 3 attempts: .../chat/completions answered 500
+        ROWS:   { docs: 0, entities: 0 }
+```
+
+Provider healthy (regression check):
+
+```
+BEFORE: COMMIT: kg:1 chunks, 3 entities   ROWS: { docs: 1, entities: 3 }
+AFTER:  COMMIT: kg:1 chunks, 3 entities   ROWS: { docs: 1, entities: 3 }
+```
+
+Chunk retrieval:
+
+```
+BEFORE: reader.read({ text }) -> { ok: true, chunks: [] }   (always)
+AFTER:  reader.read({ text }) -> { ok: false, code: "unavailable" }
+```
+
+## Verification scope, stated plainly
+
+- `npx tsc --noEmit` (repo root): clean.
+- `npm run build`: success.
+- `npm run test:affected`: 506 files passed, 3445 tests passed, 8 skipped
+  (the 3 `*-gateway` suites that spend real provider money, plus the 4 RLS
+  cases needing a provisioned role).
+- `fallow`: 0 above threshold, maintainability 90.7.
+- The vendored package's own `tsc --noEmit -p packages/llmwiki-kg/ts` reports 22
+  errors. They are PRE-EXISTING: stashing this change reproduces exactly 22, and
+  none is in a file this feature touched. The repo-root `tsc` is the gate and it
+  is clean.
+
+## Still open, deliberately
+
+- `registerDocumentRow` remains the one write without `bindCallerStack`.
+  Harmless under the `aks` role (superuser, `BYPASSRLS`); it would break document
+  registration under `llmwiki_app`. Recorded above, not fixed here.
+- No end-to-end test yet for the dimension path against a real provider. The two
+  defects were found by measuring it by hand, which is the argument for writing
+  one.
