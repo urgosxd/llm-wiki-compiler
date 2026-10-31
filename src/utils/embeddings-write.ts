@@ -20,6 +20,7 @@ import type {
   PageEmbeddingV3,
   ChunkEmbeddingV3,
 } from "./embeddings-store.js";
+import { resolveMinSimilarityForModel } from "./embeddings-store.js";
 import type { CollectedPage } from "./embeddings-collect.js";
 import type { PageId } from "./page-id.js";
 
@@ -179,5 +180,11 @@ function mergeReembedded(
   const entries = [...migrated.entries.filter((e) => !reembedSet.has(e.pageId)), ...pageEntries];
   const chunks = [...(migrated.chunks ?? []).filter((c) => !reembedSet.has(c.pageId)), ...chunkEntries];
   const dimensions = entries[0]?.vector.length ?? chunks[0]?.vector.length ?? migrated.dimensions;
-  return { version: 3, model: migrated.model, dimensions, entries, chunks };
+  const minSimilarity = resolveMinSimilarityForModel(migrated.model);
+  return {
+    version: 3, model: migrated.model, dimensions, entries, chunks,
+    // Re-stamped on every write: the floor belongs to the model that produced the
+    // vectors, and this pass just rewrote them.
+    ...(minSimilarity === undefined ? {} : { minSimilarity }),
+  };
 }

@@ -53,8 +53,27 @@ create table if not exists wiki.embedding_store_meta (
     -- written before fingerprints existed, which is compared on `model` alone so an
     -- upgrade does not force an unrequested re-embed of the whole wiki.
     fingerprint text,
+
+    -- Lowest cosine similarity this store's own vectors treat as a retrieval hit.
+    --
+    -- Stored PER STORE because the number is a property of the embedding space, not
+    -- of the retrievers: a dense model separates an on-domain question from an
+    -- unrelated one at ~0.55, while a sparse/hashed provider produces low cosines
+    -- for both and would return nothing at all under that constant. The producer
+    -- knows which space it wrote; the reader cannot infer it.
+    --
+    -- NULL means "uncalibrated" -- a store written before this column existed, or by
+    -- a provider with no measurement behind it. NULL must behave exactly like the
+    -- pre-column code: no filtering. Guessing a default here would silently drop
+    -- every hit for a provider nobody calibrated.
+    min_similarity double precision,
     updated_at timestamptz not null default now()
 );
+
+-- Stores created before `min_similarity` existed get the column with its NULL
+-- default, which keeps their behaviour (no filtering) unchanged.
+alter table wiki.embedding_store_meta
+    add column if not exists min_similarity double precision;
 
 -- One row per compiled page. `embedding_text_hash` covers the exact string handed
 -- to the provider, so a page whose text changed is detectable without re-embedding

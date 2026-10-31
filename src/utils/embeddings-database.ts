@@ -72,6 +72,7 @@ interface MetaRow extends Record<string, unknown> {
   model: string;
   dimensions: number;
   fingerprint: string | null;
+  min_similarity: number | null;
 }
 
 /** Reassemble a qualified page id from the pair stored in the table. */
@@ -93,14 +94,26 @@ function joinPageId(pageDirectory: string, slug: string): PageId {
 export async function readEmbeddingMeta(
   db: Database,
   stackId: string,
-): Promise<{ model: string; dimensions: number; fingerprint: string | null } | null> {
+): Promise<{
+  model: string;
+  dimensions: number;
+  fingerprint: string | null;
+  minSimilarity: number | null;
+} | null> {
   await bindStack(db, stackId);
   const rows = await db.execute<MetaRow>(
-    sql`select model, dimensions, fingerprint from wiki.embedding_store_meta where stack_id = ${stackId}`,
+    sql`select model, dimensions, fingerprint, min_similarity
+        from wiki.embedding_store_meta where stack_id = ${stackId}`,
   );
   const row = rows[0];
   if (row === undefined) return null;
-  return { model: row.model, dimensions: row.dimensions, fingerprint: row.fingerprint };
+  return {
+    model: row.model,
+    dimensions: row.dimensions,
+    fingerprint: row.fingerprint,
+    // NULL is meaningful: an uncalibrated store must not filter.
+    minSimilarity: row.min_similarity === null ? null : Number(row.min_similarity),
+  };
 }
 
 /**
@@ -146,9 +159,13 @@ export async function readEmbeddingStoreFromDb(
     entries,
     chunks,
   };
-  // Only attach the fingerprint when one exists: the field is optional and a store
-  // written before fingerprints existed must stay comparable on `model` alone.
-  return meta.fingerprint === null ? store : { ...store, fingerprint: meta.fingerprint };
+  // Only attach the optional header fields when they exist: a store written before
+  // fingerprints or calibration existed must stay comparable on `model` alone, and
+  // must keep its pre-column behaviour of not filtering.
+  const withFingerprint = meta.fingerprint === null ? store : { ...store, fingerprint: meta.fingerprint };
+  return meta.minSimilarity === null
+    ? withFingerprint
+    : { ...withFingerprint, minSimilarity: meta.minSimilarity };
 }
 
 /** Convert one page row to an entry, or null when its identity does not parse. */

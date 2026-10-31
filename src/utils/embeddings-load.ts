@@ -275,6 +275,7 @@ export async function findRelevantPagesV3(
   if (eligible.length === 0) return { hits: [], stalePageIds: [] };
   const queryVec = await embedQuery(question, store.dimensions);
   const ranked = scorePageEntries(queryVec, eligible);
+  if (!levelHasSignal(ranked, store.minSimilarity)) return { hits: [], stalePageIds: [] };
   return walkFreshPages(reader, ranked, k);
 }
 
@@ -283,6 +284,33 @@ export async function findRelevantPagesV3(
  * prefilter→score→walk-ranked-freshness shape as the page pipeline, but a chunk
  * hit's freshness is verified against the live page's chunk-hash at its index.
  */
+
+/**
+ * Whether a ranked level found anything this STORE considers signal.
+ *
+ * The floor comes from the store, not from a global constant, because cosine scale
+ * is a property of the embedding space that produced the vectors. A store with no
+ * floor (uncalibrated, or written before the column existed) keeps the original
+ * behaviour and filters nothing: returning zero pages is a worse failure than
+ * returning a weak answer, so an uncalibrated store must degrade to the latter.
+ *
+ * Applied to the best candidate of a level rather than to every entry: an empty
+ * level lets the cascade fall through to the next one instead of answering from
+ * noise, while ranking INSIDE a level keeps its top-K semantics untouched.
+ *
+ * @param ranked - Candidates sorted by descending score.
+ * @param minSimilarity - The store's floor, or undefined when it has none.
+ * @returns Whether the level has signal.
+ */
+function levelHasSignal(
+  ranked: ReadonlyArray<{ score: number }>,
+  minSimilarity: number | undefined,
+): boolean {
+  if (minSimilarity === undefined) return true;
+  const best = ranked[0];
+  return best !== undefined && best.score >= minSimilarity;
+}
+
 export async function findRelevantChunksV3(
   root: string,
   store: EmbeddingStoreV3,
@@ -299,6 +327,7 @@ export async function findRelevantChunksV3(
   if (eligible.length === 0) return { hits: [], stalePageIds: [] };
   const queryVec = await embedQuery(question, store.dimensions);
   const ranked = scoreChunkEntries(queryVec, eligible);
+  if (!levelHasSignal(ranked, store.minSimilarity)) return { hits: [], stalePageIds: [] };
   return walkFreshChunks(reader, ranked, k);
 }
 
