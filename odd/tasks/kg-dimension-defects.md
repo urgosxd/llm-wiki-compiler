@@ -190,11 +190,52 @@ AFTER:  reader.read({ text }) -> { ok: false, code: "unavailable" }
   none is in a file this feature touched. The repo-root `tsc` is the gate and it
   is clean.
 
+## The end-to-end test that closes the coverage gap
+
+`test/dimensions/kg-runtime-e2e.test.ts` — 6 cases, and it lives under
+`kg-runtime-*` because that is this role's namespace for suites that exercise
+real runtime behaviour against a real database, beside `kg-runtime-rls-trap`.
+
+### Where the "end" is
+
+The ONLY stub is the network boundary: `fetch` is replaced by the vendored
+package's own harness, which speaks the real wire format (`/embeddings`, and
+`/chat/completions` returning a tool call). Everything inward is shipped code —
+real chunker, prompt builder, tool schema, triplet parser, ontology admission,
+consolidation SQL, and the real FKs and unique constraints.
+
+Stubbing the harness's MODULES would reproduce `kg-dimension.test.ts` and prove
+nothing new. Stubbing nothing would spend provider money and make the suite
+depend on an account. The network edge is the only cut that leaves the defect
+surface under test.
+
+### Proof that it covers a real hole, not a hypothetical one
+
+Reintroducing the ORIGINAL defect (delete the all-failed `throw`) and running
+both suites:
+
+```
+kg-dimension.test.ts (mocks)  ->  13 passed   <- does NOT notice
+kg-runtime-e2e.test.ts (new)  ->  1 failed    <- notices
+```
+
+That contrast is the whole justification for the file.
+
+### Each case was sabotaged to confirm it bites
+
+| Sabotage | Result |
+| --- | --- |
+| Remove the all-failed throw (defect 1 returns) | the atomic-contract case fails |
+| Remove the `unavailable` early return (defect 2 returns) | the text-query case fails |
+| Break the document upsert constraint name | 4 cases fail |
+| Force every write to a foreign Stack id | 4 cases fail, including isolation |
+
 ## Still open, deliberately
 
 - `registerDocumentRow` remains the one write without `bindCallerStack`.
   Harmless under the `aks` role (superuser, `BYPASSRLS`); it would break document
   registration under `llmwiki_app`. Recorded above, not fixed here.
-- No end-to-end test yet for the dimension path against a real provider. The two
-  defects were found by measuring it by hand, which is the argument for writing
-  one.
+- The end-to-end suite stubs the network boundary rather than calling a real
+  provider, so it proves the dimension's own path and not the provider's
+  behaviour. A test against a live provider remains the `*-gateway` suites'
+  job, and those still require `AKS_TEST_GATEWAY=1` and real money.
