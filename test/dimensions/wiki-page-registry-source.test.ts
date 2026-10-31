@@ -26,6 +26,40 @@ const PLAIN = "---\ntitle: Beta\n---\n\nbeta body\n";
 /** A page the compiler has retired; the disk reader refuses to load one. */
 const ORPHAN = "---\ntitle: Gone\norphaned: true\n---\n\ngone body\n";
 
+/**
+ * A handle that records how many tenant transactions were opened through it.
+ *
+ * `withTenant` reaches the database only through `db.transaction`, so wrapping that
+ * one method counts the N+1 directly without touching production code and without
+ * timing anything. Every other member is forwarded untouched.
+ *
+ * @param db - The harness handle to wrap.
+ * @returns The proxied handle plus the live count of transactions opened.
+ */
+function countTransactions(db: KgPostgresHarness["db"]): {
+  readonly handle: KgPostgresHarness["db"];
+  readonly opened: number;
+} {
+  const state = { opened: 0 };
+  const handle = new Proxy(db, {
+    get(target, property, receiver) {
+      if (property === "transaction") {
+        return (...args: unknown[]) => {
+          state.opened += 1;
+          return (target.transaction as (...inner: unknown[]) => unknown)(...args);
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  return {
+    handle,
+    get opened() {
+      return state.opened;
+    },
+  };
+}
+
 describe("registry page source", () => {
   let harness: KgPostgresHarness;
 
@@ -123,6 +157,68 @@ describe("registry page source", () => {
     expect(pairs[0]?.record).toEqual({
       slug: "beta", title: "Beta", summary: "", body: "beta body",
     });
+  });
+
+  it("pairs a BATCH of records in input order, not row order", async () => {
+    // The freshness walk stops at the first `k` hits, so a reordered batch changes
+    // WHICH pages ground an answer even though it returns the same set. Three pages
+    // written newest-last makes any row-order leak visible.
+    const sink = createPageWriteSink(harness.db, harness.stackId);
+    await sink({ directory: "concepts", slug: "one", body: PLAIN });
+    await sink({ directory: "concepts", slug: "two", body: PLAIN });
+    await sink({ directory: "concepts", slug: "three", body: PLAIN });
+    const source = createRegistryPageSource(harness.db, harness.stackId);
+
+    const pairs = await source.recordPairs([
+      "concepts/three", "concepts/one", "concepts/two",
+    ]);
+
+    expect(pairs.map((pair) => pair.pageId)).toEqual([
+      "concepts/three", "concepts/one", "concepts/two",
+    ]);
+  });
+
+  it("returns identical records batched as it does one id at a time", async () => {
+    // Parity guard for the N+1 fix: the batched reader must be indistinguishable
+    // from single reads, including the orphan drop and the body trim.
+    const sink = createPageWriteSink(harness.db, harness.stackId);
+    await sink({ directory: "concepts", slug: "alpha", body: INDENTED });
+    await sink({ directory: "queries", slug: "beta", body: PLAIN });
+    await sink({ directory: "concepts", slug: "gone", body: ORPHAN });
+    const source = createRegistryPageSource(harness.db, harness.stackId);
+    const ids = ["concepts/alpha", "queries/beta", "concepts/gone", "concepts/missing"];
+
+    const batched = await source.recordPairs(ids);
+    const oneByOne = [];
+    for (const id of ids) oneByOne.push(...(await source.recordPairs([id])));
+
+    expect(batched).toEqual(oneByOne);
+    expect(batched.map((pair) => pair.pageId)).toEqual(["concepts/alpha", "queries/beta"]);
+  });
+
+  it("answers an empty batch without querying", async () => {
+    const source = createRegistryPageSource(harness.db, harness.stackId);
+
+    expect(await source.recordPairs([])).toEqual([]);
+    expect(await source.records([])).toEqual([]);
+  });
+
+  it("reads a BATCH in one transaction, so the N+1 cannot come back", async () => {
+    // The parity tests above pass on BOTH paths, because the per-candidate path was
+    // correct -- only slow. So a `for await` reintroduced into `resolveRecordPairs`
+    // would break nothing they assert. This counts TRANSACTIONS instead of
+    // milliseconds: `withTenant` opens exactly one per call, so N ids must cost one.
+    // Deterministic, machine-independent, and it fails on the day the loop returns.
+    const sink = createPageWriteSink(harness.db, harness.stackId);
+    const slugs = ["one", "two", "three", "four", "five"];
+    for (const slug of slugs) await sink({ directory: "concepts", slug, body: PLAIN });
+    const counted = countTransactions(harness.db);
+    const source = createRegistryPageSource(counted.handle, harness.stackId);
+
+    const pairs = await source.recordPairs(slugs.map((slug) => `concepts/${slug}`));
+
+    expect(pairs).toHaveLength(slugs.length);
+    expect(counted.opened).toBe(1);
   });
 
   it("serves a body with no trailing blank line to a consumer", async () => {

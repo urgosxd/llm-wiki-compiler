@@ -55,7 +55,7 @@ import {
 import { parseQualifiedPageId, qualifiedPageId } from "../../utils/page-id.js";
 import { hashChunkText, splitIntoChunks } from "../../utils/retrieval.js";
 import { buildEmbeddingText } from "../../utils/embeddings-pages.js";
-import { getStoredPage, listStoredPagesUnfiltered } from "./page-store.js";
+import { getStoredPage, getStoredPagesByKey, listStoredPagesUnfiltered } from "./page-store.js";
 
 /**
  * The only capability this module needs from the database handle.
@@ -232,33 +232,25 @@ function toRecord(page: Page): PageRecord {
 }
 
 /**
- * Resolve one qualified page id to a record, or null.
- *
- * An orphaned page yields null. Two rules exist on the disk side and they differ:
- * `readConfinedPageRecord` (the embedding collector, `embeddings-pages.ts`) drops an
- * orphan, while this registry's own `resolvePageRecord` does not test `orphaned` at
- * all. Excluding it is the stricter of the two, and it is the one that matters here:
- * records feed answer GROUNDING, so an orphan slipping through would put a retired
- * page's prose in front of the reader as evidence. The divergence is named rather
- * than hidden -- a caller that needs the looser disk behaviour would have to ask for
- * it explicitly.
- *
- * @param context - Bound store.
- * @param pageId - Qualified page id.
- * @returns The record, or null when absent, malformed, or orphaned.
- */
-async function resolveRecord(context: StoreContext, pageId: string): Promise<PageRecord | null> {
-  const parsed = parseQualifiedPageId(pageId);
-  if (parsed === null) return null;
-  const directory = storedDirectory(parsed.namespace);
-  if (directory === undefined) return null;
-  const page = await getStoredPage(context.db as never, context.stackId, directory, parsed.pagePart);
-  if (page === undefined || page.orphaned) return null;
-  return toRecord(page);
-}
-
-/**
  * Resolve ids to `{pageId, record}` pairs, dropping the ones that do not resolve.
+ *
+ * One query for the whole batch rather than one `getStoredPage` per id. The
+ * per-id form opened its own `withTenant` transaction each (~3.5ms measured), and
+ * the retrieval freshness walk asks for batches of 30-90 by design.
+ *
+ * ## Why an orphaned page yields no record
+ *
+ * Two rules exist on the disk side and they differ: `readConfinedPageRecord` (the
+ * embedding collector, `embeddings-pages.ts`) drops an orphan, while this
+ * registry's own `resolvePageRecord` does not test `orphaned` at all. Excluding it
+ * is the stricter of the two, and it is the one that matters here: records feed
+ * answer GROUNDING, so an orphan slipping through would put a retired page's prose
+ * in front of the reader as evidence. The divergence is named rather than hidden --
+ * a caller that needs the looser disk behaviour would have to ask for it explicitly.
+ *
+ * The output order is the INPUT order, not row order: `walkRankedFresh` stops at
+ * the first `k` hits, so a reordered batch would silently change which pages
+ * ground an answer.
  *
  * @param context - Bound store.
  * @param pageIds - Qualified page ids.
@@ -268,10 +260,25 @@ async function resolveRecordPairs(
   context: StoreContext,
   pageIds: string[],
 ): Promise<Array<{ pageId: string; record: PageRecord }>> {
+  const wanted = pageIds.flatMap((pageId) => {
+    const parsed = parseQualifiedPageId(pageId);
+    if (parsed === null) return [];
+    const pageDirectory = storedDirectory(parsed.namespace);
+    if (pageDirectory === undefined) return [];
+    return [{ pageId, pageDirectory, slug: parsed.pagePart }];
+  });
+  const stored = await getStoredPagesByKey(
+    context.db as never,
+    context.stackId,
+    wanted.map(({ pageDirectory, slug }) => ({ pageDirectory, slug })),
+  );
+
   const pairs: Array<{ pageId: string; record: PageRecord }> = [];
-  for (const pageId of pageIds) {
-    const record = await resolveRecord(context, pageId);
-    if (record !== null) pairs.push({ pageId, record });
+  for (const { pageId, pageDirectory, slug } of wanted) {
+    const page = stored.get(`${pageDirectory}/${slug}`);
+    // An orphaned page yields no record, the same rule {@link resolveRecord} applies.
+    if (page === undefined || page.orphaned) continue;
+    pairs.push({ pageId, record: toRecord(page) });
   }
   return pairs;
 }
