@@ -67,8 +67,10 @@ async function seedGraph(): Promise<void> {
 }
 
 describe("the graph read layer answers without an HTTP request", () => {
-  it("lists entities for a stack, highest confidence first", async () => {
-    if (!reachable) return;
+  // `skipIf` rather than an early `return;` inside each body: with no database the
+  // suite must report SKIPPED, because a body that returns early is recorded as a
+  // pass and proves nothing about the read layer it claims to exercise.
+  it.skipIf(!reachable)("lists entities for a stack, highest confidence first", async () => {
     await seedGraph();
 
     const result = await db.transaction((tx) =>
@@ -82,8 +84,7 @@ describe("the graph read layer answers without an HTTP request", () => {
     expect(names).toEqual(["Alpha", "Beta"]);
   }, 30_000);
 
-  it("filters by kind, which is the graph's `type` column", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("filters by kind, which is the graph's `type` column", async () => {
     const result = await db.transaction((tx) =>
       readEntities(tx, { stackId, domain: null, type: "tool", minConfidence: 0, limit: 50 }),
     );
@@ -92,8 +93,7 @@ describe("the graph read layer answers without an HTTP request", () => {
     expect(result.value.map((entity) => entity.name)).toEqual(["Beta"]);
   }, 30_000);
 
-  it("finds one entity by case-insensitive name", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("finds one entity by case-insensitive name", async () => {
     const result = await db.transaction((tx) =>
       readEntityByName(tx, stackId, null, "alpha"),
     );
@@ -103,8 +103,7 @@ describe("the graph read layer answers without an HTTP request", () => {
     expect(result.value.name).toBe("Alpha");
   }, 30_000);
 
-  it("reports not_found as a coded failure rather than throwing", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("reports not_found as a coded failure rather than throwing", async () => {
     const result = await db.transaction((tx) =>
       readEntityByName(tx, stackId, null, "Nonexistent"),
     );
@@ -114,8 +113,7 @@ describe("the graph read layer answers without an HTTP request", () => {
     expect(result.error.code).toBe("not_found");
   }, 30_000);
 
-  it("walks relationships from an anchor and counts distinct entities", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("walks relationships from an anchor and counts distinct entities", async () => {
     const result = await db.transaction((tx) =>
       traverseGraph(tx, { start: "Alpha", stackId, domain: null, maxDepth: 2, relationshipTypes: null }),
     );
@@ -127,8 +125,7 @@ describe("the graph read layer answers without an HTTP request", () => {
     expect(result.value.entityCount).toBe(2);
   }, 30_000);
 
-  it("honours the relationship_types filter, the case a fidelity test caught", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("honours the relationship_types filter, the case a fidelity test caught", async () => {
     const matching = await db.transaction((tx) =>
       traverseGraph(tx, { start: "Alpha", stackId, domain: null, maxDepth: 2, relationshipTypes: "uses" }),
     );
