@@ -39,6 +39,7 @@ import type { Database } from "llmwiki-kg";
 import { createHash } from "node:crypto";
 import { slugify } from "../../utils/markdown.js";
 import { stableContent } from "../../utils/source-writer.js";
+import { bindStack } from "../../utils/embeddings-tenant.js";
 import type { ChangeDetectionSource, SourceContentSource } from "../../compiler/hasher.js";
 import type { RuleCorpus } from "../../compiler/rule-extractor.js";
 
@@ -63,21 +64,6 @@ interface SourceDocumentRow extends Record<string, unknown> {
   content: string;
   content_hash: string;
   size_bytes: number;
-}
-
-/**
- * Bind the tenant for the duration of the transaction.
- *
- * Every statement here is tenanted, and without the binding the policy matches
- * nothing: a read returns zero rows for a Stack that has documents, and a write is
- * refused. `set_config(..., is_local = true)` is the parameterised `SET LOCAL`, so
- * the binding ends with the transaction and cannot leak onto a pooled connection.
- *
- * @param db - Connection about to run a tenanted statement.
- * @param stackId - Stack whose documents are being read or written.
- */
-async function bindStack(db: Database, stackId: string): Promise<void> {
-  await db.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
 }
 
 /**
@@ -282,12 +268,19 @@ async function readSourceDocument(
   stackId: string,
   sourceIdentity: string,
 ): Promise<StoredSourceDocument | undefined> {
-  await bindStack(db, stackId);
-  const rows = await db.execute<SourceDocumentRow>(
-    sql`select source_identity, title, filename, content, content_hash, size_bytes
-        from wiki.source_documents
-        where stack_id = ${stackId} and source_identity = ${sourceIdentity}`,
-  );
+  // The binding must be issued INSIDE the transaction that reads. `bindStack` sets
+  // a transaction-LOCAL GUC, so calling it on the pooled handle applies to a
+  // different implicit transaction and is discarded -- measured: the GUC reads
+  // back empty on the next statement even with a pool of one connection. Under a
+  // policied role that turns this read into a silent zero-row answer.
+  const rows = await runInScope(db, undefined, async (tx) => {
+    await bindStack(tx, stackId);
+    return tx.execute<SourceDocumentRow>(
+      sql`select source_identity, title, filename, content, content_hash, size_bytes
+          from wiki.source_documents
+          where stack_id = ${stackId} and source_identity = ${sourceIdentity}`,
+    );
+  });
   const row = rows[0];
   if (row === undefined) return undefined;
   return {
@@ -301,15 +294,18 @@ async function readSourceDocument(
 }
 
 export async function listSourceDocuments(db: Database, stackId: string): Promise<StoredSourceDocument[]> {
-  await bindStack(db, stackId);
   // Both the binding and an explicit predicate: under a superuser owner the policy
   // is inert, so a query relying on it alone would return every Stack's corpus.
-  const rows = await db.execute<SourceDocumentRow>(
-    sql`select source_identity, title, filename, content, content_hash, size_bytes
-        from wiki.source_documents
-        where stack_id = ${stackId}
-        order by filename asc`,
-  );
+  // The binding must run inside the transaction; see {@link readSourceDocument}.
+  const rows = await runInScope(db, undefined, async (tx) => {
+    await bindStack(tx, stackId);
+    return tx.execute<SourceDocumentRow>(
+      sql`select source_identity, title, filename, content, content_hash, size_bytes
+          from wiki.source_documents
+          where stack_id = ${stackId}
+          order by filename asc`,
+    );
+  });
   return rows.map((row) => ({
     sourceIdentity: row.source_identity,
     title: row.title,
