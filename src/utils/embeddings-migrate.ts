@@ -45,6 +45,7 @@ import type {
   PageEmbeddingV3,
   ChunkEmbeddingV3,
 } from "./embeddings-store.js";
+import { resolveMinSimilarityForModel } from "./embeddings-store.js";
 import type { PageId } from "./page-id.js";
 
 /**
@@ -91,7 +92,14 @@ export function migrateEmbeddingStore(
   const entries = migrateEntries(parsedOld!.store, liveByPageId, reembed);
   const chunks = migrateChunks(parsedOld!.store, liveByPageId, reembed);
   addNewEligiblePages(eligibleLivePages, entries, reembed);
-  return { store: { version: 3, model: activeModel, dimensions: dims, entries, chunks }, reembedPageIds: [...reembed] };
+  const minSimilarity = resolveMinSimilarityForModel(activeModel);
+  return {
+    store: {
+      version: 3, model: activeModel, dimensions: dims, entries, chunks,
+      ...(minSimilarity === undefined ? {} : { minSimilarity }),
+    },
+    reembedPageIds: [...reembed],
+  };
 }
 
 /**

@@ -114,20 +114,27 @@ async function writeToDimensions(
   root: string,
   input: { title: string; source: string; document: string; body: string },
   observer?: IngestJobObserver,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ savedPath: string; writeStatus: NonNullable<IngestResult["writeStatus"]> }> {
   // Pages are rows in Postgres now, so the dimensions need a handle. It is built
   // for this operation and released right after, because an unclosed pool keeps
   // the event loop alive.
-  const dimensionsDb = createDimensionsDatabase();
+  const dimensionsDb = createDimensionsDatabase(env);
   observer?.ingest.stage("preparing");
   const locked = await tryWithOrdinaryMutationLock(root, async () => {
     try {
       observer?.ingest.stage("committing");
       return await ingestDimensions(
         dimensionsDb.db,
-        resolveStackId(),
+        resolveStackId(env),
         input,
-        resolveDimensions({ root, db: dimensionsDb.db }),
+        // `env` is threaded here for the same reason it reaches `resolveStackId` above:
+        // `resolveDimensions` defaults to `process.env`, and the WIKI dimension takes its
+        // Stack from there. Omitting it made the job row and the source CONTENT
+        // disagree -- the job landed in the requested Stack while the document went to
+        // the host's bound one, so a caller was told "unchanged, nothing to do" about a
+        // Stack that did not contain the file at all.
+        resolveDimensions({ root, db: dimensionsDb.db, env }),
         { attempts: observer?.attempts },
       );
     } finally {
@@ -158,6 +165,7 @@ export async function ingestSource(
   root: string,
   source: string,
   observer?: IngestJobObserver,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<IngestResult> {
   observer?.ingest.stage("detecting");
   const sourceType = await detectSourceType(source);
@@ -177,7 +185,7 @@ export async function ingestSource(
     source,
     document,
     body: result.content,
-  }, observer);
+  }, observer, env);
   verbose(`saved: ${savedPath} (${result.content.length} chars extracted)`);
 
   // Journal only real writes — a no-op re-ingest must not append a log line.

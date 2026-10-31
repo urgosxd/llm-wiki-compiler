@@ -57,7 +57,16 @@ import { createApp } from "llmwiki-kg/server";
 type GraphApp = ReturnType<typeof createApp>;
 import { createViewerHandler, type ViewerRequestHandler } from "../viewer/server.js";
 import { handleApiRequest, type ApiDeps } from "./api.js";
+import { handleMcpHttp, isMcpHttpPath } from "./mcp-http.js";
 import { createJobRegistry, type JobRegistry } from "../services/ingest/jobs/registry.js";
+import { createDurableJobRegistry } from "../services/ingest/jobs/durable-registry.js";
+import { listIngestJobs, readIngestJob } from "../services/ingest/jobs/job-store.js";
+import { stackExists } from "../services/stacks/stack-store.js";
+import type { DurableJobReads } from "../viewer/api-ingest-jobs.js";
+import {
+  AKS_STACK_ID_ENV_VAR,
+  createDimensionsDatabase,
+} from "../dimensions/activation.js";
 import { resolveTenant, tenantSlugOf, type TenantEntry } from "./tenants.js";
 import { writeJsonError } from "../viewer/respond.js";
 import type { ViewerSnapshot } from "../viewer/types.js";
@@ -88,6 +97,28 @@ export interface HostOptions {
    */
   readonly includeGraph?: boolean;
   /**
+   * Version reported to MCP clients in the initialize handshake.
+   *
+   * Supplied by the caller (the CLI passes its own) so this module never reads
+   * `package.json` at runtime, which would tie the bundled output to a file that is
+   * not next to it. Absent means the MCP surface reports `unknown` rather than a
+   * version it made up.
+   */
+  readonly version?: string;
+  /**
+   * Builds an MCP server for one HTTP request, or absent to serve no MCP over HTTP.
+   *
+   * INJECTED rather than imported. `host/server.ts` cannot reach `../mcp/**` without
+   * closing a cycle through `compiler-cli.ts`, the public barrel that re-exports
+   * `hostCommand` — measured with `fallow`, which reported three cycles (one per
+   * tools barrel) the moment such an import existed. The CLI entry builds it, since
+   * nothing imports the entry back.
+   */
+  readonly mcpServerFactory?: () => {
+    connect(transport: unknown): Promise<void>;
+    close(): Promise<void>;
+  };
+  /**
    * Project root whose mutation endpoints are mounted.
    *
    * Startup does NOT touch ingest state: the coordinator's transaction is the sole
@@ -115,6 +146,68 @@ export interface HostOptions {
    * read each other's ingest history.
    */
   readonly ingestJobs?: JobRegistry;
+}
+
+/**
+ * The durable job reads the viewer needs, or nothing when no Stack is configured.
+ *
+ * `undefined` is the honest answer rather than a stub: the viewer then falls back to
+ * the in-memory registry, which is all a Stack-less host ever had.
+ *
+ * @param env - Environment carrying the Stack id; defaults to `process.env`.
+ * @returns Readers bound to this host's Stack, or `undefined`.
+ */
+function durableJobReadsFor(env: NodeJS.ProcessEnv = process.env): DurableJobReads | undefined {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return undefined;
+  const dimensionsDb = createDimensionsDatabase(env);
+  return {
+    list: (limit: number) => listIngestJobs(dimensionsDb.db, stackId, limit),
+    get: (jobId: string) => readIngestJob(dimensionsDb.db, stackId, jobId),
+    // Only present when there IS a database, which is what makes the route able to
+    // distinguish "no such Stack" (404) from "this host cannot check" (503). A
+    // Stack-less host returns undefined here and keeps answering 503, because
+    // claiming a Stack does not exist when the truth is "I cannot look" would be a
+    // fabricated answer.
+    forStack: (requested: string) => ({
+      list: (limit: number) => listIngestJobs(dimensionsDb.db, requested, limit),
+      get: (jobId: string) => readIngestJob(dimensionsDb.db, requested, jobId),
+      exists: () => stackExists(dimensionsDb.db, requested),
+    }),
+  };
+}
+
+/**
+ * Build the job registry this host should use.
+ *
+ * With a Stack configured, the live registry is wrapped so every transition is
+ * also written to `wiki.ingest_job`. That is what lets `llmwiki serve` — a separate
+ * process over stdio — answer job questions the host is running; the memory view is
+ * invisible outside this process.
+ *
+ * The database handle is opened lazily by postgres-js (constructing a client does
+ * not connect), so a host that never runs an async ingest never opens a socket.
+ * A write failure is logged and swallowed: durability serves a later reader and must
+ * never fail the ingest it is describing.
+ *
+ * Without a Stack there is nowhere durable to write, so the plain in-memory registry
+ * is returned and the durable reader answers 503 rather than pretending.
+ *
+ * @param env - Environment carrying the Stack id; defaults to `process.env`.
+ * @returns The registry the host should use.
+ */
+function durableRegistryFor(env: NodeJS.ProcessEnv = process.env): JobRegistry {
+  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (stackId === "") return createJobRegistry();
+  const dimensionsDb = createDimensionsDatabase(env);
+  return createDurableJobRegistry(createJobRegistry(), {
+    db: dimensionsDb.db,
+    stackId,
+    onError: (error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[ingest-job] durable mirror failed: ${detail}\n`);
+    },
+  });
 }
 
 /** A running host: both sub-apps behind one listener with one close path. */
@@ -154,6 +247,7 @@ function createDispatcher(
   tenants: ReadonlyMap<string, TenantEntry>,
   tenantViewer: (snapshot: ViewerSnapshot) => ViewerRequestHandler,
   apiDeps: ApiDeps,
+  mcp: ((req: IncomingMessage, res: ServerResponse) => Promise<void>) | undefined,
 ) {
   return (req: IncomingMessage, res: ServerResponse): void => {
     // A tenant-scoped path is resolved BEFORE anything else: the whole point is
@@ -178,6 +272,12 @@ function createDispatcher(
           return tenantViewer(resolved.tenant.snapshot)(req, res).catch(() => writeFallbackError(res));
         })
         .catch(() => writeFallbackError(res));
+      return;
+    }
+    // MCP over HTTP is claimed BEFORE the viewer, which registers no `/mcp` and
+    // would answer its own 404 for a path this listener genuinely serves.
+    if (mcp !== undefined && isMcpHttpPath(req.url)) {
+      void mcp(req, res).catch(() => writeFallbackError(res));
       return;
     }
     if (graph !== undefined && isGraphPath(req.url)) {
@@ -311,16 +411,39 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // One registry per host, built before the listener so the deps object is stable
   // for every request. The viewer reads it through `viewerDeps` (the GET routes) and
   // the mutation mount through `apiDeps` (the 202 route): one store, two readers.
-  const ingestJobs = options.ingestJobs ?? createJobRegistry();
+  //
+  // The live registry is mirrored into Postgres when a Stack is configured, because
+  // the memory view is readable only by THIS process and `llmwiki serve` (MCP) is a
+  // different one. Without the mirror an agent polling over MCP could never see a
+  // job the host is running. A host with no Stack keeps the plain in-memory
+  // registry: there is nowhere durable to write, and the read side already answers
+  // 503 in that configuration rather than pretending.
+  const ingestJobs = options.ingestJobs ?? durableRegistryFor();
   // The read routes are mounted ONLY when this host serves a project to mutate:
   // a viewer without a project root has no jobs, and answering an empty list would
   // claim it looked. Omitting the registry makes the read answer 503 instead.
   const jobDeps = options.projectRoot === undefined ? {} : { ingestJobs };
-  const viewerDeps = { ...jobDeps, ...(options.viewerDeps ?? {}) };
+  // Give the HTTP job reads the durable store when there is one, so
+  // `GET /api/ingest/jobs` and the MCP `ingest_jobs_list` tool answer the same
+  // question the same way. Without this the HTTP path kept reading process memory
+  // and an external consumer lost every job on restart, while the MCP path — reading
+  // the mirrored table — did not.
+  const durableJobDeps = options.projectRoot === undefined
+    ? {}
+    : { durableIngestJobs: durableJobReadsFor() };
+  const viewerDeps = { ...jobDeps, ...durableJobDeps, ...(options.viewerDeps ?? {}) };
   // Mutable holder: the origin policy needs the ACTUALLY bound port, which only
   // exists after `listen`, so this record is filled in below rather than at
   // construction.
   const apiDeps: { ingestJobs?: JobRegistry; viewerConfig?: ApiDeps["viewerConfig"] } = { ingestJobs };
+  // MCP over HTTP, on the same listener. Mounted only when this host serves a
+  // project: the tools operate on a root, and a host with none would accept MCP
+  // calls it cannot answer. Version comes from the caller so this module never
+  // reads package.json at runtime.
+  const mcpHandler = options.projectRoot === undefined || options.mcpServerFactory === undefined
+    ? undefined
+    : (req: IncomingMessage, res: ServerResponse) =>
+        handleMcpHttp(req, res, options.mcpServerFactory as Parameters<typeof handleMcpHttp>[2]);
   const server = http.createServer((req, res) => {
     const handler = viewerHolder.handler;
     if (handler === undefined) {
@@ -332,6 +455,7 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
       graph, handler, options.projectRoot, tenantMap,
       tenantViewerFactory(host, boundPortHolder, options.viewerDeps ?? {}),
       apiDeps,
+      mcpHandler,
     );
     dispatch(req, res);
   });

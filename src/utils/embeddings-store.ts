@@ -34,7 +34,12 @@ import {
   resolveEmbeddingBackend,
   resolveEmbeddingEndpoint,
 } from "./embedding-provider.js";
-import { EMBEDDINGS_FILE, EMBEDDING_MODELS, MAX_EMBEDDING_STORE_BYTES } from "./constants.js";
+import {
+  EMBEDDINGS_FILE,
+  EMBEDDING_MIN_SIMILARITY,
+  EMBEDDING_MODELS,
+  MAX_EMBEDDING_STORE_BYTES,
+} from "./constants.js";
 import { assertEmbeddingStoreValid, filterMalformedIdentities, assertFieldCaps } from "./embeddings-validate.js";
 import { resolveExistingConfinedPrivateDir } from "./private-dir.js";
 import { parseQualifiedPageId, type PageId } from "./page-id.js";
@@ -132,6 +137,16 @@ export interface EmbeddingStoreV3 {
    * not force an unrequested re-embed of the whole wiki.
    */
   fingerprint?: string;
+  /**
+   * Cosine floor this store's own vectors treat as "no signal", measured for the
+   * model that produced them. Absent means uncalibrated: the reader must NOT filter,
+   * because a guessed floor returns zero pages instead of a weaker answer.
+   *
+   * Persisted alongside the vectors so a reader never has to consult the
+   * `EMBEDDING_MIN_SIMILARITY` table, which cannot know about a model renamed or
+   * written by an older build.
+   */
+  minSimilarity?: number;
   dimensions: number;
   entries: PageEmbeddingV3[];
   chunks?: ChunkEmbeddingV3[];
@@ -366,6 +381,24 @@ export function resolveEmbeddingFingerprint(): string {
   // compared for equality — so opacity costs nothing, and `model` remains on the
   // store in cleartext for diagnostics.
   return createHash("sha256").update(identity, "utf8").digest("hex");
+}
+
+/**
+ * The cosine floor the ACTIVE embedding model declares, or undefined when it has
+ * none measured.
+ *
+ * Read from {@link EMBEDDING_MIN_SIMILARITY} at WRITE time only, so the value lands
+ * on the store and every later read uses what was recorded rather than what today's
+ * build happens to believe. A model absent from the table is uncalibrated, and an
+ * uncalibrated model must not filter -- see {@link EmbeddingStoreV3.minSimilarity}.
+ *
+ * @param model - Model name the store is being written with.
+ * @returns The measured floor, or undefined.
+ */
+export function resolveMinSimilarityForModel(model: string): number | undefined {
+  return Object.prototype.hasOwnProperty.call(EMBEDDING_MIN_SIMILARITY, model)
+    ? EMBEDDING_MIN_SIMILARITY[model]
+    : undefined;
 }
 
 /**

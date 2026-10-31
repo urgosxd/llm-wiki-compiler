@@ -541,6 +541,34 @@ export const EMBEDDING_MODELS: Record<string, string> = {
   offline: "offline-bow-768",
 };
 
+/**
+ * Measured cosine threshold below which a store's vectors are declared to have no
+ * signal for a question, keyed by embedding model.
+ *
+ * ## Why this is a table and not a constant
+ *
+ * Cosine similarity is not comparable across embedding spaces. Measured on a
+ * 28-page graph-theory corpus with `nomic-embed-text-v1.5`, on-domain questions
+ * topped out at 0.65-0.89 while four deliberately unrelated questions (sourdough,
+ * Portugal, vaccines, offside) reached 0.40-0.50: a floor of 0.55 separates them.
+ * The offline `offline-bow-768` provider hashes tokens into 768 buckets, so its
+ * cosines are structurally low for relevant AND irrelevant text alike, and the same
+ * 0.55 erases every result it produces.
+ *
+ * A model therefore either declares its own measured floor here, or has none and
+ * keeps the pre-existing behaviour of not filtering. Guessing is the one option
+ * that is not allowed: a wrong floor silently returns zero pages instead of a
+ * weaker answer.
+ *
+ * The value is persisted onto the store when it is written
+ * (`wiki.embedding_store_meta.min_similarity`) because the READER must not depend on
+ * this table: a store written by an older build, or by a model that has since been
+ * renamed, must keep behaving as it did.
+ */
+export const EMBEDDING_MIN_SIMILARITY: Record<string, number> = {
+  "hf:nomic-ai/nomic-embed-text-v1.5": 0.55,
+};
+
 /** Per-provider default batch size for embedding requests (count-based). */
 export const EMBED_BATCH_SIZES: Record<string, number> = {
   openai: 256,

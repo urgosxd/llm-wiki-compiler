@@ -122,7 +122,8 @@ export async function selectRelevantPages(
   });
 
   if (outcome.store) {
-    const chunkSelection = await trySelectViaChunks(root, outcome.store, question, debug, profile, stalePageIds, options);
+    const chunkSelection = await trySelectViaChunks(
+      root, outcome.store, question, debug, profile, stalePageIds, options, pageScope);
     if (chunkSelection) return enrich(chunkSelection);
     const candidates = await tryFindRelevantPages(root, outcome.store, question, profile, options);
     stalePageIds.push(...candidates.stalePageIds);
@@ -207,8 +208,10 @@ async function trySelectViaChunks(
   profile: Awaited<ReturnType<typeof loadProfile>>,
   stalePageIds: PageId[],
   options: RetrievalOptions,
+  pageScope?: readonly string[],
 ): Promise<SelectedPages | null> {
-  const ranked = await tryFindRelevantChunks(root, store, question, profile, options.registrySource);
+  const ranked = await tryFindRelevantChunks(
+    root, store, question, profile, options, options.registrySource, pageScope);
   stalePageIds.push(...ranked.stalePageIds);
   if (ranked.chunks.length === 0) return null;
 
@@ -322,7 +325,9 @@ async function tryFindRelevantChunks(
   store: NonNullable<Awaited<ReturnType<typeof loadEmbeddingsForSearch>>["store"]>,
   question: string,
   profile: Awaited<ReturnType<typeof loadProfile>>,
+  retrieval: RetrievalOptions,
   registrySource?: RegistryPageSource,
+  pageScope?: readonly string[],
 ): Promise<ChunkLookup> {
   try {
     // `registrySource` is load-bearing: the prefilter drops any chunk whose pageId
@@ -331,7 +336,8 @@ async function tryFindRelevantChunks(
     // discarded and retrieval silently returns nothing while the vectors sit in
     // Postgres.
     const { hits, stalePageIds } = await findRelevantChunksV3(
-      root, store, "search", question, CHUNK_TOP_K, profile, registrySource);
+      root, store, "search", question, CHUNK_TOP_K, profile, registrySource,
+      retrieval.embeddingStoreSource, pageScope);
     return { chunks: hits.map((hit) => ({ chunk: toChunkEntry(hit), pageId: hit.pageId, score: hit.score })), stalePageIds };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

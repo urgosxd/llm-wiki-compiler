@@ -23,6 +23,7 @@ import {
   parseFrontmatter,
   slugify,
 } from "../utils/markdown.js";
+import { stableContent } from "../utils/source-writer.js";
 import { releaseLock } from "../utils/lock.js";
 import { acquireMutationLock } from "../utils/mutation-lock.js";
 import {
@@ -119,6 +120,7 @@ import {
 import type { ResolverPageSource } from "./resolver.js";
 import { timeStage } from "../utils/stage-timing.js";
 import { reportCompileStage, reportCompileProgress } from "../services/ingest/jobs/compile-observer.js";
+import type { CompileProgressReporter } from "../services/ingest/jobs/types.js";
 import type { IngestJobObserver } from "../services/ingest/jobs/types.js";
 import { regenerateIndices, resolvePageSeams, type PageSeams } from "../dimensions/wiki/page-source-seam.js";
 import { createWikiStateRowsBackend } from "../dimensions/wiki/wiki-state-source.js";
@@ -217,8 +219,14 @@ async function generatePagesPhase(
   concurrency: number,
   pageSink: PageSink | undefined,
   pageRemover: PageRemover | undefined,
+  progressSink?: CompileProgressReporter,
 ): Promise<PageGenerationResult> {
   const merged = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs);
+  // Publish the denominator as soon as the stage owns it. Announcing the stage
+  // clears progress to "unknown" first (reportCompileStage does that on purpose so
+  // one stage never inherits another's counts), so the opening 0/N has to be
+  // published here, after the transition, or the bar starts blank.
+  reportCompileProgress(progressSink, 0, merged.length);
   // Build the per-source state snapshot once so each candidate can carry the
   // exact data needed to mark its sources compiled on approval.
   const shouldBuildSourceStates = options.review || !isPolicyOff(policy);
@@ -229,10 +237,20 @@ async function generatePagesPhase(
   // Collect per-outcome errors and candidate info into the ordered outcomes array
   // AFTER Promise.all, then derive candidates/review by iterating outcomes in source order.
   // This ensures stable, source-order ordering regardless of parallel completion timing.
+  // Advance the job's counter as each page SETTLES, not as it starts. A page that
+  // threw still counts as attempted work, so the count never stalls on a failure;
+  // the failure itself is reported through `errors`. Without this the job showed
+  // "0 of N" for the whole generation, which is the longest stage.
+  let settledPages = 0;
   const outcomes = await Promise.all(
     merged.map((entry) => limit(async () => {
-      const result = await generateMergedPage(root, entry, schema, options, sourceStates, policy);
-      return { entry, result };
+      try {
+        const result = await generateMergedPage(root, entry, schema, options, sourceStates, policy);
+        return { entry, result };
+      } finally {
+        settledPages += 1;
+        reportCompileProgress(progressSink, settledPages, merged.length);
+      }
     })),
   );
   const errors: string[] = [];
@@ -354,10 +372,13 @@ async function persistSourceStateFiltered(
   liveSlugs: Set<string>,
   sourceContent: string,
 ): Promise<void> {
-  // Hash the content already in memory instead of re-reading the file. Same digest
-  // -- `hashFile` is sha256 of the same bytes -- and it removes a disk read that
-  // would fail outright for a document whose bytes live only in a table.
-  const hash = createHash("sha256").update(sourceContent, "utf-8").digest("hex");
+  // Hash the content already in memory instead of re-reading the file. MUST use
+  // the same basis as change detection (`hashFile`) and the Stack's stored
+  // `content_hash`, both of which hash `stableContent` — frontmatter minus the
+  // volatile `ingestedAt`. Recording a raw-bytes digest here made the persisted
+  // hash unequal to the one detection compares against, so every source looked
+  // changed forever and extraction re-ran on every compile.
+  const hash = createHash("sha256").update(stableContent(sourceContent), "utf-8").digest("hex");
   const entry: SourceState = {
     hash,
     concepts: concepts.map((c) => slugify(c.concept)).filter((s) => liveSlugs.has(s)),
@@ -490,12 +511,85 @@ async function seedThenFinalize(
 }
 
 /** Inner pipeline, runs under lock protection. Returns structured CompileResult. */
+/** Everything the no-change path needs; grouped so the call stays one argument. */
+interface NothingToCompileInput {
+  readonly root: string;
+  readonly options: CompileOptions;
+  readonly db: DimensionsDatabaseHandle;
+  readonly env: NodeJS.ProcessEnv;
+  readonly schema: Awaited<ReturnType<typeof loadSchema>>;
+  readonly draft: CompileStateDraft;
+  readonly seams: ReturnType<typeof resolvePageSeams>;
+  readonly stateRows: ReturnType<typeof wikiStateRowsBackend>;
+  readonly reconciliationSlugs: ReadonlySet<string>;
+  readonly unchangedCount: number;
+}
+
+/**
+ * The "all sources up to date" early return.
+ *
+ * Extracted from `runCompilePipeline` because the block is only reached on a run with
+ * nothing to do, and keeping it inline pushed that function past its complexity
+ * ceiling. The behaviour is unchanged, including the seed-page regeneration that makes
+ * a schema edit take effect without touching a source file.
+ *
+ * @param input - The resolved pipeline state this branch needs.
+ * @returns The compile result for a run with no changes.
+ */
+async function finalizeNothingToCompile(
+  input: NothingToCompileInput,
+): Promise<CompileResult> {
+  const { root, options, db, env, schema, draft, seams, stateRows, reconciliationSlugs } = input;
+  output.status("✓", output.success("Nothing to compile — all sources up to date."));
+  // Seed pages are cheap deterministic writes — always run them even when no source
+  // files changed, so adding a seed page to schema.json takes effect on the next
+  // compile without needing a source file edit.
+  if (options.review) {
+    return { ...emptyCompileResult(), skipped: input.unchangedCount };
+  }
+  const hasOwnerlessFrozen = await reconcileOwnerlessFrozen(
+    root, draft, reconciliationSlugs, seams,
+  );
+  const emptyGeneration: PageGenerationResult = {
+    pages: [], writtenPages: [], errors: [], candidates: [],
+    review: { held: [], forced: [] }, seedSlugs: [],
+  };
+  // Ownerless frozen reconciliation mutates the draft; otherwise null keeps the
+  // no-change path from rewriting state unnecessarily.
+  await timeStage("compile.finalize", () => seedThenFinalize(
+    root,
+    schema,
+    emptyGeneration,
+    options,
+    hasOwnerlessFrozen ? draft : null,
+    embeddingStoreLocation(db),
+    resolverSourceReading(db, env),
+    embeddingPageReading(db, env),
+    seams,
+    stateRows,
+  ));
+  return {
+    ...emptyCompileResult(),
+    skipped: input.unchangedCount,
+    // Surface seed-page slugs alongside any errors so downstream consumers (MCP,
+    // embeddings, programmatic callers) can see what landed even on the
+    // no-source-changes early-return path.
+    pages: [...emptyGeneration.seedSlugs],
+    errors: emptyGeneration.errors,
+  };
+}
+
 async function runCompilePipeline(
   root: string,
   options: CompileOptions,
   db: DimensionsDatabaseHandle,
 ): Promise<CompileResult> {
   const startMs = Date.now();
+  // The ONE environment this run reads. Every seam below is handed this value
+  // instead of the ambient one, so a caller can compile into a chosen Stack and two
+  // concurrent runs cannot see each other's. Omitted means `process.env`, which keeps
+  // every existing caller byte-identical.
+  const env = options.env ?? process.env;
   const schema = await loadSchema(root);
   const reviewPolicy = await loadReviewPolicy(root);
   reportSchemaStatus(schema);
@@ -505,18 +599,18 @@ async function runCompilePipeline(
   // Read and write state from the SAME backend. A run that seeded from
   // `state.json` and flushed to rows would report every source as new on the next
   // pass, because the file it compared against was never the one updated.
-  const stateRows = wikiStateRowsBackend(db, process.env);
+  const stateRows = wikiStateRowsBackend(db, env);
   const draft = await CompileStateDraft.load(root, stateRows);
   const state = draft.read();
   const compileReporter = options.jobObserver?.compile;
   const detected = await timeStage("compile.detect-changes", () =>
-    detectChanges(root, state, sourceChangeDetection(db, process.env)),
+    detectChanges(root, state, sourceChangeDetection(db, env)),
     () => reportCompileStage(compileReporter, "compile.detect-changes"));
   const changes = promoteForPromptModifiers(
     applyChangeFilter(detected, options.changeFilter),
     state,
   );
-  await markUnchangedPendingSources(root, changes, sourceContentReading(db, process.env));
+  await markUnchangedPendingSources(root, changes, sourceContentReading(db, env));
   const reusableSources = reusableSourceFiles(state, changes, detected, Boolean(options.review));
   augmentWithAffectedSources(changes, findAffectedSources(state, changes, detected));
   const reconciliationSlugs = findReconciliationSlugs(state, changes);
@@ -525,49 +619,12 @@ async function runCompilePipeline(
   // Resolve every page seam ONCE, from one variable: a run that stores rows while
   // repairing files -- or reads rows while writing `wiki/` -- would split the
   // corpus in half and is the defect this migration kept re-introducing.
-  const seams = resolvePageSeams(db, process.env);
+  const seams = resolvePageSeams(db, env);
   if (buckets.toCompile.length === 0 && buckets.deleted.length === 0) {
-    output.status("✓", output.success("Nothing to compile — all sources up to date."));
-    // Seed pages are cheap deterministic writes — always run them even when
-    // no source files changed, so adding a seed page to schema.json takes
-    // effect on the next compile without needing a source file edit.
-    if (!options.review) {
-      const hasOwnerlessFrozen = await reconcileOwnerlessFrozen(
-        root, draft, reconciliationSlugs, seams,
-      );
-      const emptyGeneration: PageGenerationResult = {
-        pages: [],
-        writtenPages: [],
-        errors: [],
-        candidates: [],
-        review: { held: [], forced: [] },
-        seedSlugs: [],
-      };
-      // Ownerless frozen reconciliation mutates the draft; otherwise null keeps
-      // the no-change path from rewriting state unnecessarily.
-      await timeStage("compile.finalize", () => seedThenFinalize(
-        root,
-        schema,
-        emptyGeneration,
-        options,
-        hasOwnerlessFrozen ? draft : null,
-        embeddingStoreLocation(db),
-        resolverSourceReading(db, process.env),
-        embeddingPageReading(db, process.env),
-        seams,
-        stateRows,
-      ));
-      return {
-        ...emptyCompileResult(),
-        skipped: buckets.unchanged.length,
-        // Surface seed-page slugs alongside any errors so downstream
-        // consumers (MCP, embeddings, programmatic callers) can see what
-        // landed even on the no-source-changes early-return path.
-        pages: [...emptyGeneration.seedSlugs],
-        errors: emptyGeneration.errors,
-      };
-    }
-    return { ...emptyCompileResult(), skipped: buckets.unchanged.length };
+    return await finalizeNothingToCompile({
+      root, options, db, env, schema, draft, seams, stateRows,
+      reconciliationSlugs, unchangedCount: buckets.unchanged.length,
+    });
   }
 
   printChangesSummary(changes);
@@ -595,10 +652,16 @@ async function runCompilePipeline(
   const concurrency = resolveCompileConcurrency(options.concurrency);
   const extractions = await timeStage("compile.extraction", () => runExtractionPhases(
     root, buckets.toCompile, state, { scoped: changes, detected }, concurrency, reusableSources,
-    sourceContentReading(db, process.env),
+    sourceContentReading(db, env),
     // The extraction prompt asks the model not to duplicate an existing concept,
     // which needs each page's title -- the scan shape, not the listing.
-    scanSourceReading(db, process.env),
+    scanSourceReading(db, env),
+    // Extraction is often the longest stage, so it reports its own per-source
+    // count instead of sitting at "working" for minutes.
+    {
+      report: (completed, total) =>
+        reportCompileProgress(compileReporter, completed, total),
+    },
   ), () => reportCompileStage(compileReporter, "compile.extraction"));
   if (!options.review) {
     freezeFailedExtractions(draft, extractions, frozenSlugs);
@@ -609,10 +672,12 @@ async function runCompilePipeline(
   // produced pages are new (created) versus overwritten (updated).
   const existingIds = await listExistingPageIds(root);
   // The ONLY stage with a real denominator the pipeline computes before the work:
-  // one merged concept becomes one generated page, so the count of concepts IS the
-  // total. Reported on entry and again on exit, never interpolated in between --
-  // generation runs under p-limit, so a half-finished count would be a guess.
-  reportCompileProgress(compileReporter, 0, extractions.length);
+  // one merged concept becomes one generated page, so the number of MERGED entries
+  // is the total -- not the number of SOURCE files. Counting sources understated
+  // the work by orders of magnitude: one document yielding 92 concepts reported
+  // "1", so the job sat at "0 of 1" for the entire run. The count is published on
+  // entry and advanced per committed page by the phase itself.
+  const mergedTotal = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs).length;
   const generation = await timeStage("compile.page-generation", () => generatePagesPhase(
     root,
     extractions,
@@ -624,12 +689,14 @@ async function runCompilePipeline(
     concurrency,
     seams.sink,
     seams.remover,
-  ), () => reportCompileProgress(compileReporter, 0, extractions.length));
+    compileReporter,
+  ), () => reportCompileStage(compileReporter, "compile.page-generation"));
   reportCompileProgress(
     compileReporter,
     generation.writtenPages.length,
-    Math.max(extractions.length, generation.writtenPages.length),
+    Math.max(mergedTotal, generation.writtenPages.length),
   );
+
 
   if (!options.review) {
     const written = new Set(generation.writtenPages.map((entry) => entry.slug));
@@ -652,8 +719,8 @@ async function runCompilePipeline(
     // commits.
     await timeStage("compile.finalize", () => seedThenFinalize(
       root, schema, generation, options, draft, embeddingStoreLocation(db),
-      resolverSourceReading(db, process.env),
-      embeddingPageReading(db, process.env),
+      resolverSourceReading(db, env),
+      embeddingPageReading(db, env),
       seams,
       stateRows,
     ), () => reportCompileStage(compileReporter, "compile.finalize"));
@@ -934,7 +1001,7 @@ async function finalizeWiki(
   await regenerateIndices(root, process.env);
   if (embeddings) {
     await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(
-      root, allChangedSlugs, embeddingStore, embeddingPageSource,
+      root, allChangedSlugs, embeddingStore, embeddingPageSource, jobObserver?.compile,
     ), () => reportCompileStage(jobObserver?.compile, "compile.embeddings"));
   }
 }
@@ -1150,8 +1217,68 @@ async function safelyUpdateEmbeddings(
   changedSlugs: string[],
   embeddingStore?: EmbeddingStoreLocation,
   pageSource?: EmbeddingPageSource,
+  progressReporter?: CompileProgressReporter,
 ): Promise<void> {
   const conceptsNamespace = path.basename(CONCEPTS_DIR);
   const changedPageIds = changedSlugs.map((slug) => qualifiedPageId(conceptsNamespace, slug));
-  await refreshEmbeddingsDrainingPending(root, changedPageIds, embeddingStore, pageSource);
+  const onProgress = progressCallbackFor(progressReporter);
+  await refreshEmbeddingsDrainingPending(
+    root, changedPageIds, embeddingStore, pageSource, onProgress, detailCallbackFor(progressReporter),
+  );
+}
+
+/**
+ * Build the sink that publishes chunk/request cardinalities, or `undefined` with
+ * no job tracked.
+ *
+ * Kept apart from {@link progressCallbackFor} rather than folded into one sink:
+ * these numbers are totals for the finished stage, not a position inside it, and
+ * a consumer must be able to render the cardinality without implying the bar is
+ * about chunks. Omits a count that is zero instead of sending `0`, because
+ * "absent" and "zero chunks embedded" are different facts and only one of them
+ * is worth telling an operator.
+ *
+ * @param reporter - The compile half of the job observer, when a job is tracked.
+ * @returns A detail sink, or `undefined` when there is nothing to report to.
+ */
+function detailCallbackFor(
+  reporter: CompileProgressReporter | undefined,
+): ((detail: { chunks: number; requests: number }) => void) | undefined {
+  if (reporter === undefined) return undefined;
+  return ({ chunks, requests }) => {
+    try {
+      reporter.detail({ ...(chunks > 0 ? { chunks } : {}), ...(requests > 0 ? { requests } : {}) });
+    } catch {
+      // Telemetry is not a compile input; a throwing consumer must not fail the run.
+    }
+  };
+}
+
+/**
+ * Build the embeddings-stage progress sink, or `undefined` when no job is tracked.
+ *
+ * WHY an undefined sink rather than a no-op: reporting nothing and reporting into a
+ * throwaway object are different claims, and the refresh layer must be able to tell
+ * "no observer" from "observer that discards" when it decides to skip the work the
+ * callback implies. Delegating to {@link reportCompileProgress} keeps the `total <= 0`
+ * and clamping rules in the one place that already owns them.
+ *
+ * The sink swallows a reporter failure on purpose: telemetry is not a compile input,
+ * and a throwing progress consumer must not abort an embedding pass whose vectors
+ * were already paid for.
+ *
+ * @param reporter - The compile half of the job observer, when a job is tracked.
+ * @returns A page-record progress sink, or `undefined` when there is nothing to report to.
+ */
+function progressCallbackFor(
+  reporter: CompileProgressReporter | undefined,
+): ((completed: number, total: number) => void) | undefined {
+  if (reporter === undefined) return undefined;
+  return (completed, total) => {
+    try {
+      reportCompileProgress(reporter, completed, total);
+    } catch {
+      // A progress sink failing says nothing about the embeddings themselves.
+    }
+  };
 }

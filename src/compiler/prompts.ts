@@ -361,20 +361,48 @@ export function buildSeedPagePrompt(
 }
 
 /**
+ * The outcome of reading an extraction tool response.
+ *
+ * `settled` separates two situations that both produce zero concepts but have
+ * opposite meanings downstream: the model answered with a well-formed (possibly
+ * empty) concept list, versus the response could not be understood at all. Only
+ * the second is a failure worth retrying. An empty list is normal on a re-compile,
+ * because the extraction prompt hands the model the existing concept titles as
+ * dedup context and it correctly reports nothing new.
+ */
+export interface ParsedConcepts {
+  /** True when the payload was a readable concept list, empty or not. */
+  settled: boolean;
+  /** Valid concepts that survived field validation, in model order. */
+  concepts: ExtractedConcept[];
+}
+
+/**
+ * Read an extraction tool response, reporting whether it was understood.
+ *
+ * @param toolOutput - Raw JSON string returned from the extract_concepts tool.
+ * @returns The concepts plus whether the payload parsed as a concept list.
+ */
+export function parseConceptsResult(toolOutput: string): ParsedConcepts {
+  try {
+    const parsed: unknown = JSON.parse(toolOutput);
+    if (typeof parsed !== "object" || parsed === null) return { settled: false, concepts: [] };
+    let concepts: unknown = (parsed as { concepts?: unknown }).concepts ?? [];
+    if (typeof concepts === "string") {
+      concepts = JSON.parse(concepts);
+    }
+    if (!Array.isArray(concepts)) return { settled: false, concepts: [] };
+    return { settled: true, concepts: concepts.filter(isValidRawConcept).map(mapRawConcept) };
+  } catch {
+    return { settled: false, concepts: [] };
+  }
+}
+
+/**
  * Parse the JSON tool output from concept extraction into typed objects.
  * @param toolOutput - Raw JSON string returned from the extract_concepts tool.
  * @returns Array of ExtractedConcept objects.
  */
 export function parseConcepts(toolOutput: string): ExtractedConcept[] {
-  try {
-    const parsed = JSON.parse(toolOutput);
-    let concepts: unknown = parsed.concepts ?? [];
-    if (typeof concepts === "string") {
-      concepts = JSON.parse(concepts);
-    }
-    if (!Array.isArray(concepts)) return [];
-    return concepts.filter(isValidRawConcept).map(mapRawConcept);
-  } catch {
-    return [];
-  }
+  return parseConceptsResult(toolOutput).concepts;
 }

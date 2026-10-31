@@ -20,6 +20,7 @@ import type {
   PageEmbeddingV3,
   ChunkEmbeddingV3,
 } from "./embeddings-store.js";
+import { resolveMinSimilarityForModel } from "./embeddings-store.js";
 import type { CollectedPage } from "./embeddings-collect.js";
 import type { PageId } from "./page-id.js";
 
@@ -40,6 +41,24 @@ export interface ReembedReport {
 }
 
 /**
+ * Reports how much of the PAGE pass has settled, counted in page records.
+ *
+ * The unit is pages because that is what a caller can compare against its own
+ * page count; chunk counts are one page's worth of unrelated work and would make
+ * the same "40" mean two different things across passes.
+ */
+export type EmbeddingProgressCallback = (completed: number, total: number) => void;
+
+/**
+ * Reports the settled cardinalities once the embedding pass finishes.
+ *
+ * Separate from {@link EmbeddingProgressCallback} because these are totals, not a
+ * running position: chunks are only known after the chunk pass, and a consumer
+ * must be able to tell a final cardinality from a ratio it can divide.
+ */
+export type EmbeddingDetailCallback = (detail: { chunks: number; requests: number }) => void;
+
+/**
  * Re-embed `reembedIds` against `collected`, returning a v3 store whose page and
  * chunk records for those ids are freshly embedded and merged over `migrated`.
  * Ids absent from `collected` (deleted / ineligible) are skipped — never embedded.
@@ -49,6 +68,7 @@ export interface ReembedReport {
  * @param reembedIds - The pageIds to (re-)embed this write.
  * @param batchSize - Provider batch size.
  * @param expectedDim - Expected vector dimension (omit on a dimensionless store).
+ * @param onProgress - Optional page-record progress sink, driven by the page pass ONLY.
  */
 export async function reembedIntoStore(
   migrated: EmbeddingStoreV3,
@@ -56,21 +76,31 @@ export async function reembedIntoStore(
   reembedIds: Set<PageId>,
   batchSize: number,
   expectedDim: number | undefined,
+  onProgress?: EmbeddingProgressCallback,
+  onDetail?: EmbeddingDetailCallback,
 ): Promise<{ store: EmbeddingStoreV3; report: ReembedReport }> {
   const byId = new Map(collected.map((p) => [p.pageId, p]));
   const targets = [...reembedIds].map((id) => byId.get(id)).filter((p): p is CollectedPage => Boolean(p));
   const { provider, requestCount } = makeCountingProvider(getEmbeddingProvider());
   const now = new Date().toISOString();
 
-  const pageEntries = await embedPageLevel(provider, targets, batchSize, expectedDim, now);
+  // The page pass owns the progress sink; the chunk pass deliberately does not,
+  // because its counts are a different unit and would overwrite the page counts a
+  // consumer is already rendering as "pages embedded".
+  const pageEntries = await embedPageLevel(provider, targets, batchSize, expectedDim, now, onProgress);
   const chunkEntries = await embedChunkLevel(provider, targets, batchSize, expectedDim, now);
 
   const reembedSet = new Set(targets.map((p) => p.pageId));
   const store = mergeReembedded(migrated, pageEntries, chunkEntries, reembedSet);
-  return {
-    store,
-    report: { pagesEmbedded: pageEntries.length, chunksEmbedded: chunkEntries.length, requests: requestCount() },
+  const report = {
+    pagesEmbedded: pageEntries.length,
+    chunksEmbedded: chunkEntries.length,
+    requests: requestCount(),
   };
+  // Chunks are only knowable after the chunk pass, so the cardinality is
+  // published once here rather than interpolated during the page pass.
+  onDetail?.({ chunks: report.chunksEmbedded, requests: report.requests });
+  return { store, report };
 }
 
 /** Embed the page-level vector for each target, keyed by pageId with its text hash. */
@@ -80,10 +110,11 @@ async function embedPageLevel(
   batchSize: number,
   expectedDim: number | undefined,
   now: string,
+  onProgress?: EmbeddingProgressCallback,
 ): Promise<PageEmbeddingV3[]> {
   if (targets.length === 0) return [];
   const vectors = await embedWorkItems(
-    provider, targets, (p) => p.embeddingText, (i) => targets[i]?.pageId, "page", batchSize, expectedDim,
+    provider, targets, (p) => p.embeddingText, (i) => targets[i]?.pageId, "page", batchSize, expectedDim, onProgress,
   );
   return targets.map((page, i) => ({
     pageId: page.pageId,
@@ -95,7 +126,12 @@ async function embedPageLevel(
   }));
 }
 
-/** Embed every chunk of every target in one shared batch, keyed by (pageId, index). */
+/**
+ * Embed every chunk of every target in one shared batch, keyed by (pageId, index).
+ *
+ * Intentionally takes no progress sink: chunk counts are not page counts, so
+ * publishing them would misreport the page unit the caller already committed to.
+ */
 async function embedChunkLevel(
   provider: ReturnType<typeof makeCountingProvider>["provider"],
   targets: CollectedPage[],
@@ -144,5 +180,11 @@ function mergeReembedded(
   const entries = [...migrated.entries.filter((e) => !reembedSet.has(e.pageId)), ...pageEntries];
   const chunks = [...(migrated.chunks ?? []).filter((c) => !reembedSet.has(c.pageId)), ...chunkEntries];
   const dimensions = entries[0]?.vector.length ?? chunks[0]?.vector.length ?? migrated.dimensions;
-  return { version: 3, model: migrated.model, dimensions, entries, chunks };
+  const minSimilarity = resolveMinSimilarityForModel(migrated.model);
+  return {
+    version: 3, model: migrated.model, dimensions, entries, chunks,
+    // Re-stamped on every write: the floor belongs to the model that produced the
+    // vectors, and this pass just rewrote them.
+    ...(minSimilarity === undefined ? {} : { minSimilarity }),
+  };
 }

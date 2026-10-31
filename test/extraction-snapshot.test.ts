@@ -4,7 +4,7 @@
  * from the pipeline tests so an unsafe cache hit cannot masquerade as savings.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { reusableExtraction, snapshotExtraction, extractionSourceHash, withExtractionSnapshot } from "../src/compiler/extraction-snapshot.js";
+import { reusableExtraction, snapshotExtraction, stableSourceHash, withExtractionSnapshot } from "../src/compiler/extraction-snapshot.js";
 import { withRunSystemPolicy } from "../src/compiler/prompt-modifiers.js";
 import { CONCEPT_EXTRACTION_TOOL } from "../src/compiler/prompts.js";
 import type { SourceState } from "../src/utils/types.js";
@@ -12,9 +12,14 @@ import type { SourceState } from "../src/utils/types.js";
 const content = "Evidence for a shared concept.";
 const concepts = [{ concept: "Shared", summary: "Supported", is_new: true, confidence: 0.8 }];
 
-/** Produce a committed, matching extraction without invoking any provider. */
+/**
+ * Produce a committed, matching extraction without invoking any provider.
+ *
+ * `hash` must use the same basis as the snapshot's `sourceHash` — the stable
+ * digest — because reuse compares the two directly.
+ */
 function entry(): SourceState {
-  return { hash: extractionSourceHash(content), concepts: ["shared"], compiledAt: "now", extraction: snapshotExtraction(content, concepts) };
+  return { hash: stableSourceHash(content), concepts: ["shared"], compiledAt: "now", extraction: snapshotExtraction(content, concepts) };
 }
 
 afterEach(() => vi.unstubAllEnvs());

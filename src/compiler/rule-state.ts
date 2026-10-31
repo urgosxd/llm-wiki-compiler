@@ -43,11 +43,14 @@ function emptyRuleState(): RuleState {
  * everything looks new).
  * @param root - Project root directory.
  */
-export async function readRuleState(root: string): Promise<RuleState> {
+export async function readRuleState(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<RuleState> {
   // The cursor lives where the rest of the compile state lives: a row. Two hosts
   // sharing one Stack must advance ONE cursor, or each re-extracts the other's work.
   void root;
-  return await readRuleStateFromRows();
+  return await readRuleStateFromRows(env);
 }
 
 /**
@@ -61,10 +64,11 @@ export async function updateRuleSourceState(
   root: string,
   sourceFile: string,
   entry: RuleSourceState,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
-  const state = await readRuleState(root);
+  const state = await readRuleState(root, env);
   state.sources[sourceFile] = entry;
-  await writeRuleStateFor(root, state);
+  await writeRuleStateFor(root, state, env);
 }
 
 /** Read the cursor from the Stack's row store. */
@@ -92,10 +96,17 @@ async function readRuleStateFromRows(
  * @param root - Project root, used by the file backend.
  * @param state - The cursor to persist.
  */
-async function writeRuleStateFor(root: string, state: WikiState): Promise<void> {
+async function writeRuleStateFor(
+  root: string,
+  state: WikiState,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
   void root;
-  const stackId = resolveStackId();
-  const handle = createDimensionsDatabase();
+  // `env`, not the ambient process: before this, the read half accepted a Stack while
+  // the write half resolved its own. A compile pointed at one Stack would advance the
+  // OTHER Stack's cursor, which reads as "every source is new" on the next run.
+  const stackId = resolveStackId(env);
+  const handle = createDimensionsDatabase(env);
   try {
     await writeRuleExtractorState(handle.db, stackId, state);
   } finally {

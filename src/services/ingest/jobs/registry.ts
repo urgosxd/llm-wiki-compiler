@@ -74,8 +74,14 @@ function isSettled(job: IngestJob): boolean {
 
 /** The registry surface the HTTP layer and the pipelines use. */
 export interface JobRegistry {
-  /** Mint and store a job in its `queued` state. */
-  create(source: string, now: Date): IngestJob;
+  /**
+   * Mint and store a job in its `queued` state.
+   *
+   * `stackId` is the Stack the caller named, when it named one. It rides on the
+   * creation call rather than on the registry because one host serves several Stacks
+   * and the choice belongs to the request. Omitted, the host's bound Stack applies.
+   */
+  create(source: string, now: Date, stackId?: string): IngestJob;
   /** Current snapshot of `id`, or `undefined` when unknown, evicted, or expired. */
   get(id: string): IngestJob | undefined;
   /** Every retained job, newest first. */
@@ -125,8 +131,31 @@ function withPatch(
     ...job,
     updatedAt: now.toISOString(),
     ingest: patch.ingest === undefined ? job.ingest : { ...job.ingest, ...patch.ingest },
-    compile: patch.compile === undefined ? job.compile : { ...job.compile, ...patch.compile },
+    compile: patch.compile === undefined ? job.compile : mergeCompile(job.compile, patch.compile),
   };
+}
+
+/**
+ * Merge a compile patch, honouring an explicit `undefined` as a DELETION.
+ *
+ * A plain spread cannot remove a field: `{ ...old, detail: undefined }` leaves a
+ * present-but-undefined key, which serializes away but reads as "set to nothing"
+ * rather than "never set". `detail` must be genuinely absent, never an empty or
+ * zeroed object, or a consumer could render "0 chunks" for a stage that embedded
+ * nothing. Every other field keeps the overwrite semantics the spread gives it.
+ *
+ * The distinction is KEY PRESENCE, not value: a patch that never mentions `detail`
+ * (a status transition, which is most of them) must leave it alone. Testing the
+ * value instead deleted the cardinality on every settle, so the count vanished the
+ * moment the run finished — exactly when an operator wants to read it.
+ */
+function mergeCompile(
+  current: CompileDimensionState,
+  patch: Partial<CompileDimensionState>,
+): CompileDimensionState {
+  const merged = { ...current, ...patch };
+  if ("detail" in patch && patch.detail === undefined) delete merged.detail;
+  return merged;
 }
 
 /**
@@ -142,7 +171,7 @@ export function createJobRegistry(): JobRegistry {
   const jobs = new Map<string, IngestJob>();
 
   return {
-    create(source, now) {
+    create(source, now, stackId) {
       const at = now.toISOString();
       const job: IngestJob = {
         id: `ing_${ulid()}`,

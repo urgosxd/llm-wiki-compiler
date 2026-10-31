@@ -53,6 +53,10 @@ import type { JobRegistry } from "../services/ingest/jobs/registry.js";
 import { runIngestJob } from "../services/ingest/jobs/run.js";
 import type { IngestJobAccepted } from "../services/ingest/jobs/types.js";
 import type { CompileResult, IngestResult } from "../utils/types.js";
+import { stackIdProblem } from "../utils/stack-id.js";
+import { buildIngestEnv } from "./ingest-env.js";
+import { AKS_DATABASE_URL_ENV_VAR, createDimensionsDatabase } from "../dimensions/activation.js";
+import { stackExists } from "../services/stacks/stack-store.js";
 
 /** Largest request body these endpoints accept, in bytes. */
 const MAX_BODY_BYTES = 1024 * 64;
@@ -70,6 +74,15 @@ interface IngestRequest {
    * a 200 into a 202 would break all of them to serve one new client.
    */
   readonly async?: boolean;
+  /**
+   * Stack the ingest should write into, when it is not the bound one.
+   *
+   * On the request rather than the process because a single host now serves several
+   * Stacks: without it, every ingest from this endpoint landed in whichever Stack the
+   * process was started with, so a caller reading Stack A could only ever write to A's
+   * sibling. Validated before it reaches the database -- see `stackIdProblem`.
+   */
+  readonly stackId?: string;
 }
 
 /**
@@ -163,17 +176,20 @@ export interface ApiDeps {
  */
 function acceptAsyncIngest(
   root: string,
-  source: string,
-  compile: boolean,
+  request: IngestRequest,
   res: ServerResponse,
   deps: ApiDeps,
 ): void {
+  const { source, stackId } = request;
+  const compile = request.compile !== false;
   const registry = deps.ingestJobs;
   if (registry === undefined) {
     writeJsonError(res, 503, "jobs_unavailable", "this host does not track ingest jobs");
     return;
   }
-  const job = registry.create(source, new Date());
+  // The Stack travels into the MIRROR, not only into the pipeline: the durable row is
+  // what a client reads back by id, so a job named in B must be findable under B.
+  const job = registry.create(source, new Date(), stackId);
   const accepted: IngestJobAccepted = {
     jobId: job.id,
     status: job.ingest.status,
@@ -182,7 +198,9 @@ function acceptAsyncIngest(
     compile: job.compile,
   };
   writeJson(res, 202, accepted);
-  void runIngestJob({ root, registry, job, compile });
+  // The Stack travels ON the job: the work starts after this response is answered, so
+  // the request is gone by then and the job is the only thing that can carry it.
+  void runIngestJob({ root, registry, job, compile, stackId });
 }
 
 /**
@@ -210,7 +228,7 @@ async function handleIngest(
   const request = await readIngestRequest(req, res);
   if (request === undefined) return;
   if (request.async === true) {
-    acceptAsyncIngest(root, request.source, request.compile !== false, res, deps);
+    acceptAsyncIngest(root, request, res, deps);
     return;
   }
   await runSyncIngest(root, request, res);
@@ -241,7 +259,76 @@ async function readIngestRequest(
     writeJsonError(res, 400, "invalid_request", "body must be {\"source\": \"<url-or-path>\"}");
     return undefined;
   }
-  return { ...request, source };
+  const stackId = resolveRequestStack(req, request);
+  if (stackId !== undefined) {
+    const problem = stackIdProblem(stackId);
+    if (problem !== undefined) {
+      writeJsonError(res, 400, "invalid_request", problem);
+      return undefined;
+    }
+    // Shape is not enough. A well-formed id naming no Stack used to be accepted with
+    // a 202 and a job id, and the durable mirror then failed on a foreign key while the
+    // HTTP caller was told the work had started. Answering 202 for work that cannot be
+    // recorded is the same class as answering 200 for a Stack that does not exist.
+    const absent = await unknownStackRefusal(stackId);
+    if (absent !== undefined) {
+      writeJsonError(res, absent.status, absent.code, absent.message);
+      return undefined;
+    }
+  }
+  return { ...request, source, ...(stackId === undefined ? {} : { stackId }) };
+}
+
+/** The HTTP answer for a Stack this deployment cannot serve, or `undefined`. */
+interface StackRefusal {
+  readonly status: number;
+  readonly code: string;
+  readonly message: string;
+}
+
+/**
+ * Refuse a `stackId` that names no Stack, before any work is accepted.
+ *
+ * Skipped when no database is configured: a file-backed project has no Stacks to look
+ * up, and refusing there would break a supported deployment. A FAILED lookup is still a
+ * refusal, because an unreachable database must not read as a valid Stack.
+ *
+ * @param stackId - The Stack id taken from the request.
+ * @returns The refusal to send, or `undefined` when the Stack may be used.
+ */
+async function unknownStackRefusal(stackId: string): Promise<StackRefusal | undefined> {
+  const configured = (process.env[AKS_DATABASE_URL_ENV_VAR] ?? "").trim();
+  if (configured === "") return undefined;
+  const dimensionsDb = createDimensionsDatabase();
+  try {
+    if (await stackExists(dimensionsDb.db, stackId)) return undefined;
+    return { status: 404, code: "unknown_stack", message: `No Stack '${stackId}' exists.` };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { status: 503, code: "stack_lookup_failed", message: `Could not verify Stack '${stackId}': ${detail}` };
+  } finally {
+    await dimensionsDb.close();
+  }
+}
+
+/**
+ * The Stack an ingest request names, from the query string or the body.
+ *
+ * Query first because the routes that READ jobs take `?stackId=`. A client that writes
+ * and reads with one shape would otherwise have to know that create alone wants it in
+ * the body -- and silently writing to the host's Stack looks like success until the
+ * read 404s with the row somewhere else.
+ *
+ * @param req - The incoming request, for its query string.
+ * @param request - The parsed body, when it parsed.
+ * @returns The named Stack, or `undefined` to use the host's binding.
+ */
+function resolveRequestStack(
+  req: IncomingMessage,
+  request: IngestRequest | undefined,
+): string | undefined {
+  const fromQuery = new URL(req.url ?? "/", "http://localhost").searchParams.get("stackId");
+  return fromQuery ?? request?.stackId;
 }
 
 /**
@@ -261,12 +348,20 @@ async function runSyncIngest(
   res: ServerResponse,
 ): Promise<void> {
   try {
-    const ingested: IngestResult = await ingestSource(root, request.source);
-    if (request.compile === false) {
+    // The Stack is passed down as an ENVIRONMENT, not assigned into `process.env`.
+    // One env for the whole request means ingest and compile cannot disagree about the
+    // tenant, and two concurrent requests cannot see each other's Stack -- which the
+    // previous assign-and-restore could not promise.
+    const env = buildIngestEnv(request.stackId);
+    const ingested: IngestResult = await ingestSource(root, request.source, undefined, env);
+    const compiled: CompileResult | null =
+      request.compile === false
+        ? null
+        : await compileAndReport(root, { env });
+    if (compiled === null) {
       writeJson(res, 200, { ...ingested, compiled: null });
       return;
     }
-    const compiled: CompileResult = await compileAndReport(root);
     // `busy` means the compile never started (another holds the lock). The source
     // IS ingested, so this is a retryable compile outcome, not a failed request.
     writeJson(res, 200, { ...ingested, compiled, compileBusy: compiled.busy === true });

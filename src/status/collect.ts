@@ -196,6 +196,24 @@ function capPendingChanges(
 export interface CollectStatusOptions {
   /** Row-backed scan source; omit to read `wiki/` from disk. */
   pageScan?: PageScanSource;
+  /**
+   * Row-backed source corpus; omit to read `sources/` from disk.
+   *
+   * Separate from `pageScan` because sources and pages are different tables, and
+   * omitting this is what made `wiki_status` report a Stack's pages from rows while
+   * counting its PENDING CHANGES against the repository's own `sources/` directory.
+   * The two numbers came from different worlds in one object: a stack with one page
+   * reported `pages: 1, sources: 1` beside `pendingChanges: 23`, every one of those 23
+   * being an unrelated file in the checkout. Adding the seam here is the same fix
+   * `detectChanges` already had.
+   */
+  sourceDocuments?: SourceDocumentListing;
+}
+
+/** The Stack's own documents, as the status needs them. */
+export interface SourceDocumentListing {
+  /** Source identities and their stored hashes, as a compile compares them. */
+  list(): Promise<Array<{ sourceIdentity: string; contentHash: string }>>;
 }
 
 /** Build a read-only status snapshot used by the `wiki_status` MCP tool. */
@@ -204,10 +222,21 @@ export async function collectStatus(
   options: CollectStatusOptions = {},
 ): Promise<WikiStatus> {
   const classified = await readStateClassifiedFor(root);
-  const snapshot = await buildFreshnessSnapshot(root, classified);
+  // The corpus comes from the Stack when one is configured, for the snapshot as well as
+  // for the pending list: a snapshot that judges `exists` against `sources/` reported
+  // every Stack source as deleted, because its keys are capability URLs and no such
+  // file is ever on disk.
+  const stackDocuments = options.sourceDocuments === undefined
+    ? undefined
+    : await options.sourceDocuments.list();
+  const snapshot = await buildFreshnessSnapshot(root, classified, stackDocuments);
 
   const scan = options.pageScan;
-  const [conceptSummaries, queries, scannedConcepts, pendingCandidates, sourceFilesOnDisk] = await Promise.all([
+  // Rows are authoritative when a Stack is configured, exactly as in `detectChanges`.
+  // The directory is consulted only when it is not, so a project that never opted into
+  // the backend keeps reporting the same numbers it always did.
+  const sourceFilesOnDisk = stackDocuments?.map((doc) => doc.sourceIdentity);
+  const [conceptSummaries, queries, scannedConcepts, pendingCandidates, filesFromDisk] = await Promise.all([
     // Summaries are DERIVED from the same scan the classification uses, so a row
     // listing cannot report a page count that disagrees with its own stale list.
     scan === undefined
@@ -220,7 +249,9 @@ export async function collectStatus(
       ? scanWikiPages(path.join(root, CONCEPTS_DIR))
       : scan.scan("concepts"),
     countCandidates(root),
-    listSelectedSourceFiles(root),
+    sourceFilesOnDisk === undefined
+      ? listSelectedSourceFiles(root)
+      : Promise.resolve(sourceFilesOnDisk),
   ]);
 
   const { stalePages, orphanedPages } = classifyConceptPages(scannedConcepts, snapshot);
@@ -246,7 +277,7 @@ export async function collectStatus(
   const stateUnusable = classified.status === "corrupt" || classified.status === "too-new";
   const pendingChanges = stateUnusable
     ? []
-    : pendingChangesFromSnapshot(snapshot, sourceFilesOnDisk);
+    : pendingChangesFromSnapshot(snapshot, filesFromDisk);
 
   // A too-new state carries the RAW parsed object, which need not be v1-shaped:
   // its `sources` may be absent. Fail closed by reading an empty map for any

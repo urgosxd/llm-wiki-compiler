@@ -53,12 +53,15 @@ export async function writeEmbeddingStoreToDb(
 /** Upsert the header row for this Stack. */
 async function upsertMeta(tx: Database, stackId: string, store: EmbeddingStoreV3): Promise<void> {
   await tx.execute(sql`
-    insert into wiki.embedding_store_meta (stack_id, model, dimensions, fingerprint, updated_at)
-    values (${stackId}, ${store.model}, ${store.dimensions}, ${store.fingerprint ?? null}, now())
+    insert into wiki.embedding_store_meta
+      (stack_id, model, dimensions, fingerprint, min_similarity, updated_at)
+    values (${stackId}, ${store.model}, ${store.dimensions},
+            ${store.fingerprint ?? null}, ${store.minSimilarity ?? null}, now())
     on conflict (stack_id) do update
       set model = excluded.model,
           dimensions = excluded.dimensions,
           fingerprint = excluded.fingerprint,
+          min_similarity = excluded.min_similarity,
           updated_at = now()
   `);
 }

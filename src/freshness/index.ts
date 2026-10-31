@@ -68,9 +68,30 @@ function ownersOf(slug: string, snapshot: FreshnessSnapshot) {
 export async function buildFreshnessSnapshot(
   root: string,
   classified?: ClassifiedState,
+  /** The Stack's own documents, when one is configured; omit to hash `sources/`. */
+  stackDocuments?: ReadonlyArray<{ sourceIdentity: string; contentHash: string }>,
 ): Promise<FreshnessSnapshot> {
   const { status, state } = classified ?? (await readStateClassifiedFor(root));
   const sources: FreshnessSnapshot["sources"] = {};
+  if (status === "ok" && stackDocuments !== undefined) {
+    // A Stack's corpus is its rows, and its keys are source IDENTITIES -- capability
+    // URLs, not filenames. Judging `exists` against `sources/` therefore said every
+    // Stack source was deleted: `path.resolve(sourcesRoot, "http://…")` lands outside
+    // the directory, so the containment check bailed with `exists: false` and the
+    // status reported a document as `deleted` while it sat in the table. The page was
+    // then one compile away from being orphaned and dropped.
+    const byIdentity = new Map(stackDocuments.map((doc) => [doc.sourceIdentity, doc.contentHash]));
+    for (const [identity, entry] of Object.entries(state.sources)) {
+      const currentHash = byIdentity.get(identity);
+      sources[identity] = {
+        recordedHash: entry.hash,
+        currentHash: currentHash ?? null,
+        exists: currentHash !== undefined,
+        concepts: entry.concepts,
+      };
+    }
+    return { stateStatus: status, sources };
+  }
   if (status === "ok") {
     const sourcesRoot = path.resolve(root, SOURCES_DIR);
     // Resolve the real sources root ONCE — the per-source containment check reuses it,

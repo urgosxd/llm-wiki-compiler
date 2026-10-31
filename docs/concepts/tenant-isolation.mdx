@@ -1,0 +1,66 @@
+---
+title: "Tenant isolation"
+description: "How Stack isolation works today, and what has to change for row-level security to be the mechanism that enforces it."
+---
+
+The `wiki` schema enables row-level security on all 22 of its tables, each with
+`relforcerowsecurity = true` and a `tenant_isolation` policy keyed on
+`app.stack_id`. That apparatus is **not active for current traffic**, and this page
+exists so nobody assumes otherwise.
+
+## What enforces isolation today
+
+The explicit predicate. Every tenant-scoped query carries `where stack_id = ...`,
+written by hand in each reader. That predicate is the whole guarantee.
+
+Measured on a development database, connected as the only role that can log in:
+
+```
+select count(*), count(distinct stack_id) from wiki.source_documents;
+--  32 rows across 8 Stacks
+```
+
+No predicate, and nothing stopped it. Row-level security filtered nothing, because
+that connection is a `BYPASSRLS` superuser.
+
+## Why the policies are inert
+
+```
+role          can login   superuser   bypassrls
+aks               yes         yes         yes
+llmwiki_app       no          no          no
+```
+
+`aks` is the only role that can connect, and it bypasses every policy.
+`llmwiki_app` is the role the deployment is **meant** to switch to — it has no
+`LOGIN` and inherits from nothing — and no production code issues a `SET ROLE`. So
+the policies have never had a policied connection to apply to.
+
+## What the policies are for
+
+They are the mechanism that takes over the day the DSN switches to a policied role.
+The isolation guarantee they express is real; it is simply not the thing protecting
+you right now. Two consequences follow, and both have caused real defects:
+
+**A reader that binds the tenant outside its own transaction works today and fails
+later.** `set_config('app.stack_id', $1, true)` is the parameterised `SET LOCAL`: it
+lasts only until the enclosing transaction ends. Bind the pooled handle, then query
+in a separate implicit transaction, and the policy evaluates unbound. Under `aks`
+that is invisible — the explicit predicate carries the query. Under a policied role
+the same read returns zero rows. The failure is not an error, it is an empty result:
+a healthy Stack reports "no embedding index found", and a compiler extracts rules
+from an empty corpus. Four such readers existed; see
+`test/dimensions/kg-rls-tenant-binding.test.ts`, which pins the class.
+
+**A test that asserts isolation through a superuser proves nothing.** It passes
+because the policy never runs, not because the query is correct. Isolation
+assertions must drop to a policied role inside the transaction they measure; that is
+what `test/fixtures/rls-probe.ts` and `test/fixtures/role-scoped-db.ts` do.
+
+## Activating it
+
+Switching the deployment to a role with `LOGIN` and without `BYPASSRLS` turns the
+policies on. Before doing that, every reader must bind the tenant **inside** the
+transaction that reads, and every isolation assertion must run as the policied role.
+The explicit `where stack_id = ...` predicates should stay either way: they are the
+guarantee that survives a misconfigured DSN.

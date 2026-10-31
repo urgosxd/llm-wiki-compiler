@@ -45,7 +45,7 @@ export const AKS_STACK_ID_ENV_VAR = "AKS_STACK_ID";
 const AKS_STACK_NAME_ENV_VAR = "AKS_STACK_NAME";
 
 /** Environment variable overriding the graph database connection string. */
-const AKS_DATABASE_URL_ENV_VAR = "AKS_DATABASE_URL";
+export const AKS_DATABASE_URL_ENV_VAR = "AKS_DATABASE_URL";
 
 /** The dimension enabled when the switch is absent. */
 const DEFAULT_DIMENSION: DimensionName = "wiki";

@@ -11,6 +11,7 @@ import { Command } from "commander";
 import { ingestCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { ingestSessionCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { hostCommand, viewCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { createWikiMcpServer } from "./mcp/server.js";
 import { visualizeCommand, type VisualizeOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { compileCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { rmCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
@@ -102,9 +103,15 @@ program
     try {
       // Commander maps `--no-graph` onto `graph: false`, so the opt-out has to be
       // read as its negation rather than as a `noGraph` flag.
+      // The MCP-over-HTTP factory is built HERE and injected, because `hostCommand`
+      // is re-exported by the `compiler-cli` barrel: importing `../mcp/**` from that
+      // command closes a cycle through the barrel. The CLI entry imports the barrel
+      // and nothing imports the entry, so this is the only acyclic place for it.
+      const root = process.cwd();
       await hostCommand({
         ...options,
         ...(options.graph === false ? { noGraph: true } : {}),
+        mcpServerFactory: () => createWikiMcpServer({ root, version }),
       });
     } catch (err) {
       console.error(`\x1b[31mError:\x1b[0m ${err instanceof Error ? err.message : err}`);

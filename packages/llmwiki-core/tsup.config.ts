@@ -19,7 +19,16 @@ export default defineConfig({
   // Express and its CJS transitive deps (`debug` -> `tty`) cannot be bundled into
   // an ESM output: esbuild turns their `require` calls into a dynamic-require shim
   // that throws at import time. External so Node resolves them at runtime.
-  external: ["express"],
+  //
+  // The MCP SDK arrives the same way once `hostCommand` mounts the streamable-HTTP
+  // transport (`src/host/mcp-http.ts` -> `src/mcp/server.ts` -> the SDK). Bundling
+  // it pulls its validation layer, and `ajv-formats` does `require("ajv")` — under
+  // an ESM output that becomes a dynamic-require shim which throws
+  // `Dynamic require of "ajv" is not supported` at import time. The bundle built
+  // fine and the CLI died before parsing a single argument; measured with
+  // `node dist/cli.js --version`. External so Node resolves the SDK at runtime,
+  // which is how it already runs under `llmwiki serve`.
+  external: ["express", "@modelcontextprotocol/sdk", "@modelcontextprotocol/sdk/*", "@hono/node-server"],
   splitting: true,
   sourcemap: true,
   clean: true,

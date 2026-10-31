@@ -24,11 +24,7 @@
  * FastAPI's `{detail}`.
  */
 import { describe, expect, it } from "vitest";
-import { mkdtemp, realpath } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
-import { startHost, type HostHandle } from "../../src/host/server.js";
+import { runningHost } from "../fixtures/running-host.js";
 
 /** A UUID that resolves to no Stack, so the graph app fails INSIDE the handler. */
 const UNKNOWN_STACK = "00000000-0000-0000-0000-000000000000";
@@ -39,17 +35,14 @@ function isViewerEnvelope(body: unknown): boolean {
   return envelope?.error !== undefined && typeof envelope.error.code === "string";
 }
 
-/** Start a host on a scratch root and hand back its base URL. */
-async function runningHost(): Promise<{ handle: HostHandle; base: string }> {
-  const root = await realpath(await mkdtemp(path.join(tmpdir(), "host-prefix-")));
-  const viewerSnapshot = await buildViewerSnapshot(root);
-  const handle = await startHost({ viewerSnapshot, port: 0 });
-  return { handle, base: `http://${handle.host}:${handle.port}` };
+/** Boot a host for this suite; the fixture keeps every host suite on one path. */
+function bootHost(): ReturnType<typeof runningHost> {
+  return runningHost("host-prefix-");
 }
 
 describe("the host routes the /domain extension prefix to the graph app", () => {
   it("does not let the viewer claim the stack graph endpoint", async () => {
-    const { handle, base } = await runningHost();
+    const { handle, base } = await bootHost();
     try {
       const response = await fetch(`${base}/domain/kg/stacks/${UNKNOWN_STACK}/graph`, {
         headers: { origin: base },
@@ -65,7 +58,7 @@ describe("the host routes the /domain extension prefix to the graph app", () => 
   });
 
   it("keeps the graph app authoritative for an oracle prefix in the same list", async () => {
-    const { handle, base } = await runningHost();
+    const { handle, base } = await bootHost();
     try {
       // `/health` is the control: it proves the dispatcher sends graph-prefixed
       // traffic to the graph app, so the case above is about `/domain` and not

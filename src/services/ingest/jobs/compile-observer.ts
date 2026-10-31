@@ -80,6 +80,12 @@ export function reportCompileStage(
   if (reporter === undefined || jobStage === undefined) return;
   reporter.stage(jobStage);
   reporter.progress(null);
+  // Clearing detail is the same rule as clearing progress: a previous stage's
+  // cardinalities describe work that is already finished, and leaving them up
+  // would attribute the last stage's chunk count to the one now starting.
+  // `null`, not `{}`: an empty object stays PRESENT, so a consumer checking
+  // `detail !== undefined` would render an empty cardinality line instead of none.
+  reporter.detail(null);
 }
 
 /**

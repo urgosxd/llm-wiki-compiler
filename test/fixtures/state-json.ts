@@ -10,6 +10,7 @@ import { mkdir, writeFile, readFile } from "fs/promises";
 import { createHash } from "node:crypto";
 import path from "path";
 import { LLMWIKI_DIR, STATE_FILE } from "../../src/utils/constants.js";
+import { stableContent } from "../../src/utils/source-writer.js";
 import type { WikiState } from "../../src/utils/types.js";
 
 /** Read and parse the persisted `.llmwiki/state.json` for a test root. */
@@ -17,9 +18,16 @@ export async function readPersistedState(root: string): Promise<WikiState> {
   return JSON.parse(await readFile(path.join(root, STATE_FILE), "utf-8"));
 }
 
-/** Hex SHA-256 of a string — mirrors the compiler's source hashing for fixtures. */
+/**
+ * Hex SHA-256 of a string — mirrors the compiler's source hashing for fixtures.
+ *
+ * Hashes the STABLE form, because change detection compares this value against a
+ * persisted hash produced from `stableContent` (frontmatter minus the volatile
+ * `ingestedAt`). A raw-bytes digest here would never match what the compiler
+ * records, so fixtures built with it would look "changed" on every compile.
+ */
 export function sha256Hex(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
+  return createHash("sha256").update(stableContent(text)).digest("hex");
 }
 
 /**

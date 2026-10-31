@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { slugify } from "../utils/markdown.js";
+import { stableContent } from "../utils/source-writer.js";
 import { getActiveProviderName, resolveActiveModelId } from "../utils/provider.js";
 import type { ExtractedConcept, SourceState, SourceChange, WikiState } from "../utils/types.js";
 import type { ExtractionResult } from "./deps.js";
@@ -26,8 +27,15 @@ const snapshotSchema = z.object({
   fingerprint: z.string(), sourceHash: z.string(), concepts: z.array(conceptSchema).min(1),
 }).strict();
 
-/** Hash the bytes actually supplied to extraction, not a later disk read. */
-export function extractionSourceHash(content: string): string {
+/**
+ * Hash the bytes actually supplied to extraction, not a later disk read.
+ *
+ * Internal: this is the basis for the FINGERPRINT (a contract digest), which is a
+ * different question from whether the source's own bytes changed. The latter is
+ * `stableSourceHash`. Not exported — nothing outside this module hashes a
+ * contract.
+ */
+function extractionSourceHash(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
@@ -39,9 +47,25 @@ function extractionFingerprint(): string {
   ]));
 }
 
+/**
+ * Hash the STABLE source content, matching `SourceState.hash` and
+ * `wiki.source_documents.content_hash`.
+ *
+ * Reuse requires `snapshot.sourceHash === entry.hash`, so this MUST use the same
+ * basis as the state hash: `stableContent` drops the volatile `ingestedAt`, which
+ * moves on every ingest. Hashing raw bytes here left the two unequal, so a source
+ * could never be reused even when nothing about it had changed.
+ *
+ * @param content - Full source text, frontmatter included.
+ * @returns Lowercase hex digest.
+ */
+export function stableSourceHash(content: string): string {
+  return createHash("sha256").update(stableContent(content), "utf-8").digest("hex");
+}
+
 /** Build the optional snapshot that is committed alongside live source state. */
 export function snapshotExtraction(content: string, concepts: ExtractedConcept[]): NonNullable<SourceState["extraction"]> {
-  return { fingerprint: extractionFingerprint(), sourceHash: extractionSourceHash(content), concepts };
+  return { fingerprint: extractionFingerprint(), sourceHash: stableSourceHash(content), concepts };
 }
 
 /** Do not persist held or rejected assignments as reusable published metadata. */
@@ -66,7 +90,7 @@ export function reusableExtraction(entry: SourceState | undefined, content: stri
   if (!parsed.success || !entry) return undefined;
   const snapshot = parsed.data;
   if (snapshot.fingerprint !== extractionFingerprint()) return undefined;
-  if (snapshot.sourceHash !== entry.hash || snapshot.sourceHash !== extractionSourceHash(content)) return undefined;
+  if (snapshot.sourceHash !== entry.hash || snapshot.sourceHash !== stableSourceHash(content)) return undefined;
   const slugs = new Set(snapshot.concepts.map((concept) => slugify(concept.concept)));
   if (slugs.size !== new Set(entry.concepts).size || entry.concepts.some((slug) => !slugs.has(slug))) return undefined;
   // Newness belongs to the current run, not the original extraction. Reused

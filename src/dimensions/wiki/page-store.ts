@@ -270,6 +270,70 @@ export async function getStoredPage(
   });
 }
 
+/** One page identity as the caller asks for it, before it is narrowed to a directory. */
+export interface StoredPageKey {
+  readonly pageDirectory: PageDirectory;
+  readonly slug: string;
+}
+
+/**
+ * Many pages of one tenant in ONE round trip, body included.
+ *
+ * ## Why this is not `getStoredPage` in a loop
+ *
+ * `getStoredPage` opens its own `withTenant` transaction, so N pages cost N
+ * transactions plus N `set_config` calls. Measured on 90 candidates against a real
+ * Stack: ~3.5ms each, ~316ms total, against ~4ms for the single query below. The
+ * retrieval freshness walk asks for exactly this shape (a ranked candidate batch),
+ * and paying a transaction per candidate made freshness look like an
+ * architectural limit when it was an adapter defect.
+ *
+ * ## Why `unnest` instead of an `IN` list
+ *
+ * Two parallel arrays keep the query at one parameter pair regardless of batch
+ * size, so there is no bind-parameter ceiling or literal-length cliff to chunck
+ * around. It also keeps the identity pair explicit: `(page_directory, slug)` is
+ * the primary key, and a slug alone is not unique across directories.
+ *
+ * An orphaned or archived page is still returned. This reader's contract is "the
+ * rows that exist": the callers that exclude those apply their own rule, and a
+ * pre-filtered batch could not recover a row it never returned.
+ *
+ * @param db - Database handle.
+ * @param stackId - The tenant that owns the pages.
+ * @param keys - Identities to fetch; duplicates collapse to one row each.
+ * @returns A map from `directory/slug` to page, for the identities that exist.
+ */
+export async function getStoredPagesByKey(
+  db: Database,
+  stackId: string,
+  keys: readonly StoredPageKey[],
+): Promise<Map<string, Page>> {
+  const pages = new Map<string, Page>();
+  if (keys.length === 0) return pages;
+
+  const directories = keys.map((key) => key.pageDirectory);
+  const slugs = keys.map((key) => key.slug);
+  const rows = await withTenant(db, stackId, async (tx) =>
+    tx.execute<WikiPageRow>(sql`
+      select page_directory, slug, title, summary, tags, links, body,
+             orphaned, archived, created_at, updated_at
+      from wiki.pages
+      where stack_id = ${stackId}
+        and (page_directory, slug) in (
+          select unnest(${toArrayLiteral(directories)}::text[]),
+                 unnest(${toArrayLiteral(slugs)}::text[])
+        )
+    `),
+  );
+
+  for (const row of rows) {
+    const page = toPage(row);
+    if (page !== undefined) pages.set(`${page.pageDirectory}/${page.slug}`, page);
+  }
+  return pages;
+}
+
 /**
  * Insert or update one page.
  *

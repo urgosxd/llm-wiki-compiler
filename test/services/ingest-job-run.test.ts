@@ -18,7 +18,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createJobRegistry } from "../../src/services/ingest/jobs/registry.js";
+import { createJobRegistry, MAX_JOBS } from "../../src/services/ingest/jobs/registry.js";
 import { runIngestJob } from "../../src/services/ingest/jobs/run.js";
 import { FAILURE_LOG_FILE, failureRecordOf } from "../../src/services/ingest/jobs/failure-log.js";
 import { queuedCompileState, queuedIngestState } from "../../src/services/ingest/jobs/types.js";
@@ -36,15 +36,48 @@ async function projectRoot(): Promise<string> {
  * The failure is the POINT: it is reached before any transaction opens, so this
  * exercises the settle path without needing a database.
  */
-async function runFailingJob(): Promise<{ root: string; registry: ReturnType<typeof createJobRegistry>; jobId: string }> {
+async function runFailingJob(options: { compile?: boolean } = {}): Promise<{
+  root: string;
+  registry: ReturnType<typeof createJobRegistry>;
+  jobId: string;
+}> {
   const root = await projectRoot();
   const registry = createJobRegistry();
   const job = registry.create("/nonexistent/source.txt", new Date());
-  await runIngestJob({ root, registry, job, compile: false });
+  // `compile: true` matters: with it false the run takes the explicit-skip branch and
+  // never reaches the state this suite is about, where the compile half is still
+  // `queued` when the ingest throws.
+  await runIngestJob({ root, registry, job, compile: options.compile ?? false });
   return { root, registry, jobId: job.id };
 }
 
 describe("running a job that fails", () => {
+  it("settles the compile half instead of leaving it queued forever", async () => {
+    const { registry, jobId } = await runFailingJob({ compile: true });
+    const settled = registry.get(jobId);
+    expect(settled?.ingest.status).toBe("failed");
+    // `queued` would claim work is pending that nothing will ever advance: a client
+    // polling this sees a frozen timestamp and renders a moving "working" indicator
+    // for a dead job. `skipped` is the honest terminal state.
+    expect(settled?.compile.status).toBe("skipped");
+    expect(settled?.compile.message).toMatch(/never started/i);
+  }, 30_000);
+
+  it("lets the registry evict a failed job, which needs both halves terminal", async () => {
+    const { registry, jobId } = await runFailingJob({ compile: true });
+    // `isSettled` requires the compile to be terminal. While it stayed `queued` the
+    // job could not be evicted at all, pinning a retention slot for the life of the
+    // process — a leak, and a worse consequence than the misleading spinner.
+    // Enough NEW jobs to exceed MAX_JOBS, so eviction is forced. A smaller number
+    // proves nothing: my first version created 120 against a bound of 200 and the
+    // assertion failed because nothing was ever under pressure.
+    const created = MAX_JOBS + 10;
+    for (let index = 0; index < created; index += 1) {
+      registry.create(`source-${index}.md`, new Date());
+    }
+    expect(registry.get(jobId)).toBeUndefined();
+  }, 30_000);
+
   it("settles the ingest dimension as failed with the reason", async () => {
     const { registry, jobId } = await runFailingJob();
     const settled = registry.get(jobId);

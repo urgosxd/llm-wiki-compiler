@@ -21,6 +21,11 @@ const V3_OK = { store: { version: 3, model: "m", dimensions: 2, entries: [], chu
 // the index-selection fallback, and stub selectPages so no LLM call is needed.
 vi.mock("../src/utils/embeddings-load.js", () => ({
   loadEmbeddingsForSearch: vi.fn(async () => ({ store: null, warnings: [OUTDATED], stalePageIds: [] })),
+  // The header-only entry point delegates to the same mocked load when the source
+  // cannot rank, so these cases keep measuring the warning plumbing they are about.
+  loadMetaForSearch: vi.fn(async () => ({ store: null, warnings: [OUTDATED], stalePageIds: [] })),
+  // These cases exercise a FULL store, which is never header-only.
+  isMetaOnlyStore: () => false,
   findRelevantChunksV3: vi.fn(),
   findRelevantPagesV3: vi.fn(),
 }));

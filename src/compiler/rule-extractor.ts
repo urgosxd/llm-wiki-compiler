@@ -18,6 +18,7 @@ import path from "path";
 import { detectChanges } from "./hasher.js";
 import type { ChangeDetectionSource, SourceContentSource } from "./hasher.js";
 import { parseFrontmatter, slugify } from "../utils/markdown.js";
+import { stableContent } from "../utils/source-writer.js";
 import { callClaude } from "../utils/llm.js";
 import { resolveActiveModelId } from "../utils/provider.js";
 import { getOutputLanguage } from "../utils/output-language.js";
@@ -206,7 +207,10 @@ async function extractForSource(
   contentSource?: SourceContentSource,
 ): Promise<{ candidates: RuleCandidate[]; note?: string; hash: string }> {
   const raw = await loadSourceText(root, sourceFile, contentSource);
-  const hash = createHash("sha256").update(raw).digest("hex");
+  // Stable basis, matching `hashFile` and the Stack's `content_hash`. Change
+  // detection compares this cursor hash against that value, so hashing raw bytes
+  // made every source look changed and re-ran rule extraction on every pass.
+  const hash = createHash("sha256").update(stableContent(raw)).digest("hex");
   const { meta } = parseFrontmatter(raw);
   const numbered = budgetAndNumberSource(sourceFile, raw);
   const maxLine = numbered.split("\n").length;
@@ -229,8 +233,9 @@ async function changedSources(
   root: string,
   outputLanguage: string,
   changeSource?: ChangeDetectionSource,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<string[]> {
-  const state = await readRuleState(root);
+  const state = await readRuleState(root, env);
   const changes = await detectChanges(root, state, changeSource);
   return changes
     .filter((c) => c.status === "new" || c.status === "changed" ||
@@ -250,10 +255,11 @@ export async function extractRuleCandidates(
   root: string,
   createdAt: string = new Date().toISOString(),
   corpus?: RuleCorpus,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<RuleExtractionResult> {
   const provenance = buildProvenance();
   const outputLanguage = getOutputLanguage() ?? "";
-  const sources = await changedSources(root, outputLanguage, corpus?.detection);
+  const sources = await changedSources(root, outputLanguage, corpus?.detection, env);
 
   const candidates: RuleCandidate[] = [];
   const notes: string[] = [];
@@ -273,7 +279,7 @@ export async function extractRuleCandidates(
       concepts: [],
       compiledAt: createdAt,
       outputLanguage,
-    });
+    }, env);
   }
 
   return { processedSources: sources, candidates, notes };

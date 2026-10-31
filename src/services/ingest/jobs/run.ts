@@ -32,6 +32,7 @@
 import { LockBusyError } from "../../../utils/lock.js";
 import { compileAndReport } from "../../../compiler/index.js";
 import { ingestSource } from "../service.js";
+import { buildIngestEnv } from "../../../host/ingest-env.js";
 import { recordJobFailure } from "./failure-log.js";
 import type { JobRegistry } from "./registry.js";
 import type {
@@ -49,6 +50,15 @@ export interface RunJobInput {
   readonly job: IngestJob;
   /** Whether to compile after ingesting. Mirrors the synchronous endpoint's flag. */
   readonly compile: boolean;
+  /**
+   * Stack this job writes into, when it is not the one the process was started with.
+   *
+   * A job runs in the background, AFTER the HTTP response is answered, so the Stack
+   * cannot be read from the request any more. It has to travel on the job: without it
+   * every async ingest lands in whichever Stack the host booted with, and the caller
+   * reads back an empty Stack with no error to explain it.
+   */
+  readonly stackId?: string;
 }
 
 /** Swallow an observer call's failure; a status bug must not fail the ingest. */
@@ -87,6 +97,11 @@ function jobObserverFor(
     },
     progress(progress) {
       guarded(() => registry.patchCompile(jobId, { progress }, clock()));
+    },
+    detail(detail) {
+      // Passing `undefined` through deletes the field (see `mergeCompile`), which
+      // is how a cleared detail becomes genuinely absent instead of empty.
+      guarded(() => registry.patchCompile(jobId, { detail: detail ?? undefined }, clock()));
     },
   };
 
@@ -174,6 +189,7 @@ function settleCompile(
 async function runCompileHalf(
   input: RunJobInput,
   now: () => Date,
+  env: NodeJS.ProcessEnv,
 ): Promise<unknown> {
   const { registry, job, root } = input;
   if (!input.compile) {
@@ -185,7 +201,13 @@ async function runCompileHalf(
     return undefined;
   }
   try {
-    const result = await compileAndReport(root, { jobObserver: jobObserverFor(registry, job.id, now) });
+    const result = await compileAndReport(root, {
+      jobObserver: jobObserverFor(registry, job.id, now),
+      // Same env as the ingest half. Without it the source lands in the requested
+      // Stack and its pages land in the bound one, which is the split this route
+      // exists to prevent.
+      env,
+    });
     if (result.busy === true) {
       settleCompile(registry, job.id, "busy", "Another compile holds the lock; retry.", now());
       return undefined;
@@ -209,12 +231,26 @@ async function runCompileHalf(
  * @param input - Project root, registry, job identity, and whether to compile.
  */
 export async function runIngestJob(input: RunJobInput): Promise<void> {
+  await runIngestJobUnder(input);
+}
+
+/**
+ * The job body.
+ *
+ * The Stack travels as an ENVIRONMENT computed from the job, never assigned into
+ * `process.env`: the async route answers 202 before this runs, so a mutation here would
+ * escape into whatever else the process is doing -- including another job.
+ *
+ * @param input - The job to run.
+ */
+async function runIngestJobUnder(input: RunJobInput): Promise<void> {
   const { registry, job, root } = input;
+  const env = buildIngestEnv(input.stackId);
   const now = () => new Date();
   try {
-    const ingested = await ingestSource(root, job.source, jobObserverFor(registry, job.id, now));
+    const ingested = await ingestSource(root, job.source, jobObserverFor(registry, job.id, now), env);
     settleIngestFromResult(registry, job.id, ingested.writeStatus, now());
-    await runCompileHalf(input, now);
+    await runCompileHalf(input, now, env);
   } catch (error) {
     // Lock contention is the caller's retry signal, not a failure of the source:
     // nothing was written, so `failed` with the reason is the honest record.
@@ -230,8 +266,51 @@ export async function runIngestJob(input: RunJobInput): Promise<void> {
       },
       now(),
     );
+    settleCompileWithoutIngest(registry, job.id, busy, now);
   }
   await recordIfFailed(root, registry, job.id);
+}
+
+/**
+ * Settle the compile half when the ingest never produced anything to compile.
+ *
+ * ## Why leaving it `queued` is a defect, not a neutral default
+ *
+ * The compile starts only after a successful ingest, so an ingest that throws means
+ * no compile will ever run. Leaving it at `queued` is a claim that work is pending,
+ * and nothing will ever advance it. Two consequences, both measured:
+ *
+ *   - A client polling the job sees `compile: queued` with a FROZEN `updatedAt`
+ *     forever. A UI reasonably renders a moving "working" indicator for that — the
+ *     one thing a status endpoint must never cause — for a job that is dead.
+ *   - `isSettled` in `registry.ts` requires the compile to be terminal, so the job
+ *     can never be evicted from the registry either. An ingest-failed job would pin
+ *     a slot against the retention bound for the life of the process.
+ *
+ * `skipped` is the honest terminal state: it never ran, and it never will. It is NOT
+ * `failed`, because the compile did not fail — the distinction is what tells a user
+ * whether to wait or to act. Lock contention is reported as `busy` instead, matching
+ * how a compile that could not start for the same reason is already recorded.
+ *
+ * @param registry - The registry the job lives in.
+ * @param jobId - The job whose ingest failed.
+ * @param busy - True when the failure was lock contention rather than the source.
+ * @param now - Clock, so the settled timestamp matches the ingest's.
+ */
+function settleCompileWithoutIngest(
+  registry: JobRegistry,
+  jobId: string,
+  busy: boolean,
+  now: () => Date,
+): void {
+  const message = busy
+    ? "Compile did not start: another mutation held the project lock."
+    : "Compile never started: the ingest failed, so there was nothing to compile.";
+  registry.patchCompile(
+    jobId,
+    { status: busy ? "busy" : "skipped", progress: null, message },
+    now(),
+  );
 }
 
 /** Append the durable failure record when the settled job ended failed. */

@@ -12,7 +12,9 @@
  * B's contribution entirely.
  */
 
+import { createHash } from "node:crypto";
 import { slugify } from "../utils/markdown.js";
+import { stableContent } from "../utils/source-writer.js";
 import * as output from "../utils/output.js";
 import type { WikiState, SourceChange, ExtractedConcept } from "../utils/types.js";
 import type { CompileStateDraft } from "./compile-state-draft.js";
@@ -28,6 +30,20 @@ export interface ExtractionResult {
   sourcePath?: string;
   sourceContent: string;
   concepts: ExtractedConcept[];
+  /**
+   * True when the provider answered with a readable concept list, even an empty
+   * one.
+   *
+   * An empty list is the NORMAL answer on a re-compile: extraction is handed the
+   * existing concept titles as dedup context, so a source whose concepts are all
+   * already in the wiki legitimately yields none. Treating that as a failure
+   * wrote `hash: ""` to source state, which never matches the source's digest, so
+   * every later compile re-extracted the document from scratch.
+   *
+   * Absent or false means the response was unusable and the source still needs a
+   * retry.
+   */
+  settled?: true;
   /** Committed metadata reused for an unchanged contributor, not new work. */
   reused?: true;
   /** Prior assignments also need regeneration if fresh extraction drops them. */
@@ -373,12 +389,20 @@ export function findSharedConcepts(
 }
 
 /**
- * Freeze concepts from failed extractions and persist their state with a
- * blank hash so they retry on the next compile. Preserves old concept lists
- * to keep dependency tracking intact.
- * @param draft - In-memory CompileStateDraft the function reads/mutates instead of disk state,
- *   buffering source entries with a blank hash so they are retried on the next compile.
- * @param results - Extraction results from this batch; entries with no concepts are failed.
+ * Freeze concepts from failed extractions so they retry on the next compile.
+ *
+ * Only an UNREADABLE response is a failure. A readable but empty concept list is
+ * settled work, and must be recorded with its real content hash: extraction is
+ * given the existing concept titles as dedup context, so a source whose concepts
+ * are already in the wiki legitimately yields none. Writing `hash: ""` in that
+ * case made the digest never match, so every later compile re-extracted the whole
+ * document again — full model latency, forever — while reporting a retry warning
+ * on a source that was already complete.
+ *
+ * Preserves old concept lists either way, to keep dependency tracking intact.
+ *
+ * @param draft - In-memory CompileStateDraft the function reads/mutates instead of disk state.
+ * @param results - Extraction results from this batch.
  * @param frozenSlugs - Mutable set of frozen slugs; old concept slugs from failed sources
  *   are added here to prevent them from being orphaned prematurely.
  */
@@ -390,8 +414,21 @@ export function freezeFailedExtractions(
   for (const result of results) {
     if (result.concepts.length > 0) continue;
 
-    output.status("!", output.warn(`${result.sourceFile}: no concepts — will retry.`));
     const oldConcepts = draft.read().sources[result.sourceFile]?.concepts ?? [];
+
+    // Readable empty list: nothing new to add, but the source is fully processed.
+    // Record its digest so the next compile sees it as unchanged instead of
+    // re-running extraction. Reused contributors are already settled too.
+    if (result.settled === true || result.reused === true) {
+      draft.setSource(result.sourceFile, {
+        hash: contentDigest(result.sourceContent),
+        concepts: oldConcepts,
+        compiledAt: new Date().toISOString(),
+      });
+      continue;
+    }
+
+    output.status("!", output.warn(`${result.sourceFile}: no concepts — will retry.`));
     for (const slug of oldConcepts) frozenSlugs.add(slug);
 
     draft.setSource(result.sourceFile, {
@@ -400,4 +437,22 @@ export function freezeFailedExtractions(
       compiledAt: new Date().toISOString(),
     });
   }
+}
+
+/**
+ * SHA-256 of a source's STABLE content, matching how `wiki.source_documents`
+ * hashes the same document.
+ *
+ * Change detection compares `SourceState.hash` against the document's stored
+ * `content_hash`, which is computed over `stableContent` — frontmatter minus the
+ * volatile `ingestedAt`, which moves on every ingest. Hashing the raw text here
+ * would produce a digest that never equals the stored one, so the source would be
+ * reported "changed" on every compile even though nothing did, and extraction
+ * (the expensive stage) would run again every time.
+ *
+ * @param sourceContent - Full source text, frontmatter included.
+ * @returns Lowercase hex digest.
+ */
+function contentDigest(sourceContent: string): string {
+  return createHash("sha256").update(stableContent(sourceContent), "utf-8").digest("hex");
 }
