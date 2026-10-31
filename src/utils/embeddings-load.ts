@@ -26,7 +26,7 @@
  */
 
 import { getEmbeddingProvider } from "./embedding-provider.js";
-import { assertVectorValid } from "./embeddings-validate.js";
+import { assertVectorValid, EmbeddingIntegrityError } from "./embeddings-validate.js";
 import {
   validateV3ForSearch,
   storeMatchesActiveEmbedding,
@@ -44,7 +44,7 @@ import {
   type LiveRegistryEntry,
 } from "./page-registry.js";
 import { splitIntoChunks } from "./retrieval.js";
-import { parseQualifiedPageId, type PageId } from "./page-id.js";
+import { parseQualifiedPageId, qualifiedPageId, type PageId } from "./page-id.js";
 import type { LoadedProfile } from "../profile/types.js";
 import type { PageRecord } from "../pages/read.js";
 import type { RegistryPageSource } from "./page-registry.js";
@@ -274,6 +274,41 @@ export function canRankWithoutStore(
   return source !== undefined && "readMeta" in source && "rankChunks" in source;
 }
 
+/**
+ * How many candidates the source ranks per requested hit.
+ *
+ * The walk discards stale candidates, so ranking exactly `k` would leave fewer than
+ * `k` fresh hits whenever any of them drifted. Overscanning keeps the walk's pool
+ * deep enough to still fill `k` -- the same reason the in-memory path ranks every
+ * entry rather than exactly `k`.
+ */
+const RANK_SCOPE_OVERSCAN = 3;
+
+/**
+ * Marks a store that carries only the header.
+ *
+ * A symbol rather than a boolean field so it cannot collide with the serialized
+ * store shape, and so no persisted store can ever arrive already marked: a store
+ * read from disk or from rows has no way to set it. Inferring lightness from
+ * `entries.length === 0` would be wrong -- an empty-but-real store is a legitimate
+ * state (a rebuild with nothing to embed), and treating it as light would materialize
+ * a second time for no reason.
+ */
+const META_ONLY_STORE = Symbol("llmwiki.metaOnlyStore");
+
+/** The shape a header-only store carries, plus the marker. */
+type MetaOnlyStore = EmbeddingStoreV3 & { readonly [META_ONLY_STORE]?: true };
+
+/**
+ * Whether this store came from the header-only load.
+ *
+ * @param store - Any v3 store.
+ * @returns True when the store carries no entries by design, not by emptiness.
+ */
+export function isMetaOnlyStore(store: EmbeddingStoreV3): boolean {
+  return (store as MetaOnlyStore)[META_ONLY_STORE] === true;
+}
+
 /** A live-rehydrated page hit carrying its qualified id (spec §4.7). */
 export interface PageHitV3 {
   pageId: PageId;
@@ -303,6 +338,53 @@ export async function loadEmbeddingsForSearch(
   source?: EmbeddingStoreSource,
 ): Promise<EmbeddingLoadOutcome> {
   return gateActiveStore(root, source);
+}
+
+/**
+ * Load ONLY the header, for a backend that ranks without materializing vectors.
+ *
+ * Deliberately a SEPARATE entry point rather than a branch inside
+ * `loadEmbeddingsForSearch`. That function is public and its callers expect a store
+ * they can score; returning one with empty `entries` would silently delete the
+ * page-embedding level from every cascade that reads it. A caller that wants the
+ * light path has to name it, and takes on the obligation to materialize before
+ * touching `store.entries` or `store.chunks`.
+ *
+ * @param source - Backend that exposes a header.
+ * @returns A store carrying the header only, or a degraded outcome.
+ */
+export async function loadMetaForSearch(root: string, source: EmbeddingStoreSource): Promise<EmbeddingLoadOutcome> {
+  if (!canRankWithoutStore(source)) return gateActiveStore(root, source);
+  return loadMetaOnly(source);
+}
+
+/**
+ * Build the lightweight store from the source's header.
+ *
+ * `null` from `readMeta` is the row store's "this Stack has never been embedded",
+ * which is the same condition `gateActiveStore` reports as ABSENT. A failed read
+ * rethrows instead: an unavailable database must not look like an empty Stack, or
+ * the caller rebuilds a corpus that was never lost.
+ *
+ * @param source - Backend that exposes a header.
+ * @returns A store carrying the header only, or a degraded outcome.
+ */
+async function loadMetaOnly(
+  source: Extract<EmbeddingStoreSource, { readMeta: unknown }>,
+): Promise<EmbeddingLoadOutcome> {
+  const meta = await source.readMeta();
+  if (meta === null) return degraded("embedding-index-outdated", "No embedding index found.");
+  const store: MetaOnlyStore = {
+    [META_ONLY_STORE]: true,
+    version: 3,
+    model: meta.model,
+    dimensions: meta.dimensions,
+    entries: [],
+    chunks: [],
+    ...(meta.fingerprint === undefined ? {} : { fingerprint: meta.fingerprint }),
+    ...(meta.minSimilarity === undefined ? {} : { minSimilarity: meta.minSimilarity }),
+  };
+  return { store, warnings: [], stalePageIds: [] };
 }
 
 /**
@@ -469,7 +551,19 @@ export async function findRelevantChunksV3(
   k: number,
   profile?: LoadedProfile,
   source?: RegistryPageSource,
+  embeddingSource?: EmbeddingStoreSource,
+  pageScope?: readonly PageId[],
 ): Promise<{ hits: ChunkHitV3[]; stalePageIds: PageId[] }> {
+  // When the backend can rank without materializing vectors, it does. The store is
+  // then only a source of `dimensions` and `minSimilarity`, which the lightweight
+  // load took from the header -- `store.chunks` is empty and MUST NOT be read, or
+  // the prefilter would be computed over nothing and every query would look empty.
+  // Routed only for a LIGHTWEIGHT store: one that carries the header and no
+  // chunks. A full store still ranks in memory, so this path cannot change an
+  // answer anywhere it was not explicitly asked for.
+  if (canRankWithoutStore(embeddingSource) && isMetaOnlyStore(store)) {
+    return rankChunksViaSource(root, embeddingSource, store, { surface, question, k, profile, source, pageScope });
+  }
   const { reader, eligible } = await buildRankingScope(
     root, store.chunks ?? [], surface, profile, source,
   );
@@ -479,6 +573,92 @@ export async function findRelevantChunksV3(
   const ranked = scoreChunkEntries(queryVec, eligible);
   if (!levelHasSignal(ranked, store.minSimilarity)) return { hits: [], stalePageIds: [] };
   return walkFreshChunks(reader, ranked, k);
+}
+
+/** Everything the source-backed chunk path needs, grouped to keep the call readable. */
+interface SourceRankingInput {
+  readonly surface: RetrievalSurface;
+  readonly question: string;
+  readonly k: number;
+  readonly profile?: LoadedProfile;
+  readonly source?: RegistryPageSource;
+  readonly pageScope?: readonly PageId[];
+}
+
+/**
+ * Rank chunks through the source, then run the SAME freshness walk as the store path.
+ *
+ * The walk is not optional and must not be folded into the query. Measured on the
+ * `wiki` Stack, 23 of 28 pages carry a stored hash that no longer matches their live
+ * body; a ranked hit whose text changed is a hit whose vector describes text that no
+ * longer exists. Only the walk compares the two hashes, and only it can put those
+ * ids into `stalePageIds` -- which is what the user's `embedding-entry-stale`
+ * warning is built from. Skipping it because "the join already filtered" would drop
+ * a warning for 82% of that corpus.
+ *
+ * @param root - Wiki root the reader resolves against.
+ * @param embeddingSource - Backend that can rank without a materialized store.
+ * @param store - Lightweight store carrying `dimensions` and `minSimilarity` only.
+ * @param input - Query, surface, scope, and the registry source for live hashes.
+ * @returns Fresh hits plus the ids dropped as stale.
+ */
+async function rankChunksViaSource(
+  root: string,
+  embeddingSource: Extract<EmbeddingStoreSource, { readMeta: unknown }>,
+  store: EmbeddingStoreV3,
+  input: SourceRankingInput,
+): Promise<{ hits: ChunkHitV3[]; stalePageIds: PageId[] }> {
+  const queryVec = await embedQuery(input.question, store.dimensions);
+  const namespaceDirs = buildNamespaceDirs(input.profile?.profile);
+  const outcome = await embeddingSource.rankChunks(queryVec, input.k * RANK_SCOPE_OVERSCAN, {
+    ...(input.pageScope === undefined ? {} : { pageScope: input.pageScope }),
+    excludedNamespaces: excludedNamespacesFor(input.surface, input.profile),
+    surface: input.surface,
+  });
+  // A degraded ranking is NOT an empty result: returning [] would tell the caller
+  // there is nothing relevant, which is a different claim from "I could not rank".
+  if (outcome.kind === "degraded") throw new EmbeddingIntegrityError(`${outcome.code}: ${outcome.reason}`);
+  if (outcome.hits.length === 0) return { hits: [], stalePageIds: [] };
+  const ranked = outcome.hits.map((hit) => ({
+    entry: {
+      pageId: qualifiedPageId(hit.pageDirectory, hit.slug),
+      title: "",
+      chunkIndex: hit.chunkIndex,
+      contentHash: hit.contentHash,
+      text: "",
+      vector: [],
+      updatedAt: "",
+    } as ChunkEmbeddingV3,
+    score: hit.cosine,
+  }));
+  // The floor compares the EXACT cosine the source returned, never a re-derived one.
+  if (!levelHasSignal(ranked, store.minSimilarity)) return { hits: [], stalePageIds: [] };
+  const reader: PageReader = { root, namespaceDirs, source: input.source };
+  return walkFreshChunks(reader, ranked, input.k);
+}
+
+/**
+ * The namespaces whose retrieval flag excludes them on this surface.
+ *
+ * Derived from the profile the same way `passesSurfaceFlag` decides per entry, so a
+ * backend that applies the list as a predicate filters exactly what the in-memory
+ * prefilter would have filtered.
+ *
+ * @param surface - Surface whose flag applies.
+ * @param profile - Active profile, or undefined for the default (no exclusions).
+ * @returns Namespace names to exclude; empty when the profile excludes none.
+ */
+function excludedNamespacesFor(
+  surface: RetrievalSurface,
+  profile: LoadedProfile | undefined,
+): string[] {
+  if (!profile) return [];
+  const excluded: string[] = [];
+  for (const [name, def] of Object.entries(profile.profile.entities)) {
+    const flag = surface === "search" ? def.retrieval?.includeInSearch : def.retrieval?.includeInContext;
+    if (flag === false) excluded.push(name);
+  }
+  return excluded;
 }
 
 /**

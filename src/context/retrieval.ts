@@ -99,6 +99,7 @@ export async function retrieveSemanticChunks(
       k,
       profile,
       registryPageSource,
+      embeddingStoreSource,
     );
     const staleEntriesDetected = stalePageIds.length > 0;
     if (hits.length === 0)

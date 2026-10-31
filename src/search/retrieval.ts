@@ -17,6 +17,8 @@
 
 import {
   loadEmbeddingsForSearch,
+  loadMetaForSearch,
+  isMetaOnlyStore,
   findRelevantChunksV3,
   findRelevantPagesV3,
   type EmbeddingWarning,
@@ -109,7 +111,11 @@ function dedupeRefs(refs: SelectedPageRef[]): SelectedPageRef[] {
  */
 export async function pickSearchRefs(root: string, question: string, options: RetrievalOptions = {}): Promise<SearchSelection> {
   const profile = await loadProfile(root);
-  const outcome = await loadEmbeddingsForSearch(root, options.embeddingStoreSource);
+  // The header-only load applies only when a backend can rank without a store. The
+  // file-backed path has no header, so it takes the ordinary materializing load.
+  const outcome = options.embeddingStoreSource === undefined
+    ? await loadEmbeddingsForSearch(root)
+    : await loadMetaForSearch(root, options.embeddingStoreSource);
   // A pending/unavailable compile journal applies to the whole result regardless
   // of which retrieval branch wins, so prepend it to the base warnings ONCE. An
   // ok journal contributes nothing, so the default warnings list is unchanged.
@@ -167,16 +173,26 @@ async function selectViaEmbeddings(
   options: RetrievalOptions,
 ): Promise<SemanticSelection> {
   try {
-    const { hits: chunkHits, stalePageIds: chunkStale } =
-      await findRelevantChunksV3(root, store, "search", question, CHUNK_TOP_K, profile, options.registrySource);
+    const { hits: chunkHits, stalePageIds: chunkStale } = await findRelevantChunksV3(
+      root, store, "search", question, CHUNK_TOP_K, profile,
+      options.registrySource, options.embeddingStoreSource,
+    );
     if (chunkHits.length > 0) {
       const refs = chunkHits.map((c) => ({ pageId: c.pageId, slug: c.slug, title: "", kind: "chunk" as const }));
       return { refs, stalePageIds: chunkStale };
     }
+    // The page level needs `store.entries`, and a lightweight store deliberately
+    // has none: it carries the header only. Falling through with `entries: []`
+    // would quietly delete a whole level from the cascade, so the full store is
+    // materialized here -- only on the rare path where chunk ranking found nothing.
+    const pageStore = isMetaOnlyStore(store)
+      ? await materializeForPages(root, options.embeddingStoreSource)
+      : store;
+    if (pageStore === null) return { refs: [], stalePageIds: chunkStale };
     const { hits: pageHits, stalePageIds: pageStale } =
-      await findRelevantPagesV3(root, store, "search", question, EMBEDDING_TOP_K, profile, options.registrySource);
+      await findRelevantPagesV3(root, pageStore, "search", question, EMBEDDING_TOP_K, profile, options.registrySource);
     const refs = pageHits.map((p) => ({ pageId: p.pageId, slug: p.slug, title: p.title, kind: "page" as const }));
-    return { refs, stalePageIds: pageStale };
+    return { refs, stalePageIds: [...chunkStale, ...pageStale] };
   } catch (err) {
     if (options.embeddingFailure !== "fallback") throw err;
     const message = err instanceof Error ? err.message : String(err);
@@ -188,6 +204,29 @@ async function selectViaEmbeddings(
         message: `Semantic retrieval embedding failed (${message}); degraded to LLM/index fallback selection.`,
       },
     };
+  }
+}
+
+/**
+ * Read the whole store, for the page-embedding level.
+ *
+ * Only reached when a lightweight store yielded no chunk hits. Returns null rather
+ * than throwing: a page level that cannot be loaded degrades to the LLM/index
+ * fallback, which is the branch the caller already takes for "no refs".
+ *
+ * @param root - Wiki root, used when the store lives on disk.
+ * @param source - Backend to read from; undefined reads the file.
+ * @returns The full store, or null when it cannot be read.
+ */
+async function materializeForPages(
+  root: string,
+  source: RetrievalOptions["embeddingStoreSource"],
+): Promise<EmbeddingStoreV3 | null> {
+  try {
+    const outcome = await loadEmbeddingsForSearch(root, source);
+    return outcome.store ?? null;
+  } catch {
+    return null;
   }
 }
 
