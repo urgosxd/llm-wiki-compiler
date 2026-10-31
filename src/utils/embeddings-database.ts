@@ -94,14 +94,44 @@ function joinPageId(pageDirectory: string, slug: string): PageId {
 export async function readEmbeddingMeta(
   db: Database,
   stackId: string,
+  callerTx?: Database,
 ): Promise<{
   model: string;
   dimensions: number;
   fingerprint: string | null;
   minSimilarity: number | null;
 } | null> {
-  await bindStack(db, stackId);
-  const rows = await db.execute<MetaRow>(
+  // The tenant binding is TRANSACTION-LOCAL, so it has to run in the same
+  // transaction as the read it protects. Binding the pooled handle would attach to
+  // a different implicit transaction and be discarded, leaving the policy unbound:
+  // every row filtered out, so a healthy Stack reads as "no embedding index" for a
+  // connection whose role is not BYPASSRLS. Measured against `llmwiki_app`: 0 rows
+  // unbound, 1 bound.
+  if (callerTx !== undefined) return readMetaInScope(callerTx, stackId);
+  return db.transaction((tx) => readMetaInScope(tx as unknown as Database, stackId));
+}
+
+/**
+ * Read the header inside an ALREADY-bound transaction.
+ *
+ * Split out so both callers -- the standalone read and the store read, which needs
+ * the same header without opening a second transaction -- share one statement.
+ *
+ * @param tx - Transaction carrying the tenant binding.
+ * @param stackId - Stack whose header to read.
+ * @returns The header, or null when this Stack has none.
+ */
+async function readMetaInScope(
+  tx: Database,
+  stackId: string,
+): Promise<{
+  model: string;
+  dimensions: number;
+  fingerprint: string | null;
+  minSimilarity: number | null;
+} | null> {
+  await bindStack(tx, stackId);
+  const rows = await tx.execute<MetaRow>(
     sql`select model, dimensions, fingerprint, min_similarity
         from wiki.embedding_store_meta where stack_id = ${stackId}`,
   );
@@ -133,22 +163,46 @@ export async function readEmbeddingStoreFromDb(
   db: Database,
   stackId: string,
 ): Promise<EmbeddingStoreV3 | null> {
-  const meta = await readEmbeddingMeta(db, stackId);
-  if (meta === null) return null;
+  // One transaction for the header AND the vectors: the binding is
+  // transaction-local, so reading the header in one transaction and the vectors in
+  // another would leave the second read unbound and return zero rows for a Stack
+  // that has vectors.
+  return db.transaction(async (tx) => {
+    const scoped = tx as unknown as Database;
+    const meta = await readMetaInScope(scoped, stackId);
+    if (meta === null) return null;
 
-  await bindStack(db, stackId);
-  // The tenant predicate is explicit as well as policy-backed. Under a superuser
-  // owner the policy is inert, so a query relying on it alone would return every
-  // Stack's vectors -- measured on `ingest_outbox`, same shape, same fix.
-  const pageRows = await db.execute<PageVectorRow>(
-    sql`select page_directory, slug, title, summary, embedding_text_hash, vector::text as vector, updated_at
-        from wiki.page_embeddings where stack_id = ${stackId}`,
-  );
-  const chunkRows = await db.execute<ChunkVectorRow>(
-    sql`select page_directory, slug, chunk_index, title, content_hash, text, vector::text as vector, updated_at
-        from wiki.page_chunk_embeddings where stack_id = ${stackId} order by chunk_index asc`,
-  );
+    // The tenant predicate is explicit as well as policy-backed. Under a superuser
+    // owner the policy is inert, so a query relying on it alone would return every
+    // Stack's vectors -- measured on `ingest_outbox`, same shape, same fix.
+    const pageRows = await scoped.execute<PageVectorRow>(
+      sql`select page_directory, slug, title, summary, embedding_text_hash, vector::text as vector, updated_at
+          from wiki.page_embeddings where stack_id = ${stackId}`,
+    );
+    const chunkRows = await scoped.execute<ChunkVectorRow>(
+      sql`select page_directory, slug, chunk_index, title, content_hash, text, vector::text as vector, updated_at
+          from wiki.page_chunk_embeddings where stack_id = ${stackId} order by chunk_index asc`,
+    );
+    return assembleStore(meta, pageRows, chunkRows);
+  });
+}
 
+/**
+ * Assemble the v3 store from already-read rows.
+ *
+ * Split from the read so the transaction body stays a sequence of statements, and
+ * so the header-to-store projection is testable without a database.
+ *
+ * @param meta - Header read in the same scope as the rows.
+ * @param pageRows - Page vector rows.
+ * @param chunkRows - Chunk vector rows.
+ * @returns The reassembled store.
+ */
+function assembleStore(
+  meta: { model: string; dimensions: number; fingerprint: string | null; minSimilarity: number | null },
+  pageRows: PageVectorRow[],
+  chunkRows: ChunkVectorRow[],
+): EmbeddingStoreV3 {
   const entries = pageRows.map(toPageEntry).filter((entry): entry is PageEmbeddingV3 => entry !== null);
   const chunks = chunkRows.map(toChunkEntry).filter((entry): entry is ChunkEmbeddingV3 => entry !== null);
 
