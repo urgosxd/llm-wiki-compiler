@@ -33,6 +33,7 @@
  */
 import { sql } from "drizzle-orm";
 import type { Database } from "llmwiki-kg";
+import { rankChunksInSql } from "./embeddings-rank-sql.js";
 import { bindStack, splitPageId } from "./embeddings-tenant.js";
 import type { PageId } from "./page-id.js";
 
@@ -300,6 +301,9 @@ function toIsoString(value: Date | string): string {
  */
 export function databaseEmbeddingSource(db: Database, stackId: string): EmbeddingStoreSource {
   return {
+    // Rows can rank without materializing the store, which is the whole point of
+    // the row store: the file path must read every vector to score anything.
+    rankChunks: (queryVec, k, scope) => rankChunksInSql(db, stackId, queryVec, k, scope),
     read: async (): Promise<StoredEmbeddingRead> => {
       try {
         const store = await readEmbeddingStoreFromDb(db, stackId);

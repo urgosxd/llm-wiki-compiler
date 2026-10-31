@@ -113,6 +113,52 @@ export interface EmbeddingLoadOutcome {
  * a caller opts into the database explicitly. When the write path moves over, this
  * default moves with it, and the seam disappears.
  */
+/**
+ * The eligibility and scope constraints a ranking call must honour.
+ *
+ * Every field is a predicate the adapter can express in its own storage language,
+ * which is the whole point: materializing the equivalent `Set` of allowed ids in
+ * Node costs a full page read before the ranking can start. Measured on a 387-page
+ * Stack, building that set took 27-31ms -- more than the ranking it would have
+ * constrained -- because the listing carries every page `body`.
+ *
+ * ## The four filters that must travel
+ *
+ * 1. `pageScope` -- the caller's own narrowing (`narrowToScope`).
+ * 2. `excludedNamespaces` -- a typed namespace whose surface flag is `false`.
+ * 3. Liveness plus title, which the adapter applies unconditionally: the live
+ *    predicate is `orphaned !== true && hasTitle`, and it does NOT test `archived`.
+ *    Archiving is a freshness warning (`context/ranking.ts`), not an eligibility
+ *    gate, so excluding archived rows would make this path disagree with the
+ *    in-memory one on an axis only the row store knows about.
+ *
+ * A filter an adapter cannot express is NOT a filter it may drop: returning fewer
+ * rows is acceptable, returning rows the caller could not use is not.
+ */
+export interface RankScope {
+  /** Caller-narrowed page ids; `undefined` means unrestricted, not "no filter". */
+  readonly pageScope?: readonly string[];
+  /** Namespaces excluded by the profile's retrieval flag; empty means none. */
+  readonly excludedNamespaces: readonly string[];
+  /** Which surface's flag `excludedNamespaces` was derived from. */
+  readonly surface: RetrievalSurface;
+}
+
+/**
+ * One ranked chunk from a source that can rank without materializing vectors.
+ *
+ * `cosine` is a distinct field from the pipeline's `score` on purpose: callers
+ * compare it against the in-memory cosine, so a source that returned `1 - dist`
+ * from an approximate index instead would fail visibly rather than silently shift
+ * the similarity floor.
+ */
+export interface RankedChunk {
+  readonly pageDirectory: string;
+  readonly slug: string;
+  readonly chunkIndex: number;
+  readonly cosine: number;
+}
+
 export interface EmbeddingStoreSource {
   /**
    * Read the raw parsed store.
@@ -122,6 +168,21 @@ export interface EmbeddingStoreSource {
    * with a different warning.
    */
   read(): Promise<StoredEmbeddingRead>;
+
+  /**
+   * Rank chunks WITHOUT materializing the store, when the source can.
+   *
+   * OPTIONAL by design: a source that cannot rank is not a broken source, it is a
+   * source whose caller falls back to the in-memory path over the store `read`
+   * already returned. The absence of this method is the capability check, so no
+   * caller has to guess which kind of backend it holds.
+   *
+   * @param queryVec - The embedded query, already dimension-checked.
+   * @param k - Maximum hits to return.
+   * @param scope - Eligibility and scope constraints; applies to every hit.
+   * @returns Hits ordered by exact cosine, descending.
+   */
+  rankChunks?(queryVec: number[], k: number, scope: RankScope): Promise<RankedChunk[]>;
 }
 
 /** A live-rehydrated page hit carrying its qualified id (spec §4.7). */
