@@ -9,9 +9,16 @@
  * graph failure becoming a coded dimension failure. A test that called the queries
  * directly would not exercise any of that.
  *
- * Entity and relationship reads are asserted against real Postgres. Chunk
- * retrieval is deliberately NOT asserted here: it needs a live embedding provider,
- * and stubbing it would test the stub.
+ * Entity and relationship reads are asserted against real Postgres.
+ *
+ * ## Chunk retrieval is CUT, and that is what these tests pin
+ *
+ * The dimension used to advertise passages it could never return: it chunks and
+ * embeds text, then throws the chunks away without writing `document_chunks`, so
+ * `read({ text })` answered `ok: true` with `chunks: []` for every query, forever.
+ * A caller had no way to tell "nothing matched" from "this capability was never
+ * wired". The capability is now removed and the absence is REPORTED, which is the
+ * only honest answer a dimension can give for something it does not do.
  */
 import { afterAll, describe, expect, it } from "vitest";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
@@ -124,4 +131,25 @@ describe("the kg dimension as a DimensionReader", () => {
     if (!result.ok) return;
     expect(result.value.relationships).toHaveLength(0);
   }, 30_000);
+});
+
+describe("the kg reader and passage retrieval", () => {
+  it("reports text queries as unavailable instead of answering an empty list", async () => {
+    // `ok: true` with no chunks is the lie this replaces: it reads as "searched,
+    // found nothing" when the truth is "this dimension does not serve passages".
+    const result = await reader().read({ text: "how is Alpha connected to Beta" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("unavailable");
+  });
+
+  it("names the omission in the failure message, so a caller knows what to do", async () => {
+    const result = await reader().read({ text: "anything" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // The message must point at the alternative rather than describe a bug.
+    expect(result.error.message).toMatch(/passage|chunk/i);
+  });
 });
