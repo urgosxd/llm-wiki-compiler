@@ -38,7 +38,7 @@ import { bindStack, splitPageId } from "./embeddings-tenant.js";
 import type { PageId } from "./page-id.js";
 
 export { splitPageId };
-import type { EmbeddingStoreSource } from "./embeddings-load.js";
+import type { EmbeddingStoreMeta, EmbeddingStoreSource } from "./embeddings-load.js";
 import type { EmbeddingStoreSink } from "./embeddings-storage.js";
 import type { EmbeddingStoreLocation } from "./embeddings-store.js";
 import { writeEmbeddingStoreToDb } from "./embeddings-database-write.js";
@@ -304,6 +304,33 @@ export function databaseEmbeddingSource(db: Database, stackId: string): Embeddin
     // Rows can rank without materializing the store, which is the whole point of
     // the row store: the file path must read every vector to score anything.
     rankChunks: (queryVec, k, scope) => rankChunksInSql(db, stackId, queryVec, k, scope),
+    /**
+     * The header only: four numbers, no vectors.
+     *
+     * This is what makes a lightweight load possible at all. Reading the whole store
+     * costs ~588ms on a 1696-chunk Stack because it transfers 16.1MB of
+     * `vector::text`; the header costs under a millisecond, and `rankChunks` needs
+     * nothing more to answer a query.
+     */
+    readMeta: async (): Promise<EmbeddingStoreMeta | null> => {
+      try {
+        const meta = await readEmbeddingMeta(db, stackId);
+        if (meta === null) return null;
+        return {
+          model: meta.model,
+          dimensions: meta.dimensions,
+          ...(meta.minSimilarity === null ? {} : { minSimilarity: meta.minSimilarity }),
+          ...(meta.fingerprint === null ? {} : { fingerprint: meta.fingerprint }),
+        };
+      } catch (err) {
+        // A FAILED read must not return null. `null` means "this Stack has no
+        // store", and a caller that believes that rebuilds from scratch — which,
+        // on a transient connection failure, would re-embed a corpus that was
+        // never lost. Rethrowing keeps "absent" and "unavailable" distinct, the
+        // same way `read()` separates those two kinds.
+        throw new Error(describeReadFailure(err));
+      }
+    },
     read: async (): Promise<StoredEmbeddingRead> => {
       try {
         const store = await readEmbeddingStoreFromDb(db, stackId);

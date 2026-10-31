@@ -157,32 +157,121 @@ export interface RankedChunk {
   readonly slug: string;
   readonly chunkIndex: number;
   readonly cosine: number;
+  /**
+   * The hash stored alongside the vector, so the freshness walk can compare it
+   * against the live body without a second read.
+   *
+   * A ranked chunk is a CANDIDATE, not a hit: the text may have changed since the
+   * vector was written, and the walk is what decides. Carrying the hash here is
+   * what lets `walkFreshChunks` keep doing that job unchanged.
+   */
+  readonly contentHash: string;
 }
 
-export interface EmbeddingStoreSource {
-  /**
-   * Read the raw parsed store.
-   *
-   * Returns the same discriminated result the file reader returns: the gate above
-   * needs to tell "absent" from "unavailable" from "parsed", because each degrades
-   * with a different warning.
-   */
-  read(): Promise<StoredEmbeddingRead>;
+/**
+ * The four header values a lightweight load needs, and nothing else.
+ *
+ * Deliberately NOT a store: it has no `entries`, no `chunks`, and no way to be
+ * mistaken for one. A load that returns this cannot hand a caller a partial store
+ * by accident, which is the failure a `{ entries: [], chunks: [] }` shape invites.
+ *
+ * `dimensions` is the field that makes this mandatory rather than optional: the
+ * query embedding has to be validated against it, and skipping that check would
+ * let a provider returning 1536 dims rank silently against a 768-dim store.
+ */
+export interface EmbeddingStoreMeta {
+  readonly model: string;
+  readonly dimensions: number;
+  /** Omitted when the store predates calibration; omitted means no floor. */
+  readonly minSimilarity?: number;
+  /** Omitted when the store predates fingerprints. */
+  readonly fingerprint?: string;
+}
 
-  /**
-   * Rank chunks WITHOUT materializing the store, when the source can.
-   *
-   * OPTIONAL by design: a source that cannot rank is not a broken source, it is a
-   * source whose caller falls back to the in-memory path over the store `read`
-   * already returned. The absence of this method is the capability check, so no
-   * caller has to guess which kind of backend it holds.
-   *
-   * @param queryVec - The embedded query, already dimension-checked.
-   * @param k - Maximum hits to return.
-   * @param scope - Eligibility and scope constraints; applies to every hit.
-   * @returns Hits ordered by exact cosine, descending.
-   */
-  rankChunks?(queryVec: number[], k: number, scope: RankScope): Promise<RankedChunk[]>;
+/**
+ * The outcome of a ranking attempt that can decline to rank.
+ *
+ * Discriminated rather than a bare array so "I ranked and found nothing" cannot be
+ * confused with "I could not rank at all". The second must never look like the
+ * first: an empty result reads as "no relevant pages", which is a different claim
+ * from "your index is unusable", and the user can only act on the difference if it
+ * survives as a type.
+ *
+ * `code` reuses the warning vocabulary `gateActiveStore` already emits, so the
+ * caller maps rather than translates.
+ */
+export type ChunkRanking =
+  | { readonly kind: "ranked"; readonly hits: RankedChunk[] }
+  | {
+      readonly kind: "degraded";
+      readonly code: "embedding-index-outdated" | "embedding-store-unavailable";
+      readonly reason: string;
+    };
+
+/**
+ * Where a load reads its store from, and what else that backend can answer.
+ *
+ * ## Why this is a UNION and not two optional methods
+ *
+ * A backend either materializes its store or ranks without it. `readMeta` and
+ * `rankChunks` are meaningless apart: without the header there is no dimension to
+ * validate the query embedding against, and without ranking the header alone cannot
+ * answer anything the store does not. Spelling that as a union makes the impossible
+ * combination unrepresentable instead of merely discouraged, so no caller has to
+ * handle a shape that cannot work.
+ *
+ * The first branch is the file-backed path: `read` is its only capability, and the
+ * caller must materialize. The second is the row-backed path: it MAY still be asked
+ * for the whole store (the page pipeline does, when chunk ranking returns nothing),
+ * but it can also answer from the header plus one ranked query.
+ */
+export type EmbeddingStoreSource =
+  | {
+      /**
+       * Read the raw parsed store.
+       *
+       * Returns the same discriminated result the file reader returns: the gate
+       * above needs to tell "absent" from "unavailable" from "parsed", because
+       * each degrades with a different warning.
+       */
+      read(): Promise<StoredEmbeddingRead>;
+    }
+  | {
+      read(): Promise<StoredEmbeddingRead>;
+      /**
+       * Read the header only. `null` means this Stack has no store at all.
+       *
+       * Side-effect free by design: validation belongs to `rankChunks`, which is
+       * where the answer is used. A caller that only needs `dimensions` should not
+       * pay for an integrity scan it will discard.
+       */
+      readMeta(): Promise<EmbeddingStoreMeta | null>;
+      /**
+       * Validate, then rank chunks by exact cosine, without materializing vectors.
+       *
+       * @param queryVec - The embedded query, already dimension-checked.
+       * @param k - Maximum hits to return.
+       * @param scope - Eligibility and scope constraints; applies to every hit.
+       * @returns `ranked` with the hits (possibly none) or `degraded` with a code.
+       */
+      rankChunks(queryVec: number[], k: number, scope: RankScope): Promise<ChunkRanking>;
+    };/**
+ * The capability check, in one place.
+ *
+ * Callers must not test for `readMeta` and `rankChunks` separately: the union makes
+ * them arrive together, and asking once keeps that guarantee visible at the call
+ * site instead of restated with a risk of drift.
+ *
+ * @param source - Any embedding store source.
+ * @returns True when the source can rank without materializing its store.
+ */
+// Consumed by the call-site wiring that follows this contract; the check lives
+// here so no caller restates it.
+// fallow-ignore-next-line unused-export
+export function canRankWithoutStore(
+  source: EmbeddingStoreSource | undefined,
+): source is Extract<EmbeddingStoreSource, { readMeta: unknown }> {
+  return source !== undefined && "readMeta" in source && "rankChunks" in source;
 }
 
 /** A live-rehydrated page hit carrying its qualified id (spec §4.7). */
