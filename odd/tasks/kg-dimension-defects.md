@@ -130,17 +130,32 @@ So the contract is:
 That distinction is the difference between "a thin extraction" and "an outage",
 and it is measured rather than assumed.
 
-## Open question, deliberately not decided here
+## The latent defect, now fixed
 
-`registerDocumentRow` is the ONE write in `core/document-consolidation.ts` that
-does not call `bindCallerStack`, while `consolidateEntityRows` and
-`consolidateRelationshipRows` do. Measured: under the `llmwiki_app` role that
-write is refused with SQLSTATE `42501`. It is harmless today because production
-connects as `aks` (superuser, `BYPASSRLS`, so RLS is inert), but switching the
-production connection to the app role would break document registration.
+`registerDocumentRow` was the ONE write in `core/document-consolidation.ts` that
+did not call `bindCallerStack`, while `consolidateEntityRows` and
+`consolidateRelationshipRows` did. Under the `llmwiki_app` role the document
+insert is refused with SQLSTATE `42501`
+(`new row violates row-level security policy for table "stack_documents"`) and the
+whole graph write fails.
 
-This is latent debt, not an active defect, and it is outside the two defects this
-feature fixes. Recording it so it is not rediscovered from scratch.
+It was invisible for a structural reason worth naming: every suite in the
+repository connects as `aks`, which is a SUPERUSER with `BYPASSRLS`, so the
+policies never run. Every "the two Stacks stayed apart" assertion therefore
+proved only that the SQL carried a `where stack_id = ...`, never that the database
+would refuse a mistake. That is a weaker guarantee than the word "isolation"
+suggests.
+
+It is also narrower than it looked: `registerDocumentRow` has exactly ONE caller,
+the `kg` dimension. The HTTP path does not use it — `routes/documents/upload.ts`
+has its own insert, and that path already binds (`routes/ingest/request.ts`). So
+the missing binding was a hole in this dimension, not an oddity of the core.
+
+Fixed by binding before the insert, exactly as the two siblings do. Verified under
+the real role: `test/dimensions/kg-runtime-app-role-write.test.ts` drives
+`prepare` + `commit` under `llmwiki_app` and asserts the rows land, plus asserts
+that the policy still refuses an unbound write with `42501` — both directions, so
+the suite cannot pass by the policy being inert.
 
 ## Evidence log
 
@@ -150,6 +165,23 @@ feature fixes. Recording it so it is not rediscovered from scratch.
 | retry policy | `204ece2` | 14/14 retry tests; package suite 781 passed, 4 skipped; tsc clean; fallow 0 issues |
 | defect 1: fail on total extraction failure | `ba8dcc1` | 31/31 extraction + retry; package 781 passed; `test:affected` 3445 passed |
 | defect 2: cut chunk retrieval | `c1ceccf` | 77/77 kg + wiki reader suites; build OK; fallow 0 issues |
+| end-to-end suite | `c6ca3f9` | 6 cases; each sabotaged; contrast: mocks stay 13/13 green on the same defect |
+| app-role write + RLS | pending | 3 cases under `llmwiki_app`; each sabotaged; `test:affected` 3454 passed on 10 consecutive runs |
+
+### A shared Postgres fixture quirk worth knowing
+
+This package's full suite has a PRE-EXISTING intermittent failure, documented
+upstream in `packages/llmwiki-kg/odd/findings/db-test-isolation.md`:
+`backfeed-approve` and `backfeed-ontology` use fixed domain prefixes and clean up
+with a `like '<prefix>%'` delete, so suite files running in parallel can delete
+each other's rows. Measured: it appears in roughly one full-suite run in three,
+and NEVER in isolation (3/3 green). It is upstream's debt in test code, not
+production behaviour, and it is unrelated to these fixes — confirmed by reverting
+this whole change and reproducing the same rate.
+
+Because that noise made a single green run hard to read, verification here was
+repeated instead of trusted once: **10 consecutive `test:affected` runs, all
+3454 passed**.
 
 ### Measured before and after, against live Postgres and a fake gateway
 

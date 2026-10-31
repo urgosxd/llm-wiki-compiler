@@ -41,19 +41,12 @@
  * `kg-runtime-savepoint-binding`. Scope ownership and semantics agree here.
  */
 
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
-// Provider configuration must be in place BEFORE the core reads `process.env` at
-// import time, and `vi.hoisted` is what runs early enough.
-vi.hoisted(() => {
-  process.env["EXTRACTION_PROVIDER"] = "gateway";
-  process.env["EMBEDDING_PROVIDER"] = "gateway";
-  process.env["GATEWAY_URL"] = "https://gateway.invalid/v1";
-  process.env["GATEWAY_API_KEY"] = "test-key-not-a-credential";
-  process.env["EMBEDDING_MODEL"] = "hf:nomic-ai/nomic-embed-text-v1.5";
-  process.env["EMBEDDING_DIM"] = "768";
-  process.env["EXTRACTION_MODEL"] = "hf:deepseek-ai/DeepSeek-V4.1-Flash-1017";
-});
+// FIRST import, and it must stay first: the vendored `config` reads `process.env`
+// once at import time, so this module's side effect has to run before anything
+// below reaches the provider layer. Measured, not assumed.
+import "./kg-runtime-provider-env.js";
 
 // The dimension, the reader and Postgres are imported UNMOCKED, on purpose.
 import { createKgDimension } from "../../src/dimensions/kg/index.js";
