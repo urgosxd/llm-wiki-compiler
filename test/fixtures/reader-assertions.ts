@@ -15,7 +15,25 @@
  */
 
 import { expect } from "vitest";
-import type { DimensionReader } from "../../src/dimensions/read-types.js";
+import type { DimensionReader, GraphReadResult } from "../../src/dimensions/read-types.js";
+
+/**
+ * Assert that a lookup of a name nobody has produced the `not_found` CODE.
+ *
+ * Extracted because the same three lines were being spelled out one per suite:
+ * the port's own readers, and the graph read layer that answers the same
+ * question without going through the port. Reading `error.code` on an `ok: true`
+ * result narrows to `undefined` and silently asserts nothing, so the shape is
+ * worth owning in one place rather than trusting four copies of it.
+ *
+ * @param result - The result a lookup of a missing name produced.
+ */
+export function expectNotFoundCode(result: GraphReadResult<unknown>): void {
+  // A miss is an EXPECTED answer carrying a code, not a thrown error: each
+  // transport renders it differently (HTTP 404, MCP tool error, CLI message).
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.code).toBe("not_found");
+}
 
 /**
  * Assert that a reader finds a known name AND reports `not_found` for an unknown
