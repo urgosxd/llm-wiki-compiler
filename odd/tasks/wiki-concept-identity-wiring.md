@@ -210,8 +210,36 @@ failure is load-dependent flakiness on top of the 7 deterministic ones — which
 why a single `test:affected` number is not sufficient evidence that nothing broke,
 and why two sessions can honestly report the same count and different contents.
 
-None of this is caused by the concept-identity work. All of it should disappear on a
-rebase onto `main`, which is a human decision like any other branch operation.
+None of this is caused by the concept-identity work.
+
+### RESOLVED — rebased onto main, tree now fully green
+
+The branch was rebased onto `main` (base `1f5d5de`) and the prediction above held
+exactly: every one of those failures disappeared without a single code change from
+this feature. Measured on the rebased tree:
+
+- `npm run test:affected` → **715 files passed (715), 5239 tests passed (5239), 0
+  failed**. Previously 5 files and 8 tests were failing.
+- `npx tsc --noEmit` → exit 0.
+- `npm run build` → success (ESM + DTS).
+- `npx fallow` → 0 above threshold, maintainability 90.7.
+- The 81 concept and pipeline tests → all green.
+
+That is the strongest available confirmation that the failures were the branch's
+distance from `main` and not this feature: a history rewrite with zero source
+changes fixed them.
+
+**Method lesson, worth more than the fix.** "Reproduces at the same commit with the
+change stashed" does NOT establish that a failure is pre-existing — it only
+establishes that the change is not its cause. To call a failure pre-existing you
+must test a tree that does not contain your work's ancestry at all, such as `main`.
+Two sessions reported this wrong, in the same words, for several turns, because
+they used the same weak check.
+
+**Second lesson.** A single `test:affected` count is not evidence. Three runs of the
+same converged tree produced 8, 8 and 7 failures with two different extra victims,
+both of which pass in isolation. Only after the rebase did the count become
+reproducibly zero.
 - `npx fallow` → 0 above threshold, maintainability 90.7 (good), no dead code,
   no duplication.
 - Implementation finding worth keeping: the rule tier originally kept running over
