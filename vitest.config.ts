@@ -1,8 +1,30 @@
 import { defineConfig, configDefaults } from "vitest/config";
 import { fileURLToPath } from "node:url";
+import { testDatabaseUrl } from "./test/fixtures/test-database.js";
 
 const TEST_TIMEOUT_MS = 30_000;
 const HOOK_TIMEOUT_MS = 60_000;
+
+/**
+ * Database every test worker sees, resolved once by the safe fixture resolver.
+ *
+ * WHY THE WORKER ENV AND NOT EACH SUITE. Production code reads
+ * `AKS_DATABASE_URL` and treats a MISSING value as "use the vendored default",
+ * which is `localhost:5432` — the PRODUCTION port. Ten suites call
+ * `createDimensionsDatabase(process.env)` directly, so on a machine with nothing
+ * on 5432 they failed with `ECONNREFUSED` and read like product bugs, and on a
+ * machine where production IS reachable they would have run their assertions
+ * against operator data. Neither is acceptable and neither is fixable one suite
+ * at a time without leaving the next suite free to reintroduce it.
+ *
+ * Seeding the worker environment closes it for every suite at once: no consumer
+ * can inherit the production port by omission. A suite that specifically needs
+ * the unconfigured case still deletes the variable itself, which the degrade and
+ * backend-selection tests already do.
+ */
+const TEST_DATABASE_ENV = {
+  AKS_DATABASE_URL: testDatabaseUrl(),
+} as const;
 
 export default defineConfig({
   // In-repository tests exercise source. Packed consumers still import the
@@ -33,6 +55,8 @@ export default defineConfig({
     // tests exist.
     maxWorkers: "50%",
     minWorkers: 1,
+    // Seed, do not default: see TEST_DATABASE_ENV for why omission is the bug.
+    env: { ...TEST_DATABASE_ENV },
     // Don't pick up tests from sibling worktrees living under local worktree dirs.
     // Worktrees share the parent's working directory tree, so without this
     // exclude vitest discovers and runs every feature branch's tests.
