@@ -102,9 +102,20 @@ published function; it does not reach into the wiki dimension's internals.
   it), `test/dimensions/wiki-*`.
 
 - [x] **5. Wire the resolver into the compile.**
-  Done by `orchestrator-main` in commit `604db54` on branch
-  `feat/wiki-concept-identity-wiring`, branched from this branch's tip
-  (`489e772`), NOT from main — the seam does not exist in main.
+  Done by `orchestrator-main` on branch `feat/wiki-concept-identity-wiring`,
+  branched from this branch's tip, NOT from main — the seam does not exist in
+  main.
+
+  The implementation lives in `src/compiler/identity-stage.ts`,
+  `src/compiler/extraction-identity.ts`, `src/compiler/index.ts` and
+  `src/compiler/orphan.ts`, with tests in `test/compile-concept-identity.test.ts`
+  and `test/compiler/extraction-identity.test.ts`. **Name those files and that
+  branch, not a commit hash**: a hash in a document becomes a lie the moment the
+  branch is rebased or squashed, and nothing in the repository can detect it. The
+  hashes that existed when this feature was finished were `604db54` (the wiring)
+  merged with this branch's doc correction into `d7c4297`, and this branch was
+  fast-forwarded onto it, so `feat/orchestrator-a` and
+  `feat/wiki-concept-identity-wiring` agreed at that moment.
 
   **It was NOT implemented as this task first described.** The original plan was
   “make `mergeExtractions` async, or inject the plan at `index.ts:224`”. Both were
@@ -134,20 +145,24 @@ published function; it does not reach into the wiki dimension's internals.
     `is_new: false`; only the canonical record decides newness.
 
 - [x] **6. Verify end to end and close.**
-  Verified independently by this session against `604db54`, not taken on report:
+  Verified independently by this session against the wiring tree (see task 5 for
+  why that is named by branch rather than by hash), not taken on report:
   `npx tsc --noEmit` exit 0; the 18 pipeline tests
   (`test/compile-concept-identity.test.ts`, `test/compiler/extraction-identity.test.ts`)
   pass and assert exactly the two halves that can fail silently — ONE page per
   synonym pair, a denominator equal to the generated set, and ownership recorded
   under the canonical slug rather than the alias; this branch's 63 concept tests
-  still pass with the compiler wiring in place.
-  `npx tsc --noEmit`, `npm run test:affected`, and a compile over a corpus with
-  a known synonym pair, asserting one page instead of two.
+  still pass with the compiler wiring in place. The tree was re-verified AFTER this
+  branch was fast-forwarded onto the merged wiring branch: `npx tsc --noEmit`
+  exit 0 and 81 tests across the five concept and pipeline suites green, so the
+  claim describes what this branch actually contains, not what a peer reported.
 
 ## Evidence
 
-- Work-unit commit `bf9f47d` — `feat(wiki): rank concept similarity above the
-  normalization rules`. Touches only `orchestrator-a`'s owned paths.
+- Work unit on this branch: `feat(wiki): rank concept similarity above the
+  normalization rules`. It touches only `orchestrator-a`'s owned paths —
+  `src/dimensions/wiki/**` and `test/dimensions/wiki-*`. (Cited by subject, not by
+  hash, for the reason given in task 5.)
 - `npx tsc --noEmit` exit 0 after every task.
 - `npx vitest run test/dimensions/wiki-concept-{resolution,identity,merge-plan,aliases,embeddings}`
   → 80 passed, 0 failed.
@@ -158,7 +173,7 @@ published function; it does not reach into the wiki dimension's internals.
 - A THIRD pre-existing failure was found later: `test/okf-mcp-stdio.test.ts`
   (1 of 4). It was absent from this session's earlier selection because that run
   never included the file. Verified by `orchestrator-main` and independently by
-  this session at `604db54^` with the wiring absent: fails identically. So the
+  this session at the wiring's parent with the wiring absent: fails identically. So the
   real baseline is 8 failures in 5 files, all outside this feature.
 - `npx fallow` → 0 above threshold, maintainability 90.7 (good), no dead code,
   no duplication.
