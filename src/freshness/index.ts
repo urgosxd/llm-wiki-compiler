@@ -11,6 +11,9 @@ import { existsSync } from "fs";
 import { realpath } from "fs/promises";
 import path from "path";
 import { readStateClassifiedFor, withSourceDocuments } from "../dimensions/wiki/page-source-seam.js";
+
+/** The Stack's documents in the shape the snapshot consumes. */
+export type StackDocuments = ReadonlyArray<{ sourceIdentity: string; contentHash: string }>;
 import type { ClassifiedState } from "../utils/state.js";
 import { hashFile } from "../compiler/hasher.js";
 import { SOURCES_DIR } from "../utils/constants.js";
@@ -126,22 +129,36 @@ export async function buildFreshnessSnapshot(
  * six more places. Resolving it here instead means the backend is a property of
  * the project, not of the caller's memory: there is no argument left to forget.
  *
+ * ## A corpus the caller already holds wins over the environment
+ *
+ * The helper resolves the corpus itself so no call site has to remember the
+ * argument. But a caller that ALREADY resolved one must be able to hand it over,
+ * or the helper becomes a second, silent source of truth. `collectStatus` accepts
+ * `sourceDocuments` as an option and the MCP tool passes the real listing; when the
+ * helper resolved from ambient `env` regardless, that injected listing reached the
+ * pending-change list while the snapshot ignored it — two corpora in one object,
+ * disagreeing. Measured with an injected one-document listing and no
+ * `AKS_STACK_ID`: a page with a live owner was classified `orphaned`.
+ *
+ * So: a supplied corpus is used as given, and only an absent one is resolved from
+ * `env`. That keeps the forget-proof default while letting an injected listing win
+ * — which is the injection path the status tests drive.
+ *
  * @param root - Project root, used by the state read and the on-disk hash pass.
  * @param classified - Optional pre-read classified state, to avoid a redundant read.
+ * @param documents - A corpus the caller already resolved; omitted means "resolve it".
  * @param env - Environment naming the Stack; `process.env` when omitted.
  * @returns The snapshot for whichever corpus this project has.
  */
 export async function buildProjectFreshnessSnapshot(
   root: string,
   classified?: ClassifiedState,
+  documents?: StackDocuments,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<FreshnessSnapshot> {
-  return await withSourceDocuments(env, async (listing) =>
-    await buildFreshnessSnapshot(
-      root,
-      classified,
-      listing === undefined ? undefined : await listing.list(),
-    ));
+  const corpus = documents ?? await withSourceDocuments(env, async (listing) =>
+    listing === undefined ? undefined : await listing.list());
+  return await buildFreshnessSnapshot(root, classified, corpus);
 }
 
 /**

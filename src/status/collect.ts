@@ -229,7 +229,11 @@ export async function collectStatus(
   const stackDocuments = options.sourceDocuments === undefined
     ? undefined
     : await options.sourceDocuments.list();
-  const snapshot = await buildProjectFreshnessSnapshot(root, classified);
+  // Hand the listing over explicitly. Letting the helper resolve its own corpus would
+  // make the snapshot and the pending list read two different sources: an injected
+  // listing (how the status tests, and the MCP tool, drive this) reached the pending
+  // list while the snapshot ignored it and judged a live owner `orphaned`.
+  const snapshot = await buildProjectFreshnessSnapshot(root, classified, stackDocuments);
 
   const scan = options.pageScan;
   // Rows are authoritative when a Stack is configured, exactly as in `detectChanges`.
