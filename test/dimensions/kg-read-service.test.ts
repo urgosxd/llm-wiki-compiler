@@ -18,6 +18,11 @@ import { afterAll, describe, expect, it } from "vitest";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { expectNotFoundCode } from "../fixtures/reader-assertions.js";
 import {
+  DEFAULT_TEST_DATABASE_URL,
+  TEST_DATABASE_URL_ENV_VAR,
+  testDatabaseUrl,
+} from "../fixtures/test-database.js";
+import {
   consolidateEntityRows,
   consolidateRelationshipRows,
   readEntities,
@@ -138,4 +143,50 @@ describe("the graph read layer answers without an HTTP request", () => {
     expect(matching.value.steps.length).toBeGreaterThan(0);
     expect(nonMatching.value.steps).toHaveLength(0);
   }, 30_000);
+});
+
+/**
+ * The graph read layer is reached here through a test database, so the resolver that
+ * chooses that database is load-bearing for this suite. It is pinned here because it
+ * lives in `test/fixtures/**`, which no feature role may write.
+ *
+ * WHY THE PORT MATTERS MORE THAN IT LOOKS. The vendored production default is 5432.
+ * A fixture that propagates an EMPTY override hands that default to production code,
+ * which reads `""` as "unset" rather than "no database" and connects to the
+ * production port — quietly, against operator data, on a machine where production is
+ * reachable. Only the loud variant (ECONNREFUSED) is easy to notice.
+ *
+ * Pure unit: no Postgres, no environment mutation, no side effects.
+ */
+describe("the test database resolver never falls back to the production port", () => {
+  it("answers with the documented container when no override is set", () => {
+    expect(testDatabaseUrl({})).toBe(DEFAULT_TEST_DATABASE_URL);
+  });
+
+  it("treats an empty override as ABSENT, the specific bug being closed", () => {
+    // `AKS_DATABASE_URL=""` means "use the production port" to production code, so
+    // propagating an empty string here would silently retarget the suite.
+    expect(testDatabaseUrl({ [TEST_DATABASE_URL_ENV_VAR]: "" })).toBe(
+      DEFAULT_TEST_DATABASE_URL,
+    );
+  });
+
+  it("treats a whitespace-only override as absent too", () => {
+    expect(testDatabaseUrl({ [TEST_DATABASE_URL_ENV_VAR]: "   " })).toBe(
+      DEFAULT_TEST_DATABASE_URL,
+    );
+  });
+
+  it("honours an explicit override verbatim", () => {
+    const explicit = "postgresql://override:pw@db.internal:6000/other";
+    expect(testDatabaseUrl({ [TEST_DATABASE_URL_ENV_VAR]: explicit })).toBe(explicit);
+  });
+
+  it("resolves to a non-empty URL on the test container's port, not production's", () => {
+    const resolved = testDatabaseUrl({});
+    expect(resolved).not.toBe("");
+    expect(DEFAULT_TEST_DATABASE_URL).toContain(":5434");
+    expect(DEFAULT_TEST_DATABASE_URL).not.toContain(":5432");
+    expect(resolved).not.toContain(":5432");
+  });
 });
