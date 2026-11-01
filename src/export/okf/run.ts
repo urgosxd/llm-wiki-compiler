@@ -12,7 +12,7 @@ export interface OkfExportReport { outDir: string; writtenPaths: string[]; warni
 /** Export the wiki as an OKF bundle under `out` (default dist/exports/okf). Returns the bundle dir, every written path, and any non-fatal warnings (e.g. cited sources not bundled). Output-free — warnings are data, not prints. */
 export async function runOkfExport(root: string, opts: { out?: string } = {}): Promise<OkfExportReport> {
   const outDir = opts.out ?? path.join(root, EXPORT_DIR, "okf");
-  const pages = await withRawPageSource(root, process.env, (s) => collectExportPages(root, s));
+  const pages = await withRawPageSource(root, process.env, (s) => collectExportPages(root, s, process.env));
   const warnings: string[] = [];
   // Surface a pending/unavailable compile journal so an OKF-bundle consumer never
   // imports partial post-crash or tampered page bodies as a clean export. The

@@ -211,9 +211,15 @@ function toExportPage(
 export async function collectExportPages(
   root: string,
   source?: RawPageSource,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<ExportPage[]> {
   const raw = source === undefined ? await collectRawWikiPages(root) : await source.collect();
-  const snapshot = await buildProjectFreshnessSnapshot(root);
+  // `env`, not the ambient one: a compile runs against a Stack carried as an
+  // environment (see `buildIngestEnv`), never assigned into `process.env`. Resolving
+  // the corpus from the ambient env here meant the snapshot judged a DIFFERENT tenant
+  // than the compile that produced the pages — the same split this feature exists to
+  // remove, one layer up.
+  const snapshot = await buildProjectFreshnessSnapshot(root, undefined, undefined, env);
   const sourceHashes = sourceHashLookupFromSnapshot(snapshot);
   const kept = raw.filter((page) => page.parseStatus.hasTitle && !page.parseStatus.orphaned);
   const pages = kept

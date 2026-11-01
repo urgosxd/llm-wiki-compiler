@@ -215,7 +215,7 @@ function computeReportedPageCount(
 export async function runExport(root: string, options: ExportOptions = {}): Promise<ExportResult> {
   const projectId =
     options.projectId !== undefined ? validateProjectId(options.projectId) : undefined;
-  const pages = await withRawPageSource(root, process.env, (source) => collectExportPages(root, source));
+  const pages = await withRawPageSource(root, process.env, (source) => collectExportPages(root, source, process.env));
   const projectTitle = resolveProjectTitle(root);
   const profile = await buildExportProfileBlock(root);
   const warnings = await collectExportWarnings(root);
@@ -273,7 +273,7 @@ export async function exportJson(
   root: string,
   options: ExportJsonOptions = {},
 ): Promise<JsonExportDocument> {
-  const pages = await withRawPageSource(root, process.env, (source) => collectExportPages(root, source));
+  const pages = await withRawPageSource(root, process.env, (source) => collectExportPages(root, source, process.env));
   const profile = await buildExportProfileBlock(root);
   const warnings = await collectExportWarnings(root);
   // Reconstruct build options from ONLY the public knob so a forged `profile` or
