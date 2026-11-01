@@ -16,6 +16,12 @@
  */
 import { afterAll, describe, expect, it } from "vitest";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
+import { expectNotFoundCode } from "../fixtures/reader-assertions.js";
+import {
+  DEFAULT_TEST_DATABASE_URL,
+  TEST_DATABASE_URL_ENV_VAR,
+  testDatabaseUrl,
+} from "../fixtures/test-database.js";
 import {
   consolidateEntityRows,
   consolidateRelationshipRows,
@@ -67,8 +73,10 @@ async function seedGraph(): Promise<void> {
 }
 
 describe("the graph read layer answers without an HTTP request", () => {
-  it("lists entities for a stack, highest confidence first", async () => {
-    if (!reachable) return;
+  // `skipIf` rather than an early `return;` inside each body: with no database the
+  // suite must report SKIPPED, because a body that returns early is recorded as a
+  // pass and proves nothing about the read layer it claims to exercise.
+  it.skipIf(!reachable)("lists entities for a stack, highest confidence first", async () => {
     await seedGraph();
 
     const result = await db.transaction((tx) =>
@@ -82,8 +90,7 @@ describe("the graph read layer answers without an HTTP request", () => {
     expect(names).toEqual(["Alpha", "Beta"]);
   }, 30_000);
 
-  it("filters by kind, which is the graph's `type` column", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("filters by kind, which is the graph's `type` column", async () => {
     const result = await db.transaction((tx) =>
       readEntities(tx, { stackId, domain: null, type: "tool", minConfidence: 0, limit: 50 }),
     );
@@ -92,8 +99,7 @@ describe("the graph read layer answers without an HTTP request", () => {
     expect(result.value.map((entity) => entity.name)).toEqual(["Beta"]);
   }, 30_000);
 
-  it("finds one entity by case-insensitive name", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("finds one entity by case-insensitive name", async () => {
     const result = await db.transaction((tx) =>
       readEntityByName(tx, stackId, null, "alpha"),
     );
@@ -103,19 +109,16 @@ describe("the graph read layer answers without an HTTP request", () => {
     expect(result.value.name).toBe("Alpha");
   }, 30_000);
 
-  it("reports not_found as a coded failure rather than throwing", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("reports not_found as a coded failure rather than throwing", async () => {
     const result = await db.transaction((tx) =>
       readEntityByName(tx, stackId, null, "Nonexistent"),
     );
-    // A missing entity is an EXPECTED answer; a transport maps the code onto 404.
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.code).toBe("not_found");
+    // A missing entity is an EXPECTED answer carrying a code; a transport maps
+    // that code onto 404, so the assertion is shared with the reader suites.
+    expectNotFoundCode(result);
   }, 30_000);
 
-  it("walks relationships from an anchor and counts distinct entities", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("walks relationships from an anchor and counts distinct entities", async () => {
     const result = await db.transaction((tx) =>
       traverseGraph(tx, { start: "Alpha", stackId, domain: null, maxDepth: 2, relationshipTypes: null }),
     );
@@ -127,8 +130,7 @@ describe("the graph read layer answers without an HTTP request", () => {
     expect(result.value.entityCount).toBe(2);
   }, 30_000);
 
-  it("honours the relationship_types filter, the case a fidelity test caught", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("honours the relationship_types filter, the case a fidelity test caught", async () => {
     const matching = await db.transaction((tx) =>
       traverseGraph(tx, { start: "Alpha", stackId, domain: null, maxDepth: 2, relationshipTypes: "uses" }),
     );
@@ -141,4 +143,50 @@ describe("the graph read layer answers without an HTTP request", () => {
     expect(matching.value.steps.length).toBeGreaterThan(0);
     expect(nonMatching.value.steps).toHaveLength(0);
   }, 30_000);
+});
+
+/**
+ * The graph read layer is reached here through a test database, so the resolver that
+ * chooses that database is load-bearing for this suite. It is pinned here because it
+ * lives in `test/fixtures/**`, which no feature role may write.
+ *
+ * WHY THE PORT MATTERS MORE THAN IT LOOKS. The vendored production default is 5432.
+ * A fixture that propagates an EMPTY override hands that default to production code,
+ * which reads `""` as "unset" rather than "no database" and connects to the
+ * production port — quietly, against operator data, on a machine where production is
+ * reachable. Only the loud variant (ECONNREFUSED) is easy to notice.
+ *
+ * Pure unit: no Postgres, no environment mutation, no side effects.
+ */
+describe("the test database resolver never falls back to the production port", () => {
+  it("answers with the documented container when no override is set", () => {
+    expect(testDatabaseUrl({})).toBe(DEFAULT_TEST_DATABASE_URL);
+  });
+
+  it("treats an empty override as ABSENT, the specific bug being closed", () => {
+    // `AKS_DATABASE_URL=""` means "use the production port" to production code, so
+    // propagating an empty string here would silently retarget the suite.
+    expect(testDatabaseUrl({ [TEST_DATABASE_URL_ENV_VAR]: "" })).toBe(
+      DEFAULT_TEST_DATABASE_URL,
+    );
+  });
+
+  it("treats a whitespace-only override as absent too", () => {
+    expect(testDatabaseUrl({ [TEST_DATABASE_URL_ENV_VAR]: "   " })).toBe(
+      DEFAULT_TEST_DATABASE_URL,
+    );
+  });
+
+  it("honours an explicit override verbatim", () => {
+    const explicit = "postgresql://override:pw@db.internal:6000/other";
+    expect(testDatabaseUrl({ [TEST_DATABASE_URL_ENV_VAR]: explicit })).toBe(explicit);
+  });
+
+  it("resolves to a non-empty URL on the test container's port, not production's", () => {
+    const resolved = testDatabaseUrl({});
+    expect(resolved).not.toBe("");
+    expect(DEFAULT_TEST_DATABASE_URL).toContain(":5434");
+    expect(DEFAULT_TEST_DATABASE_URL).not.toContain(":5432");
+    expect(resolved).not.toContain(":5432");
+  });
 });

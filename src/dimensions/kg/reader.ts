@@ -11,12 +11,20 @@
  * compiled pages. That asymmetry is the reason both dimensions exist rather than
  * one being sufficient.
  *
- * ## Two capabilities, deliberately separable
+ * ## What this reader does NOT do: passages
  *
- * `readEntities`/`traverseGraph` need only Postgres. Chunk retrieval additionally
- * needs an embedding of the query text, which costs a provider call. Asking for
- * entities must therefore not fail because an embedding provider is unconfigured —
- * the two are attempted independently and their failures reported per capability.
+ * It answers entities and typed edges, and deliberately nothing else. It used to
+ * advertise passage retrieval too, and that capability was never real: this
+ * dimension chunks and embeds a document during `prepare`, then throws the chunks
+ * away without writing `document_chunks`, because only the vendored HTTP route
+ * calls `upsertChunk`. So `read({ text })` answered `ok: true` with `chunks: []`
+ * for every query, forever.
+ *
+ * A caller could not distinguish "nothing matched" from "never wired", which is
+ * the same silent lie as a provider outage reported as an empty graph. The
+ * capability is therefore removed rather than left broken, and a text query now
+ * answers `unavailable` with a message naming the gap. The `wiki` dimension does
+ * serve passages, so the alternative is real and the message says so.
  *
  * ## Why it reuses `core/graph_read.ts`
  *
@@ -28,15 +36,11 @@
 import {
   createClient,
   createDatabase,
-  embedQuery,
   kgConfig,
   readEntities,
   readEntityByName,
-  retrieveRelevantChunks,
   traverseGraph,
-  toVectorLiteral,
   type AKSEntityDto,
-  type RetrievedChunk,
 } from "llmwiki-kg";
 import type {
   DimensionAnswer,
@@ -44,7 +48,6 @@ import type {
   DimensionReader,
   GraphReadFailure,
   GraphReadResult,
-  ReadChunk,
   ReadEntity,
   ReadRelationship,
 } from "../read-types.js";
@@ -172,60 +175,16 @@ async function readRelationshipPart(
   }));
 }
 
-/** Map a retrieved chunk onto the dimension-neutral shape. */
-function toReadChunk(chunk: RetrievedChunk): ReadChunk {
-  return {
-    content: chunk.content,
-    sourceId: chunk.document_id,
-    score: chunk.similarity,
-  };
-}
-
-/**
- * Retrieve passages relevant to the query text.
- *
- * Returns `unavailable` when either half cannot run: the text must be embedded
- * before it can be compared, and a missing provider is a capability gap rather
- * than an empty result. Reporting it lets the caller distinguish "nothing matched"
- * from "search is off".
- *
- * @param options - Stack binding and connection override.
- * @param text - Query text.
- * @param limit - Cap on returned passages.
- * @returns Passages, or a coded failure.
- */
-async function readChunkPart(
-  options: KgReaderOptions,
-  text: string,
-  limit: number,
-): Promise<GraphReadResult<readonly ReadChunk[]>> {
-  let embedding: readonly number[];
-  try {
-    embedding = await embedQuery(text);
-  } catch (error) {
-    return {
-      ok: false,
-      error: {
-        code: "unavailable",
-        message: `cannot embed the query: ${error instanceof Error ? error.message : String(error)}`,
-      },
-    };
-  }
-  // Serializing here proves the vector is well-formed before it reaches SQL; the
-  // query path casts it back to ::vector.
-  void toVectorLiteral(embedding);
-  const rows = await withGraph(options, (db) =>
-    db.transaction((tx) => retrieveRelevantChunks(tx, options.stackId, text, embedding, limit)),
-  );
-  return { ok: true, value: rows.map(toReadChunk) };
-}
-
 /**
  * Answer one question against the knowledge graph.
  *
- * Entities and relationships are read first because they need only the database;
- * chunk retrieval is attempted only when text was supplied, so a missing embedding
- * provider never prevents an entity listing.
+ * A text query is refused up front, before any database work, because this
+ * dimension cannot answer it: the passages a text query asks for are never
+ * stored by this path. Refusing early is also what keeps the answer honest — a
+ * caller that ignores the code still cannot mistake it for "no matches".
+ *
+ * Entities and relationships then need only Postgres, so they are read
+ * independently of any provider being configured.
  *
  * @param options - Stack binding and connection override.
  * @param query - What to look for.
@@ -235,34 +194,36 @@ async function readGraph(
   options: KgReaderOptions,
   query: DimensionQuery,
 ): Promise<GraphReadResult<DimensionAnswer>> {
-  const limit = query.limit ?? DEFAULT_LIMIT;
+  if (query.text !== undefined && query.text.trim() !== "") {
+    return {
+      ok: false,
+      error: {
+        code: "unavailable",
+        message:
+          "the kg dimension does not serve passage retrieval; " +
+          "query the wiki dimension for text matches",
+      },
+    };
+  }
 
   let entities: readonly ReadEntity[] = [];
   let relationships: readonly ReadRelationship[] = [];
 
-  const wantsEntityRead =
-    query.name !== undefined || query.text === undefined || query.depth !== undefined;
-  if (wantsEntityRead) {
-    const entityPart = await readEntityPart(options, query).catch((error: unknown) => ({
-      ok: false as const,
-      error: {
-        code: "unavailable" as const,
-        message: error instanceof Error ? error.message : String(error),
-      },
-    }));
-    if (!entityPart.ok) return entityPart;
-    entities = entityPart.value;
-    relationships = await readRelationshipPart(options, query);
-  }
+  // A text query already returned above, so a call reaching here either names an
+  // anchor, asks to walk, or lists what the graph holds. All three want the
+  // entity part; only a walk also wants the edges.
+  const entityPart = await readEntityPart(options, query).catch((error: unknown) => ({
+    ok: false as const,
+    error: {
+      code: "unavailable" as const,
+      message: error instanceof Error ? error.message : String(error),
+    },
+  }));
+  if (!entityPart.ok) return entityPart;
+  entities = entityPart.value;
+  relationships = await readRelationshipPart(options, query);
 
-  let chunks: readonly ReadChunk[] = [];
-  if (query.text !== undefined && query.text.trim() !== "") {
-    const chunkPart = await readChunkPart(options, query.text, limit);
-    if (!chunkPart.ok) return chunkPart;
-    chunks = chunkPart.value;
-  }
-
-  return { ok: true, value: { entities, relationships, chunks } };
+  return { ok: true, value: { entities, relationships, chunks: [] } };
 }
 
 /**

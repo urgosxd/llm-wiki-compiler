@@ -9,9 +9,16 @@
  * graph failure becoming a coded dimension failure. A test that called the queries
  * directly would not exercise any of that.
  *
- * Entity and relationship reads are asserted against real Postgres. Chunk
- * retrieval is deliberately NOT asserted here: it needs a live embedding provider,
- * and stubbing it would test the stub.
+ * Entity and relationship reads are asserted against real Postgres.
+ *
+ * ## Chunk retrieval is CUT, and that is what these tests pin
+ *
+ * The dimension used to advertise passages it could never return: it chunks and
+ * embeds text, then throws the chunks away without writing `document_chunks`, so
+ * `read({ text })` answered `ok: true` with `chunks: []` for every query, forever.
+ * A caller had no way to tell "nothing matched" from "this capability was never
+ * wired". The capability is now removed and the absence is REPORTED, which is the
+ * only honest answer a dimension can give for something it does not do.
  */
 import { afterAll, describe, expect, it } from "vitest";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
@@ -69,8 +76,10 @@ describe("the kg dimension as a DimensionReader", () => {
     expect(reader().name).toBe("kg");
   });
 
-  it("maps graph entities onto the dimension-neutral shape", async () => {
-    if (!reachable) return;
+  // `skipIf` rather than an early `return;` inside each body: with no database the
+  // suite must report SKIPPED, because a body that returns early is recorded as a
+  // pass and proves nothing about the graph it claims to read.
+  it.skipIf(!reachable)("maps graph entities onto the dimension-neutral shape", async () => {
     await seedGraph();
 
     const result = await reader().read({ limit: 50 });
@@ -85,15 +94,13 @@ describe("the kg dimension as a DimensionReader", () => {
     expect(alpha?.description).toBe("first entity");
   }, 30_000);
 
-  it("finds one entity by name and reports not_found as a code", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("finds one entity by name and reports not_found as a code", async () => {
     // The lookup contract is asserted identically on both dimensions, so a change
     // to the port's failure semantics fails BOTH suites rather than one.
     await expectNamedLookupContract(reader(), "Alpha", "Alpha");
   }, 30_000);
 
-  it("returns typed edges only when a walk is actually requested", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("returns typed edges only when a walk is actually requested", async () => {
     const readerInstance = reader();
 
     // A name without a depth is a lookup, not a walk: no edges should appear.
@@ -110,20 +117,39 @@ describe("the kg dimension as a DimensionReader", () => {
     });
   }, 30_000);
 
-  it("narrows by kind, which is the graph's entity type", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("narrows by kind, which is the graph's entity type", async () => {
     const result = await reader().read({ kinds: ["tool"] });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.entities.map((entity) => entity.name)).toEqual(["Beta"]);
   }, 30_000);
 
-  it("does not return relationships for a source that has none", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("does not return relationships for a source that has none", async () => {
     // A plain listing asks for no anchor, so there is nothing to walk from.
     const result = await reader().read({ limit: 50 });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.relationships).toHaveLength(0);
   }, 30_000);
+});
+
+describe("the kg reader and passage retrieval", () => {
+  it("reports text queries as unavailable instead of answering an empty list", async () => {
+    // `ok: true` with no chunks is the lie this replaces: it reads as "searched,
+    // found nothing" when the truth is "this dimension does not serve passages".
+    const result = await reader().read({ text: "how is Alpha connected to Beta" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("unavailable");
+  });
+
+  it("names the omission in the failure message, so a caller knows what to do", async () => {
+    const result = await reader().read({ text: "anything" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // The message must point at the alternative rather than describe a bug.
+    expect(result.error.message).toMatch(/passage|chunk/i);
+  });
 });

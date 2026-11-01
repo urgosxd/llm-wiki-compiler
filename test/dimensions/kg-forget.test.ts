@@ -57,9 +57,11 @@ async function tracesOf(source: string): Promise<{ docs: number; contributions: 
   };
 }
 
+// `skipIf` rather than an early `return;` inside each body: with no database the
+// suite must report SKIPPED, because a body that returns early is recorded as a
+// pass and proves nothing about the cascade this file exists to verify.
 describe("forget retires a source from the graph", () => {
-  it("removes the document and its contributions in one delete", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("removes the document and its contributions in one delete", async () => {
     const source = `https://forget.test/${randomUUID()}.md`;
     await seedDocument(source, "content to retire");
     expect(await tracesOf(source)).toEqual({ docs: 1, contributions: 1 });
@@ -70,8 +72,7 @@ describe("forget retires a source from the graph", () => {
     expect(await tracesOf(source)).toEqual({ docs: 0, contributions: 0 });
   }, 30_000);
 
-  it("is idempotent, because a reconciler retries", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("is idempotent, because a reconciler retries", async () => {
     const source = `https://forget.test/${randomUUID()}.md`;
     await seedDocument(source, "content to retire twice");
 
@@ -82,8 +83,7 @@ describe("forget retires a source from the graph", () => {
     ).resolves.not.toThrow();
   }, 30_000);
 
-  it("retires every generation of a source, not just the newest", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("retires every generation of a source, not just the newest", async () => {
     const source = `https://forget.test/${randomUUID()}.md`;
     // Two bodies mean two different `source_hash` values, so two rows. Forgetting
     // the source must retire both, or stale text stays queryable.
@@ -96,8 +96,7 @@ describe("forget retires a source from the graph", () => {
     expect((await tracesOf(source)).docs).toBe(0);
   }, 30_000);
 
-  it("leaves other stacks and other sources untouched", async () => {
-    if (!reachable) return;
+  it.skipIf(!reachable)("leaves other stacks and other sources untouched", async () => {
     const doomed = `https://forget.test/${randomUUID()}.md`;
     const survivor = `https://forget.test/${randomUUID()}.md`;
     await seedDocument(doomed, "to be removed");

@@ -96,6 +96,14 @@ interface KgHandle {
   readonly relationships: readonly ExtractedRelationship[];
   /** Triplets the declared ontology turned away; empty when none was supplied. */
   readonly rejected: readonly KgRejection[];
+  /**
+   * Chunks whose extraction failed after every retry was spent.
+   *
+   * Carried so the commit summary can say a document was extracted from SOME of
+   * its chunks. The all-failed case never gets here: it raises inside
+   * `extractGraphFromChunks`, which fails `prepare` and therefore the ingest.
+   */
+  readonly failedChunks: number;
 }
 
 /** How this dimension is bound to one knowledge stack. */
@@ -191,6 +199,20 @@ function ontologyArgs(ontology: Ontology | undefined): [] | [Ontology] {
  */
 function rejectionNote(rejected: readonly KgRejection[]): string {
   return rejected.length === 0 ? "" : `, ${rejected.length} triplets rejected by ontology`;
+}
+
+/**
+ * Renders the failed-chunk count, or nothing when every chunk answered.
+ *
+ * The same reasoning as {@link rejectionNote}, for the same reason: a document
+ * whose graph was built from two of five chunks must not read exactly like one
+ * that only had two chunks' worth of facts in it.
+ *
+ * @param failedChunks - Chunks that produced nothing after their retries.
+ * @returns A leading-comma fragment, or an empty string when nothing failed.
+ */
+function extractionNote(failedChunks: number): string {
+  return failedChunks === 0 ? "" : `, ${failedChunks} chunks failed extraction`;
 }
 
 /**
@@ -346,6 +368,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
         entities: extraction.entities,
         relationships: extraction.relationships,
         rejected: extraction.rejected ?? [],
+        failedChunks: extraction.failedChunks ?? 0,
       };
       return { unchanged: chunks.length === 0, handle };
     },
@@ -355,7 +378,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       if (options.dryRun === true || handle.chunks.length === 0) {
         return {
           idempotencyKey: `kg:${handle.documentId}`,
-          summary: `kg:dry-run(${handle.chunks.length} chunks, ${handle.entities.length} entities)${rejectionNote(handle.rejected)}`,
+          summary: `kg:dry-run(${handle.chunks.length} chunks, ${handle.entities.length} entities)${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}`,
         };
       }
       // `writeGraph` replaces the placeholder with the id Postgres assigned.
@@ -364,7 +387,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
         // Keyed on the real row id, so the outbox replay targets the same document
         // rather than the label it was prepared under.
         idempotencyKey: `kg:${handle.documentId}`,
-        summary: `kg:${handle.chunks.length} chunks, ${handle.entities.length} entities${rejectionNote(handle.rejected)}`,
+        summary: `kg:${handle.chunks.length} chunks, ${handle.entities.length} entities${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}`,
       };
     },
 

@@ -299,6 +299,20 @@ export interface DocumentRegistration {
  * text rather than accumulating stale chunks under one id. A soft delete keys off
  * `source` instead, so `forget` can find every generation of a removed source.
  *
+ * ## Why this binds the tenant like its two siblings
+ *
+ * Every statement here is tenant-scoped, and `stack_documents` carries a
+ * `tenant_isolation` policy with a `WITH CHECK`, so an insert whose bound tenant
+ * does not match `stack_id` is REFUSED. Measured under the application role:
+ * SQLSTATE 42501, `new row violates row-level security policy for table
+ * "stack_documents"`, which failed the whole graph write.
+ *
+ * `consolidateEntityRows` and `consolidateRelationshipRows` already bound before
+ * their writes; this function did not, and the asymmetry was invisible because
+ * every suite connects as `aks` -- a SUPERUSER with `BYPASSRLS`, where no policy
+ * runs at all. Binding here is what makes the three writes consistent and the
+ * dimension work under the role production is meant to use.
+ *
  * @param tx - Transaction that will also carry the consolidation writes.
  * @param registration - Source identity, body, and title.
  * @returns The document row's id.
@@ -307,6 +321,10 @@ export async function registerDocumentRow(
   tx: Database,
   registration: DocumentRegistration,
 ): Promise<string> {
+  // Before the insert, for the same reason the consolidation functions do it:
+  // the policy validates what is written against the bound tenant.
+  await bindCallerStack(tx, registration.stackId, null);
+
   const sourceHash = createHash("sha256")
     .update(registration.source)
     .update("\u0000")

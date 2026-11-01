@@ -61,6 +61,19 @@ export interface ExtractionResult {
    * three entities in it.
    */
   readonly rejected?: readonly RejectedTriplet[];
+  /**
+   * Chunks whose extraction failed after every retry was spent.
+   *
+   * Absent when nothing failed, so the common case keeps the oracle's exact
+   * result shape. Present so a caller can tell a thin extraction from an
+   * impaired one: a document that yielded 2 entities because it had 2 is not the
+   * same as a document that yielded 2 because three of its five chunks never
+   * answered.
+   *
+   * Never present with `entities: []` -- a run where every chunk failed raises
+   * instead, because an empty graph is not a degraded result, it is an outage.
+   */
+  readonly failedChunks?: number;
 }
 
 /**

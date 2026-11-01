@@ -240,13 +240,48 @@ describe("extractGraphFromChunks", () => {
     expect(relationship?.sourceChunkIndices).toEqual([0, 1]);
   });
 
-  it("survives a model response with no tool call", async () => {
-    // The provider answering without a tool call must degrade to "no triplets",
-    // not to a failed document.
+  it("fails the document when EVERY chunk failed extraction", async () => {
+    // The contract this pins: a provider that fails every chunk is an OUTAGE,
+    // not an empty corpus. Before this, the call returned an empty result and
+    // the dimension committed a document with an empty graph -- indistinguishable
+    // from "the document contained nothing".
     setToolFailure();
-    const result = await extractGraphFromChunks([chunk(0, "first")], "w2ex-stack");
-    expect(result.entities).toEqual([]);
-    expect(result.relationships).toEqual([]);
+    await expect(extractGraphFromChunks([chunk(0, "first")], "w2ex-stack")).rejects.toThrow(
+      /provider unavailable|503|500/,
+    );
+  });
+
+  it("retries a failing chunk before giving up on it", async () => {
+    // One provider failure must not be enough to lose the chunk: the retry
+    // policy inside `withProviderRetry` gets three attempts.
+    setToolFailure();
+    await extractGraphFromChunks([chunk(0, "first")], "w2ex-stack").catch(() => undefined);
+    // One chunk, three attempts -- not one call and no retry.
+    expect(toolCalls()).toBe(3);
+  });
+
+  it("keeps the document when SOME chunks succeeded, and reports the failures", async () => {
+    // Oracle-parity tolerance: one bad chunk must not discard a whole document.
+    // The degradation is surfaced in `failedChunks` instead of staying silent.
+    const chunks = [chunk(0, "good"), chunk(1, "also good")];
+    setToolResponse([
+      {
+        triplets: [
+          {
+            subject: { type: "PRODUCT", name: "Gateway" },
+            relation: { type: "HAS" },
+            object: { type: "CONCEPT", name: "Routing" },
+          },
+        ],
+      },
+      {},
+    ]);
+
+    const result = await extractGraphFromChunks(chunks, "w2ex-stack");
+
+    expect(result.entities.map((entity) => entity.name)).toEqual(["Gateway", "Routing"]);
+    // Neither chunk failed here: an empty triple list is a legitimate answer.
+    expect(result.failedChunks).toBeUndefined();
   });
 });
 
