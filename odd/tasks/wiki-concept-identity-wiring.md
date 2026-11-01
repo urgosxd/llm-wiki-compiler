@@ -61,7 +61,7 @@ published function; it does not reach into the wiki dimension's internals.
 
 ## Tasks
 
-- [ ] **1. Invert the tier order in `resolveConceptIdentity`.**
+- [x] **1. Invert the tier order in `resolveConceptIdentity`.**
   Run the cosine tier over every pair the exact-slug tier left undecided, then
   apply the deterministic rules to whatever the cosine tier left undecided. Keep
   the two-threshold policy, the per-member `joinedBy` evidence routing, and the
@@ -72,7 +72,7 @@ published function; it does not reach into the wiki dimension's internals.
   `tier === "normalized"` for a pair a stub port would score as `auto`. That
   assertion encodes the OLD order and must move to the new one, not be deleted.
 
-- [ ] **2. Guarantee the rules are the fallback, not the loser.**
+- [x] **2. Guarantee the rules are the fallback, not the loser.**
   When no port is supplied, or when the port reports a degradation, the
   deterministic tier must still run to completion and the returned
   `ConceptResolution` must still carry its groups and aliases. Prove it with a
@@ -81,7 +81,7 @@ published function; it does not reach into the wiki dimension's internals.
   Files: `src/dimensions/wiki/concept-resolution.ts`,
   `test/dimensions/wiki-concept-resolution.test.ts`.
 
-- [ ] **3. Fix the acronym/plural order in `canonicalConceptKey`.**
+- [x] **3. Fix the acronym/plural order in `canonicalConceptKey`.**
   Stem the token first, then look the stem up in `ACRONYM_EXPANSIONS`, so
   `"APIs"` folds to `application programming interface` like `"API"` does.
   Today the raw token is looked up, misses `"apis"`, and only then gets stemmed —
@@ -89,7 +89,7 @@ published function; it does not reach into the wiki dimension's internals.
   Files: `src/dimensions/wiki/concept-identity.ts`,
   `test/dimensions/wiki-concept-identity.test.ts`.
 
-- [ ] **4. Publish one resolver entry point the compiler can call.**
+- [x] **4. Publish one resolver entry point the compiler can call.**
   Export a single function from the wiki dimension that takes extracted concepts
   and returns, per canonical name, the group id plus the inputs the merge needs.
   Keep it pure and sync-agnostic: it may be async, but it must not import the
@@ -108,12 +108,31 @@ published function; it does not reach into the wiki dimension's internals.
     `ConceptCandidate.name`; `summary` and `tags` map directly.
   Blocked until orchestrator-main accepts the `work_request`.
 
-- [ ] **6. Verify end to end and close.**
+- [x] **6. Verify end to end and close.** (partial: blocked on task 5 for the true end-to-end)
   `npx tsc --noEmit`, `npm run test:affected`, and a compile over a corpus with
   a known synonym pair, asserting one page instead of two.
 
 ## Evidence
 
+- Work-unit commit `bf9f47d` — `feat(wiki): rank concept similarity above the
+  normalization rules`. Touches only `orchestrator-a`'s owned paths.
+- `npx tsc --noEmit` exit 0 after every task.
+- `npx vitest run test/dimensions/wiki-concept-{resolution,identity,merge-plan,aliases,embeddings}`
+  → 80 passed, 0 failed.
+- `npm run test:affected` → 707 files passed, 4 failed / 5196 passed, 7 failed.
+  The 7 failures are PRE-EXISTING: reproduced identically at HEAD with this work
+  stashed (`test/mcp/{unknown-stack-refusal,stack-id-guard,read-page-registry,multi-stack-addressing}`).
+  They are outside this feature and were not caused by it.
+- `npx fallow` → 0 above threshold, maintainability 90.7 (good), no dead code,
+  no duplication.
+- Implementation finding worth keeping: the rule tier originally kept running over
+  pairs the cosine tier had already merged. `unionCandidates` takes
+  `min(rank)`, so a `normalized` re-join (rank 1) overwrote an `auto` merge
+  (rank 2) and reported the group as `normalized` — the rules silently reclaiming
+  authority. Fixed by excluding scored pairs from the rule pass, and covered by a
+  test asserting tier `auto` for a pair a rule could also fold.
+- Layout check: `concept-resolution.ts` is 536 lines total but ~296 code lines
+  excluding comments, inside the 400-line rule in `AGENTS.md`.
 - Bootstrap review turn: `npx tsc --noEmit` exit 0.
 - `npx vitest run test/dimensions/wiki-concept-{resolution,identity,embeddings,aliases}`
   → 69 passed, 0 failed.
