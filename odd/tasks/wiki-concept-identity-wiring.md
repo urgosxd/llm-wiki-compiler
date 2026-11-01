@@ -41,9 +41,13 @@ undecided — or everything, when embeddings are unavailable.
    acronym table, so `"APIs"` and `"API"` share one key.
 5. Order independence holds: shuffling the input candidates produces identical
    groups, aliases, and pending aliases.
-6. The compile calls the resolver exactly once per run, and both call sites of
-   `mergeExtractions` (`src/compiler/index.ts:224` and `:680`) observe the same
-   grouping, so the progress denominator equals the real page count.
+6. The compile calls the resolver exactly once per run, through
+   `src/compiler/identity-stage.ts` (`applyConceptIdentity`), NOT through
+   `extraction-merge.ts`. That stage rewrites the extractions' concept names
+   before any consumer derives a slug, so `mergeExtractions` stays synchronous,
+   takes no plan, and still groups correctly. The progress denominator is the
+   single merged list returned by `runGenerationStage`, so it cannot count pages
+   the run never writes.
 7. `npx tsc --noEmit` clean; `npx vitest related` over the touched files green.
 
 ## Owned contract
@@ -97,20 +101,46 @@ published function; it does not reach into the wiki dimension's internals.
   Files: `src/dimensions/wiki/concept-resolution.ts` (or a small adapter beside
   it), `test/dimensions/wiki-*`.
 
-- [ ] **5. BLOCKED — wire `mergeExtractions` to the resolver.**
-  Owner: `orchestrator-main`, under `unrestrictedWrite`. Outside
-  `orchestrator-a`'s ownedPaths; the contract hook refuses an edit from this
-  session and should. Requires:
-  - `mergeExtractions` becomes async, or the resolver result is injected by the
-    caller at `src/compiler/index.ts:224`.
-  - The `:680` progress-denominator call site must consume the SAME grouping.
-  - `ExtractedConcept.concept` (`src/utils/types.ts:79`) maps to
-    `ConceptCandidate.name`; `summary` and `tags` map directly.
-  Requested: `work_request` `wq-2026-11-01-01` sent to `orchestrator-main`
-  (session `01a194f2-448f-7743-95c1-1840cdb2af78`) on 2026-11-01, `expect: none`.
-  Awaiting its `work_result` or one `blocked`. Do not re-send.
+- [x] **5. Wire the resolver into the compile.**
+  Done by `orchestrator-main` in commit `604db54` on branch
+  `feat/wiki-concept-identity-wiring`, branched from this branch's tip
+  (`489e772`), NOT from main — the seam does not exist in main.
 
-- [x] **6. Verify end to end and close.** (partial: blocked on task 5 for the true end-to-end)
+  **It was NOT implemented as this task first described.** The original plan was
+  “make `mergeExtractions` async, or inject the plan at `index.ts:224`”. Both were
+  too narrow, and the reason is worth keeping: a concept's slug is the page
+  filename, the chunk-embedding key, the link target and the unit of ownership
+  persisted in `SourceState.concepts`, so SIX places derive it. Grouping only
+  inside the merge would write the page under the canonical slug while ownership
+  still recorded the alias, so the next run would schedule the wrong owners and
+  lose the alias's evidence silently — invisible, and worse than the bug this
+  feature set out to remove.
+
+  What landed instead: one resolution per run, applied to the extractions
+  themselves before any consumer runs (`src/compiler/identity-stage.ts`,
+  `applyConceptIdentity`). After `bindConceptsToCanonicalNames` a folded name no
+  longer exists in the run, so every downstream `slugify` lands on the canonical
+  slug for free. That is why `mergeExtractions` stayed sync and argument-free.
+  The seam is consumed as published: `planConceptMerge`, positionally aligned,
+  `concept`→`name` with `summary`, `tags` and `confidence` passed through
+  (`src/compiler/extraction-identity.ts`, `toMergePlanCandidate`).
+
+  Additional behaviour beyond the original task, and why it is needed:
+  - A page left under a folded name has no producer, so it is marked `orphaned`
+    (marked, never deleted — same convention as deletion, so a wrong merge stays
+    reversible by a human). Without it the motivating case ends with two files on
+    the second run.
+  - A folded concept keeps its evidence, takes the canonical name and is marked
+    `is_new: false`; only the canonical record decides newness.
+
+- [x] **6. Verify end to end and close.**
+  Verified independently by this session against `604db54`, not taken on report:
+  `npx tsc --noEmit` exit 0; the 18 pipeline tests
+  (`test/compile-concept-identity.test.ts`, `test/compiler/extraction-identity.test.ts`)
+  pass and assert exactly the two halves that can fail silently — ONE page per
+  synonym pair, a denominator equal to the generated set, and ownership recorded
+  under the canonical slug rather than the alias; this branch's 63 concept tests
+  still pass with the compiler wiring in place.
   `npx tsc --noEmit`, `npm run test:affected`, and a compile over a corpus with
   a known synonym pair, asserting one page instead of two.
 
@@ -125,6 +155,11 @@ published function; it does not reach into the wiki dimension's internals.
   The 7 failures are PRE-EXISTING: reproduced identically at HEAD with this work
   stashed (`test/mcp/{unknown-stack-refusal,stack-id-guard,read-page-registry,multi-stack-addressing}`).
   They are outside this feature and were not caused by it.
+- A THIRD pre-existing failure was found later: `test/okf-mcp-stdio.test.ts`
+  (1 of 4). It was absent from this session's earlier selection because that run
+  never included the file. Verified by `orchestrator-main` and independently by
+  this session at `604db54^` with the wiring absent: fails identically. So the
+  real baseline is 8 failures in 5 files, all outside this feature.
 - `npx fallow` → 0 above threshold, maintainability 90.7 (good), no dead code,
   no duplication.
 - Implementation finding worth keeping: the rule tier originally kept running over
