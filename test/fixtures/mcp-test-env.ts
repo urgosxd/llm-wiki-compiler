@@ -28,6 +28,7 @@ import { afterEach, beforeEach } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { testDotenvEnv } from "./test-dotenv.js";
 import { registerWikiTools } from "../../src/mcp/tools.js";
 import { registerWikiResources } from "../../src/mcp/resources.js";
 import { CLI } from "./run-cli.js";
@@ -75,6 +76,10 @@ export async function connectMcpClient(root: string): Promise<McpClientHandle> {
     command: "node",
     args: [CLI, "serve", "--root", root],
     stderr: "ignore",
+    cwd: path.resolve("."),
+    // The SDK inherits only a handful of variables, so the corpus override has to be
+    // handed over explicitly or the subprocess reads the operator's real `.env`.
+    env: { ...process.env, ...testDotenvEnv() },
   });
   const client = new Client({ name: "test-client", version: "0.0.0" });
   await client.connect(transport);

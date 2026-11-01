@@ -11,6 +11,7 @@ import { promisify } from "util";
 import { access } from "fs/promises";
 import path from "path";
 import { expect } from "vitest";
+import { testDotenvEnv } from "./test-dotenv.js";
 
 const exec = promisify(execFile);
 
@@ -125,7 +126,9 @@ export async function runCLI(
 
     const { stdout, stderr } = await exec(process.execPath, [CLI, ...args], {
       cwd,
-      env: { ...process.env, ...envOverrides, ...compileCacheEnv() },
+      // The corpus override goes last so a subprocess never re-reads the operator's
+      // real `.env`; an explicit `envOverrides` still wins over it.
+      env: { ...process.env, ...testDotenvEnv(), ...envOverrides, ...compileCacheEnv() },
     });
     return {
       stdout,

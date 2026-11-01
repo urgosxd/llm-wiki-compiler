@@ -20,6 +20,7 @@
 import { ChildProcess, spawn } from "child_process";
 import path from "path";
 import { afterEach } from "vitest";
+import { testDotenvEnv } from "./test-dotenv.js";
 
 const CLI = path.resolve("dist/cli.js");
 // Parses either `http://127.0.0.1:PORT` or the bracketed-IPv6 form
@@ -52,7 +53,7 @@ export async function startViewerCLI(
   cwd: string,
   timeoutMs: number = DEFAULT_READY_TIMEOUT_MS,
 ): Promise<ViewerProcessHandle> {
-  return spawnAwaitingReadiness(["view", ...args], cwd, timeoutMs, "viewer", { env: process.env });
+  return spawnAwaitingReadiness(["view", ...args], cwd, timeoutMs, "viewer", { env: { ...process.env, ...testDotenvEnv() } });
 }
 
 /**
@@ -72,7 +73,7 @@ export async function startQuickstartCLI(
     cwd,
     timeoutMs,
     "quickstart",
-    { env: { ...process.env, ...envOverrides } },
+    { env: { ...process.env, ...testDotenvEnv(), ...envOverrides } },
   );
 }
 
