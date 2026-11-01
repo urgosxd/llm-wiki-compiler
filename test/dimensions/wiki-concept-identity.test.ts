@@ -23,6 +23,14 @@ describe("canonicalConceptKey", () => {
     expect(canonicalConceptKey("Vector DB")).toBe(canonicalConceptKey("Vector Database"));
   });
 
+  it("expands a PLURAL acronym, because the stem is looked up before the table", () => {
+    // The table is keyed on singulars. Looking up the raw token made "apis" miss
+    // and collapse to "api" while "API" expanded to the full phrase, so the two
+    // spellings of one concept stayed two concepts.
+    expect(canonicalConceptKey("APIs")).toBe(canonicalConceptKey("API"));
+    expect(canonicalConceptKey("APIs")).toBe("application programming interface");
+  });
+
   it("stems plurals so a plural and a singular share one key", () => {
     expect(canonicalConceptKey("Vector Databases")).toBe(canonicalConceptKey("Vector Database"));
   });

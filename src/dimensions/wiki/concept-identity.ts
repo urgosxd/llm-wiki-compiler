@@ -194,7 +194,12 @@ function stemNonSibilantS(token: string): string {
 export function canonicalConceptKey(name: string): string {
   const canonicalTokens: string[] = [];
   for (const token of nameTokens(name)) {
-    const expanded = ACRONYM_EXPANSIONS[token];
+    // Stem BEFORE consulting the acronym table, not after. The table is keyed on
+    // singulars, so a plural acronym ("apis") misses the raw lookup and — under the
+    // old order — only ever reached the stemmer, producing "api" instead of
+    // "application programming interface". "APIs" and "API" are the same concept
+    // and must therefore share a key.
+    const expanded = ACRONYM_EXPANSIONS[stemPlural(token)];
     if (expanded !== undefined) {
       canonicalTokens.push(...expanded.split(" "));
       continue;

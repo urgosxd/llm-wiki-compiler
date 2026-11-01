@@ -83,6 +83,77 @@ describe("resolveConceptIdentity deterministic tiers", () => {
   });
 });
 
+describe("resolveConceptIdentity tier order: slug, then cosine, then rules", () => {
+  /** A port that records which identity texts it was asked to embed. */
+  function recordingPort(angles: Readonly<Record<string, number>>): {
+    port: ConceptEmbeddingPort;
+    embedded: string[];
+  } {
+    const embedded: string[] = [];
+    const inner = stubPort(angles);
+    return {
+      embedded,
+      port: {
+        fingerprint: inner.fingerprint,
+        async embed(texts) {
+          embedded.push(...texts.map((text) => text.split("\n")[0]));
+          return inner.embed(texts);
+        },
+      },
+    };
+  }
+
+  it("decides by cosine before the normalization rule can claim the pair", async () => {
+    // These two fold under the `normalized` rule. With a port their score is what
+    // must decide the tier, because similarity outranks the rules.
+    const { port, embedded } = recordingPort({ "Vector Database": 0, "Vector DB": 0 });
+    const result = await resolveConceptIdentity(
+      [{ name: "Vector Database" }, { name: "Vector DB" }],
+      { embed: port },
+    );
+    expect(embedded).toEqual(["Vector DB", "Vector Database"]);
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0].tier).toBe("auto");
+  });
+
+  it("compares a synonym that shares no word with the other name", async () => {
+    // "PostgreSQL" and "Postgres" share no blocking token, so the old gate never
+    // let them reach a cosine comparison at all.
+    const { port, embedded } = recordingPort({ PostgreSQL: 0, Postgres: 0 });
+    const result = await resolveConceptIdentity(
+      [{ name: "PostgreSQL" }, { name: "Postgres" }],
+      { embed: port },
+    );
+    // Code-unit order, not locale order: uppercase sorts first, so "PostgreSQL"
+    // precedes "Postgres". That determinism is intentional (see compareNames).
+    expect(embedded).toEqual(["PostgreSQL", "Postgres"]);
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0].tier).toBe("auto");
+  });
+
+  it("still merges by rule when the provider fails", async () => {
+    // The rules are the fallback, not the loser: a dead provider must not cost a
+    // merge the deterministic tier could make on its own.
+    const result = await resolveConceptIdentity(
+      [{ name: "Vector Database" }, { name: "Vector DB" }],
+      { embed: failingPort },
+    );
+    expect(result.degradation?.reason).toBe("embeddings-failed");
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0].tier).toBe("normalized");
+  });
+
+  it("still merges by rule when no port is configured", async () => {
+    const result = await resolveConceptIdentity([
+      { name: "Vector Database" },
+      { name: "Vector DB" },
+    ]);
+    expect(result.degradation?.reason).toBe("embeddings-unconfigured");
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0].tier).toBe("normalized");
+  });
+});
+
 describe("resolveConceptIdentity thresholds", () => {
   /** Two candidates whose names share a token, so they reach the cosine tier. */
   const pair: ConceptCandidate[] = [{ name: "Vector Search" }, { name: "Vector Indexing" }];
