@@ -167,14 +167,51 @@ published function; it does not reach into the wiki dimension's internals.
 - `npx vitest run test/dimensions/wiki-concept-{resolution,identity,merge-plan,aliases,embeddings}`
   → 80 passed, 0 failed.
 - `npm run test:affected` → 707 files passed, 4 failed / 5196 passed, 7 failed.
-  The 7 failures are PRE-EXISTING: reproduced identically at HEAD with this work
-  stashed (`test/mcp/{unknown-stack-refusal,stack-id-guard,read-page-registry,multi-stack-addressing}`).
-  They are outside this feature and were not caused by it.
-- A THIRD pre-existing failure was found later: `test/okf-mcp-stdio.test.ts`
-  (1 of 4). It was absent from this session's earlier selection because that run
-  never included the file. Verified by `orchestrator-main` and independently by
-  this session at the wiring's parent with the wiring absent: fails identically. So the
-  real baseline is 8 failures in 5 files, all outside this feature.
+  The 7 were `test/mcp/{unknown-stack-refusal,stack-id-guard,read-page-registry,multi-stack-addressing}`.
+- A THIRD failure appeared later: `test/okf-mcp-stdio.test.ts` (1 of 4). It was
+  absent from this session's earlier selection because that run never included
+  the file.
+
+### CORRECTION — these failures are NOT pre-existing, and not ours either
+
+Calling them "pre-existing" was wrong, and wrong in a way that hid a real fact. The
+earlier check (`git stash`, re-run at the same commit) only proved they are not
+caused by THIS feature. It could not prove they predate it, and they do not.
+
+`main` has already found and fixed them. This branch was cut before that work and
+is BEHIND `main`, so it does not carry the fixes:
+
+- `test(config): seed the worker database URL instead of letting it default to
+  production` — states the cause outright: production reads a MISSING
+  `AKS_DATABASE_URL` as the vendored default `postgresql://aks:aks@localhost:5432/aks`,
+  so "seven tests across the four mcp suites were failing that way, and the stackId
+  guard took the blame" — a `ECONNREFUSED` on the wrong port, which reads like a
+  product bug in whatever the suite was testing.
+- `test(fixtures): point spawned CLI at a committed corpus, not the operator's .env`
+  — the MCP stdio subprocess inherited the operator's real `.env` because the SDK
+  passes only a handful of variables.
+
+Measured, same worktree, same commit:
+
+| Tree | Result on the four mcp suites |
+| --- | --- |
+| `main` (`1f5d5de`, checked out detached in this worktree) | 12 passed, 0 failed |
+| this branch at the wiring's parent, wiring absent | 7 failed |
+| this branch at `db2fd00`, wiring present | 7 failed |
+
+So the worktree is not the variable and the wiring is not the variable: the COMMIT
+is. These are upstream-fixable environment failures this branch simply lacks.
+
+Also observed: the failure SET is not stable across runs of the same tree. Three
+runs of converged `db2fd00` produced 8, 8 and 7 failures, and the 8-failure runs
+each carried one DIFFERENT extra victim (`okf-mcp-stdio`, then
+`viewer-sidebar-label-collision`). Both of those pass in isolation. So the extra
+failure is load-dependent flakiness on top of the 7 deterministic ones — which is
+why a single `test:affected` number is not sufficient evidence that nothing broke,
+and why two sessions can honestly report the same count and different contents.
+
+None of this is caused by the concept-identity work. All of it should disappear on a
+rebase onto `main`, which is a human decision like any other branch operation.
 - `npx fallow` → 0 above threshold, maintainability 90.7 (good), no dead code,
   no duplication.
 - Implementation finding worth keeping: the rule tier originally kept running over
