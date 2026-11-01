@@ -31,7 +31,9 @@ import {
   groupByDeclaredTier, tieredReport, type LintTierV1, type TieredLintReportV1, type TieredResultGroupV1,
 } from "./tiers.js";
 import { collectProfileLintFindings, collectProfileLintInput } from "../profile/lint.js";
-import type { PageScope } from "./rules-shared.js";
+import { collectAllPages, type PageScope } from "./rules-shared.js";
+import { corpusFromRawPages, withLintCorpus, type LintCorpus } from "./corpus.js";
+import { withRawPageSource } from "../dimensions/wiki/page-source-seam.js";
 
 /** Rule-only lint checks that don't depend on the schema layer. */
 /**
@@ -119,7 +121,32 @@ async function profileGroups(root: string, defaultResults: readonly LintResult[]
  * registries and the profile appendix produce them, which is the order the
  * frozen parity suites pin — so this must never sort or regroup.
  */
+/**
+ * Resolve the pages this run may inspect, from whichever corpus the project has.
+ *
+ * On a Stack the pages are rows; `collectAllPages` would walk an empty `wiki/`
+ * and every page-scoped rule would report nothing — a clean verdict for a corpus
+ * nobody read. The corpus is put in scope by {@link collectTieredGroups}, so the
+ * rules keep their signatures and still see the right pages.
+ *
+ * @param root - Project root, used only by the on-disk fallback.
+ * @param scope - Which pages this run claims.
+ * @returns The corpus, ready for {@link withLintCorpus}.
+ */
+async function resolveLintCorpus(root: string, scope: PageScope): Promise<LintCorpus> {
+  return await withRawPageSource(root, process.env, async (source) =>
+    source === undefined
+      ? { pages: (await collectAllPages(root, scope)).map((page) => ({ ...page })) }
+      : corpusFromRawPages(await source.collect(), scope));
+}
+
 async function collectTieredGroups(root: string, scope: PageScope = "generic"): Promise<TieredResultGroupV1[]> {
+  const corpus = await resolveLintCorpus(root, scope);
+  return await withLintCorpus(corpus, () => collectGroupsInScope(root, scope));
+}
+
+/** The rule fan-out itself, run with a corpus already in scope. */
+async function collectGroupsInScope(root: string, scope: PageScope): Promise<TieredResultGroupV1[]> {
   const schema = await loadSchema(root);
   // Resolves the corpus itself: on a Stack the documents are rows, and every source
   // identity is a capability URL that no `sources/` file can match. Omitting that

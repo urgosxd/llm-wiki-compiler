@@ -17,7 +17,7 @@ import {
   resolvePageKind,
   type SchemaConfig,
 } from "../schema/index.js";
-import { collectAllPages } from "./rules-shared.js";
+import { readLintPages } from "./rules-shared.js";
 
 /**
  * Enforce per-kind cross-link minimums declared in the schema.
@@ -36,7 +36,7 @@ export async function checkSchemaCrossLinks(
   root: string,
   schema: SchemaConfig,
 ): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const results: LintResult[] = [];
   for (const page of pages) {
     results.push(...checkPageCrossLinks(page.content, page.filePath, schema));

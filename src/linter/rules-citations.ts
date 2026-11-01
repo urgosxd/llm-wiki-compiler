@@ -27,7 +27,7 @@ import type { LintResult } from "./types.js";
 export const MALFORMED_CLAIM_CITATION_RULE = "malformed-claim-citation";
 import {
   CITATION_PATTERN,
-  collectAllPages,
+  readLintPages,
   findMatchesInContent,
 } from "./rules-shared.js";
 
@@ -51,7 +51,7 @@ function countLines(content: string): number {
  * redundant reads.
  */
 export async function checkBrokenCitations(root: string): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const sourcesDir = path.join(root, SOURCES_DIR);
   const results: LintResult[] = [];
   const lineCountCache = new Map<string, number>();
@@ -157,7 +157,7 @@ async function resolveLineCount(
  * Detects malformed claim-level citations without breaking the paragraph form.
  */
 export async function checkMalformedClaimCitations(root: string): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const results: LintResult[] = [];
   for (const page of pages) {
     results.push(...checkPageMalformedCitations(page.content, page.filePath));
