@@ -24,7 +24,7 @@ import {
 import { checkJournalHealth } from "./journal-rule.js";
 import { checkPendingEmbeddings } from "./pending-embeddings-rule.js";
 import { loadSchema } from "../schema/index.js";
-import { buildFreshnessSnapshot } from "../freshness/index.js";
+import { buildProjectFreshnessSnapshot } from "../freshness/index.js";
 import type { FreshnessSnapshot } from "../freshness/types.js";
 import { loadProfile } from "../profile/load.js";
 import {
@@ -32,7 +32,6 @@ import {
 } from "./tiers.js";
 import { collectProfileLintFindings, collectProfileLintInput } from "../profile/lint.js";
 import type { PageScope } from "./rules-shared.js";
-import { withSourceDocuments } from "../dimensions/wiki/page-source-seam.js";
 
 /** Rule-only lint checks that don't depend on the schema layer. */
 /**
@@ -122,20 +121,11 @@ async function profileGroups(root: string, defaultResults: readonly LintResult[]
  */
 async function collectTieredGroups(root: string, scope: PageScope = "generic"): Promise<TieredResultGroupV1[]> {
   const schema = await loadSchema(root);
-  // The Stack's own documents, not a hash of `sources/`.
-  //
-  // `status` already passes this (see `collectStatus`), and lint did not, so the
-  // two surfaces disagreed about the SAME corpus: on a Stack every source identity
-  // is a capability URL that no `sources/` file can match, so every owned page was
-  // classified `orphaned` and `checkStalePages` reported a healthy wiki as one whose
-  // evidence had all been deleted. Omitted for a file-backed project, where hashing
-  // `sources/` is exactly right.
-  const freshness = await withSourceDocuments(process.env, async (listing) =>
-    await buildFreshnessSnapshot(
-      root,
-      undefined,
-      listing === undefined ? undefined : await listing.list(),
-    ));
+  // Resolves the corpus itself: on a Stack the documents are rows, and every source
+  // identity is a capability URL that no `sources/` file can match. Omitting that
+  // classified every owned page `orphaned` here while `status` reported them fine --
+  // the same corpus, two answers. See `buildProjectFreshnessSnapshot`.
+  const freshness = await buildProjectFreshnessSnapshot(root);
   const [plain, schemaGroups, freshnessGroups] = await Promise.all([
     Promise.all(RULES_WITHOUT_SCHEMA.map(async (entry) => ({
       tier: entry.tier,

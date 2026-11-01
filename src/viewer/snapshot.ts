@@ -33,7 +33,7 @@ import { extractWikilinkSlugs } from "../wiki/collect.js";
 import { isMalformedCitationEntry, splitCitationMarker } from "../utils/markdown.js";
 import { buildGraphData } from "./graph.js";
 import { pageTimestamp } from "./page-fields.js";
-import { buildFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
+import { buildProjectFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
 import { collectProfileSummary } from "../profile/block.js";
 import { journalHealthWarning } from "../trust/journal-health-warning.js";
 import { collectTypedViewerInputs } from "./typed-pages.js";
@@ -72,7 +72,7 @@ export async function buildViewerSnapshot(root: string): Promise<ViewerSnapshot>
       readIndexFile(root),
       collectTypedViewerInputs(root),
     ]);
-  const freshnessSnapshot = await buildFreshnessSnapshot(root, classified);
+  const freshnessSnapshot = await buildProjectFreshnessSnapshot(root, classified);
   const decorate = buildPageDecorator(sourceFilenames, freshnessSnapshot);
   const annotatedDefault = defaultPages.map(decorate);
   const annotatedTyped = decorateEntityPages(typed?.pages ?? [], defaultPages).map(decorate);

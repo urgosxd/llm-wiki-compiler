@@ -14,7 +14,7 @@ import { collectRawWikiPages, extractWikilinkSlugs } from "../wiki/collect.js";
 import type { RawPageSource } from "../dimensions/wiki/page-scan-source.js";
 import type { RawWikiPage } from "../wiki/collect.js";
 import { readConnectorBlock } from "../connectors/fence.js";
-import { buildFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
+import { buildProjectFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
 import type { FreshnessSnapshot } from "../freshness/types.js";
 import { extractClaimCitations } from "../utils/markdown.js";
 import { flattenCitations } from "../context/provenance.js";
@@ -213,7 +213,7 @@ export async function collectExportPages(
   source?: RawPageSource,
 ): Promise<ExportPage[]> {
   const raw = source === undefined ? await collectRawWikiPages(root) : await source.collect();
-  const snapshot = await buildFreshnessSnapshot(root);
+  const snapshot = await buildProjectFreshnessSnapshot(root);
   const sourceHashes = sourceHashLookupFromSnapshot(snapshot);
   const kept = raw.filter((page) => page.parseStatus.hasTitle && !page.parseStatus.orphaned);
   const pages = kept

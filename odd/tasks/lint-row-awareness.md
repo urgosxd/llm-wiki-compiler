@@ -40,8 +40,27 @@ severity, and different fixes, so they are separated here.
 
 ### D1 — freshness is computed without the Stack's documents
 
-`src/linter/index.ts:124` calls `buildFreshnessSnapshot(root)` and omits the
-third parameter, `stackDocuments`. `src/status/collect.ts:232` passes it.
+`buildFreshnessSnapshot` takes the Stack's documents as an OPTIONAL third
+argument, so a caller that omits it silently falls back to hashing `sources/`.
+Five call sites exist and only two passed it.
+
+`orchestrator-a` measured the consequence on a healthy stack (`d61bf181`, where
+lint reports 0 stale and 0 orphaned): `export_okf` produced 154 pages out of 387,
+because `export/collect.ts` filters `freshnessStatus !== "orphaned"` and the
+omitted basis classified the other 233 as orphaned.
+
+| Call site | Passed the corpus? |
+| --- | --- |
+| `status/collect.ts:232` | yes |
+| `linter/index.ts` (Stage 0) | yes, after the fix |
+| `export/collect.ts:216` | **no** — silently dropped pages |
+| `viewer/snapshot.ts:75` | **no** |
+| `compiler/refresh-plan.ts:153` | **no** |
+
+**Fixed by making the argument unnecessary, not by making callers careful.**
+`buildProjectFreshnessSnapshot` resolves the corpus itself, so the backend is a
+property of the project rather than of the caller's memory. All five sites now
+go through it, and there is no argument left to forget.
 
 Consequence: `buildFreshnessSnapshot` falls back to hashing `sources/`, finds
 nothing, and classifies every owned page `orphaned`. On the reporting Stack that
@@ -52,6 +71,8 @@ This is a **false claim about data**, visible in `status` and `lint` today, and
 it is the cheapest of the three.
 
 ### D2 — the page corpus is read from disk only
+
+Unchanged by Stage 0.
 
 Every rule reads pages through `collectAllPages(root)` (`src/linter/rules-shared.ts:88`),
 which walks `wiki/concepts` and `wiki/queries`. Nine modules outside the linter
@@ -110,11 +131,26 @@ change, so `eval/health.ts` and the MCP `lint_wiki` tool keep working untouched.
 diagnostic `filePath` — so `LintResult.file` survives on rows and the existing
 diagnostics keep their shape.
 
-**Correction to the original report:** it states `journal-health` "has no row
-backend". It does — `withJournalSource`, backed by `activity-log-store`, with
-`append` and `read`. The gap is that `checkJournalHealth` reaches
-`journalHealthWarning(root)`, which reads `journal.jsonl` directly. That is
-threading work, not a missing capability.
+**Retracted correction, recorded because it was wrong.** This document first
+claimed `journal-health` did have a row backend and that Stage 3 was therefore
+cheap threading. That was wrong, and the mistake was conflating two different
+things that share the word "journal":
+
+| | `.llmwiki/journal/` | `wiki.activity_log` |
+| --- | --- | --- |
+| What it holds | revert batches and pre-state bytes | operation / description / details entries |
+| Read by | `classifyJournalDir`, `journalHealth` | `activity-log-store` |
+| Seam | none | `withJournalSource` |
+
+`journalHealth` needs `pending-revertable` / `unsafe` / `ok` over REVERT
+batches. `withJournalSource` offers appending and reading ACTIVITY entries.
+Different data, different question.
+
+There is also nothing to back: a row is already inside a transaction and needs no
+pre-state snapshot, so a revert journal has no meaning on a Stack. On such a
+corpus the rule is not lying by reading disk — it is vacuous because no journal
+can exist. Stage 3 is therefore a **product decision** (does this rule apply at
+all to a row corpus?), not a threading task.
 
 ### Rules that need more than a page
 
@@ -138,9 +174,11 @@ once they call `readLintPages`.
 Each stage is independently shippable, independently verifiable, and leaves the
 frozen parity suites green.
 
-- [ ] **Stage 0 — D1 only.** Pass `stackDocuments` to `buildFreshnessSnapshot` in
-  `collectTieredGroups`. Closes the false `orphaned` classification. No rule
-  signature, no scope, no new module.
+- [x] **Stage 0 — D1, completed as `buildProjectFreshnessSnapshot`.** A first pass
+  fixed only the linter call site (`f241a35`). `orchestrator-a` then found the same
+  omission at three more sites, one of which is a data-loss path in export, so the
+  fix moved from "pass the argument here" to "no call site passes it at all".
+  Covered by `test/export-freshness-stack-documents.test.ts`.
 - [ ] **Stage 1 — the page scope (D2).** Add `readLintCorpus` (the
   AsyncLocalStorage scope) and `readLintPages`. Switch every page-reading rule to
   `readLintPages`. Open the scope in `lint`/`lintByTier`/`lintBothViews`.

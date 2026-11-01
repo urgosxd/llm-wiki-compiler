@@ -22,7 +22,7 @@ import { countCandidates } from "../compiler/candidates.js";
 import { isPlainObject } from "../utils/state.js";
 import { readStateClassifiedFor } from "../dimensions/wiki/page-source-seam.js";
 import type { StateStatus } from "../utils/state.js";
-import { buildFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
+import { buildProjectFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import { collectProfileSummary } from "../profile/block.js";
 import { journalHealthWarning } from "../trust/journal-health-warning.js";
@@ -229,7 +229,7 @@ export async function collectStatus(
   const stackDocuments = options.sourceDocuments === undefined
     ? undefined
     : await options.sourceDocuments.list();
-  const snapshot = await buildFreshnessSnapshot(root, classified, stackDocuments);
+  const snapshot = await buildProjectFreshnessSnapshot(root, classified);
 
   const scan = options.pageScan;
   // Rows are authoritative when a Stack is configured, exactly as in `detectChanges`.
