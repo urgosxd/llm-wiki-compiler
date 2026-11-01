@@ -106,7 +106,9 @@ published function; it does not reach into the wiki dimension's internals.
   - The `:680` progress-denominator call site must consume the SAME grouping.
   - `ExtractedConcept.concept` (`src/utils/types.ts:79`) maps to
     `ConceptCandidate.name`; `summary` and `tags` map directly.
-  Blocked until orchestrator-main accepts the `work_request`.
+  Requested: `work_request` `wq-2026-11-01-01` sent to `orchestrator-main`
+  (session `01a194f2-448f-7743-95c1-1840cdb2af78`) on 2026-11-01, `expect: none`.
+  Awaiting its `work_result` or one `blocked`. Do not re-send.
 
 - [x] **6. Verify end to end and close.** (partial: blocked on task 5 for the true end-to-end)
   `npx tsc --noEmit`, `npm run test:affected`, and a compile over a corpus with
