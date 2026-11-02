@@ -22,7 +22,7 @@ through `resolvePageSeams` and threads to every stage.
 | compile (generation, seeds, orphan, resolver, link-repair) | `applyCompilePageWritesLocked` | **yes** |
 | source removal | `deleteWikiPagesLocked` | **yes** (via `withPageRemover`) |
 | review approve — default page | `routeDefaultPageWrite` → `applyApprovedMutationsLocked` | **no** |
-| review approve / import — typed candidate | `applyTypedCandidate` → `applyApprovedMutationsLocked` | **no** |
+| review approve / import — typed candidate | `applyTypedCandidate` → `applyApprovedMutationsLocked` | **refused** — not storable, see below |
 | `promote` | `applyTypedCandidate` (same function) | **no** |
 | lifecycle transition | `transitionLifecycle` → `applyApprovedMutationsLocked` | **no** |
 | relation create | `createRelation` → `applyApprovedMutationsLocked` | **no** (relations are appended, not pages — see below) |
@@ -92,13 +92,33 @@ the CLI telling the operator something untrue about where the page landed.
 
 ## The surfaces, one by one
 
-### 2. `applyTypedCandidate` (`promote.ts`) — two callers behind one function
+### 2. `applyTypedCandidate` (`promote.ts`) — NOT STORABLE ON A STACK
 
 Called by review approve for typed candidates and by `profile-import.ts:240`. It
-plans and applies with no options. Typed candidates write PROFILE ENTITY pages,
-which are stored in `wiki.pages` under `page_directory` = the entity namespace, so
-the row sink already covers them — nothing about the row path is default-page
-specific.
+planned and applied with no options, so the executor wrote
+`wiki/<entityType>/<slug>.md`.
+
+**Passing the row sink does not work, and the database says why:**
+
+```
+PostgresError: new row for relation "pages" violates check constraint
+  "pages_page_directory_check"
+  detail: Failing row contains (..., papers, row-only-paper, ...)
+```
+
+`wiki.pages.page_directory` admits only `concepts` and `queries`
+(`src/dimensions/wiki/schema.sql:73`), and that closed set is DELIBERATE — the
+schema's own comment: "a typo'd directory is rejected on write instead of becoming
+a page no reader ever lists."
+
+`entity_pages` is not the answer either. It is the KG's on-demand page cache, keyed
+by `ontology_entities`, in the `public` schema, invalidated by a `graph_version`
+hash of the graph. An entity page must not live in the wiki dimension at all.
+
+**Product decision (human, this session):** no entity page in the wiki dimension.
+So there is nowhere to store it on a Stack, and the honest response is a typed
+refusal — `TypedPageNotRowBackedError` — rather than a file that silently diverges
+from the corpus. The file-backed project is untouched and still writes the file.
 
 ### 3. `transitionLifecycle` (`lifecycle-transition.ts`)
 

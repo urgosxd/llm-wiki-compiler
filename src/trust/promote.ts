@@ -22,6 +22,7 @@
  *    releases the lock in `finally`.
  */
 
+import { AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
 import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { releaseLock } from "../utils/lock.js";
@@ -118,8 +119,51 @@ export async function applyTypedCandidate(
   if (planned.length === 0) {
     throw new CandidatePromotionBlockedError(entityType, candidate.slug);
   }
+  // TYPED PAGES HAVE NO ROW BACKEND, ON PURPOSE.
+  //
+  // `wiki.pages.page_directory` is constrained to `concepts` and `queries`, so an
+  // entity namespace cannot be stored there — the write fails on
+  // `pages_page_directory_check`. `entity_pages` is NOT the answer either: it is the
+  // KG's on-demand page cache, keyed by `ontology_entities`, and an entity page must
+  // not live in the wiki dimension at all.
+  //
+  // So there is nowhere to put this page on a Stack, and the write is refused rather
+  // than falling through to a file that nothing on a Stack reads. Silently writing
+  // `wiki/<entityType>/<slug>.md` is the defect this refusal replaces.
+  if (rowBackedPageStoreIsActive(process.env)) {
+    throw new TypedPageNotRowBackedError(entityType, candidate.slug);
+  }
   await applyApprovedMutationsLocked(root, planned);
   return typedPagePath(entityType, candidate.slug);
+}
+
+/**
+ * Thrown when a typed candidate is applied to a Stack.
+ *
+ * A Stack stores pages in rows, and `wiki.pages` cannot hold an entity namespace
+ * (its `page_directory` CHECK admits only the reserved directories). There is no row
+ * to write, so this fails closed instead of leaving the page in a file the Stack's
+ * readers never open.
+ */
+export class TypedPageNotRowBackedError extends Error {
+  constructor(entityType: string, slug: string) {
+    super(
+      `entity-pages-not-row-backed: ${entityType}/${slug} cannot be stored on a Stack — ` +
+        `wiki.pages admits only concepts and queries, and entity pages do not belong ` +
+        `to the wiki dimension`,
+    );
+    this.name = "TypedPageNotRowBackedError";
+  }
+}
+
+/**
+ * True when this project stores pages in rows rather than files.
+ *
+ * @param env - Environment to read the Stack from.
+ * @returns True when a Stack is configured.
+ */
+function rowBackedPageStoreIsActive(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env[AKS_STACK_ID_ENV_VAR] ?? "").trim() !== "";
 }
 
 /**
