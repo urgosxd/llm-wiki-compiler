@@ -225,3 +225,23 @@ observation of the rest; D3 last because it is cosmetic once D1 is true.
   changes it.
 - **Workload**: nine tasks across five surfaces is a large slice. It should land as
   chained commits per surface, not one review.
+
+## Evidence
+
+Delivered as chained work-unit commits, one per surface, each with its own test:
+
+| Commit | Surface | Fix |
+| --- | --- | --- |
+| `5c913e9` | candidate custody | row-aware: FS preconditions vacuous on a Stack |
+| `3d580bc` | review approve (default) | takes the sink; return value stops naming a file |
+| `aa451b5` | `applyTypedCandidate` | refuses — no row can hold an entity namespace |
+| `322b970` | `transitionLifecycle` | refuses before the lock, same constraint |
+| `776f671` | OKF import `writeAll` | takes the sink (`concepts`/`queries` only) |
+
+Package checks: `npx tsc --noEmit` clean · `npm run build` green ·
+`npm run test:affected` 725 files / 5251 tests ·
+`fallow` no issues.
+
+`test/parity-default.test.ts` fails (3 cases) both on this branch and on `main`
+with the same assertions — verified by checking `main` out and re-running. It is
+pre-existing and unrelated; `test:affected` does not select it.
