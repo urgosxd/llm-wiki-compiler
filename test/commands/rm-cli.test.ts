@@ -46,7 +46,7 @@ import { writeFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { exec, CLI, stripAnsi } from "../fixtures/cli-runner.js";
-import { makeEmptyRmProject, twoSourceRmProject, twoSourceRmProjectWithProfile } from "../fixtures/rm-project.js";
+import { makeEmptyRmProject, twoSourceRmProject } from "../fixtures/rm-project.js";
 import type { WikiState } from "../../src/utils/types.js";
 
 /** A project with one source owning one concept page. */
@@ -105,25 +105,6 @@ describe("llmwiki rm CLI", () => {
     const { stdout, stderr } = await exec("node", [CLI, "rm", "bad.md", "--dry-run"], { cwd: root });
 
     expect(stripAnsi(stdout + stderr)).not.toContain("This project uses the");
-  });
-
-  it("warns that typed entity pages are untracked and untouched on a profile project's --dry-run", async () => {
-    const root = await twoSourceRmProjectWithProfile();
-
-    const { stdout, stderr } = await exec("node", [CLI, "rm", "bad.md", "--dry-run"], { cwd: root });
-    const lines = stripAnsi(stdout + stderr);
-
-    expect(lines).toContain("This project uses the `sample` profile.");
-    expect(lines).toContain("Typed entity pages are not tracked to the source they came from");
-    expect(lines).toContain("Any entity pages from this source remain and must be removed manually.");
-  });
-
-  it("warns on the applied path too, not only --dry-run", async () => {
-    const root = await twoSourceRmProjectWithProfile();
-
-    const { stdout, stderr } = await exec("node", [CLI, "rm", "bad.md"], { cwd: root });
-
-    expect(stripAnsi(stdout + stderr)).toContain("This project uses the `sample` profile.");
   });
 
   it("prints the deletion report before regeneration's own progress output", async () => {

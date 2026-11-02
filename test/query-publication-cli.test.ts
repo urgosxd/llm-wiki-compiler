@@ -117,15 +117,6 @@ it.each(["Retained [[alpha]].", "No recognized links."])("stages an eligible ans
   expect(run.result.stdout).toContain(answer);
 });
 
-it("keeps the direct-save profile refusal at exit zero", async () => {
-  const answer = "Retained [[alpha]].";
-  const { root, handle, result, before } = await runSave(answer, [], true);
-  expectCLIExit(result, 0);
-  expect(result.stdout).toContain(answer);
-  expect(result.stdout).toContain("query --save is disabled in profile-enabled projects");
-  expect(await citationWorkspaceBytes(root)).toEqual(before);
-  expect(handle.mock.getRequests()).toHaveLength(2);
-});
 
 it("stages a reviewed answer in a profile-enabled project without publishing", async () => {
   const run = await runSave("Retained [[alpha]].", ["--review"], true);

@@ -55,7 +55,7 @@ import { writeFile, readFile, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { planRemoval, applyRemovalLocked, regenerateDerivedLocked } from "../src/sources/removal.js";
-import { twoSourceRmProject, twoSourceRmProjectWithProfile, makeEmptyRmProject } from "./fixtures/rm-project.js";
+import { twoSourceRmProject, makeEmptyRmProject } from "./fixtures/rm-project.js";
 import type { WikiState } from "../src/utils/types.js";
 
 /**

@@ -249,32 +249,6 @@ function printRegenerated(deletedCount: number): void {
   if (deletedCount > 0) output.status("~", output.info("Regenerated index and MOC"));
 }
 
-/**
- * Warn that this is a profile project, so any typed entity pages the removed
- * source contributed to are untracked and were left untouched.
- *
- * UNCONDITIONAL on `plan.profileId !== null` — unlike the other two warnings
- * in {@link printConsequences}, which only fire when the plan found something
- * concrete to name. `rm` derives everything it deletes from
- * `state.sources[file].concepts`, a structure typed entity candidates never
- * populate (see `review-approve.ts`'s typed/default split), so there is no
- * ownership record to count against. Printing a count here would overclaim
- * knowledge `rm` doesn't have; printing nothing would let a profile project's
- * typed pages go silently unmentioned. Fires on every `rm` on a profile
- * project, `--dry-run` included, since dry-run is the only pre-flight check
- * this command has. Split out of `printConsequences` to keep its cyclomatic
- * complexity down, matching this file's existing one-concern-per-print-helper
- * shape (`printDeleted`, `printKept`, `printRegenerated`).
- */
-function printProfileWarning(plan: RemovalPlan): void {
-  if (plan.profileId === null) return;
-  output.status("!", output.warn(`This project uses the \`${plan.profileId}\` profile.`));
-  output.note(
-    "Typed entity pages are not tracked to the source they came from, so `rm` cannot remove " +
-      "them — only pages under wiki/concepts/.",
-  );
-  output.note("Any entity pages from this source remain and must be removed manually.");
-}
 
 /**
  * Warn that a kept page can still CITE the source just deleted.
@@ -303,7 +277,6 @@ function printCitationWarning(plan: RemovalPlan): void {
 
 /** Warn about what `rm` reports but deliberately does not repair, or cannot see at all. */
 function printConsequences(plan: RemovalPlan): void {
-  printProfileWarning(plan);
   printCitationWarning(plan);
   if (plan.brokenLinks.length > 0) {
     output.status("!", output.warn(`${plan.brokenLinks.length} surviving page(s) link to a deleted page:`));
