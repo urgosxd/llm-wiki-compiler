@@ -28,6 +28,7 @@ import { readFile } from "fs/promises";
 import { validateWikiPage } from "../utils/markdown.js";
 import { planPageMutation } from "../trust/planner.js";
 import { applyApprovedMutationsLocked } from "../trust/executor.js";
+import { pageStoreOptions } from "../trust/page-apply.js";
 import {
   applyTypedCandidate,
   CandidateProfileError,
@@ -343,8 +344,42 @@ async function routeDefaultPageWrite(
     return null;
   }
   if (!checkAnswerPlan(candidate, planned)) return null;
-  await applyApprovedMutationsLocked(root, planned);
-  const dir = candidate.targetDirectory === "queries" ? QUERIES_DIR : CONCEPTS_DIR;
+  // A Stack stores the page as a ROW. Without the seams the executor takes its file
+  // branch and writes `wiki/concepts/<slug>.md` -- a file nothing reads, because the
+  // corpus is `wiki.pages`. The seams are resolved here rather than threaded from the
+  // caller so a CLI entry point stays free of the dimensions graph, exactly as
+  // `sources/removal.ts` does for the delete path.
+  return await withPageSeams(process.env, async (seams) => {
+    await applyApprovedMutationsLocked(
+      root, planned, pageStoreOptions(seams.sink, seams.remover, seams.transaction));
+    return approvedPageLocation(root, candidate, seams.sink !== undefined);
+  });
+}
+
+/**
+ * Where the approved page actually landed, for the success line.
+ *
+ * ON A STACK THERE IS NO FILE, so returning `wiki/concepts/<slug>.md` would name a
+ * path that was never written -- the CLI telling the operator something untrue. The
+ * page's identity is the honest answer: `concepts/<slug>` is what `wiki.pages` keys
+ * it by, and it is what a reader would use to find it.
+ *
+ * The file backend keeps its absolute path byte-for-byte, because that path is real
+ * there and existing output may depend on it.
+ *
+ * @param root - Absolute project root.
+ * @param candidate - The approved candidate.
+ * @param storedAsRow - True when the page was stored as a row rather than a file.
+ * @returns The file path for the file backend, or the row identity for a Stack.
+ */
+function approvedPageLocation(
+  root: string,
+  candidate: ReviewCandidate,
+  storedAsRow: boolean,
+): string {
+  const namespace = candidate.targetDirectory === "queries" ? "queries" : "concepts";
+  if (storedAsRow) return `${namespace}/${candidate.slug}`;
+  const dir = namespace === "queries" ? QUERIES_DIR : CONCEPTS_DIR;
   return path.join(root, dir, `${candidate.slug}.md`);
 }
 
