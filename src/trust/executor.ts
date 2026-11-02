@@ -70,8 +70,6 @@ import {
   type PageSink,
   type WriteOne,
 } from "./page-apply.js";
-import { applyRelationLocked } from "./relation-apply.js";
-import { applyArtifactLocked } from "../artifacts/apply.js";
 import type { PlannedMutation, PagePlannedMutation } from "./planner.js";
 
 export type { WriteOne } from "./page-apply.js";
@@ -260,13 +258,15 @@ export async function applyApprovedMutationsLocked(
     if (batch !== undefined) await commitBatch(batch);
     return planned.map(() => ({ kind: "page" as const }));
   }
+  // RELATION AND ARTIFACT MUTATIONS WERE REMOVED WITH THE PROFILE SYSTEM.
+  //
+  // As with `lifecycle-transition` below, the kinds stay in the union so a plan
+  // PERSISTED by an earlier build still parses and reaches a typed refusal. The
+  // alternative — dropping them from `MutationKind` — would turn an old plan into
+  // a compile-time error at every call site and, worse, let an unreadable plan be
+  // mistaken for an empty one.
   if (planned.length === 1 && planned[0].kind === "relation") {
-    // The relation handler is the UNDER-LOCK authority: it re-loads the profile,
-    // re-plans, re-composes the decision, and appends — the caller-supplied plan
-    // is intent only. The persisted ref + composed decision flow back through the
-    // apply RESULT, so a consumer records the REAL decision (not a literal).
-    const { ref, decision } = await applyRelationLocked(root, planned[0]);
-    return [{ kind: "relation", ref, decision }];
+    throw new NotImplementedMutationError("relation");
   }
   // LIFECYCLE TRANSITIONS WERE REMOVED WITH THE PROFILE SYSTEM.
   //
@@ -277,13 +277,7 @@ export async function applyApprovedMutationsLocked(
     throw new NotImplementedMutationError("lifecycle-transition");
   }
   if (planned.length === 1 && planned[0].kind === "artifact") {
-    // The artifact handler is the UNDER-LOCK authority: it re-loads the profile,
-    // re-plans (composing the real decision over the type-declared + body-contract
-    // checks), gates on the operator trusted-write grant, and writes the content-
-    // addressed bytes + manifest via the journal. The composed decision flows back
-    // through the apply RESULT.
-    const { ref, decision } = await applyArtifactLocked(root, planned[0]);
-    return [{ kind: "artifact", ref, decision }];
+    throw new NotImplementedMutationError("artifact");
   }
   // workflow kinds stay not-implemented.
   throw new NotImplementedMutationError(planned[0].kind);

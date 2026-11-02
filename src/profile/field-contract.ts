@@ -15,7 +15,6 @@
 
 import { isSlugSafe } from "./identity.js";
 import type { EntityTypeDef, FieldDef, FieldType } from "./types.js";
-import { parseArtifactRef } from "../artifacts/ref.js";
 
 /**
  * Thrown by the typed WRITE gates (staging / promotion) when a candidate body's
@@ -73,8 +72,6 @@ const TYPE_PREDICATES: Record<Exclude<FieldType, "enum">, (value: unknown) => bo
   boolean: (v) => typeof v === "boolean",
   date: isValidDate,
   "string[]": (v) => Array.isArray(v) && v.every((item) => typeof item === "string"),
-  artifactRef: (v) => parseArtifactRef(v) !== null,
-  "artifactRef[]": (v) => Array.isArray(v) && v.every((item) => parseArtifactRef(item) !== null),
 };
 
 /** True when `value` satisfies the declared `FieldDef.type` (enum included). */
@@ -153,7 +150,7 @@ function collectFieldValueViolations(
  * @param missingMessage - Optional formatter for a missing required name's message.
  * @returns Zero or more PATH-FREE field-violation messages.
  */
-export function validateFieldsAgainstDefs(
+function validateFieldsAgainstDefs(
   values: Record<string, unknown>,
   fieldDefs: Record<string, FieldDef>,
   requiredNames: Iterable<string>,

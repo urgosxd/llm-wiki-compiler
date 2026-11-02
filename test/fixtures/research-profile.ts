@@ -56,7 +56,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PROFILE_FILE } from "../../src/utils/constants.js";
-import { appendRelation } from "../../src/relations/store.js";
 import type { ProfilePack } from "../../src/profile/types.js";
 import { SEED_PAGES, SEED_RELATIONS } from "./research-seeds.js";
 import { writeSeedPage } from "./seed-page.js";
@@ -137,16 +136,3 @@ export const RESEARCH_RELATION_TYPES = [
   "cites", "builds-on", "tests", "challenges", "introduces-concept", "uses-concept",
   "proposes-method", "extends-method", "supports", "contradicts", "derived-from", "addresses-gap",
 ] as const;
-
-/**
- * Append every {@link SEED_RELATIONS} typed relation into the project's relation
- * store. Every endpoint has a backing seed page, so no relation is dangling and
- * the read surfaces (status/export/lint/graph) stay clean.
- *
- * @param root - Absolute project root of a materialized research project.
- */
-export async function seedResearchRelations(root: string): Promise<void> {
-  for (const rel of SEED_RELATIONS) {
-    await appendRelation(root, RESEARCH_PROFILE, { type: rel.type, from: rel.from, to: rel.to });
-  }
-}

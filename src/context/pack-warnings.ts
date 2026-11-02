@@ -28,7 +28,6 @@
  * fixed sequence between source-window materialization and budget trimming.
  */
 
-import { isRelationStoreUnavailableProblem } from "../profile/block.js";
 import { journalHealthWarning } from "../trust/journal-health-warning.js";
 import type { ProjectState } from "../project/state.js";
 import type { ViewerSnapshot } from "../viewer/types.js";
@@ -76,81 +75,6 @@ export function appendProjectWarnings(
     });
   }
   return { ...pack, warnings };
-}
-
-/**
- * Append a `relation-store-unavailable` warning when the snapshot's profile
- * summary reports a fail-closed relation-store read (corrupt / too-new / symlink
- * / confinement). Narrowed to the store-UNAVAILABLE problem via
- * {@link isRelationStoreUnavailableProblem} so an ordinary entity field-violation
- * or a healthy-store-but-stale-relations problem does NOT spuriously fire. A
- * default/healthy project has no such problem, so the pack is unchanged.
- */
-export function appendRelationStoreWarning(pack: ContextPack, snapshot: ViewerSnapshot): ContextPack {
-  const problem = snapshot.profile?.problems?.find(isRelationStoreUnavailableProblem);
-  if (problem === undefined) return pack;
-  const warning: ContextWarning = {
-    code: "relation-store-unavailable",
-    message: `Typed relations are unavailable: ${problem.message}`,
-  };
-  return { ...pack, warnings: [...pack.warnings, warning] };
-}
-
-/**
- * Append the STANDING relation-precondition warnings from the snapshot's profile
- * problems: a `lifecycle-relation-requirement-unmet` warning when at least one
- * typed page is CURRENTLY in a gated lifecycle state whose relation precondition
- * no longer holds (the first offending page's message is quoted so the agent sees
- * an actionable example), and a distinct `lifecycle-relation-requirement-unverifiable`
- * warning when the standing check could not read the relation store. Both are
- * derived from the SAME `snapshot.profile.problems` status/viewer/export surface,
- * so a healthy/non-gated snapshot has neither and the pack stays byte-identical.
- */
-export function appendStandingRelationWarnings(pack: ContextPack, snapshot: ViewerSnapshot): ContextPack {
-  const problems = snapshot.profile?.problems ?? [];
-  const unmet = problems.filter((p) => p.kind === "lifecycle-relation-requirement-unmet");
-  const unverifiable = problems.find((p) => p.kind === "lifecycle-relation-requirement-unverifiable");
-  const warnings: ContextWarning[] = [];
-  if (unmet.length > 0) {
-    warnings.push({
-      code: "lifecycle-relation-requirement-unmet",
-      message:
-        `${unmet.length} typed page${unmet.length === 1 ? "" : "s"} in a gated lifecycle state no ` +
-        `longer satisfy a relation precondition (e.g. ${unmet[0].message}).`,
-    });
-  }
-  if (unverifiable !== undefined) {
-    warnings.push({ code: "lifecycle-relation-requirement-unverifiable", message: unverifiable.message });
-  }
-  return warnings.length > 0 ? { ...pack, warnings: [...pack.warnings, ...warnings] } : pack;
-}
-
-/**
- * Append an `artifact-ref-unhealthy` warning when the snapshot's profile summary
- * reports one or more `artifact-store` problems: a hash-pinned artifactRef (a
- * page field or a live relation attribute) that {@link checkArtifactRefs}
- * resolved to a non-`ok` health. Sourced from the SAME
- * `snapshot.profile.problems` list `block.ts`'s `collectProfileSummary` already
- * folds `artifactProblemViews` findings into for status/viewer, and
- * `export/profile-block.ts` mirrors for export — so context can never disagree
- * with them about which refs are unhealthy. Unlike
- * {@link appendRelationStoreWarning}'s single store-wide fault, an
- * `artifact-store` problem is emitted ONE PER unhealthy ref (mirroring
- * {@link appendStandingRelationWarnings}'s multi-instance shape), so this
- * quotes the count and the first offending ref's health verdict as an example
- * rather than assuming exactly one. A project with no `artifacts` block or no
- * unresolved ref has no such problem, so the pack is byte-identical.
- */
-export function appendArtifactWarning(pack: ContextPack, snapshot: ViewerSnapshot): ContextPack {
-  const problems = (snapshot.profile?.problems ?? []).filter((p) => p.kind === "artifact-store");
-  if (problems.length === 0) return pack;
-  const warning: ContextWarning = {
-    code: "artifact-ref-unhealthy",
-    message:
-      `${problems.length} artifact reference${problems.length === 1 ? "" : "s"} failed ` +
-      `verification (e.g. ${problems[0].message}).`,
-  };
-  return { ...pack, warnings: [...pack.warnings, warning] };
 }
 
 /**

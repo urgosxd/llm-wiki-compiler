@@ -21,9 +21,7 @@
  * entirely), so a default bundle's `index.md` stays byte-identical to a pre-7.6
  * export. Output is deterministic: every list is sorted and no timestamps ride.
  */
-import { readLiveValidRelations } from "../../relations/live-valid.js";
 import type { LoadedProfile } from "../../profile/types.js";
-import type { RelationRef } from "../../relations/types.js";
 import pkg from "../../../package.json";
 
 /** Producer identity stamped into every profile block. */
@@ -94,19 +92,6 @@ function buildProfileSubBlock(loaded: LoadedProfile): BundleProfileBlock {
   };
 }
 
-/** Flatten one relation to its bundle entry (attributes omitted when empty). */
-function toRelationEntry(rel: RelationRef): BundleRelationEntry {
-  const hasAttributes = Object.keys(rel.attributes).length > 0;
-  return {
-    id: rel.id,
-    type: rel.type,
-    from: rel.from,
-    to: rel.to,
-    ...(hasAttributes ? { attributes: rel.attributes } : {}),
-    contentHash: rel.contentHash,
-  };
-}
-
 /** Total order over bundle entries by their `id`/`runId` string key (deterministic output). */
 function byStringKey<T>(key: (item: T) => string): (a: T, b: T) => number {
   return (a, b) => {
@@ -114,13 +99,6 @@ function byStringKey<T>(key: (item: T) => string): (a: T, b: T) => number {
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   };
 }
-
-/** Collect the live, profile-valid relations as sorted bundle entries. */
-async function collectRelationEntries(loaded: LoadedProfile, root: string): Promise<BundleRelationEntry[]> {
-  const relations = await readLiveValidRelations(root, loaded.profile);
-  return relations.map(toRelationEntry).sort(byStringKey((r) => r.id));
-}
-
 
 /**
  * Collect a bounded summary of every READABLE workflow run, sorted by runId. An
@@ -144,8 +122,12 @@ export async function collectBundleBlock(
   loaded: LoadedProfile | undefined,
 ): Promise<BundleBlock | undefined> {
   if (loaded === undefined) return undefined;
+  // `relations` is emitted EMPTY: the relation subsystem was removed, so this
+  // build has no live graph to export. The field stays in the block because
+  // `import/bundle-block-read.ts` still parses it, so a bundle produced by an
+  // earlier version remains readable — the export side simply never has entries.
   return {
     profile: buildProfileSubBlock(loaded),
-    relations: await collectRelationEntries(loaded, root),
+    relations: [],
   };
 }

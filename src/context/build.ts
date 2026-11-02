@@ -29,11 +29,8 @@ import {
   type PreloadedProfile,
 } from "../profile/block.js";
 import {
-  appendArtifactWarning,
   appendJournalWarning,
   appendProjectWarnings,
-  appendRelationStoreWarning,
-  appendStandingRelationWarnings,
 } from "./pack-warnings.js";
 import { collectProjectState } from "../project/state.js";
 import { recommendNextAction } from "../project/recommendations.js";
@@ -182,39 +179,11 @@ export async function buildContextPack(
     normalized,
   );
   // The viewer snapshot's `profile` summary already carries a fail-closed
-  // relation-store problem (the same one `status` surfaces). Lift it into a
-  // top-level warning so an agent SEES typed relations are unavailable rather
-  // than receiving a silently relation-less pack. A default/healthy project's
-  // snapshot has no such problem, so the pack is byte-identical.
-  const withRelationWarning = appendRelationStoreWarning(
-    withProjectWarnings,
-    snapshot,
-  );
-  // The snapshot's profile summary also carries any `artifact-store` problem: a
-  // hash-pinned artifactRef (page field or relation attribute) that no longer
-  // verifies. Lift it into a top-level warning so an agent SEES the unhealthy ref
-  // rather than a silently-thinner pack. A project with no artifacts or no
-  // unresolved ref has none, so the pack stays byte-identical.
-  const withArtifactWarning = appendArtifactWarning(
-    withRelationWarning,
-    snapshot,
-  );
-  // The snapshot's profile summary also carries any STANDING relation-precondition
-  // violation (a page still in a gated state whose precondition drifted) and any
-  // "cannot verify" store-read failure of that check. Lift them into top-level
-  // warnings so an agent SEES a drifted/unverifiable lifecycle gate rather than a
-  // silently-degraded pack. A healthy/non-gated snapshot has neither, so the pack
-  // stays byte-identical.
-  const withStandingWarning = appendStandingRelationWarnings(
-    withArtifactWarning,
-    snapshot,
-  );
   // A pending/unavailable compile journal means the pack may reflect partial
-  // post-crash or tampered state; surface it as a top-level warning (mirroring
-  // appendRelationStoreWarning) so an agent SEES it. A cleanly-compiled project
+  // post-crash or tampered state; surface it as a top-level warning  so an agent SEES it. A cleanly-compiled project
   // adds nothing, so the pack stays byte-identical.
   const withJournalWarning = await appendJournalWarning(
-    withStandingWarning,
+    withProjectWarnings,
     options.root,
   );
   const graph =

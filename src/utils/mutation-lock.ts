@@ -103,7 +103,7 @@ export async function acquireMutationLockBlocking(
  * @param fn - The mutation, run while the lock is held.
  * @returns Whatever `fn` returns.
  */
-export async function withOrdinaryMutationLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
+async function withOrdinaryMutationLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
   await acquireMutationLockBlocking(root, "ordinary");
   try {
     return await fn();

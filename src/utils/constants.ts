@@ -422,7 +422,7 @@ export const MAX_RELATION_STORE_BYTES = 64 * 1024 * 1024;
  * Bounds attacker-controlled attribute/evidence size before append so one record
  * cannot grow unbounded (and so the per-store cap cannot be reached by one line).
  */
-export const MAX_RELATION_RECORD_BYTES = MAX_SOURCE_CHARS;
+const MAX_RELATION_RECORD_BYTES = MAX_SOURCE_CHARS;
 
 /**
  * Resource cap on the event store file. Mirrors {@link MAX_RELATION_STORE_BYTES}:

@@ -34,20 +34,10 @@ const PACK: ProfilePack = {
         headline: { type: "string", required: true },
         wordCount: { type: "integer", min: 0, max: 5000 },
         stage: { type: "enum", enum: ["draft", "filed"], default: "draft" },
-        assets: { type: "artifactRef[]", artifactTypes: ["photo"] },
         homepage: { type: "string", format: "url" },
       },
     },
     desks: { directory: "wiki/desks" },
-  },
-  artifacts: {
-    photo: {
-      fileName: "photo.json",
-      contentKind: "json",
-      maxBytes: 65536,
-      metadata: { credit: { type: "string", required: true } },
-    },
-    transcript: { fileName: "transcript.txt", contentKind: "text", maxBytes: 262144 },
   },
 };
 
@@ -66,22 +56,16 @@ describe("profilePipeline carries each type's declared schema", () => {
       "headline",
       "wordCount",
       "stage",
-      "assets",
       "homepage",
     ]);
   });
 
-  it("carries type, required, enum, artifactTypes and format verbatim", () => {
+  it("carries type, required, enum and format verbatim", () => {
     const byName = Object.fromEntries(
       (typeRow("articles").fields ?? []).map((field) => [field.name, field]),
     );
     expect(byName.headline).toEqual({ name: "headline", type: "string", required: true });
     expect(byName.stage).toEqual({ name: "stage", type: "enum", enum: ["draft", "filed"] });
-    expect(byName.assets).toEqual({
-      name: "assets",
-      type: "artifactRef[]",
-      artifactTypes: ["photo"],
-    });
     expect(byName.homepage).toEqual({ name: "homepage", type: "string", format: "url" });
   });
 
@@ -106,47 +90,6 @@ describe("the field projection is bounded", () => {
   });
 });
 
-describe("profilePipeline carries the profile's artifact declarations", () => {
-  /** The projected artifact rows. */
-  function artifactRows() {
-    return buildPipelineDefinitions(PACK).artifactTypes ?? [];
-  }
-
-  it("carries every declared artifact type, in declaration order", () => {
-    expect(artifactRows().map((row) => row.type)).toEqual(["photo", "transcript"]);
-  });
-
-  it("carries the filename and content kind", () => {
-    const photo = artifactRows().find((row) => row.type === "photo");
-    expect(photo?.fileName).toBe("photo.json");
-    expect(photo?.contentKind).toBe("json");
-  });
-
-  it("carries the declared metadata schema through the same field projection", () => {
-    const photo = artifactRows().find((row) => row.type === "photo");
-    expect(photo?.metadata).toEqual([{ name: "credit", type: "string", required: true }]);
-  });
-
-  it("omits metadata for an artifact type declaring none", () => {
-    expect(artifactRows().find((row) => row.type === "transcript")).not.toHaveProperty("metadata");
-  });
-
-  it("omits the block entirely for a profile declaring no artifact types", () => {
-    const bare: ProfilePack = {
-      schemaVersion: 1,
-      profileId: "newsroom",
-      entities: { desks: { directory: "wiki/desks" } },
-    };
-    expect(buildPipelineDefinitions(bare)).not.toHaveProperty("artifactTypes");
-  });
-});
-
-/**
- * The join onto counts is a separate function from the projection, and an
- * artifact type has no count to join — so it can be dropped there without any
- * projection test noticing. The shipped newsroom profile declares no artifact
- * types, which is why the integration test over that fixture cannot cover this.
- */
 describe("the envelope carries the schema through the count join", () => {
   /** The wire block for `PACK`, with a summary that reports no pages at all. */
   function envelope() {
@@ -156,10 +99,6 @@ describe("the envelope carries the schema through the count join", () => {
     } as never);
   }
 
-  it("carries the artifact declarations, which have no count to join", () => {
-    expect(envelope()?.artifactTypes?.map((row) => row.type)).toEqual(["photo", "transcript"]);
-  });
-
   it("carries each type's titleField and fields alongside its counts", () => {
     const row = envelope()?.entityTypes.find((entry) => entry.type === "articles");
     expect(row?.titleField).toBe("headline");
@@ -167,22 +106,9 @@ describe("the envelope carries the schema through the count join", () => {
       "headline",
       "wordCount",
       "stage",
-      "assets",
       "homepage",
     ]);
     expect(row?.pageCount).toBe(0);
   });
 
-  it("omits the artifact block for a profile declaring none", () => {
-    const bare: ProfilePack = {
-      schemaVersion: 1,
-      profileId: "newsroom",
-      entities: { desks: { directory: "wiki/desks" } },
-    };
-    const built = buildPipelineEnvelope(buildPipelineDefinitions(bare), {
-      profileId: "newsroom",
-      entityCounts: {},
-    } as never);
-    expect(built).not.toHaveProperty("artifactTypes");
-  });
 });

@@ -74,8 +74,6 @@ import type { PageRef } from "../pages/list.js";
 import type { ListSourcesOptions } from "../sources/source-record.js";
 import type { ExportJsonOptions } from "../export/json-export.js";
 import type { OkfImportOptions } from "../import/run.js";
-import type { ArtifactRef } from "../artifacts/ref.js";
-import type { ArtifactHealth } from "../artifacts/resolve.js";
 
 export interface WikiCore {
   /** Ingest a file path or URL as a new source document. */
@@ -117,17 +115,4 @@ export interface WikiCore {
   exportOkf(opts?: { out?: string }): Promise<unknown>;
   /** Import an OKF bundle. */
   importOkf(dir: string, opts?: OkfImportOptions): Promise<unknown>;
-  /** Write one artifact through the trust executor. */
-  writeArtifact(input: {
-    artifactType: string;
-    slug: string;
-    body?: string;
-    memberFiles?: readonly { fileName: string; bytes: Uint8Array }[];
-  }): Promise<unknown>;
-  /** Verify an artifact ref. */
-  verifyArtifact(ref: ArtifactRef): Promise<{ health: ArtifactHealth }>;
-  /** Read a verified artifact body. */
-  readVerifiedArtifactBody(ref: ArtifactRef): Promise<unknown>;
-  /** Discover an artifact by selector. */
-  discoverArtifact(selector: import("../artifacts/discover.js").ArtifactSelectorV1): Promise<unknown>;
 }

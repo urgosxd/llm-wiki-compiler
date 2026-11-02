@@ -32,9 +32,7 @@ export type FieldType =
   | "date"
   | "slug"
   | "enum"
-  | "string[]"
-  | "artifactRef"
-  | "artifactRef[]";
+  | "string[]";
 
 /**
  * Declarative PRESENTATION hints for a text field: enough for a read surface to
@@ -63,8 +61,6 @@ export interface FieldDef {
   enum?: string[];
   min?: number;
   max?: number;
-  /** For artifactRef fields: the declared artifact types this ref may point at (omitted = any). */
-  artifactTypes?: string[];
 }
 
 /**

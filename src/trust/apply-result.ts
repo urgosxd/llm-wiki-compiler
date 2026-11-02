@@ -11,14 +11,20 @@
  * atomically under today's single-store durability (cross-store op-ID atomicity
  * is a Phase-5 task).
  */
-import type { RelationRef } from "../relations/types.js";
-import type { ArtifactRef } from "../artifacts/ref.js";
 import type { TrustDecision } from "./decision.js";
 
+/**
+ * One applied mutation's outcome.
+ *
+ * `relation` and `artifact` are RETAINED FOR COMPATIBILITY: the subsystems are
+ * gone and nothing produces them, but a plan parsed from an earlier build must
+ * still map to a result shape rather than failing as an unknown kind. Their
+ * `ref`/`decision` payloads went with the stores that minted them.
+ */
 export type ApplyResult =
   | { kind: "page" }
-  | { kind: "relation"; ref: RelationRef; decision: TrustDecision }
-  | { kind: "artifact"; ref: ArtifactRef; decision: TrustDecision };
+  | { kind: "relation" }
+  | { kind: "artifact" };
 
 export class CrossStoreBatchUnsupportedError extends Error {
   constructor(reason: string) {

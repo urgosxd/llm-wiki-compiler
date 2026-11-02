@@ -23,7 +23,6 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { AddressInfo } from "net";
 import { buildHealthResponse } from "./health.js";
 import { handleApiPage, handleApiPages } from "./api-pages.js";
-import { handleApiArtifact } from "./api-artifacts.js";
 import { handleApiSource } from "./api-sources.js";
 import { loadShellTemplate } from "./shell.js";
 import { ASSETS_DIR, handleAsset } from "./static-assets.js";
@@ -225,7 +224,6 @@ async function routeLiveResources(
   const isLoopback = LOOPBACK_HOSTS.has(config.host);
   if (parsedUrl.pathname === "/api/index") return handleApiIndex(res, snapshot, isLoopback);
   if (parsedUrl.pathname === "/api/search") return handleApiSearch(res, parsedUrl, snapshot);
-  if (ARTIFACT_PATHS.has(parsedUrl.pathname)) return handleApiArtifact(res, snapshot, parsedUrl, isLoopback);
   if (parsedUrl.pathname.startsWith("/api/source/")) return handleApiSource(res, snapshot, parsedUrl.pathname, isLoopback);
   if (parsedUrl.pathname.startsWith("/api/page/")) {
     return handleApiPage(res, parsedUrl.pathname, snapshot, isLoopback);
@@ -268,9 +266,6 @@ const SNAPSHOT_ONLY_HANDLERS: ReadonlyMap<
  * Exact-path registered routes for v1. Kept as a Set so additions are
  * just a string in one place and the membership test stays O(1).
  */
-const ARTIFACT_PATHS: ReadonlySet<string> = new Set(["/api/artifact", "/api/artifact/content"]);
-
-/** Exact registered paths, sharing artifact membership with dispatch. */
 const REGISTERED_EXACT_PATHS: ReadonlySet<string> = new Set([
   "/",
   "/api/pages",
@@ -280,7 +275,6 @@ const REGISTERED_EXACT_PATHS: ReadonlySet<string> = new Set([
   "/api/graph",
   "/api/reviews",
   INGEST_JOBS_PATH,
-  ...ARTIFACT_PATHS,
 ]);
 
 /**
@@ -306,7 +300,6 @@ const DISPATCHED_EXACT_PATHS: ReadonlySet<string> = new Set([
   "/api/index",
   "/api/search",
   INGEST_JOBS_PATH,
-  ...ARTIFACT_PATHS,
 ]);
 for (const path of REGISTERED_EXACT_PATHS) {
   if (!DISPATCHED_EXACT_PATHS.has(path)) {

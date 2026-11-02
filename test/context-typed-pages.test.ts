@@ -26,7 +26,6 @@ import type { EntityId } from "../src/profile/types.js";
 import {
   buildResearchLiteRelationsProject,
   writeMarkdownPage,
-  seedTestsRelation,
   writeProfileFile,
 } from "./fixtures/profile-fixtures.js";
 
@@ -34,10 +33,8 @@ let root = "";
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "context-typed-"));
   await buildResearchLiteRelationsProject(root);
-  // A distinctive-bodied idea page (the lexical match target) + a seeded relation
-  // from an experiment to it (the graph neighbor).
+  // A distinctive-bodied idea page — the lexical match target.
   await writeMarkdownPage(root, "wiki/ideas", "sparse-routing", "---\nstatus: proposed\n---\nMixtureOfExperts conditional computation routing.");
-  await seedTestsRelation(root, "ablation-batch-size", "sparse-routing");
 });
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); });
 
@@ -47,12 +44,6 @@ describe("FIX F3 — typed pages in the context pool", () => {
     const primary = pack.primary.find((p) => p.id === ("ideas/sparse-routing" as unknown as string));
     expect(primary).toBeDefined();
     expect(primary?.summary).toMatch(/MixtureOfExperts/);
-  });
-
-  it("surfaces the relation neighbor of a ranked typed page in neighbors[]", async () => {
-    const pack = await buildContextPack({ root, prompt: "MixtureOfExperts", depth: 1 });
-    const neighborIds = pack.neighbors.map((n) => n.to);
-    expect(neighborIds).toContain("experiments/ablation-batch-size" as unknown as EntityId);
   });
 });
 

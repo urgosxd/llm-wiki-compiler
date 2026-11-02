@@ -29,42 +29,6 @@
 import { validateProjectId } from "./project-id.js";
 import type { ExportPage } from "./types.js";
 import type { EntityPageView, EntityProblemView } from "../profile/types.js";
-import type { CitationRef } from "../relations/types.js";
-
-/**
- * The PUBLIC, path-safe DTO for one typed relation in the JSON export.
- *
- * Mirrors the {@link EntityPageView} omitted-for-default discipline: it NEVER
- * carries an absolute path. `from`/`to` are already opaque `<entityType>/<slug>`
- * EntityId strings (not filesystem paths). The relation's `evidence` citations
- * are now contract-VALIDATED on write (safe PROJECT-RELATIVE paths, allowlisted
- * keys), so they are INCLUDED — they are core provenance value AND make the
- * published `contentHash` (computed over `{type,from,to,attributes,evidence}`)
- * recomputable by a consumer. Only the relative citation paths are exported, never
- * an absolute path.
- *
- * @experimental Shape may change in a future release.
- */
-export interface RelationView {
-  /** Stable relation handle (`rel_<ULID>`). */
-  id: string;
-  /** Relation-type id (a key of the profile's `relations` block). */
-  type: string;
-  /** The `from` endpoint EntityId (`<entityType>/<slug>`); never a filesystem path. */
-  from: string;
-  /** The `to` endpoint EntityId; never a filesystem path. */
-  to: string;
-  /** Typed relation attributes, as declared by the relation-type def. */
-  attributes: Record<string, unknown>;
-  /**
-   * Validated citations backing the relation (safe project-relative paths only),
-   * present ONLY when the relation carries evidence. Exported so a consumer can
-   * recompute the `contentHash`; never an absolute path.
-   */
-  evidence?: CitationRef[];
-  /** Canonical content digest over `{type, from, to, attributes, evidence}`. */
-  contentHash: string;
-}
 
 /**
  * Monotonically-incremented envelope version.
@@ -111,16 +75,6 @@ export interface JsonExportProfileBlock {
   problems?: EntityProblemView[];
   /** Full problem count; equals `problems.length` (export is never capped). */
   problemTotal?: number;
-  /**
-   * Path-safe views of the live relation store, present ONLY when the store
-   * holds at least one relation; OMITTED for the built-in default and for any
-   * relation-LESS profile so the default export envelope is byte-identical. Each
-   * {@link RelationView} carries opaque EntityId endpoints and NO filesystem
-   * path. A fail-closed read (corrupt / too-new store) omits this field AND adds
-   * a `relation-store` entry to `problems` so the broken store is reported
-   * VISIBLY, never as a silent "no relations".
-   */
-  relations?: RelationView[];
 }
 
 /**

@@ -49,15 +49,11 @@ import { isSlugSafe } from "./identity.js";
 import { PROFILE_V1_RESERVED_VERBS } from "./reserved-verbs.js";
 import { assert, lifecycleStates } from "./validate-helpers.js";
 import { validateWorkflowActions } from "./validate-workflow-actions.js";
-import { assertRelationRequirementsDeclared } from "./validate-relation-requirements.js";
-import { assertArtifactRequirementsDeclared, collectArtifactOrderingWarnings } from "./validate-artifact-requirements.js";
 import { validateEntityDirectory, isInsidePosixDir } from "./paths.js";
 import { assertStructurallyValid } from "./schema-validator.js";
 import { ProfileValidationError } from "./errors.js";
 import { SOURCES_DIR, LLMWIKI_DIR, EXPORT_DIR, CONCEPTS_DIR, QUERIES_DIR, WORKFLOW_PROJECTION_DIR } from "../utils/constants.js";
-import { isValidArtifactFileName, MAX_ARTIFACT_BYTES } from "../artifacts/name.js";
 import { getConnectorDef } from "../connectors/registry.js";
-import { assertMembersDef } from "./validate-artifact-members.js";
 import { validateStageExecutor, validateStageGate, validateSubjectGate } from "./validate-stage-authority.js";
 
 
@@ -131,52 +127,6 @@ function assertFiniteNumbers(entityType: string, def: EntityTypeDef): void {
   const weight = def.retrieval?.defaultWeight;
   if (typeof weight === "number") {
     assert(Number.isFinite(weight), `entity '${entityType}' retrieval.defaultWeight must be finite`);
-  }
-}
-
-/**
- * Reject `artifactTypes` declared on a field whose type is not `artifactRef` /
- * `artifactRef[]` — the property is meaningless (and silently ignored) on any
- * other field type, so a profile author's typo is caught at LOAD rather than
- * producing a scope that never applies. Placement is checked FIRST: a
- * misplaced `artifactTypes` is flagged before its contents, since a field that
- * shouldn't have the property at all makes checking its contents moot.
- *
- * Once placement is confirmed, an artifactRef field's `artifactTypes` scope
- * must be non-empty (an empty array can never be satisfied by any artifact
- * type — the same silently-dead-scope failure as an undeclared entry) and
- * every named type must be DECLARED by the profile's `artifacts` block —
- * otherwise every ref would fail Layer B ({@link validateArtifactRefsAgainstProfile})
- * at runtime, a silently-dead scope caught here at load instead. Shared by
- * entity fields, relation attributes, and artifact-metadata sub-fields, which
- * all carry the same {@link FieldDef} shape.
- */
-function assertArtifactTypesScoped(where: string, name: string, field: FieldDef, declaredArtifactTypes: Set<string>): void {
-  assert(
-    field.artifactTypes === undefined || field.type === "artifactRef" || field.type === "artifactRef[]",
-    `${where} field ${JSON.stringify(name)} declares artifactTypes but is not an artifactRef field`,
-  );
-  if (field.artifactTypes === undefined) return;
-  assert(
-    field.artifactTypes.length > 0,
-    `${where} field ${JSON.stringify(name)} declares an empty artifactTypes — no artifact type could ever satisfy it`,
-  );
-  for (const t of field.artifactTypes) {
-    assert(
-      declaredArtifactTypes.has(t),
-      `${where} field ${JSON.stringify(name)} artifactTypes references undeclared artifact type ${JSON.stringify(t)}`,
-    );
-  }
-}
-
-/**
- * Reject `artifactTypes` declared on any of an entity type's fields that is not
- * `artifactRef` / `artifactRef[]`, plus scope-contents violations — see
- * {@link assertArtifactTypesScoped}.
- */
-function validateArtifactTypesScope(entityType: string, def: EntityTypeDef, declaredArtifactTypes: Set<string>): void {
-  for (const [name, field] of Object.entries(def.fields ?? {})) {
-    assertArtifactTypesScoped(`entity '${entityType}'`, name, field, declaredArtifactTypes);
   }
 }
 
@@ -398,7 +348,6 @@ interface EntityValidation {
 function validateEntity(entityType: string, def: EntityTypeDef, declaredArtifactTypes: Set<string>): EntityValidation {
   const canonicalDirectory = validateEntityDirectory(def.directory, RESERVED_ROOTS);
   assertFiniteNumbers(entityType, def);
-  validateArtifactTypesScope(entityType, def, declaredArtifactTypes);
   validateRequiredFields(entityType, def);
   validateTitleField(entityType, def);
   validateFieldFormats(entityType, def);
@@ -441,7 +390,6 @@ function validateRelationAttributes(rel: string, def: RelationTypeDef, declaredA
   const attributes = def.attributes ?? {};
   for (const [name, field] of Object.entries(attributes)) {
     assertFieldDefFinite(`relation '${rel}' attribute '${name}'`, field);
-    assertArtifactTypesScoped(`relation '${rel}'`, name, field, declaredArtifactTypes);
     assertFieldFormatScoped(`relation '${rel}'`, name, field);
   }
   for (const name of def.requiredAttributes ?? []) {
@@ -599,43 +547,6 @@ function validateWorkflows(
   }
 }
 
-/**
- * Semantic checks the JSON schema cannot express for artifact type declarations.
- * `declaredArtifactTypes` is threaded in (rather than recomputed from `profile`)
- * so this shares the exact same declared set as {@link validateEntities} /
- * {@link validateRelations} — a metadata sub-field's `artifactTypes` scope is
- * judged against the same profile-wide truth.
- */
-function validateArtifacts(profile: ProfilePack, declaredArtifactTypes: Set<string>): void {
-  const artifacts = profile.artifacts;
-  if (!artifacts) return;
-  for (const [id, def] of Object.entries(artifacts)) {
-    assert(isSlugSafe(id), `artifact type id ${JSON.stringify(id)} is not slug-safe`);
-    assert(isValidArtifactFileName(def.fileName, def.contentKind),
-      `artifact ${JSON.stringify(id)} fileName ${JSON.stringify(def.fileName)} is not a valid ${def.contentKind} filename`);
-    assert(def.maxBytes >= 1 && def.maxBytes <= MAX_ARTIFACT_BYTES,
-      `artifact ${JSON.stringify(id)} maxBytes must be in 1..${MAX_ARTIFACT_BYTES}`);
-    assert(def.contentKind === "json" || def.metadata === undefined,
-      `artifact ${JSON.stringify(id)} metadata is permitted only when contentKind is "json"`);
-    if (def.members !== undefined) assertMembersDef(id, def);
-    // The SHARED FieldType union includes artifactRef, which would make `metadata`
-    // a third consumer of it — but Layer B and ref-health never run on artifact
-    // bodies, so a nested artifact→artifact ref would be silently half-supported.
-    // Refuse at load. A metadata sub-field is also a THIRD `artifactTypes` carrier
-    // (alongside entity fields and relation attributes) reachable by no other
-    // check, so it gets the same placement scrutiny here (the declared/empty
-    // branches are structurally unreachable for metadata — the guard above
-    // already rejects artifactRef-typed metadata fields before this call runs,
-    // and v0 has no nested artifactRef — but wired for forward-compat).
-    for (const [field, fd] of Object.entries(def.metadata ?? {})) {
-      assert(fd.type !== "artifactRef" && fd.type !== "artifactRef[]",
-        `artifact ${JSON.stringify(id)} metadata field ${JSON.stringify(field)} is artifactRef-typed — nested artifact refs are not supported in v0`);
-      assertArtifactTypesScoped(`artifact ${JSON.stringify(id)} metadata`, field, fd, declaredArtifactTypes);
-      assertFieldFormatScoped(`artifact ${JSON.stringify(id)} metadata`, field, fd);
-    }
-  }
-}
-
 /** Validate pure-data connector bindings against the static connector registry and entity fields. */
 function validateConnectors(profile: ProfilePack): void {
   for (const [connectorId, binding] of Object.entries(profile.connectors ?? {})) {
@@ -669,13 +580,9 @@ function validateProfileShape(raw: unknown): ProfileValidationResult {
   const declaredArtifactTypes = new Set(Object.keys(profile.artifacts ?? {}));
   const warnings = validateEntities(profile.entities, declaredArtifactTypes);
   validateRelations(profile.relations, profile.entities, declaredArtifactTypes);
-  assertRelationRequirementsDeclared(profile.entities, profile.relations);
   validateWorkflows(profile.workflows, profile.entities, declaredArtifactTypes);
   validateWorkflowActions(profile.workflowActions, profile.workflows, profile.entities);
-  validateArtifacts(profile, declaredArtifactTypes);
   validateConnectors(profile);
-  assertArtifactRequirementsDeclared(profile.entities, profile.artifacts);
-  warnings.push(...collectArtifactOrderingWarnings(profile.workflows, profile.entities));
   return { profile, warnings };
 }
 

@@ -37,7 +37,6 @@
 
 import { collectEntityPages, type EntityProblem } from "./collect.js";
 import { checkPageEmpty, checkPageMalformedCitations } from "../linter/rules.js";
-import { checkArtifactRefs } from "./artifact-lint.js";
 import { checkEventChain } from "./event-lint.js";
 import { lifecycleStateSet } from "./lifecycle.js";
 import type { ProfilePack, EntityPage, LifecycleDef } from "./types.js";
@@ -180,6 +179,5 @@ export async function collectProfileLintFindings(input: ProfileLintContext): Pro
     if (definition) results.push(...checkDeclaredConfidence(page, definition));
   }
   results.push(...(await checkEventChain(root)));
-  results.push(...(await checkArtifactRefs(root, pages, profile)));
   return { results, ruleTiers: profileRuleTiers(profile) };
 }

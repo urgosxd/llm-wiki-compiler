@@ -17,7 +17,6 @@ export type {
   JsonExportDocument,
   ExportJsonOptions,
   JsonExportProfileBlock,
-  RelationView,
 } from "./export/json-export.js";
 export {
   ProviderUnavailableError,
@@ -41,12 +40,6 @@ export type { OkfExportReport } from "./export/okf/run.js";
 export type { OkfImportReport, OkfImportSkip, OkfImportedPage } from "./import/run.js";
 export { LockUnavailableError, QueueFullError } from "./import/run-errors.js";
 
-export type { ArtifactRef } from "./artifacts/ref.js";
-export type { ArtifactHealth } from "./artifacts/resolve.js";
-export { ArtifactVerifyUnavailableError } from "./artifacts/resolve.js";
-export type { VerifiedArtifactBodyV1 } from "./artifacts/read-verified.js";
-export type { ArtifactSelectorV1, ArtifactDiscoveryV1 } from "./artifacts/discover.js";
-export type { ArtifactMemberFileInput } from "./artifacts/members.js";
 export type {
   StagedChange,
   CandidateKind,
@@ -55,10 +48,6 @@ export type {
   StagedRelationRef,
   StagedArtifactRef,
 } from "./trust/staged-change.js";
-export type { AppendRelationInput } from "./relations/store.js";
-export type { RelationRef, RelationId, CitationRef } from "./relations/types.js";
-export { RelationEndpointError } from "./relations/types.js";
-export { RelationWriteDeniedError, RelationsRequireProfileError } from "./trust/relation-write.js";
 
 
 
@@ -86,16 +75,10 @@ export type {
 } from "./profile/types.js";
 export { parseFrontmatter, slugify } from "./utils/markdown.js";
 export { collectViewerPages, resolveBareSlug } from "./viewer/collect.js";
-export type { ArtifactMemberEntry } from "./artifacts/members.js";
 export { isTrustedWriteGranted } from "./trust/trusted-write.js";
-export { captureVerifiedMemberArtifact } from "./artifacts/capture-member.js";
 export { atomicWrite, AtomicWriteCollisionError, AtomicWriteCommittedCleanupError, type AtomicWriteOptions, type AtomicWriteNoReplaceDurableOptions } from "./utils/atomic-write.js";
 
 
-export { formatArtifactRef, parseArtifactRef } from "./artifacts/ref.js";
-export { readVerifiedArtifactBody } from "./artifacts/read-verified.js";
-export { resolveArtifactRef } from "./artifacts/resolve.js";
-export { artifactPaths, memberLeafPath, readArtifactMemberBytes } from "./artifacts/store.js";
 export { loadProfile } from "./profile/load.js";
 export { isSlugSafe } from "./profile/identity.js";
 export { confineUnderRoot } from "./utils/path-confine.js";

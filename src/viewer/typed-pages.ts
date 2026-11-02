@@ -32,7 +32,6 @@
 import { collectEntityPages, invalidEntityPagePaths } from "../profile/collect.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
 import { buildPipelineDefinitions } from "./pipeline.js";
-import { readLiveValidRelations } from "../relations/live-valid.js";
 import type { EntityPageNode, GraphBuildOptions, RelationEdge } from "./graph.js";
 import type { PipelineDefinitions } from "./pipeline.js";
 import type { EntityPage, ProfilePack } from "../profile/types.js";
@@ -55,8 +54,6 @@ export interface TypedViewerInputs {
    * different profile than the one that produced the corpus beside it.
    */
   pipeline: PipelineDefinitions;
-  /** Full internal contract used by confined artifact access, not the wire projection. */
-  artifactDefinitions: ProfilePack["artifacts"];
 }
 
 /**
@@ -77,14 +74,22 @@ export async function collectTypedViewerInputs(
   return {
     entityTypes: Object.keys(loaded.profile.entities),
     pages: valid,
+    // `relations` is empty: the relation subsystem was removed, so this build
+    // has no live graph to draw. The field stays because `GraphBuildOptions`
+    // still accepts it and the renderer tolerates an empty edge list.
     graph: {
       entityPages: valid.map(toEntityPageNode),
-      relations: await readTypedRelations(root, loaded.profile),
+      relations: [],
     },
     pipeline: buildPipelineDefinitions(loaded.profile),
-    artifactDefinitions: structuredClone(loaded.profile.artifacts ?? {}),
   };
 }
+
+/**
+ * Project a collected entity page down to the graph builder's identity-only
+ * node input, dropping frontmatter, body, and the absolute `filePath` the graph
+ * has no use for.
+ */
 
 /**
  * Project a collected entity page down to the graph builder's identity-only
@@ -99,30 +104,4 @@ function toEntityPageNode(page: EntityPage): EntityPageNode {
     directory: page.directory,
     ...(page.title !== undefined ? { title: page.title } : {}),
   };
-}
-
-/**
- * Read the live relations as graph edges, fail-closed AND profile-filtered: a
- * corrupt / too-new / symlinked-leaf store (or any read error) yields an empty
- * edge list rather than crashing the snapshot. The live + profile-valid filtering
- * runs through the SHARED {@link readLiveValidRelations}, so a relation whose
- * type/endpoints/attributes the profile has outgrown is EXCLUDED from the graph
- * and the graph agrees with status/export/lint (which exclude the same
- * profile-invalid relations) instead of reanimating stale edges.
- */
-async function readTypedRelations(root: string, profile: ProfilePack): Promise<RelationEdge[]> {
-  try {
-    const valid = await readLiveValidRelations(root, profile);
-    return valid.map((rel) => {
-      const def = profile.relations?.[rel.type];
-      return {
-        type: rel.type,
-        from: rel.from,
-        to: rel.to,
-        ...(def?.direction !== undefined ? { direction: def.direction } : {}),
-      };
-    });
-  } catch {
-    return [];
-  }
 }

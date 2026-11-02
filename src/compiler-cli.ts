@@ -5,13 +5,9 @@
  * Each handler retains its existing operator, review and apply checks.
  */
 export { parseInputPairs, parseJsonObject, parseInputJsonObject } from "./cli/input-parsers.js";
-export type { ArtifactRef } from "./artifacts/ref.js";
-export { resolveArtifactRef, declaresArtifactTypes } from "./artifacts/resolve.js";
 export { addProviderOption, applyProviderOption } from "./cli/provider-option.js";
 export type { ProviderOption } from "./cli/provider-option.js";
 export { runExitCodeCommand } from "./cli/shared.js";
-export { artifactWriteCommand, artifactVerifyCommand } from "./commands/artifact.js";
-export type { ArtifactWriteOptions, ArtifactVerifyOptions } from "./commands/artifact.js";
 export { default as compileCommand } from "./commands/compile.js";
 export { default as contextCommand } from "./commands/context.js";
 export type { ContextCommandOptions } from "./commands/context.js";
@@ -53,7 +49,6 @@ export { readPageRecord } from "./pages/read.js";
 export { loadNonDefaultProfile } from "./profile/block.js";
 export { isSlugSafe } from "./profile/identity.js";
 export { readBoundedFromHandle } from "./utils/bounded-read.js";
-export type { AppendRelationInput } from "./relations/store.js";
 export { pickSearchRefs, loadSelectedRefs } from "./search/retrieval.js";
 export { listSelectedSourceFiles } from "./sources/scan.js";
 export { collectStatus } from "./status/collect.js";

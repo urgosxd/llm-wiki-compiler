@@ -98,7 +98,7 @@ export async function buildViewerSnapshot(root: string): Promise<ViewerSnapshot>
     graph: buildGraphData(annotatedDefault, typed?.graph),
     ...(journalWarning ? { warnings: [journalWarning] } : {}),
     ...(profile ? { profile } : {}),
-    ...(typed ? { entityTypes: typed.entityTypes, pipeline: typed.pipeline, artifactDefinitions: typed.artifactDefinitions } : {}),
+    ...(typed ? { entityTypes: typed.entityTypes, pipeline: typed.pipeline } : {}),
   };
 }
 
