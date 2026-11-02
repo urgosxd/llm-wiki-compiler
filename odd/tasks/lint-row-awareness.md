@@ -179,20 +179,58 @@ frozen parity suites green.
   omission at three more sites, one of which is a data-loss path in export, so the
   fix moved from "pass the argument here" to "no call site passes it at all".
   Covered by `test/export-freshness-stack-documents.test.ts`.
-- [ ] **Stage 1 — the page scope (D2).** Add `readLintCorpus` (the
-  AsyncLocalStorage scope) and `readLintPages`. Switch every page-reading rule to
-  `readLintPages`. Open the scope in `lint`/`lintByTier`/`lintBothViews`.
-  **Delivers a subset of rules**: the ones whose inputs a row can express. The
-  provenance subset stays on disk until the schema gap above is closed, and
-  Stage 4 pins that split explicitly.
-- [ ] **Stage 2 — sources (D3).** Thread source existence and content into
-  `checkBrokenCitations` and `checkMalformedClaimCitations` via the scope. Keep
-  `checkPageBrokenCitations`'s on-disk callers working.
-- [ ] **Stage 3 — journal.** Thread the journal handle into `checkJournalHealth`.
-- [ ] **Stage 4 — the parity proof.** A test that lints the SAME corpus twice,
-  once on disk and once through a row source, and asserts identical findings.
-  This is the acceptance criterion for the whole feature; without it the stages
-  are plausible rather than proven.
+- [x] **Stage 1 — the page scope (D2), `8e48899`.** `linter/corpus.ts` provides
+  `withLintCorpus` / `activeLintCorpus` / `corpusFromRawPages`; `readLintPages`
+  serves the scope when active and delegates to `collectAllPages` otherwise, so
+  every rule keeps its signature and the 20 files importing `linter/rules` are
+  untouched. The scope opens in `collectTieredGroups`, which is the single path all
+  three entry points take.
+
+  Row pages arrive with frontmatter ALREADY stripped (`toPage` stores only the
+  body), so `buildFrontmatter` rebuilds the block before a rule parses it. Serving
+  the bare body would have made every metadata rule a silent no-op.
+- [x] **Stage 2 — sources (D3), `7a48d2d`.** The corpus carries document text keyed
+  by FILENAME, because a page cites `^[abc123.md]` while a row is keyed by source
+  IDENTITY — `filename` is the column that joins them, and it is what lands in
+  `sources/` on the file path, so both backends resolve to the same document.
+  `SourceDocumentListing` gained an optional `content`; the row already carried it,
+  so this is no extra query.
+
+  Three states are kept distinct: the corpus knows the text, knows the document
+  does not exist (`null` — that IS the finding), or cannot answer (`undefined`, a
+  file-backed project). Collapsing the last two would report every citation broken
+  the moment no Stack was configured.
+- [ ] **Stage 3 — journal. A DECISION, not threading.** See the corrected
+  analysis above: `.llmwiki/journal/` (revert batches, pre-state) and
+  `wiki.activity_log` (activity entries) are different things, and a row is
+  already inside a transaction so it needs no pre-state. The question is whether
+  `journal-health` has any meaning for a row corpus at all. Not implemented,
+  because inventing an answer would be guesswork.
+- [x] **Stage 4 — the parity proof, `458b197`.** One corpus, described once and
+  rendered twice: markdown on disk, and rows as the source returns them. Findings
+  compared as an exact sorted set of `rule|file|severity|message`. A second test
+  asserts the shared corpus really produces findings, because a vacuous comparison
+  would pass the first one while proving nothing.
+
+## Delivered, and what is deliberately not
+
+| Commit | What |
+| --- | --- |
+| `f241a35` | freshness at the linter call site (subsumed by `3cb4924`) |
+| `3cb4924` | `buildProjectFreshnessSnapshot` — all five consumers |
+| `afb6d3c` | honour a corpus the caller supplies |
+| `0162da5` | the ingest-triggered compile's own environment |
+| `8e48899` | Stage 1 — the row corpus |
+| `7a48d2d` | Stage 2 — citations from rows |
+| `458b197` | Stage 4 — parity proof |
+
+**Not delivered, on purpose:** Stage 3 (a product decision) and the provenance
+columns (a schema feature). Both are named above with the reason, so neither
+looks like an oversight.
+
+Every new test in this feature was proved non-vacuous by neutralising the code
+path it covers and watching it fail. A test that passes for the wrong reason is
+worse than no test, because it certifies the bug.
 
 ## BLOCKER found while implementing Stage 1: rows cannot carry provenance
 
