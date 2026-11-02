@@ -60,6 +60,41 @@ describe("buildLiveIdSet", () => {
     const ids = await buildLiveIdSet(root, ["concepts"]);
     expect(ids.size).toBe(0);
   });
+
+  // The eligibility gate below is NOT a profile feature: it is the legacy
+  // concept/query rule that a page must be live (not orphaned) and titled to be
+  // embedded, and it mirrors the WRITE gate in `readConfinedPageRecord`. These
+  // three cases assert `buildLiveIdSet`'s side of it specifically; the
+  // `embeddings-load` suite covers the retrieved-store side, so without them a
+  // break confined to this function would pass every other test.
+  it("excludes an orphaned concept (meta.orphaned:true) — matches writer which never embeds it", async () => {
+    const root = await makeTempRoot("elig-orphaned");
+    await writePage(path.join(root, "wiki/concepts"), "ghost", { title: "Ghost", orphaned: true }, "body");
+    await writePage(path.join(root, "wiki/concepts"), "live", { title: "Live" }, "body");
+    const ids = await buildLiveIdSet(root, ["concepts"]);
+    expect(ids.has("concepts/ghost")).toBe(false);
+    expect(ids.has("concepts/live")).toBe(true);
+  });
+
+  it("excludes an untitled concept — matches writer which never embeds it", async () => {
+    const root = await makeTempRoot("elig-untitled");
+    await writePage(path.join(root, "wiki/concepts"), "no-title", { summary: "s" }, "body");
+    await writePage(path.join(root, "wiki/concepts"), "titled", { title: "Titled" }, "body");
+    const ids = await buildLiveIdSet(root, ["concepts"]);
+    expect(ids.has("concepts/no-title")).toBe(false);
+    expect(ids.has("concepts/titled")).toBe(true);
+  });
+
+  it("regression: eligible concepts/queries are present; ineligible (orphaned) are absent — gate is applied", async () => {
+    const root = await makeTempRoot("elig-regression-default");
+    await writePage(path.join(root, "wiki/concepts"), "alpha", { title: "Alpha", summary: "sum" }, "body");
+    // An orphaned concept in the same namespace — the eligibility gate must exclude it
+    await writePage(path.join(root, "wiki/concepts"), "dead", { title: "Dead", orphaned: true }, "body");
+    const ids = await buildLiveIdSet(root, ["concepts"]);
+    expect(ids.has("concepts/alpha")).toBe(true);
+    expect(ids.has("concepts/dead")).toBe(false);
+    expect(ids.size).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
