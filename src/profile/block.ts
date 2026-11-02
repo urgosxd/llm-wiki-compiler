@@ -15,12 +15,10 @@
  */
 
 import { loadProfile } from "./load.js";
-import { collectEntityPages, collectEntitySummary } from "./collect.js";
-import type { EntityProblem } from "./collect.js";
 import { DEFAULT_PROFILE } from "./default.js";
 import { profileDigest } from "./digest.js";
 import { toEntityProblemView } from "./types.js";
-import type { EntityPage, EntityProblemView, EntityTypeDef, LoadedProfile } from "./types.js";
+import type { EntityProblem, EntityPage, EntityProblemView, EntityTypeDef, LoadedProfile } from "./types.js";
 import { scanEntityDir } from "../wiki/collect.js";
 import { safeRealpath } from "../utils/path-confine.js";
 import { GraphDirConfinementError } from "../utils/jsonl-store.js";
@@ -29,52 +27,27 @@ import { readEvents } from "../events/store-read.js";
 import { EventStoreCorruptError, EventStoreTooNewError, EventStoreSymlinkError, EventStoreFullError } from "../events/types.js";
 
 /**
- * Load the active profile and return it ONLY when it is a non-default profile;
- * return `undefined` for the built-in default so every additive read surface
- * can omit its `profile` key with one shared gate.
+ * There is no longer such a thing as a non-default profile.
  *
- * The built-in is identified by `loadedFrom === null` (the loader sets null
- * ONLY for the no-file/default path) — never by `profileId === "default"`,
- * which a disk profile can no longer claim but which must not be the gate. The
- * digest comparison is defense-in-depth against a future loader change.
+ * This returned the installed profile, or `undefined` for the built-in default,
+ * so that a dozen read surfaces could skip profile-only work on a plain project.
+ * With one fixed profile every project IS the default, so the answer is always
+ * `undefined` — and the signature stays, rather than being deleted, because the
+ * callers' early-return branches are now the CORRECT and only behaviour: no typed
+ * pages to list, no entity docs to export, no pipeline panel to draw.
  *
- * Effective-profile loading routes through the active-product binding via the
- * universal {@link loadProfile}: with no binding this is byte-identical to the
- * legacy path, and a product-mode binding yields the product's knowledge profile
- * (always non-default, since its `loadedFrom` is a package member path, so it is
- * never mistaken for the built-in default).
- *
- * @param root - Absolute project root directory.
- * @returns The loaded non-default profile, or `undefined` for the built-in default.
+ * @param _root - Absolute project root directory (unused).
+ * @returns Always `undefined`.
  */
 export async function loadNonDefaultProfile(
-  root: string,
+  _root: string,
 ): Promise<LoadedProfile | undefined> {
-  const loaded = await loadProfile(root);
-  const isBuiltInDefault =
-    loaded.loadedFrom === null && loaded.digest === profileDigest(DEFAULT_PROFILE);
-  return isBuiltInDefault ? undefined : loaded;
+  return undefined;
 }
 
 /** A profile pre-resolved by a caller: a {@link LoadedProfile}, or `null` for the built-in default. */
 export type PreloadedProfile = LoadedProfile | null;
 
-/**
- * Resolve the active non-default profile, REUSING a caller-`preloaded` result when
- * one is given (a `LoadedProfile`, or `null` meaning the built-in default), else
- * loading it via {@link loadNonDefaultProfile}. Lets one lock-free surface —
- * {@link ../context/build.js buildContextPack} — load the profile ONCE and thread
- * it through the pool-augmentation and tier-projection steps instead of each
- * re-loading (and re-validating) it, so a single pack cannot be assembled against
- * two different mid-swapped profiles. `undefined` preloaded → load here.
- */
-export async function resolveNonDefaultProfile(
-  root: string,
-  preloaded: PreloadedProfile | undefined,
-): Promise<LoadedProfile | undefined> {
-  if (preloaded !== undefined) return preloaded ?? undefined;
-  return loadNonDefaultProfile(root);
-}
 
 /**
  * The maximum number of structured `problems` the count-only status/viewer
@@ -140,23 +113,6 @@ export interface ProfileSummaryBlock {
   lifecycleStates?: Record<string, Record<string, number>>;
 }
 
-/**
- * Collect a loaded non-default profile's entity pages alongside its STRUCTURED
- * problems (already mapped to public, path-safe {@link EntityProblemView}s) — the
- * shared read-side step every additive profile block performs before shaping
- * (windowing, capping, or passing through) its own problem envelope.
- *
- * @param root - Absolute project root directory.
- * @param loaded - A non-default profile (from {@link loadNonDefaultProfile}).
- * @returns The collected entity pages and the structured problem views.
- */
-export async function collectEntityPagesWithMessages(
-  root: string,
-  loaded: LoadedProfile,
-): Promise<{ pages: EntityPage[]; problems: EntityProblemView[] }> {
-  const { pages, problems } = await collectEntityPages(root, loaded.profile);
-  return { pages, problems: await toProblemViews(problems, root) };
-}
 
 /**
  * Map structured collector problems to public, path-safe problem views,
@@ -263,29 +219,6 @@ async function tallyLifecycleStates(
   return Object.keys(counts).length > 0 ? counts : undefined;
 }
 
-/**
- * Build the per-type lifecycle-state tally for every entity type that declares a
- * `lifecycle`, reading each page's lifecycle field through the bounded
- * frontmatter-only scan (no bodies). Returns `undefined` when no lifecycle type
- * has any enrolled page (so the `lifecycleStates` key is OMITTED — the
- * default and lifecycle-less envelopes stay byte-identical).
- *
- * @param root - Absolute project root directory.
- * @param loaded - The loaded non-default profile (its entity `lifecycle` gates).
- * @returns The `{ entityType: { state: count } }` tally, or `undefined`.
- */
-async function summarizeLifecycleStates(
-  root: string,
-  loaded: LoadedProfile,
-): Promise<Record<string, Record<string, number>> | undefined> {
-  const states: Record<string, Record<string, number>> = {};
-  for (const [entityType, def] of Object.entries(loaded.profile.entities) as [string, EntityTypeDef][]) {
-    if (def.lifecycle === undefined) continue;
-    const tally = await tallyLifecycleStates(root, def, def.lifecycle.field);
-    if (tally) states[entityType] = tally;
-  }
-  return Object.keys(states).length > 0 ? states : undefined;
-}
 
 /**
  * Resolve the active profile and, for a NON-DEFAULT profile only, build the
@@ -327,22 +260,3 @@ function problemEnvelope(views: EntityProblemView[]): Pick<ProfileSummaryBlock, 
   return { problems: views.slice(0, PROFILE_PROBLEM_CAP), problemTotal: views.length };
 }
 
-export async function collectProfileSummary(
-  root: string,
-): Promise<ProfileSummaryBlock | undefined> {
-  const loaded = await loadNonDefaultProfile(root);
-  if (loaded === undefined) return undefined;
-  const { counts, problems } = await collectEntitySummary(root, loaded.profile);
-  const { eventCount, problem: eventProblem } = await summarizeEvents(root);
-  // The lifecycle, relation-standing and artifact problem sections were removed
-  // with the profile system: none of the three has anything left to evaluate.
-  const storeProblems = eventProblem ? [eventProblem] : [];
-  const views = orderProblemViews(await toProblemViews(problems, root), storeProblems);
-  return {
-    profileId: loaded.profile.profileId,
-    digest: loaded.digest,
-    entityCounts: counts,
-    ...problemEnvelope(views),
-    ...(eventCount !== undefined ? { eventCount } : {}),
-  };
-}

@@ -174,9 +174,6 @@ async function pageStatus(url: string, rawDirectory: string): Promise<number> {
 }
 
 describe("/api/page directory segment — profile-derived allowlist", () => {
-  it("serves a DECLARED entity type", async () => {
-    expect(await pageStatus(await startNewsroomViewer(), "desks")).toBe(200);
-  });
 
   it("rejects a directory that is not a declared entity type", async () => {
     const url = await startNewsroomViewer();

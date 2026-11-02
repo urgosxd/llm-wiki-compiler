@@ -23,6 +23,6 @@ export const DEFAULT_PROFILE: ProfilePack = {
 };
 
 /** True when the given profile is the built-in default profile. */
-export function isDefaultProfile(p: ProfilePack): boolean {
+function isDefaultProfile(p: ProfilePack): boolean {
   return p.profileId === "default";
 }

@@ -171,7 +171,7 @@ export const QUERIES_DIR = "wiki/queries";
  * `projectionFile` is confined here at profile LOAD so it can never target an
  * authored entity page; no entity `directory` may overlap this subtree either.
  */
-export const WORKFLOW_PROJECTION_DIR = "wiki/outputs/workflows";
+const WORKFLOW_PROJECTION_DIR = "wiki/outputs/workflows";
 export const LLMWIKI_DIR = ".llmwiki";
 export const PROFILE_FILE = ".llmwiki/profile.json";
 export const STATE_FILE = ".llmwiki/state.json";
@@ -459,7 +459,7 @@ export const MAX_EVENT_HEAD_BYTES = 4096;
  * symlink target would be read fully before `JSON.parse`, a local DoS. A bloated
  * profile is treated as a load error (fail closed).
  */
-export const MAX_PROFILE_BYTES = 1024 * 1024; // 1 MiB
+const MAX_PROFILE_BYTES = 1024 * 1024; // 1 MiB
 
 /**
  * Append-only activity journal at the project root, per Karpathy's llm-wiki

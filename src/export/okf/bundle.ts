@@ -20,8 +20,7 @@ import { renderJournal } from "../../utils/activity-log.js";
 import { withJournalSource } from "../../dimensions/wiki/activity-log-source.js";
 import { collectReferenceFiles, resolveReferences, type ResolvedReference } from "./references.js";
 import { resolveOutputPaths } from "./output-paths.js";
-import { collectProfileEntityDocs } from "./profile-docs.js";
-import { collectBundleBlock } from "./bundle-block.js";
+import type { ProfileEntityDoc } from "./bundle-block-contract.js";
 import { loadNonDefaultProfile } from "../../profile/block.js";
 
 /** OS noise files that must not, by themselves, make an output dir count as non-empty. */
@@ -190,17 +189,14 @@ export async function buildOkfBundle(
   // Resolve references FIRST so citation links are emitted only for files actually copied.
   const refs = await resolveReferences(root, pages);
   const refName = (file: string): string | null => refs.get(file)?.destName ?? null;
-  // Load the ACTIVE profile ONCE and thread it to every profile-aware surface, so
-  // the export validates it a single time and all surfaces see the same profile.
-  // `undefined` = the built-in default: entity docs are [] and the bundle block is
-  // omitted, so the bundle stays byte-identical to a pre-7.6 export (D-7.6.10).
-  const loaded = await loadNonDefaultProfile(root);
-  // Entity-page bodies reuse the native-page resolver for wikilink rewriting.
-  const entityDocs = await collectProfileEntityDocs(root, resolve, loaded);
-  const bundleBlock = await collectBundleBlock(root, loaded);
+  // Entity-page docs and the `x-llmwiki` bundle block both came from a non-default
+  // profile, which no longer exists: `concepts` and `queries` are fixed and there
+  // are no entity types to declare. Both are therefore empty/omitted, and the
+  // bundle stays byte-identical to what a default-profile project produced before.
+  const entityDocs: ProfileEntityDoc[] = [];
   const written: string[] = [];
 
-  written.push(await writeConfined(realOut, "index.md", buildOkfIndex(pages, paths, entityDocs, bundleBlock)));
+  written.push(await writeConfined(realOut, "index.md", buildOkfIndex(pages, paths, entityDocs)));
   for (const p of pages) {
     const docRel = paths.get(p)!;
     written.push(await writeConfined(realOut, docRel, renderOkfDoc(p, resolve, refName)));

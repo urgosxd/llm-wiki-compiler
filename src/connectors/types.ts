@@ -33,12 +33,6 @@ export interface ConnectorDef {
   canonicalSourceId(inputs: Record<string, string>): string;
 }
 
-/** Pure-data profile binding from a connector output to one entity type. */
-export interface ConnectorBindingDef {
-  entityType: string;
-  fields: Record<string, string>;
-  contentField?: string;
-}
 
 /** Review-candidate provenance for connector-fetched drafts. */
 export interface ConnectorProvenance {

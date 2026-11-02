@@ -22,10 +22,8 @@
 
 import { buildViewerSnapshot } from "../viewer/snapshot.js";
 import { narrowSnapshotToContextPool } from "./typed-pages.js";
-import { applyContentTiers } from "./content-tiers.js";
 import {
   loadNonDefaultProfile,
-  resolveNonDefaultProfile,
   type PreloadedProfile,
 } from "../profile/block.js";
 import {
@@ -147,21 +145,16 @@ export async function buildContextPack(
     options.embeddingStoreSource,
     options.registryPageSource,
   );
-  // POST-ranking, per-record content-depth projection (CLP 6.2). Reads the same
-  // non-default profile the pool augmentation loads; for the built-in default it
-  // is a no-op, so the default pack stays byte-identical.
-  const draft = await projectContentTiers(
-    assembleDraft({
-      snapshot,
-      state,
-      recommendation,
-      options: normalized,
-      semantic,
-    }),
+  // The POST-ranking content-depth projection (CLP 6.2) is gone with the profile
+  // substrate: `contentTiers` was a declared entity-type field, and there are no
+  // declared types left to project. The pack is assembled directly.
+  const draft = assembleDraft({
     snapshot,
-    options.root,
-    preloadedProfile,
-  );
+    state,
+    recommendation,
+    options: normalized,
+    semantic,
+  });
   // Source windows are materialized AFTER ranking so the per-pack
   // budget sees the final primary list, not every candidate.
   // Skipped entirely when `--include-sources` is off.
@@ -359,22 +352,6 @@ function assembleDraft(input: AssembleInput): ContextPack {
   };
 }
 
-/**
- * Project each ranked primary's declared per-record content tiers onto the draft
- * (CLP 6.2). Loads the active NON-DEFAULT profile once (the same one the pool
- * augmentation reads); for the built-in default profile it returns the draft
- * UNCHANGED so the default pack stays byte-identical. Never reorders `primary[]`.
- */
-async function projectContentTiers(
-  draft: ContextPack,
-  snapshot: ViewerSnapshot,
-  root: string,
-  preloaded: PreloadedProfile,
-): Promise<ContextPack> {
-  const loaded = await resolveNonDefaultProfile(root, preloaded);
-  if (loaded === undefined) return draft;
-  return applyContentTiers(draft, snapshot, loaded.profile);
-}
 
 /**
  * Append `graph-neighbor` to existing primary entries that have a

@@ -28,15 +28,13 @@ import { countCandidates } from "../compiler/candidates.js";
 import { isPlainObject } from "../utils/state.js";
 import { readStateClassifiedFor } from "../dimensions/wiki/page-source-seam.js";
 import type { ClassifiedState } from "../utils/state.js";
-import { collectViewerPages, decorateEntityPages, resolveBareSlugList } from "./collect.js";
+import { collectViewerPages, resolveBareSlugList } from "./collect.js";
 import { extractWikilinkSlugs } from "../wiki/collect.js";
 import { isMalformedCitationEntry, splitCitationMarker } from "../utils/markdown.js";
 import { buildGraphData } from "./graph.js";
 import { pageTimestamp } from "./page-fields.js";
 import { buildProjectFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
-import { collectProfileSummary } from "../profile/block.js";
 import { journalHealthWarning } from "../trust/journal-health-warning.js";
-import { collectTypedViewerInputs } from "./typed-pages.js";
 import { attachEntityContexts } from "./entity-context.js";
 import type { FreshnessSnapshot } from "../freshness/types.js";
 import { UNRESOLVED_CITATION_CODE } from "./types.js";
@@ -63,25 +61,25 @@ const INDEX_HREF = "/#/index";
  * `readLintCache` in `src/viewer/health.ts` is the sole exception.
  */
 export async function buildViewerSnapshot(root: string): Promise<ViewerSnapshot> {
-  const [defaultPages, classified, pendingReviews, sourceFilenames, index, typed] =
+  const [defaultPages, classified, pendingReviews, sourceFilenames, index] =
     await Promise.all([
       withRawPageSource(root, process.env, (source) => collectViewerPages(root, source)),
       readStateClassifiedFor(root),
       countCandidates(root),
       listSelectedSourceEntries(root),
       readIndexFile(root),
-      collectTypedViewerInputs(root),
     ]);
   const freshnessSnapshot = await buildProjectFreshnessSnapshot(root, classified);
   const decorate = buildPageDecorator(sourceFilenames, freshnessSnapshot);
   const annotatedDefault = defaultPages.map(decorate);
-  const annotatedTyped = decorateEntityPages(typed?.pages ?? [], defaultPages).map(decorate);
-  const pages = attachEntityContexts([...annotatedDefault, ...annotatedTyped], typed?.graph.relations ?? [], sourceFilenames);
+  // Typed entity pages came from a non-default profile, which no longer exists:
+  // `concepts` and `queries` are fixed and declare no fields. The page list is
+  // therefore the default one, and no relation edges exist to annotate with.
+  const pages = attachEntityContexts(annotatedDefault, [], sourceFilenames);
   // Surface a pending/unavailable compile journal so the viewer never renders
   // partial post-crash or tampered state as silently healthy. ABSENT when the
   // journal is ok, so the default snapshot is byte-identical (parity-safe).
   const journalWarning = await journalHealthWarning(root);
-  const profile = await collectProfileSummary(root);
   return {
     root,
     generatedAt: new Date().toISOString(),
@@ -92,13 +90,8 @@ export async function buildViewerSnapshot(root: string): Promise<ViewerSnapshot>
     recentPages: buildRecentPages(pages),
     pages,
     sourceFilenames,
-    // Typed pages reach the graph through `typed.graph` as entity nodes and
-    // relation edges, NOT through this page list — passing them both ways would
-    // mint two nodes for one page under the same id.
-    graph: buildGraphData(annotatedDefault, typed?.graph),
+    graph: buildGraphData(annotatedDefault),
     ...(journalWarning ? { warnings: [journalWarning] } : {}),
-    ...(profile ? { profile } : {}),
-    ...(typed ? { entityTypes: typed.entityTypes, pipeline: typed.pipeline } : {}),
   };
 }
 

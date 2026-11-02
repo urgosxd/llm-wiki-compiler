@@ -33,10 +33,8 @@ import {
   type BuildJsonExportOptions,
   type ExportJsonOptions,
   type JsonExportDocument,
-  type JsonExportProfileBlock,
   type JsonExportWarning,
 } from "../export/json-export.js";
-import { buildExportProfileBlock } from "../export/profile-block.js";
 import { validateProjectId } from "../export/project-id.js";
 import { journalHealthWarning } from "../trust/journal-health-warning.js";
 import { buildJsonLd } from "../export/json-ld.js";
@@ -143,39 +141,35 @@ interface BuildContentInputs {
   marpSource: MarpSource;
   /** Optional bridge identifier; only consumed by the json target. */
   projectId?: string;
-  /** Pre-computed non-default profile block; only consumed by the json target. */
-  profile?: JsonExportProfileBlock;
   /** Pre-computed read-surface health warnings; only consumed by the json target. */
   warnings?: JsonExportWarning[];
 }
 
 /**
- * Assemble the JSON-export options from the optional bridge id, the pre-computed
- * profile block, and the read-surface warnings, omitting each key when absent so
- * the default envelope is unchanged.
+ * Assemble the JSON-export options from the optional bridge id and the
+ * read-surface warnings, omitting each key when absent so the envelope is
+ * unchanged.
  */
 function buildJsonOptions(
   projectId: string | undefined,
-  profile: JsonExportProfileBlock | undefined,
   warnings: JsonExportWarning[] | undefined,
 ): BuildJsonExportOptions {
   return {
     ...(projectId !== undefined ? { projectId } : {}),
-    ...(profile !== undefined ? { profile } : {}),
     ...(warnings !== undefined ? { warnings } : {}),
   };
 }
 
 /** Build the content string for a single target. */
 function buildContent(inputs: BuildContentInputs): string {
-  const { target, pages, projectTitle, marpSource, projectId, profile, warnings } = inputs;
+  const { target, pages, projectTitle, marpSource, projectId, warnings } = inputs;
   switch (target) {
     case "llms-txt":
       return buildLlmsTxt(pages, projectTitle);
     case "llms-full-txt":
       return buildLlmsFullTxt(pages, projectTitle);
     case "json":
-      return buildJsonExport(pages, buildJsonOptions(projectId, profile, warnings));
+      return buildJsonExport(pages, buildJsonOptions(projectId, warnings));
     case "json-ld":
       return buildJsonLd(pages);
     case "graphml":
@@ -217,7 +211,6 @@ export async function runExport(root: string, options: ExportOptions = {}): Prom
     options.projectId !== undefined ? validateProjectId(options.projectId) : undefined;
   const pages = await withRawPageSource(root, process.env, (source) => collectExportPages(root, source, process.env));
   const projectTitle = resolveProjectTitle(root);
-  const profile = await buildExportProfileBlock(root);
   const warnings = await collectExportWarnings(root);
   verbose(`export: ${pages.length} pages collected`);
 
@@ -233,7 +226,7 @@ export async function runExport(root: string, options: ExportOptions = {}): Prom
       output.status("+", output.success(`Exported okf bundle → ${output.source(outDir)}`));
       continue;
     }
-    const content = buildContent({ target, pages, projectTitle, marpSource, projectId, profile, warnings });
+    const content = buildContent({ target, pages, projectTitle, marpSource, projectId, warnings });
     const outPath = path.join(root, EXPORT_DIR, TARGET_FILENAMES[target]);
     await atomicWrite(outPath, content);
     written.push(outPath);
@@ -274,14 +267,12 @@ export async function exportJson(
   options: ExportJsonOptions = {},
 ): Promise<JsonExportDocument> {
   const pages = await withRawPageSource(root, process.env, (source) => collectExportPages(root, source, process.env));
-  const profile = await buildExportProfileBlock(root);
   const warnings = await collectExportWarnings(root);
-  // Reconstruct build options from ONLY the public knob so a forged `profile` or
-  // `warnings` on the caller's object can never reach the document; the
-  // pipeline-computed `profile`/`warnings` are the sole source of those blocks.
+  // Reconstruct build options from ONLY the public knob so a forged `warnings`
+  // on the caller's object can never reach the document; the pipeline-computed
+  // `warnings` is the sole source of that block.
   const buildOptions: BuildJsonExportOptions = {
     ...(options.projectId !== undefined ? { projectId: options.projectId } : {}),
-    ...(profile !== undefined ? { profile } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
   return buildJsonExportDocument(pages, buildOptions);

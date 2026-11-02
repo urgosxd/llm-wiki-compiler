@@ -60,7 +60,6 @@ readonly SCHEMA_FILES=(
   "src/dimensions/wiki/migration_wiki_small_markers.sql"
   "src/dimensions/wiki/migration_wiki_log.sql"
   "src/dimensions/wiki/migration_wiki_derived.sql"
-  "src/dimensions/wiki/migration_wiki_profile.sql"
   "src/dimensions/wiki/migration_wiki_project_config.sql"
   "src/dimensions/wiki/migration_page_embeddings.sql"
   "src/dimensions/wiki/migration_wiki_jobs.sql"

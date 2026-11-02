@@ -62,15 +62,3 @@ it("fills past stale top-ranked binary pages and chunks with fresh live results"
   expect(pages.hits[0].score).toBeGreaterThan(pages.hits[1].score);
 });
 
-it("keeps a binary typed page eligible for context but excluded from search", async () => {
-  await writeEmbeddingStore(ctx.root, await storeFor(["notes/context-only"]));
-  const profile = { profile: { schemaVersion: 1, profileId: "fixture", entities: {
-    notes: { directory: "wiki/notes", retrieval: { includeInSearch: false, includeInContext: true } },
-  } }, loadedFrom: null, digest: "" } as LoadedProfile;
-  const search = await loadEmbeddingsForSearch(ctx.root);
-  const context = await loadEmbeddingsForContext(ctx.root);
-  expect((await findRelevantPagesV3(ctx.root, search.store!, "search", "question", 2, profile)).hits).toEqual([]);
-  const result = await findRelevantPagesV3(ctx.root, context.store!, "context", "question", 2, profile);
-  expect(result.hits.map(hit => hit.pageId)).toEqual(["notes/context-only"]);
-  expect(result.hits[0].title).toBe("context-only");
-});

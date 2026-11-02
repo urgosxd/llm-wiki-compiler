@@ -20,7 +20,7 @@ import {
 } from "../dimensions/wiki/page-scan-source.js";
 import * as output from "../utils/output.js";
 import type { PageSummary } from "../utils/types.js";
-import { loadNonDefaultProfile, collectEntityPagesWithMessages } from "../profile/block.js";
+import { loadNonDefaultProfile } from "../profile/block.js";
 import type { EntityPage } from "../profile/types.js";
 
 /**
@@ -76,17 +76,13 @@ export async function generateIndex(
 }
 
 /**
- * Collect the promoted typed entity pages for a NON-DEFAULT profile, or an empty
- * array for a DEFAULT project. Returns the path-confined `EntityPage`s the
- * collector already validated — nothing here re-reads or re-resolves a path.
- * @param root - Project root directory.
- * @returns The non-default profile's entity pages, or `[]` for a default project.
+ * No typed entity pages exist any more, so the index has no entity sections.
+ *
+ * @param _root - Project root directory (unused).
+ * @returns Always an empty list.
  */
-async function collectTypedPages(root: string): Promise<EntityPage[]> {
-  const loaded = await loadNonDefaultProfile(root);
-  if (loaded === undefined) return [];
-  const { pages } = await collectEntityPagesWithMessages(root, loaded);
-  return pages;
+async function collectTypedPages(_root: string): Promise<EntityPage[]> {
+  return [];
 }
 
 /** A scanned page paired with its parsed frontmatter. */

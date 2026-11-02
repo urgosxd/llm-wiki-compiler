@@ -1,5 +1,5 @@
 /**
- * @file src/profile/event-lint.ts
+ * @file src/linter/rules-events.ts
  * @description Event-store lint findings, making the append-only HASH-CHAINED
  * event store (`wiki/graph/events.jsonl`, CLP 4b) VISIBLE through the
  * profile-aware lint runner — additively, alongside the relation findings.
@@ -37,7 +37,7 @@ import {
 } from "../events/types.js";
 import { GraphDirConfinementError } from "../utils/jsonl-store.js";
 import { PrivateDirConfinementError } from "../utils/private-dir.js";
-import type { LintResult } from "../linter/types.js";
+import type { LintResult } from "./types.js";
 
 /** Rule id for a broken/forked/reordered chain or a head-anchor (truncation) mismatch. */
 const EVENT_CHAIN_BROKEN_RULE = "event-chain-broken";
@@ -57,7 +57,7 @@ const EVENT_STORE_PRIVATE_DIR_RULE = "event-store-private-dir";
 const EVENT_STORE_FULL_RULE = "event-store-full";
 
 /** Complete emitted event health IDs, including defensive store-read mappings. */
-export const EVENT_LINT_RULES = [
+const EVENT_LINT_RULES = [
   EVENT_CHAIN_BROKEN_RULE, EVENT_STORE_TORN_RULE, EVENT_STORE_CORRUPT_RULE,
   EVENT_STORE_TOO_NEW_RULE, EVENT_STORE_SYMLINK_RULE, EVENT_STORE_GRAPH_DIR_RULE,
   EVENT_STORE_PRIVATE_DIR_RULE, EVENT_STORE_FULL_RULE,

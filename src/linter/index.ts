@@ -28,9 +28,9 @@ import { buildProjectFreshnessSnapshot } from "../freshness/index.js";
 import type { FreshnessSnapshot } from "../freshness/types.js";
 import { loadProfile } from "../profile/load.js";
 import {
-  groupByDeclaredTier, tieredReport, type LintTierV1, type TieredLintReportV1, type TieredResultGroupV1,
+  tieredReport, type LintTierV1, type TieredLintReportV1, type TieredResultGroupV1,
 } from "./tiers.js";
-import { collectProfileLintFindings, collectProfileLintInput } from "../profile/lint.js";
+import { checkEventChain } from "./rules-events.js";
 import { collectAllPages, type PageScope } from "./rules-shared.js";
 import { corpusFromRawPages, withLintCorpus, type LintCorpus } from "./corpus.js";
 import { withRawPageSource, withSourceDocuments } from "../dimensions/wiki/page-source-seam.js";
@@ -57,6 +57,11 @@ const RULES_WITHOUT_SCHEMA: ReadonlyArray<{ rule: LintRule; tier: LintTierV1 }> 
   { rule: checkContradictedPages, tier: "provider-judgement" },
   { rule: checkInferredWithoutCitations, tier: "provider-judgement" },
   { rule: checkJournalHealth, tier: "deterministic" },
+  // The event chain's own integrity: tamper-VISIBLE, not a judgement about a page.
+  // It used to run inside the profile lint group, which made a security property
+  // depend on a profile being installed. The chain survives the profile system, so
+  // its check belongs here, beside the other store-health rules.
+  { rule: checkEventChain, tier: "deterministic" },
   // Embeddings not yet computed: a derived view is behind, nothing is wrong.
   { rule: checkPendingEmbeddings, tier: "derived-view" },
 ];
@@ -92,26 +97,6 @@ function summarize(results: LintResult[]): LintSummary {
   };
 }
 
-/**
- * Append profile-aware entity findings when the project runs a NON-default
- * profile. A default/built-in profile (`loadedFrom === null`) returns the
- * default results UNCHANGED, so the default lint output stays byte-identical.
- */
-async function profileGroups(root: string, defaultResults: readonly LintResult[]): Promise<TieredResultGroupV1[]> {
-  const { profile, loadedFrom } = await loadProfile(root);
-  if (loadedFrom === null) return [];
-  // One entity collection feeds every profile check, including the declared
-  // numeric confidence judgement, so a tiered view never walks entities twice.
-  const collected = await collectProfileLintFindings(await collectProfileLintInput(root, profile));
-  // Only an overlapping default confidence finding wins; unrelated duplicates survive.
-  const defaultConfidenceFiles = new Set(
-    defaultResults.filter((r) => r.rule === "low-confidence").map((r) => r.file),
-  );
-  const results = collected.results.filter((r) => r.rule !== "low-confidence" || !defaultConfidenceFiles.has(r.file));
-  // Profile rule ids are declared beside their emitters; grouping preserves the
-  // emission order and refuses any id nobody declared.
-  return groupByDeclaredTier(results, collected.ruleTiers);
-}
 
 /**
  * Run every registered rule once, keeping each rule's results paired with the
@@ -203,7 +188,7 @@ async function collectGroupsInScope(root: string, scope: PageScope): Promise<Tie
     Promise.all(RULES_WITH_FRESHNESS.map(async (entry) => ({ tier: entry.tier, results: await entry.rule(root, freshness) }))),
   ]);
   const defaultResults = [...plain, ...schemaGroups, ...freshnessGroups];
-  return [...defaultResults, ...await profileGroups(root, defaultResults.flatMap((group) => group.results))];
+  return defaultResults;
 }
 
 /**

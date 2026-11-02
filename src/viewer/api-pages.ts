@@ -16,7 +16,6 @@
 
 import type { ServerResponse } from "http";
 import { pageTimestamp, viewerPageKind } from "./page-fields.js";
-import { buildPipelineEnvelope } from "./pipeline.js";
 import { assertSafeSlug, PathSafetyError } from "./path-safety.js";
 import { tryRenderBody, writeJson, writeJsonError, writeRenderFailed } from "./respond.js";
 import { UNRESOLVED_CITATION_CODE } from "./types.js";
@@ -38,7 +37,7 @@ export function handleApiPages(res: ServerResponse, snapshot: ViewerSnapshot): v
   writeJson(res, 200, {
     project: snapshot.project,
     stateStatus: snapshot.stateStatus,
-    profileId: snapshot.profile?.profileId ?? DEFAULT_PROFILE_ID,
+    profileId: DEFAULT_PROFILE_ID,
     counts: {
       concepts: snapshot.counts.concepts,
       queries: snapshot.counts.queries,
@@ -54,45 +53,7 @@ export function handleApiPages(res: ServerResponse, snapshot: ViewerSnapshot): v
     recentPages: snapshot.recentPages,
     pages: snapshot.pages.map(pageListRow),
     updatedAt: snapshot.generatedAt,
-    ...profileProblemFields(snapshot.profile),
-    ...profilePipelineField(snapshot),
   });
-}
-
-/**
- * The active profile's lifecycle and relation model, serialised ONLY when a
- * non-default profile is active — the same omitted-when-absent rule
- * {@link profileProblemFields} follows, and for the same reason: a default
- * project declares no lifecycle and no relation type, so its envelope must not
- * grow a key describing either.
- *
- * The counts inside it (valid pages per type, the unfiltered state tally, live
- * relation counts) already existed on `snapshot.profile`; the declarations come
- * from the loaded pack via `snapshot.pipeline`. Joining them here rather than on
- * the client means the panel reads one list instead of three maps it would have
- * to align itself.
- */
-function profilePipelineField(snapshot: ViewerSnapshot): Record<string, unknown> {
-  const pipeline = buildPipelineEnvelope(snapshot.pipeline, snapshot.profile);
-  return pipeline ? { profilePipeline: pipeline } : {};
-}
-
-/**
- * The profile collector's problems, serialised ONLY when there is at least one.
- *
- * The data exists so a non-default project with a bad entity directory or an
- * invalid entity page is never reported as silently healthy — but it stopped at
- * the snapshot until now, so the header could still read ALL CLEAR over a broken
- * project. Omitted-when-clean keeps a default-profile envelope byte-identical and
- * lets the client treat absence as "nothing wrong" without a second flag.
- *
- * Both fields ship together because `problems` is CAPPED (`PROFILE_PROBLEM_CAP`)
- * while `problemTotal` is the true count: without the total, a truncated list
- * would read as the whole set.
- */
-function profileProblemFields(profile: ViewerSnapshot["profile"]): Record<string, unknown> {
-  if (!profile?.problems?.length) return {};
-  return { profileProblems: profile.problems, profileProblemTotal: profile.problemTotal };
 }
 
 /**

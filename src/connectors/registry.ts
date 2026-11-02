@@ -34,6 +34,6 @@ export function discoverableConnectors(): readonly ConnectorDef[] {
 }
 
 /** Resolve one compiled-in connector definition by id. */
-export function getConnectorDef(id: string): ConnectorDef | undefined {
+function getConnectorDef(id: string): ConnectorDef | undefined {
   return CONNECTORS.find((def) => def.id === id);
 }

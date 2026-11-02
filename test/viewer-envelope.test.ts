@@ -99,28 +99,3 @@ async function seedBrokenProfileProject(): Promise<string> {
   return root;
 }
 
-describe("/api/pages envelope — profile collector problems", () => {
-  it("serialises the collector's problems and their true total", async () => {
-    const env = await fetchEnvelope(await seedBrokenProfileProject());
-    expect(env.profileProblems?.length).toBeGreaterThan(0);
-    expect(env.profileProblemTotal).toBe(env.profileProblems?.length);
-    expect(env.profileProblems?.[0].message).toContain("title");
-  });
-
-  /**
-   * The docstring on `ProfileSummaryBlock.problems` promises project-relative
-   * paths, but a docstring is not a guarantee: an absolute path already leaked
-   * through `/api/health` once on this branch. Assert it at the wire, where the
-   * value crosses into the DOM.
-   */
-  it("never puts an absolute or escaping path on the wire", async () => {
-    const root = await seedBrokenProfileProject();
-    const env = await fetchEnvelope(root);
-    for (const view of env.profileProblems ?? []) {
-      if (view.path === undefined) continue;
-      expect(path.isAbsolute(view.path)).toBe(false);
-      expect(view.path.startsWith("..")).toBe(false);
-      expect(view.path).not.toContain(root);
-    }
-  });
-});

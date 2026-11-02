@@ -29,22 +29,35 @@ interface QueryPublicationOptions {
 
 type PublicationResult = Pick<QueryResult, "saved" | "candidateId" | "publicationRefusal">;
 type PublicationRefusal = NonNullable<QueryResult["publicationRefusal"]>;
-let afterDefaultProfileCheckForTest: (() => Promise<void>) | undefined;
+let afterSaveGateForTest: (() => Promise<void>) | undefined;
 
 /** Reject an invalid reviewed-save request before provider or filesystem work. */
 export function assertQuerySaveOptions(options: { save?: boolean; review?: boolean }): void {
   if (options.review && !options.save) throw new Error("Query review requires save.");
 }
 
-/** Test-only seam after the under-lock profile decision, before fresh resolution. */
+/** Test-only seam after the under-lock save gate, before fresh citation resolution. */
 export function setQuerySaveTestHookForTest(hook: (() => Promise<void>) | undefined): void {
-  afterDefaultProfileCheckForTest = hook;
+  afterSaveGateForTest = hook;
 }
 
-/** Refuse profile-disabled direct writes with the existing actionable warning. */
+/**
+ * Refuse the direct `query --save` write in a project with a non-default profile.
+ *
+ * That condition can no longer hold: there is one fixed profile, so
+ * `loadNonDefaultProfile` returns `undefined` for every project and this refusal
+ * is unreachable. The saved-query write path was ALREADY trusted for a plain
+ * project — the guard existed because a profile-enabled project's write routing
+ * had not caught up — so direct saves working everywhere is the correct outcome,
+ * not a regression.
+ *
+ * Kept rather than deleted so the shape of the gate stays visible if a second
+ * profile authority ever returns.
+ */
 function profileRefusal(): PublicationResult {
-  const message = "query --save is disabled in profile-enabled projects (the saved-query "
-    + "write path is not yet trust-routed). Run without --save, or use the default profile.";
+  const message = "query --save (direct write) is disabled in profile-enabled projects "
+    + "(the saved-query write path is not yet trust-routed there). Run without --save, "
+    + "or use `--review` to stage it as a candidate.";
   output.status("!", output.warn(message));
   return { publicationRefusal: { code: "profile-disabled", targets: [], message } };
 }
@@ -70,10 +83,11 @@ export async function maybeSaveQueryPage(options: QueryPublicationOptions): Prom
   if (!save) return {};
   await acquireMutationLockBlocking(root, "ordinary");
   try {
-    // Only the direct write is gated by the profile: a reviewed proposal is the
-    // trust-routed destination and its approval goes through the planner.
+    // Only a direct write in a PROFILE-ENABLED project is gated; a reviewed
+    // proposal is the trust-routed destination and its approval goes through the
+    // planner. With one fixed profile this never fires.
     if (!review && await loadNonDefaultProfile(root)) return profileRefusal();
-    await afterDefaultProfileCheckForTest?.();
+    await afterSaveGateForTest?.();
     const document = options.document ?? buildQueryDocument(question, answer, new Date().toISOString()).document;
     const validation = await checkCitations(root, document, review ? "proposal" : "direct", slugify(question));
     if ("publicationRefusal" in validation) return validation;

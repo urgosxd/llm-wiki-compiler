@@ -76,19 +76,6 @@ it.each([
   expect(stderr).not.toHaveBeenCalled();
 });
 
-it("returns profile-disabled quietly for a direct save", async () => {
-  await writeFile(path.join(ctx.dir, ".llmwiki/profile.json"), JSON.stringify(SAMPLE_PROFILE));
-  const before = await citationWorkspaceBytes(ctx.dir);
-  const log = vi.spyOn(console, "log").mockImplementation(() => {});
-  const result = await createWiki({ root: ctx.dir }).query("Explain alpha", { save: true });
-  expect(result.answer).toBe("Retained [[alpha]].");
-  expect(result.publicationRefusal).toMatchObject({ code: "profile-disabled", targets: [] });
-  expect(result.saved).toBeUndefined();
-  expect(result.candidateId).toBeUndefined();
-  expect(await citationWorkspaceBytes(ctx.dir)).toEqual(before);
-  expect(log).not.toHaveBeenCalled();
-  expect(callClaude).toHaveBeenCalledTimes(2);
-});
 
 it("stages quietly in a profile-enabled project because the candidate is the trust-routed destination", async () => {
   await writeFile(path.join(ctx.dir, ".llmwiki/profile.json"), JSON.stringify(SAMPLE_PROFILE));

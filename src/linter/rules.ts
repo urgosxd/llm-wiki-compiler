@@ -51,7 +51,7 @@ export {
 
 /** Minimum body length (in characters) for a page to be considered non-empty. */
 /** Rule id for a page whose body is too short to carry a claim; the profile registry declares it by this name. */
-export const EMPTY_PAGE_RULE = "empty-page";
+const EMPTY_PAGE_RULE = "empty-page";
 const MIN_BODY_LENGTH = 50;
 
 /** Pattern matching [[Wikilink Title]] references in markdown content. */
@@ -244,7 +244,7 @@ export async function checkEmptyPages(root: string): Promise<LintResult[]> {
  * @param page - The page's frontmatter title (if any), markdown body, and path.
  * @returns A single `empty-page` warning, or an empty array when not empty.
  */
-export function checkPageEmpty(page: {
+function checkPageEmpty(page: {
   title?: string;
   body: string;
   filePath: string;

@@ -27,9 +27,7 @@ import { collectNamespacedPageRecords, buildEmbeddingText } from "./embeddings-p
 import { hashChunkText, splitIntoChunks } from "./retrieval.js";
 import { parseQualifiedPageId, qualifiedPageId, type PageId } from "./page-id.js";
 import { pageEmbedSurfaces } from "./embed-eligibility.js";
-import { collectEntityPages, invalidEntityPagePaths } from "../profile/collect.js";
 import type { EmbeddingPageSource } from "../dimensions/wiki/page-scan-source.js";
-import { isDefaultProfile } from "../profile/default.js";
 import type { LoadedProfile } from "../profile/types.js";
 import type { EligibleLivePage } from "./embeddings-migrate.js";
 import type { PageRecord } from "../pages/read.js";
@@ -66,9 +64,10 @@ export async function collectEligibleLivePages(
     // every page would be re-embedded as new, or nothing embedded at all.
     : (await pageSource.collectNamespaced()).map(({ namespace, record }) =>
       toCollectedPage(qualifiedPageId(namespace, record.slug), record));
-  if (isDefaultProfile(profile.profile)) return reserved;
-  const typed = await collectTypedPages(root, profile);
-  return [...reserved, ...typed];
+  // Every project is the default profile now: there are no declared entity types,
+  // so there are no typed pages to collect beyond the two reserved namespaces.
+  void profile;
+  return reserved;
 }
 
 /** What the disk says about one requested page: present, PROVABLY absent, or not answerable right now. */
@@ -130,26 +129,6 @@ async function collectReservedPages(root: string): Promise<CollectedPage[]> {
   );
 }
 
-/** Collect typed entity pages, gated by eligibility + profile validity. */
-async function collectTypedPages(root: string, profile: LoadedProfile): Promise<CollectedPage[]> {
-  const { pages, problems } = await collectEntityPages(root, profile.profile);
-  const invalidPaths = invalidEntityPagePaths(problems);
-  const out: CollectedPage[] = [];
-  for (const page of pages) {
-    const retrieval = profile.profile.entities[page.entityType]?.retrieval;
-    const isProfileInvalid = invalidPaths.has(page.filePath);
-    const surfaces = pageEmbedSurfaces({ meta: page.frontmatter, pageKind: "typed", retrieval, isProfileInvalid });
-    if (!surfaces.embedded) continue;
-    const record: PageRecord = {
-      slug: page.slug,
-      title: page.title ?? page.slug,
-      summary: typeof page.frontmatter.summary === "string" ? page.frontmatter.summary : "",
-      body: page.body.trim(),
-    };
-    out.push(toCollectedPage(qualifiedPageId(page.entityType, page.slug), record));
-  }
-  return out;
-}
 
 /** Build a {@link CollectedPage} from a pageId + record, computing live hashes. */
 function toCollectedPage(pageId: PageId, record: PageRecord): CollectedPage {

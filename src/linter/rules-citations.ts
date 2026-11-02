@@ -25,7 +25,7 @@ import type { LintResult } from "./types.js";
 import { lintSourceText } from "./corpus.js";
 
 /** Rule id for a claim citation that does not parse; the profile registry declares it by this name. */
-export const MALFORMED_CLAIM_CITATION_RULE = "malformed-claim-citation";
+const MALFORMED_CLAIM_CITATION_RULE = "malformed-claim-citation";
 import {
   CITATION_PATTERN,
   readLintPages,

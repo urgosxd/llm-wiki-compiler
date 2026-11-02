@@ -58,7 +58,6 @@ function renderHumanStatus(status: WikiStatus): void {
   output.status("i", output.dim(`Last compiled: ${status.lastCompiledAt ?? "never"}`));
   renderFreshness(status);
   renderQueues(status);
-  renderProfile(status);
   for (const warning of status.warnings ?? []) {
     output.status("!", output.warn(warning.message));
   }
@@ -95,18 +94,6 @@ function renderQueues(status: WikiStatus): void {
       `Pending review: ${status.pendingCandidates} candidate(s) — run \`llmwiki review list\``,
     ));
   }
-}
-
-/** One-line active-profile summary; silent for the default profile. */
-function renderProfile(status: WikiStatus): void {
-  if (!status.profile) return;
-  const entityTotal = Object.values(status.profile.entityCounts).reduce((sum, n) => sum + n, 0);
-  const problems = status.profile.problemTotal
-    ? `, ${status.profile.problemTotal} problem(s) — run \`llmwiki profile validate\``
-    : "";
-  output.status("i", output.info(
-    `Profile: ${status.profile.profileId} (${entityTotal} typed page(s)${problems})`,
-  ));
 }
 
 /** Per-state recovery hints; each names the command that actually fixes that state. */

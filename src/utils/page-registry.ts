@@ -36,7 +36,6 @@ import { hashChunkText, splitIntoChunks } from "./retrieval.js";
 import { buildEmbeddingText } from "./embeddings-pages.js";
 import { pageEmbedSurfaces } from "./embed-eligibility.js";
 import { isSlugSafe } from "../profile/identity.js";
-import { validateEntityFields } from "../profile/field-contract.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "./constants.js";
 import type { PageRecord } from "../pages/read.js";
 import type { ProfilePack, LoadedProfile, EntityTypeDef } from "../profile/types.js";
@@ -150,15 +149,10 @@ export interface LiveRegistryEntry {
  * @param profile - Optional profile pack; when present each entity type's
  *   `directory` is added under its entity-type name as the namespace key.
  */
-export function buildNamespaceDirs(profile?: ProfilePack): Map<string, string> {
+export function buildNamespaceDirs(_profile?: ProfilePack): Map<string, string> {
   const map = new Map<string, string>();
   map.set("concepts", CONCEPTS_DIR);
   map.set("queries", QUERIES_DIR);
-  if (profile) {
-    for (const [entityType, def] of Object.entries(profile.entities)) {
-      map.set(entityType, def.directory);
-    }
-  }
   return map;
 }
 
@@ -185,11 +179,10 @@ type SurfaceName = "search" | "context";
  * search-fallback, context-fallback) — separated from the surface-flag check so
  * each caller can ask its own surface question without re-deriving validity.
  */
-function isTypedScanProfileValid(scan: RawEntityScan, def: EntityTypeDef): boolean {
+function isTypedScanProfileValid(scan: RawEntityScan): boolean {
   if (!isSlugSafe(scan.stem)) return false;
   const declaredSlug = typeof scan.frontmatter.slug === "string" ? scan.frontmatter.slug : undefined;
-  if (declaredSlug !== undefined && declaredSlug !== scan.stem) return false;
-  return validateEntityFields(scan.frontmatter, def).length === 0;
+  return declaredSlug === undefined || declaredSlug === scan.stem;
 }
 
 /**
@@ -198,10 +191,13 @@ function isTypedScanProfileValid(scan: RawEntityScan, def: EntityTypeDef): boole
  * (context) flag is not `false`. Routes through `pageEmbedSurfaces` so the
  * read-side fallback and the write gate share one truth table (F2/F3).
  */
-export function isTypedScanSurfaceEligible(scan: RawEntityScan, def: EntityTypeDef, surface: SurfaceName): boolean {
-  if (!isTypedScanProfileValid(scan, def)) return false;
-  const surfaces = pageEmbedSurfaces({ meta: scan.frontmatter, pageKind: "typed", retrieval: def.retrieval, isProfileInvalid: false });
-  return surface === "search" ? surfaces.inSearch : surfaces.inContext;
+export function isTypedScanSurfaceEligible(scan: RawEntityScan, _def: EntityTypeDef, surface: SurfaceName): boolean {
+  // `retrieval` was a declared entity-type setting. With the two namespaces fixed
+  // and nothing declarable, both surfaces always apply, so the surface argument
+  // no longer changes the answer — it is kept so call sites stay explicit about
+  // which question they are asking.
+  void surface;
+  return isTypedScanProfileValid(scan);
 }
 
 /**
@@ -211,10 +207,8 @@ export function isTypedScanSurfaceEligible(scan: RawEntityScan, def: EntityTypeD
  * Mirrors `collectTypedPages` + `pageEmbedSurfaces` so the read prefilter and
  * the write gate never diverge (F2).
  */
-function isTypedScanEligible(scan: RawEntityScan, def: EntityTypeDef): boolean {
-  if (!isTypedScanProfileValid(scan, def)) return false;
-  const surfaces = pageEmbedSurfaces({ meta: scan.frontmatter, pageKind: "typed", retrieval: def.retrieval, isProfileInvalid: false });
-  return surfaces.embedded;
+function isTypedScanEligible(scan: RawEntityScan, _def: EntityTypeDef): boolean {
+  return isTypedScanProfileValid(scan);
 }
 
 /**

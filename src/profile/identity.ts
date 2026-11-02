@@ -14,7 +14,7 @@ import { slugify } from "../utils/markdown.js";
 import type { SlugSafe, EntityId } from "./types.js";
 
 /** Error raised when an identity primitive is given an invalid value. */
-export class EntityIdError extends Error {
+class EntityIdError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "EntityIdError";
@@ -28,7 +28,7 @@ import { isSlugSafe, isSafeFilenameComponent } from "../utils/page-identity.js";
  * Assert that `s` is slug-safe, returning it branded as SlugSafe. This is the
  * ONLY way to obtain a SlugSafe value. Throws EntityIdError otherwise.
  */
-export function assertSlugSafe(s: string): SlugSafe {
+function assertSlugSafe(s: string): SlugSafe {
   if (!isSlugSafe(s)) {
     throw new EntityIdError(`Not a slug-safe string: ${JSON.stringify(s)}`);
   }
@@ -75,7 +75,7 @@ function stemFromBasename(filePath: string): string {
  * A slugified suggestion derived from a file's basename, for use ONLY in error
  * messages (e.g. "did you mean foo-bar?"). NEVER used on the id path.
  */
-export function suggestSlugFromBasename(filePath: string): string {
+function suggestSlugFromBasename(filePath: string): string {
   return slugify(stemFromBasename(filePath));
 }
 

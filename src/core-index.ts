@@ -16,7 +16,6 @@ export type {
 export type {
   JsonExportDocument,
   ExportJsonOptions,
-  JsonExportProfileBlock,
 } from "./export/json-export.js";
 export {
   ProviderUnavailableError,

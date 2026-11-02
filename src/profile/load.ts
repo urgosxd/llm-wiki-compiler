@@ -1,64 +1,30 @@
 /**
- * Fail-closed, binding-aware effective-profile loader.
+ * @file The project's profile, which is now a CONSTANT.
  *
- * `loadProfile` is the UNIVERSAL effective-authority resolver (design section 8.2):
- * every reader that loads a project's profile authorizes against the EXACT active
- * product and its knowledge profile when a binding is present, and against the
- * legacy `.llmwiki/profile.json`-or-built-in-default otherwise. It first classifies
- * the runtime mode via the active-product binding, then:
- *   - ABSENT binding → the LEGACY path ({@link loadLegacyProfile}), byte-identical
- *     to the pre-binding loader (same profile, `loadedFrom`, and digest);
- *   - PRESENT, healthy binding → the product's knowledge profile;
- *   - binding beside a legacy `profile.json` → {@link ProductAuthorityConflictError};
- *   - present-but-unhealthy binding → {@link ActiveProductUnavailableError}, NEVER
- *     a silent fall back to legacy/default.
+ * This module used to be a fail-closed, binding-aware loader: it classified the
+ * runtime mode, read a Stack row or `.llmwiki/profile.json`, validated the
+ * document against an ajv schema, and content-addressed the result. Every one of
+ * those steps existed to answer "which profile is installed", and that question
+ * no longer has more than one answer — a wiki has `concepts` and `queries`, they
+ * live at fixed directories, and nothing is declarable about them.
  *
- * The LEGACY path is itself fail-closed, mirroring the review-config pattern: a
- * MISSING file falls back to the built-in default profile, but a file that is
- * PRESENT yet broken (unparseable JSON or schema-invalid) is a hard error. A typo
- * in a present profile must never silently degrade the project to the default
- * profile, because that would change every entity's identity and retrieval
- * behaviour without warning.
+ * What survives is the OBSERVATION half, which callers still legitimately need:
+ * a profile object, its digest, and a `loadedFrom` marker. `loadedFrom` is `null`
+ * because there is no file or row to name, and callers that treated `null` as
+ * "the built-in default" — the linter and the viewer skip profile-only work on it
+ * — are exactly right now.
  *
- * The returned `LoadedProfile` carries the resolved pack, its absolute source
- * path (or `null` for the built-in default), and its canonical digest.
- *
- * Confinement: the legacy read is routed through the confined `.llmwiki` dir
- * primitive (`resolveExistingConfinedPrivateDir`) and the leaf is opened with
- * `O_NOFOLLOW` so a symlinked `.llmwiki` dir OR a symlinked `profile.json` leaf
- * FAILS CLOSED (never reads out-of-tree bytes). An `fstat`-based size cap guards
- * against reading a multi-GB or `/dev/zero`-backed target before `JSON.parse`.
- *
- * ACYCLIC RULE: this module imports `products/binding`, never the reverse. The
- * binding resolver loads the knowledge-profile member and validates it directly
- * via `validateProfile`/`profileDigest`; it must never call back into `loadProfile`.
+ * A reader looking for "how do I configure a project" should stop looking: the
+ * answer is the Stack id, and everything else is a constant in `default.ts`.
  */
 
-import { constants as fsConstants } from "node:fs";
-import { openFileNoFollow } from "../utils/no-follow-open.js";
-import type { FileHandle } from "node:fs/promises";
-import path from "node:path";
-import { PROFILE_FILE, MAX_PROFILE_BYTES } from "../utils/constants.js";
-import {
-  withProfileSource,
-  type StoredProfileRow,
-} from "../dimensions/wiki/profile-source.js";
-import { resolveExistingConfinedPrivateDir, PrivateDirConfinementError } from "../utils/private-dir.js";
 import { DEFAULT_PROFILE } from "./default.js";
-import { validateProfile } from "./validate.js";
 import { profileDigest } from "./digest.js";
 import type { LoadedProfile } from "./types.js";
 
-/** Error raised when a present profile file cannot be loaded or validated. */
-export class ProfileLoadError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ProfileLoadError";
-  }
-}
 
-/** The LoadedProfile for the built-in default profile (no source file). */
-function defaultLoadedProfile(): LoadedProfile {
+/** The one profile a project has, with its content-address. */
+function loadedProfile(): LoadedProfile {
   return {
     profile: DEFAULT_PROFILE,
     loadedFrom: null,
@@ -67,152 +33,25 @@ function defaultLoadedProfile(): LoadedProfile {
 }
 
 /**
- * Open `profile.json` with `O_NOFOLLOW` so a symlinked leaf fails the `open`
- * call with `ELOOP` — never reading out-of-tree bytes. Returns `null` when
- * absent (ENOENT → caller yields default). Throws `ProfileLoadError` on
- * symlink (`ELOOP`) or any other unexpected open error.
+ * The project's profile.
+ *
+ * The `root` parameter is retained deliberately: callers pass it today and a
+ * future reader may need it, but nothing about the answer depends on it.
+ *
+ * @param _root - Absolute project root directory (unused).
+ * @returns The one profile, its `loadedFrom` marker and its digest.
  */
-async function openProfileNoFollow(filePath: string): Promise<FileHandle | null> {
-  try {
-    return await openFileNoFollow(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return null;
-    if (code === "ELOOP") throw new ProfileLoadError(`${PROFILE_FILE} is a symlink — refusing to follow`);
-    throw new ProfileLoadError(`Failed to read ${PROFILE_FILE}: ${describe(err)}`);
-  }
+export async function loadProfile(_root: string): Promise<LoadedProfile> {
+  return loadedProfile();
 }
 
 /**
- * Resolve the confined `.llmwiki` dir, mapping a symlinked/escaping dir to a
- * {@link ProfileLoadError} — the pre-existing read-path confinement contract. A
- * clean project (no `.llmwiki`) resolves to `null` WITHOUT creating the directory.
- */
-async function resolveConfinedProfileDir(root: string): Promise<string | null> {
-  try {
-    return await resolveExistingConfinedPrivateDir(root);
-  } catch (err) {
-    if (err instanceof PrivateDirConfinementError) {
-      throw new ProfileLoadError(`${PROFILE_FILE} directory is a symlink — refusing to follow`);
-    }
-    throw err;
-  }
-}
-
-/**
- * The fail-closed profile loader: a Stack's row first, then `<root>/.llmwiki/profile.json`,
- * yielding the built-in default when neither exists and failing closed on a
- * present-but-broken or confined file.
+ * The canonical DIGEST of the project's profile — the content-address a host may
+ * record to confirm which configuration it verified against.
  *
  * @param root - Absolute project root directory.
- * @returns The resolved, validated profile with its source marker and digest.
- * @throws {ProfileLoadError} When a present file is unparseable, invalid, or confined.
- */
-async function loadProjectProfile(root: string): Promise<LoadedProfile> {
-  // Rows first: when the project is bound to a Stack, its profile lives there and
-  // there is no file to read. A Stack WITHOUT a profile is not a broken project -- it
-  // is one that never installed a profile -- so it yields the built-in default, the
-  // same answer the file backend gives for an absent file.
-  const fromRows = await withProfileSource(process.env, async (source) =>
-    source === undefined ? null : (await source.read()) ?? null,
-  );
-  if (fromRows !== null) return loadProfileFromRow(fromRows);
-  const dir = await resolveConfinedProfileDir(root);
-  // Absent .llmwiki dir means no profile file — yield the built-in default without
-  // creating the directory (read-only contract: a clean project stays clean).
-  if (dir === null) return defaultLoadedProfile();
-  // Use the realpath-resolved confined path for the open (confinement) but keep the
-  // original logical path for `loadedFrom` so callers see a stable, user-facing path.
-  const confinedFilePath = path.join(dir, path.basename(PROFILE_FILE));
-  const logicalFilePath = path.join(root, PROFILE_FILE);
-  const handle = await openProfileNoFollow(confinedFilePath);
-  if (handle === null) return defaultLoadedProfile();
-  let raw: string;
-  try {
-    const size = (await handle.stat()).size;
-    if (size > MAX_PROFILE_BYTES) {
-      throw new ProfileLoadError(`${PROFILE_FILE} is ${size} bytes — exceeds the ${MAX_PROFILE_BYTES}-byte cap`);
-    }
-    raw = await handle.readFile("utf-8");
-  } finally {
-    await handle.close();
-  }
-  const parsed = parseOrThrow(raw, logicalFilePath);
-  const { profile } = validateProfile(parsed);
-  return { profile, loadedFrom: logicalFilePath, digest: profileDigest(profile) };
-}
-
-/**
- * Validate one stored profile row into a {@link LoadedProfile}.
- *
- * Three things happen here, and each one is deliberate:
- *
- * 1. **The document goes through the SAME validator the file does.** A row is not more
- *    trusted than a file just because it came from Postgres.
- * 2. **The digest is recomputed and compared.** A stored digest alone would let a row
- *    be edited while a projection still believed it held the profile it verified
- *    against. A mismatch is a load error, not a silent new authority.
- * 3. **`loadedFrom` is a non-null marker.** Four callers treat `loadedFrom === null` as
- *    "built-in default" (the linter and the viewer skip work entirely on it), so a row
- *    that reported null would make an installed profile invisible to them.
- *
- * @param row - The stored document and its recorded digest.
- * @returns The validated profile, its source marker and its digest.
- * @throws {ProfileLoadError} When the row fails validation or its digest disagrees.
- */
-function loadProfileFromRow(row: StoredProfileRow): LoadedProfile {
-  const { profile } = validateProfile(row.document);
-  const digest = profileDigest(profile);
-  if (digest !== row.digest) {
-    throw new ProfileLoadError(
-      `Stored ${PROFILE_FILE} does not match its recorded digest — refusing to use it`,
-    );
-  }
-  return { profile, loadedFrom: `${PROFILE_FILE} (stack)`, digest };
-}
-
-/**
- * Load the projection's profile: the Stack's row, or the built-in default.
- *
- * There is exactly ONE authority. A build with no product bindings cannot produce
- * a `product`, `conflict` or `unavailable` state, so the previous dispatch over
- * four runtime modes resolved to `legacy` on every call — 123 LOC of authority
- * machinery whose other three branches were unreachable. It is gone, and what
- * remains is the order the row path already had.
- *
- * Rows first: when the project is bound to a Stack, its profile lives there.
- * Absent `.llmwiki/profile.json` falls back to the built-in default WITHOUT
- * creating the directory, so a clean project stays clean.
- *
- * @param root - Absolute project root directory.
- * @returns The resolved profile, its source marker and its digest.
- * @throws {ProfileLoadError} When a present `profile.json` is unparseable, invalid or confined.
- */
-export async function loadProfile(root: string): Promise<LoadedProfile> {
-  return loadProjectProfile(root);
-}
-
-/**
- * The canonical DIGEST of the project's ACTIVE profile — the exact content-address
- * {@link loadProfile} binds. A generic, read-only profile OBSERVATION: a host or product
- * can confirm which profile configuration is active (e.g. to bind a live projection to the
- * profile it verified against) WITHOUT the loader itself being public. Carries no product
- * vocabulary — it reads whatever profile is installed.
+ * @returns Lowercase hex SHA-256 of the canonical profile form.
  */
 export async function activeProfileDigest(root: string): Promise<string> {
   return (await loadProfile(root)).digest;
-}
-
-/** Parse profile JSON, failing closed (never falling back) on broken content. */
-function parseOrThrow(raw: string, filePath: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch (err) {
-    throw new ProfileLoadError(`Invalid JSON in ${filePath}: ${describe(err)}`);
-  }
-}
-
-/** Extract a human-readable message from an unknown thrown value. */
-function describe(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

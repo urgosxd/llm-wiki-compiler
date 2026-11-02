@@ -25,7 +25,7 @@ import { safeReadFile, parseFrontmatter } from "../utils/markdown.js";
 import { extractWikilinkSlugs } from "../wiki/collect.js";
 import { assertSafeSlug } from "../viewer/path-safety.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
-import { loadNonDefaultProfile, collectEntityPagesWithMessages } from "../profile/block.js";
+import { loadNonDefaultProfile } from "../profile/block.js";
 import { journalHealthWarning } from "../trust/journal-health-warning.js";
 import { toEntityPageView } from "../profile/types.js";
 import type { EntityPageView, EntityProblemView, EntityPage } from "../profile/types.js";
@@ -302,32 +302,22 @@ function profileOffset(cursor: string | undefined, name: string): number {
 }
 
 /**
- * For a NON-DEFAULT profile only, build the additive `profile` block from the
- * content-carrying entity collector. Returns `undefined` for the built-in
- * default so the legacy envelope is unchanged — gated through the shared
- * {@link loadNonDefaultProfile} primitive, exactly as `status` does.
+ * No typed pages exist any more.
  *
- * Honors `includeBody`: each view's `body` is OMITTED (key absent) when bodies
- * are not requested, mirroring how the legacy `pages` block omits bodies. Maps
- * the internal `EntityPage` to the public `EntityPageView` so the absolute
- * `filePath` never reaches the surface.
+ * `concepts` and `queries` stay as page namespaces, but they declare no fields,
+ * so there is no "typed entity page" distinct from an ordinary wiki page and no
+ * per-type block to attach. The `profile` key is therefore always absent, which
+ * is exactly what a default project produced before.
  *
- * BOUNDED + PAGINATED: entity pages are deterministically sorted by `id` (entity
- * collection order is filesystem-dependent and unstable), then windowed by the
- * SAME `limit` as the legacy section, offset by `profileCursor`. `total` reports
- * the full count and `cursor` carries the next offset (absent when exhausted) —
- * so a large profile no longer returns an unbounded, body-bearing payload.
+ * @param _root - Project root directory (unused).
+ * @param _options - The caller's listing options (unused).
+ * @returns Always `undefined`.
  */
 async function collectProfileBlock(
-  root: string,
-  options: ListPagesOptions,
+  _root: string,
+  _options: ListPagesOptions,
 ): Promise<ListPagesProfileBlock | undefined> {
-  const loaded = await loadNonDefaultProfile(root);
-  if (loaded === undefined) return undefined;
-  const { pages, problems } = await collectEntityPagesWithMessages(root, loaded);
-  pages.sort((a, b) => a.id.localeCompare(b.id));
-  const includeBody = options.includeBody === true;
-  return windowEntityPages(pages, options, includeBody, problems);
+  return undefined;
 }
 
 /** An offset window over a list: the slice plus the next-batch offset (absent when exhausted). */
