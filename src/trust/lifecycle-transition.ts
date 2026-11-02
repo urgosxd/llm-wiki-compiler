@@ -30,6 +30,7 @@
  * importers keep resolving them from this module.
  */
 
+import { AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
 import { releaseLock } from "../utils/lock.js";
 import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { applyApprovedMutationsLocked } from "./executor.js";
@@ -75,10 +76,47 @@ export async function transitionLifecycle(
     toState,
     evidence,
   };
+  // A LIFECYCLE TRANSITION WRITES AN ENTITY PAGE, WHICH A STACK CANNOT STORE.
+  //
+  // The page mutation's target is `{ entityType, slug }` — a profile namespace such
+  // as `papers`. `wiki.pages.page_directory` admits only `concepts` and `queries`
+  // (src/dimensions/wiki/schema.sql:73), so there is no row to write; `entity_pages`
+  // is the KG's page cache, not wiki storage, and an entity page does not belong to
+  // the wiki dimension. Refused here, BEFORE the lock, so a Stack never reaches a
+  // write that would either fail on the CHECK or silently leave a file behind.
+  if (entityPagesNeedRows(process.env)) throw new EntityPageNotRowBackedError(entityType, slug);
   if (!(await acquireMutationLock(root, "ordinary"))) throw new LifecycleTransitionLockError();
   try {
     await applyApprovedMutationsLocked(root, [mutation]);
   } finally {
     await releaseLock(root);
   }
+}
+
+/**
+ * Thrown when a lifecycle transition targets a Stack.
+ *
+ * Same constraint as `TypedPageNotRowBackedError` on the promotion path: the page is
+ * an entity page and `wiki.pages` cannot hold its namespace. Failing closed beats
+ * writing a file the Stack's readers never open.
+ */
+export class EntityPageNotRowBackedError extends Error {
+  constructor(entityType: string, slug: string) {
+    super(
+      `entity-pages-not-row-backed: cannot transition ${entityType}/${slug} on a Stack — ` +
+        `wiki.pages admits only concepts and queries, and entity pages do not belong ` +
+        `to the wiki dimension`,
+    );
+    this.name = "EntityPageNotRowBackedError";
+  }
+}
+
+/**
+ * True when this project stores pages in rows rather than files.
+ *
+ * @param env - Environment to read the Stack from.
+ * @returns True when a Stack is configured.
+ */
+function entityPagesNeedRows(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env[AKS_STACK_ID_ENV_VAR] ?? "").trim() !== "";
 }
