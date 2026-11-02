@@ -200,12 +200,23 @@ frozen parity suites green.
   does not exist (`null` — that IS the finding), or cannot answer (`undefined`, a
   file-backed project). Collapsing the last two would report every citation broken
   the moment no Stack was configured.
-- [ ] **Stage 3 — journal. A DECISION, not threading.** See the corrected
-  analysis above: `.llmwiki/journal/` (revert batches, pre-state) and
-  `wiki.activity_log` (activity entries) are different things, and a row is
-  already inside a transaction so it needs no pre-state. The question is whether
-  `journal-health` has any meaning for a row corpus at all. Not implemented,
-  because inventing an answer would be guesswork.
+- [x] **Stage 3 — journal. The premise was false; see
+  `row-page-batch-atomicity.md`.** This stage was recorded as a product decision
+  resting on "a row is already inside a transaction so it needs no pre-state".
+  That is true for ONE page and false for a BATCH: `applyBatch`
+  (`trust/executor.ts`) is a `for` loop, and each `upsertStoredPage` opened its
+  own `db.transaction` through `withTenant`, so a five-page batch committed five
+  times and a failure halfway through left the earlier pages durable — the exact
+  partial application the journal prevents on the file path, with no journal to
+  replay because a row records no pre-state.
+
+  So the question this stage was waiting on was not unanswerable, it was
+  answering the wrong thing. `journal-health` is NOT vacuous on a row corpus: the
+  silence it reports is correct, and it now has a proof behind it instead of an
+  assumption. Closed by giving a row batch ONE transaction
+  (`pageBatchTransaction`), which is the row backend's equivalent of the journal
+  batch, and by a test that fails a mid-batch write and asserts that nothing
+  survived.
 - [x] **Stage 4 — the parity proof, `458b197`.** One corpus, described once and
   rendered twice: markdown on disk, and rows as the source returns them. Findings
   compared as an exact sorted set of `rule|file|severity|message`. A second test
@@ -224,9 +235,13 @@ frozen parity suites green.
 | `7a48d2d` | Stage 2 — citations from rows |
 | `458b197` | Stage 4 — parity proof |
 
-**Not delivered, on purpose:** Stage 3 (a product decision) and the provenance
-columns (a schema feature). Both are named above with the reason, so neither
-looks like an oversight.
+**Not delivered, on purpose:** the provenance columns (a schema feature). Named
+above with the reason, so it does not look like an oversight.
+
+Stage 3 was listed here as "not delivered, a product decision". That was wrong:
+the decision rest on a false premise about transactions, and closing it exposed a
+data-integrity defect rather than answering a question. See
+`row-page-batch-atomicity.md`.
 
 Every new test in this feature was proved non-vacuous by neutralising the code
 path it covers and watching it fail. A test that passes for the wrong reason is

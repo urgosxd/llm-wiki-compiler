@@ -63,7 +63,13 @@ import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { atomicWrite } from "../utils/markdown.js";
 import { openBatch, commitBatch, replayJournal, type JournalBatch } from "./journal.js";
 import { type ApplyResult, CrossStoreBatchUnsupportedError } from "./apply-result.js";
-import { applyPageMutationLocked, type PageRemover, type PageSink, type WriteOne } from "./page-apply.js";
+import {
+  applyPageMutationLocked,
+  type PageBatchTransaction,
+  type PageRemover,
+  type PageSink,
+  type WriteOne,
+} from "./page-apply.js";
 import { applyRelationLocked } from "./relation-apply.js";
 import { applyLifecycleLocked } from "./lifecycle-apply.js";
 import { applyArtifactLocked } from "../artifacts/apply.js";
@@ -87,6 +93,11 @@ export interface ApplyOptions {
    * current BYTES so a rollback can restore them; a row has no such pre-state to
    * capture, and recording a path that the write never touches would make the
    * journal claim a revert capability it does not have.
+   *
+   * SKIPPING THE JOURNAL DOES NOT MAKE THE BATCH ATOMIC BY ITSELF, which is what
+   * this comment claimed for far too long. The journal is what makes a FILE batch
+   * atomic; a row batch needs a transaction around the whole loop, and that is
+   * {@link pageBatchTransaction}. Without it each page commits on its own.
    */
   pageSink?: PageSink;
   /**
@@ -98,6 +109,23 @@ export interface ApplyOptions {
    * be silently wrong, which is why the two travel together.
    */
   pageRemover?: PageRemover;
+  /**
+   * Run the whole page batch as ONE all-or-nothing unit.
+   *
+   * The row backend needs this and the file backend does not. A file batch is made
+   * atomic by the journal: every target's pre-state is recorded before any write
+   * lands, and a failure leaves the batch `pending` for replay. A row records no
+   * pre-state, so nothing is journalled — and the same `for` loop then commits each
+   * page in its OWN transaction, leaving a failure halfway through with the earlier
+   * pages durable.
+   *
+   * Structural, not a `Database`: this module sits on the trust path and must stay
+   * usable with no database at all. The owner supplies `db.transaction`; this side
+   * only knows the work either fully commits or fully rolls back.
+   *
+   * Absent for every file-backend caller, whose behaviour is unchanged.
+   */
+  pageBatchTransaction?: PageBatchTransaction;
 }
 
 
@@ -153,12 +181,18 @@ async function applyBatch(
   planned: PagePlannedMutation[],
   batch: JournalBatch | undefined,
   writeOne: WriteOne,
-  pageSink: PageSink | undefined,
-  pageRemover: PageRemover | undefined,
+  opts: ApplyOptions,
 ): Promise<void> {
-  for (const mutation of planned) {
-    await applyPageMutationLocked(root, mutation, batch, writeOne, pageSink, pageRemover);
-  }
+  const writeAll = async (): Promise<void> => {
+    for (const mutation of planned) {
+      await applyPageMutationLocked(
+        root, mutation, batch, writeOne, opts.pageSink, opts.pageRemover);
+    }
+  };
+  // Without a transaction the loop is exactly what it was: the file backend's
+  // atomicity comes from the journal batch, not from a unit around this loop.
+  if (opts.pageBatchTransaction === undefined) return await writeAll();
+  return await opts.pageBatchTransaction(writeAll);
 }
 
 /**
@@ -223,8 +257,7 @@ export async function applyApprovedMutationsLocked(
     // a project that is otherwise entirely row-backed -- a filesystem effect on the
     // one backend that must not have any.
     const batch = needsJournal(planned as PagePlannedMutation[], opts) ? await openBatch(root) : undefined;
-    await applyBatch(
-      root, planned as PagePlannedMutation[], batch, writeOne, opts.pageSink, opts.pageRemover);
+    await applyBatch(root, planned as PagePlannedMutation[], batch, writeOne, opts);
     if (batch !== undefined) await commitBatch(batch);
     return planned.map(() => ({ kind: "page" as const }));
   }

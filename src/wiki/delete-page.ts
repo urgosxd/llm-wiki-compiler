@@ -30,6 +30,7 @@ import { lstat } from "fs/promises";
 import { CONCEPTS_DIR } from "../utils/constants.js";
 import { isSafeFilenameComponent } from "../profile/identity.js";
 import { openBatch, recordPreState, commitBatch, replayJournal, confinedUnlink } from "../trust/journal.js";
+import type { PageBatchTransaction } from "../trust/page-apply.js";
 import type { PageRemover } from "../trust/page-apply.js";
 import type { PageDirectory } from "../export/types.js";
 
@@ -72,6 +73,14 @@ export interface DeleteOptions {
    * the all-or-nothing is the database's rather than the journal's.
    */
   pageRemover?: PageRemover;
+  /**
+   * Run the whole delete batch as ONE all-or-nothing unit.
+   *
+   * A row batch has no journal to replay, so without this each `pageRemover` call
+   * commits its own transaction and a failure halfway through leaves the earlier
+   * rows deleted — the mirror of the write-batch defect.
+   */
+  pageBatchTransaction?: PageBatchTransaction;
 }
 
 /**
@@ -108,7 +117,7 @@ export async function deleteWikiPagesLocked(
   if (allowed.length === 0) return { skipped };
 
   if (opts.pageRemover !== undefined) {
-    return deleteRows(allowed, skipped, opts.pageRemover);
+    return deleteRows(allowed, skipped, opts.pageRemover, opts.pageBatchTransaction);
   }
   const unlinkOne = opts.unlinkOne ?? ((target: string) => confinedUnlink(target, root));
   const batch = await openBatch(root);
@@ -161,10 +170,17 @@ async function deleteRows(
   allowed: string[],
   skipped: SkippedDelete[],
   pageRemover: PageRemover,
+  transaction: PageBatchTransaction | undefined,
 ): Promise<{ skipped: SkippedDelete[] }> {
-  for (const slug of allowed) {
-    await pageRemover({ directory: CONCEPT_PAGE_DIRECTORY, slug });
-  }
+  const removeAll = async (): Promise<void> => {
+    for (const slug of allowed) {
+      await pageRemover({ directory: CONCEPT_PAGE_DIRECTORY, slug });
+    }
+  };
+  // Without a transaction this is the unchanged loop: the file path's atomicity
+  // comes from the journal batch opened below, not from a unit around this loop.
+  if (transaction === undefined) await removeAll();
+  else await transaction(removeAll);
   return { skipped };
 }
 

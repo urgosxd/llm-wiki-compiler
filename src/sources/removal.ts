@@ -303,8 +303,8 @@ export async function applyRemovalLocked(root: string, plan: RemovalPlan): Promi
   // report success while the row survived. Resolved here rather than threaded from
   // the caller so the CLI stays free of the dimensions graph, and scoped to this one
   // call because the handle must be closed before the rest of the apply.
-  const { skipped } = await withPageRemover(process.env, (pageRemover) =>
-    deleteWikiPagesLocked(root, current.deleteSlugs, { pageRemover }));
+  const { skipped } = await withPageRemover(process.env, (pageRemover, pageBatchTransaction) =>
+    deleteWikiPagesLocked(root, current.deleteSlugs, { pageRemover, pageBatchTransaction }));
   const deleted = withoutSkipped(current.deleteSlugs, skipped);
 
   const frozen = new Set(fresh.frozenSlugs ?? []);

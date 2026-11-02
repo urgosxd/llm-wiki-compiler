@@ -20,7 +20,12 @@ import { buildSeedPagePrompt } from "./prompts.js";
 import { type SchemaConfig, type SeedPage } from "../schema/index.js";
 import { readWikiPageFrom } from "./confined-wiki-read.js";
 import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
-import { pageStoreOptions, type PageRemover, type PageSink } from "../trust/page-apply.js";
+import {
+  pageStoreOptions,
+  type PageBatchTransaction,
+  type PageRemover,
+  type PageSink,
+} from "../trust/page-apply.js";
 import { addObsidianMeta } from "./obsidian.js";
 import { addModelProvenanceMeta } from "./provenance.js";
 import {
@@ -50,6 +55,7 @@ export async function generateSeedPages(
   source?: PageContentSource,
   sink?: PageSink,
   remover?: PageRemover,
+  transaction?: PageBatchTransaction,
 ): Promise<void> {
   if (schema.seedPages.length === 0) return;
   // Dedup seeds by slug FIRST-SEEN-WINS before rendering, mirroring
@@ -72,7 +78,7 @@ export async function generateSeedPages(
     }
     if (result.write) writes.push(result.write);
   }
-  const { skipped } = await applyCompilePageWritesLocked(root, writes, pageStoreOptions(sink, remover));
+  const { skipped } = await applyCompilePageWritesLocked(root, writes, pageStoreOptions(sink, remover, transaction));
   reportSeedOutcome(generation, writes, skipped);
 }
 

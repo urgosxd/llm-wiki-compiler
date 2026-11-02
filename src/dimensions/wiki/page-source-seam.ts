@@ -24,6 +24,9 @@ import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js
 import { generateIndex } from "../../compiler/indexgen.js";
 import { generateMOC } from "../../compiler/obsidian.js";
 import { createPageListingSource, createPageRemoveSink, createPageWriteSink } from "./page-write-sink.js";
+import { withPageBatchTransaction } from "./page-batch-transaction.js";
+import { sql } from "drizzle-orm";
+import type { PageBatchTransaction } from "../../trust/page-apply.js";
 import { createResolverPageSource } from "./page-scan-source.js";
 import type { ResolverPageSource } from "../../compiler/resolver.js";
 import type { PageRemover, PageSink } from "../../trust/page-apply.js";
@@ -280,19 +283,29 @@ export async function withEmbeddingStoreSource<T>(
  *
  * The handle is closed before returning, whatever `fn` does.
  *
+ * THE TRANSACTION IS PASSED BESIDE THE REMOVER, because a delete batch has the same
+ * partial-application window as a write batch: without a unit around the loop each
+ * removal commits on its own. `fn` receives it as its SECOND argument, so a callback
+ * that only wants the remover — which is every existing one — is unchanged.
+ *
  * @param env - Environment to read the Stack from.
- * @param fn - Receives the row remover, or `undefined` to unlink files.
+ * @param fn - Receives the row remover (or `undefined` to unlink files) and the
+ *   batch transaction (or `undefined` for the file path).
  * @returns Whatever `fn` returns.
  */
 export async function withPageRemover<T>(
   env: NodeJS.ProcessEnv,
-  fn: (remover: PageRemover | undefined) => Promise<T>,
+  fn: (remover: PageRemover | undefined, transaction?: PageBatchTransaction) => Promise<T>,
 ): Promise<T> {
   const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return fn(undefined);
+  if (stackId === "") return fn(undefined, undefined);
   const dimensionsDb = createDimensionsDatabase(env);
   try {
-    return await fn(createPageRemoveSink(dimensionsDb.db as never, stackId));
+    const db = dimensionsDb.db as never;
+    return await fn(
+      createPageRemoveSink(db, stackId),
+      createPageBatchTransaction(db, stackId),
+    );
   } finally {
     await dimensionsDb.close();
   }
@@ -366,6 +379,16 @@ export interface PageSeams {
   remover?: PageRemover;
   /** Enumerate concept pages for link RESOLUTION (a different shape than `scan`). */
   resolver?: ResolverPageSource;
+  /**
+   * Run a page batch as ONE all-or-nothing transaction.
+   *
+   * Resolved HERE, beside the sink and the remover, because it belongs to the same
+   * decision: a batch that writes rows and a batch that commits them one by one are
+   * the same kind of mixed answer as reading rows while writing files. A caller that
+   * takes the sink without this gets a per-page commit, which is the defect it is
+   * here to close.
+   */
+  transaction?: PageBatchTransaction;
 }
 
 /**
@@ -387,7 +410,45 @@ export function resolvePageSeams(
     sink: createPageWriteSink(db as never, stackId),
     remover: createPageRemoveSink(db as never, stackId),
     resolver: createResolverPageSource(db as never, stackId),
+    transaction: createPageBatchTransaction(db as never, stackId),
   };
+}
+
+/**
+ * Build the batch transaction a row-backed page write runs inside.
+ *
+ * Opens ONE transaction and binds the tenant in it, then runs the supplied work with
+ * that transaction as the ambient one so every sink inside joins it. Mirrors
+ * `withTenant`'s own `db.transaction` branch, which cannot be reused directly here:
+ * the batch body decides which sinks to call, and they are not a single `work`
+ * callback.
+ *
+ * @param db - The run's database handle.
+ * @param stackId - The tenant to bind for the duration.
+ * @returns A function that runs work as one unit.
+ */
+function createPageBatchTransaction(db: PageStoreHandle, stackId: string): PageBatchTransaction {
+  // STRUCTURAL ON PURPOSE. Naming `llmwiki-kg`'s `Database` here drags the package
+  // into the `compiler-cli` DTS graph, which does not resolve it — the same rule that
+  // keeps every other seam in this file expressed as `PageStoreHandle` (an `unknown`
+  // the caller narrows). The batch only needs "something that can open a transaction
+  // and execute a statement", which is all this declares.
+  const handle = db as TransactionCapableHandle;
+  return async (work) =>
+    await handle.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
+      return await withPageBatchTransaction(tx as never, work);
+    });
+}
+
+/** The narrow slice of a pooled handle a page batch needs, without naming the package. */
+interface TransactionCapableHandle {
+  transaction<T>(fn: (tx: TransactionCapableTx) => Promise<T>): Promise<T>;
+}
+
+/** The narrow slice of an open transaction a page batch needs. */
+interface TransactionCapableTx {
+  execute(statement: unknown): Promise<unknown>;
 }
 
 /**
