@@ -155,8 +155,12 @@ function sourceTextByFilename(
  * @param scope - Which pages this run claims.
  * @returns The corpus, ready for {@link withLintCorpus}.
  */
-async function resolveLintCorpus(root: string, scope: PageScope): Promise<LintCorpus> {
-  return await withRawPageSource(root, process.env, async (source) => {
+async function resolveLintCorpus(
+  root: string,
+  scope: PageScope,
+  env: NodeJS.ProcessEnv,
+): Promise<LintCorpus> {
+  return await withRawPageSource(root, env, async (source) => {
     if (source === undefined) {
       // File-backed: no corpus override for sources either, so the citation rules
       // keep reading `sources/` exactly as they always have.
@@ -165,7 +169,7 @@ async function resolveLintCorpus(root: string, scope: PageScope): Promise<LintCo
     // A Stack's citation targets are its `source_documents` rows. Without this the
     // citation rules join every cited filename against `sources/`, where a Stack
     // has nothing, and report EVERY citation as broken.
-    const sources = await withSourceDocuments(process.env, async (listing) => {
+    const sources = await withSourceDocuments(env, async (listing) => {
       if (listing === undefined) return undefined;
       return sourceTextByFilename(await listing.list());
     });
@@ -173,8 +177,12 @@ async function resolveLintCorpus(root: string, scope: PageScope): Promise<LintCo
   });
 }
 
-async function collectTieredGroups(root: string, scope: PageScope = "generic"): Promise<TieredResultGroupV1[]> {
-  const corpus = await resolveLintCorpus(root, scope);
+async function collectTieredGroups(
+  root: string,
+  scope: PageScope = "generic",
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<TieredResultGroupV1[]> {
+  const corpus = await resolveLintCorpus(root, scope, env);
   return await withLintCorpus(corpus, () => collectGroupsInScope(root, scope));
 }
 
@@ -207,10 +215,13 @@ async function collectGroupsInScope(root: string, scope: PageScope): Promise<Tie
  * @param root - Absolute path to the project root directory.
  * @returns A summary containing all diagnostics and severity counts.
  */
-export async function lint(root: string): Promise<LintSummary> {
+export async function lint(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<LintSummary> {
   // lint is intentionally not journaled to log.md — it is a read-only check,
   // and the MCP `lint_wiki` tool documents it as non-mutating.
-  return summarize((await collectTieredGroups(root)).flatMap((group) => group.results));
+  return summarize((await collectTieredGroups(root, "generic", env)).flatMap((group) => group.results));
 }
 
 /**
@@ -241,8 +252,11 @@ export function declaredRuleTiers(): ReadonlyArray<{ rule: string; tier: LintTie
     .map((entry) => ({ rule: entry.rule.name, tier: entry.tier }));
 }
 
-export async function lintByTier(root: string): Promise<TieredLintReportV1> {
-  return tieredReport(await collectTieredGroups(root));
+export async function lintByTier(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<TieredLintReportV1> {
+  return tieredReport(await collectTieredGroups(root, "generic", env));
 }
 
 /**
@@ -257,7 +271,8 @@ export async function lintByTier(root: string): Promise<TieredLintReportV1> {
 export async function lintBothViews(
   root: string,
   scope: PageScope = "generic",
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ summary: LintSummary; tiered: TieredLintReportV1 }> {
-  const groups = await collectTieredGroups(root, scope);
+  const groups = await collectTieredGroups(root, scope, env);
   return { summary: summarize(groups.flatMap((group) => group.results)), tiered: tieredReport(groups) };
 }

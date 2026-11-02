@@ -255,11 +255,13 @@ function registerLintTool(server: McpServer, root: string): void {
       inputSchema: { stackId: STACK_ID_SCHEMA },
     },
     async ({ stackId }) => {
-      // `lint` takes only `root` and walks categories and rules that legitimately read
-      // non-page project files, so it is NOT Stack-addressed yet: accepting the
-      // argument here would promise an isolation it does not deliver. The parameter is
-      // present for surface consistency and documented in the audit as unwired.
-      const summary = await withRequestEnv(stackId, () => lint(root));
+      // `lint` IS Stack-addressed now: it resolves its page corpus, its source
+      // documents and its freshness snapshot from the env it is handed. Passing the
+      // per-request env is what makes a `stackId` argument mean something, and NOT
+      // passing it would read whichever Stack the process happens to be bound to.
+      // The remaining rule that is not Stack-addressed is `journal-health`, whose
+      // subject (revert batches) does not exist for a row corpus.
+      const summary = await withRequestEnv(stackId, (env) => lint(root, env));
       if (isRefusal(summary)) return refusalResult(summary);
       return jsonResult(summary);
     },

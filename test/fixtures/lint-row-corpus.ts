@@ -52,11 +52,17 @@ export interface RowDocument {
   readonly content: string;
 }
 
-/** A project root with no `wiki/` — the shape a Stack-backed project has. */
+/**
+ * A project root with no `wiki/` and no `.llmwiki/` — the shape a Stack-backed
+ * project actually has.
+ *
+ * Deliberately empty: a Stack's corpus, its source documents and its compile state
+ * all live in rows keyed by stack id. A fixture that seeded `.llmwiki/state.json`
+ * would be testing the FILE backend while claiming to test the row one, and would
+ * pass for as long as nobody noticed the two had diverged.
+ */
 export async function stackProjectRoot(suffix: string): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), `lint-${suffix}-`));
-  await mkdir(path.join(root, ".llmwiki"), { recursive: true });
-  return root;
+  return await mkdtemp(path.join(tmpdir(), `lint-${suffix}-`));
 }
 
 /**
