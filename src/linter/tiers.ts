@@ -83,7 +83,7 @@ export function tieredReport(groups: readonly TieredResultGroupV1[]): TieredLint
  * profile pass emits computed rule ids, and an undeclared one must surface as
  * a configuration error instead of silently vanishing from every tier.
  */
-export class UnknownLintRuleTierError extends Error {
+class UnknownLintRuleTierError extends Error {
   constructor(readonly rule: string) {
     super(`No declared tier for lint rule: ${rule}`);
     this.name = "UnknownLintRuleTierError";

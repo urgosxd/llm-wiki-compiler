@@ -382,7 +382,7 @@ const MAX_TOTAL_WORKFLOW_RUNS = 1000;
  * (a handful of per-surface grants plus an enabled-gate list) yet bounds the read;
  * an oversize config FAILS CLOSED to `read-only`, never a write capability.
  */
-export const MAX_LOCAL_CONFIG_BYTES = 64 * 1024; // 64 KiB
+const MAX_LOCAL_CONFIG_BYTES = 64 * 1024; // 64 KiB
 
 export const INDEX_FILE = "wiki/index.md";
 export const MOC_FILE = "wiki/MOC.md";

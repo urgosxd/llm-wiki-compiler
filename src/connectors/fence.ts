@@ -9,7 +9,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 const BASE_SENTINEL = "UNTRUSTED";
 
 /** Reserved frontmatter key carrying host-authored connector provenance on live pages. */
-export const CONNECTOR_BLOCK_KEY = "x-llmwiki.connector";
+const CONNECTOR_BLOCK_KEY = "x-llmwiki.connector";
 
 /** Generate a short nonce for one rendered untrusted-content fence. */
 function nonce(): string {

@@ -71,7 +71,6 @@ import {
   type WriteOne,
 } from "./page-apply.js";
 import { applyRelationLocked } from "./relation-apply.js";
-import { applyLifecycleLocked } from "./lifecycle-apply.js";
 import { applyArtifactLocked } from "../artifacts/apply.js";
 import type { PlannedMutation, PagePlannedMutation } from "./planner.js";
 
@@ -269,13 +268,13 @@ export async function applyApprovedMutationsLocked(
     const { ref, decision } = await applyRelationLocked(root, planned[0]);
     return [{ kind: "relation", ref, decision }];
   }
+  // LIFECYCLE TRANSITIONS WERE REMOVED WITH THE PROFILE SYSTEM.
+  //
+  // The kind stays in the union so an old persisted plan still PARSES — a candidate
+  // staged before the removal must fail with a clear refusal, not a type error or a
+  // silent no-op. Nothing in this build can produce one.
   if (planned.length === 1 && planned[0].kind === "lifecycle-transition") {
-    // The lifecycle handler is the UNDER-LOCK authority: it re-loads the profile,
-    // composes a real decision over the FINAL frontmatter (FSM + entity fields),
-    // and writes via the shared page-apply primitive — no dispatcher re-entry.
-    // The composed decision flows back through the apply RESULT.
-    const decision = await applyLifecycleLocked(root, planned[0]);
-    return [{ kind: "lifecycle-transition", decision }];
+    throw new NotImplementedMutationError("lifecycle-transition");
   }
   if (planned.length === 1 && planned[0].kind === "artifact") {
     // The artifact handler is the UNDER-LOCK authority: it re-loads the profile,

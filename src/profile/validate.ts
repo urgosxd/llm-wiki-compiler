@@ -63,7 +63,6 @@ import { validateStageExecutor, validateStageGate, validateSubjectGate } from ".
 
 
 
-export { ProfileValidationError } from "./errors.js";
 
 /**
  * Profile ids reserved by the system. `default` names the in-memory built-in

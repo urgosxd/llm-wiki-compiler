@@ -327,7 +327,7 @@ export async function listCandidateFileEntries(
 }
 
 /** Compare exact filename identities by their UTF-8 byte sequence. */
-export function compareCandidateFileIdsUtf8(left: string, right: string): number {
+function compareCandidateFileIdsUtf8(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 

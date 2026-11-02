@@ -53,7 +53,7 @@ export { RelationWriteDeniedError } from "./relation-apply.js";
  * @returns The persisted {@link RelationRef}.
  * @throws {RelationWriteDeniedError} When the recomposed decision denies the write.
  */
-export async function createRelation(
+async function createRelation(
   root: string,
   _profile: ProfilePack,
   input: AppendRelationInput,

@@ -85,7 +85,7 @@ export function validateArtifactRefsAgainstProfile(
  * @param def - The resolved entity type definition to validate against.
  * @returns Zero or more PATH-FREE field-violation messages (both layers).
  */
-export function entityFieldViolations(
+function entityFieldViolations(
   profile: ProfilePack,
   frontmatter: Record<string, unknown>,
   def: EntityTypeDef,

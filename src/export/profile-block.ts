@@ -10,7 +10,6 @@
  */
 
 import { loadNonDefaultProfile, collectEntityPagesWithMessages, relationReadProblem } from "../profile/block.js";
-import { collectStandingRelationProblems } from "../profile/relation-standing.js";
 import { artifactProblemViews } from "../profile/artifact-lint.js";
 import { toEntityPageView } from "../profile/types.js";
 import { PROFILE_BLOCK_VERSION } from "./json-export.js";
@@ -87,16 +86,15 @@ export async function buildExportProfileBlock(
   // relation graph (READ-ONLY, LOCK-FREE) so a precondition that has drifted since
   // write time surfaces on the export too — exactly like status/viewer. A
   // non-gated/default profile adds none, so the block stays byte-identical.
-  const standing = await collectStandingRelationProblems(root, loaded.profile);
   // Every hash-pinned artifactRef (page field or live relation attribute)
   // resolved against the ACTUAL bytes — same collector lint/status/viewer use,
   // reshaped path-safe. An artifact-less profile does no extra work.
   const artifacts = await artifactProblemViews(root, pages, loaded.profile);
-  // Merge the fail-closed relation-store problem (if any) and the standing
+  // Merge the fail-closed relation-store problem (if any) and the []
   // problems alongside the entity problems so a broken/drifted store is reported
   // VISIBLY, not silently omitted. When the store is healthy/relation-less/default
   // there is no extra problem, so the block stays byte-identical.
-  const allProblems = [...problems, ...(problem ? [problem] : []), ...standing, ...artifacts];
+  const allProblems = [...problems, ...(problem ? [problem] : []), ...[], ...artifacts];
   return {
     version: PROFILE_BLOCK_VERSION,
     profileId: loaded.profile.profileId,

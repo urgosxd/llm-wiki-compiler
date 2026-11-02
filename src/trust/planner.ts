@@ -35,13 +35,12 @@ import type { EntityId } from "../profile/types.js";
 import type { ArtifactMemberFileInput } from "../artifacts/members.js";
 import type { AppendRelationInput } from "../relations/store.js";
 
-/** Every CLP store a mutation can target. The executor handles `page`, `relation`,
- * `lifecycle-transition`, and `artifact` kinds; `workflow-*` is not-implemented. */
+/** Every CLP store a mutation can target. The executor handles `page`, `relation`
+ * and `artifact` kinds; `workflow-*` is not-implemented. */
 export type MutationKind =
   | "page"
   | "relation"
   | "artifact"
-  | "lifecycle-transition"
   | "workflow-gate"
   | "workflow-state";
 

@@ -28,7 +28,6 @@ import {
   type CandidateDirectoryBinding,
 } from "./candidate-store-paths.js";
 
-export { MAX_CANDIDATE_RECORD_BYTES } from "./candidate-custody-limits.js";
 
 /** Stable filesystem identity used to bind candidate files and their store. */
 export interface CandidateFileIdentity {

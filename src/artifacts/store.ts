@@ -27,7 +27,7 @@ import { isSlugSafe, isSafeFilenameComponent } from "../profile/identity.js";
 export { resolveExpectedReal } from "../utils/confined-read.js";
 
 /** Thrown when an artifact path segment is not safe. */
-export class ArtifactPathError extends Error {
+class ArtifactPathError extends Error {
   constructor(what: string, value: string) {
     super(`unsafe artifact ${what}: ${JSON.stringify(value)}`);
     this.name = "ArtifactPathError";

@@ -69,15 +69,6 @@ it("warns and preserves generic approval when the new check is unavailable", asy
   expect(vi.mocked(console.log).mock.calls.flat().join(" ")).toContain("citation check unavailable");
 });
 
-it("leaves typed candidates on their existing policy despite broken default wikilinks", async () => {
-  await writeFile(path.join(root.dir, ".llmwiki/profile.json"), JSON.stringify(SAMPLE_PROFILE));
-  const candidate = await writeCandidate(root.dir, { title: "Typed", slug: "typed", summary: "s", sources: [],
-    targetEntityType: "notes", body: "---\ntitle: Typed\n---\n[[missing]]\n" });
-  await approve(candidate.id);
-  expect(process.exitCode).toBe(0);
-  expect(await readFile(path.join(root.dir, "wiki/notes/typed.md"), "utf8")).toContain("[[missing]]");
-});
-
 it("does not catch planner failure as generic citation unavailability", async () => {
   const candidate = await generic(root.dir, "valid", "[[Alpha]]");
   const error = new Error("planner failed");

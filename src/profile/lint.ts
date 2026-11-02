@@ -37,7 +37,6 @@
 
 import { collectEntityPages, type EntityProblem } from "./collect.js";
 import { checkPageEmpty, checkPageMalformedCitations } from "../linter/rules.js";
-import { checkRelationStore, checkStandingRelationPreconditions } from "./relation-lint.js";
 import { checkArtifactRefs } from "./artifact-lint.js";
 import { checkEventChain } from "./event-lint.js";
 import { lifecycleStateSet } from "./lifecycle.js";
@@ -157,7 +156,7 @@ function checkLifecycleStates(page: EntityPage, lifecycle?: LifecycleDef): LintR
  *   entity-collection path; callers gate on `isDefaultProfile` before calling).
  * @returns All profile-aware findings, each tagged with its `entityType`.
  */
-export async function lintProfileEntities(
+async function lintProfileEntities(
   root: string,
   profile: ProfilePack,
 ): Promise<LintResult[]> {
@@ -180,8 +179,6 @@ export async function collectProfileLintFindings(input: ProfileLintContext): Pro
     const definition = profile.entities[page.entityType];
     if (definition) results.push(...checkDeclaredConfidence(page, definition));
   }
-  results.push(...(await checkRelationStore(root, pages, profile)));
-  results.push(...(await checkStandingRelationPreconditions(root, profile)));
   results.push(...(await checkEventChain(root)));
   results.push(...(await checkArtifactRefs(root, pages, profile)));
   return { results, ruleTiers: profileRuleTiers(profile) };

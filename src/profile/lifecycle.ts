@@ -28,7 +28,7 @@ import type { LifecycleDef } from "./types.js";
  * structured list of PATH-FREE problem messages so callers can surface exactly
  * what failed.
  */
-export class LifecycleTransitionError extends Error {
+class LifecycleTransitionError extends Error {
   /** The PATH-FREE lifecycle problem messages that caused the refusal. */
   readonly problems: string[];
 

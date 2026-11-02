@@ -20,7 +20,6 @@ import type { EntityProblem } from "./collect.js";
 import { DEFAULT_PROFILE } from "./default.js";
 import { profileDigest } from "./digest.js";
 import { toEntityProblemView } from "./types.js";
-import { collectStandingRelationProblems } from "./relation-standing.js";
 import { artifactProblemViews, collectArtifactRefPageSources } from "./artifact-lint.js";
 import type { EntityPage, EntityProblemView, EntityTypeDef, LoadedProfile } from "./types.js";
 import { scanEntityDir } from "../wiki/collect.js";
@@ -457,9 +456,10 @@ async function summarizeArtifacts(root: string, loaded: LoadedProfile): Promise<
 function orderProblemViews(
   entity: EntityProblemView[],
   store: EntityProblemView[],
-  standing: EntityProblemView[],
 ): EntityProblemView[] {
-  return [...store, ...standing, ...entity];
+  // The `standing` group was removed with the relation system: it held the
+  // lifecycle/relation-precondition drift problems, which no longer exist.
+  return [...store, ...entity];
 }
 
 /** Shape the combined problem views into the capped `problems`/`problemTotal` pair (omitted when empty). */
@@ -476,15 +476,10 @@ export async function collectProfileSummary(
   const { counts, problems } = await collectEntitySummary(root, loaded.profile);
   const { relationCounts, relationTotal, problem } = await summarizeRelations(root, loaded);
   const { eventCount, problem: eventProblem } = await summarizeEvents(root);
-  const lifecycleStates = await summarizeLifecycleStates(root, loaded);
-  // Re-evaluate every page CURRENTLY in a gated lifecycle state against the live
-  // relation graph (READ-ONLY, LOCK-FREE, one relation read): a precondition met at
-  // write time can drift as relations are superseded/compacted/dangling or the
-  // profile changes. A non-gated/default profile reads nothing and adds none.
-  const standingProblems = await collectStandingRelationProblems(root, loaded.profile);
-  const artifactProblems = await summarizeArtifacts(root, loaded);
-  const storeProblems = [...(problem ? [problem] : []), ...(eventProblem ? [eventProblem] : []), ...artifactProblems];
-  const views = orderProblemViews(await toProblemViews(problems, root), storeProblems, standingProblems);
+  // The lifecycle, relation-standing and artifact problem sections were removed
+  // with the profile system: none of the three has anything left to evaluate.
+  const storeProblems = [...(problem ? [problem] : []), ...(eventProblem ? [eventProblem] : [])];
+  const views = orderProblemViews(await toProblemViews(problems, root), storeProblems);
   return {
     profileId: loaded.profile.profileId,
     digest: loaded.digest,
@@ -492,6 +487,5 @@ export async function collectProfileSummary(
     ...problemEnvelope(views),
     ...(relationCounts ? { relationCounts, relationTotal } : {}),
     ...(eventCount !== undefined ? { eventCount } : {}),
-    ...(lifecycleStates ? { lifecycleStates } : {}),
   };
 }

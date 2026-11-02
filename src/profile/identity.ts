@@ -13,9 +13,6 @@ import path from "path";
 import { slugify } from "../utils/markdown.js";
 import type { SlugSafe, EntityId } from "./types.js";
 
-/** The slug-safe grammar: lowercase alphanumerics and internal hyphens. */
-const SLUG_SAFE_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-
 /** Error raised when an identity primitive is given an invalid value. */
 export class EntityIdError extends Error {
   constructor(message: string) {
@@ -24,28 +21,8 @@ export class EntityIdError extends Error {
   }
 }
 
-/** Type guard: does `s` match the slug-safe grammar? */
-export function isSlugSafe(s: string): s is SlugSafe {
-  return SLUG_SAFE_PATTERN.test(s);
-}
 
-/**
- * The DEFAULT-page identity floor: is `s` a single safe path component for a
- * default wiki page filename?
- *
- * Distinct from the slug-safe EntityId grammar ({@link isSlugSafe}): default
- * pages keep their Unicode `slugify` stems (e.g. `café-society`, `机器学习`)
- * and, per the Phase-1 invariant, NEVER become EntityIds — so this floor allows
- * Unicode letters/digits/hyphens (whatever `slugify` produces) while still
- * rejecting anything that could escape or hide the file: path separators
- * (`/`, `\`), spaces, the dot-only names `.`/`..`, and a leading-dot (hidden)
- * name. NUL and any other separator-bearing string is rejected by the same
- * separator test (a NUL embeds no separator but a traversal/segment always
- * does); the dot-prefix and empty-string guards cover the remainder.
- */
-export function isSafeFilenameComponent(s: string): boolean {
-  return s.length > 0 && !/[/\\ \0]/.test(s) && s !== "." && s !== ".." && !s.startsWith(".");
-}
+import { isSlugSafe, isSafeFilenameComponent } from "../utils/page-identity.js";
 
 /**
  * Assert that `s` is slug-safe, returning it branded as SlugSafe. This is the
@@ -113,3 +90,6 @@ function assertSlugMatchesFrontmatter(stem: string, frontmatterSlug?: string): v
     );
   }
 }
+
+// Re-exported for the existing call sites; the canonical home is utils/page-identity.
+export { isSlugSafe, isSafeFilenameComponent } from "../utils/page-identity.js";

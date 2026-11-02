@@ -75,10 +75,7 @@ export { UnsafeCandidateIdError } from "./candidate-paths.js";
 export {
   CandidateIdentityMismatchError,
 } from "./candidate-selection.js";
-export {
-  CandidatePublicationUnavailableError,
-  FreshCandidateIdExhaustedError,
-} from "./candidate-publication.js";
+export { FreshCandidateIdExhaustedError } from "./candidate-publication.js";
 export type { FreshCandidateWriteOptions } from "./candidate-publication.js";
 
 /** Input shape for creating a new candidate (id + timestamp generated here). */

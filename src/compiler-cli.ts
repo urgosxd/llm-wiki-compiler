@@ -13,8 +13,6 @@ export { runExitCodeCommand } from "./cli/shared.js";
 export { artifactWriteCommand, artifactVerifyCommand } from "./commands/artifact.js";
 export type { ArtifactWriteOptions, ArtifactVerifyOptions } from "./commands/artifact.js";
 export { default as compileCommand } from "./commands/compile.js";
-export { connectorListCommand, connectorRunCommand } from "./commands/connector.js";
-export type { ConnectorRunOptions } from "./commands/connector.js";
 export { default as contextCommand } from "./commands/context.js";
 export type { ContextCommandOptions } from "./commands/context.js";
 export { default as evalCommand, evalCacheClearCommand, evalCacheShowCommand, evalReportCommand, evalHistoryCommand, evalJudgementsCommand } from "./commands/eval.js";

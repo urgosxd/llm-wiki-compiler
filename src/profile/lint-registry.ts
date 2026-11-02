@@ -9,7 +9,6 @@ import type { EntityProblemKind } from "./collect.js";
 import type { ProfilePack } from "./types.js";
 import type { LintResult } from "../linter/types.js";
 import type { LintTierV1 } from "../linter/tiers.js";
-import { RELATION_LINT_RULES } from "./relation-lint.js";
 import { EVENT_LINT_RULES } from "./event-lint.js";
 import { ARTIFACT_LINT_RULES } from "./artifact-lint.js";
 import { EMPTY_PAGE_RULE } from "../linter/rules.js";
@@ -34,7 +33,7 @@ export function profileRuleTiers(profile: ProfilePack): ProfileRuleTier[] {
   const rules = [
     ...Object.keys(PROBLEM_SEVERITY).map((kind) => `profile/${kind}`),
     EMPTY_PAGE_RULE, MALFORMED_CLAIM_CITATION_RULE, INVALID_LIFECYCLE_STATE_RULE,
-    ...RELATION_LINT_RULES, ...EVENT_LINT_RULES, ...ARTIFACT_LINT_RULES,
+    ...EVENT_LINT_RULES, ...ARTIFACT_LINT_RULES,
   ];
   const descriptors: ProfileRuleTier[] = rules.map((rule) => ({ rule, tier: "deterministic" }));
   if (Object.values(profile.entities).some((def) => def.fields?.confidence?.type === "number")) {

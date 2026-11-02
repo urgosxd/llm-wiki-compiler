@@ -172,7 +172,7 @@ export const checkResourceLimit: MandatoryPageCheck = async (ctx) => {
  * message wording) so the two agree. The planner's floor stays as the executor
  * -side guarantee (defense in depth).
  */
-export class ResourceLimitError extends Error {
+class ResourceLimitError extends Error {
   constructor(chars: number) {
     super(`body ${chars} chars exceeds cap of ${MAX_SOURCE_CHARS}`);
     this.name = "ResourceLimitError";
@@ -188,7 +188,7 @@ export class ResourceLimitError extends Error {
  * @param body - The full markdown body to length-check.
  * @throws {ResourceLimitError} When `body.length` exceeds the cap.
  */
-export function assertBodyWithinResourceLimit(body: string): void {
+function assertBodyWithinResourceLimit(body: string): void {
   if (body.length > MAX_SOURCE_CHARS) {
     throw new ResourceLimitError(body.length);
   }

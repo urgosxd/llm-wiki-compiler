@@ -3,7 +3,7 @@
  * @description The executor's kind-discriminated apply RESULT and the typed
  * batch-shape guard error. A `relation` apply yields the persisted RelationRef
  * back through the seam (so a public caller never bypasses the executor to read
- * it); `relation` and `lifecycle-transition` ALSO carry the {@link TrustDecision}
+ * it); `relation` ALSO carries the {@link TrustDecision}
  * the under-lock authority composed (e.g. `allow` vs `allow-with-warning`), so a
  * consumer records the REAL decision rather than a hardcoded literal; `page`
  * yields no value (its decision is already known plan-side).
@@ -18,7 +18,6 @@ import type { TrustDecision } from "./decision.js";
 export type ApplyResult =
   | { kind: "page" }
   | { kind: "relation"; ref: RelationRef; decision: TrustDecision }
-  | { kind: "lifecycle-transition"; decision: TrustDecision }
   | { kind: "artifact"; ref: ArtifactRef; decision: TrustDecision };
 
 export class CrossStoreBatchUnsupportedError extends Error {

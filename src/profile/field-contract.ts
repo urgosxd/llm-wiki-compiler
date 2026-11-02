@@ -25,7 +25,7 @@ import { parseArtifactRef } from "../artifacts/ref.js";
  * violations are non-fatal problems, not throws). Carries the structured list of
  * PATH-FREE violation messages so callers can surface exactly what failed.
  */
-export class EntityFieldContractError extends Error {
+class EntityFieldContractError extends Error {
   /** The PATH-FREE field-violation messages that caused the refusal. */
   readonly violations: string[];
 

@@ -47,8 +47,6 @@ export { ArtifactVerifyUnavailableError } from "./artifacts/resolve.js";
 export type { VerifiedArtifactBodyV1 } from "./artifacts/read-verified.js";
 export type { ArtifactSelectorV1, ArtifactDiscoveryV1 } from "./artifacts/discover.js";
 export type { ArtifactMemberFileInput } from "./artifacts/members.js";
-export type { SdkStageEntityPageInput } from "./trust/staging.js";
-export { StagingRequiresProfileError } from "./trust/staging.js";
 export type {
   StagedChange,
   CandidateKind,
