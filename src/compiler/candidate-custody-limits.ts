@@ -6,7 +6,7 @@
  */
 
 /** Maximum raw bytes accepted by the new bounded custody interfaces. */
-export const MAX_CANDIDATE_RECORD_BYTES = 4 * 1024 * 1024;
+const MAX_CANDIDATE_RECORD_BYTES = 4 * 1024 * 1024;
 
 /** Host-selected policy; legacy local operations have no new product byte cap. */
 export type CandidateCustodyPolicy = "bounded" | "public";

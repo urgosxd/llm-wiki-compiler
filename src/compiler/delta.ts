@@ -82,7 +82,11 @@ export async function compileDelta(
   // `result.pages` are concept/seed slugs, all written under wiki/concepts.
   // Match on (pageDirectory, slug), not bare slug, so a saved query that
   // happens to share a slug with a changed concept is never mis-included.
-  const allPages = await withRawPageSource(root, process.env, (s) => collectExportPages(root, s));
+  // The env the COMPILE ran under, not `process.env`. A caller that compiled
+  // against one Stack must collect from that same Stack, or the delta reports
+  // pages belonging to whoever the process happens to be bound to.
+  const env = options.env ?? process.env;
+  const allPages = await withRawPageSource(root, env, (s) => collectExportPages(root, s, env));
   const changedPages = allPages.filter(
     (page) => page.pageDirectory === "concepts" && changedSlugSet.has(page.slug),
   );

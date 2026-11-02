@@ -16,7 +16,7 @@ export function canonicalBody(body: string): string {
 }
 
 /** Authoritative contentHash domain: sha256 of the canonical body. */
-export function hashCanonicalBody(body: string): string {
+function hashCanonicalBody(body: string): string {
   return createHash("sha256").update(canonicalBody(body), "utf-8").digest("hex");
 }
 

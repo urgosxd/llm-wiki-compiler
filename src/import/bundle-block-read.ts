@@ -16,13 +16,12 @@
  *    summary; nothing here flows into any write of `.llmwiki/profile.json` or
  *    `.llmwiki/config.json` (Invariant 7 / D-7.6.8 — the parsed block is inert).
  */
-import { loadNonDefaultProfile } from "../profile/block.js";
 import type { OkfImportLimits } from "./types.js";
 import type {
   BundleProfileBlock,
   BundleRelationEntry,
   BundleWorkflowEntry,
-} from "../export/okf/bundle-block.js";
+} from "../export/okf/bundle-block-contract.js";
 
 /** The reserved bundle-metadata frontmatter key the exporter writes on index.md. */
 const BLOCK_KEY = "x-llmwiki";
@@ -228,30 +227,26 @@ function notDeclaredLocally(candidates: string[], declared: string[]): string[] 
 }
 
 /**
- * Compare the bundle's declared profile against the ACTIVE LOCAL profile (READ-only:
- * loads the local profile, writes nothing). A default-profile project yields a
- * `noActiveProfile` note; a differing digest attaches the OQ12 no-migration note.
+ * A bundle's declared profile against the local one.
+ *
+ * There is no local profile to compare: every project is the fixed default, so a
+ * bundle ALWAYS arrives describing types this build cannot declare. That is not a
+ * mismatch to report — it is the expected shape of an older bundle, and the import
+ * path already drops every undeclared schema element with a warning. So the answer
+ * is the `noActiveProfile` note, which is what the caller rendered before for a
+ * project with no profile installed.
+ *
+ * @param _root - Project root directory (unused).
+ * @param profile - The bundle's declared profile block.
+ * @returns The no-active-profile comparison result.
  */
-async function buildMismatch(root: string, profile: BundleProfileBlock): Promise<BundleProfileMismatch> {
-  const local = await loadNonDefaultProfile(root);
-  if (local === undefined) {
-    return {
-      noActiveProfile: true,
-      entityTypesNotDeclaredLocally: profile.entityTypes,
-      relationTypesNotDeclaredLocally: profile.relationTypes,
-      note: NO_ACTIVE_PROFILE_NOTE,
-    };
-  }
-  const mismatch: BundleProfileMismatch = {
-    entityTypesNotDeclaredLocally: notDeclaredLocally(profile.entityTypes, Object.keys(local.profile.entities)),
-    relationTypesNotDeclaredLocally: notDeclaredLocally(profile.relationTypes, Object.keys(local.profile.relations ?? {})),
+async function buildMismatch(_root: string, profile: BundleProfileBlock): Promise<BundleProfileMismatch> {
+  return {
+    noActiveProfile: true,
+    entityTypesNotDeclaredLocally: profile.entityTypes,
+    relationTypesNotDeclaredLocally: profile.relationTypes,
+    note: NO_ACTIVE_PROFILE_NOTE,
   };
-  if (profile.profileId !== local.profile.profileId) mismatch.differingProfileId = { bundle: profile.profileId, local: local.profile.profileId };
-  if (profile.profileContentHash !== local.digest) {
-    mismatch.differingProfileContentHash = { bundle: profile.profileContentHash, local: local.digest };
-    mismatch.note = OQ12_NOTE;
-  }
-  return mismatch;
 }
 
 /**

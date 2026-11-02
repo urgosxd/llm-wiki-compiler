@@ -20,7 +20,7 @@ import type {
 } from "./candidate-custody.js";
 
 /** Typed refusal for a malformed or mutable candidate-custody boundary. */
-export class CandidateCustodyBoundaryError extends Error {
+class CandidateCustodyBoundaryError extends Error {
   constructor() {
     super("candidate custody boundary is invalid");
     this.name = "CandidateCustodyBoundaryError";
@@ -85,7 +85,7 @@ export function captureCandidateCustodyReceipt(
 }
 
 /** Capture a dense frozen receipt list before any batch effect. */
-export function captureCandidateCustodyReceipts(
+function captureCandidateCustodyReceipts(
   value: unknown,
   maximum = 200,
   overflowError: () => Error = () => new CandidateCustodyBoundaryError(),

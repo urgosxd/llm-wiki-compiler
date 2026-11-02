@@ -7,8 +7,8 @@
  * `parseLlmwikiLog` translates llmwiki's `## [ISO] op | desc` headings into OKF entries.
  */
 import type { ExportPage } from "../types.js";
-import type { ProfileEntityDoc } from "./profile-docs.js";
-import type { BundleBlock } from "./bundle-block.js";
+import type { ProfileEntityDoc } from "./bundle-block-contract.js";
+import type { BundleBlock } from "./bundle-block-contract.js";
 import { buildFrontmatter } from "../../utils/markdown.js";
 
 /** The OKF bundle format version stamped on `index.md` frontmatter. */

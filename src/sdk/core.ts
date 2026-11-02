@@ -45,21 +45,7 @@ import { runOkfExport } from "../export/okf/run.js";
 import { runOkfImport } from "../import/run.js";
 import { applyApprovedMutations } from "../trust/executor.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
-import { resolveArtifactRef, declaresArtifactTypes, ArtifactVerifyUnavailableError, type ArtifactHealth } from "../artifacts/resolve.js";
-import type { ArtifactPlannedMutation } from "../trust/planner.js";
 import type { CreateWikiOptions, WikiCore, SdkCompileOptions } from "./core-types.js";
-import { readVerifiedArtifactBody } from "../artifacts/read-verified.js";
-import { captureArtifactSelector, discoverArtifact } from "../artifacts/discover.js";
-
-/** Share the active-profile admission across artifact read surfaces. */
-async function requireArtifactProfile(root: string) {
-  const loaded = await loadNonDefaultProfile(root);
-  if (!loaded) throw new ArtifactVerifyUnavailableError("no-profile", "the project has no non-default profile");
-  if (!declaresArtifactTypes(loaded.profile)) {
-    throw new ArtifactVerifyUnavailableError("no-artifact-types", "no artifact types declared by the active profile");
-  }
-  return loaded.profile;
-}
 
 /**
  * Run `fn` with output scoped quiet via AsyncLocalStorage.
@@ -170,69 +156,6 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     exportOkf: (opts = {}) => runQuiet(() => runOkfExport(root, opts)),
 
     importOkf: (dir, opts = {}) => runQuiet(() => runOkfImport(root, dir, opts)),
-
-    // @experimental artifact write/verify slice — writeArtifact delegates to the
-    // SAME self-locking executor seam the CLI uses, threading `origin: "sdk"`
-    // from the mutation (never hardcoded downstream); verifyArtifact loads the
-    // active non-default profile itself and throws the typed
-    // ArtifactVerifyUnavailableError when none is active OR it declares no
-    // artifact types (the CLI's dedicated "no artifact types declared" exit,
-    // mirrored via the shared `declaresArtifactTypes` predicate so the two
-    // surfaces agree), matching the other experimental profile-gated methods.
-    //
-    // Allowlist-construct the mutation from ONLY the known `input` fields —
-    // the SDK is a published JS runtime surface, so a caller can pass extra
-    // properties (e.g. a forged `origin`/`kind`) that TypeScript can't stop at
-    // the call site. Naming each field (rather than spreading `input`) means no
-    // caller-injected property can ride along and override the SDK-stamped
-    // `origin` or `kind`.
-    writeArtifact: (input) => {
-      // EXACTLY one of body/memberFiles: neither would synthesize an empty
-      // body, and BOTH would silently discard the caller's body — a JS caller
-      // can pass either shape, so the contract is enforced at runtime.
-      if ((input.body === undefined) === (input.memberFiles === undefined)) {
-        return Promise.reject(new Error("writeArtifact requires exactly one of body or memberFiles"));
-      }
-      // SNAPSHOT SYNCHRONOUSLY, before the first await: member bytes are
-      // caller-owned mutable views, and hashing one snapshot while writing
-      // another would be a forged-manifest channel. Copying here (and again at
-      // the executor for non-SDK callers) pins hash === written bytes.
-      const mutation: ArtifactPlannedMutation = {
-        kind: "artifact",
-        artifactType: input.artifactType,
-        slug: input.slug,
-        // A member-bearing write carries an EMPTY body: core derives the manifest.
-        body: input.memberFiles === undefined ? (input.body as string) : "",
-        ...(input.memberFiles === undefined ? {} : {
-          memberFiles: input.memberFiles.map((file) => ({ fileName: file.fileName, bytes: Uint8Array.from(file.bytes) })),
-        }),
-        origin: "sdk",
-      };
-      return runQuiet(async () => {
-        const [result] = await applyApprovedMutations(root, [mutation]);
-        if (result.kind !== "artifact") throw new Error("executor returned a non-artifact result for an artifact write");
-        return { ref: result.ref };
-      });
-    },
-
-    // `resolveArtifactRef` also returns the parsed manifest now (an MCP-only
-    // optimization — see `src/mcp/tools.ts`); project it away here rather than
-    // returning the resolve result verbatim, so the published SDK contract
-    // stays exactly `{ health }` and never leaks manifest fields.
-    verifyArtifact: (ref): Promise<{ health: ArtifactHealth }> =>
-      runQuiet(async () => {
-        const { health } = await resolveArtifactRef(root, await requireArtifactProfile(root), ref);
-        return { health };
-      }),
-
-    readVerifiedArtifactBody: (ref) => runQuiet(async () =>
-      readVerifiedArtifactBody(root, await requireArtifactProfile(root), ref)),
-
-    discoverArtifact: (selector) => runQuiet(async () => {
-      const captured = captureArtifactSelector(selector);
-      return discoverArtifact(root, await requireArtifactProfile(root), captured);
-    }),
-
 
     // @experimental preparation slice — factored into preparation-facade.ts.
     // The embedder's preparation identity and grants are read HERE, at

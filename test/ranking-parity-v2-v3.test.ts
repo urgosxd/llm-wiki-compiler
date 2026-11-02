@@ -193,61 +193,6 @@ const EXPECTED_ID: Record<string, string> = { "1,0,0": "concepts/foo", "0,1,0": 
  */
 const ALL_BODIES = [CONCEPT_BODY, PAPERS_BODY, QUERY_BODY];
 
-describe("v2→v3 ranking parity — pillar 2: collision classes disambiguated", () => {
-  let generateAnswer: typeof import("../src/commands/query.js").generateAnswer;
-
-  /** Build the collision corpus with the query vector aligned to one axis. */
-  async function setupAxis(key: string): Promise<string> {
-    setProviderEnv();
-    const root = await buildCollisionCorpus();
-    mockQueryVector(key.split(",").map(Number));
-    ({ generateAnswer } = await import("../src/commands/query.js"));
-    return root;
-  }
-
-  it.each(["1,0,0", "0,1,0", "0,0,1"])("generateAnswer ranks the %s-aligned namespace first, each foo on its own body", async (key) => {
-    const root = await setupAxis(key);
-    try {
-      const result = await generateAnswer(root, "which foo?");
-      expect(result.pageIds[0]).toBe(EXPECTED_ID[key]); // intended namespace ranks first
-      expect(new Set(result.pageIds)).toEqual(new Set(["concepts/foo", "papers/foo", "queries/foo"]));
-      // Every distinct body present → each foo resolved to its OWN file (no collapse).
-      for (const body of ALL_BODIES) expect(result.answer).toContain(body);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it.each(["1,0,0", "0,1,0", "0,0,1"])("MCP search_pages ranks the %s-aligned page first, each foo on its own body", async (key) => {
-    const root = await setupAxis(key);
-    try {
-      const envelope = await callTool(buildServer(root), "search_pages", { question: "which foo?" });
-      const { pages, refs } = parseSearchResult(envelope);
-      expect(refs[0]?.pageId).toBe(EXPECTED_ID[key]); // intended namespace ranks first
-      expect(new Set(refs.map((r) => r.pageId))).toEqual(new Set(["concepts/foo", "papers/foo", "queries/foo"]));
-      const bodies = pages.map((p) => p.body).join("\n");
-      for (const body of ALL_BODIES) expect(bodies).toContain(body);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-});
-
-/** Decode the `search_pages` envelope into its pages + refs payload. */
-function parseSearchResult(envelope: import("./fixtures/mcp-test-env.js").McpToolEnvelope): {
-  pages: PageRecord[];
-  refs: Array<{ pageId: string }>;
-} {
-  const payload = (envelope.structuredContent?.result ?? JSON.parse(envelope.content[0].text)) as {
-    pages: PageRecord[];
-    refs: Array<{ pageId: string }>;
-  };
-  return payload;
-}
-
-// ---------------------------------------------------------------------------
-// Pillar 3 — direction-of-fix: bare slug collapses, pageId disambiguates
-// ---------------------------------------------------------------------------
 
 describe("v2→v3 ranking parity — pillar 3: direction-of-fix", () => {
   const collide = [

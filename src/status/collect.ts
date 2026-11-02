@@ -22,9 +22,8 @@ import { countCandidates } from "../compiler/candidates.js";
 import { isPlainObject } from "../utils/state.js";
 import { readStateClassifiedFor } from "../dimensions/wiki/page-source-seam.js";
 import type { StateStatus } from "../utils/state.js";
-import { buildFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
+import { buildProjectFreshnessSnapshot, computeFreshness } from "../freshness/index.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
-import { collectProfileSummary } from "../profile/block.js";
 import { journalHealthWarning } from "../trust/journal-health-warning.js";
 import type { ReadSurfaceWarning } from "../trust/journal-health-warning.js";
 import { pendingEmbeddingsWarning } from "../trust/pending-embeddings-warning.js";
@@ -82,38 +81,6 @@ export interface WikiStatus {
    * silently healthy. Mirrors the journal-warning surfacing on viewer/export/context.
    */
   warnings?: ReadSurfaceWarning[];
-  /**
-   * Active non-default profile summary. ABSENT (undefined) for the default
-   * profile so default envelopes are unchanged. When present, `entityCounts`
-   * is the per-entity-type page count; the legacy `pages` block above stays
-   * scoped to the literal wiki/concepts + wiki/queries dirs only.
-   */
-  profile?: {
-    profileId: string;
-    digest: string;
-    entityCounts: Record<string, number>;
-    /**
-     * Structured problems from the non-default read path (invalid directories,
-     * non-slug-safe filenames, slug mismatches, field-contract violations),
-     * CAPPED at PROFILE_PROBLEM_CAP; each `path` is project-relative (never
-     * absolute) and absent for directory-level problems. Present ONLY when
-     * non-empty, so a non-default project with a bad directory or page is never
-     * reported as silently healthy; see `problemTotal` for the full count.
-     */
-    problems?: EntityProblemView[];
-    /** Full problem count (may exceed `problems.length` when capped). */
-    problemTotal?: number;
-    /**
-     * Per-entity-type tally of the CURRENT lifecycle-field value across that
-     * type's enrolled pages (e.g. `{ ideas: { proposed: 1, testing: 2 } }`),
-     * computed ONLY for entity types declaring a `lifecycle`, from the bounded
-     * frontmatter-only scan. This is what makes a lifecycle TRANSITION visible
-     * to `status`/`wiki_status`: a field-flip changes these counts. ABSENT when
-     * no entity type declares a lifecycle (or none is enrolled), so default and
-     * lifecycle-less envelopes stay byte-identical.
-     */
-    lifecycleStates?: Record<string, Record<string, number>>;
-  };
 }
 
 /** Classify scanned concept pages into stale/orphaned arrays using the freshness snapshot. */
@@ -212,8 +179,15 @@ export interface CollectStatusOptions {
 
 /** The Stack's own documents, as the status needs them. */
 export interface SourceDocumentListing {
-  /** Source identities and their stored hashes, as a compile compares them. */
-  list(): Promise<Array<{ sourceIdentity: string; contentHash: string }>>;
+  /**
+   * Source identities, their stored hashes, and their text.
+   *
+   * `content` is present because the row already carries it: `listSourceDocuments`
+   * selects it for every document. Freshness compares hashes and ignores the text;
+   * the citation rules need the text itself to count lines for claim-level spans,
+   * and re-reading it per rule would be a second query for data already in hand.
+   */
+  list(): Promise<Array<{ sourceIdentity: string; contentHash: string; content?: string }>>;
 }
 
 /** Build a read-only status snapshot used by the `wiki_status` MCP tool. */
@@ -229,7 +203,11 @@ export async function collectStatus(
   const stackDocuments = options.sourceDocuments === undefined
     ? undefined
     : await options.sourceDocuments.list();
-  const snapshot = await buildFreshnessSnapshot(root, classified, stackDocuments);
+  // Hand the listing over explicitly. Letting the helper resolve its own corpus would
+  // make the snapshot and the pending list read two different sources: an injected
+  // listing (how the status tests, and the MCP tool, drive this) reached the pending
+  // list while the snapshot ignored it and judged a live owner `orphaned`.
+  const snapshot = await buildProjectFreshnessSnapshot(root, classified, stackDocuments);
 
   const scan = options.pageScan;
   // Rows are authoritative when a Stack is configured, exactly as in `detectChanges`.
@@ -255,7 +233,6 @@ export async function collectStatus(
   ]);
 
   const { stalePages, orphanedPages } = classifyConceptPages(scannedConcepts, snapshot);
-  const profileBlock = await collectProfileSummary(root);
   // Surface read-surface health signals so an agent never reads a degraded status
   // as silently healthy: a pending/unavailable journal (unfinished or tampered
   // compile) AND a pending embeddings refresh (a compile that skipped/failed the
@@ -297,6 +274,5 @@ export async function collectStatus(
     pendingChanges: capPendingChanges(pendingChanges),
     pendingChangesCount: pendingChanges.length,
     ...(warnings.length ? { warnings } : {}),
-    ...(profileBlock ? { profile: profileBlock } : {}),
   };
 }

@@ -282,18 +282,4 @@ describe("llmwiki rm end to end", () => {
     expect(plan!.profileId).toBeNull();
   });
 
-  it("still deletes exclusive concepts and keeps shared ones on a profile project, and carries its profileId", async () => {
-    const root = await twoSourceRmProjectWithProfile();
-
-    const plan = await planRemoval(root, "bad.md");
-    expect(plan!.profileId).toBe("sample");
-
-    // P1: rm must NOT refuse on a profile project — a profile project can
-    // legitimately still have concept pages, and rm must go on deleting them
-    // exactly as it does for a default project. It is the caller (the CLI)
-    // that must warn about what this plan cannot see, not this apply step.
-    await applyRemovalLocked(root, plan!);
-
-    expectExclusiveGoneSharedKept(root);
-  });
 });

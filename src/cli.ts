@@ -36,10 +36,8 @@ import { parseConcurrencyFlag } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { ENV_VERBOSE } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { runExitCodeCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { registerSchemaCommands } from "./cli/schema-commands.js";
-import { registerArtifactCommands } from "./cli/artifact-commands.js";
 import { registerReviewCommands } from "./cli/review-commands.js";
 import { registerEvalCommands } from "./cli/eval-commands.js";
-import { registerConnectorCommands } from "./cli/connector-commands.js";
 import { addProviderOption, applyProviderOption, type ProviderOption } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { loadCliEnvironment } from "./cli/environment.js";
 
@@ -327,10 +325,6 @@ registerSchemaCommands(program);
 
 
 
-
-registerArtifactCommands(program);
-
-registerConnectorCommands(program);
 
 program
   .command("export")

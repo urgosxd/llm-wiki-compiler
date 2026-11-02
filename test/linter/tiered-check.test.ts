@@ -118,6 +118,9 @@ describe("every rule's tier is pinned", () => {
       { rule: "checkContradictedPages", tier: "provider-judgement" },
       { rule: "checkInferredWithoutCitations", tier: "provider-judgement" },
       { rule: "checkJournalHealth", tier: "deterministic" },
+      // Moved here from the profile lint group: the event chain's integrity is not a
+      // judgement about a page, and it must not depend on a profile being installed.
+      { rule: "checkEventChain", tier: "deterministic" },
       { rule: "checkPendingEmbeddings", tier: "derived-view" },
       { rule: "checkSchemaCrossLinks", tier: "deterministic" },
       { rule: "checkStalePages", tier: "derived-view" },

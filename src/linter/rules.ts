@@ -30,7 +30,7 @@ import type { FreshnessSnapshot } from "../freshness/types.js";
 import { listLinkResolvablePendingSlugs } from "../compiler/candidates.js";
 import {
   CITATION_PATTERN,
-  collectAllPages,
+  readLintPages,
   type PageScope,
   findMatchesInContent,
 } from "./rules-shared.js";
@@ -51,7 +51,7 @@ export {
 
 /** Minimum body length (in characters) for a page to be considered non-empty. */
 /** Rule id for a page whose body is too short to carry a claim; the profile registry declares it by this name. */
-export const EMPTY_PAGE_RULE = "empty-page";
+const EMPTY_PAGE_RULE = "empty-page";
 const MIN_BODY_LENGTH = 50;
 
 /** Pattern matching [[Wikilink Title]] references in markdown content. */
@@ -75,7 +75,7 @@ function buildPageSlugSet(
 /** Find [[Title]] wikilinks that don't match any existing wiki page. */
 export async function checkBrokenWikilinks(root: string, scope: PageScope = "generic"): Promise<LintResult[]> {
   // Existing profile projects also retain public default coverage.
-  const pages = await collectAllPages(root, scope);
+  const pages = await readLintPages(root, scope);
   const existingSlugs = buildPageSlugSet(pages);
   const pendingSlugs = await listLinkResolvablePendingSlugs(root);
   const results: LintResult[] = [];
@@ -109,7 +109,7 @@ export async function checkBrokenWikilinks(root: string, scope: PageScope = "gen
 
 /** Find pages with `orphaned: true` in their frontmatter. */
 export async function checkOrphanedPages(root: string): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const results: LintResult[] = [];
 
   for (const page of pages) {
@@ -138,7 +138,7 @@ export async function checkOrphanedPages(root: string): Promise<LintResult[]> {
  * source-hash pass happens once per lint run.
  */
 export async function checkStalePages(root: string, snapshot: FreshnessSnapshot): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const results: LintResult[] = [];
   for (const page of pages) {
     const { meta } = parseFrontmatter(page.content);
@@ -167,7 +167,7 @@ export async function checkStalePages(root: string, snapshot: FreshnessSnapshot)
 
 /** Find pages with empty or missing `summary` in frontmatter. */
 export async function checkMissingSummaries(root: string): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const results: LintResult[] = [];
 
   for (const page of pages) {
@@ -190,7 +190,7 @@ export async function checkMissingSummaries(root: string): Promise<LintResult[]>
 
 /** Find multiple pages whose titles match case-insensitively. */
 export async function checkDuplicateConcepts(root: string): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const titleMap = new Map<string, string[]>();
 
   for (const page of pages) {
@@ -222,7 +222,7 @@ export async function checkDuplicateConcepts(root: string): Promise<LintResult[]
 
 /** Find pages with frontmatter but very short or empty body content. */
 export async function checkEmptyPages(root: string): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const results: LintResult[] = [];
 
   for (const page of pages) {
@@ -244,7 +244,7 @@ export async function checkEmptyPages(root: string): Promise<LintResult[]> {
  * @param page - The page's frontmatter title (if any), markdown body, and path.
  * @returns A single `empty-page` warning, or an empty array when not empty.
  */
-export function checkPageEmpty(page: {
+function checkPageEmpty(page: {
   title?: string;
   body: string;
   filePath: string;
@@ -268,7 +268,7 @@ export function checkPageEmpty(page: {
  * backward-compatibility with pre-existing wikis.
  */
 export async function checkLowConfidencePages(root: string): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const results: LintResult[] = [];
 
   for (const page of pages) {
@@ -288,7 +288,7 @@ export async function checkLowConfidencePages(root: string): Promise<LintResult[
 
 /** Flag pages whose frontmatter records contradictions with other pages. */
 export async function checkContradictedPages(root: string): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const results: LintResult[] = [];
 
   for (const page of pages) {
@@ -318,7 +318,7 @@ export async function checkContradictedPages(root: string): Promise<LintResult[]
  * reviewer would see and survives hand-edits.
  */
 export async function checkInferredWithoutCitations(root: string): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const results: LintResult[] = [];
 
   for (const page of pages) {

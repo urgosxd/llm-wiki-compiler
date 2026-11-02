@@ -6,10 +6,16 @@
  *
  * `recordPreState` snapshots a target's PREVIOUS BYTES so a crash can restore them.
  * That exists because file writes are not atomic as a SET: if A lands and B fails, A
- * has to be undone by hand. A row write has no previous bytes to snapshot, and the
- * database already gives all-or-nothing for free through its transaction — so
+ * has to be undone by hand. A row write has no previous bytes to snapshot, so
  * `applyPageMutationLocked` deliberately SKIPS the journal when a `pageSink` is
- * present. That reasoning is written down in `executor.ts` and is correct.
+ * present, and that part of the reasoning is correct.
+ *
+ * ITS COMPANION CLAIM WAS NOT. This header used to say the transaction gave
+ * all-or-nothing "for free". It does not: nothing opened a transaction around the
+ * batch, so each page committed its own and a failure halfway through left the
+ * earlier ones durable. That is fixed by `pageBatchTransaction` and proven in
+ * `row-page-batch-atomicity.test.ts`. What this file asserts — that no journal is
+ * created — is still true, and is the half of the contract that never changed.
  *
  * What it did not do is stop opening the batch. `applyApprovedMutationsLocked` still
  * called `openBatch` (creating `.llmwiki/journal/<id>.json`) and `commitBatch`

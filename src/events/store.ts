@@ -44,7 +44,7 @@ import { assertOperationBinding, type OperationBinding } from "../utils/operatio
 import { releaseLock } from "../utils/lock.js";
 import { acquireMutationLockBlocking } from "../utils/mutation-lock.js";
 import { atomicWrite } from "../utils/markdown.js";
-import { ulid } from "../relations/ulid.js";
+import { ulid } from "../utils/ulid.js";
 import type { EventContent, EventId, EventRecord, EventType } from "./types.js";
 import { GENESIS_PREV_HASH, EventStoreFullError } from "./types.js";
 import {
@@ -168,7 +168,7 @@ async function sealHeadAnchor(root: string, content: EventContent): Promise<void
  * @throws {EventStoreFullError} When the would-be record exceeds the per-record
  *   cap or would drive the store past its size ceiling.
  */
-export async function preflightEventAppend(root: string, input: AppendEventInput): Promise<void> {
+async function preflightEventAppend(root: string, input: AppendEventInput): Promise<void> {
   const events = await prepareEventStoreForAppend(root); // under the caller's lock
   const record = buildEventRecord(input, prevHashFor(events));
   const serialized = serializeEventRecord(stripChecksum(record));
@@ -269,7 +269,7 @@ export async function appendEventLocked(root: string, input: AppendEventInput): 
  * @param binding - The operation binding to stamp onto the record.
  * @returns The persisted {@link EventRecord}.
  */
-export async function appendBoundEventLocked(
+async function appendBoundEventLocked(
   root: string,
   input: AppendEventInput,
   binding: OperationBinding,

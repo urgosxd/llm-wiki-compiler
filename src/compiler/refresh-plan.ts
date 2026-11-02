@@ -10,7 +10,7 @@
 import { listSelectedSourceFiles } from "../sources/scan.js";
 import path from "path";
 import { readStateClassifiedFor } from "../dimensions/wiki/page-source-seam.js";
-import { buildFreshnessSnapshot } from "../freshness/index.js";
+import { buildProjectFreshnessSnapshot } from "../freshness/index.js";
 import { findAffectedSources } from "./deps.js";
 import { scanWikiPages } from "./indexgen.js";
 import type { PageScanSource } from "../dimensions/wiki/page-scan-source.js";
@@ -150,7 +150,7 @@ export async function resolveStaleRefresh(
     return { stateStatus: classified.status, plan: null };
   }
 
-  const snapshot = await buildFreshnessSnapshot(root, classified);
+  const snapshot = await buildProjectFreshnessSnapshot(root, classified);
   const state = classified.state;
   // Rows when they are the corpus. `classifyPages` already takes the scan shape, so
   // the classification below is unchanged -- only where the page list came from.

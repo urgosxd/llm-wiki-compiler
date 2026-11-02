@@ -24,7 +24,7 @@ import type { ReviewCandidate } from "../utils/types.js";
 const BUNDLE_ID_PREFIX = "bnd_";
 
 /** Exact aggregate serialized-byte ceiling for one strict mutation scan. */
-export const MAX_CANDIDATE_MUTATION_SCAN_BYTES = 64 * 1024 * 1024;
+const MAX_CANDIDATE_MUTATION_SCAN_BYTES = 64 * 1024 * 1024;
 
 /** Predicate used to select candidate records by caller-owned content identity. */
 export type CandidateMutationSelector = (candidate: ReviewCandidate) => boolean;
@@ -43,7 +43,7 @@ export interface CandidateMutationSelectionHooks extends CandidateMutationScanHo
 }
 
 /** One binding-owned strict snapshot used for projection and mutation. */
-export interface CandidateMutationSelection {
+interface CandidateMutationSelection {
   readonly totalPending: number;
   readonly entries: readonly CandidateFileEntry[];
 }
@@ -57,7 +57,7 @@ export class CandidateIdentityMismatchError extends Error {
 }
 
 /** Typed fixed refusal when a strict scan exceeds its aggregate byte budget. */
-export class CandidateMutationScanCapacityError extends Error {
+class CandidateMutationScanCapacityError extends Error {
   constructor() {
     super("candidate mutation scan byte capacity exhausted");
     this.name = "CandidateMutationScanCapacityError";
@@ -155,7 +155,7 @@ export async function selectReadableCandidateEntriesForMutation(
 }
 
 /** Select and count under one store binding through the final receipt read. */
-export async function selectCandidateEntriesForMutationWithTotal(
+async function selectCandidateEntriesForMutationWithTotal(
   root: string,
   selector: CandidateMutationSelector,
   bounds?: CandidateSelectionBounds,

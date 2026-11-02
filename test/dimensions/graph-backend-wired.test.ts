@@ -1,17 +1,25 @@
 /**
  * @file test/dimensions/graph-backend-wired.test.ts
- * @description With a Stack configured, the graph stores write and read ROWS.
+ * @description With a Stack configured, the EVENT chain writes and reads ROWS.
  *
- * The property that matters is that the two halves agree: a relation recorded in
- * rows while its event went to a file would leave the audit trail describing a store
- * nothing reads. So this asserts both, and asserts no `wiki/graph/` directory
- * appears — a file-backed store would create one.
+ * This file used to also prove that a relation recorded in rows while its event
+ * went to a file would leave the audit trail describing a store nothing reads.
+ * Relations were removed with the profile system, so that half is gone; the
+ * event half is what survives and it is the half that matters most now.
  *
- * It also proves the chain still detects tampering over rows, using the SAME
- * `recordChecksum`/`eventPrevHash` the file path uses.
+ * `migration_wiki_graph.sql` is the one file that carries `wiki.event_log`, and
+ * it was edited when `relation_edges` came out. These tests are the reason that
+ * edit has to stay honest: they assert that rows are written, that the chain
+ * reads back intact, that tampering over rows is DETECTED, and that no
+ * `wiki/graph/` directory appears — a file-backed store would create one.
+ *
+ * When this file was deleted along with the relation suite, the only remaining
+ * coverage of `appendEventLocked` was timestamp fidelity via the FILE path. The
+ * row backend, the "no `wiki/graph/` directory" property and row tamper
+ * detection were uncovered. That gap is why this file is restored.
  */
 
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -19,16 +27,8 @@ import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readEvents } from "../../src/events/store-read.js";
 import { appendEventLocked } from "../../src/events/store.js";
-import { readRelations } from "../../src/relations/store-read.js";
-import { appendRelationLocked } from "../../src/relations/store.js";
-import type { ProfilePack } from "../../src/profile/types.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
-
-const PROFILE = {
-  relations: { SUPPLIES: { from: ["concepts"], to: ["concepts"], direction: "directed" } },
-  entities: { concepts: {} },
-} as unknown as ProfilePack;
 
 let harness: KgPostgresHarness;
 let root: string;
@@ -37,13 +37,6 @@ beforeEach(async () => {
   harness = await createKgPostgresHarness(`wired-${randomUUID().slice(0, 8)}`);
   root = await mkdtemp(path.join(os.tmpdir(), "graph-wired-"));
   await mkdir(path.join(root, "wiki/concepts"), { recursive: true });
-  // The profile loader reads a project file; a non-default profile is needed for
-  // relation validation, so it is written here rather than mocked.
-  await writeFile(
-    path.join(root, ".llmwiki-probe-profile.json"),
-    JSON.stringify(PROFILE),
-    "utf-8",
-  ).catch(() => undefined);
 });
 
 afterEach(async () => {
@@ -69,7 +62,15 @@ async function hasGraphDir(): Promise<boolean> {
   return entries.includes("graph");
 }
 
-describe("the graph backend when a Stack is configured", () => {
+/** Count the event rows this harness's Stack holds. */
+async function countEventRows(): Promise<number> {
+  const rows = await harness.db.execute<{ n: number }>(sql`
+    select count(*)::int as n from wiki.event_log where stack_id = ${harness.stackId}
+  `);
+  return rows[0]?.n ?? 0;
+}
+
+describe("the event backend when a Stack is configured", () => {
   it("writes events to rows and creates no wiki/graph/ directory", async () => {
     applyStackEnv();
     try {
@@ -80,10 +81,7 @@ describe("the graph backend when a Stack is configured", () => {
       clearStackEnv();
     }
 
-    const rows = await harness.db.execute<{ n: number }>(sql`
-      select count(*)::int as n from wiki.event_log where stack_id = ${harness.stackId}
-    `);
-    expect(rows[0]?.n).toBe(1);
+    expect(await countEventRows()).toBe(1);
     expect(await hasGraphDir()).toBe(false);
   });
 
@@ -112,31 +110,6 @@ describe("the graph backend when a Stack is configured", () => {
 
       const { problems } = await readEvents(root);
       expect(problems.some((p) => p.includes("checksum mismatch"))).toBe(true);
-    } finally {
-      clearStackEnv();
-    }
-  });
-
-  it("records a relation and its event in rows, both", async () => {
-    applyStackEnv();
-    try {
-      await appendRelationLocked(root, PROFILE, {
-        type: "SUPPLIES",
-        from: "concepts/alpha" as never,
-        to: "concepts/beta" as never,
-        attributes: {},
-      } as never);
-
-      const relations = await readRelations(root);
-      expect(relations.relations).toHaveLength(1);
-
-      // The event moved with it: a relation whose audit event stayed in a file would
-      // leave the trail describing a store nothing reads.
-      const events = await harness.db.execute<{ n: number }>(sql`
-        select count(*)::int as n from wiki.event_log where stack_id = ${harness.stackId}
-      `);
-      expect(events[0]?.n).toBe(1);
-      expect(await hasGraphDir()).toBe(false);
     } finally {
       clearStackEnv();
     }

@@ -236,7 +236,7 @@ async function changedSources(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string[]> {
   const state = await readRuleState(root, env);
-  const changes = await detectChanges(root, state, changeSource);
+  const changes = await detectChanges(root, state, changeSource, env);
   return changes
     .filter((c) => c.status === "new" || c.status === "changed" ||
       (c.status === "unchanged" && (state.sources[c.file]?.outputLanguage ?? "") !== outputLanguage))

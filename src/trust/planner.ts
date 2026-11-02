@@ -32,16 +32,13 @@ import { runMandatoryPageChecks, resourceCapForOrigin, type PageWriteContext } f
 import { composeTrustDecision, type TrustDecision, type TrustCheckResult } from "./decision.js";
 import { entityId, isSlugSafe, isSafeFilenameComponent } from "../profile/identity.js";
 import type { EntityId } from "../profile/types.js";
-import type { ArtifactMemberFileInput } from "../artifacts/members.js";
-import type { AppendRelationInput } from "../relations/store.js";
 
-/** Every CLP store a mutation can target. The executor handles `page`, `relation`,
- * `lifecycle-transition`, and `artifact` kinds; `workflow-*` is not-implemented. */
+/** Every CLP store a mutation can target. The executor handles `page`, `relation`
+ * and `artifact` kinds; `workflow-*` is not-implemented. */
 export type MutationKind =
   | "page"
   | "relation"
   | "artifact"
-  | "lifecycle-transition"
   | "workflow-gate"
   | "workflow-state";
 
@@ -103,15 +100,19 @@ export interface PagePlannedMutation {
 }
 
 /**
- * One planned `relation` mutation — INTENT ONLY (no page body). The persisted
- * {@link RelationRef} flows back through the executor's apply RESULT, not the
- * plan. Carries the validated {@link AppendRelationInput} the relation store
- * appends.
+ * One planned `relation` mutation — RETAINED FOR PLAN COMPATIBILITY ONLY.
+ *
+ * The relation subsystem was removed, so nothing constructs this any more. The
+ * shape stays so a plan PERSISTED by an earlier build still parses, and reaches
+ * the executor's typed `not-implemented:` refusal instead of failing as an
+ * unreadable plan or a silent no-op. `input` is opaque here for the same reason:
+ * the `AppendRelationInput` type went with the relation store, and inventing a
+ * replacement would be a lie about a subsystem that no longer exists.
  */
 export interface RelationPlannedMutation {
   kind: "relation";
   operation: "create";
-  input: AppendRelationInput;
+  input: Record<string, unknown>;
 }
 
 /**
@@ -139,11 +140,6 @@ export interface ArtifactPlannedMutation {
   slug: string;
   /** The bytes to write; for a member-bearing type this must be EMPTY (core derives the manifest). */
   body: string;
-  /**
-   * The member leaves of a member-bearing type (bytes only — core hashes them
-   * and renders the manifest). Refused on a type that declares no members.
-   */
-  memberFiles?: readonly ArtifactMemberFileInput[];
   /** Provenance recorded in the audit event; set by the calling surface (F2). */
   origin: ArtifactOrigin;
 }

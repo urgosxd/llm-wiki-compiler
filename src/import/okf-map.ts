@@ -93,7 +93,7 @@ function baseFields(meta: Record<string, unknown>, ctx: OkfMapContext, slug: str
  * Exported so the typed profile-import leg reuses the SAME re-export honesty snapshot
  * (D-7.6.12) as native docs — foreign vendor keys survive in `originalFrontmatter`.
  */
-export function buildXokf(meta: Record<string, unknown>, okfPath: string): Record<string, unknown> {
+function buildXokf(meta: Record<string, unknown>, okfPath: string): Record<string, unknown> {
   const rawType = typeof meta.type === "string" ? meta.type : "concept";
   const known = KNOWN_KINDS.has(rawType);
   return { ...(known ? {} : { type: rawType }), okfPath, originalFrontmatter: meta };
@@ -122,7 +122,7 @@ function buildPageFields(doc: RawOkfDoc, ctx: OkfMapContext, slug: string): Reco
  * syntax (intentional: it's a llmwiki page by then). Shared by the native mapper and the
  * typed profile-import leg so both reverse bodies identically (DRY).
  */
-export function reverseDocBody(doc: RawOkfDoc, ctx: OkfMapContext): string {
+function reverseDocBody(doc: RawOkfDoc, ctx: OkfMapContext): string {
   const isNative = doc.meta["x-llmwiki"] !== undefined;
   const resolveLink = (linkPath: string): { slug: string; title: string } | null => {
     const linkSlug = slugFromRelPath(linkPath);

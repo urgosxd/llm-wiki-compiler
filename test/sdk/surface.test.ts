@@ -30,13 +30,13 @@ const REQUIRED = [
   "ingest", "ingestText", "compile", "search", "query", "getPage", "listPages",
   "listSources", "getSource", "deleteSource", "status", "lint", "lintByTier",
   "getContextPack", "exportJson", "runEval", "exportOkf", "importOkf",
-  "writeArtifact", "verifyArtifact", "readVerifiedArtifactBody", "discoverArtifact",
 ] as const;
 
 /** Surfaces removed with the non-wiki subsystems; their return would be a regression. */
 const REMOVED = [
   "stageEntityPage", "promoteStagedPage", "createRelation", "transitionLifecycle",
   "stagePreparation", "previewPreparation", "listPreparations",
+  "writeArtifact", "verifyArtifact", "readVerifiedArtifactBody", "discoverArtifact",
 ] as const;
 
 describe("createWiki facade surface", () => {

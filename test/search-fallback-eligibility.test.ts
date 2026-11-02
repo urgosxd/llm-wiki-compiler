@@ -84,16 +84,7 @@ describe("buildSurfaceEligibleCandidates — privacy + surface specificity (Find
     expect(await enumerate(root, "context")).not.toContain("secrets/s-one");
   });
 
-  it("an includeInSearch:false,includeInContext:true page appears under context but NOT search", async () => {
-    const root = await seedMixed();
-    expect(await enumerate(root, "context")).toContain("papers/p-one");
-    expect(await enumerate(root, "search")).not.toContain("papers/p-one");
-  });
 
-  it("concepts + queries + opted-in typed pages ARE enumerated for search", async () => {
-    const ids = await enumerate(await seedMixed(), "search");
-    expect(ids).toEqual(expect.arrayContaining(["concepts/c-one", "queries/q-one", "notes/n-one"]));
-  });
 });
 
 describe("selectFallbackRefs — namespace correctness + privacy drop (Findings 1 & 3)", () => {
@@ -120,11 +111,6 @@ describe("selectFallbackRefs — namespace correctness + privacy drop (Findings 
     expect(refsIds).toEqual(["queries/q-one"]);
   });
 
-  it("a typed pick resolves to <type>/<slug> and a concept pick to concepts/<slug>", async () => {
-    const root = await seedMixed();
-    expect(await pick(root, ["notes/n-one"])).toEqual(["notes/n-one"]);
-    expect(await pick(root, ["concepts/c-one"])).toEqual(["concepts/c-one"]);
-  });
 
   it("an opted-out typed pageId returned by the LLM is DROPPED (not resolved)", async () => {
     const refsIds = await pick(await seedMixed(), ["papers/p-one"]);
@@ -175,25 +161,6 @@ describe("selectFallbackRefs — collision + default project", () => {
     expect(callClaude).not.toHaveBeenCalled();
   });
 
-  it("concepts/foo and an inSearch papers/foo enumerate as distinct, independently selectable", async () => {
-    const root = await makeTempRoot("f-collision");
-    await writeFile(path.join(root, "wiki", "index.md"), "# Index\n");
-    await writeProfileFile(root, {
-      schemaVersion: 1, profileId: "p", entities: { papers: { directory: "wiki/papers", retrieval: { includeInSearch: true } } },
-    } as ProfilePack);
-    await writePage(path.join(root, "wiki/concepts"), "foo", { title: "Concept Foo", summary: "s" }, "Concept foo.");
-    await mkdir(path.join(root, "wiki/papers"), { recursive: true });
-    await writePage(path.join(root, "wiki/papers"), "foo", { title: "Paper Foo", summary: "s" }, "Paper foo.");
-
-    const profile = await loadProfile(root);
-    const dirs = buildNamespaceDirs(profile.profile);
-    const ids = (await buildSurfaceEligibleCandidates(root, "search", ["concepts", "queries", "papers"], dirs, profile)).map((c) => c.pageId);
-    expect(ids).toEqual(expect.arrayContaining(["concepts/foo", "papers/foo"]));
-
-    await stubSelectPages(["papers/foo"]);
-    const a = await selectFallbackRefs(root, "q", "search", profile);
-    expect(a.refs.map((r) => r.pageId)).toEqual(["papers/foo"]);
-  });
 
   it("default project (no profile.json): concepts + queries enumerate and resolve; no crash", async () => {
     const root = await makeTempRoot("f-default");

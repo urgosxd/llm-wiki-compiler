@@ -23,8 +23,11 @@ function normalizeExclusion(value: unknown): string {
 }
 
 /** Load source settings without interfering with sibling review configuration. */
-export async function loadSourceSelection(root: string): Promise<SourceSelection> {
-  const config = await loadProjectConfig(root);
+export async function loadSourceSelection(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<SourceSelection> {
+  const config = await loadProjectConfig(root, env);
   if (config?.sources === undefined) return { recursive: false, exclude: [] };
   normalizeProjectConfig(config);
   const sources = requireConfigRecord(config.sources, "sources");

@@ -24,14 +24,16 @@ import {
 import { checkJournalHealth } from "./journal-rule.js";
 import { checkPendingEmbeddings } from "./pending-embeddings-rule.js";
 import { loadSchema } from "../schema/index.js";
-import { buildFreshnessSnapshot } from "../freshness/index.js";
+import { buildProjectFreshnessSnapshot } from "../freshness/index.js";
 import type { FreshnessSnapshot } from "../freshness/types.js";
 import { loadProfile } from "../profile/load.js";
 import {
-  groupByDeclaredTier, tieredReport, type LintTierV1, type TieredLintReportV1, type TieredResultGroupV1,
+  tieredReport, type LintTierV1, type TieredLintReportV1, type TieredResultGroupV1,
 } from "./tiers.js";
-import { collectProfileLintFindings, collectProfileLintInput } from "../profile/lint.js";
-import type { PageScope } from "./rules-shared.js";
+import { checkEventChain } from "./rules-events.js";
+import { collectAllPages, type PageScope } from "./rules-shared.js";
+import { corpusFromRawPages, withLintCorpus, type LintCorpus } from "./corpus.js";
+import { withRawPageSource, withSourceDocuments } from "../dimensions/wiki/page-source-seam.js";
 
 /** Rule-only lint checks that don't depend on the schema layer. */
 /**
@@ -55,6 +57,11 @@ const RULES_WITHOUT_SCHEMA: ReadonlyArray<{ rule: LintRule; tier: LintTierV1 }> 
   { rule: checkContradictedPages, tier: "provider-judgement" },
   { rule: checkInferredWithoutCitations, tier: "provider-judgement" },
   { rule: checkJournalHealth, tier: "deterministic" },
+  // The event chain's own integrity: tamper-VISIBLE, not a judgement about a page.
+  // It used to run inside the profile lint group, which made a security property
+  // depend on a profile being installed. The chain survives the profile system, so
+  // its check belongs here, beside the other store-health rules.
+  { rule: checkEventChain, tier: "deterministic" },
   // Embeddings not yet computed: a derived view is behind, nothing is wrong.
   { rule: checkPendingEmbeddings, tier: "derived-view" },
 ];
@@ -90,26 +97,6 @@ function summarize(results: LintResult[]): LintSummary {
   };
 }
 
-/**
- * Append profile-aware entity findings when the project runs a NON-default
- * profile. A default/built-in profile (`loadedFrom === null`) returns the
- * default results UNCHANGED, so the default lint output stays byte-identical.
- */
-async function profileGroups(root: string, defaultResults: readonly LintResult[]): Promise<TieredResultGroupV1[]> {
-  const { profile, loadedFrom } = await loadProfile(root);
-  if (loadedFrom === null) return [];
-  // One entity collection feeds every profile check, including the declared
-  // numeric confidence judgement, so a tiered view never walks entities twice.
-  const collected = await collectProfileLintFindings(await collectProfileLintInput(root, profile));
-  // Only an overlapping default confidence finding wins; unrelated duplicates survive.
-  const defaultConfidenceFiles = new Set(
-    defaultResults.filter((r) => r.rule === "low-confidence").map((r) => r.file),
-  );
-  const results = collected.results.filter((r) => r.rule !== "low-confidence" || !defaultConfidenceFiles.has(r.file));
-  // Profile rule ids are declared beside their emitters; grouping preserves the
-  // emission order and refuses any id nobody declared.
-  return groupByDeclaredTier(results, collected.ruleTiers);
-}
 
 /**
  * Run every registered rule once, keeping each rule's results paired with the
@@ -119,9 +106,79 @@ async function profileGroups(root: string, defaultResults: readonly LintResult[]
  * registries and the profile appendix produce them, which is the order the
  * frozen parity suites pin — so this must never sort or regroup.
  */
-async function collectTieredGroups(root: string, scope: PageScope = "generic"): Promise<TieredResultGroupV1[]> {
+/**
+ * Index a Stack's documents by the filename a page cites.
+ *
+ * A page cites the source FILENAME (`^[abc123.md]`), while a document row is keyed
+ * by its source IDENTITY (a capability URL). `filename` is the column that joins
+ * them, and it is what lands in `sources/` on the file-backed path — so a citation
+ * resolves to the same document on both backends.
+ *
+ * @param documents - The Stack's documents.
+ * @returns Filename → document text, for the documents that carry text.
+ */
+function sourceTextByFilename(
+  documents: ReadonlyArray<{ filename?: string; content?: string }>,
+): Map<string, string> {
+  const byFilename = new Map<string, string>();
+  for (const document of documents) {
+    if (document.filename === undefined || document.content === undefined) continue;
+    byFilename.set(document.filename, document.content);
+  }
+  return byFilename;
+}
+
+/**
+ * Resolve the pages this run may inspect, from whichever corpus the project has.
+ *
+ * On a Stack the pages are rows; `collectAllPages` would walk an empty `wiki/`
+ * and every page-scoped rule would report nothing — a clean verdict for a corpus
+ * nobody read. The corpus is put in scope by {@link collectTieredGroups}, so the
+ * rules keep their signatures and still see the right pages.
+ *
+ * @param root - Project root, used only by the on-disk fallback.
+ * @param scope - Which pages this run claims.
+ * @returns The corpus, ready for {@link withLintCorpus}.
+ */
+async function resolveLintCorpus(
+  root: string,
+  scope: PageScope,
+  env: NodeJS.ProcessEnv,
+): Promise<LintCorpus> {
+  return await withRawPageSource(root, env, async (source) => {
+    if (source === undefined) {
+      // File-backed: no corpus override for sources either, so the citation rules
+      // keep reading `sources/` exactly as they always have.
+      return { pages: (await collectAllPages(root, scope)).map((page) => ({ ...page })) };
+    }
+    // A Stack's citation targets are its `source_documents` rows. Without this the
+    // citation rules join every cited filename against `sources/`, where a Stack
+    // has nothing, and report EVERY citation as broken.
+    const sources = await withSourceDocuments(env, async (listing) => {
+      if (listing === undefined) return undefined;
+      return sourceTextByFilename(await listing.list());
+    });
+    return corpusFromRawPages(await source.collect(), scope, sources);
+  });
+}
+
+async function collectTieredGroups(
+  root: string,
+  scope: PageScope = "generic",
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<TieredResultGroupV1[]> {
+  const corpus = await resolveLintCorpus(root, scope, env);
+  return await withLintCorpus(corpus, () => collectGroupsInScope(root, scope));
+}
+
+/** The rule fan-out itself, run with a corpus already in scope. */
+async function collectGroupsInScope(root: string, scope: PageScope): Promise<TieredResultGroupV1[]> {
   const schema = await loadSchema(root);
-  const freshness = await buildFreshnessSnapshot(root);
+  // Resolves the corpus itself: on a Stack the documents are rows, and every source
+  // identity is a capability URL that no `sources/` file can match. Omitting that
+  // classified every owned page `orphaned` here while `status` reported them fine --
+  // the same corpus, two answers. See `buildProjectFreshnessSnapshot`.
+  const freshness = await buildProjectFreshnessSnapshot(root);
   const [plain, schemaGroups, freshnessGroups] = await Promise.all([
     Promise.all(RULES_WITHOUT_SCHEMA.map(async (entry) => ({
       tier: entry.tier,
@@ -131,7 +188,7 @@ async function collectTieredGroups(root: string, scope: PageScope = "generic"): 
     Promise.all(RULES_WITH_FRESHNESS.map(async (entry) => ({ tier: entry.tier, results: await entry.rule(root, freshness) }))),
   ]);
   const defaultResults = [...plain, ...schemaGroups, ...freshnessGroups];
-  return [...defaultResults, ...await profileGroups(root, defaultResults.flatMap((group) => group.results))];
+  return defaultResults;
 }
 
 /**
@@ -143,10 +200,13 @@ async function collectTieredGroups(root: string, scope: PageScope = "generic"): 
  * @param root - Absolute path to the project root directory.
  * @returns A summary containing all diagnostics and severity counts.
  */
-export async function lint(root: string): Promise<LintSummary> {
+export async function lint(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<LintSummary> {
   // lint is intentionally not journaled to log.md — it is a read-only check,
   // and the MCP `lint_wiki` tool documents it as non-mutating.
-  return summarize((await collectTieredGroups(root)).flatMap((group) => group.results));
+  return summarize((await collectTieredGroups(root, "generic", env)).flatMap((group) => group.results));
 }
 
 /**
@@ -177,8 +237,11 @@ export function declaredRuleTiers(): ReadonlyArray<{ rule: string; tier: LintTie
     .map((entry) => ({ rule: entry.rule.name, tier: entry.tier }));
 }
 
-export async function lintByTier(root: string): Promise<TieredLintReportV1> {
-  return tieredReport(await collectTieredGroups(root));
+export async function lintByTier(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<TieredLintReportV1> {
+  return tieredReport(await collectTieredGroups(root, "generic", env));
 }
 
 /**
@@ -193,7 +256,8 @@ export async function lintByTier(root: string): Promise<TieredLintReportV1> {
 export async function lintBothViews(
   root: string,
   scope: PageScope = "generic",
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ summary: LintSummary; tiered: TieredLintReportV1 }> {
-  const groups = await collectTieredGroups(root, scope);
+  const groups = await collectTieredGroups(root, scope, env);
   return { summary: summarize(groups.flatMap((group) => group.results)), tiered: tieredReport(groups) };
 }

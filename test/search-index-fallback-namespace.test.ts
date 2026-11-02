@@ -46,14 +46,6 @@ describe("pickSearchRefs — fallback namespace resolution (F3)", () => {
     expect(refs[0].kind).toBe("index");
   });
 
-  it("a fallback selection of a TYPED entity pageId resolves to <entityType>/<slug>", async () => {
-    const root = await seedProject("concept-a", "query-b", "paper-c");
-    await stubSelectPages(["papers/paper-c"]);
-    const { refs } = await pickSearchRefs(root, "test question");
-
-    expect(refs).toHaveLength(1);
-    expect(refs[0].pageId).toBe("papers/paper-c");
-  });
 
   it("a fallback selection of a CONCEPT pageId resolves to concepts/<slug> (regression)", async () => {
     const root = await seedProject("concept-a", "query-b", "paper-c");
@@ -105,9 +97,4 @@ describe("loadSelectedRefs — fallback refs hydrate the correct page (F3)", () 
     expect(body).toContain("Query body.");
   });
 
-  it("a papers/<slug> fallback ref hydrates from wiki/papers/<slug>.md", async () => {
-    const root = await seedProject("concept-a", "query-b", "paper-c");
-    const body = await hydrateFirstBody(root, "papers/paper-c");
-    expect(body).toContain("Typed body.");
-  });
 });

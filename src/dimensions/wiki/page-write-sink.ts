@@ -28,6 +28,7 @@ import {
 } from "../../pages/list.js";
 import { parseFrontmatter } from "../../utils/markdown.js";
 import { deleteStoredPage, getStoredPage, listStoredPages, upsertStoredPage } from "./page-store.js";
+import { activePageBatchTransaction } from "./page-batch-transaction.js";
 import type { PageRemover } from "../../trust/page-apply.js";
 
 /**
@@ -58,7 +59,10 @@ export interface PageWriteRequest {
  */
 export function createPageWriteSink(db: Database, stackId: string): PageWriteSink {
   return async (request) => {
-    await upsertStoredPage(db, stackId, toPage(request));
+    // Join the ambient batch transaction when one is open, so a page batch commits
+    // as ONE unit. `undefined` means "no batch": open your own, which keeps every
+    // single-page and coordinator-owned caller behaving exactly as before.
+    await upsertStoredPage(db, stackId, toPage(request), activePageBatchTransaction());
   };
 }
 
@@ -79,6 +83,7 @@ export function createPageRemoveSink(db: Database, stackId: string): PageRemover
   return async (request) => {
     await deleteStoredPage(
       db, stackId, request.directory as PageDirectory, request.slug,
+      activePageBatchTransaction(),
     );
   };
 }

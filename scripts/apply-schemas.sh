@@ -32,7 +32,7 @@ readonly CHECK_ONLY="${CHECK_ONLY:-false}"
 # embedding migration last because it extends tables the earlier files create.
 # The wiki migrations that used to be applied by hand were MISSING from this list,
 # so a database built from this runner alone had no `wiki.compile_config`, no
-# `wiki.event_log`, no `wiki.relation_edges`, no `wiki.review_candidates`, and none
+# `wiki.event_log`, no `wiki.review_candidates`, and none
 # of the small marker tables -- while the developer machine had all of them, because
 # they had been pasted in manually. Every environment drifted silently and nothing
 # said so. A new stack (CI included) would come up missing tables that the code
@@ -60,8 +60,7 @@ readonly SCHEMA_FILES=(
   "src/dimensions/wiki/migration_wiki_small_markers.sql"
   "src/dimensions/wiki/migration_wiki_log.sql"
   "src/dimensions/wiki/migration_wiki_derived.sql"
-  "src/dimensions/wiki/migration_wiki_profile.sql"
-  "src/dimensions/wiki/migration_wiki_artifacts.sql"
+  "src/dimensions/wiki/migration_wiki_project_config.sql"
   "src/dimensions/wiki/migration_page_embeddings.sql"
   "src/dimensions/wiki/migration_wiki_jobs.sql"
 )
@@ -85,8 +84,8 @@ readonly REQUIRED_TENANT_TABLES=(
   "wiki.source_documents"
   "wiki.source_compile_state"
   "wiki.compile_config"
+  "wiki.project_config"
   "wiki.event_log"
-  "wiki.relation_edges"
   "wiki.review_candidates"
   "wiki.embedding_refresh_marker"
   "wiki.lint_cache"

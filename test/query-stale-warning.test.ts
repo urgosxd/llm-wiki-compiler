@@ -44,18 +44,7 @@ describe("query stale-embedding warnings — Finding 4", () => {
   beforeEach(() => mockQueryVector([1, 0]));
   afterEach(() => vi.restoreAllMocks());
 
-  it("surfaces embedding-entry-stale when the CHUNK path drops a stale entry", async () => {
-    const root = await seedTypedProject("qstale-chunk", "foo", BODY);
-    await writeChunkStore(root, [staleChunkOf("papers/foo", [1, 0])]);
-    expect(await warningCodes(root)).toContain("embedding-entry-stale");
-  });
 
-  it("surfaces embedding-entry-stale when the PAGE path drops a stale entry", async () => {
-    const root = await seedTypedProject("qstale-page", "foo", BODY);
-    // entry hash computed over the WRONG title → live freshness check fails.
-    await writePageStore(root, [pageEntryOf("papers/foo", "WRONG", "s", [1, 0])]);
-    expect(await warningCodes(root)).toContain("embedding-entry-stale");
-  });
 
   it("does NOT surface embedding-entry-stale for a clean v3 store", async () => {
     const root = await seedTypedProject("qstale-clean", "foo", BODY);

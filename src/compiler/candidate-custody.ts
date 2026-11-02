@@ -16,6 +16,7 @@ import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { archivePath, assertCandidateId, candidatePath } from "./candidate-paths.js";
 import { CANDIDATES_ARCHIVE_DIR, CANDIDATES_DIR } from "../utils/constants.js";
+import { AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
 import { openConfinedLeaf } from "../utils/confined-read.js";
 import { candidateByteLimit, type CandidateCustodyPolicy } from "./candidate-custody-limits.js";
 import {
@@ -27,7 +28,6 @@ import {
   type CandidateDirectoryBinding,
 } from "./candidate-store-paths.js";
 
-export { MAX_CANDIDATE_RECORD_BYTES } from "./candidate-custody-limits.js";
 
 /** Stable filesystem identity used to bind candidate files and their store. */
 export interface CandidateFileIdentity {
@@ -188,8 +188,33 @@ async function assertDirectoryReadable(
   }
 }
 
+/**
+ * True when this project's candidate queue lives in ROWS, so filesystem custody is
+ * vacuous rather than merely unproven.
+ *
+ * THE DISTINCTION MATTERS. A missing `.llmwiki/candidates` directory is a CUSTODY
+ * FAILURE on a file-backed project — the store should be there and its absence means
+ * something removed or never created it. On a Stack the directory is ABSENT BY
+ * DESIGN: `writeCandidate` takes its row branch and its own header says the custody
+ * dance exists "to give a DIRECTORY the identity a row has for free". So the same
+ * absence means opposite things, and a single check cannot serve both.
+ *
+ * Without this, `review approve` on a Stack refused every candidate with "candidate
+ * store unavailable" and exited 1 before reaching any page write.
+ *
+ * The decision is read from the environment, mirroring `withCandidateSource`, so this
+ * module answers the same question the read/write/delete paths already answer.
+ */
+function candidateQueueIsRows(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env[AKS_STACK_ID_ENV_VAR] ?? "").trim() !== "";
+}
+
 /** Validate both owned namespaces and reject any shared filesystem identity. */
 export async function assertCandidateNamespacesHealthy(root: string): Promise<void> {
+  // Vacuous on a row-backed queue: there is no inode to bind, no directory to search,
+  // and no shared-identity collision to detect. Returning early rather than treating
+  // the absence as healthy keeps the failure path intact for the file backend.
+  if (candidateQueueIsRows()) return;
   const pending = await captureDirectory(root, candidateDir(root, "pending"));
   if (pending) await assertDirectoryReadable(root, pending);
   const archive = await captureDirectory(root, candidateDir(root, "archive"));
@@ -201,6 +226,9 @@ export async function assertCandidateNamespacesHealthy(root: string): Promise<vo
 
 /** Prove one existing namespace or its literal creation parent can be mutated. */
 async function assertMutationTargetWritable(root: string, target: string): Promise<void> {
+  // A row-backed queue has no target directory to prove writable; the row write
+  // either commits or the database refuses it.
+  if (candidateQueueIsRows()) return;
   const existing = await captureDirectory(root, target);
   const binding = existing ?? await captureDirectory(root, path.dirname(target));
   if (binding === null) throw new CandidateCustodyUnavailableError();

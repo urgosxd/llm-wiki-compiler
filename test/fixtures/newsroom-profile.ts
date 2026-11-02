@@ -19,7 +19,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PROFILE_FILE } from "../../src/utils/constants.js";
-import { appendRelation } from "../../src/relations/store.js";
 import type { EntityId, ProfilePack } from "../../src/profile/types.js";
 import { writeSeedPage, type SeedPage } from "./seed-page.js";
 import { autosciArtifacts, autosciEntities, autosciRelations, autosciWorkflowActions, autosciWorkflows, newsroomEntities, newsroomRelations, newsroomWorkflowActions, newsroomWorkflows } from "./builtin-profile-data.js";
@@ -66,13 +65,4 @@ export async function installNewsroomProfile(root: string): Promise<void> {
 export async function buildNewsroomProject(root: string): Promise<void> {
   await installNewsroomProfile(root);
   for (const page of SEED_PAGES) await writeSeedPage(root, page);
-}
-
-/** Seed the single `filed-under` relation between backing pages (no dangling endpoint). */
-export async function seedNewsroomRelations(root: string): Promise<void> {
-  await appendRelation(root, NEWSROOM_PROFILE, {
-    type: "filed-under",
-    from: "articles/port-strike-latest" as EntityId,
-    to: "desks/metro" as EntityId,
-  });
 }

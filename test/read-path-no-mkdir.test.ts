@@ -24,7 +24,6 @@ import { lint } from "../src/linter/index.js";
 import { exportJson } from "../src/commands/export.js";
 import { LLMWIKI_DIR, PROFILE_FILE } from "../src/utils/constants.js";
 import { PrivateDirConfinementError } from "../src/utils/private-dir.js";
-import { ProfileLoadError } from "../src/profile/load.js";
 
 let root = "";
 
@@ -46,13 +45,6 @@ describe("loadProfile — no .llmwiki creation on clean project", () => {
     expect(privateDirAbsent()).toBe(true);
   });
 
-  it("loads a real profile correctly when .llmwiki already exists", async () => {
-    const VALID_JSON = JSON.stringify({ schemaVersion: 1, profileId: "myprof", displayName: "My", entities: { n: { directory: "wiki/n" } } });
-    await mkdir(llmwikiDir(), { recursive: true });
-    await writeFile(path.join(root, PROFILE_FILE), VALID_JSON, "utf8");
-    const loaded = await loadProfile(root);
-    expect(loaded.profile.profileId).toBe("myprof");
-  });
 });
 
 describe("readEvents — no .llmwiki creation on clean project", () => {
@@ -93,15 +85,6 @@ describe("exportJson — no .llmwiki creation on clean project", () => {
 });
 
 describe("symlinked .llmwiki still fails closed on the READ path", () => {
-  it("loadProfile throws ProfileLoadError when .llmwiki is a symlink escaping root", async () => {
-    const outside = await mkdtemp(path.join(os.tmpdir(), "read-no-mkdir-out-"));
-    try {
-      await symlink(outside, llmwikiDir(), "dir");
-      await expect(loadProfile(root)).rejects.toBeInstanceOf(ProfileLoadError);
-    } finally {
-      await rm(outside, { recursive: true, force: true });
-    }
-  });
 
   it("readEvents throws PrivateDirConfinementError when .llmwiki is a symlink escaping root", async () => {
     const outside = await mkdtemp(path.join(os.tmpdir(), "read-no-mkdir-out2-"));

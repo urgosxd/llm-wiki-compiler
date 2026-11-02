@@ -38,7 +38,7 @@
  * of one state and half of another.
  */
 
-import { ulid } from "../../../relations/ulid.js";
+import { ulid } from "../../../utils/ulid.js";
 import {
   queuedCompileState,
   queuedIngestState,

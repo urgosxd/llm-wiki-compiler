@@ -127,14 +127,17 @@ describe("applyApprovedMutations — clean batch", () => {
     expect(await readFile(path.join(root, WIKI, "two.md"), "utf-8")).toBe(GOOD_BODY);
   });
 
-  it("routes a lone lifecycle-transition to its under-lock authority (fails closed without a profile)", async () => {
-    // `relation` and `lifecycle-transition` now BOTH route to their handlers
-    // (Task 4). On this profile-less default root the lifecycle authority fails
-    // CLOSED — it never reaches `not-implemented` (only artifact/workflow do).
+  it("refuses a lifecycle-transition outright, because that kind was removed", async () => {
+    // LIFECYCLE TRANSITIONS WERE REMOVED WITH THE PROFILE SYSTEM. The kind stays in
+    // the union so a plan persisted by an earlier build still PARSES and fails with
+    // a typed refusal — never a silent no-op, and never a type error at the call
+    // site. This replaces the old expectation that it routed to an under-lock
+    // authority: there is no authority left to route to.
     const lifecycle: PlannedMutation = {
       kind: "lifecycle-transition", entityType: "concepts", slug: "p", toState: "done",
     };
-    await expect(applyApprovedMutations(root, [lifecycle])).rejects.toThrow(/cannot transition lifecycle/);
+    await expect(applyApprovedMutations(root, [lifecycle]))
+      .rejects.toThrow(/not-implemented: executor does not handle mutation kind "lifecycle-transition"/);
   });
 });
 

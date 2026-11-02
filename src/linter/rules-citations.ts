@@ -22,12 +22,13 @@ import {
 } from "../utils/markdown.js";
 import { SOURCES_DIR } from "../utils/constants.js";
 import type { LintResult } from "./types.js";
+import { lintSourceText } from "./corpus.js";
 
 /** Rule id for a claim citation that does not parse; the profile registry declares it by this name. */
-export const MALFORMED_CLAIM_CITATION_RULE = "malformed-claim-citation";
+const MALFORMED_CLAIM_CITATION_RULE = "malformed-claim-citation";
 import {
   CITATION_PATTERN,
-  collectAllPages,
+  readLintPages,
   findMatchesInContent,
 } from "./rules-shared.js";
 
@@ -51,7 +52,7 @@ function countLines(content: string): number {
  * redundant reads.
  */
 export async function checkBrokenCitations(root: string): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const sourcesDir = path.join(root, SOURCES_DIR);
   const results: LintResult[] = [];
   const lineCountCache = new Map<string, number>();
@@ -111,30 +112,74 @@ async function collectBrokenForMarker(
   for (const part of splitCitationMarker(captured)) {
     const trimmed = part.trim();
     if (trimmed.length === 0) continue;
-    const filename = stripSpanSuffix(trimmed);
-    const citedPath = path.join(sourcesDir, filename);
-    if (!existsSync(citedPath)) {
-      out.push({
-        rule: "broken-citation",
-        severity: "error",
-        file: pageFile,
-        message: `Broken citation ^[${filename}] — source file not found`,
-        line,
-      });
-      continue;
-    }
-    const ranges = parseCitationLineRanges(trimmed);
-    if (ranges === null || ranges.length === 0) continue;
-    const lineCount = await resolveLineCount(citedPath, filename, lineCountCache);
-    if (ranges.every((range) => range.end <= lineCount)) continue;
-    out.push({
-      rule: "broken-citation",
-      severity: "error",
-      file: pageFile,
-      message: `Claim-level span ^[${trimmed}] is out of bounds (source has only ${lineCount} lines)`,
-      line,
-    });
+    const finding = await inspectCitation(
+      trimmed, line, pageFile, sourcesDir, lineCountCache,
+    );
+    if (finding !== null) out.push(finding);
   }
+}
+
+/** The diagnostic for a missing cited document. */
+function missingSource(filename: string, pageFile: string, line: number): LintResult {
+  return {
+    rule: "broken-citation",
+    severity: "error",
+    file: pageFile,
+    message: `Broken citation ^[${filename}] — source file not found`,
+    line,
+  };
+}
+
+/**
+ * Resolve the text of one cited document.
+ *
+ * Three answers, and they are not interchangeable: the corpus may KNOW the text
+ * (`string`), may know the document does not exist (`null`), or may not be able to
+ * answer at all (`undefined`, a file-backed project, where `sources/` is the corpus).
+ *
+ * @returns The text, or `null` when the document is known to be absent.
+ */
+async function citedSourceText(
+  filename: string,
+  citedPath: string,
+): Promise<{ readonly text: string | null } | { readonly absent: true }> {
+  const corpusText = lintSourceText(filename);
+  if (corpusText === null) return { absent: true };
+  if (corpusText !== undefined) return { text: corpusText };
+  return existsSync(citedPath) ? { text: null } : { absent: true };
+}
+
+/**
+ * Evaluate one citation entry, returning at most one finding.
+ *
+ * @param trimmed - The entry with surrounding whitespace removed.
+ * @returns The finding, or `null` when the citation is sound.
+ */
+async function inspectCitation(
+  trimmed: string,
+  line: number,
+  pageFile: string,
+  sourcesDir: string,
+  lineCountCache: Map<string, number>,
+): Promise<LintResult | null> {
+  const filename = stripSpanSuffix(trimmed);
+  const citedPath = path.join(sourcesDir, filename);
+  const resolved = await citedSourceText(filename, citedPath);
+  if ("absent" in resolved) return missingSource(filename, pageFile, line);
+
+  const ranges = parseCitationLineRanges(trimmed);
+  if (ranges === null || ranges.length === 0) return null;
+  const lineCount = resolved.text === null
+    ? await resolveLineCount(citedPath, filename, lineCountCache)
+    : countLines(resolved.text);
+  if (ranges.every((range) => range.end <= lineCount)) return null;
+  return {
+    rule: "broken-citation",
+    severity: "error",
+    file: pageFile,
+    message: `Claim-level span ^[${trimmed}] is out of bounds (source has only ${lineCount} lines)`,
+    line,
+  };
 }
 
 /** Return the line count for a source file, reading and caching if necessary. */
@@ -157,7 +202,7 @@ async function resolveLineCount(
  * Detects malformed claim-level citations without breaking the paragraph form.
  */
 export async function checkMalformedClaimCitations(root: string): Promise<LintResult[]> {
-  const pages = await collectAllPages(root);
+  const pages = await readLintPages(root);
   const results: LintResult[] = [];
   for (const page of pages) {
     results.push(...checkPageMalformedCitations(page.content, page.filePath));

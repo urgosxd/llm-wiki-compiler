@@ -56,32 +56,6 @@ export async function collectViewerPages(
   return decoratePages(raw);
 }
 
-/**
- * Decorate a NON-DEFAULT profile's typed entity pages into `ViewerPage`s, so the
- * envelope, `/api/page/<entityType>/<slug>` and search see them the way they see
- * default pages. Input comes from the SHARED `collectEntityPages` (already
- * filtered to the profile-VALID pages by the caller) — this layer adds only the
- * decoration, never a second read of disk.
- *
- * Outgoing wikilinks resolve against `defaultPages` alone, which is complete
- * rather than a shortcut: {@link resolveBareSlug} matches `concepts`/`queries`
- * targets only, so a typed page can never BE a wikilink target and widening the
- * index would resolve nothing extra.
- *
- * @param entityPages - Profile-valid typed entity pages, with their content.
- * @param defaultPages - The default page list, used as the wikilink index.
- * @returns One decorated `ViewerPage` per typed entity page, in input order.
- */
-export function decorateEntityPages(
-  entityPages: ReadonlyArray<EntityPage>,
-  defaultPages: ReadonlyArray<PageIndexEntry>,
-): ViewerPage[] {
-  return entityPages.map((entity) => {
-    const page = buildEntityPageShell(entity);
-    page.outgoingLinks = resolveBareSlugList(extractWikilinkSlugs(page.body), defaultPages);
-    return page;
-  });
-}
 
 /**
  * Resolve a bare-slug wikilink target to a namespaced `PageId`. The

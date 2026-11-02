@@ -119,7 +119,7 @@ export type CappedLeafReadBuffer =
  * @param maxBytes - The inclusive byte ceiling; a larger leaf is `unavailable`.
  * @returns The discriminated read outcome, carrying a `Buffer` on `ok`.
  */
-export async function readCappedNoFollowBuffer(filePath: string, maxBytes: number): Promise<CappedLeafReadBuffer> {
+async function readCappedNoFollowBuffer(filePath: string, maxBytes: number): Promise<CappedLeafReadBuffer> {
   const opened = await openCappedNoFollow(filePath, maxBytes);
   if (opened.kind !== "ok") return opened;
   try {

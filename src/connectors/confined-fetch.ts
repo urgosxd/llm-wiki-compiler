@@ -18,7 +18,7 @@ const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
  * This bound is what lets the pre-fetch audit gate pad the event's finalUrl to a
  * true worst case rather than an estimate.
  */
-export const MAX_CONNECTOR_URL_BYTES = 2048;
+const MAX_CONNECTOR_URL_BYTES = 2048;
 
 /** Resource bounds applied by the connector substrate to one external fetch. */
 export interface FetchLimits {
@@ -236,7 +236,7 @@ function validateHeaders(headers: Record<string, string>): HeaderValidation {
 }
 
 /** Validate connector request headers without dialing the network. */
-export function validateConnectorHeaders(headers: Record<string, string>): HeaderValidation {
+function validateConnectorHeaders(headers: Record<string, string>): HeaderValidation {
   return validateHeaders(headers);
 }
 

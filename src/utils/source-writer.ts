@@ -82,7 +82,20 @@ async function resolveCollisionFreeFilename(
  * consistent with list/get/delete and preventing arbitrary-file-reads and
  * confused-deputy write-through via `saveSource`.
  */
-async function findFileBySourceIdentity(sourcesDir: string, source: string): Promise<string | null> {
+/**
+ * Locate an existing file for a source identity.
+ *
+ * Reads the FILE config deliberately, and takes no environment: this module is
+ * imported by the wiki store, so letting it reach the Stack would pull the
+ * database layer underneath itself (measured: four dependency cycles). An ingest
+ * writes a real file into `sources/`, which is a file-backed operation — the
+ * Stack's `sources.exclude` decides what a COMPILE scans, not where an ingest
+ * lands its bytes.
+ */
+async function findFileBySourceIdentity(
+  sourcesDir: string,
+  source: string,
+): Promise<string | null> {
   const root = path.dirname(sourcesDir);
   const selection = await loadSourceSelection(root);
   // An explicit re-ingest updates an existing identity even if compile excludes it.

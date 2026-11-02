@@ -68,6 +68,20 @@ export type PageSink = (request: {
 export type PageRemover = (request: { directory: string; slug: string }) => Promise<void>;
 
 /**
+ * Run a set of work as ONE all-or-nothing unit.
+ *
+ * Declared HERE beside {@link PageSink} and {@link PageRemover}, and for the same
+ * reason: the executor depends on this module and not the reverse, and the trust
+ * path must stay usable with no database at all. The row owner supplies
+ * `db.transaction(...)`; the consumer only knows the work either fully commits or
+ * fully rolls back, so no pool, connection or `llmwiki-kg` type reaches this side.
+ *
+ * The ROW backend needs it because a row write records no pre-state and therefore
+ * opens no journal: without this, one page batch commits once per page.
+ */
+export type PageBatchTransaction = <T>(fn: () => Promise<T>) => Promise<T>;
+
+/**
  * Both page-store options a batch call takes, narrowed together.
  *
  * `ApplyOptions` declares both fields OPTIONAL, and under `exactOptionalPropertyTypes`
@@ -80,17 +94,27 @@ export type PageRemover = (request: { directory: string; slug: string }) => Prom
  * making hard to express: it stores a page and then cannot remove it, so a `delete`
  * unlinks a file that does not exist and reports success.
  *
+ * THE TRANSACTION TRAVELS WITH THEM for the same reason, one step further: a row
+ * batch whose pages commit one at a time is the partial-application failure the
+ * file backend's journal exists to prevent. A caller that supplies a sink without a
+ * transaction gets that failure, so the three are narrowed together rather than
+ * left as three independent optional fields a caller can half-fill.
+ *
  * @param pageSink - The row writer, or undefined to keep writing files.
  * @param pageRemover - The row remover, or undefined to keep unlinking files.
+ * @param pageBatchTransaction - Runs the batch as one unit, or undefined when the
+ *   file backend's journal batch already supplies that guarantee.
  * @returns Options carrying only the capabilities that were supplied.
  */
 export function pageStoreOptions(
   pageSink: PageSink | undefined,
   pageRemover: PageRemover | undefined,
-): { pageSink?: PageSink; pageRemover?: PageRemover } {
+  pageBatchTransaction?: PageBatchTransaction,
+): { pageSink?: PageSink; pageRemover?: PageRemover; pageBatchTransaction?: PageBatchTransaction } {
   return {
     ...(pageSink === undefined ? {} : { pageSink }),
     ...(pageRemover === undefined ? {} : { pageRemover }),
+    ...(pageBatchTransaction === undefined ? {} : { pageBatchTransaction }),
   };
 }
 

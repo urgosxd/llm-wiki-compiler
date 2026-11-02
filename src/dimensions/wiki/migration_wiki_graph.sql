@@ -1,12 +1,20 @@
 -- ============================================================
--- wiki.event_log + wiki.relation_edges — the wiki's typed graph, as rows
+-- wiki.event_log — the wiki's hash-chained event log, as rows
 --
 -- ## What this replaces
 --
--- `wiki/graph/events.jsonl` and `wiki/graph/relations.jsonl`, plus the head anchor
--- at `.llmwiki/events.head`. Both files are APPEND-ONLY, HASH-CHAINED logs: each
--- record carries `prevHash` (the prior record's digest) and `checksum` (its own), so
--- a flipped byte, a reordered line or a deleted record is detectable on read.
+-- `wiki/graph/events.jsonl`, plus the head anchor at `.llmwiki/events.head`. The
+-- file is an APPEND-ONLY, HASH-CHAINED log: each record carries `prevHash` (the
+-- prior record's digest) and `checksum` (its own), so a flipped byte, a reordered
+-- line or a deleted record is detectable on read.
+--
+-- ## What this file no longer creates
+--
+-- `wiki.relation_edges` lived here until the relation subsystem was removed. Its
+-- statements were deleted from this file rather than the file being dropped, because
+-- `wiki.event_log` is declared in it and survives. The TABLE itself is retired, not
+-- dropped: no migration in this directory has ever issued a `drop table`, and every
+-- Stack measured holds zero rows in it. See `remove-profile-substrate.md`.
 --
 -- ## Why the chain survives the move, and what changes about it
 --
@@ -77,52 +85,11 @@ create index if not exists idx_event_log_type
 -- ------------------------------------------------------------
 -- Relations: the typed edges the events record
 -- ------------------------------------------------------------
-create table if not exists wiki.relation_edges (
-    stack_id uuid not null references stacks(id) on delete cascade,
-
-    -- Stable handle, allocated once at creation.
-    relation_id text not null,
-
-    -- Relation-type id, a key of the profile's `relations`.
-    relation_type text not null,
-
-    -- Endpoint entity page ids (`<entityType>/<slug>`).
-    from_id text not null,
-    to_id text not null,
-
-    attributes jsonb not null default '{}'::jsonb,
-    evidence jsonb,
-
-    -- Canonical digest over {type, from, to, attributes, evidence}. Two edges with
-    -- different evidence are DIFFERENT edges, which is why this is not a unique key
-    -- on the endpoints alone.
-    content_hash text not null,
-
-    -- Per-record checksum, recomputed and compared on read. Covers the content plus
-    -- any operation binding, so a flipped byte is detectable.
-    checksum text not null,
-
-    -- The operation binding, when an operation-bundle apply produced this edge.
-    operation_binding jsonb,
-
-    -- Set when a compaction SUPERSEDES the edge rather than deleting it: the graph
-    -- is append-only in spirit, so history stays readable.
-    superseded_by text,
-
-    at timestamptz not null,
-
-    primary key (stack_id, relation_id)
 );
 
 -- Dedup key: canonical endpoints + type + evidence fingerprint. The evidence is part
 -- of `content_hash`, so an edge that GAINS evidence is a different edge and gets its
 -- own row rather than colliding.
-create unique index if not exists idx_relation_edges_dedup
-    on wiki.relation_edges (stack_id, relation_type, from_id, to_id, content_hash);
-create index if not exists idx_relation_edges_from
-    on wiki.relation_edges (stack_id, from_id);
-create index if not exists idx_relation_edges_to
-    on wiki.relation_edges (stack_id, to_id);
 
 -- ============================================================
 -- Row-level security
@@ -133,21 +100,14 @@ create index if not exists idx_relation_edges_to
 -- otherwise bypass its own policy.
 alter table wiki.event_log enable row level security;
 alter table wiki.event_log force row level security;
-alter table wiki.relation_edges enable row level security;
-alter table wiki.relation_edges force row level security;
 
 drop policy if exists tenant_isolation on wiki.event_log;
 create policy tenant_isolation on wiki.event_log
     using (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid)
     with check (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);
 
-drop policy if exists tenant_isolation on wiki.relation_edges;
-create policy tenant_isolation on wiki.relation_edges
-    using (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid)
-    with check (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);
 
 grant select, insert, update, delete on wiki.event_log to llmwiki_app;
-grant select, insert, update, delete on wiki.relation_edges to llmwiki_app;
 
 -- `at` moved from `timestamptz` to `text`: it is CHECKSUMMED content, and a
 -- timestamptz re-renders the value (`...11.123Z` in becomes `...11.123000Z` out), so a

@@ -60,6 +60,41 @@ describe("buildLiveIdSet", () => {
     const ids = await buildLiveIdSet(root, ["concepts"]);
     expect(ids.size).toBe(0);
   });
+
+  // The eligibility gate below is NOT a profile feature: it is the legacy
+  // concept/query rule that a page must be live (not orphaned) and titled to be
+  // embedded, and it mirrors the WRITE gate in `readConfinedPageRecord`. These
+  // three cases assert `buildLiveIdSet`'s side of it specifically; the
+  // `embeddings-load` suite covers the retrieved-store side, so without them a
+  // break confined to this function would pass every other test.
+  it("excludes an orphaned concept (meta.orphaned:true) — matches writer which never embeds it", async () => {
+    const root = await makeTempRoot("elig-orphaned");
+    await writePage(path.join(root, "wiki/concepts"), "ghost", { title: "Ghost", orphaned: true }, "body");
+    await writePage(path.join(root, "wiki/concepts"), "live", { title: "Live" }, "body");
+    const ids = await buildLiveIdSet(root, ["concepts"]);
+    expect(ids.has("concepts/ghost")).toBe(false);
+    expect(ids.has("concepts/live")).toBe(true);
+  });
+
+  it("excludes an untitled concept — matches writer which never embeds it", async () => {
+    const root = await makeTempRoot("elig-untitled");
+    await writePage(path.join(root, "wiki/concepts"), "no-title", { summary: "s" }, "body");
+    await writePage(path.join(root, "wiki/concepts"), "titled", { title: "Titled" }, "body");
+    const ids = await buildLiveIdSet(root, ["concepts"]);
+    expect(ids.has("concepts/no-title")).toBe(false);
+    expect(ids.has("concepts/titled")).toBe(true);
+  });
+
+  it("regression: eligible concepts/queries are present; ineligible (orphaned) are absent — gate is applied", async () => {
+    const root = await makeTempRoot("elig-regression-default");
+    await writePage(path.join(root, "wiki/concepts"), "alpha", { title: "Alpha", summary: "sum" }, "body");
+    // An orphaned concept in the same namespace — the eligibility gate must exclude it
+    await writePage(path.join(root, "wiki/concepts"), "dead", { title: "Dead", orphaned: true }, "body");
+    const ids = await buildLiveIdSet(root, ["concepts"]);
+    expect(ids.has("concepts/alpha")).toBe(true);
+    expect(ids.has("concepts/dead")).toBe(false);
+    expect(ids.size).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -171,211 +206,24 @@ function typedProfile(papersDir: string): ProfilePack {
   };
 }
 
-describe("buildNamespaceDirs — typed namespace resolution", () => {
-  it("resolves a typed namespace to the profile entity directory (not wiki/<namespace>)", () => {
-    const dirs = buildNamespaceDirs(typedProfile("wiki/research-papers"));
-    expect(dirs.get("papers")).toBe("wiki/research-papers");
-  });
-
-  it("resolves concepts/queries to reserved dirs regardless of profile", () => {
-    const dirs = buildNamespaceDirs(typedProfile("wiki/papers"));
-    expect(dirs.get("concepts")).toBe("wiki/concepts");
-    expect(dirs.get("queries")).toBe("wiki/queries");
-  });
-
-  it("returns undefined for an unknown namespace (does NOT fall back to wiki/<ns>)", () => {
-    const dirs = buildNamespaceDirs(typedProfile("wiki/papers"));
-    expect(dirs.get("unknown-ns")).toBeUndefined();
-  });
-
-  it("defaults to only reserved namespaces when no profile is supplied", () => {
+describe("buildNamespaceDirs", () => {
+  // The two typed-namespace cases this block used to carry — a declared directory
+  // resolving to its own path, and an unknown namespace NOT falling back to
+  // `wiki/<ns>` — are gone with the ability to declare an entity type. What is
+  // left is the invariant they were protecting, now unconditionally true: exactly
+  // the two reserved namespaces, at their canonical directories.
+  it("resolves concepts/queries to the reserved dirs", () => {
     const dirs = buildNamespaceDirs();
     expect(dirs.get("concepts")).toBe("wiki/concepts");
     expect(dirs.get("queries")).toBe("wiki/queries");
-    expect(dirs.size).toBe(2);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Typed entity page resolution end-to-end
-// ---------------------------------------------------------------------------
-
-describe("typed namespace — end-to-end page resolution", () => {
-  it("resolves papers/foo via wiki/papers when profile.entities.papers.directory = wiki/papers", async () => {
-    const root = await makeTempRoot("typed-standard-dir");
-    const { mkdir } = await import("fs/promises");
-    const papersDir = path.join(root, "wiki/papers");
-    await mkdir(papersDir, { recursive: true });
-    await writePage(papersDir, "foo", { title: "Foo Paper", summary: "s" }, "body");
-    const dirs = buildNamespaceDirs(typedProfile("wiki/papers"));
-    const records = await loadPageRecordsByPageId(root, ["papers/foo"], dirs);
-    expect(records).toHaveLength(1);
-    expect(records[0].title).toBe("Foo Paper");
   });
 
-  it("resolves papers/foo via a CUSTOM directory (not wiki/papers), proving hardcode is gone", async () => {
-    const root = await makeTempRoot("typed-custom-dir");
-    const { mkdir } = await import("fs/promises");
-    const customDir = path.join(root, "wiki/research-papers");
-    await mkdir(customDir, { recursive: true });
-    await writePage(customDir, "foo", { title: "Custom Dir Paper", summary: "s" }, "body");
-    const dirs = buildNamespaceDirs(typedProfile("wiki/research-papers"));
-    const records = await loadPageRecordsByPageId(root, ["papers/foo"], dirs);
-    expect(records).toHaveLength(1);
-    expect(records[0].title).toBe("Custom Dir Paper");
+  it("returns nothing for an unknown namespace (no wiki/<ns> fallback)", () => {
+    const dirs = buildNamespaceDirs();
+    expect(dirs.get("unknown-ns")).toBeUndefined();
   });
 
-  it("does NOT resolve papers/foo from wiki/papers when profile.directory = wiki/research-papers", async () => {
-    const root = await makeTempRoot("typed-wrong-dir");
-    const { mkdir } = await import("fs/promises");
-    // Page at wiki/papers (wrong dir per profile) — must NOT be found
-    const wrongDir = path.join(root, "wiki/papers");
-    await mkdir(wrongDir, { recursive: true });
-    await writePage(wrongDir, "foo", { title: "Wrong Dir", summary: "s" }, "body");
-    const dirs = buildNamespaceDirs(typedProfile("wiki/research-papers"));
-    const records = await loadPageRecordsByPageId(root, ["papers/foo"], dirs);
-    expect(records).toHaveLength(0);
-  });
-
-  it("drops a typed page for an unknown namespace (not reserved, not in profile)", async () => {
-    const root = await makeTempRoot("typed-unknown-ns");
-    const { mkdir } = await import("fs/promises");
-    // Even if wiki/unknowntype/foo.md exists, it must not be read
-    const unknownDir = path.join(root, "wiki/unknowntype");
-    await mkdir(unknownDir, { recursive: true });
-    await writePage(unknownDir, "foo", { title: "Should Not Load", summary: "" }, "body");
-    const dirs = buildNamespaceDirs(typedProfile("wiki/papers"));
-    const records = await loadPageRecordsByPageId(root, ["unknowntype/foo"], dirs);
-    expect(records).toHaveLength(0);
-  });
-
-  it("concepts/queries still work when a profile is loaded", async () => {
-    const root = await makeTempRoot("typed-reserved-regression");
-    await writePage(path.join(root, "wiki/concepts"), "alpha", { title: "Alpha", summary: "" }, "body");
-    const dirs = buildNamespaceDirs(typedProfile("wiki/papers"));
-    const records = await loadPageRecordsByPageId(root, ["concepts/alpha"], dirs);
-    expect(records).toHaveLength(1);
-    expect(records[0].title).toBe("Alpha");
-  });
-
-  it("drops a symlink-escaping typed page (B2 confinement applies to custom dir)", async () => {
-    const root = await makeTempRoot("typed-escape");
-    const outside = await makeOutsideDir();
-    await writeFile(path.join(outside, "evil.md"), "---\ntitle: Evil\nsummary: s\n---\n\nevil");
-    const { mkdir } = await import("fs/promises");
-    const papersDir = path.join(root, "wiki/papers");
-    await mkdir(papersDir, { recursive: true });
-    await symlink(path.join(outside, "evil.md"), path.join(papersDir, "evil.md"));
-    const dirs = buildNamespaceDirs(typedProfile("wiki/papers"));
-    const records = await loadPageRecordsByPageId(root, ["papers/evil"], dirs);
-    expect(records).toHaveLength(0);
-  });
-
-  it("buildLiveRegistryEntry returns null for an unknown typed namespace", async () => {
-    const root = await makeTempRoot("registry-typed-unknown");
-    const dirs = buildNamespaceDirs(typedProfile("wiki/papers"));
-    const entry = await buildLiveRegistryEntry(root, "unknowntype/foo", dirs);
-    expect(entry).toBeNull();
-  });
-
-  it("buildLiveIdSet finds typed pages via the profile entity directory", async () => {
-    const root = await makeTempRoot("ids-typed");
-    const { mkdir } = await import("fs/promises");
-    const customDir = path.join(root, "wiki/research-papers");
-    await mkdir(customDir, { recursive: true });
-    await writePage(customDir, "bar", { title: "Bar", summary: "" }, "body");
-    const dirs = buildNamespaceDirs(typedProfile("wiki/research-papers"));
-    const ids = await buildLiveIdSet(root, ["papers", "concepts"], dirs);
-    expect(ids.has("papers/bar")).toBe(true);
-    expect(ids.has("concepts/bar")).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// buildLiveIdSet — embed-eligibility parity with the writer (F2)
-// ---------------------------------------------------------------------------
-
-/** Minimal LoadedProfile wrapping a given ProfilePack. */
-function loadedProfile(pack: ProfilePack): LoadedProfile {
-  return { profile: pack, loadedFrom: null, digest: "" };
-}
-
-/** Profile with a `notes` entity type at wiki/notes, optional retrieval. */
-function notesProfile(retrieval?: Record<string, unknown>): LoadedProfile {
-  return loadedProfile({
-    schemaVersion: 1, profileId: "test",
-    entities: { notes: { directory: "wiki/notes", ...(retrieval ? { retrieval } : {}) } },
-  });
-}
-
-describe("buildLiveIdSet — eligibility parity with the writer", () => {
-  it("excludes an orphaned concept (meta.orphaned:true) — matches writer which never embeds it", async () => {
-    const root = await makeTempRoot("elig-orphaned");
-    await writePage(path.join(root, "wiki/concepts"), "ghost", { title: "Ghost", orphaned: true }, "body");
-    await writePage(path.join(root, "wiki/concepts"), "live", { title: "Live" }, "body");
-    const ids = await buildLiveIdSet(root, ["concepts"]);
-    expect(ids.has("concepts/ghost")).toBe(false);
-    expect(ids.has("concepts/live")).toBe(true);
-  });
-
-  it("excludes an untitled concept — matches writer which never embeds it", async () => {
-    const root = await makeTempRoot("elig-untitled");
-    await writePage(path.join(root, "wiki/concepts"), "no-title", { summary: "s" }, "body");
-    await writePage(path.join(root, "wiki/concepts"), "titled", { title: "Titled" }, "body");
-    const ids = await buildLiveIdSet(root, ["concepts"]);
-    expect(ids.has("concepts/no-title")).toBe(false);
-    expect(ids.has("concepts/titled")).toBe(true);
-  });
-
-  it("excludes a profile-invalid typed page (missing required field) from the live-id set", async () => {
-    const root = await makeTempRoot("elig-invalid-typed");
-    const { mkdir } = await import("fs/promises");
-    await mkdir(path.join(root, "wiki/notes"), { recursive: true });
-    // field-violation: notes requires title field (profile declares it required)
-    const profile: LoadedProfile = loadedProfile({
-      schemaVersion: 1, profileId: "test",
-      entities: { notes: { directory: "wiki/notes", requiredFields: ["title"], fields: { title: { type: "string" } } } },
-    });
-    await writePage(path.join(root, "wiki/notes"), "invalid-note", {}, "body"); // no title → field-violation
-    await writePage(path.join(root, "wiki/notes"), "valid-note", { title: "Valid" }, "body");
-    const dirs = buildNamespaceDirs(profile.profile);
-    const ids = await buildLiveIdSet(root, ["notes"], dirs, profile);
-    expect(ids.has("notes/invalid-note")).toBe(false);
-    expect(ids.has("notes/valid-note")).toBe(true);
-  });
-
-  it("includes a typed page with includeInSearch:false (surface filter handles it, not the live-id set)", async () => {
-    const root = await makeTempRoot("elig-search-false");
-    const { mkdir } = await import("fs/promises");
-    await mkdir(path.join(root, "wiki/notes"), { recursive: true });
-    // includeInSearch:false but includeInContext defaults to true → embedded:true
-    const profile = notesProfile({ includeInSearch: false });
-    await writePage(path.join(root, "wiki/notes"), "context-only", { title: "Context Only" }, "body");
-    const dirs = buildNamespaceDirs(profile.profile);
-    const ids = await buildLiveIdSet(root, ["notes"], dirs, profile);
-    // Page IS in live-id set (it's embedded); surface filter in passesPrefilter handles search exclusion
-    expect(ids.has("notes/context-only")).toBe(true);
-  });
-
-  it("excludes a typed page whose retrieval is both-surfaces false (embedded:false)", async () => {
-    const root = await makeTempRoot("elig-both-false");
-    const { mkdir } = await import("fs/promises");
-    await mkdir(path.join(root, "wiki/notes"), { recursive: true });
-    const profile = notesProfile({ includeInSearch: false, includeInContext: false });
-    await writePage(path.join(root, "wiki/notes"), "neither", { title: "Neither" }, "body");
-    const dirs = buildNamespaceDirs(profile.profile);
-    const ids = await buildLiveIdSet(root, ["notes"], dirs, profile);
-    expect(ids.has("notes/neither")).toBe(false);
-  });
-
-  it("regression: eligible concepts/queries are present; ineligible (orphaned) are absent — gate is applied", async () => {
-    const root = await makeTempRoot("elig-regression-default");
-    await writePage(path.join(root, "wiki/concepts"), "alpha", { title: "Alpha", summary: "sum" }, "body");
-    // An orphaned concept in the same namespace — the eligibility gate must exclude it
-    await writePage(path.join(root, "wiki/concepts"), "dead", { title: "Dead", orphaned: true }, "body");
-    const ids = await buildLiveIdSet(root, ["concepts"]);
-    expect(ids.has("concepts/alpha")).toBe(true);
-    expect(ids.has("concepts/dead")).toBe(false);
-    expect(ids.size).toBe(1);
+  it("holds exactly the two reserved namespaces", () => {
+    expect(buildNamespaceDirs().size).toBe(2);
   });
 });

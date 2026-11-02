@@ -15,72 +15,39 @@
  */
 
 import { loadProfile } from "./load.js";
-import { collectEntityPages, collectEntitySummary } from "./collect.js";
-import type { EntityProblem } from "./collect.js";
 import { DEFAULT_PROFILE } from "./default.js";
 import { profileDigest } from "./digest.js";
 import { toEntityProblemView } from "./types.js";
-import { collectStandingRelationProblems } from "./relation-standing.js";
-import { artifactProblemViews, collectArtifactRefPageSources } from "./artifact-lint.js";
-import type { EntityPage, EntityProblemView, EntityTypeDef, LoadedProfile } from "./types.js";
+import type { EntityProblem, EntityPage, EntityProblemView, EntityTypeDef, LoadedProfile } from "./types.js";
 import { scanEntityDir } from "../wiki/collect.js";
 import { safeRealpath } from "../utils/path-confine.js";
-import { readRelations } from "../relations/store-read.js";
-import { validateRelationAgainstProfile } from "../relations/relation-contract.js";
-import { RelationStoreCorruptError, RelationStoreTooNewError, RelationStoreSymlinkError } from "../relations/types.js";
 import { GraphDirConfinementError } from "../utils/jsonl-store.js";
 import { PrivateDirConfinementError } from "../utils/private-dir.js";
-import type { RelationRef } from "../relations/types.js";
 import { readEvents } from "../events/store-read.js";
 import { EventStoreCorruptError, EventStoreTooNewError, EventStoreSymlinkError, EventStoreFullError } from "../events/types.js";
 
 /**
- * Load the active profile and return it ONLY when it is a non-default profile;
- * return `undefined` for the built-in default so every additive read surface
- * can omit its `profile` key with one shared gate.
+ * There is no longer such a thing as a non-default profile.
  *
- * The built-in is identified by `loadedFrom === null` (the loader sets null
- * ONLY for the no-file/default path) — never by `profileId === "default"`,
- * which a disk profile can no longer claim but which must not be the gate. The
- * digest comparison is defense-in-depth against a future loader change.
+ * This returned the installed profile, or `undefined` for the built-in default,
+ * so that a dozen read surfaces could skip profile-only work on a plain project.
+ * With one fixed profile every project IS the default, so the answer is always
+ * `undefined` — and the signature stays, rather than being deleted, because the
+ * callers' early-return branches are now the CORRECT and only behaviour: no typed
+ * pages to list, no entity docs to export, no pipeline panel to draw.
  *
- * Effective-profile loading routes through the active-product binding via the
- * universal {@link loadProfile}: with no binding this is byte-identical to the
- * legacy path, and a product-mode binding yields the product's knowledge profile
- * (always non-default, since its `loadedFrom` is a package member path, so it is
- * never mistaken for the built-in default).
- *
- * @param root - Absolute project root directory.
- * @returns The loaded non-default profile, or `undefined` for the built-in default.
+ * @param _root - Absolute project root directory (unused).
+ * @returns Always `undefined`.
  */
 export async function loadNonDefaultProfile(
-  root: string,
+  _root: string,
 ): Promise<LoadedProfile | undefined> {
-  const loaded = await loadProfile(root);
-  const isBuiltInDefault =
-    loaded.loadedFrom === null && loaded.digest === profileDigest(DEFAULT_PROFILE);
-  return isBuiltInDefault ? undefined : loaded;
+  return undefined;
 }
 
 /** A profile pre-resolved by a caller: a {@link LoadedProfile}, or `null` for the built-in default. */
 export type PreloadedProfile = LoadedProfile | null;
 
-/**
- * Resolve the active non-default profile, REUSING a caller-`preloaded` result when
- * one is given (a `LoadedProfile`, or `null` meaning the built-in default), else
- * loading it via {@link loadNonDefaultProfile}. Lets one lock-free surface —
- * {@link ../context/build.js buildContextPack} — load the profile ONCE and thread
- * it through the pool-augmentation and tier-projection steps instead of each
- * re-loading (and re-validating) it, so a single pack cannot be assembled against
- * two different mid-swapped profiles. `undefined` preloaded → load here.
- */
-export async function resolveNonDefaultProfile(
-  root: string,
-  preloaded: PreloadedProfile | undefined,
-): Promise<LoadedProfile | undefined> {
-  if (preloaded !== undefined) return preloaded ?? undefined;
-  return loadNonDefaultProfile(root);
-}
 
 /**
  * The maximum number of structured `problems` the count-only status/viewer
@@ -146,23 +113,6 @@ export interface ProfileSummaryBlock {
   lifecycleStates?: Record<string, Record<string, number>>;
 }
 
-/**
- * Collect a loaded non-default profile's entity pages alongside its STRUCTURED
- * problems (already mapped to public, path-safe {@link EntityProblemView}s) — the
- * shared read-side step every additive profile block performs before shaping
- * (windowing, capping, or passing through) its own problem envelope.
- *
- * @param root - Absolute project root directory.
- * @param loaded - A non-default profile (from {@link loadNonDefaultProfile}).
- * @returns The collected entity pages and the structured problem views.
- */
-export async function collectEntityPagesWithMessages(
-  root: string,
-  loaded: LoadedProfile,
-): Promise<{ pages: EntityPage[]; problems: EntityProblemView[] }> {
-  const { pages, problems } = await collectEntityPages(root, loaded.profile);
-  return { pages, problems: await toProblemViews(problems, root) };
-}
 
 /**
  * Map structured collector problems to public, path-safe problem views,
@@ -177,124 +127,6 @@ async function toProblemViews(
 ): Promise<EntityProblemView[]> {
   const canonicalRoot = (await safeRealpath(root)) ?? root;
   return problems.map((problem) => toEntityProblemView(problem, canonicalRoot));
-}
-
-/**
- * The relation-store contribution to the summary block: per-type live counts
- * (present only when non-empty) and at most one fail-closed read problem.
- */
-interface RelationSummary {
-  relationCounts?: Record<string, number>;
-  relationTotal?: number;
-  problem?: EntityProblemView;
-}
-
-/**
- * Map a fail-closed relation-store read error (corrupt / too-new / symlinked-leaf
- * / symlinked-or-escaping `wiki/graph` dir) to a `relation-store` problem view.
- *
- * This is the SINGLE mapper for the store-UNAVAILABLE case, shared by every
- * surface that must fail closed VISIBLY (status, viewer, AND the JSON export) so
- * a broken store is never reported as a silent "no relations". A store-unavailable
- * problem is distinguishable from a {@link relationProfileInvalidProblem} (the
- * store is healthy, some stored relations are just stale) via
- * {@link isRelationStoreUnavailableProblem}.
- *
- * @param error - The caught relation-store read error.
- * @returns The `relation-store` problem view, or rethrows a non-store error.
- */
-export function relationReadProblem(error: unknown): EntityProblemView {
-  if (
-    error instanceof RelationStoreTooNewError ||
-    error instanceof RelationStoreCorruptError ||
-    error instanceof RelationStoreSymlinkError ||
-    error instanceof GraphDirConfinementError // a symlinked/escaping wiki/graph DIR (FIX F5)
-  ) {
-    return { kind: "relation-store", message: error.message };
-  }
-  throw error; // a non-store error (e.g. a confinement escape) is not ours to swallow
-}
-
-/**
- * The trailing clause unique to the profile-invalid relation problem. It is the
- * SOLE `relation-store` message produced WITHOUT a fail-closed read, so its
- * suffix is the discriminator {@link isRelationStoreUnavailableProblem} uses to
- * exclude the healthy-store-stale-data case from the store-UNAVAILABLE case.
- */
-const RELATION_PROFILE_INVALID_SUFFIX = "(retained, not counted as live)";
-
-/** Build the stable message for the profile-invalid (NOT store-unavailable) relation problem. */
-function relationProfileInvalidMessage(count: number): string {
-  return `${count} stored relation(s) are no longer valid against the current profile ${RELATION_PROFILE_INVALID_SUFFIX}`;
-}
-
-/** A `relation-store` problem reporting the count of profile-invalid stored relations. */
-function relationProfileInvalidProblem(count: number): EntityProblemView {
-  return { kind: "relation-store", message: relationProfileInvalidMessage(count) };
-}
-
-/**
- * True when a problem reports the relation store is UNAVAILABLE (corrupt /
- * too-new / symlink / confinement) rather than merely holding stale,
- * profile-invalid relations on an otherwise-healthy store. Both share
- * `kind: "relation-store"`, so this narrows to the fail-closed read case — the
- * one agent-facing surfaces (context) must warn about. The profile-invalid case
- * is the SOLE `relation-store` message produced WITHOUT a read failure, so it is
- * the only one excluded.
- *
- * @param problem - A problem view from `snapshot.profile.problems`.
- * @returns Whether the problem signals an unavailable relation store.
- */
-export function isRelationStoreUnavailableProblem(problem: EntityProblemView): boolean {
-  if (problem.kind !== "relation-store") return false;
-  return !problem.message.endsWith(RELATION_PROFILE_INVALID_SUFFIX);
-}
-
-/**
- * Tally per-type counts over only the relations STILL VALID against the current
- * profile; relations whose type/endpoints/attributes the profile has outgrown are
- * excluded from the live counts and surfaced as a single `relation-store` problem.
- */
-function tallyValidRelations(relations: RelationRef[], loaded: LoadedProfile): RelationSummary {
-  const counts: Record<string, number> = {};
-  let valid = 0;
-  let invalid = 0;
-  for (const rel of relations) {
-    if (validateRelationAgainstProfile(rel, loaded.profile).length > 0) { invalid += 1; continue; }
-    counts[rel.type] = (counts[rel.type] ?? 0) + 1;
-    valid += 1;
-  }
-  const problem = invalid > 0 ? relationProfileInvalidProblem(invalid) : undefined;
-  if (valid === 0) return { ...(problem ? { problem } : {}) };
-  return { relationCounts: counts, relationTotal: valid, ...(problem ? { problem } : {}) };
-}
-
-/**
- * Read the live relation store for a non-default profile and reduce it to the
- * additive summary contribution: per-type counts of relations STILL VALID against
- * the current profile (OMITTED when none are, so a relation-less or fully-stale
- * profile gains no count fields), and a single `relation-store` problem on a
- * fail-closed read OR when stored relations are no longer profile-valid (the
- * invalid ones are retained on disk, never counted as live).
- *
- * @param root - Absolute project root directory.
- * @param loaded - The loaded non-default profile (its `relations` block gates).
- * @returns The valid relation counts/total and/or a problem.
- */
-async function summarizeRelations(root: string, loaded: LoadedProfile): Promise<RelationSummary> {
-  // The store is read even when the profile declares NO `relations` block: a
-  // relation-less project has no `wiki/graph` store, so the read returns empty
-  // (→ `{}`, byte-identical), but a project whose `relations` block was REMOVED
-  // while records remain on disk must still surface them as profile-invalid
-  // rather than silently vanishing.
-  let relations;
-  try {
-    ({ relations } = await readRelations(root));
-  } catch (error) {
-    return { problem: relationReadProblem(error) };
-  }
-  if (relations.length === 0) return {};
-  return tallyValidRelations(relations, loaded);
 }
 
 /**
@@ -387,47 +219,6 @@ async function tallyLifecycleStates(
   return Object.keys(counts).length > 0 ? counts : undefined;
 }
 
-/**
- * Build the per-type lifecycle-state tally for every entity type that declares a
- * `lifecycle`, reading each page's lifecycle field through the bounded
- * frontmatter-only scan (no bodies). Returns `undefined` when no lifecycle type
- * has any enrolled page (so the `lifecycleStates` key is OMITTED — the
- * default and lifecycle-less envelopes stay byte-identical).
- *
- * @param root - Absolute project root directory.
- * @param loaded - The loaded non-default profile (its entity `lifecycle` gates).
- * @returns The `{ entityType: { state: count } }` tally, or `undefined`.
- */
-async function summarizeLifecycleStates(
-  root: string,
-  loaded: LoadedProfile,
-): Promise<Record<string, Record<string, number>> | undefined> {
-  const states: Record<string, Record<string, number>> = {};
-  for (const [entityType, def] of Object.entries(loaded.profile.entities) as [string, EntityTypeDef][]) {
-    if (def.lifecycle === undefined) continue;
-    const tally = await tallyLifecycleStates(root, def, def.lifecycle.field);
-    if (tally) states[entityType] = tally;
-  }
-  return Object.keys(states).length > 0 ? states : undefined;
-}
-
-/**
- * Resolve every hash-pinned artifactRef reachable from a non-default profile's
- * pages/relations and reduce it to the additive summary contribution: the
- * path-safe problem views for any non-`ok` health. OMITTED work for an
- * artifact-less profile — {@link collectArtifactRefPageSources} is skipped
- * entirely, so the default/artifact-less status/viewer envelope stays
- * byte-identical.
- *
- * @param root - Absolute project root directory.
- * @param loaded - The loaded non-default profile (its `artifacts` block gates).
- * @returns The artifact-ref health problems (possibly empty).
- */
-async function summarizeArtifacts(root: string, loaded: LoadedProfile): Promise<EntityProblemView[]> {
-  if (!loaded.profile.artifacts || Object.keys(loaded.profile.artifacts).length === 0) return [];
-  const pages = await collectArtifactRefPageSources(root, loaded.profile);
-  return artifactProblemViews(root, pages, loaded.profile);
-}
 
 /**
  * Resolve the active profile and, for a NON-DEFAULT profile only, build the
@@ -457,9 +248,10 @@ async function summarizeArtifacts(root: string, loaded: LoadedProfile): Promise<
 function orderProblemViews(
   entity: EntityProblemView[],
   store: EntityProblemView[],
-  standing: EntityProblemView[],
 ): EntityProblemView[] {
-  return [...store, ...standing, ...entity];
+  // The `standing` group was removed with the relation system: it held the
+  // lifecycle/relation-precondition drift problems, which no longer exist.
+  return [...store, ...entity];
 }
 
 /** Shape the combined problem views into the capped `problems`/`problemTotal` pair (omitted when empty). */
@@ -468,30 +260,3 @@ function problemEnvelope(views: EntityProblemView[]): Pick<ProfileSummaryBlock, 
   return { problems: views.slice(0, PROFILE_PROBLEM_CAP), problemTotal: views.length };
 }
 
-export async function collectProfileSummary(
-  root: string,
-): Promise<ProfileSummaryBlock | undefined> {
-  const loaded = await loadNonDefaultProfile(root);
-  if (loaded === undefined) return undefined;
-  const { counts, problems } = await collectEntitySummary(root, loaded.profile);
-  const { relationCounts, relationTotal, problem } = await summarizeRelations(root, loaded);
-  const { eventCount, problem: eventProblem } = await summarizeEvents(root);
-  const lifecycleStates = await summarizeLifecycleStates(root, loaded);
-  // Re-evaluate every page CURRENTLY in a gated lifecycle state against the live
-  // relation graph (READ-ONLY, LOCK-FREE, one relation read): a precondition met at
-  // write time can drift as relations are superseded/compacted/dangling or the
-  // profile changes. A non-gated/default profile reads nothing and adds none.
-  const standingProblems = await collectStandingRelationProblems(root, loaded.profile);
-  const artifactProblems = await summarizeArtifacts(root, loaded);
-  const storeProblems = [...(problem ? [problem] : []), ...(eventProblem ? [eventProblem] : []), ...artifactProblems];
-  const views = orderProblemViews(await toProblemViews(problems, root), storeProblems, standingProblems);
-  return {
-    profileId: loaded.profile.profileId,
-    digest: loaded.digest,
-    entityCounts: counts,
-    ...problemEnvelope(views),
-    ...(relationCounts ? { relationCounts, relationTotal } : {}),
-    ...(eventCount !== undefined ? { eventCount } : {}),
-    ...(lifecycleStates ? { lifecycleStates } : {}),
-  };
-}

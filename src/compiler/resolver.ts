@@ -16,7 +16,12 @@ import { existsSync } from "fs";
 import { parseFrontmatter } from "../utils/markdown.js";
 import { readWikiPageContentOrWarn } from "./confined-wiki-read.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
-import { pageStoreOptions, type PageRemover, type PageSink } from "../trust/page-apply.js";
+import {
+  pageStoreOptions,
+  type PageBatchTransaction,
+  type PageRemover,
+  type PageSink,
+} from "../trust/page-apply.js";
 import { applyCompilePageWritesLocked } from "./compile-write.js";
 import type { CompilePageNamespace, CompilePageWrite } from "./compile-write.js";
 import * as output from "../utils/output.js";
@@ -266,9 +271,10 @@ export async function resolveAndApplyLinks(
   source?: ResolverPageSource,
   sink?: PageSink,
   remover?: PageRemover,
+  transaction?: PageBatchTransaction,
 ): Promise<void> {
   await applyCompilePageWritesLocked(
-    root, await resolveLinks(root, changedSlugs, newSlugs, source), pageStoreOptions(sink, remover),
+    root, await resolveLinks(root, changedSlugs, newSlugs, source), pageStoreOptions(sink, remover, transaction),
   );
 }
 

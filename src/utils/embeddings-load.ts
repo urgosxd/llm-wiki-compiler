@@ -638,27 +638,22 @@ async function rankChunksViaSource(
 }
 
 /**
- * The namespaces whose retrieval flag excludes them on this surface.
+ * No namespace is excluded from any surface.
  *
- * Derived from the profile the same way `passesSurfaceFlag` decides per entry, so a
- * backend that applies the list as a predicate filters exactly what the in-memory
- * prefilter would have filtered.
+ * `includeInSearch` / `includeInContext` were declared entity-type settings, and
+ * every type WITHOUT them already defaulted to included. With the two namespaces
+ * fixed and nothing declarable, the excluded list is always empty — the same
+ * answer the old code gave for a profile declaring neither flag.
  *
- * @param surface - Surface whose flag applies.
- * @param profile - Active profile, or undefined for the default (no exclusions).
- * @returns Namespace names to exclude; empty when the profile excludes none.
+ * @param _surface - Which surface is asking (unused).
+ * @param _profile - The caller's profile (unused).
+ * @returns Always an empty list.
  */
 function excludedNamespacesFor(
-  surface: RetrievalSurface,
-  profile: LoadedProfile | undefined,
+  _surface: RetrievalSurface,
+  _profile: LoadedProfile | undefined,
 ): string[] {
-  if (!profile) return [];
-  const excluded: string[] = [];
-  for (const [name, def] of Object.entries(profile.profile.entities)) {
-    const flag = surface === "search" ? def.retrieval?.includeInSearch : def.retrieval?.includeInContext;
-    if (flag === false) excluded.push(name);
-  }
-  return excluded;
+  return [];
 }
 
 /**
@@ -698,14 +693,16 @@ function passesPrefilter(
   return passesSurfaceFlag(pageId, surface, profile);
 }
 
-/** A typed namespace's `includeInSearch`/`includeInContext` flag (tri-state). */
-function passesSurfaceFlag(pageId: PageId, surface: RetrievalSurface, profile?: LoadedProfile): boolean {
-  const parsed = parseQualifiedPageId(pageId);
-  if (!parsed || !profile) return true;
-  const def = profile.profile.entities[parsed.namespace]?.retrieval;
-  if (!def) return true;
-  const flag = surface === "search" ? def.includeInSearch : def.includeInContext;
-  return flag !== false;
+/**
+ * Every page passes every surface flag.
+ *
+ * @param _pageId - The page being checked (unused).
+ * @param _surface - Which surface is asking (unused).
+ * @param _profile - The caller's profile (unused).
+ * @returns Always `true`.
+ */
+function passesSurfaceFlag(_pageId: PageId, _surface: RetrievalSurface, _profile?: LoadedProfile): boolean {
+  return true;
 }
 
 /** Score page entries by cosine similarity, descending; ties keep input order. */

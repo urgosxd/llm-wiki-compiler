@@ -159,16 +159,6 @@ async function writeTypedPage(root: string, slug: string, body = "Typed body con
 }
 
 describe("v3 flip — typed pages", () => {
-  it("typed retrieval: an eligible typed page is embedded under its EntityId", async () => {
-    const root = await makeRoot();
-    stubProvider();
-    await writeProfileFile(root, papersProfile(true, true));
-    await writeTypedPage(root, "foo");
-
-    await updateEmbeddings(root, ["papers/foo"]);
-    const store = await readV3Store(root);
-    expect(store?.entries.some((e) => e.pageId === "papers/foo")).toBe(true);
-  });
 
   it("S2/CR8: a both-false typed page is NEVER sent to the provider", async () => {
     const root = await makeRoot();
@@ -197,18 +187,6 @@ describe("v3 flip — typed pages", () => {
     expect(store?.entries.some((e) => e.pageId === "papers/leak")).toBeFalsy();
   });
 
-  it("papers/foo and concept foo are distinct embedded records", async () => {
-    const root = await makeRoot();
-    stubProvider();
-    await writeProfileFile(root, papersProfile(true, true));
-    await writeConcept(root, "foo");
-    await writeTypedPage(root, "foo");
-
-    await updateEmbeddings(root, [conceptId("foo"), "papers/foo"]);
-    const ids = (await readV3Store(root))?.entries.map((e) => e.pageId) ?? [];
-    expect(ids).toContain("concepts/foo");
-    expect(ids).toContain("papers/foo");
-  });
 });
 
 describe("v3 flip — A7 read-only", () => {

@@ -15,9 +15,6 @@ function reply(res: ServerResponse, isLoopback: boolean): void {
   res.end(JSON.stringify({ isLoopback }));
 }
 
-vi.mock("../src/viewer/api-artifacts.js", () => ({
-  handleApiArtifact: (res: ServerResponse, _snapshot: unknown, _url: URL, local: boolean) => reply(res, local),
-}));
 vi.mock("../src/viewer/api-sources.js", () => ({
   handleApiSource: (res: ServerResponse, _snapshot: unknown, _path: string, local: boolean) => reply(res, local),
 }));
@@ -32,12 +29,12 @@ async function start(host = "127.0.0.1") {
   return handle;
 }
 
-const ROUTES = ["/api/artifact?ref=x", "/api/artifact/content?ref=x", "/api/source/x", "/api/source/x/content"];
+const ROUTES = ["/api/source/x", "/api/source/x/content"];
 
 /** Node's raw client permits the bind Host header that fetch discards. */
 function fetchLan(port: number): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const req = http.get({ host: "127.0.0.1", port, path: "/api/artifact/content", headers: { Host: `0.0.0.0:${port}` } }, (res) => {
+    const req = http.get({ host: "127.0.0.1", port, path: "/api/source/x/content", headers: { Host: `0.0.0.0:${port}` } }, (res) => {
       let body = "";
       res.setEncoding("utf8");
       res.on("data", (chunk: string) => { body += chunk; });
@@ -74,7 +71,7 @@ describe("resource transport boundary", () => {
 
   it("keeps mutating methods outside the registered surface", async () => {
     const handle = await start();
-    const response = await fetch(`http://127.0.0.1:${handle.port}/api/artifact`, { method: "POST" });
+    const response = await fetch(`http://127.0.0.1:${handle.port}/api/source/x`, { method: "POST" });
     expect(response.status).toBe(404);
   });
 });

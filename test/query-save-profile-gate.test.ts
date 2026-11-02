@@ -57,14 +57,6 @@ describe("query --save profile gate", () => {
     expect(lockWasHeld).toBe(true);
   });
 
-  it("profile-enabled project: --save does NOT write a queries page", async () => {
-    await buildResearchLiteProject(root);
-    const result = await maybeSaveQueryPage({ root, question: QUESTION, answer: ANSWER, save: true });
-    expect(result.saved).toBeUndefined();
-    expect(result.publicationRefusal?.code).toBe("profile-disabled");
-    const queries = await readdir(path.join(root, "wiki/queries"));
-    expect(queries).toHaveLength(0);
-  });
 
   it("save=false never writes regardless of profile", async () => {
     const result = await maybeSaveQueryPage({ root, question: QUESTION, answer: ANSWER, save: false });

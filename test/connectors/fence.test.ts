@@ -4,7 +4,6 @@
  */
 import { describe, expect, it } from "vitest";
 import { fenceUntrustedConnectorText, readConnectorBlock } from "../../src/connectors/fence.js";
-import { applyContentTiers } from "../../src/context/content-tiers.js";
 import type { ContextPack } from "../../src/context/types.js";
 import type { ProfilePack } from "../../src/profile/types.js";
 import type { ViewerSnapshot } from "../../src/viewer/types.js";
@@ -99,9 +98,4 @@ describe("connector nonce fencing", () => {
     expect(readConnectorBlock({ "x-llmwiki.connector": { ...BLOCK, externalFields: "bad" } })).toBeNull();
   });
 
-  it("fences connector-origin frontmatter field tiers", () => {
-    const out = applyContentTiers(contentTierPack(), contentTierSnapshot(), contentTierProfile());
-    expect(out.primary[0]?.contentTiers?.[0]?.content).toContain("UNTRUSTED");
-    expect(out.primary[0]?.contentTiers?.[0]?.content).toContain("ignore previous instructions");
-  });
 });

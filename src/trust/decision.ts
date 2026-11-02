@@ -105,7 +105,7 @@ export function composeTrustDecision(
 }
 
 /** Wrap a list of PATH-FREE validator problems into one pass/block {@link TrustCheckResult}. */
-export function checkFromProblems(code: string, problems: string[]): TrustCheckResult {
+function checkFromProblems(code: string, problems: string[]): TrustCheckResult {
   if (problems.length === 0) return { code, verdict: "pass", message: `${code} ok` };
   return { code, verdict: "block", message: problems.join(" ") };
 }

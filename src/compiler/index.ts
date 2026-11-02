@@ -108,7 +108,12 @@ import {
   sourceDocumentsContentSource,
 } from "../dimensions/wiki/source-documents-store.js";
 import type { ChangeDetectionSource, SourceContentSource } from "./hasher.js";
-import { pageStoreOptions, type PageRemover, type PageSink } from "../trust/page-apply.js";
+import {
+  pageStoreOptions,
+  type PageBatchTransaction,
+  type PageRemover,
+  type PageSink,
+} from "../trust/page-apply.js";
 import { createPageWriteSink } from "../dimensions/wiki/page-write-sink.js";
 import {
   createEmbeddingPageSource,
@@ -219,6 +224,7 @@ async function generatePagesPhase(
   concurrency: number,
   pageSink: PageSink | undefined,
   pageRemover: PageRemover | undefined,
+  transaction: PageBatchTransaction | undefined,
   progressSink?: CompileProgressReporter,
 ): Promise<PageGenerationResult> {
   const merged = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs);
@@ -268,7 +274,7 @@ async function generatePagesPhase(
   // then derive writtenPages from what ACTUALLY committed (skipped pages folded
   // into errors), so finalizeWiki never resolves/embeds an uncommitted page.
   const { writtenPages, batchErrors } = await commitLivePageWrites(
-    root, outcomes, pageSink, pageRemover);
+    root, outcomes, pageSink, pageRemover, transaction);
   errors.push(...batchErrors);
   return { pages, writtenPages, errors, candidates, review, seedSlugs: [] };
 }
@@ -295,12 +301,13 @@ async function commitLivePageWrites(
   outcomes: GeneratedOutcome[],
   pageSink: PageSink | undefined,
   pageRemover: PageRemover | undefined,
+  transaction: PageBatchTransaction | undefined,
 ): Promise<{ writtenPages: MergedConcept[]; batchErrors: string[] }> {
   const live = outcomes.filter((o) => o.result.liveWrite);
   const { skipped } = await applyCompilePageWritesLocked(
     root,
     live.map((o) => o.result.liveWrite!),
-    pageStoreOptions(pageSink, pageRemover),
+    pageStoreOptions(pageSink, pageRemover, transaction),
   );
   const skippedKeys = new Set(skipped.map((s) => `${s.item.namespace}/${s.item.slug}`));
   const writtenPages = live
@@ -473,7 +480,8 @@ async function maybeSeedPages(
   seams: PageSeams,
 ): Promise<void> {
   if (!options.review && !options.skipSeedPages) {
-    await generateSeedPages(root, schema, generation, seams.content, seams.sink, seams.remover);
+    await generateSeedPages(
+      root, schema, generation, seams.content, seams.sink, seams.remover, seams.transaction);
   }
 }
 
@@ -508,6 +516,31 @@ async function seedThenFinalize(
     stateRows,
     jobObserver: options.jobObserver,
   });
+}
+
+/**
+ * Load the two documents a compile is configured by, from ONE environment.
+ *
+ * Grouped rather than inlined because both resolve against the run's Stack: a
+ * schema from disk and a review policy from a DIFFERENT tenant would be a run
+ * reviewed by rules nobody chose. Extracting it also keeps `runCompilePipeline`
+ * inside its complexity ceiling, which is how the duplication stayed invisible
+ * before — the policy loader used to re-derive `options.env ?? process.env`
+ * instead of reusing the `env` already computed two lines above.
+ *
+ * @param root - Project root, used by the schema and the file config.
+ * @param env - The one environment this run reads.
+ * @returns Both documents.
+ */
+async function loadRunConfiguration(
+  root: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ schema: Awaited<ReturnType<typeof loadSchema>>; reviewPolicy: ReviewPolicy }> {
+  const [schema, reviewPolicy] = await Promise.all([
+    loadSchema(root),
+    loadReviewPolicy(root, env),
+  ]);
+  return { schema, reviewPolicy };
 }
 
 /** Inner pipeline, runs under lock protection. Returns structured CompileResult. */
@@ -590,8 +623,7 @@ async function runCompilePipeline(
   // concurrent runs cannot see each other's. Omitted means `process.env`, which keeps
   // every existing caller byte-identical.
   const env = options.env ?? process.env;
-  const schema = await loadSchema(root);
-  const reviewPolicy = await loadReviewPolicy(root);
+  const { schema, reviewPolicy } = await loadRunConfiguration(root, env);
   reportSchemaStatus(schema);
   // Single in-memory draft of state.json for the whole run. Every intra-compile
   // state read/write goes through it; the durable marker advances only at the
@@ -604,7 +636,7 @@ async function runCompilePipeline(
   const state = draft.read();
   const compileReporter = options.jobObserver?.compile;
   const detected = await timeStage("compile.detect-changes", () =>
-    detectChanges(root, state, sourceChangeDetection(db, env)),
+    detectChanges(root, state, sourceChangeDetection(db, env), env),
     () => reportCompileStage(compileReporter, "compile.detect-changes"));
   const changes = promoteForPromptModifiers(
     applyChangeFilter(detected, options.changeFilter),
@@ -689,6 +721,7 @@ async function runCompilePipeline(
     concurrency,
     seams.sink,
     seams.remover,
+    seams.transaction,
     compileReporter,
   ), () => reportCompileStage(compileReporter, "compile.page-generation"));
   reportCompileProgress(
@@ -799,7 +832,8 @@ async function markDeletedAsOrphaned(
   seams: PageSeams = {},
 ): Promise<void> {
   for (const del of deleted) {
-    await markOrphaned(root, del.file, draft, seams.content, seams.sink, seams.remover);
+    await markOrphaned(
+      root, del.file, draft, seams.content, seams.sink, seams.remover, seams.transaction);
   }
 }
 
@@ -968,12 +1002,14 @@ async function finalizeWiki(
     // holds the project lock for its whole pipeline → the lock-free seam.
     await resolveAndApplyLinks(
       root, allChangedSlugs, allNewSlugs, resolverSource, seams.sink, seams.remover,
+      seams.transaction,
     );
     // Resolution adds links for titles it recognises; repair fixes links the
     // model already wrote against a page whose slug is longer than the name it
     // used. Ordered after resolution so a link resolution has just created is
     // already valid and never looks repairable.
-    await repairAndApplyLinks(root, seams.content, seams.scan, seams.sink, seams.remover);
+    await repairAndApplyLinks(
+      root, seams.content, seams.scan, seams.sink, seams.remover, seams.transaction);
   }
 
   // SINGLE durable state write of the whole compile: the buffered draft is

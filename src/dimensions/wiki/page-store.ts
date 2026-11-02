@@ -341,14 +341,23 @@ export async function getStoredPagesByKey(
  * content changed but whose timestamp did not would sink to the bottom of a
  * "newest first" view, which reads as "this page was not updated".
  *
+ * THE `callerTx` PARAMETER IS WHAT MAKES A BATCH ATOMIC. Without it each page opens
+ * its own transaction, so a batch of five pages is five commits and a failure on the
+ * fifth leaves the first four durable. `withTenant` already accepts a caller's
+ * transaction for exactly this reason (see its docstring: a nested `db.transaction`
+ * gets a DIFFERENT pooled connection, so the inner writes commit separately); a batch
+ * caller is the case it was written for.
+ *
  * @param db - Database handle.
  * @param stackId - The tenant that owns the page.
  * @param page - The page to store; its `pageDirectory` and `slug` are its identity.
+ * @param callerTx - Batch transaction to join, when the caller owns one.
  */
 export async function upsertStoredPage(
   db: Database,
   stackId: string,
   page: Page,
+  callerTx?: Database,
 ): Promise<void> {
   await withTenant(db, stackId, async (tx) => {
     await tx.execute(sql`
@@ -370,7 +379,7 @@ export async function upsertStoredPage(
         archived = excluded.archived,
         updated_at = now()
     `);
-  });
+  }, callerTx);
 }
 
 /**
@@ -384,12 +393,14 @@ export async function upsertStoredPage(
  * @param stackId - The tenant that owns the page.
  * @param pageDirectory - `concepts` or `queries`.
  * @param slug - The page's slug.
+ * @param callerTx - Batch transaction to join, when the caller owns one.
  */
 export async function deleteStoredPage(
   db: Database,
   stackId: string,
   pageDirectory: PageDirectory,
   slug: string,
+  callerTx?: Database,
 ): Promise<void> {
   await withTenant(db, stackId, async (tx) => {
     await tx.execute(sql`
@@ -397,5 +408,5 @@ export async function deleteStoredPage(
       where stack_id = ${stackId}
         and page_directory = ${pageDirectory} and slug = ${slug}
     `);
-  });
+  }, callerTx);
 }

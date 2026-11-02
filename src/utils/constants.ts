@@ -171,7 +171,7 @@ export const QUERIES_DIR = "wiki/queries";
  * `projectionFile` is confined here at profile LOAD so it can never target an
  * authored entity page; no entity `directory` may overlap this subtree either.
  */
-export const WORKFLOW_PROJECTION_DIR = "wiki/outputs/workflows";
+const WORKFLOW_PROJECTION_DIR = "wiki/outputs/workflows";
 export const LLMWIKI_DIR = ".llmwiki";
 export const PROFILE_FILE = ".llmwiki/profile.json";
 export const STATE_FILE = ".llmwiki/state.json";
@@ -382,7 +382,7 @@ const MAX_TOTAL_WORKFLOW_RUNS = 1000;
  * (a handful of per-surface grants plus an enabled-gate list) yet bounds the read;
  * an oversize config FAILS CLOSED to `read-only`, never a write capability.
  */
-export const MAX_LOCAL_CONFIG_BYTES = 64 * 1024; // 64 KiB
+const MAX_LOCAL_CONFIG_BYTES = 64 * 1024; // 64 KiB
 
 export const INDEX_FILE = "wiki/index.md";
 export const MOC_FILE = "wiki/MOC.md";
@@ -422,7 +422,7 @@ export const MAX_RELATION_STORE_BYTES = 64 * 1024 * 1024;
  * Bounds attacker-controlled attribute/evidence size before append so one record
  * cannot grow unbounded (and so the per-store cap cannot be reached by one line).
  */
-export const MAX_RELATION_RECORD_BYTES = MAX_SOURCE_CHARS;
+const MAX_RELATION_RECORD_BYTES = MAX_SOURCE_CHARS;
 
 /**
  * Resource cap on the event store file. Mirrors {@link MAX_RELATION_STORE_BYTES}:
@@ -459,7 +459,7 @@ export const MAX_EVENT_HEAD_BYTES = 4096;
  * symlink target would be read fully before `JSON.parse`, a local DoS. A bloated
  * profile is treated as a load error (fail closed).
  */
-export const MAX_PROFILE_BYTES = 1024 * 1024; // 1 MiB
+const MAX_PROFILE_BYTES = 1024 * 1024; // 1 MiB
 
 /**
  * Append-only activity journal at the project root, per Karpathy's llm-wiki

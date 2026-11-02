@@ -28,21 +28,7 @@ import { readFile } from "fs/promises";
 import { validateWikiPage } from "../utils/markdown.js";
 import { planPageMutation } from "../trust/planner.js";
 import { applyApprovedMutationsLocked } from "../trust/executor.js";
-import {
-  applyTypedCandidate,
-  CandidateProfileError,
-  CandidatePromotionBlockedError,
-} from "../trust/promote.js";
-import { EntityFieldContractError } from "../profile/field-contract.js";
-import { LifecycleTransitionError } from "../profile/lifecycle.js";
-import {
-  RelationPreconditionUnmetError,
-  RelationPreconditionUnverifiableError,
-} from "../relations/enforce-precondition.js";
-import {
-  ArtifactPreconditionUnmetError,
-  ArtifactPreconditionUnverifiableError,
-} from "../artifacts/enforce-precondition.js";
+import { pageStoreOptions } from "../trust/page-apply.js";
 import { deleteCandidate } from "../compiler/candidates.js";
 import {
   assertCandidateMutationAccess,
@@ -222,91 +208,47 @@ async function targetUnchangedSincePropose(root: string, candidate: ReviewCandid
  * Invariant 4) and return the ABSOLUTE page path it landed at, or `null` on a
  * refusal (exit code 1, candidate retained, nothing written).
  *
- * A candidate carrying `targetEntityType` (staged via the typed planner) routes
- * through {@link applyTypedCandidate} so it lands at `wiki/<entityType>/<slug>.md`
- * — NOT silently in concepts. A candidate without a typed target keeps the
- * EXISTING default concepts/queries path byte-for-byte. Both run under the
- * ALREADY-HELD review lock (no nested-lock deadlock).
+ * EVERY candidate routes through the default concepts/queries path now. The typed
+ * leg (a `targetEntityType` candidate promoted through the profile-aware planner)
+ * was removed with the profile system, so a candidate carrying that field can only
+ * come from a pre-removal store and is refused rather than silently written as a
+ * concept — see {@link refuseStaleTypedCandidate}.
+ *
+ * Runs under the ALREADY-HELD review lock (no nested-lock deadlock).
  */
 async function routeApprovedPageWrite(
   root: string,
   candidate: ReviewCandidate,
   id: string,
 ): Promise<string | null> {
-  if (candidate.targetEntityType) {
-    return routeTypedPageWrite(root, candidate, id);
-  }
+  if (candidate.targetEntityType) return refuseStaleTypedCandidate(candidate, id);
   return routeDefaultPageWrite(root, candidate, id);
 }
 
 /**
- * Route a TYPED candidate through the profile-validated typed planner. Refuses
- * (exit 1, candidate retained) when the project has no profile, the type is no
- * longer declared, the body violates the declared field contract, the body
- * performs an illegal lifecycle transition, a relation-count or artifact-existence
- * precondition for the entered gated state is unmet or unverifiable, or the re-plan
- * blocks — never a silent fall back to concepts. Returns the absolute
- * `wiki/<entityType>/<slug>.md` path on success.
- */
-async function routeTypedPageWrite(
-  root: string,
-  candidate: ReviewCandidate,
-  id: string,
-): Promise<string | null> {
-  try {
-    const relPath = await applyTypedCandidate(root, candidate);
-    noteTypedReadIntegration(relPath);
-    return path.join(root, relPath);
-  } catch (err) {
-    if (!isTypedPromotionRefusal(err)) throw err;
-    output.status("!", output.error(`Candidate ${id} not approved: ${err.message}`));
-    process.exitCode = 1;
-    return null;
-  }
-}
-
-/**
- * Whether `err` is a KNOWN typed-candidate promotion refusal surfaced by
- * {@link applyTypedCandidate} — a missing/undeclared profile
- * ({@link CandidateProfileError}), a blocked re-plan ({@link CandidatePromotionBlockedError}),
- * a field-contract violation ({@link EntityFieldContractError}), an illegal lifecycle
- * transition ({@link LifecycleTransitionError}), or a relation- / artifact-precondition
- * that is unmet or unverifiable. Any such error is reported as a clean "not approved"
- * (exit 1, candidate retained); ANY other error propagates. Returning `err is Error`
- * lets the caller read `err.message` after the guard. Centralized here so the routing
- * predicate reads flat rather than inflating {@link routeTypedPageWrite}.
- */
-function isTypedPromotionRefusal(err: unknown): err is Error {
-  return (
-    err instanceof CandidateProfileError ||
-    err instanceof CandidatePromotionBlockedError ||
-    err instanceof EntityFieldContractError ||
-    err instanceof LifecycleTransitionError ||
-    err instanceof RelationPreconditionUnmetError ||
-    err instanceof RelationPreconditionUnverifiableError ||
-    err instanceof ArtifactPreconditionUnmetError ||
-    err instanceof ArtifactPreconditionUnverifiableError
-  );
-}
-
-/**
- * Emit a one-line, non-error informational NOTE after a typed page is written,
- * summarising the current read-integration state: a typed entity page is now
- * surfaced in `status`, JSON export, the wiki index, the viewer graph, agent
- * context packs (lexical ranking + relation-edge expansion), and semantic search
- * (under its qualified EntityId, on the next compile). The note never touches
- * the exit code — a successful typed approval still exits 0.
+ * Refuse a candidate that still carries a `targetEntityType`.
  *
- * @param relPath - The project-relative `wiki/<entityType>/<slug>.md` path.
+ * THE TYPED APPROVAL LEG WAS REMOVED WITH THE PROFILE SYSTEM. A candidate with
+ * this field can only come from a store written by an earlier build, and there is
+ * no longer a profile to validate it against, no entity namespace in `wiki.pages`
+ * to hold it, and no typed planner to re-plan it. Writing it as a concept would
+ * land the page under the wrong identity, so it is refused with the candidate
+ * retained — the operator can reject it and regenerate.
+ *
+ * @param candidate - The stale typed candidate.
+ * @param id - Its id, for the message.
+ * @returns Always `null`, after reporting the refusal and setting exit code 1.
  */
-function noteTypedReadIntegration(relPath: string): void {
+function refuseStaleTypedCandidate(candidate: ReviewCandidate, id: string): null {
   output.status(
-    "i",
-    output.info(
-      `Typed page ${relPath} written. Visible in viewer graph, context packs ` +
-        `(lexical + relation-edge), and semantic search (on next compile).`,
+    "!",
+    output.error(
+      `Candidate ${id} not approved: it targets entity type "${candidate.targetEntityType}", ` +
+        `and typed entity pages were removed. Reject it and regenerate against the default wiki.`,
     ),
   );
+  process.exitCode = 1;
+  return null;
 }
 
 /**
@@ -343,8 +285,42 @@ async function routeDefaultPageWrite(
     return null;
   }
   if (!checkAnswerPlan(candidate, planned)) return null;
-  await applyApprovedMutationsLocked(root, planned);
-  const dir = candidate.targetDirectory === "queries" ? QUERIES_DIR : CONCEPTS_DIR;
+  // A Stack stores the page as a ROW. Without the seams the executor takes its file
+  // branch and writes `wiki/concepts/<slug>.md` -- a file nothing reads, because the
+  // corpus is `wiki.pages`. The seams are resolved here rather than threaded from the
+  // caller so a CLI entry point stays free of the dimensions graph, exactly as
+  // `sources/removal.ts` does for the delete path.
+  return await withPageSeams(process.env, async (seams) => {
+    await applyApprovedMutationsLocked(
+      root, planned, pageStoreOptions(seams.sink, seams.remover, seams.transaction));
+    return approvedPageLocation(root, candidate, seams.sink !== undefined);
+  });
+}
+
+/**
+ * Where the approved page actually landed, for the success line.
+ *
+ * ON A STACK THERE IS NO FILE, so returning `wiki/concepts/<slug>.md` would name a
+ * path that was never written -- the CLI telling the operator something untrue. The
+ * page's identity is the honest answer: `concepts/<slug>` is what `wiki.pages` keys
+ * it by, and it is what a reader would use to find it.
+ *
+ * The file backend keeps its absolute path byte-for-byte, because that path is real
+ * there and existing output may depend on it.
+ *
+ * @param root - Absolute project root.
+ * @param candidate - The approved candidate.
+ * @param storedAsRow - True when the page was stored as a row rather than a file.
+ * @returns The file path for the file backend, or the row identity for a Stack.
+ */
+function approvedPageLocation(
+  root: string,
+  candidate: ReviewCandidate,
+  storedAsRow: boolean,
+): string {
+  const namespace = candidate.targetDirectory === "queries" ? "queries" : "concepts";
+  if (storedAsRow) return `${namespace}/${candidate.slug}`;
+  const dir = namespace === "queries" ? QUERIES_DIR : CONCEPTS_DIR;
   return path.join(root, dir, `${candidate.slug}.md`);
 }
 

@@ -74,7 +74,7 @@ async function typedSkipReason(
  * @param typed - The typed docs mapped from this bundle.
  * @returns The docs kept for staging and the collision-skip outcomes.
  */
-export async function filterTypedCollisions(
+async function filterTypedCollisions(
   root: string,
   typed: MappedTypedOkfDoc[],
 ): Promise<{ kept: MappedTypedOkfDoc[]; skipped: TypedImportOutcome[] }> {

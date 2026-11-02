@@ -14,6 +14,7 @@ import { readdir, readFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
+import { activeLintCorpus } from "./corpus.js";
 
 /** Pattern matching ^[filename.md] citation markers in markdown content. */
 export const CITATION_PATTERN = /\^\[([^\]]+)\]/g;
@@ -83,6 +84,30 @@ async function readMarkdownFiles(
  * other did not.
  */
 export type PageScope = "generic" | "wiki-wide";
+
+/**
+ * The pages a RULE should walk: the resolved corpus when one is in scope, the
+ * on-disk walk otherwise.
+ *
+ * This is the only reader a rule needs. It exists so a rule keeps its
+ * `(root) => …` signature and still gets the right corpus: on a Stack the pages
+ * are rows, and `collectAllPages` would walk an empty tree and report a clean
+ * wiki. See `linter/corpus.ts` for why the corpus travels in an async scope.
+ *
+ * Outside a scope this delegates to {@link collectAllPages} unchanged, so every
+ * existing caller and test keeps the behaviour it had.
+ *
+ * @param root - Project root, used only by the on-disk fallback.
+ * @param scope - The jurisdiction this rule family claims.
+ * @returns The pages this rule may inspect.
+ */
+export async function readLintPages(
+  root: string, scope: PageScope = "generic",
+): Promise<Array<{ filePath: string; content: string }>> {
+  const corpus = activeLintCorpus();
+  if (corpus !== undefined) return [...corpus.pages];
+  return await collectAllPages(root, scope);
+}
 
 /** Collect the pages one rule family walks, under its declared scope. */
 export async function collectAllPages(

@@ -23,49 +23,45 @@
  * as clean primary evidence.
  */
 
-import { resolveNonDefaultProfile, type PreloadedProfile } from "../profile/block.js";
+import type { PreloadedProfile } from "../profile/block.js";
 import type { ProfilePack } from "../profile/types.js";
 import type { ViewerPage, ViewerSnapshot } from "../viewer/types.js";
 
 /**
- * Return a snapshot whose `pages` pool honours each entity type's
- * `retrieval.includeInContext`.
+ * Nothing narrows the context pool any more.
  *
- * The ORIGINAL snapshot object is returned unchanged whenever nothing is
- * excluded (the built-in default profile, a read error, or a profile that opts
- * nothing out), so the common path allocates nothing and the default context
- * pack is byte-identical.
+ * This filtered out typed pages whose entity type declared
+ * `retrieval.includeInContext: false`. With the two namespaces fixed and nothing
+ * declarable, no page can be excluded, so the snapshot is returned unchanged —
+ * the same result the old code produced for a project with no such declaration.
  *
- * @param root - Absolute project root.
+ * The signature is retained because `context/build.ts` threads a caller-resolved
+ * profile through it, and dropping the parameter would churn that call site for
+ * no behavioural gain.
+ *
+ * @param _root - Project root directory (unused).
  * @param snapshot - The frozen viewer snapshot to scope.
- * @param preloaded - A profile the caller already resolved, threaded through so
- *   one pack is never assembled against two mid-swapped profiles.
- * @returns The snapshot, minus any typed page its entity type keeps out of context.
+ * @param _preloaded - The caller's pre-resolved profile (unused).
+ * @returns The snapshot, unchanged.
  */
 export async function narrowSnapshotToContextPool(
-  root: string,
+  _root: string,
   snapshot: ViewerSnapshot,
-  preloaded?: PreloadedProfile,
+  _preloaded?: PreloadedProfile,
 ): Promise<ViewerSnapshot> {
-  let profile: ProfilePack;
-  try {
-    const loaded = await resolveNonDefaultProfile(root, preloaded);
-    if (loaded === undefined) return snapshot; // default profile → byte-identical pool
-    profile = loaded.profile;
-  } catch {
-    return snapshot; // a profile-load failure must not break context
-  }
-  const pages = snapshot.pages.filter((page) => !isExcludedFromContext(page, profile));
-  if (pages.length === snapshot.pages.length) return snapshot;
-  return { ...snapshot, pages };
+  return snapshot;
 }
 
 /**
- * True when `page` is a typed entity page whose type declares
- * `retrieval.includeInContext: false`. Default pages are never excluded — the
- * flag lives on an entity type definition, and they have none.
+ * No page is excluded from context any more.
+ *
+ * `retrieval.includeInContext: false` was a declared entity-type setting. With
+ * the two namespaces fixed and nothing declarable, every page enters context —
+ * which is the behaviour a type WITHOUT a retrieval block already had, so this is
+ * the same answer the old default produced.
+ *
+ * @returns Always `false`.
  */
-function isExcludedFromContext(page: ViewerPage, profile: ProfilePack): boolean {
-  if (page.entityType === undefined) return false;
-  return profile.entities[page.entityType]?.retrieval?.includeInContext === false;
+function isExcludedFromContext(): boolean {
+  return false;
 }

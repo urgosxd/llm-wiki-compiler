@@ -14,8 +14,32 @@
 
 import path from "path";
 import { toPosixPath } from "../utils/path-confine.js";
-import type { ConnectorBindingDef } from "../connectors/types.js";
-import type { EntityProblem, EntityProblemKind } from "./collect.js";
+/**
+ * The kinds of structured problem an entity-page collector could report.
+ *
+ * These lived in `collect.ts`, which was removed with the profile substrate: the
+ * collector walked DECLARED entity types, and there are none. The types stay
+ * because {@link EntityProblemView} is a wire DTO that other layers still shape
+ * and because the union is the closed vocabulary a consumer switches on — but
+ * only `invalid-directory` remains producible, since a page cannot violate a
+ * field contract that no longer exists.
+ */
+export type EntityProblemKind =
+  | "invalid-directory"
+  | "non-slug-safe-filename"
+  | "slug-mismatch"
+  | "field-violation";
+
+/** A structured, non-fatal problem found while collecting entity pages. */
+export interface EntityProblem {
+  kind: EntityProblemKind;
+  /** The declared entity type the problem belongs to. */
+  entityType: string;
+  /** Absolute path of the offending page (absent for directory-level problems). */
+  filePath?: string;
+  /** Human-readable description, safe to surface to agents/users. */
+  message: string;
+}
 
 /** A string proven to match the slug-safe grammar (`^[a-z0-9][a-z0-9-]*$`). */
 export type SlugSafe = string & { readonly __slugSafe: unique symbol };
@@ -23,49 +47,8 @@ export type SlugSafe = string & { readonly __slugSafe: unique symbol };
 /** A composed, validated `type/slug` entity identifier. */
 export type EntityId = string & { readonly __entityId: unique symbol };
 
-/** The supported scalar/array field types for a profile entity field. */
-export type FieldType =
-  | "string"
-  | "number"
-  | "integer"
-  | "boolean"
-  | "date"
-  | "slug"
-  | "enum"
-  | "string[]"
-  | "artifactRef"
-  | "artifactRef[]";
 
-/**
- * Declarative PRESENTATION hints for a text field: enough for a read surface to
- * build an external link generically, and nothing more.
- *
- * A CLOSED vocabulary rather than a URL template. A template would be an
- * author-supplied string a renderer interpolates into an href — executable
- * profile behaviour reaching a read surface — whereas these three name a
- * resolver the READER already knows, so the origin stays out of profile control.
- * An unknown value is rejected at load, so no renderer has to guess.
- */
-export type FieldFormat = "url" | "doi" | "arxiv";
 
-/** Declarative definition of a single frontmatter field on an entity type. */
-export interface FieldDef {
-  type: FieldType;
-  /**
-   * How a read surface may linkify this field's text. Valid only on `string` and
-   * `string[]` (see `validateTitleField`'s neighbour in validate.ts): a format is
-   * a hint about how to read text, and on any other type it would be config no
-   * renderer could act on.
-   */
-  format?: FieldFormat;
-  required?: boolean;
-  default?: unknown;
-  enum?: string[];
-  min?: number;
-  max?: number;
-  /** For artifactRef fields: the declared artifact types this ref may point at (omitted = any). */
-  artifactTypes?: string[];
-}
 
 /**
  * How an entity type participates in search and context retrieval.
@@ -81,343 +64,50 @@ export interface RetrievalDef {
   defaultWeight?: number;
 }
 
-/**
- * A relation-count precondition on ENTERING a lifecycle state: THIS lifecycle's
- * entity must be an endpoint of at least `minCount` instances of `relationType`
- * on its `role` side (optionally narrowed to `otherTypes` on the opposite side).
- *
- * Declarative + load-validated in `./validate-relation-requirements.ts`; a
- * malformed or structurally-unsatisfiable requirement fails the profile LOAD.
- * ENFORCED at write time by `../relations/enforce-precondition.ts` (composed at
- * every live typed-page apply path) and re-checked as a standing invariant on
- * the read surfaces by `./relation-standing.ts`.
- */
-export interface RelationCountReq {
-  /** A DECLARED relation type whose instances are counted. */
-  relationType: string;
-  /** Whether THIS lifecycle's entity is the from- or to-endpoint of `relationType`. */
-  role: "from" | "to";
-  /**
-   * Allowed entity types of the OTHER endpoint; omitted = any. Each entry must be
-   * a declared entity AND a legal opposite-side endpoint of `relationType`.
-   */
-  otherTypes?: string[];
-  /**
-   * Allowed CURRENT lifecycle states of the OTHER endpoint for a relation to
-   * count; omitted = any state (or no lifecycle at all). Enforcement is
-   * FAIL-CLOSED: when set, an endpoint whose type declares no lifecycle, or
-   * whose page carries no lifecycle-field value, does NOT qualify. Load-validated
-   * in `./validate-relation-requirements.ts`: non-empty, entries unique, each a
-   * declared lifecycle state of an allowed other endpoint type.
-   */
-  otherStates?: string[];
-  /** Minimum required instance count; a finite integer >= 1. */
-  minCount: number;
-}
 
-/**
- * An artifact-existence precondition on ENTERING a lifecycle state: the entity's
- * declared `field` (an `artifactRef`/`artifactRef[]` field) must carry a pinned ref that
- * RESOLVES HEALTHY to an artifact of `artifactType`. EXISTENCE/health only — semantic
- * coverage is a NON-GOAL (OQ11), so there is deliberately NO `minCount`. Load-validated
- * in `./validate-artifact-requirements.ts` (M1/M3); ENFORCED at write time by
- * `../artifacts/enforce-precondition.ts`.
- */
-export interface ArtifactPreconditionReq {
-  /** A declared `artifactRef`/`artifactRef[]` field of THIS entity whose ref must resolve healthy. */
-  field: string;
-  /** The declared artifact type the ref must be. */
-  artifactType: string;
-  /**
-   * Optional EXECUTION-PROVENANCE arm: beyond resolving healthy, the pinned
-   * artifact's BYTES must have been admitted as provider output of a settled
-   * (exactly `succeeded`) preparation run of the declared action whose frozen
-   * input names this entity. OPT-IN per requirement: a profile that does not
-   * declare it keeps the existence/health gate alone. Load-validated in
-   * `./validate-artifact-requirements.ts`; enforced at write time by
-   * `../artifacts/execution-provenance.ts` via the same gated-state-entry
-   * authority as the health check.
-   */
-  executionProvenance?: ExecutionProvenanceReq;
-}
 
-/**
- * The execution-provenance declaration: which preparation runs may vouch for a
- * pinned artifact. GENERIC — it names an action id, an input field, and a
- * provider output id; it knows nothing about any product's vocabulary.
- */
-export interface ExecutionProvenanceReq {
-  /** The sealed plan `actionAuthority.actionId` a vouching run must carry. */
-  actionId: string;
-  /** The frozen-input field that must equal the transitioning entity's slug. */
-  slugInputField: string;
-  /**
-   * The provider output id (the admitted evidence ref's `provenanceLabel`)
-   * whose whole-artifact digest must equal the pinned artifact's digest.
-   */
-  resultOutputId: string;
-}
 
-/** A state-machine lifecycle defined over one frontmatter field. */
-export interface LifecycleDef {
-  field: string;
-  initial: string;
-  terminal: string[];
-  transitions: Record<string, string[]>;
-  transitionRequirements?: Record<string, string[]>;
-  /**
-   * Optional per-state relation-count preconditions, keyed by the state being
-   * ENTERED. Omitted-for-default: a lifecycle without this key behaves exactly as
-   * before. Load-validated in `./validate-relation-requirements.ts`; ENFORCED at
-   * write time by `../relations/enforce-precondition.ts` on every live typed-page
-   * apply path, and re-evaluated against the CURRENT relation graph on the read
-   * surfaces by `./relation-standing.ts` (standing-invariant drift detection).
-   */
-  transitionRelationRequirements?: Record<string, RelationCountReq[]>;
-  /**
-   * Optional per-state artifact-existence preconditions, keyed by the state being
-   * ENTERED. Omitted-for-default. Load-validated in `./validate-artifact-requirements.ts`;
-   * ENFORCED at write time by `../artifacts/enforce-precondition.ts`. See {@link ArtifactPreconditionReq}.
-   */
-  transitionArtifactRequirements?: Record<string, ArtifactPreconditionReq[]>;
-}
 
-/**
- * Declarative definition of one typed relation type within a profile pack.
- *
- * A relation type declares its endpoints by entity-type id (`from`/`to`, each a
- * non-empty list of DECLARED entity types), a `direction` (`directed` keeps the
- * endpoint roles distinct; `symmetric` treats them as an unordered pair —
- * canonicalization of symmetric pairs is enforced at STORE time in a later
- * slice, not here), and optionally a set of typed `attributes` (reusing the same
- * {@link FieldDef} contract as entity fields) with a `requiredAttributes`
- * subset that must reference declared attribute keys.
- *
- * This is SCHEMA + VALIDATION only: there is no relation store or write path in
- * this slice. The DEFAULT profile declares no relations, so the whole block is
- * omitted-for-default and never appears in default output or digest.
- */
-export interface RelationTypeDef {
-  /** Endpoint entity-type ids on the `from` side; each must be a declared entity. */
-  from: string[];
-  /** Endpoint entity-type ids on the `to` side; each must be a declared entity. */
-  to: string[];
-  /** `directed` keeps endpoint roles distinct; `symmetric` treats them as unordered. */
-  direction: "directed" | "symmetric";
-  /** Typed relation attributes, validated with the same {@link FieldDef} contract as fields. */
-  attributes?: Record<string, FieldDef>;
-  /** Attribute keys (subset of `attributes`) that must be present on a relation instance. */
-  requiredAttributes?: string[];
-}
 
-/** One stage of a declarative workflow: what it reads/writes and an optional gate. */
-export interface WorkflowStageDef {
-  /** Slug-safe stage id, unique within its workflow. */
-  id: string;
-  /** Declared entity-type ids this stage reads. */
-  reads: string[];
-  /** Declared entity-type ids this stage writes. */
-  writes: string[];
-  /**
-   * OPTIONAL declared artifact-type ids this stage may PRODUCE as an artifact
-   * stage output (P-A). Omitted-for-default: a stage without this key produces no
-   * artifacts, so default profiles stay byte-identical. Validated against the
-   * profile's declared artifact types at load.
-   */
-  artifactWrites?: string[];
-  /** Optional product action whose authenticated preparation settles this stage. */
-  productAction?: string;
-  /** Optional closed typed-input contract; when present the stage parks for it. */
-  humanInput?: HumanInputDescriptorV1;
-  /** Optional gate, `<kind>:<id>` where kind ∈ {trust,human,agent}. */
-  gate?: string;
-  /** Optional verified predecessor subject required by this human gate. */
-  subjectGate?: SubjectGateDescriptorV1;
-  /**
-   * Prior stage ids this stage was renamed FROM; lets an in-flight run on an old
-   * id be adapted rather than blocked.
-   */
-  previousIds?: string[];
-}
 
-/** A human gate whose approval is bound to one verified predecessor artifact. */
-export interface SubjectGateDescriptorV1 {
-  /** Earlier stage whose core-minted verifier receipt supplies the subject. */
-  outputStageId: string;
-  /** Required artifact type named by that receipt. */
-  artifactType: string;
-  /** Process-pinned host verifier id that minted the receipt. */
-  verifierId: string;
-}
 
-/** Common constraints shared by every human-input field kind. */
-export interface HumanInputFieldBaseV1 {
-  required?: boolean;
-  default?: string | string[] | null;
-}
 
-/** A bounded string supplied by an authenticated operator. */
-export interface HumanInputStringFieldV1 extends HumanInputFieldBaseV1 {
-  kind: "string";
-  maxBytes: number;
-  nullable?: boolean;
-}
 
-/** A scalar selected from a closed string set. */
-export interface HumanInputEnumFieldV1 extends HumanInputFieldBaseV1 {
-  kind: "enum";
-  values: string[];
-}
 
-/** A live entity reference, optionally constrained by lifecycle state. */
-export interface HumanInputEntityRefFieldV1 extends HumanInputFieldBaseV1 {
-  kind: "entity-ref";
-  entityTypes: string[];
-  lifecycleStates?: string[];
-  allowedInput?: string;
-}
 
-/** A healthy hash-pinned artifact reference. */
-export interface HumanInputArtifactRefFieldV1 extends HumanInputFieldBaseV1 {
-  kind: "artifact-ref";
-  artifactTypes: string[];
-  allowedInput?: string;
-}
 
-/** A bounded list of bounded strings. */
-export interface HumanInputStringListFieldV1 extends HumanInputFieldBaseV1 {
-  kind: "string-list";
-  maxItems: number;
-  maxItemBytes: number;
-}
 
-/** A bounded list of entity or artifact references. */
-export interface HumanInputRefListFieldV1 extends HumanInputFieldBaseV1 {
-  kind: "ref-list";
-  referenceKind: "entity" | "artifact";
-  maxItems: number;
-  entityTypes?: string[];
-  artifactTypes?: string[];
-  lifecycleStates?: string[];
-  allowedInput?: string;
-}
 
-/** The six closed field forms admitted by a human-input stage. */
-export type HumanInputFieldV1 =
-  | HumanInputStringFieldV1 | HumanInputEnumFieldV1
-  | HumanInputEntityRefFieldV1 | HumanInputArtifactRefFieldV1
-  | HumanInputStringListFieldV1 | HumanInputRefListFieldV1;
 
-/** Declarative typed human-input contract carried by a workflow stage. */
-export interface HumanInputDescriptorV1 {
-  schemaVersion: 1;
-  schemaId: string;
-  fields: Record<string, HumanInputFieldV1>;
-}
 
-/** A declarative, non-executable workflow definition. */
-export interface WorkflowDef {
-  stages: WorkflowStageDef[];
-  /** Optional project-relative markdown projection target (validated in a later slice). */
-  projectionFile?: string;
-}
 
-/** The capability classes, ordinal: disabled < read-only < staged-write < trusted-write. */
-export type CapabilityClass = "disabled" | "read-only" | "staged-write" | "trusted-write";
 
-/** The surfaces an action can be invoked through. */
-export type ActionSurface = "cli" | "sdk" | "mcp" | "viewer";
 
-/** One declarative input field of an action's inputSchema. */
-export interface ActionInputField {
-  type: "string" | "string[]" | "entityRef" | "number" | "boolean";
-  required?: boolean;
-  default?: unknown;
-  /** For type "entityRef": the declared entity types the ref may point to. */
-  entityTypes?: string[];
-}
 
-/** A declarative workflow action: a shortcut resolving to a workflow operation. */
-export interface WorkflowActionDef {
-  label: string;
-  /** The declared workflow this action operates on. */
-  workflow: string;
-  operation: "start" | "resume" | "advance" | "gate" | "cancel" | "fail" | "status" | "submit";
-  /** Optional explicit submit shape; required only for declarative human input. */
-  submitKind?: "page" | "artifact" | "human-input";
-  inputSchema?: Record<string, ActionInputField>;
-  /** Per-surface REQUESTED capability (a request, not a grant). All 4 surfaces required. */
-  permissions: Record<ActionSurface, CapabilityClass>;
-  /** A human:/agent: gate this action satisfies (operation "gate"). */
-  gate?: string;
-  /** A trust: gate this action's write must pass. */
-  trustGate?: string;
-}
 
 /**
  * The reserved `contentTiers` token that reveals a record's markdown BODY (as
  * opposed to a declared frontmatter field). Shared by the load validator and the
  * context projection so the one reserved literal is spelled exactly once.
  */
-export const BODY_TIER_TOKEN = "body";
+const BODY_TIER_TOKEN = "body";
 
 /** Declarative definition of one entity type within a profile pack. */
+/**
+ * One page namespace. It carries its directory and nothing else.
+ *
+ * Seven fields used to live here — `titleField`, `requiredFields`, `fields`,
+ * `retrieval`, `lifecycle`, `contentTiers`, `export` — describing what a project
+ * could DECLARE about its own entity types. With `concepts` and `queries` fixed
+ * and nothing configurable, no code path reads any of them, and a type nobody can
+ * populate is not a contract. `retrieval` in particular is now the rule rather
+ * than a setting: both namespaces always enter search and context.
+ */
 export interface EntityTypeDef {
   directory: string;
-  titleField?: string;
-  requiredFields?: string[];
-  fields?: Record<string, FieldDef>;
-  retrieval?: RetrievalDef;
-  lifecycle?: LifecycleDef;
-  /**
-   * Optional shallowest-first per-record content-depth tiers for progressive
-   * context revelation: each entry is either a declared field name of this entity
-   * type OR the reserved {@link BODY_TIER_TOKEN}. OMITTED-for-default — a type
-   * WITHOUT this key behaves exactly as today: its context primaries carry no
-   * `contentTiers`, so default packs stay byte-identical. Load-validated in
-   * `validate.ts`; consumed by the context projection in `context/content-tiers.ts`.
-   */
-  contentTiers?: string[];
-  export?: { okfType?: string };
 }
 
-/** A profile-declared artifact type: a typed, content-addressed leaf file. */
-export interface ArtifactTypeDef {
-  /** Leaf filename: safe-filename grammar + allowlisted extension (see src/artifacts/name.ts). */
-  fileName: string;
-  /** v0 content kinds. */
-  contentKind: "json" | "text";
-  /** Inclusive UTF-8 byte ceiling, enforced on the handle before any read/hash. */
-  maxBytes: number;
-  /** OPTIONAL partial scalar field-contract over top-level JSON object fields (json only). */
-  metadata?: Record<string, FieldDef>;
-  /**
-   * OPTIONAL member-bearing declaration (json only; exclusive with `metadata`):
-   * the declared file becomes a core-schema MEMBER MANIFEST listing flat
-   * sibling leaves by name, sha256, and byte count, so the pinned ref is a
-   * Merkle root over binary-capable members (see src/artifacts/members.ts).
-   */
-  members?: ArtifactMembersDef;
-}
 
-/**
- * The generic member policy of a member-bearing artifact type. Vocabulary is
- * structural only (counts, bytes, names, extensions) — never a product's.
- */
-export interface ArtifactMembersDef {
-  /** Maximum number of member leaves. */
-  maxCount: number;
-  /** Inclusive per-member byte ceiling. */
-  maxMemberBytes: number;
-  /** Inclusive ceiling over the SUM of member byte counts. */
-  maxTotalBytes: number;
-  /** When present, every member's lower-cased extension must be one of these (e.g. ".tex"). */
-  allowedExtensions?: string[];
-  /** Member names that must each be present. */
-  requiredNames?: string[];
-  /** When true, any member OUTSIDE `requiredNames` is refused. */
-  exactNames?: boolean;
-}
 
 /** A profile pack: the full declarative description of a wiki's entity types. */
 export interface ProfilePack {
@@ -427,43 +117,9 @@ export interface ProfilePack {
   displayName?: string;
   extends?: string[];
   entities: Record<string, EntityTypeDef>;
-  /**
-   * Typed relation type declarations, keyed by slug-safe relation-type id.
-   * OPTIONAL and omitted-for-default: a relation-less profile (including the
-   * built-in default) carries no `relations` key, so its digest and output are
-   * unchanged. See {@link RelationTypeDef}.
-   */
-  relations?: Record<string, RelationTypeDef>;
-  /**
-   * Optional declarative workflow declarations, keyed by slug-safe workflow id.
-   * OPTIONAL and omitted-for-default: a workflow-less profile (incl. the built-in
-   * default) carries no `workflows` key, so its digest and output are unchanged.
-   * See {@link WorkflowDef}. Validated fail-closed in validate.ts; never executable.
-   */
-  workflows?: Record<string, WorkflowDef>;
-  /**
-   * Optional declarative workflow-action declarations, keyed by a slug-safe DOTTED
-   * id (`<domain>.<action>`). OPTIONAL and omitted-for-default: an action-less
-   * profile (incl. the built-in default) carries no `workflowActions` key, so its
-   * digest and output are unchanged. Each action is a SHORTCUT that resolves to a
-   * workflow operation; see {@link WorkflowActionDef}. Validated fail-closed in
-   * validate.ts — SCHEMA + TYPES + VALIDATION only, with no authority model,
-   * execution, or CLI surface in this slice.
-   */
-  workflowActions?: Record<string, WorkflowActionDef>;
-  /**
-   * Optional profile-declared artifact type declarations, keyed by slug-safe id.
-   * OPTIONAL and omitted-for-default: an artifact-less profile (incl. the built-in
-   * default) carries no `artifacts` key, so its digest and output are unchanged.
-   * See {@link ArtifactTypeDef}. Validated fail-closed in validate.ts.
-   */
-  artifacts?: Record<string, ArtifactTypeDef>;
-  /**
-   * Optional pure-data connector bindings, keyed by registered connector id.
-   * OPTIONAL and omitted-for-default: connector-less profiles carry no
-   * `connectors` key and never activate external fetch surfaces.
-   */
-  connectors?: Record<string, ConnectorBindingDef>;
+  // `relations`, `workflows`, `workflowActions`, `artifacts` and `connectors` were
+  // REMOVED with the subsystems that consumed them. A profile is now its identity
+  // plus its two fixed namespaces; there is nothing left to declare.
 }
 
 /** A profile resolved from disk (or built-in), with its source and digest. */
