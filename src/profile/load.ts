@@ -48,8 +48,6 @@ import { DEFAULT_PROFILE } from "./default.js";
 import { validateProfile } from "./validate.js";
 import { profileDigest } from "./digest.js";
 import type { LoadedProfile } from "./types.js";
-import { resolveActiveProduct } from "../products/binding/resolve.js";
-import { ActiveProductUnavailableError, ProductAuthorityConflictError } from "../products/binding/problems.js";
 
 /** Error raised when a present profile file cannot be loaded or validated. */
 export class ProfileLoadError extends Error {
@@ -102,17 +100,15 @@ async function resolveConfinedProfileDir(root: string): Promise<string | null> {
 }
 
 /**
- * The LEGACY fail-closed loader: resolve `<root>/.llmwiki/profile.json`, yielding
- * the built-in default when absent and failing closed on a present-but-broken or
- * confined file. This is the exact behaviour {@link loadProfile} runs when NO
- * active-product binding is present, so the absent-binding result (profile,
- * `loadedFrom`, and digest) stays byte-identical to the pre-binding loader.
+ * The fail-closed profile loader: a Stack's row first, then `<root>/.llmwiki/profile.json`,
+ * yielding the built-in default when neither exists and failing closed on a
+ * present-but-broken or confined file.
  *
  * @param root - Absolute project root directory.
- * @returns The resolved, validated legacy profile with its source path and digest.
+ * @returns The resolved, validated profile with its source marker and digest.
  * @throws {ProfileLoadError} When a present file is unparseable, invalid, or confined.
  */
-async function loadLegacyProfile(root: string): Promise<LoadedProfile> {
+async function loadProjectProfile(root: string): Promise<LoadedProfile> {
   // Rows first: when the project is bound to a Stack, its profile lives there and
   // there is no file to read. A Stack WITHOUT a profile is not a broken project -- it
   // is one that never installed a profile -- so it yields the built-in default, the
@@ -176,42 +172,24 @@ function loadProfileFromRow(row: StoredProfileRow): LoadedProfile {
 }
 
 /**
- * A symlinked/escaping `.llmwiki` dir is a legacy confinement fault of the WHOLE
- * private dir, not a present-binding fault, so it must surface as the pre-existing
- * {@link ProfileLoadError} read-path contract rather than an unavailable-binding
- * error. When the dir resolves cleanly (or is absent) this returns and the caller
- * raises the binding-specific {@link ActiveProductUnavailableError}.
- */
-async function assertPrivateDirNotConfinementFault(root: string): Promise<void> {
-  await resolveConfinedProfileDir(root);
-}
-
-/**
- * Load the EFFECTIVE profile for a project root — the UNIVERSAL effective-authority
- * resolver every reader uses (design section 8.2). Routes through the active-product
- * binding: an ABSENT binding is the LEGACY path ({@link loadLegacyProfile}, byte-
- * identical to the pre-binding loader); a PRESENT, healthy binding yields the
- * product's knowledge profile; a binding beside a legacy `profile.json` fails closed
- * with {@link ProductAuthorityConflictError} (neither wins); a present-but-unhealthy
- * binding throws {@link ActiveProductUnavailableError} and NEVER falls back to legacy.
+ * Load the projection's profile: the Stack's row, or the built-in default.
  *
- * A symlinked/escaping `.llmwiki` dir surfaces as a {@link ProfileLoadError} (the
- * legacy confinement contract), not as an unavailable-binding error, because the
- * fault is the private dir itself rather than a present binding.
+ * There is exactly ONE authority. A build with no product bindings cannot produce
+ * a `product`, `conflict` or `unavailable` state, so the previous dispatch over
+ * four runtime modes resolved to `legacy` on every call — 123 LOC of authority
+ * machinery whose other three branches were unreachable. It is gone, and what
+ * remains is the order the row path already had.
+ *
+ * Rows first: when the project is bound to a Stack, its profile lives there.
+ * Absent `.llmwiki/profile.json` falls back to the built-in default WITHOUT
+ * creating the directory, so a clean project stays clean.
  *
  * @param root - Absolute project root directory.
- * @returns The resolved effective profile for the project's runtime mode.
- * @throws {ProductAuthorityConflictError} When a binding and `profile.json` coexist.
- * @throws {ActiveProductUnavailableError} When a present binding is unhealthy.
- * @throws {ProfileLoadError} When the legacy `profile.json` is present but broken/confined.
+ * @returns The resolved profile, its source marker and its digest.
+ * @throws {ProfileLoadError} When a present `profile.json` is unparseable, invalid or confined.
  */
 export async function loadProfile(root: string): Promise<LoadedProfile> {
-  const resolution = await resolveActiveProduct();
-  if (resolution.mode === "legacy") return loadLegacyProfile(root);
-  if (resolution.mode === "product") return resolution.loaded;
-  if (resolution.mode === "conflict") throw new ProductAuthorityConflictError();
-  await assertPrivateDirNotConfinementFault(root);
-  throw new ActiveProductUnavailableError(resolution.detail);
+  return loadProjectProfile(root);
 }
 
 /**
