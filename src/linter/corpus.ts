@@ -49,6 +49,16 @@ export interface LintPage {
 export interface LintCorpus {
   /** Every page the run may inspect, in the run's declared scope. */
   readonly pages: readonly LintPage[];
+  /**
+   * Source documents, keyed by the filename a page cites.
+   *
+   * `undefined` means "not resolved — read from `sources/`", which is what a
+   * file-backed project wants. An empty map is different and means "this project
+   * has sources, and none of them is that filename": `checkBrokenCitations`
+   * distinguishes the two, because a citation to a document that exists nowhere is
+   * exactly what it reports.
+   */
+  readonly sources?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -141,11 +151,29 @@ function pagesInScope(pages: readonly RawWikiPage[], scope: PageScope): RawWikiP
  *
  * @param pages - Every page the project holds.
  * @param scope - Which pages this run may inspect.
+ * @param sources - Source documents by cited filename, when the project has rows.
  * @returns The corpus, ready to be put in scope.
  */
 export function corpusFromRawPages(
   pages: readonly RawWikiPage[],
   scope: PageScope = "generic",
+  sources?: ReadonlyMap<string, string>,
 ): LintCorpus {
-  return { pages: pagesInScope(pages, scope).map(lintPageFromRaw) };
+  return {
+    pages: pagesInScope(pages, scope).map(lintPageFromRaw),
+    ...(sources === undefined ? {} : { sources }),
+  };
+}
+
+/**
+ * The source text for one cited filename, when a corpus is in scope and knows it.
+ *
+ * @param filename - The name a page cites.
+ * @returns The text, `null` when the corpus says the document does not exist, or
+ *   `undefined` when no corpus is in scope and the caller should read disk.
+ */
+export function lintSourceText(filename: string): string | null | undefined {
+  const corpus = activeLintCorpus();
+  if (corpus === undefined || corpus.sources === undefined) return undefined;
+  return corpus.sources.get(filename) ?? null;
 }

@@ -33,7 +33,7 @@ import {
 import { collectProfileLintFindings, collectProfileLintInput } from "../profile/lint.js";
 import { collectAllPages, type PageScope } from "./rules-shared.js";
 import { corpusFromRawPages, withLintCorpus, type LintCorpus } from "./corpus.js";
-import { withRawPageSource } from "../dimensions/wiki/page-source-seam.js";
+import { withRawPageSource, withSourceDocuments } from "../dimensions/wiki/page-source-seam.js";
 
 /** Rule-only lint checks that don't depend on the schema layer. */
 /**
@@ -122,6 +122,28 @@ async function profileGroups(root: string, defaultResults: readonly LintResult[]
  * frozen parity suites pin — so this must never sort or regroup.
  */
 /**
+ * Index a Stack's documents by the filename a page cites.
+ *
+ * A page cites the source FILENAME (`^[abc123.md]`), while a document row is keyed
+ * by its source IDENTITY (a capability URL). `filename` is the column that joins
+ * them, and it is what lands in `sources/` on the file-backed path — so a citation
+ * resolves to the same document on both backends.
+ *
+ * @param documents - The Stack's documents.
+ * @returns Filename → document text, for the documents that carry text.
+ */
+function sourceTextByFilename(
+  documents: ReadonlyArray<{ filename?: string; content?: string }>,
+): Map<string, string> {
+  const byFilename = new Map<string, string>();
+  for (const document of documents) {
+    if (document.filename === undefined || document.content === undefined) continue;
+    byFilename.set(document.filename, document.content);
+  }
+  return byFilename;
+}
+
+/**
  * Resolve the pages this run may inspect, from whichever corpus the project has.
  *
  * On a Stack the pages are rows; `collectAllPages` would walk an empty `wiki/`
@@ -134,10 +156,21 @@ async function profileGroups(root: string, defaultResults: readonly LintResult[]
  * @returns The corpus, ready for {@link withLintCorpus}.
  */
 async function resolveLintCorpus(root: string, scope: PageScope): Promise<LintCorpus> {
-  return await withRawPageSource(root, process.env, async (source) =>
-    source === undefined
-      ? { pages: (await collectAllPages(root, scope)).map((page) => ({ ...page })) }
-      : corpusFromRawPages(await source.collect(), scope));
+  return await withRawPageSource(root, process.env, async (source) => {
+    if (source === undefined) {
+      // File-backed: no corpus override for sources either, so the citation rules
+      // keep reading `sources/` exactly as they always have.
+      return { pages: (await collectAllPages(root, scope)).map((page) => ({ ...page })) };
+    }
+    // A Stack's citation targets are its `source_documents` rows. Without this the
+    // citation rules join every cited filename against `sources/`, where a Stack
+    // has nothing, and report EVERY citation as broken.
+    const sources = await withSourceDocuments(process.env, async (listing) => {
+      if (listing === undefined) return undefined;
+      return sourceTextByFilename(await listing.list());
+    });
+    return corpusFromRawPages(await source.collect(), scope, sources);
+  });
 }
 
 async function collectTieredGroups(root: string, scope: PageScope = "generic"): Promise<TieredResultGroupV1[]> {

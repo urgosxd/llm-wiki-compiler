@@ -212,8 +212,15 @@ export interface CollectStatusOptions {
 
 /** The Stack's own documents, as the status needs them. */
 export interface SourceDocumentListing {
-  /** Source identities and their stored hashes, as a compile compares them. */
-  list(): Promise<Array<{ sourceIdentity: string; contentHash: string }>>;
+  /**
+   * Source identities, their stored hashes, and their text.
+   *
+   * `content` is present because the row already carries it: `listSourceDocuments`
+   * selects it for every document. Freshness compares hashes and ignores the text;
+   * the citation rules need the text itself to count lines for claim-level spans,
+   * and re-reading it per rule would be a second query for data already in hand.
+   */
+  list(): Promise<Array<{ sourceIdentity: string; contentHash: string; content?: string }>>;
 }
 
 /** Build a read-only status snapshot used by the `wiki_status` MCP tool. */
