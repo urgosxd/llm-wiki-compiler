@@ -34,9 +34,12 @@ const MODE_VALUES = new Set<ReviewPolicyMode>([
   "off",
 ]);
 
-/** Load and normalize review policy from `.llmwiki/config.json`. */
-export async function loadReviewPolicy(root: string): Promise<ReviewPolicy> {
-  const raw = await loadProjectConfig(root);
+/** Load and normalize review policy from the Stack, or `.llmwiki/config.json`. */
+export async function loadReviewPolicy(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ReviewPolicy> {
+  const raw = await loadProjectConfig(root, env);
   return raw === null ? { ...REVIEW_POLICY_OFF } : normalizeReviewPolicy(raw);
 }
 

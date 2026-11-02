@@ -44,8 +44,11 @@ export async function detectChanges(
   root: string,
   prevState: WikiState,
   source?: ChangeDetectionSource,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<SourceChange[]> {
-  const selection = await loadSourceSelection(root);
+  // The env, not the ambient one: `sources.exclude`/`recursive` live in the Stack's
+  // config, and a compile carries its tenant as an environment.
+  const selection = await loadSourceSelection(root, env);
   // Rows are authoritative when a Stack is configured. The directory is consulted
   // only when it is not, so a project that never opted into the backend keeps
   // compiling exactly as before.

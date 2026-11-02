@@ -510,6 +510,31 @@ async function seedThenFinalize(
   });
 }
 
+/**
+ * Load the two documents a compile is configured by, from ONE environment.
+ *
+ * Grouped rather than inlined because both resolve against the run's Stack: a
+ * schema from disk and a review policy from a DIFFERENT tenant would be a run
+ * reviewed by rules nobody chose. Extracting it also keeps `runCompilePipeline`
+ * inside its complexity ceiling, which is how the duplication stayed invisible
+ * before — the policy loader used to re-derive `options.env ?? process.env`
+ * instead of reusing the `env` already computed two lines above.
+ *
+ * @param root - Project root, used by the schema and the file config.
+ * @param env - The one environment this run reads.
+ * @returns Both documents.
+ */
+async function loadRunConfiguration(
+  root: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ schema: Awaited<ReturnType<typeof loadSchema>>; reviewPolicy: ReviewPolicy }> {
+  const [schema, reviewPolicy] = await Promise.all([
+    loadSchema(root),
+    loadReviewPolicy(root, env),
+  ]);
+  return { schema, reviewPolicy };
+}
+
 /** Inner pipeline, runs under lock protection. Returns structured CompileResult. */
 /** Everything the no-change path needs; grouped so the call stays one argument. */
 interface NothingToCompileInput {
@@ -590,8 +615,7 @@ async function runCompilePipeline(
   // concurrent runs cannot see each other's. Omitted means `process.env`, which keeps
   // every existing caller byte-identical.
   const env = options.env ?? process.env;
-  const schema = await loadSchema(root);
-  const reviewPolicy = await loadReviewPolicy(root);
+  const { schema, reviewPolicy } = await loadRunConfiguration(root, env);
   reportSchemaStatus(schema);
   // Single in-memory draft of state.json for the whole run. Every intra-compile
   // state read/write goes through it; the durable marker advances only at the
@@ -604,7 +628,7 @@ async function runCompilePipeline(
   const state = draft.read();
   const compileReporter = options.jobObserver?.compile;
   const detected = await timeStage("compile.detect-changes", () =>
-    detectChanges(root, state, sourceChangeDetection(db, env)),
+    detectChanges(root, state, sourceChangeDetection(db, env), env),
     () => reportCompileStage(compileReporter, "compile.detect-changes"));
   const changes = promoteForPromptModifiers(
     applyChangeFilter(detected, options.changeFilter),
