@@ -4,6 +4,7 @@ import path from "path";
 import { importOkfBundle } from "./okf-import.js";
 import { isWritable } from "../commands/import-core.js"; // leaf created in Task 4 Step 0
 import { writeCandidate, listCandidates } from "../compiler/candidates.js";
+import { withPageSeams, type PageSeams } from "../dimensions/wiki/page-source-seam.js";
 import { atomicWrite } from "../utils/markdown.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import { qualifiedPageId, type PageId } from "../utils/page-id.js";
@@ -70,15 +71,41 @@ async function writeAll(root: string, valid: MappedOkfPage[]): Promise<void> {
   // The namespace IS the targetDirectory basename ("concepts" / "queries"), so a
   // concept `foo` and a query `foo` imported together invalidate independently.
   const written: PageId[] = [];
-  try {
-    for (const page of valid) {
-      const dir = page.targetDirectory === "queries" ? QUERIES_DIR : CONCEPTS_DIR;
-      await atomicWrite(path.join(root, dir, `${page.slug}.md`), page.body);
-      written.push(qualifiedPageId(page.targetDirectory, page.slug));
+  // A STACK STORES THESE AS ROWS. `concepts` and `queries` are exactly the two
+  // namespaces `wiki.pages.page_directory` admits, so there IS a row to write here —
+  // unlike the entity paths, which have to refuse. `withPageSeams` resolves the sink
+  // for a Stack and yields all-undefined for a file project, whose branch is
+  // unchanged.
+  await withPageSeams(process.env, async (seams) => {
+    try {
+      for (const page of valid) {
+        await writeOneImportedPage(root, page, seams);
+        written.push(qualifiedPageId(page.targetDirectory, page.slug));
+      }
+    } finally {
+      if (written.length) await refreshAfterImport(root, written);
     }
-  } finally {
-    if (written.length) await refreshAfterImport(root, written);
+  });
+}
+
+/**
+ * Write one imported page to the backend this project uses.
+ *
+ * @param root - Absolute project root.
+ * @param page - The mapped bundle page.
+ * @param seams - Resolved page seams; `sink` is absent on a file-backed project.
+ */
+async function writeOneImportedPage(
+  root: string,
+  page: MappedOkfPage,
+  seams: PageSeams,
+): Promise<void> {
+  if (seams.sink !== undefined) {
+    await seams.sink({ directory: page.targetDirectory, slug: page.slug, body: page.body });
+    return;
   }
+  const dir = page.targetDirectory === "queries" ? QUERIES_DIR : CONCEPTS_DIR;
+  await atomicWrite(path.join(root, dir, `${page.slug}.md`), page.body);
 }
 
 /** Build the inert bundle-block report sections from a parsed block (none → {}). */
