@@ -111,6 +111,41 @@ export async function orphanUnownedFrozenPages(
 }
 
 /**
+ * Retire the pages of concept names that folded into another concept.
+ *
+ * Concept identity can decide that "Vector DB" and "Vector Database" are one
+ * concept. The run then writes that one page under the canonical slug, and the
+ * page the alias used to own has no producer left. Leaving it in place is exactly
+ * the defect the merge exists to remove: two files describing one thing, with the
+ * stale one still linked, embedded and counted.
+ *
+ * The convention is the same one deletion uses — MARK, never delete. An orphaned
+ * page keeps its bytes for inspection and is dropped from the index and the
+ * embedding refresh, so a wrong merge is reversible by a human rather than by a
+ * restore from backup.
+ *
+ * @param root - Project root directory.
+ * @param superseded - Alias slug → the slug that absorbed it.
+ * @param source - Row-backed page reader, or undefined to read `wiki/concepts`.
+ * @param sink - Row writer, or undefined to keep writing files.
+ * @param remover - Row remover, or undefined to keep unlinking files.
+ */
+export async function orphanSupersededAliasPages(
+  root: string,
+  superseded: ReadonlyMap<string, string>,
+  source?: PageContentSource,
+  sink?: PageSink,
+  remover?: PageRemover,
+): Promise<void> {
+  const writes: CompilePageWrite[] = [];
+  for (const [aliasSlug, canonicalSlug] of superseded) {
+    const write = await orphanPage(root, aliasSlug, `merged into "${canonicalSlug}"`, source);
+    if (write) writes.push(write);
+  }
+  await applyCompilePageWritesLocked(root, writes, pageStoreOptions(sink, remover));
+}
+
+/**
  * COMPUTE the orphan write for a single concept page, or return `null` to SKIP
  * it (no batch entry). The caller collects the non-null results and applies them
  * through {@link applyCompilePageWritesLocked}, so the write now flows through the

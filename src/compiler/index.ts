@@ -43,7 +43,11 @@ import {
   persistFrozenSlugs,
   type ExtractionResult,
 } from "./deps.js";
-import { markOrphaned, orphanUnownedFrozenPages } from "./orphan.js";
+import {
+  markOrphaned,
+  orphanSupersededAliasPages,
+  orphanUnownedFrozenPages,
+} from "./orphan.js";
 import { resolveAndApplyLinks } from "./resolver.js";
 import { repairAndApplyLinks } from "./link-repair.js";
 import { qualifiedPageId } from "../utils/page-id.js";
@@ -65,6 +69,7 @@ import {
 import { resolveCompileConcurrency } from "./concurrency.js";
 import pLimit from "p-limit";
 import { mergeExtractions } from "./extraction-merge.js";
+import { applyConceptIdentity, type ConceptIdentityOutcome } from "./identity-stage.js";
 import { runExtractionPhases } from "./extraction-phase.js";
 import { reusableSourceFiles, withExtractionSnapshot } from "./extraction-snapshot.js";
 import { generateMergedPage } from "./review-pipeline.js";
@@ -212,12 +217,19 @@ function bucketChanges(changes: SourceChange[]): ChangeBuckets {
   };
 }
 
-/** Phase 2: generate pages for merged concepts in parallel, capturing errors. */
+/**
+ * Phase 2: generate pages for merged concepts in parallel, capturing errors.
+ *
+ * The merged page set arrives ALREADY computed. It used to be derived here from
+ * the extractions, which meant the progress denominator had to re-run the same
+ * merge a few lines above just to count pages. Two calls meant two chances to
+ * disagree, and any identity decision applied between them would make the
+ * denominator count pages the run never wrote.
+ */
 async function generatePagesPhase(
   root: string,
+  merged: MergedConcept[],
   extractions: ExtractionResult[],
-  frozenSlugs: Set<string>,
-  reconciliationSlugs: ReadonlySet<string>,
   schema: SchemaConfig,
   options: CompileOptions,
   policy: ReviewPolicy,
@@ -227,7 +239,6 @@ async function generatePagesPhase(
   transaction: PageBatchTransaction | undefined,
   progressSink?: CompileProgressReporter,
 ): Promise<PageGenerationResult> {
-  const merged = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs);
   // Publish the denominator as soon as the stage owns it. Announcing the stage
   // clears progress to "unknown" first (reportCompileStage does that on purpose so
   // one stage never inherits another's counts), so the opening 0/N has to be
@@ -543,6 +554,135 @@ async function loadRunConfiguration(
   return { schema, reviewPolicy };
 }
 
+/**
+ * Post-generation bookkeeping: the state writes and page retirements that follow
+ * a committed page set.
+ *
+ * Grouped because the ordering inside carries the meaning: state ownership is
+ * recorded first (so the alias page below is provably not owned), then the folded
+ * pages are retired, then frozen slugs are pruned against what this run actually
+ * replaced.
+ */
+interface LiveOutcomeInput {
+  readonly root: string;
+  readonly draft: CompileStateDraft;
+  readonly seams: PageSeams;
+  readonly canonicalExtractions: ExtractionResult[];
+  readonly generation: PageGenerationResult;
+  readonly identity: ConceptIdentityOutcome;
+  /** Mutable set: `persistFrozenSlugs` prunes it in place against this run. */
+  readonly frozenSlugs: Set<string>;
+  readonly reconciliationSlugs: ReadonlySet<string>;
+}
+
+/**
+ * Record this run's ownership, retire folded alias pages, and prune frozen slugs.
+ *
+ * @param input - The committed page set and the state it has to be recorded in.
+ */
+async function commitLiveOutcome(input: LiveOutcomeInput): Promise<void> {
+  const { root, draft, seams, canonicalExtractions, generation, identity } = input;
+  const { frozenSlugs, reconciliationSlugs } = input;
+  const written = new Set(generation.writtenPages.map((entry) => entry.slug));
+  const retained = new Set(
+    [...reconciliationSlugs, ...frozenSlugs].filter((slug) => !written.has(slug)),
+  );
+  await persistExtractionStates(draft, canonicalExtractions, generation.writtenPages, retained);
+  // Retire the pages of concept names that folded into another concept. Runs after
+  // the writes commit so a canonical page exists before its alias stops being
+  // served, and after ownership was recorded so nothing still claims the alias.
+  if (identity.superseded.size > 0) {
+    await orphanSupersededAliasPages(
+      root, identity.superseded, seams.content, seams.sink, seams.remover);
+  }
+  const orphanCandidates = new Set([...reconciliationSlugs, ...frozenSlugs]);
+  if (orphanCandidates.size > 0) {
+    await orphanUnownedFrozenPages(
+      root, draft, orphanCandidates, seams.content, seams.sink, seams.remover);
+  }
+  persistFrozenSlugs(draft, frozenSlugs, canonicalExtractions, {
+    pending: reconciliationSlugs,
+    replaced: written,
+  });
+}
+
+/**
+ * Everything the page-generation stage needs; grouped so the call stays one
+ * argument and a caller cannot transpose two same-typed positional values.
+ */
+interface GenerationStageInput {
+  readonly root: string;
+  readonly extractions: ExtractionResult[];
+  readonly frozenSlugs: Set<string>;
+  readonly reconciliationSlugs: ReadonlySet<string>;
+  readonly schema: SchemaConfig;
+  readonly options: CompileOptions;
+  readonly reviewPolicy: ReviewPolicy;
+  readonly concurrency: number;
+  readonly seams: PageSeams;
+  readonly compileReporter: CompileProgressReporter | undefined;
+}
+
+/** What the generation stage hands back to the pipeline. */
+interface GenerationStageOutcome {
+  readonly identity: ConceptIdentityOutcome;
+  /** The extractions carrying canonical concept names, for the state writes. */
+  readonly canonicalExtractions: ExtractionResult[];
+  readonly generation: PageGenerationResult;
+  /** Page ids as they were before the run, so the journal can split new/updated. */
+  readonly existingIds: Set<string>;
+}
+
+/**
+ * Decide concept identity, then generate pages from that ONE decision.
+ *
+ * Extracted from `runCompilePipeline` because the ordering here is the whole
+ * point and reading it inline was getting lost: identity first (it rewrites the
+ * names), then the merge (it slugs them), then the denominator (it counts what
+ * that same merged list contains), then the work. A second, independent merge for
+ * the count is exactly how a progress bar comes to report pages nobody wrote.
+ *
+ * @param input - The stage's resolved pipeline state.
+ * @returns The identity decision, the canonical extractions, and the generation.
+ */
+async function runGenerationStage(
+  input: GenerationStageInput,
+): Promise<GenerationStageOutcome> {
+  const { root, extractions, frozenSlugs, reconciliationSlugs } = input;
+  // Snapshot pages on disk before generation so the journal can tell which
+  // produced pages are new (created) versus overwritten (updated). The same
+  // snapshot supplies the incumbent slugs identity resolution must preserve.
+  const existingIds = await listExistingPageIds(root);
+  const identity = await applyConceptIdentity(extractions, existingIds);
+  const canonicalExtractions = identity.extractions;
+  // The ONLY stage with a real denominator the pipeline computes before the work:
+  // one merged concept becomes one generated page, so the number of MERGED entries
+  // is the total -- not the number of SOURCE files. Counting sources understated
+  // the work by orders of magnitude: one document yielding 92 concepts reported
+  // "1", so the job sat at "0 of 1" for the entire run. The SAME list is handed to
+  // the phase below, so the denominator and the work cannot diverge.
+  const merged = mergeExtractions(canonicalExtractions, frozenSlugs, reconciliationSlugs);
+  const generation = await timeStage("compile.page-generation", () => generatePagesPhase(
+    root,
+    merged,
+    canonicalExtractions,
+    input.schema,
+    input.options,
+    input.reviewPolicy,
+    input.concurrency,
+    input.seams.sink,
+    input.seams.remover,
+    input.seams.transaction,
+    input.compileReporter,
+  ), () => reportCompileStage(input.compileReporter, "compile.page-generation"));
+  reportCompileProgress(
+    input.compileReporter,
+    generation.writtenPages.length,
+    Math.max(merged.length, generation.writtenPages.length),
+  );
+  return { identity, canonicalExtractions, generation, existingIds };
+}
+
 /** Inner pipeline, runs under lock protection. Returns structured CompileResult. */
 /** Everything the no-change path needs; grouped so the call stays one argument. */
 interface NothingToCompileInput {
@@ -700,51 +840,16 @@ async function runCompilePipeline(
     reportFrozenSlugs(frozenSlugs);
   }
 
-  // Snapshot pages on disk before generation so the journal can tell which
-  // produced pages are new (created) versus overwritten (updated).
-  const existingIds = await listExistingPageIds(root);
-  // The ONLY stage with a real denominator the pipeline computes before the work:
-  // one merged concept becomes one generated page, so the number of MERGED entries
-  // is the total -- not the number of SOURCE files. Counting sources understated
-  // the work by orders of magnitude: one document yielding 92 concepts reported
-  // "1", so the job sat at "0 of 1" for the entire run. The count is published on
-  // entry and advanced per committed page by the phase itself.
-  const mergedTotal = mergeExtractions(extractions, frozenSlugs, reconciliationSlugs).length;
-  const generation = await timeStage("compile.page-generation", () => generatePagesPhase(
-    root,
-    extractions,
-    frozenSlugs,
-    reconciliationSlugs,
-    schema,
-    options,
-    reviewPolicy,
-    concurrency,
-    seams.sink,
-    seams.remover,
-    seams.transaction,
-    compileReporter,
-  ), () => reportCompileStage(compileReporter, "compile.page-generation"));
-  reportCompileProgress(
-    compileReporter,
-    generation.writtenPages.length,
-    Math.max(mergedTotal, generation.writtenPages.length),
-  );
+  const { identity, canonicalExtractions, generation, existingIds } = await runGenerationStage({
+    root, extractions, frozenSlugs, reconciliationSlugs, schema, options,
+    reviewPolicy, concurrency, seams, compileReporter,
+  });
 
 
   if (!options.review) {
-    const written = new Set(generation.writtenPages.map((entry) => entry.slug));
-    const retained = new Set(
-      [...reconciliationSlugs, ...frozenSlugs].filter((slug) => !written.has(slug)),
-    );
-    await persistExtractionStates(draft, extractions, generation.writtenPages, retained);
-    const orphanCandidates = new Set([...reconciliationSlugs, ...frozenSlugs]);
-    if (orphanCandidates.size > 0) {
-      await orphanUnownedFrozenPages(
-        root, draft, orphanCandidates, seams.content, seams.sink, seams.remover);
-    }
-    persistFrozenSlugs(draft, frozenSlugs, extractions, {
-      pending: reconciliationSlugs,
-      replaced: written,
+    await commitLiveOutcome({
+      root, draft, seams, canonicalExtractions, generation, identity,
+      frozenSlugs, reconciliationSlugs,
     });
     // Seed + resolution route through the SAME executor batches as the
     // no-source-changes branch (see seedThenFinalize). The draft flush is the
@@ -760,7 +865,7 @@ async function runCompilePipeline(
     await logCompile(root, buckets, generation, existingIds);
   }
   verbose(`compile finished in ${Date.now() - startMs} ms`);
-  return summarizeCompile(buckets, generation, extractions, options, forgetErrors);
+  return summarizeCompile(buckets, generation, canonicalExtractions, options, forgetErrors);
 }
 
 /**

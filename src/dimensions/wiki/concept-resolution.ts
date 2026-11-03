@@ -23,6 +23,22 @@
  *   - **Deterministic tie-breaking.** The canonical name is chosen by incumbency,
  *     then confidence, then name — never by arrival.
  *
+ * ## Tier order: slug, then similarity, then rules
+ *
+ * The semantic tier runs ABOVE the deterministic one. Exact-slug equality still
+ * decides first because it is free and already the compiler's notion of identity,
+ * but everything the slug leaves open is offered to the cosine score before the
+ * normalization rules see it. The rules then settle only what the score could not
+ * decide — or everything, when no embedding port is usable at all.
+ *
+ * This is deliberately NOT "rules first, similarity for the leftovers". A rule can
+ * only fold spellings someone thought to enumerate, so rules-first makes the
+ * synonym set the ceiling of what the wiki can ever merge. Similarity-first makes
+ * the rules a safety net instead of the authority.
+ *
+ * The cost of that ordering is why {@link MAX_SEMANTIC_PAIRS} exists: see
+ * {@link applySemanticTier}.
+ *
  * The set bookkeeping lives in `concept-forest.ts`; this module is the policy.
  */
 
@@ -181,33 +197,83 @@ function identityText(candidate: ConceptCandidate): string {
   ].join("\n");
 }
 
-/** Whether a pair is eligible for a cosine comparison at all. */
-function isComparable(left: ConceptCandidate, right: ConceptCandidate): boolean {
+/**
+ * Pair budget for the semantic tier: beyond this, the blocking gate is re-armed.
+ *
+ * Cosine-first means every pair the slug left open is a candidate, which is
+ * quadratic in the candidate count. At 768 dimensions a full sweep is cheap for
+ * hundreds of concepts and untenable for thousands, so past this budget the
+ * resolver falls back to comparing only pairs that share a blocking token. That
+ * keeps the common case exact and the pathological case bounded without ever
+ * silently doing nothing.
+ */
+const MAX_SEMANTIC_PAIRS = 20_000;
+
+/**
+ * Whether a pair is eligible for a cosine comparison at all.
+ *
+ * `tagsConflict` is a HARD exclusion: a disjoint tag set is positive evidence that
+ * two concepts differ, so it outranks any score.
+ *
+ * The blocking token is a SOFT gate and is off by default, because requiring a
+ * shared token excludes exactly the pairs the semantic tier exists to find: a
+ * synonym that shares no word — "PostgreSQL" against "Postgres", "k8s" against
+ * "Kubernetes" — has no blocking signal by construction. Requiring one made the
+ * tier unable to earn its position above the rules.
+ */
+function isComparable(
+  left: ConceptCandidate,
+  right: ConceptCandidate,
+  requireBlockingSignal: boolean,
+): boolean {
   if (tagsConflict(left.tags, right.tags)) {
     return false;
+  }
+  if (!requireBlockingSignal) {
+    return true;
   }
   return sharesBlockingSignal(left.name, left.tags, right.name, right.tags);
 }
 
-/** Applies the deterministic tiers and returns the pairs left for cosine. */
-function applyDeterministicTiers(
+/** Applies the exact-slug tier and returns the pairs it left undecided. */
+function applySlugTier(
   ordered: readonly ConceptCandidate[],
   forest: ConceptForest,
 ): Array<readonly [number, number]> {
   const undecided: Array<readonly [number, number]> = [];
   for (let left = 0; left < ordered.length; left += 1) {
     for (let right = left + 1; right < ordered.length; right += 1) {
-      const tier = deterministicTier(ordered[left].name, ordered[right].name);
-      if (tier !== undefined) {
-        unionCandidates(forest, left, right, tier);
+      if (slugify(ordered[left].name) === slugify(ordered[right].name)) {
+        unionCandidates(forest, left, right, "slug");
         continue;
       }
-      if (isComparable(ordered[left], ordered[right])) {
-        undecided.push([left, right]);
-      }
+      undecided.push([left, right]);
     }
   }
   return undecided;
+}
+
+/**
+ * Applies the normalization rules to whichever pairs are still undecided.
+ *
+ * This is the LAST tier: it only runs where the score could not decide, and it runs
+ * on every remaining pair when the semantic tier never ran at all.
+ */
+function applyRuleTier(
+  ordered: readonly ConceptCandidate[],
+  forest: ConceptForest,
+  pairs: ReadonlyArray<readonly [number, number]>,
+  decided: ReadonlySet<string>,
+): void {
+  for (const [left, right] of pairs) {
+    if (decided.has(pairKey(left, right))) {
+      continue;
+    }
+    const tier = deterministicTier(ordered[left].name, ordered[right].name);
+    if (tier !== undefined) {
+      unionCandidates(forest, left, right, tier);
+    }
+  }
 }
 
 /** One scoring attempt: the vectors per candidate index, or why there are none. */
@@ -256,10 +322,29 @@ function applyScore(
   }
 }
 
+/** What the semantic tier concluded, and which pairs it is therefore responsible for. */
+interface SemanticOutcome {
+  readonly degradation?: ConceptDegradation;
+  /**
+   * Pairs this tier actually scored.
+   *
+   * Load-bearing: the rule tier must NOT revisit them. A rule re-joining a pair the
+   * score already merged only overwrites that group's evidence with a lower rank,
+   * which reports the merge as `normalized` and hands the authority back to the
+   * rules — the exact inversion this tier order exists to prevent.
+   */
+  readonly decided: ReadonlySet<string>;
+}
+
+/** Stable key for one unordered pair of candidate indices. */
+function pairKey(left: number, right: number): string {
+  return `${left}-${right}`;
+}
+
 /**
- * Runs the semantic tier over the pairs the deterministic tiers left undecided.
+ * Runs the semantic tier over the pairs the exact-slug tier left undecided.
  *
- * @returns The degradation to report, if the port could not score.
+ * @returns The degradation to report, plus the pairs this tier decided.
  */
 async function applySemanticTier(
   ordered: readonly ConceptCandidate[],
@@ -267,29 +352,62 @@ async function applySemanticTier(
   forest: ConceptForest,
   options: ConceptResolutionOptions,
   thresholds: { readonly auto: number; readonly review: number },
-): Promise<ConceptDegradation | undefined> {
+): Promise<SemanticOutcome> {
   if (undecided.length === 0) {
-    return undefined;
+    return { decided: new Set() };
   }
   if (options.embed === undefined) {
-    return { reason: "embeddings-unconfigured", detail: "no embedding port supplied" };
+    return {
+      decided: new Set(),
+      degradation: { reason: "embeddings-unconfigured", detail: "no embedding port supplied" },
+    };
   }
 
+  const pairs = semanticPairs(ordered, undecided);
+  if (pairs.length === 0) {
+    return { decided: new Set() };
+  }
   const needed = new Set<number>();
-  for (const [left, right] of undecided) {
+  for (const [left, right] of pairs) {
     needed.add(left);
     needed.add(right);
   }
   const embedded = await embedCandidates(ordered, needed, options.embed);
-  for (const pair of undecided) {
+  const decided = new Set<string>();
+  for (const pair of pairs) {
     const leftVector = embedded.vectors.get(pair[0]);
     const rightVector = embedded.vectors.get(pair[1]);
     if (leftVector === undefined || rightVector === undefined) {
       continue;
     }
+    // Scored, therefore this tier owns the verdict: even a score BELOW the review
+    // band is a decision ("different"), and the rules are not allowed to override it.
+    decided.add(pairKey(pair[0], pair[1]));
     applyScore(forest, pair, cosineSimilarity([...leftVector], [...rightVector]), thresholds);
   }
-  return embedded.degradation;
+  return { decided, degradation: embedded.degradation } as SemanticOutcome;
+}
+
+/**
+ * The pairs the semantic tier will actually score, after the tag gate and the
+ * budget.
+ *
+ * Under the budget every pair is a candidate, so a synonym that shares no word is
+ * still compared. Over it, the blocking gate is re-armed to keep the sweep affine
+ * instead of quadratic — a bounded answer rather than an unbounded bill.
+ *
+ * @param ordered - Candidates in deterministic order.
+ * @param undecided - Pairs the exact-slug tier left open.
+ * @returns The pairs to score.
+ */
+function semanticPairs(
+  ordered: readonly ConceptCandidate[],
+  undecided: ReadonlyArray<readonly [number, number]>,
+): Array<readonly [number, number]> {
+  const requireBlockingSignal = undecided.length > MAX_SEMANTIC_PAIRS;
+  return undecided.filter(([left, right]) =>
+    isComparable(ordered[left], ordered[right], requireBlockingSignal),
+  );
 }
 
 /**
@@ -381,13 +499,18 @@ export async function resolveConceptIdentity(
 ): Promise<ConceptResolution> {
   const ordered = [...candidates].sort((left, right) => compareNames(left.name, right.name));
   const forest = createConceptForest(ordered.length);
-  const undecided = applyDeterministicTiers(ordered, forest);
   const thresholds = options.thresholds ?? {
     auto: DEFAULT_AUTO_THRESHOLD,
     review: DEFAULT_REVIEW_THRESHOLD,
   };
 
-  const degradation = await applySemanticTier(ordered, undecided, forest, options, thresholds);
+  // Tier order is load-bearing: exact slug, then similarity, then rules. The score
+  // must see every pair the slug left open, and the rules must see whatever the
+  // score left open — including the case where the score never ran.
+  const bySlug = applySlugTier(ordered, forest);
+  const semantic = await applySemanticTier(ordered, bySlug, forest, options, thresholds);
+  applyRuleTier(ordered, forest, bySlug, semantic.decided);
+  const degradation = semantic.degradation;
 
   const groups: ConceptGroup[] = [];
   const aliases: ConceptAlias[] = [];
