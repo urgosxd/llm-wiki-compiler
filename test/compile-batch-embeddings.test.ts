@@ -25,9 +25,9 @@ describe("compile batches embeddings (subprocess)", () => {
       toolCalls: [{
         name: "extract_concepts",
         arguments: { concepts: [
-          { concept: "Alpha", summary: "First concept.", is_new: true, tags: ["t"], confidence: 0.9 },
-          { concept: "Beta", summary: "Second concept.", is_new: true, tags: ["t"], confidence: 0.9 },
-          { concept: "Gamma", summary: "Third concept.", is_new: true, tags: ["t"], confidence: 0.9 },
+          { concept: "Alpha", summary: "First concept.", is_new: true, tags: ["alpha"], confidence: 0.9 },
+          { concept: "Beta", summary: "Second concept.", is_new: true, tags: ["beta"], confidence: 0.9 },
+          { concept: "Gamma", summary: "Third concept.", is_new: true, tags: ["gamma"], confidence: 0.9 },
         ] },
       }],
     });
