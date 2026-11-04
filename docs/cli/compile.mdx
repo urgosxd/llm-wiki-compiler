@@ -20,6 +20,7 @@ Run from your project root. If `sources/` is empty or doesn't exist yet, compile
 
 | Flag | Description |
 |------|-------------|
+| `--stack <id>` | Compile into a named Stack instead of the one `AKS_STACK_ID` names. Wins over the environment variable, and an id no Stack row carries fails before any work runs. See [Stack resolution](/concepts/tenant-isolation#choosing-which-stack-a-command-uses). |
 | `--review` | Write generated pages to `.llmwiki/candidates/` instead of `wiki/`. Pages are held for human review and don't appear in the live wiki until you approve them with `llmwiki review approve <id>`. |
 | `--provider <name>` | Override `LLMWIKI_PROVIDER` for this compile only. Use `codex-agent` to delegate both compile phases to non-interactive `codex exec`. |
 | `--instructions <path>` | Read an explicit UTF-8 instruction file (maximum 64 KiB) and append it to the built-in compile instructions. Changing or omitting the file option regenerates affected pages. |
@@ -27,6 +28,10 @@ Run from your project root. If `sources/` is empty or doesn't exist yet, compile
 | `--no-sources-section` | Stop asking the model for a trailing `## Sources` section in generated pages. Provenance is unaffected: the `sources:` frontmatter and the inline `^[file.md:1-5]` citation markers are produced by the compiler and stay exactly as they are. Equivalent to setting `LLMWIKI_SOURCES_SECTION=off`. |
 | `--concurrency <n>` | Maximum LLM calls run in parallel during this compile, across both extraction and page generation. Wins over the `LLMWIKI_COMPILE_CONCURRENCY` environment variable; defaults to `5`. Values above `50` are clamped. |
 | `--verbose` | Print detailed per-step progress: source sizes, concept merge details, page char counts, embedding batch summary, and total compile time. Equivalent to setting `LLMWIKI_VERBOSE=1`. Quiet mode (`--json`) always wins over verbose. |
+
+`--stack <id>` is also accepted by `llmwiki refresh` and `llmwiki watch`, which
+write pages the same way. With neither the flag nor `AKS_STACK_ID` configured, all
+three work on the default Stack and say so once on stderr; stdout is untouched.
 
 ## Nested source folders
 

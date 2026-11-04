@@ -83,8 +83,8 @@ That message and the `{ unavailable: ... }` result must remain reachable for an 
 - T1 — S1, S2 — resolver with precedence, no throw on absence; keep strict entry point for callers that must refuse — worker — commit: 44209e2
 - T2 — S3 — idempotent default Stack ensure — worker — commit: 44209e2
 - T3 — S1, S3 — wire ingest write path and rule-state to the resolver — worker — commit: 3fc4aa9
-- T4 — S4 — `--stack` option, flag wins over env, fail-closed on unknown/malformed id — worker — commit: pending
-- T5 — S5 — announce the default Stack on stderr; no `stack list` (RLS makes it a one-row lie) — worker — commit: pending
+- T4 — S4 — `--stack` option, flag wins over env, fail-closed on unknown/malformed id — worker — commit: 57a2f3a
+- T5 — S5 — announce the default Stack on stderr; no `stack list` (RLS makes it a one-row lie) — worker — commit: 57a2f3a
 - T6 — S6 — help text and docs corrected — worker — commit: pending
 - T7 — S7 — regression tests proving MCP refusal and `buildIngestEnv` are unchanged — worker — commit: pending
 
@@ -96,3 +96,4 @@ That message and the `{ unavailable: ... }` result must remain reachable for an 
 - L4 — decision (lead): the recorded refusal in `src/dimensions/activation.ts:20-36` is superseded for the CLI by the human's request. The default is a named, materialized Stack (`domain` = `default`, `name` = `Default`) rather than a silent unnamed fallback, which answers the original objection that defaulting would scatter entities into one unnamed Stack.
 - L5 — decision (lead): the MCP deployment binding keeps refusing (S7) because that path serves an explicitly bound Stack; defaulting there would silently retarget a deployed server.
 - L6 — decision (lead): S5's original `llmwiki stack list` bullet is withdrawn. Row-level security restricts `stacks` visibility to the bound Stack, so the command could only ever print one row; enumeration stays in the HTTP API. S5 now requires announcing the default Stack on stderr only, which is new behaviour in a path that previously refused, so no existing output contract changes.
+- L7 — environment finding: the first slice-C gate run failed 2 of 6 CLI cases because the worktree's `node_modules` was a symlink to the main checkout, so the built `dist/cli.js` loaded `main`'s pre-branch `@atomicstrata/llmwiki-core`. Replacing it with a real `npm ci` install in the worktree turned the same 6 cases green with no code change. Conclusion: CLI subprocess tests were not exercising this branch until then, and `test:affected` does not include `test/cli/`, so CLI behaviour must be gated by an explicit run.

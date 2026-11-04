@@ -8,6 +8,42 @@ The `wiki` schema enables row-level security on all 22 of its tables, each with
 `app.stack_id`. That apparatus is **not active for current traffic**, and this page
 exists so nobody assumes otherwise.
 
+## Choosing which Stack a command uses
+
+A Stack-scoped command (`ingest`, `compile`, `refresh`, `query`, `watch`) resolves
+the Stack it works on in one order, highest precedence first:
+
+1. `--stack <id>` on the command line.
+2. `AKS_STACK_ID`.
+3. The default Stack: the existing Stack whose `domain` is `default` and whose
+   `name` is `Default`, created the first time it is used and reused from then on.
+
+An explicit selection always wins over the default, and a project that configures
+nothing still resolves a Stack. The option help text on all five commands reads:
+
+```text
+Write to and read from this Stack instead of the one AKS_STACK_ID names.
+```
+
+When neither `--stack` nor `AKS_STACK_ID` is configured, the command prints this
+one line before it starts working:
+
+```text
+Using the default Stack (no --stack or AKS_STACK_ID configured).
+```
+
+That line goes to **stderr**, so a `--json` run keeps its stdout byte-for-byte.
+With a Stack configured nothing is announced: the caller already chose it.
+
+No Stack configuration is required for a single checkout. A clone with neither
+`--stack` nor `AKS_STACK_ID` compiles into the default Stack, and several Stacks in
+one database never merge - each run works on exactly the one it resolved.
+
+A `--stack` value that is not a uuid, or an id no Stack row carries, fails before
+any work runs and names the value it could not honour. It never falls back to the
+default Stack: a typed id that redirects itself is the failure the flag exists to
+prevent.
+
 ## What enforces isolation today
 
 The explicit predicate. Every tenant-scoped query carries `where stack_id = ...`,

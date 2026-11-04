@@ -35,7 +35,13 @@ Content longer than 100,000 characters is truncated. The saved file records `tru
 
 ### Flags
 
-`llmwiki ingest` takes no flags beyond the positional `<url|file>` argument. Source type detection, character limits, and output paths are handled automatically.
+`llmwiki ingest` takes two options besides the positional `<url|file>` argument.
+`--stack <id>` ingests into a named Stack instead of the one `AKS_STACK_ID` names,
+and `--verbose` prints detailed progress (equivalent to `LLMWIKI_VERBOSE=1`). See
+[Stack resolution](/concepts/tenant-isolation#choosing-which-stack-a-command-uses)
+for where the Stack comes from when neither the flag nor the variable is set.
+Source type detection, character limits, and output paths are handled
+automatically.
 
 ### Examples
 

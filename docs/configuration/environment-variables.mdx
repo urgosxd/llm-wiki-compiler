@@ -286,6 +286,21 @@ Non-numeric, zero, or negative values are silently ignored and the next source i
 
 ---
 
+## Stacks
+
+Stack configuration is optional. A single checkout configures none of these and
+still compiles: the resolution order is `--stack <id>`, then `AKS_STACK_ID`, then
+the default Stack - documented once in
+[Tenant isolation](/concepts/tenant-isolation#choosing-which-stack-a-command-uses).
+
+| Variable | Default | Description |
+|---|---|---|
+| `AKS_STACK_ID` | The default Stack | The Stack `ingest`, `compile`, `refresh`, `query` and `watch` read and write. Unset or blank means the default Stack is used, announced once on stderr. The `--stack <id>` flag wins over it for a single run |
+| `AKS_STACK_NAME` | The Stack id | Display name recorded for the Stack in the graph dimension |
+| `AKS_DATABASE_URL` | The vendored `llmwiki-kg` DSN | Connection string for the dimensions database that holds Stack-scoped rows. Setting it is how a project points at a different database, not a requirement |
+
+---
+
 ## Profiles, workflows, and connectors
 
 | Variable | Default | Description |
