@@ -301,6 +301,104 @@ the default Stack - documented once in
 
 ---
 
+## Dimensions
+
+`LLMWIKI_DIMENSIONS` selects which dimensions an ingest writes: `wiki` (pages,
+sources, and chunks) and `kg` (the Stack-scoped graph). With the variable unset or
+empty, only `wiki` is enabled. The Stack is resolved exactly as described in
+[Tenant isolation](/concepts/tenant-isolation#choosing-which-stack-a-command-uses).
+
+| Variable | Default | Description |
+|---|---|---|
+| `LLMWIKI_DIMENSIONS` | `wiki` | Comma-separated dimensions to write. Known values: `wiki`, `kg`. An unknown name fails before any work runs and names the value it could not honour |
+
+```bash
+LLMWIKI_DIMENSIONS=wiki,kg llmwiki ingest sources/report.md
+```
+
+### Shared embedding credentials
+
+When `kg` is activated alongside `wiki`, the `kg` dimension resolves its embedding
+provider credential from the same variables the wiki dimension already uses, so one
+credential configuration serves both dimensions. The root variables below are
+already part of a normal llmwiki setup: `OPENAI_API_KEY`,
+`OPENAI_EMBEDDINGS_API_KEY`, `GATEWAY_URL`, `OPENAI_EMBEDDINGS_BASE_URL`,
+`OPENAI_BASE_URL`, and `LLMWIKI_EMBEDDING_PROVIDER`.
+
+An explicitly set KG-side variable always wins. The bridge only fills absences, so a
+deployment that already configures `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`,
+`GATEWAY_URL`, or `GATEWAY_API_KEY` keeps exactly the behavior it has today.
+
+Per variable, the first present value wins. The left column is the `kg` dimension's
+own variable; the other columns are the values it falls back to when that variable
+is empty or whitespace-only.
+
+| KG variable | 1st | 2nd | 3rd | fallback |
+| --- | --- | --- | --- | --- |
+| `EMBEDDING_PROVIDER` | `EMBEDDING_PROVIDER` | `gateway`, derived when `W` is `openai` and the wiki embedding endpoint override is set | `openai`, derived when `W` is `openai` | schema default `openai` |
+| `OPENAI_API_KEY` | `OPENAI_API_KEY` | `OPENAI_EMBEDDINGS_API_KEY`, only when the resolved provider is `openai` | — | `""`, then the error below |
+| `GATEWAY_URL` | `GATEWAY_URL` | `OPENAI_EMBEDDINGS_BASE_URL`, then `OPENAI_BASE_URL`; only when the resolved provider is `gateway` | — | `""`, then the error below |
+| `GATEWAY_API_KEY` | `GATEWAY_API_KEY` | `OPENAI_EMBEDDINGS_API_KEY`, then `OPENAI_API_KEY`; only when the resolved provider is `gateway` | — | `""`, then the error below |
+
+`W` is the wiki embedding provider: `LLMWIKI_EMBEDDING_PROVIDER` when set, otherwise
+`LLMWIKI_PROVIDER`, lowercased and trimmed. When both are unset, `W` is `anthropic`,
+which has no `kg` equivalent. "The wiki embedding endpoint override is set" means
+`OPENAI_EMBEDDINGS_BASE_URL` or `OPENAI_BASE_URL` is non-empty. Empty and
+whitespace-only values count as absent, everywhere.
+
+Only those four variables are shared. `EMBEDDING_MODEL`, `EMBEDDING_DIM`,
+`EXTRACTION_MODEL`, `EXTRACTION_PROVIDER`, `EXTRACTION_STRICT_SCHEMA`,
+`DATABASE_URL`, and `AKS_API_KEY` keep their own resolution and are never derived
+from the wiki side: they describe storage shape and unrelated credentials, not the
+shared embedding credential. In particular, the `kg` dimension's extraction provider
+is **not** derived from the wiki side, so a gateway deployment must still set
+`EXTRACTION_PROVIDER` explicitly. Its credential, however, is the shared one —
+see the two notes below the table.
+
+Two consequences of the bridge are worth stating, because neither is visible from the
+table itself.
+
+The bridged `GATEWAY_URL` and `GATEWAY_API_KEY` are not embedding-only. When the `kg`
+dimension's extraction client runs with `EXTRACTION_PROVIDER=gateway`, it
+authenticates with those same two variables, so in that deployment the wiki
+dimension's embedding endpoint and key authenticate extraction as well: one
+credential, both calls. `EXTRACTION_PROVIDER` is still never derived — set it
+yourself — but there is no second gateway credential to configure.
+
+Only the OpenAI-compatible family is bridged. An `LLMWIKI_EMBEDDING_PROVIDER` value
+with no `kg` equivalent — the Voyage-backed `anthropic` and `claude-agent`, plus
+`ollama`, `orcarouter`, and `offline` — is refused with the message listed in the
+next section rather than mapped onto `openai`, because no equivalent mapping is
+defined. The `kg` dimension embeds through `EMBEDDING_PROVIDER=openai` or `gateway`,
+with one of those two configured.
+
+### When the shared credential is incomplete
+
+The `kg` dimension checks its embedding credential immediately before the first
+provider call and fails closed, naming the variable to set. No HTTP request is made,
+so you never see a provider `401` or a stack trace for this. These are the messages:
+
+| Condition | Message |
+| --- | --- |
+| Resolved provider `openai`, no key | `EMBEDDING_PROVIDER=openai but no API key is configured. Set OPENAI_API_KEY, or OPENAI_EMBEDDINGS_API_KEY to reuse the wiki dimension's credential.` |
+| Resolved provider `gateway`, no URL | `EMBEDDING_PROVIDER=gateway but GATEWAY_URL is not set. Set GATEWAY_URL, or OPENAI_EMBEDDINGS_BASE_URL to reuse the wiki dimension's endpoint.` |
+| Resolved provider `gateway`, URL but no key | `EMBEDDING_PROVIDER=gateway but GATEWAY_API_KEY is not set. Set GATEWAY_API_KEY, or OPENAI_EMBEDDINGS_API_KEY to reuse the wiki dimension's credential.` |
+| `W` (the wiki embedding provider) has no `kg` equivalent | `LLMWIKI_EMBEDDING_PROVIDER="<value>" has no kg-dimension equivalent. The kg dimension embeds through EMBEDDING_PROVIDER=openai or gateway; set one of those with its credential.` |
+
+Each message names the fix. Setting the variable it names is enough; setting both
+sides is not required. This check applies to the `kg` dimension only, and it leaves
+the startup validation described in [Provider selection](#provider-selection)
+unchanged.
+
+### The kg embedding column is 768 wide
+
+The `kg` dimension stores embeddings in a `vector(768)` column and, like the wiki
+dimension, performs no dimension reduction on the provider's response. The shared
+credential must therefore point at an embedding source that emits 768-dimensional
+vectors.
+
+---
+
 ## Profiles, workflows, and connectors
 
 | Variable | Default | Description |

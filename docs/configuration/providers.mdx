@@ -393,6 +393,16 @@ export OPENAI_EMBEDDINGS_API_KEY=<your-key>
   </Tab>
 </Tabs>
 
+## Dimensions
+
+Activating the `kg` dimension with `LLMWIKI_DIMENSIONS=wiki,kg` reuses the wiki
+dimension's embedding credential, so a second provider configuration is not needed
+for it. `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`, `GATEWAY_URL`, and `GATEWAY_API_KEY`
+fall back to the wiki-side values; a KG-side value you set explicitly still wins.
+`EXTRACTION_PROVIDER` is not derived, so it keeps its own setting. The precedence
+table, the fail-closed messages, and the `vector(768)` width requirement are in
+[Environment Variables](/configuration/environment-variables#shared-embedding-credentials).
+
 ## Per-concept prompt budget
 
 When many sources contribute to the same compiled concept, llmwiki enforces a character cap on the combined source content sent to the LLM so no single concept blows past the model's context window. Each contributing source gets a fair share when truncation kicks in.
