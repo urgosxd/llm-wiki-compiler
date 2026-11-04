@@ -2,14 +2,9 @@
  * @file packages/llmwiki-kg/ts/src/mcp-harness.ts
  * @description Shared fixtures and stubs for the split `mcp-*` test files.
  */
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { expect } from "vitest";
 
 import type { FetchLike } from "./mcp.js";
-
-export const PYTHON_TOOLS_JSON = `[{"name":"query_stack","description":"Run a natural-language query against a compiled AKS Knowledge Stack. Returns the relevant entities, their relationships, the reasoning the model used to select them, and a confidence rating. Use this when you need to find domain knowledge by description, not by exact entity name.","inputSchema":{"type":"object","properties":{"query":{"type":"string","description":"The natural-language question"},"domain":{"type":"string","description":"Domain slug of the Stack (e.g. 'incident-response'). Either domain or stack_id is required."},"stack_id":{"type":"string","description":"UUID of the Stack. Either domain or stack_id is required."},"max_entities":{"type":"integer","description":"Maximum number of entities to return (default 8)","default":8}},"required":["query"]}},{"name":"traverse_stack","description":"Traverse a Knowledge Stack starting from a named entity, following typed relationships up to max_depth hops away. Returns the chain of relationships found. Use this when you know the starting entity and want to explore its neighborhood in the graph.","inputSchema":{"type":"object","properties":{"start":{"type":"string","description":"Name of the starting entity"},"domain":{"type":"string","description":"Domain slug of the Stack"},"stack_id":{"type":"string","description":"UUID of the Stack"},"max_depth":{"type":"integer","description":"Maximum hops from the starting entity (default 2)","default":2},"relationship_types":{"type":"string","description":"Optional comma-separated list of relationship types to follow (e.g. 'requires,triggers')"}},"required":["start"]}},{"name":"get_entities","description":"List the compiled entities in a Knowledge Stack, with optional filtering by type and confidence threshold. Use this for inventory questions like 'what does this Stack know about?' or to find entities by type.","inputSchema":{"type":"object","properties":{"domain":{"type":"string","description":"Domain slug of the Stack"},"stack_id":{"type":"string","description":"UUID of the Stack"},"type":{"type":"string","description":"Filter by entity type (e.g. 'Process', 'System')"},"min_confidence":{"type":"number","description":"Minimum confidence (0.0-1.0)","default":0.0},"limit":{"type":"integer","description":"Maximum entities to return (default 100, max 1000)","default":100}}}},{"name":"list_stacks","description":"List all Knowledge Stacks available on this AKS server. Returns each Stack's name, domain, and description. Use this when the user hasn't specified which Stack to query and you need to figure out what's available.","inputSchema":{"type":"object","properties":{}}}]`;
-
-export const PYTHON_TOOLS: unknown = JSON.parse(PYTHON_TOOLS_JSON);
 
 export const ORACLE_STACKS_BODY = `[{"id":"1146a0e7-dc44-4eac-bd62-606549aa86ce","name":"BF probe","domain":"w1bf-probe-1792602489","description":null,"scope":"stack","compilation_strategy":"incremental","synthesize_descriptions":false,"created_at":"2026-10-21T17:08:09.444263Z","updated_at":"2026-10-21T17:08:09.444263Z"},{"id":"b6c9fd8b-205f-4f5e-b482-7b540e616c86","name":"W1 Doc Probe 2","domain":"w1doc-probe-second","description":null,"scope":"stack","compilation_strategy":"incremental","synthesize_descriptions":false,"created_at":"2026-10-21T17:07:38.226251Z","updated_at":"2026-10-21T17:07:38.226251Z"},{"id":"20efd96a-f6e1-4994-8812-65113f8db4db","name":"W1 Doc Probe","domain":"w1doc-probe-main","description":null,"scope":"stack","compilation_strategy":"incremental","synthesize_descriptions":false,"created_at":"2026-10-21T17:05:32.366119Z","updated_at":"2026-10-21T17:05:32.366119Z"}]`;
 
@@ -65,10 +60,20 @@ export function recordingFetch(response: StubResponse): {
   return { fetchImpl, requests };
 }
 
-export function textOf(result: CallToolResult): string {
-  expect(result.content).toHaveLength(1);
-  const [first] = result.content;
-  if (first === undefined || first.type !== "text") {
+/**
+ * The single text block of a tool result, whatever typed envelope it arrived in.
+ *
+ * Deliberately `unknown`: `callTool` returns the SDK's `CallToolResult`, while the
+ * client's `callTool` over a transport returns the protocol's own result type,
+ * and the two are not mutually assignable under `exactOptionalPropertyTypes`.
+ * The shape is asserted at runtime instead.
+ */
+export function textOf(result: unknown): string {
+  const content = (result as { content?: ReadonlyArray<{ type?: string; text?: string }> })
+    .content;
+  expect(content).toHaveLength(1);
+  const [first] = content ?? [];
+  if (first?.type !== "text" || first.text === undefined) {
     throw new Error("Expected a single text content block");
   }
   return first.text;
