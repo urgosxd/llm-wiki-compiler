@@ -1,3 +1,4 @@
+import { bridgeEnvWithWikiCredentials } from "./wiki-credential-fallback.js";
 import { z } from "zod";
 
 /**
@@ -176,8 +177,51 @@ export function validateConfig(cfg: Config): void {
 }
 
 /**
- * The config singleton. Read once at module load, exactly like
+ * The config singleton. Resolved ONCE, on FIRST ACCESS, from the bridged
+ * environment — the same "read the environment once" rule as
  * `config = Config()` after `load_dotenv()` in Python. Never re-read per
- * request; `auth_enabled` is derived here, not recomputed later.
+ * request or per call: `authEnabled` is derived at that first resolution, not
+ * recomputed later.
+ *
+ * WHY FIRST ACCESS AND NOT IMPORT. llmwiki loads the project `.env` into
+ * `process.env` after this module graph has been evaluated, and the
+ * externalized `@atomicstrata/llmwiki-core` chunk that carries this module is
+ * evaluated before the CLI entry body runs at all. Snapshotting `process.env`
+ * here made a `.env` invisible to the KG side, so the credentials the wiki
+ * dimension already had never reached the bridge. Resolving on first access
+ * moves the snapshot to where the environment is complete: a dimension running,
+ * or the standalone server starting.
+ *
+ * The environment is bridged first, so a value the wiki dimension already
+ * configures (an embedding key, a provider, an endpoint) is visible to the KG
+ * side without being duplicated in a second namespace. The bridge only fills
+ * absences: an explicitly set KG-side variable reaches the schema unchanged.
  */
-export const config: Config = parseConfig(process.env);
+export const config: Config = lazyConfig();
+
+/** The resolved singleton, kept for the rest of the process once produced. */
+let resolvedConfig: Config | undefined;
+
+/** Resolve the singleton once, from the environment as it is at first access. */
+function resolveConfig(): Config {
+  resolvedConfig ??= parseConfig(bridgeEnvWithWikiCredentials(process.env));
+  return resolvedConfig;
+}
+
+/**
+ * The {@link Config} stand-in that defers resolution to the first read.
+ *
+ * A proxy rather than one accessor per key, because the schema — not this
+ * module — decides which keys exist. Every reflection path a caller can take
+ * (`config.KEY`, spread, `in`, `Object.keys`) is answered from the resolved
+ * object, so no consumer has to know the singleton is deferred.
+ */
+function lazyConfig(): Config {
+  return new Proxy({} as Config, {
+    get: (_target, property) => Reflect.get(resolveConfig(), property),
+    has: (_target, property) => Reflect.has(resolveConfig(), property),
+    ownKeys: () => Reflect.ownKeys(resolveConfig()),
+    getOwnPropertyDescriptor: (_target, property) =>
+      Reflect.getOwnPropertyDescriptor(resolveConfig(), property),
+  });
+}

@@ -24,17 +24,25 @@
  * The vendored core reads provider credentials and `DATABASE_URL` from the
  * process environment through its own `config` module, exactly as when run as a
  * standalone server. This adapter adds no second configuration layer.
+ *
+ * What it does add is a door: the vendored config bridges the wiki dimension's
+ * embedding credentials into that namespace, and `prepare` refuses a
+ * configuration the bridge could not complete BEFORE any provider or database
+ * call. A missing credential has to name the variable to set; a 401 from a
+ * remote provider names nothing and costs a round trip.
  */
 
 import { createHash } from "node:crypto";
 import {
   chunkAndEmbed,
+  ConfigValidationError,
   consolidateEntityRows,
   consolidateRelationshipRows,
   registerDocumentRow,
   createClient,
   createDatabase,
   extractGraphFromChunks,
+  findEmbeddingCredentialProblem,
   kgConfig,
   forgetDocumentRows,
   readStackOntology,
@@ -346,6 +354,11 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
     name: "kg",
 
     async prepare(input: DimensionInput): Promise<PreparedWrite> {
+      // FIRST, before the ontology read and before any provider call. A missing
+      // or partial embedding credential must fail closed with the variable to
+      // set, never surface as a provider 401 or a stack trace.
+      const credentialProblem = findEmbeddingCredentialProblem(kgConfig, process.env);
+      if (credentialProblem !== null) throw new ConfigValidationError(credentialProblem);
       // Chunk labels carry the source identity only. The authoritative document
       // id does not exist yet — Postgres assigns it during `commit` — and chunks
       // stay in memory, so nothing depends on this placeholder matching a row.

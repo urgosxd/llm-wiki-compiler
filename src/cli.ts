@@ -6,6 +6,12 @@
  * Designed for `npx llmwiki` or global install via `npm install -g llm-wiki-compiler`.
  */
 
+// FIRST IMPORT, DELIBERATELY. ES modules evaluate every import before this
+// module's own body, and the vendored KG core snapshots `process.env` while its
+// modules are evaluated (`llmwiki-kg`'s `config.ts` parses it and `db.ts` reads
+// `config.DATABASE_URL`). Loading `.env` any later hides the project
+// configuration from the KG credential bridge.
+import "./cli/load-environment-at-import.js";
 import { createRequire } from "module";
 import { Command } from "commander";
 import { ingestCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
@@ -42,6 +48,8 @@ import { addProviderOption, applyProviderOption, type ProviderOption } from "@at
 import { loadCliEnvironment } from "./cli/environment.js";
 import { addStackOption, applyStackOption, type StackOption } from "./cli/stack-option.js";
 
+// Belt and braces: the same load already ran from the first import above, and
+// `loadCliEnvironment()` is idempotent (`dotenv/config` is require-cached).
 loadCliEnvironment();
 
 const require = createRequire(import.meta.url);

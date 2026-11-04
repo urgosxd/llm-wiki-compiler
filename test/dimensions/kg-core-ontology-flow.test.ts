@@ -40,9 +40,19 @@ vi.mock("llmwiki-kg", async () => {
     createDatabase: vi.fn(() => ({
       transaction: async (run: (tx: unknown) => Promise<void>) => run({}),
     })),
-    kgConfig: { DATABASE_URL: "postgres://invalid/none" },
+    kgConfig: {
+      DATABASE_URL: "postgres://invalid/none",
+      // A usable embedding credential: this suite exercises the ontology
+      // wiring, not the credential door `prepare` opens with first.
+      EMBEDDING_PROVIDER: "openai",
+      OPENAI_API_KEY: "test-key-not-real",
+      GATEWAY_URL: "",
+      GATEWAY_API_KEY: "",
+    },
     readStackOntology: core.readStackOntology,
     defaultOntology: core.defaultOntology,
+    findEmbeddingCredentialProblem: core.findEmbeddingCredentialProblem,
+    ConfigValidationError: core.ConfigValidationError,
   };
 });
 

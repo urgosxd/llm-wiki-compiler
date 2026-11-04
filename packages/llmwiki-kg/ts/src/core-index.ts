@@ -86,8 +86,18 @@ export type { DocumentRegistration } from "./core/document-consolidation.js";
 
 export { createClient, createDatabase } from "./db.js";
 export type { Database } from "./db.js";
-export { config as kgConfig } from "./config.js";
+export { config as kgConfig, ConfigValidationError } from "./config.js";
 export type { Config as KgConfig } from "./config.js";
+
+// The wiki-to-KG credential bridge and its fail-closed check (shared-credential
+// feature).
+//
+// Exported through this barrel because the compiler's `kg` dimension is the one
+// consumer that has to REFUSE a configuration before it calls a provider, and
+// `ConfigValidationError` is the error type it raises: re-exporting the message
+// without the check would make every consumer re-derive the precedence rules.
+export { findEmbeddingCredentialProblem } from "./wiki-credential-fallback.js";
+export type { EmbeddingCredentialConfig } from "./wiki-credential-fallback.js";
 
 export {
   parseTypeFilter,

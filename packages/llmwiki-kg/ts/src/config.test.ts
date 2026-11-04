@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
@@ -70,11 +70,34 @@ describe("parseConfig defaults (mirrors app/core/config.py)", () => {
     expect(cfg.authEnabled).toBe(false);
   });
 
-  it("reads the env once at module load into a single config object", () => {
-    // The singleton is bound to `process.env` at import time; the property is
-    // derived, never re-read, so it must always agree with the parsed key.
+  it("resolves the env once, at first access, into a single config object", () => {
+    // The singleton parses the environment on the first property read and keeps
+    // the result; the property is derived then, never re-read, so it must always
+    // agree with the parsed key.
     expect(config).toBe(config);
     expect(config.authEnabled).toBe(config.AKS_API_KEY !== "");
+  });
+});
+
+describe("the config singleton and the wiki credential bridge (S2)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("bridges a missing KG key from the wiki embedding key before first access", async () => {
+    // WHY A RELOAD: the singleton resolves the bridged environment on its first
+    // property read, so the only way to observe the bridge on a fresh instance is
+    // to import it again with the wiki-side variables in place. A config that
+    // ignored the bridge would still report an empty OPENAI_API_KEY here.
+    vi.resetModules();
+    vi.stubEnv("LLMWIKI_EMBEDDING_PROVIDER", "openai");
+    vi.stubEnv("OPENAI_API_KEY", "");
+    vi.stubEnv("OPENAI_EMBEDDINGS_API_KEY", "test-key-not-real");
+
+    const reloaded = await import("./config.js");
+    expect(reloaded.config.OPENAI_API_KEY).toBe("test-key-not-real");
+    expect(reloaded.config.EMBEDDING_PROVIDER).toBe("openai");
   });
 });
 

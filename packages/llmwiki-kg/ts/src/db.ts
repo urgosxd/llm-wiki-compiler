@@ -200,15 +200,63 @@ export function createDatabase(client: Sql): Database {
 }
 
 /**
- * Process-wide pool and drizzle handle.
+ * Process-wide pool and drizzle handle, built on FIRST USE.
  *
- * Importing this module must not connect, so neither of these touches the
- * network. `config.DATABASE_URL` is read here for the same reason Python reads
- * it once in `app/core/config.py`.
+ * NOTHING HERE MAY RUN AT IMPORT TIME. `config.DATABASE_URL` is itself resolved
+ * lazily (see `config.ts`), and importing this module happens while llmwiki's
+ * module graph is still being evaluated — before the project `.env` exists in
+ * `process.env`. Reading the DSN here would snapshot the environment one step
+ * too early. Importing still connects nothing: the pool is created by the first
+ * caller that needs it, exactly as Python reads the DSN once at its own startup.
  */
-export const client: Sql = createClient(config.DATABASE_URL);
+let resolvedClient: Sql | undefined;
 
-export const db: Database = createDatabase(client);
+/** The process-wide pool, created on first use. */
+function getClient(): Sql {
+  resolvedClient ??= createClient(config.DATABASE_URL);
+  return resolvedClient;
+}
+
+/** The process-wide drizzle handle, created on first use. */
+let resolvedDatabase: Database | undefined;
+
+function getDatabase(): Database {
+  resolvedDatabase ??= createDatabase(getClient());
+  return resolvedDatabase;
+}
+
+/**
+ * A stand-in for a value that must not be built while this module is imported.
+ *
+ * Forwarding rather than a plain accessor keeps the exported names usable
+ * exactly as before: `client` still works as a tagged template (`client\`…\``),
+ * `db` still works as a drizzle handle, and neither builds anything until it is
+ * used. The builder runs at most once, because {@link getClient} and
+ * {@link getDatabase} memoize their result.
+ *
+ * @param build - Produces the real value the first time it is needed.
+ * @returns A proxy that behaves like that value.
+ */
+function lazyValue<T extends object>(build: () => T): T {
+  return new Proxy(function lazyPlaceholder() {} as unknown as T, {
+    apply: (_target, thisArg, args: unknown[]) =>
+      Reflect.apply(build() as unknown as (...a: unknown[]) => unknown, thisArg, args),
+    get: (_target, property) => {
+      const value = build();
+      return Reflect.get(value as object, property, value);
+    },
+    has: (_target, property) => Reflect.has(build() as object, property),
+    ownKeys: () => Reflect.ownKeys(build() as object),
+    getOwnPropertyDescriptor: (_target, property) =>
+      Reflect.getOwnPropertyDescriptor(build() as object, property),
+  });
+}
+
+/** Process-wide pool, resolved on first use. */
+export const client: Sql = lazyValue(getClient);
+
+/** Process-wide drizzle handle, resolved on first use. */
+export const db: Database = lazyValue(getDatabase);
 
 /** Signature of a transaction runner bound to one database handle. */
 export type TransactionRunner = <T>(
@@ -243,8 +291,11 @@ export function createTransactionRunner(database: Database): TransactionRunner {
 /**
  * Runs `fn` inside a single transaction on the process-wide pool.
  * See {@link createTransactionRunner} for the exact guarantees.
+ *
+ * The pool is created on the first call, not when this module is imported.
  */
-export const withTransaction: TransactionRunner = createTransactionRunner(db);
+export const withTransaction: TransactionRunner = (fn) =>
+  createTransactionRunner(getDatabase())(fn);
 
 /** An Express handler that receives its request-scoped transaction. */
 export type TransactionalHandler = (
@@ -309,19 +360,22 @@ export function createRequestTransactionWrapper(
 /**
  * Request-scoped transaction wrapper bound to the process-wide pool.
  * See {@link createRequestTransactionWrapper}.
+ *
+ * Bound through the lazy handle, so mounting routes never builds the pool.
  */
 export const withRequestTransaction: (
   handler: TransactionalHandler,
-) => RequestHandler = createRequestTransactionWrapper(db);
+) => RequestHandler = (handler) => createRequestTransactionWrapper(getDatabase())(handler);
 
 /**
  * Closes the pool. Call once on shutdown, after the HTTP server has stopped.
  *
  * A bounded `timeout` is passed so a wedged connection cannot hang the process
- * forever; postgres-js waits for in-flight queries up to that limit.
+ * forever; postgres-js waits for in-flight queries up to that limit. A pool that
+ * was never needed is not created just to be closed.
  */
 export async function closeDatabase(timeoutSeconds = 5): Promise<void> {
-  await client.end({ timeout: timeoutSeconds });
+  await resolvedClient?.end({ timeout: timeoutSeconds });
 }
 
 /**
@@ -332,7 +386,7 @@ export async function closeDatabase(timeoutSeconds = 5): Promise<void> {
  */
 export async function isDatabaseReachable(): Promise<boolean> {
   try {
-    await client`select 1`;
+    await getClient()`select 1`;
     return true;
   } catch {
     return false;

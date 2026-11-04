@@ -46,9 +46,23 @@ vi.mock("llmwiki-kg", async () => {
     consolidateEntityRows,
     consolidateRelationshipRows,
     registerDocumentRow,
-    kgConfig: { DATABASE_URL: "postgres://from-config" },
+    kgConfig: {
+      DATABASE_URL: "postgres://from-config",
+      // A usable embedding credential, so the fail-closed door `prepare` opens
+      // with is not what this suite measures. Obviously fake: no provider is
+      // ever reached, the whole provider layer is replaced here.
+      EMBEDDING_PROVIDER: "openai",
+      OPENAI_API_KEY: "test-key-not-real",
+      GATEWAY_URL: "",
+      GATEWAY_API_KEY: "",
+    },
     readStackOntology: core.readStackOntology,
     defaultOntology: core.defaultOntology,
+    // The credential door `prepare` now opens with is real: this suite replaces
+    // the provider layer, not the rule that refuses a configuration with no
+    // credential, so both exports have to come through the mock.
+    findEmbeddingCredentialProblem: core.findEmbeddingCredentialProblem,
+    ConfigValidationError: core.ConfigValidationError,
   };
 });
 
