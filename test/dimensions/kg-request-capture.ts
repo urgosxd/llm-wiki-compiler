@@ -12,6 +12,19 @@
  * in these suites; this helper never prints or logs it.
  */
 
+import type { MockInstance } from "vitest";
+
+/**
+ * The `fetch` spy type the host-observation suites install.
+ *
+ * Declared from what `vi.spyOn(globalThis, "fetch")` actually returns. The
+ * generic `ReturnType<typeof vi.spyOn>` erases the signature to
+ * `(this: unknown, ...args: unknown[]) => unknown`, which the real spy is NOT
+ * assignable to, so a variable annotated that way cannot hold the spy at all.
+ * One declaration, so the four suites that install the same spy cannot drift.
+ */
+export type FetchSpy = MockInstance<typeof globalThis.fetch>;
+
 /** The tool `callTool` is asked to force, named so one payload fits every case. */
 export const TOOL_NAME = "KGSchema";
 

@@ -26,6 +26,7 @@ import {
   embeddingsPayload,
   toolCallPayload,
   type CapturedRequest,
+  type FetchSpy,
 } from "./kg-request-capture.js";
 
 /** The chat host: the only correct destination for an extraction request. */
@@ -95,7 +96,7 @@ function expectEmbeddingsHost(request: CapturedRequest): void {
   expect(request.authorization).toBe(`Bearer ${EMBEDDING_KEY}`);
 }
 
-let fetchSpy: ReturnType<typeof vi.spyOn>;
+let fetchSpy: FetchSpy;
 
 /**
  * Answer each POST with the payload its path implies.

@@ -19,6 +19,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { FetchSpy } from "./kg-request-capture.js";
 import { capturedEmbeddingRequest } from "./kg-embedding-capture.js";
 
 /** The wiki-side embedding model, 768-wide on the host that serves it. */
@@ -66,7 +67,7 @@ function loadModules() {
   ]);
 }
 
-let fetchSpy: ReturnType<typeof vi.spyOn>;
+let fetchSpy: FetchSpy;
 
 beforeEach(() => {
   for (const [name, value] of Object.entries(WIKI_ONLY_ENV)) vi.stubEnv(name, value);

@@ -16,6 +16,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { FetchSpy } from "./kg-request-capture.js";
 import { capturedEmbeddingRequest } from "./kg-embedding-capture.js";
 
 /** The descriptor under test: a wiki-side backend, nothing the KG configured. */
@@ -73,7 +74,7 @@ async function loadModules(env: Record<string, string> = CLEAN_ENV) {
 }
 
 
-let fetchSpy: ReturnType<typeof vi.spyOn>;
+let fetchSpy: FetchSpy;
 
 beforeEach(() => {
   fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(embeddingsPayload());

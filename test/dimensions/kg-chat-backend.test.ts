@@ -16,6 +16,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { FetchSpy } from "./kg-request-capture.js";
 import { TOOL_NAME, capturedPost, toolCallPayload } from "./kg-request-capture.js";
 
 /** The chat backend under test: what a wiki provider resolved for CHAT. */
@@ -67,7 +68,7 @@ async function loadModules(env: Record<string, string | undefined> = CLEAN_ENV) 
   return { toolCall, endpoints, backend };
 }
 
-let fetchSpy: ReturnType<typeof vi.spyOn>;
+let fetchSpy: FetchSpy;
 
 beforeEach(() => {
   fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(toolCallPayload());
