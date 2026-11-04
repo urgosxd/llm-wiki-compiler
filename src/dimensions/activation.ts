@@ -28,6 +28,18 @@
  *     `forgetDeletedSources` drops `wiki` immediately) would otherwise fail on a
  *     dimension they never intended to use. Failing closed here is the honest
  *     answer: the environment is misconfigured either way.
+ *
+ * ## A caller that already resolved a Stack says so, and the environment is not read
+ *
+ * `stackId` exists for the CLI, which resolves its Stack ONCE (`selectStack`) and
+ * then hands the answer down. When it is supplied, `AKS_STACK_ID` is not consulted
+ * AT ALL — not merely preferred — because a second read would be a second answer to
+ * the same question: the defaulting path would resolve the default Stack and then
+ * this module would refuse for a missing variable the caller had already replaced.
+ *
+ * The refusal itself is deliberately unchanged for callers that supply nothing
+ * (`resolveStackId`, and the MCP deployment binding behind it): the surfaces that
+ * must refuse keep refusing.
  */
 
 import { createClient, createDatabase, kgConfig, type Database } from "llmwiki-kg";
@@ -140,6 +152,14 @@ export interface ResolveDimensionsOptions {
   /** Detect-only graph mode; see {@link createKgDimension}. */
   readonly kgDryRun?: boolean;
   /**
+   * Stack these dimensions are bound to, when the caller already resolved one.
+   *
+   * Supplied and non-blank: used as-is, and `AKS_STACK_ID` is never read. Absent
+   * or blank: the environment decides, exactly as before, so every existing caller
+   * is unaffected.
+   */
+  readonly stackId?: string;
+  /**
    * Database handle to bind the wiki dimension to.
    *
    * REQUIRED, and deliberately not optional. Every dimension is Postgres-backed
@@ -189,19 +209,38 @@ function requireStackId(env: NodeJS.ProcessEnv, dimension: DimensionName): strin
 }
 
 /**
+ * The Stack one dimension is bound to: the caller's, or the environment's.
+ *
+ * @param options - Resolution options, which may carry a resolved Stack.
+ * @param env - Environment to read the Stack id from when none was supplied.
+ * @param dimension - Dimension being resolved, named in the refusal.
+ * @returns The trimmed Stack id.
+ * @throws {DimensionActivationError} when nothing supplied one and the variable is blank.
+ */
+function stackIdFor(
+  options: ResolveDimensionsOptions,
+  env: NodeJS.ProcessEnv,
+  dimension: DimensionName,
+): string {
+  const supplied = options.stackId?.trim() ?? "";
+  if (supplied !== "") return supplied;
+  return requireStackId(env, dimension);
+}
+
+/**
  * Build the wiki dimension over Postgres, or refuse when no handle was supplied.
  *
  * @param options - Resolution options, possibly carrying a database.
  * @param env - Environment to read the Stack id from.
  * @returns The Postgres-backed wiki dimension.
- * @throws {DimensionActivationError} when the database handle is missing.
+ * @throws {DimensionActivationError} when no Stack id is available.
  */
 function resolveWiki(options: ResolveDimensionsOptions, env: NodeJS.ProcessEnv): Dimension {
   // The handle is checked first because it is the caller-level mistake: an
   // operator who forgot `{ db }` controls that argument directly, while the
   // Stack id lives in the environment. Reporting the environment first would
   // send them to the wrong place when both are missing.
-  const stackId = requireStackId(env, "wiki");
+  const stackId = stackIdFor(options, env, "wiki");
   // `root` is required by the dimension, not by this function: pages are rows,
   // but the raw markdown is still written under `sources/` so `compile` can
   // discover it. Until Wave 4 moves those bytes, the dimension needs both.
@@ -211,11 +250,11 @@ function resolveWiki(options: ResolveDimensionsOptions, env: NodeJS.ProcessEnv):
 /**
  * Build the enabled dimensions, in commit order.
  *
- * `kg` requires a stack id: a graph write without one would scatter every
- * project's entities into a single unnamed stack, so a missing id is an error
- * rather than a silent default.
+ * `kg` requires a stack id UNLESS the caller supplied one: a graph write without
+ * one would scatter every project's entities into a single unnamed stack, so a
+ * missing id is an error rather than a silent default.
  *
- * @param options - Project root plus optional environment and dry-run flag.
+ * @param options - Project root plus optional environment, dry-run flag and Stack.
  * @throws {DimensionActivationError} on an unknown dimension or missing stack id.
  */
 /**
@@ -246,7 +285,7 @@ export function resolveDimensions(options: ResolveDimensionsOptions): Dimension[
       dimensions.push(resolveWiki(options, env));
       continue;
     }
-    const stackId = requireStackId(env, "kg");
+    const stackId = stackIdFor(options, env, "kg");
     const stackName = env[AKS_STACK_NAME_ENV_VAR]?.trim() || stackId;
     const databaseUrl = env[AKS_DATABASE_URL_ENV_VAR]?.trim();
     dimensions.push(

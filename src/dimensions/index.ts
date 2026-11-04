@@ -62,3 +62,16 @@ export {
   resolveStackId,
 } from "./activation.js";
 export type { DimensionsDatabase, ResolveDimensionsOptions } from "./activation.js";
+
+/*
+ * Stack selection is pure: it reads an argument and an environment, never a
+ * database, and imports nothing from `drizzle-orm`. Exporting it here therefore
+ * costs none of the query-builder weight the comment above is about.
+ */
+export {
+  DEFAULT_STACK_DOMAIN,
+  DEFAULT_STACK_NAME,
+  describeStackSelection,
+  selectStack,
+} from "./stack-selection.js";
+export type { StackSelection, StackSelectionSource } from "./stack-selection.js";
