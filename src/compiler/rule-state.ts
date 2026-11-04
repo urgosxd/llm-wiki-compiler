@@ -18,7 +18,8 @@
  */
 
 import type { WikiState, SourceState } from "../utils/types.js";
-import { createDimensionsDatabase, resolveStackId } from "../dimensions/activation.js";
+import { createDimensionsDatabase } from "../dimensions/activation.js";
+import { resolveStackForCommand } from "../services/stacks/resolve-stack.js";
 import { readRuleExtractorState, writeRuleExtractorState } from "../dimensions/wiki/marker-store.js";
 
 /** A source advances only under the language that successfully processed it. */
@@ -75,9 +76,13 @@ export async function updateRuleSourceState(
 async function readRuleStateFromRows(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<RuleState> {
-  const stackId = resolveStackId(env);
   const handle = createDimensionsDatabase(env);
   try {
+    // Resolved through `resolveStackForCommand`, not `resolveStackId`: an unconfigured
+    // checkout reads the default Stack's cursor instead of refusing, and the write half
+    // below resolves through the SAME call, so a read and the advance that follows it
+    // cannot name different Stacks.
+    const stackId = await resolveStackForCommand(handle.db, env);
     const stored = await readRuleExtractorState(handle.db, stackId);
     // A cursor that has never been written is EMPTY, not an error: it just means
     // everything looks new.
@@ -105,9 +110,9 @@ async function writeRuleStateFor(
   // `env`, not the ambient process: before this, the read half accepted a Stack while
   // the write half resolved its own. A compile pointed at one Stack would advance the
   // OTHER Stack's cursor, which reads as "every source is new" on the next run.
-  const stackId = resolveStackId(env);
   const handle = createDimensionsDatabase(env);
   try {
+    const stackId = await resolveStackForCommand(handle.db, env);
     await writeRuleExtractorState(handle.db, stackId, state);
   } finally {
     await handle.close();

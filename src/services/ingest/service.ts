@@ -30,8 +30,8 @@ import {
   createDimensionsDatabase,
   ingestDimensions,
   resolveDimensions,
-  resolveStackId,
 } from "../../dimensions/index.js";
+import { resolveStackForCommand } from "../stacks/resolve-stack.js";
 import { LockBusyError } from "../../utils/lock.js";
 import { appendLog } from "../../utils/activity-log.js";
 import { SOURCES_DIR } from "../../utils/constants.js";
@@ -123,18 +123,27 @@ async function writeToDimensions(
   observer?.ingest.stage("preparing");
   const locked = await tryWithOrdinaryMutationLock(root, async () => {
     try {
+      // The Stack is resolved ONCE and the same value is handed to both the
+      // coordinator and the dimensions, so the two can never disagree -- the job rows
+      // and the document CONTENT must land in one Stack. A second resolution was a
+      // second answer: the job landed in the requested Stack while the document went
+      // to the host's bound one, so a caller was told "unchanged, nothing to do"
+      // about a Stack that did not contain the file at all.
+      //
+      // `resolveStackForCommand` rather than `resolveStackId`: a checkout that
+      // configured no Stack is no longer a refusal here, it is the default Stack. The
+      // strict helper stays as it is, because the surfaces that must refuse -- the MCP
+      // deployment binding -- still need it.
+      const stackId = await resolveStackForCommand(dimensionsDb.db, env);
       observer?.ingest.stage("committing");
       return await ingestDimensions(
         dimensionsDb.db,
-        resolveStackId(env),
+        stackId,
         input,
-        // `env` is threaded here for the same reason it reaches `resolveStackId` above:
-        // `resolveDimensions` defaults to `process.env`, and the WIKI dimension takes its
-        // Stack from there. Omitting it made the job row and the source CONTENT
-        // disagree -- the job landed in the requested Stack while the document went to
-        // the host's bound one, so a caller was told "unchanged, nothing to do" about a
-        // Stack that did not contain the file at all.
-        resolveDimensions({ root, db: dimensionsDb.db, env }),
+        // `env` still reaches the dimensions because it carries the dimension switch,
+        // the Stack name and the connection string; `stackId` settles the one question
+        // this function already answered.
+        resolveDimensions({ root, db: dimensionsDb.db, env, stackId }),
         { attempts: observer?.attempts },
       );
     } finally {

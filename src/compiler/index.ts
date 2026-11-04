@@ -105,7 +105,13 @@ import type {
  */
 type DimensionsDatabaseHandle = ReturnType<typeof createDimensionsDatabase>["db"];
 
-import { createDimensionsDatabase, resolveDimensions, AKS_STACK_ID_ENV_VAR } from "../dimensions/index.js";
+import {
+  createDimensionsDatabase,
+  resolveDimensions,
+  AKS_STACK_ID_ENV_VAR,
+} from "../dimensions/index.js";
+import type { DimensionName } from "../dimensions/index.js";
+import { resolveStackForDimensions } from "../services/stacks/resolve-stack.js";
 import type { EmbeddingStoreLocation } from "../utils/embeddings.js";
 import { databaseEmbeddingLocation } from "../utils/embeddings-database.js";
 import {
@@ -812,7 +818,7 @@ async function runCompilePipeline(
     await markDeletedAsOrphaned(root, buckets.deleted, draft, seams);
     // Graph retirement follows the same review rule: a held-back run must not
     // retire documents the wiki has not stopped serving yet.
-    forgetErrors.push(...(await forgetDeletedSources(root, buckets.deleted, state, db)));
+    forgetErrors.push(...(await forgetDeletedSources(root, buckets.deleted, state, db, env)));
   }
 
   // Only extraction failures in THIS run freeze a page. Deletion and persisted
@@ -943,6 +949,47 @@ async function markDeletedAsOrphaned(
 }
 
 /**
+ * The dimensions retirement reads from. Only the graph: the wiki owns its own
+ * removal story, so asking for it would demand a Stack this path never needs.
+ */
+const RETIREMENT_DIMENSIONS: readonly DimensionName[] = ["kg"];
+
+/**
+ * The graph dimensions retirement needs, bound to the Stack this run resolved.
+ *
+ * ONE switch decides whether there is work at all, and it is read BEFORE anything is
+ * resolved. A workspace that configured no Stack gets the default one provisioned the
+ * first time something needs it, so resolving unconditionally would make every
+ * wiki-only compile -- the ordinary case -- open a connection for a dimension it
+ * never uses. `resolveDimensions` alone cannot answer that cheaply: its refusal for a
+ * missing Stack is indistinguishable, to a caller, from its refusal for an unknown
+ * dimension name, and branching on the message would tie this decision to wording.
+ *
+ * When the answer is "nothing to do" it returns no dimensions and touches neither the
+ * database nor the environment's Stack.
+ *
+ * @param root - Project root, for dimension resolution.
+ * @param db - Database handle every dimension is backed by.
+ * @param env - The one environment this run reads.
+ * @returns The graph dimensions to retire from; empty when the graph is disabled.
+ * @throws Whatever resolution throws for an unknown dimension name — it is raised
+ *   there, unchanged, and never caught here to steer this decision.
+ */
+async function graphRetirementDimensions(
+  root: string,
+  db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv,
+): Promise<ReturnType<typeof resolveDimensions>> {
+  const stackId = await resolveStackForDimensions(db, env, RETIREMENT_DIMENSIONS);
+  if (stackId === undefined) return [];
+  // The SAME environment the pre-check just read: a switch taken from one place and
+  // dimensions built from another is two answers to one question, and the run that
+  // enables the graph through `options.env` would resolve a Stack and then build
+  // nothing from it.
+  return resolveDimensions({ root, db, env, only: RETIREMENT_DIMENSIONS, stackId });
+}
+
+/**
  * Retire deleted sources from every registered dimension that is not the wiki.
  *
  * WHY THIS EXISTS. `compile` already marks a deleted source's pages orphaned, but
@@ -964,6 +1011,7 @@ async function markDeletedAsOrphaned(
  * @param deleted - Source changes already classified as deletions.
  * @param state - State BEFORE this run, which still holds the missing sources.
  * @param db - Database handle every dimension is backed by.
+ * @param env - The one environment this run reads, used to resolve the Stack.
  * @returns One message per source that could not be retired.
  */
 async function forgetDeletedSources(
@@ -971,6 +1019,7 @@ async function forgetDeletedSources(
   deleted: readonly SourceChange[],
   state: WikiState,
   db: DimensionsDatabaseHandle,
+  env: NodeJS.ProcessEnv,
 ): Promise<string[]> {
   const failures: string[] = [];
   // Graph retirement is the ONLY concern here, so ask for the graph dimension
@@ -979,7 +1028,7 @@ async function forgetDeletedSources(
   // file-backed; it is Postgres-backed now, so resolving it demands a Stack id
   // this path never needed. `only` also respects the switch: a project that never
   // enabled `kg` retires nothing here, exactly as before.
-  const dimensions = resolveDimensions({ root, db, only: ["kg"] });
+  const dimensions = await graphRetirementDimensions(root, db, env);
   if (dimensions.length === 0) return failures;
   for (const change of deleted) {
     const source = state.sources[change.file]?.source;
