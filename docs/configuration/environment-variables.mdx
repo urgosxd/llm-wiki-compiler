@@ -435,6 +435,11 @@ its own resolution, and the `extracted_by_model` column records the model that
 actually produced each row: the wiki chat backend's model under rule 2, and the
 `kg` configuration's `EXTRACTION_MODEL` under rules 1 and 3.
 
+When the kg dimension takes its extraction configuration from the resolved
+provider, it does not send `strict: true` in the tool definition: that flag is
+derived from `EXTRACTION_PROVIDER`, which is unset in this path. Extraction stays
+advisory-typed. Set `EXTRACTION_PROVIDER` explicitly if you need binding schemas.
+
 ### When the shared credential is incomplete
 
 The `kg` dimension checks its embedding credential immediately before the first
