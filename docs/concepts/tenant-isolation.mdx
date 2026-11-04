@@ -35,9 +35,19 @@ Using the default Stack (no --stack or AKS_STACK_ID configured).
 That line goes to **stderr**, so a `--json` run keeps its stdout byte-for-byte.
 With a Stack configured nothing is announced: the caller already chose it.
 
-No Stack configuration is required for a single checkout. A clone with neither
-`--stack` nor `AKS_STACK_ID` compiles into the default Stack, and several Stacks in
-one database never merge - each run works on exactly the one it resolved.
+No Stack configuration is required for a single checkout: a bare clone runs `ingest`
+and `compile` successfully with nothing set, and `ingest` records its rows into the
+default Stack.
+
+`compile` is the exception, and it is a known limitation rather than behaviour to
+build on. Its page and source seams still key off the raw `AKS_STACK_ID`, so a bare
+`compile` publishes the wiki to disk instead of reading the default Stack's rows. To
+compile from that Stack's rows, name it explicitly - `--stack <default stack id>` or
+`AKS_STACK_ID`. Rule state and graph retirement are the two places that do resolve
+the default Stack.
+
+Several Stacks in one database never merge - each run works on exactly the one it
+resolved.
 
 A `--stack` value that is not a uuid, or an id no Stack row carries, fails before
 any work runs and names the value it could not honour. It never falls back to the

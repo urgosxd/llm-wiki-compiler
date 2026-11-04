@@ -85,8 +85,8 @@ That message and the `{ unavailable: ... }` result must remain reachable for an 
 - T3 — S1, S3 — wire ingest write path and rule-state to the resolver — worker — commit: 3fc4aa9
 - T4 — S4 — `--stack` option, flag wins over env, fail-closed on unknown/malformed id — worker — commit: 57a2f3a
 - T5 — S5 — announce the default Stack on stderr; no `stack list` (RLS makes it a one-row lie) — worker — commit: 57a2f3a
-- T6 — S6 — help text and docs corrected — worker — commit: pending
-- T7 — S7 — regression tests proving MCP refusal and `buildIngestEnv` are unchanged — worker — commit: pending
+- T6 — S6 — help text and docs corrected — worker — commit: c152d84
+- T7 — S7 — regression tests proving MCP refusal and `buildIngestEnv` are unchanged — worker — commit: c152d84
 
 ## Log
 
@@ -97,3 +97,6 @@ That message and the `{ unavailable: ... }` result must remain reachable for an 
 - L5 — decision (lead): the MCP deployment binding keeps refusing (S7) because that path serves an explicitly bound Stack; defaulting there would silently retarget a deployed server.
 - L6 — decision (lead): S5's original `llmwiki stack list` bullet is withdrawn. Row-level security restricts `stacks` visibility to the bound Stack, so the command could only ever print one row; enumeration stays in the HTTP API. S5 now requires announcing the default Stack on stderr only, which is new behaviour in a path that previously refused, so no existing output contract changes.
 - L7 — environment finding: the first slice-C gate run failed 2 of 6 CLI cases because the worktree's `node_modules` was a symlink to the main checkout, so the built `dist/cli.js` loaded `main`'s pre-branch `@atomicstrata/llmwiki-core`. Replacing it with a real `npm ci` install in the worktree turned the same 6 cases green with no code change. Conclusion: CLI subprocess tests were not exercising this branch until then, and `test:affected` does not include `test/cli/`, so CLI behaviour must be gated by an explicit run.
+- L8 — closure: slices A-D landed as 44209e2 (resolver + default Stack), 3fc4aa9 (write path + compile pre-check), 57a2f3a (--stack + default-Stack notice), c152d84 (docs + S7 preservation tests). All tasks T1-T7 checked. Known limitations recorded, not fixed here: `ingest-session` and `context` accept no `--stack` (they still work via AKS_STACK_ID or the default Stack), and the Postgres requirement is unchanged — only the Stack id stopped being required.
+- L9 — independent verification (gentle-ai-verify, not an implementer) accepted S1-S7 with its own probes: bare `ingest` exits 0 with no Stack configured, the notice appears once on stderr, stdout is byte-identical to a configured run, and the default Stack stays one row with an unchanged `updated_at` across repeated runs. It found one real defect, now fixed: the tenant-isolation page claimed a bare clone "compiles into the default Stack", but compile's page and source seams still gate on the raw `AKS_STACK_ID`, so a bare compile publishes to disk. The page now states what is actually true. Limitation recorded, not fixed: compile reads rows only when a Stack is named explicitly; `src/commands/rules.ts` and `context`/`ingest-session` likewise never see the default Stack.
+- L10 — process finding: three worker turns were killed by an approval prompt on `rm -rf` in their own cleanup steps, not by product defects. Work already on disk survived each time; recovery was to re-drive only the remaining steps with `rm` forbidden.
