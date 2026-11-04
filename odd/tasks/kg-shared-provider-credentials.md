@@ -108,3 +108,5 @@ L14: The product owner withdrew the extraction non-goal, verbatim: "The non-goal
 
 L15: Verifying the live run found the stored provenance naming the configured model rather than the model that actually ran: `extracted_by_model` recorded `claude-sonnet-4-5` while the request used `deepseek/deepseek-v4-flash`. Corrected so stored rows name the model that produced them, with a test for both the injected and the un-injected path.
 L16: C10 d307184004 reuses the wiki chat backend for extraction; C11 9d6c81f3aa fixes the recorded extraction model.
+
+L17: The product owner's standard, verbatim: "la extracion debe ser con las credencioles de .env no con antropci ni openai". Pinned as tests: the extraction host comes from the resolved chat client's base URL and never from the provider's NAME (the wiki's provider is named `openai` while it points at another host), the credential is the one that client carries, and no run may reach `api.anthropic.com` or `api.openai.com` while a descriptor is installed.
