@@ -6,7 +6,12 @@
  */
 
 import OpenAI from "openai";
-import type { LLMProvider, LLMMessage, LLMTool } from "../utils/provider.js";
+import type {
+  LLMProvider,
+  LLMMessage,
+  LLMTool,
+  EmbeddingBackendDescriptor,
+} from "../utils/provider.js";
 import { EMBEDDING_MODELS, OPENAI_DEFAULT_TIMEOUT_MS } from "../utils/constants.js";
 import * as output from "../utils/output.js";
 import { assertVectorValid, normalizeEmbeddingData } from "../utils/embeddings-validate.js";
@@ -311,5 +316,32 @@ export class OpenAIProvider implements LLMProvider {
   /** Default embedding model for this provider. Subclasses may override. */
   protected embeddingModel(): string {
     return this.configuredEmbeddingModel ?? EMBEDDING_MODELS.openai;
+  }
+
+  /**
+   * Describe the embeddings backend this instance resolved.
+   *
+   * Reads the instance's OWN client fields, so every OpenAI-compatible subclass —
+   * and every one added later — inherits an accurate report with no edit and no
+   * per-provider table: what is reported is exactly what this client will use.
+   */
+  describeEmbeddingBackend(): EmbeddingBackendDescriptor {
+    return {
+      baseURL: this.embeddingsClient.baseURL,
+      apiKey: this.embeddingsCredential(),
+      model: this.embeddingModel(),
+    };
+  }
+
+  /**
+   * The embeddings credential, or `""` when the client only ever received the
+   * placeholder.
+   *
+   * A placeholder is not a credential: reporting it would tell a consumer it had
+   * one and turn a missing key into a provider 401 later on.
+   */
+  private embeddingsCredential(): string {
+    const key = this.embeddingsClient.apiKey;
+    return key === null || key === PLACEHOLDER_API_KEY ? "" : key;
   }
 }

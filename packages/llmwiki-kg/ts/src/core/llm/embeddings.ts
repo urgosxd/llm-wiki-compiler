@@ -9,6 +9,7 @@
  */
 
 import { config } from "../../config.js";
+import { injectedEmbeddingModel } from "../../embedding-backend.js";
 import { embeddingEndpoint } from "./endpoints.js";
 import { LlmError } from "./errors.js";
 import { asArray, asRecord, postJson } from "./json.js";
@@ -87,7 +88,10 @@ function orderBySlot(
  *
  * The model name is sent verbatim from `config.EMBEDDING_MODEL`
  * (`hf:nomic-ai/nomic-embed-text-v1.5`), which is what the direct HTTP API
- * expects and what the LlamaIndex workaround in Python was working around.
+ * expects and what the LlamaIndex workaround in Python was working around. A
+ * backend injected by the host supplies its own model instead, because the same
+ * request must ask for the model that endpoint was resolved with; an explicitly
+ * configured `EMBEDDING_MODEL` still wins over it.
  *
  * @returns one vector per input, in input order. Ordering is restored from each
  *   entry's `index` when the provider supplies it, because the gateway is not
@@ -106,7 +110,7 @@ export async function embedTexts(texts: readonly string[]): Promise<number[][]> 
   const { body } = await postJson(
     endpoint,
     { authorization: `Bearer ${apiKey}` },
-    { model: config.EMBEDDING_MODEL, input: [...texts] },
+    { model: injectedEmbeddingModel() ?? config.EMBEDDING_MODEL, input: [...texts] },
   );
 
   const data = asArray(asRecord(body)?.["data"]);

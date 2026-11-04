@@ -49,6 +49,21 @@ export interface LLMTool {
 /** Embedding input purpose for providers that tune document/query vectors. */
 export type EmbeddingInputType = "document" | "query";
 
+/**
+ * The OpenAI-compatible embedding backend a provider resolved for itself.
+ *
+ * Reported so another dimension can embed through the SAME endpoint, credential
+ * and model instead of resolving a second copy of the same settings.
+ */
+export interface EmbeddingBackendDescriptor {
+  /** Base URL the embeddings endpoint answers on, without the `/embeddings` path. */
+  readonly baseURL: string;
+  /** Credential sent as `Bearer`, or `""` when this provider resolved none. */
+  readonly apiKey: string;
+  /** Model id this provider's embeddings client was configured with. */
+  readonly model: string;
+}
+
 /** Provider-agnostic interface for LLM backends. */
 export interface LLMProvider {
   complete(system: string, messages: LLMMessage[], maxTokens: number): Promise<string>;
@@ -68,6 +83,15 @@ export interface LLMProvider {
   embed(text: string, inputType?: EmbeddingInputType): Promise<number[]>;
   /** Embed multiple texts in a single provider-native request (optional). */
   embedBatch?(texts: string[], inputType?: EmbeddingInputType): Promise<number[][]>;
+  /**
+   * Describe the embedding backend this instance resolved, for a consumer that
+   * must talk to the SAME endpoint (optional).
+   *
+   * OPTIONAL ON PURPOSE. Implementing it is purely additive: a provider that
+   * does not answer has no embedding backend to share, and its consumer keeps
+   * its own named refusal. Nothing else in this interface changes.
+   */
+  describeEmbeddingBackend?(): EmbeddingBackendDescriptor;
 }
 
 /**

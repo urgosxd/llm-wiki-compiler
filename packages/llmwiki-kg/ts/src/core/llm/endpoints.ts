@@ -9,6 +9,7 @@
  */
 
 import { config } from "../../config.js";
+import { injectedEmbeddingEndpoint } from "../../embedding-backend.js";
 import { ANTHROPIC_BASE_URL, OPENAI_BASE_URL } from "./constants.js";
 
 // ---------------------------------------------------------------------------
@@ -46,8 +47,17 @@ export function extractionEndpoint(): ExtractionEndpoint {
   }
 }
 
-/** Embeddings endpoint for the configured embedding provider, plus its key. */
+/**
+ * Embeddings endpoint for the configured embedding provider, plus its key.
+ *
+ * An injected backend wins when one is installed for this call: a host that
+ * already resolved an OpenAI-compatible endpoint hands over the endpoint and
+ * credential it will actually use, so the kg dimension reaches the same service
+ * instead of a second, separately-derived one.
+ */
 export function embeddingEndpoint(): ExtractionEndpoint {
+  const injected = injectedEmbeddingEndpoint();
+  if (injected !== undefined) return injected;
   switch (config.EMBEDDING_PROVIDER) {
     case "gateway":
       return {
