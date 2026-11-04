@@ -37,12 +37,20 @@
  * reaches the same OpenAI-compatible service whatever that service is, with no
  * provider table and no second endpoint convention. It is injected per call and
  * only fills what the KG side left blank.
+ *
+ * Extraction runs on the same two halves, deliberately kept apart: the env side
+ * is the KG's own `EXTRACTION_*` namespace (never bridged from the wiki side),
+ * and the descriptor side is the wiki provider's CHAT report
+ * (`describeChatBackend`). A chat descriptor and an embedding descriptor are
+ * different services in a real deployment — often on different hosts — so each
+ * is installed around its own call and neither may supply the other's request.
  */
 
 import { createHash } from "node:crypto";
 import {
   chunkAndEmbed,
   ConfigValidationError,
+  configuresOwnChatBackend,
   configuresOwnEmbeddingBackend,
   consolidateEntityRows,
   consolidateRelationshipRows,
@@ -52,12 +60,17 @@ import {
   extractGraphFromChunks,
   findEmbeddingCredentialProblem,
   findEmbeddingModelProblem,
+  findExtractionCredentialProblem,
   kgConfig,
   forgetDocumentRows,
+  prepareChatBackend,
   prepareEmbeddingBackend,
   readStackOntology,
+  withChatBackend,
   withEmbeddingBackend,
   type ChunkResult,
+  type ChatBackendDescriptor,
+  type ChatBackendRun,
   type EmbeddingBackendDescriptor,
   type EmbeddingBackendRun,
   type ExtractedEntity,
@@ -67,6 +80,7 @@ import { defaultOntology } from "llmwiki-kg";
 import type { Database, ExtractionResult, Ontology } from "llmwiki-kg";
 
 import { getEmbeddingProvider } from "../../utils/embedding-provider.js";
+import { getProvider } from "../../utils/provider.js";
 import { loadStoredOntology } from "./ontology-store.js";
 import type {
   CommittedWrite,
@@ -175,6 +189,16 @@ export interface KgDimensionOptions {
    * side builds its provider.
    */
   readonly describeEmbeddingBackend?: () => EmbeddingBackendDescriptor | undefined;
+  /**
+   * Describes the CHAT backend the wiki dimension resolved, called once per
+   * `prepare`.
+   *
+   * Injected for the same reason as {@link describeEmbeddingBackend}, and kept a
+   * separate member for a stronger one: the wiki's chat and embedding services
+   * are different hosts in a real deployment, so the two descriptors must be
+   * independently replaceable — and independently observable.
+   */
+  readonly describeChatBackend?: () => ChatBackendDescriptor | undefined;
 }
 
 /**
@@ -456,6 +480,73 @@ function modelProblem(): string | null {
 }
 
 /**
+ * Describe the chat backend the active CHAT provider resolved.
+ *
+ * The default for {@link KgDimensionOptions.describeChatBackend}: this is the
+ * provider the wiki dimension generates with, so its report is the endpoint,
+ * credential and model that dimension will actually use for extraction.
+ *
+ * @returns The descriptor, or `undefined` for a provider that reports none.
+ * @throws {Error} Whatever the provider factory throws for an unusable provider.
+ */
+function describeActiveChatBackend(): ChatBackendDescriptor | undefined {
+  return getProvider().describeChatBackend?.();
+}
+
+/** What a chat-backend resolver reported: its descriptor, or why not. */
+interface ChatResolution {
+  readonly backend: ChatBackendDescriptor | undefined;
+  readonly problem: string | null;
+}
+
+/**
+ * Ask the injected (or default) chat resolver, keeping its MESSAGE when it
+ * throws.
+ *
+ * A stack trace from a provider factory tells an operator nothing about which
+ * variable to set, so only the message is kept.
+ *
+ * @param options - Stack binding carrying the injected resolver, if any.
+ * @returns The reported backend, or the resolver's message.
+ */
+function describeChat(options: KgDimensionOptions): ChatResolution {
+  const describe = options.describeChatBackend ?? describeActiveChatBackend;
+  try {
+    return { backend: describe(), problem: null };
+  } catch (error) {
+    return {
+      backend: undefined,
+      problem: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * The chat backend this run should install, and the reason it cannot extract.
+ *
+ * Same shape and same reasons as {@link resolveEmbeddingBackendRun}: a KG-side
+ * configuration already working on its own variables must not start failing
+ * because the wiki side cannot resolve one, and when the env-derived rules
+ * explain the refusal that explanation names the variable to set, so it outranks
+ * the factory's own reason.
+ *
+ * @param options - Stack binding carrying the injected resolver, if any.
+ * @returns The descriptor to install, or the message to raise before any request.
+ */
+function resolveChatBackendRun(options: KgDimensionOptions): ChatBackendRun {
+  const credentialProblem = findExtractionCredentialProblem(kgConfig);
+  if (configuresOwnChatBackend(process.env)) {
+    return { backend: undefined, problem: credentialProblem };
+  }
+  const resolution = describeChat(options);
+  if (resolution.backend !== undefined) {
+    const run = prepareChatBackend(resolution.backend, process.env);
+    if (run.backend !== undefined || run.problem !== null) return run;
+  }
+  return { backend: undefined, problem: credentialProblem ?? resolution.problem };
+}
+
+/**
  * Build the graph dimension.
  *
  * @param options - Stack binding and an optional database override.
@@ -470,6 +561,11 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       // set, never surface as a provider 401 or a stack trace.
       const backendRun = resolveEmbeddingBackendRun(options);
       if (backendRun.problem !== null) throw new ConfigValidationError(backendRun.problem);
+      // The extraction side is judged here too, and still before any request: a
+      // missing chat credential discovered after the embedding calls have been
+      // paid for is the same defect in a more expensive place.
+      const chatRun = resolveChatBackendRun(options);
+      if (chatRun.problem !== null) throw new ConfigValidationError(chatRun.problem);
       // Chunk labels carry the source identity only. The authoritative document
       // id does not exist yet — Postgres assigns it during `commit` — and chunks
       // stay in memory, so nothing depends on this placeholder matching a row.
@@ -489,7 +585,12 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       // did. Call arity is observable to spies and mocks, and "no ontology
       // changes nothing" has to hold at the call boundary, not just in the
       // result.
-      const extraction = await extractGraphFromChunks(chunks, options.stackName, ...ontologyArgs(ontology));
+      // Installed around this call alone, exactly like the embedding backend
+      // and independently of it: the override decides the extraction endpoint,
+      // credential and model, and is cleared again even when extraction throws.
+      const extraction = await withChatBackend(chatRun.backend, () =>
+        extractGraphFromChunks(chunks, options.stackName, ...ontologyArgs(ontology)),
+      );
       const handle: KgHandle = {
         documentId: chunkLabel,
         registration: { source: input.source, body: input.body, title: input.title },

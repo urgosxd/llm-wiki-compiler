@@ -8,9 +8,8 @@
  * changing any of them changes what the model returns.
  */
 
-import { config } from "../../config.js";
 import { ANTHROPIC_VERSION, EXTRACTION_MAX_TOKENS, EXTRACTION_TEMPERATURE } from "./constants.js";
-import { extractionEndpoint } from "./endpoints.js";
+import { extractionEndpoint, extractionModel, extractionUsesAnthropicScheme } from "./endpoints.js";
 import { LlmError } from "./errors.js";
 import { asArray, asRecord, asString, postJson } from "./json.js";
 import { strictSchemaEnabled } from "./strict-policy.js";
@@ -28,7 +27,7 @@ export interface ToolDefinition {
 /** The Anthropic request body: `input_schema`, not `parameters`. */
 function anthropicToolPayload(prompt: string, tool: ToolDefinition, maxTokens: number): unknown {
   return {
-    model: config.EXTRACTION_MODEL,
+    model: extractionModel(),
     max_tokens: maxTokens,
     temperature: EXTRACTION_TEMPERATURE,
     tools: [{ name: tool.name, description: tool.description, input_schema: tool.parameters }],
@@ -53,7 +52,7 @@ function openAiToolPayload(prompt: string, tool: ToolDefinition, maxTokens: numb
   return {
     messages: [{ role: "user", content: prompt }],
     stream: false,
-    model: config.EXTRACTION_MODEL,
+    model: extractionModel(),
     temperature: EXTRACTION_TEMPERATURE,
     tools: [
       {
@@ -128,7 +127,7 @@ export async function callTool(
 ): Promise<string> {
   const { endpoint, apiKey } = extractionEndpoint();
 
-  if (config.EXTRACTION_PROVIDER === "anthropic") {
+  if (extractionUsesAnthropicScheme()) {
     const { body } = await postJson(
       endpoint,
       { "x-api-key": apiKey, "anthropic-version": ANTHROPIC_VERSION },

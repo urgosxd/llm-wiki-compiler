@@ -64,6 +64,22 @@ export interface EmbeddingBackendDescriptor {
   readonly model: string;
 }
 
+/**
+ * The OpenAI-compatible chat backend a provider resolved for its own CHAT
+ * client.
+ *
+ * Reported so another dimension can extract through the SAME endpoint,
+ * credential and model instead of resolving a second copy of the same settings.
+ */
+export interface ChatBackendDescriptor {
+  /** Base URL the chat-completions endpoint answers on, without its path. */
+  readonly baseURL: string;
+  /** Credential sent as `Bearer`, or `""` when this provider resolved none. */
+  readonly apiKey: string;
+  /** Model id this provider's chat client was configured with. */
+  readonly model: string;
+}
+
 /** Provider-agnostic interface for LLM backends. */
 export interface LLMProvider {
   complete(system: string, messages: LLMMessage[], maxTokens: number): Promise<string>;
@@ -92,6 +108,19 @@ export interface LLMProvider {
    * its own named refusal. Nothing else in this interface changes.
    */
   describeEmbeddingBackend?(): EmbeddingBackendDescriptor;
+  /**
+   * Describe the CHAT backend this instance resolved, for a consumer that must
+   * extract through the SAME endpoint and credential (optional).
+   *
+   * OPTIONAL ON PURPOSE, exactly like {@link describeEmbeddingBackend}: a
+   * provider that does not answer has no chat backend to share, and its consumer
+   * keeps the vendored env-derived path with its own named refusal.
+   *
+   * Deliberately a SEPARATE member from the embedding descriptor: in a real
+   * deployment the two point at different services, so one member answering for
+   * both would make a crossed wire unobservable.
+   */
+  describeChatBackend?(): ChatBackendDescriptor;
 }
 
 /**

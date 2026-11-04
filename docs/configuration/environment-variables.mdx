@@ -357,13 +357,14 @@ Only those five variables are shared. `EMBEDDING_MODEL` is shared **only from a 
 named** in `LLMWIKI_EMBEDDING_MODEL`; the wiki dimension's own default model table is
 never mirrored, because its `openai` default is 1536-wide and the `kg` embedding
 columns are `vector(768)`, so inheriting a default would inherit an unusable model.
-`EMBEDDING_DIM`, `EXTRACTION_MODEL`, `EXTRACTION_PROVIDER`, `EXTRACTION_STRICT_SCHEMA`,
-`DATABASE_URL`, and `AKS_API_KEY` keep their own resolution and are never derived
-from the wiki side: they describe storage shape and unrelated credentials, not the
-shared embedding credential. In particular, the `kg` dimension's extraction provider
-is **not** derived from the wiki side, so a gateway deployment must still set
-`EXTRACTION_PROVIDER` explicitly. Its credential, however, is the shared one —
-see the two notes below the table.
+`EMBEDDING_DIM`, `DATABASE_URL`, and `AKS_API_KEY` keep their own resolution and are
+never derived from the wiki side: they describe storage shape and unrelated
+credentials, not the shared credential.
+
+Extraction is in scope too, through a second, independent mechanism described in
+[Reusing the wiki dimension's chat backend](#reusing-the-wiki-dimensions-chat-backend):
+the same precedence shape, the same fail-closed rules, and a descriptor that never
+overlaps with the embedding one.
 
 Two consequences of the bridge are worth stating, because neither is visible from the
 table itself.
@@ -372,8 +373,9 @@ The bridged `GATEWAY_URL` and `GATEWAY_API_KEY` are not embedding-only. When the
 dimension's extraction client runs with `EXTRACTION_PROVIDER=gateway`, it
 authenticates with those same two variables, so in that deployment the wiki
 dimension's embedding endpoint and key authenticate extraction as well: one
-credential, both calls. `EXTRACTION_PROVIDER` is still never derived — set it
-yourself — but there is no second gateway credential to configure.
+credential, both calls. `EXTRACTION_PROVIDER` itself is only needed when you name the
+`kg` extraction provider yourself; without it the wiki dimension's own chat backend
+supplies extraction (see below).
 
 Only the OpenAI-compatible family is bridged. An `LLMWIKI_EMBEDDING_PROVIDER` value
 with no `kg` equivalent — the Voyage-backed `anthropic` and `claude-agent`, plus
@@ -403,6 +405,35 @@ Resolution order for that backend, first applicable rule winning:
 3. An explicitly set `EMBEDDING_MODEL` still decides the model sent in the request
    body, even when the rest of the backend comes from rule 2.
 
+### Reusing the wiki dimension's chat backend
+
+Extraction goes through the same mechanism against a **separate** descriptor: the `kg`
+dimension asks the wiki dimension's own provider for the base URL, credential and
+model its CHAT client resolved, and uses that triple for the extraction requests.
+Sharing only the embedding credential would be half the credentials the setup names:
+a wiki whose chat runs on an OpenAI-compatible gateway would otherwise still send its
+extraction to a provider nobody configured.
+
+Resolution order for extraction, first applicable rule winning:
+
+1. An explicitly set `EXTRACTION_PROVIDER` or `EXTRACTION_MODEL` keeps the
+   configuration exactly as it is today, and the wiki-side chat backend is not
+   consulted at all. The credentials — `OPENAI_API_KEY`, `GATEWAY_URL`,
+   `GATEWAY_API_KEY` — are deliberately not part of that set: both dimensions read
+   them, so setting one cannot say which chat backend the `kg` side chose.
+2. Otherwise the wiki dimension's resolved chat backend supplies the endpoint, the
+   credential and the model. An explicitly set `EXTRACTION_MODEL` still decides the
+   model sent in the request body.
+3. Otherwise today's behavior is unchanged: `EXTRACTION_PROVIDER` and the credential
+   it implies, refused by name when that credential is missing.
+
+The two sides are never crossed. An embedding descriptor supplies embedding requests
+only and a chat descriptor supplies extraction requests only, whichever hosts the
+wiki dimension resolved — so a deployment whose chat and embeddings live on different
+services reaches both, each with its own credential. `EXTRACTION_STRICT_SCHEMA` keeps
+its own resolution, and the `extracted_by_model` column continues to record the `kg`
+configuration's `EXTRACTION_MODEL`.
+
 ### When the shared credential is incomplete
 
 The `kg` dimension checks its embedding credential immediately before the first
@@ -417,6 +448,10 @@ so you never see a provider `401` or a stack trace for this. These are the messa
 | `W` (the wiki embedding provider) has no `kg` equivalent | `LLMWIKI_EMBEDDING_PROVIDER="<value>" has no kg-dimension equivalent. The kg dimension embeds through EMBEDDING_PROVIDER=openai or gateway; set one of those with its credential.` |
 | The wiki backend resolved, but without a credential | `The wiki dimension's embedding backend resolved with no API key. Set the wiki dimension's embedding credential (OPENAI_EMBEDDINGS_API_KEY) or GATEWAY_API_KEY to reuse that backend in the kg dimension.` |
 | The wiki backend resolved, but no model was chosen | `The kg dimension's embedding column is 768 dimensions wide, but the resolved model "<model>" was not chosen by the operator. Set LLMWIKI_EMBEDDING_MODEL to a model that emits 768-dimensional vectors.` |
+| `EXTRACTION_PROVIDER=anthropic`, no key | `EXTRACTION_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set. Set ANTHROPIC_API_KEY to extract in the kg dimension.` |
+| `EXTRACTION_PROVIDER=openai`, no key | `EXTRACTION_PROVIDER=openai but OPENAI_API_KEY is not set. Set OPENAI_API_KEY to extract in the kg dimension.` |
+| `EXTRACTION_PROVIDER=gateway`, URL or key missing | `EXTRACTION_PROVIDER=gateway but GATEWAY_URL or GATEWAY_API_KEY is not set. Set both to extract in the kg dimension.` |
+| The wiki chat backend resolved, but without a credential | `The wiki dimension's chat backend resolved with no API key. Set the wiki dimension's chat credential (OPENAI_API_KEY) or EXTRACTION_PROVIDER with its own endpoint and credential to extract in the kg dimension.` |
 
 Each message names the fix. Setting the variable it names is enough; setting both
 sides is not required. This check applies to the `kg` dimension only, and it leaves

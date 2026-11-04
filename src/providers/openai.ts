@@ -11,6 +11,7 @@ import type {
   LLMMessage,
   LLMTool,
   EmbeddingBackendDescriptor,
+  ChatBackendDescriptor,
 } from "../utils/provider.js";
 import { EMBEDDING_MODELS, OPENAI_DEFAULT_TIMEOUT_MS } from "../utils/constants.js";
 import * as output from "../utils/output.js";
@@ -347,20 +348,36 @@ export class OpenAIProvider implements LLMProvider {
   describeEmbeddingBackend(): EmbeddingBackendDescriptor {
     return {
       baseURL: this.embeddingsClient.baseURL,
-      apiKey: this.embeddingsCredential(),
+      apiKey: this.credentialOf(this.embeddingsClient),
       model: this.embeddingModel(),
     };
   }
 
   /**
-   * The embeddings credential, or `""` when the client only ever received the
-   * placeholder.
+   * Describe the CHAT backend this instance resolved.
+   *
+   * Reads the CHAT client's own fields — never the embeddings client's — so a
+   * consumer extracts through the same service this instance talks to. With two
+   * hosts configured (a chat host and an embeddings host) the two descriptors
+   * differ, and that difference is what makes a crossed wire observable.
+   */
+  describeChatBackend(): ChatBackendDescriptor {
+    return {
+      baseURL: this.client.baseURL,
+      apiKey: this.credentialOf(this.client),
+      model: this.model,
+    };
+  }
+
+  /**
+   * The credential a client actually holds, or `""` when it only ever received
+   * the placeholder.
    *
    * A placeholder is not a credential: reporting it would tell a consumer it had
    * one and turn a missing key into a provider 401 later on.
    */
-  private embeddingsCredential(): string {
-    const key = this.embeddingsClient.apiKey;
+  private credentialOf(client: OpenAI): string {
+    const key = client.apiKey;
     return key === null || key === PLACEHOLDER_API_KEY ? "" : key;
   }
 }

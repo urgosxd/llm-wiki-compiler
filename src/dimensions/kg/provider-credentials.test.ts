@@ -48,7 +48,10 @@ const { ConfigValidationError } = await import("llmwiki-kg");
 const { injectedEmbeddingEndpoint } = await import(
   "../../../packages/llmwiki-kg/ts/src/embedding-backend.js"
 );
-const { embeddingEndpoint } = await import(
+const { injectedChatEndpoint } = await import(
+  "../../../packages/llmwiki-kg/ts/src/chat-backend.js"
+);
+const { embeddingEndpoint, extractionEndpoint } = await import(
   "../../../packages/llmwiki-kg/ts/src/core/llm/endpoints.js"
 );
 
@@ -60,19 +63,39 @@ const INJECTED_BACKEND = {
 };
 
 /**
+ * A chat backend the wiki dimension reports, distinct from the embedding one.
+ *
+ * The two carry different hosts, credentials and models on purpose: a wiring
+ * that confuses them produces a well-formed request to the wrong service.
+ */
+const INJECTED_CHAT = {
+  baseURL: "https://wiki-chat.invalid/api/v1",
+  apiKey: "test-key-not-real-chat",
+  model: "wiki-chat-model",
+};
+
+/** The message the chat descriptor path adds when it resolved no key. */
+const NO_CHAT_CREDENTIAL_MESSAGE =
+  "The wiki dimension's chat backend resolved with no API key. " +
+  "Set the wiki dimension's chat credential (OPENAI_API_KEY) or EXTRACTION_PROVIDER " +
+  "with its own endpoint and credential to extract in the kg dimension.";
+
+/**
  * Build the dimension under test with a stable stack binding.
  *
- * `describeEmbeddingBackend` is the injected resolver the compiler supplies in
+ * Each `describe*Backend` is the injected resolver the compiler supplies in
  * production; `undefined` stands for a provider that does not implement it.
  */
 function dimension(
   describeEmbeddingBackend?: () => typeof INJECTED_BACKEND | undefined,
+  describeChatBackend?: () => typeof INJECTED_CHAT | undefined,
 ) {
   return createKgDimension({
     stackId: "stack-1",
     stackName: "Stack One",
     loadOntology,
     ...(describeEmbeddingBackend === undefined ? {} : { describeEmbeddingBackend }),
+    ...(describeChatBackend === undefined ? {} : { describeChatBackend }),
   });
 }
 
@@ -87,9 +110,10 @@ const INPUT = {
 /** Run `prepare` and return the message it rejected with. */
 async function rejectionMessage(
   describeEmbeddingBackend?: () => typeof INJECTED_BACKEND | undefined,
+  describeChatBackend?: () => typeof INJECTED_CHAT | undefined,
 ): Promise<string> {
   try {
-    await dimension(describeEmbeddingBackend).prepare(INPUT);
+    await dimension(describeEmbeddingBackend, describeChatBackend).prepare(INPUT);
   } catch (error) {
     expect(error).toBeInstanceOf(ConfigValidationError);
     return (error as Error).message;
@@ -150,14 +174,22 @@ beforeEach(() => {
   vi.clearAllMocks();
   // The worker environment must not decide the outcome: the wiki side and the
   // explicit KG provider are stated per case.
+  // The wiki side and the explicit KG provider are stated per case. The chat
+  // provider name is `undefined`, not `""`: an empty provider is an invalid
+  // value, and the chat descriptor path resolves that provider by name.
   vi.stubEnv("LLMWIKI_EMBEDDING_PROVIDER", "");
-  vi.stubEnv("LLMWIKI_PROVIDER", "");
-  vi.stubEnv("EMBEDDING_PROVIDER", "");
+  vi.stubEnv("LLMWIKI_PROVIDER", undefined);
+  vi.stubEnv("EMBEDDING_PROVIDER", undefined);
   vi.stubEnv("OPENAI_API_KEY", "");
   vi.stubEnv("GATEWAY_URL", "");
   vi.stubEnv("GATEWAY_API_KEY", "");
   vi.stubEnv("EMBEDDING_MODEL", "");
   vi.stubEnv("LLMWIKI_EMBEDDING_MODEL", "");
+  // The extraction namespace too: the chat descriptor path reads it, so the
+  // worker's own environment must not decide any case.
+  vi.stubEnv("EXTRACTION_PROVIDER", undefined);
+  vi.stubEnv("EXTRACTION_MODEL", "");
+  vi.stubEnv("ANTHROPIC_API_KEY", "");
   chunkAndEmbed.mockResolvedValue([{ text: "body", embedding: [0.1], index: 0 }]);
   extractGraphFromChunks.mockResolvedValue({ entities: [], relationships: [] });
   fetchSpy = spyOnFetch();
@@ -286,5 +318,79 @@ describe("the backend the wiki dimension resolved drives the kg dimension (S2, S
       apiKey: FAKE_KEY,
     });
     expect(injectedEmbeddingEndpoint()).toBeUndefined();
+  });
+});
+
+/** An embedding-side configuration complete enough for the chat cases to reach. */
+const COMPLETE_EMBEDDING_CONFIG = {
+  EMBEDDING_PROVIDER: "openai",
+  OPENAI_API_KEY: FAKE_KEY,
+  GATEWAY_URL: "",
+  GATEWAY_API_KEY: "",
+};
+
+/** Name the embedding model, so the 768-width door is not what refuses. */
+function stateWithExtraction(overrides: Record<string, string> = {}): void {
+  state.config = { ...COMPLETE_EMBEDDING_CONFIG, ...overrides };
+  vi.stubEnv("LLMWIKI_EMBEDDING_MODEL", "operator-chosen-768");
+  loadOntology.mockResolvedValue(undefined);
+}
+
+describe("the chat backend the wiki dimension resolved drives extraction (S2, S4)", () => {
+  it("refuses an absent chat descriptor by naming the variable to set", async () => {
+    stateWithExtraction({ EXTRACTION_PROVIDER: "anthropic" });
+
+    const message = await rejectionMessage(() => INJECTED_BACKEND, () => undefined);
+
+    expect(message).toBe(
+      "EXTRACTION_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set. " +
+        "Set ANTHROPIC_API_KEY to extract in the kg dimension.",
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(extractGraphFromChunks).not.toHaveBeenCalled();
+  });
+
+  it("refuses a chat backend that resolved no credential, before any request", async () => {
+    stateWithExtraction();
+    const credentialless = { ...INJECTED_CHAT, apiKey: "" };
+
+    const message = await rejectionMessage(() => INJECTED_BACKEND, () => credentialless);
+
+    expect(message).toBe(NO_CHAT_CREDENTIAL_MESSAGE);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(chunkAndEmbed).not.toHaveBeenCalled();
+  });
+
+  it("installs the chat backend for the extraction call and clears it afterwards", async () => {
+    stateWithExtraction();
+    let inside: unknown;
+    extractGraphFromChunks.mockImplementationOnce(async () => {
+      inside = extractionEndpoint();
+      return { entities: [], relationships: [] };
+    });
+
+    await dimension(() => INJECTED_BACKEND, () => INJECTED_CHAT).prepare(INPUT);
+
+    expect(inside).toEqual({
+      endpoint: `${INJECTED_CHAT.baseURL}/chat/completions`,
+      apiKey: INJECTED_CHAT.apiKey,
+    });
+    expect(injectedChatEndpoint()).toBeUndefined();
+  });
+
+  it("keeps an explicitly configured extraction provider in charge (S3)", async () => {
+    stateWithExtraction({ EXTRACTION_PROVIDER: "gateway", GATEWAY_URL: FAKE_ENDPOINT, GATEWAY_API_KEY: FAKE_KEY });
+    vi.stubEnv("EXTRACTION_PROVIDER", "gateway");
+    let inside: unknown;
+    extractGraphFromChunks.mockImplementationOnce(async () => {
+      inside = injectedChatEndpoint();
+      return { entities: [], relationships: [] };
+    });
+
+    await dimension(() => INJECTED_BACKEND, () => INJECTED_CHAT).prepare(INPUT);
+
+    // The KG side named its own provider, so nothing was installed around the
+    // extraction call: it ran on the env-derived path exactly as before.
+    expect(inside).toBeUndefined();
   });
 });

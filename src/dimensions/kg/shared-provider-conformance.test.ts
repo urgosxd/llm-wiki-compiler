@@ -46,7 +46,16 @@ import {
   injectedEmbeddingEndpoint,
   injectedEmbeddingModel,
 } from "../../../packages/llmwiki-kg/ts/src/embedding-backend.js";
-import { embeddingEndpoint } from "../../../packages/llmwiki-kg/ts/src/core/llm/endpoints.js";
+import {
+  withChatBackend,
+  injectedChatEndpoint,
+  injectedChatModel,
+} from "../../../packages/llmwiki-kg/ts/src/chat-backend.js";
+import {
+  embeddingEndpoint,
+  extractionEndpoint,
+  extractionModel,
+} from "../../../packages/llmwiki-kg/ts/src/core/llm/endpoints.js";
 
 /** The one wiki provider the kg dimension has an equivalent for. */
 const WIKI_OPENAI = "openai";
@@ -254,6 +263,7 @@ const BUILD_ENV: Record<string, string> = {
   ANTHROPIC_API_KEY: PROBE,
   LLMWIKI_EMBEDDING_MODEL: PROBE,
   EMBEDDING_MODEL: "",
+  EXTRACTION_MODEL: "",
 };
 
 /** A provider the factory can build, or `undefined` when it refuses to be built. */
@@ -266,13 +276,18 @@ function buildQuietly(name: string): LLMProvider | undefined {
 }
 
 /**
- * Every provider the factory builds that reports an embedding backend.
+ * The providers the factory builds that answer `member`.
  *
- * DERIVED, NOT LISTED: a new OpenAI-compatible provider is picked up here with
- * no edit, which is the point of the seam — the kg bridge carries no provider
- * knowledge, so the conformance check must not carry a name table either.
+ * A new OpenAI-compatible provider is picked up here with no edit, which is the
+ * point of the seam: the kg bridge carries no provider knowledge, so the
+ * conformance check derives its list from the factory's own inputs.
+ *
+ * @param member - The optional descriptor member a provider may implement.
+ * @returns The instances that implement it.
  */
-function descriptorProviders(): LLMProvider[] {
+function providersReporting(
+  member: "describeEmbeddingBackend" | "describeChatBackend",
+): LLMProvider[] {
   const seen = new Set<string>();
   const reporting: LLMProvider[] = [];
   for (const input of SUPPORTED_PROVIDER_INPUTS) {
@@ -280,13 +295,60 @@ function descriptorProviders(): LLMProvider[] {
     if (seen.has(name)) continue;
     seen.add(name);
     const provider = buildQuietly(name);
-    if (provider !== undefined && typeof provider.describeEmbeddingBackend === "function") {
+    if (provider !== undefined && typeof provider[member] === "function") {
       reporting.push(provider);
     }
   }
   return reporting;
 }
-describe("every provider reporting an embedding backend matches what the bridge derives (S2)", () => {
+/**
+ * One of the two descriptor sides, described as data.
+ *
+ * WHY DATA. The embedding and the chat side differ only in which module answers
+ * the question; stating that difference once is what stops the chat side from
+ * being verified by a weaker copy of the embedding side's cases — and stops the
+ * two copies from drifting apart.
+ */
+interface DescriptorSide {
+  readonly name: string;
+  readonly member: "describeEmbeddingBackend" | "describeChatBackend";
+  /** The path the descriptor's base URL is extended with. */
+  readonly path: string;
+  readonly install: <T>(
+    descriptor: { baseURL: string; apiKey: string; model: string } | undefined,
+    work: () => Promise<T> | T,
+  ) => Promise<T>;
+  readonly endpointReader: () => { endpoint: string; apiKey: string };
+  readonly modelReader: () => string | undefined;
+  readonly injectedEndpoint: () => unknown;
+  readonly injectedModel: () => string | undefined;
+}
+
+/** The two sides, each reading its OWN seam and nothing else. */
+const SIDES: readonly DescriptorSide[] = [
+  {
+    name: "embedding backend",
+    member: "describeEmbeddingBackend",
+    path: "embeddings",
+    install: withEmbeddingBackend,
+    endpointReader: embeddingEndpoint,
+    modelReader: injectedEmbeddingModel,
+    injectedEndpoint: injectedEmbeddingEndpoint,
+    injectedModel: injectedEmbeddingModel,
+  },
+  {
+    name: "chat backend",
+    member: "describeChatBackend",
+    path: "chat/completions",
+    install: withChatBackend,
+    endpointReader: extractionEndpoint,
+    modelReader: extractionModel,
+    injectedEndpoint: injectedChatEndpoint,
+    injectedModel: injectedChatModel,
+  },
+];
+
+describe.each(SIDES)("every provider reporting a $name matches what the kg request asks for (S2)", (side) => {
   beforeEach(() => {
     for (const [name, value] of Object.entries(BUILD_ENV)) vi.stubEnv(name, value);
   });
@@ -296,23 +358,23 @@ describe("every provider reporting an embedding backend matches what the bridge 
   });
 
   it("finds at least the OpenAI-compatible providers", () => {
-    expect(descriptorProviders().length).toBeGreaterThan(0);
+    expect(providersReporting(side.member).length).toBeGreaterThan(0);
   });
 
   it("derives the instance's own endpoint, credential and model", async () => {
-    for (const provider of descriptorProviders()) {
-      const descriptor = provider.describeEmbeddingBackend?.();
+    for (const provider of providersReporting(side.member)) {
+      const descriptor = provider[side.member]?.();
       if (descriptor === undefined) throw new Error("provider announced no descriptor");
 
-      const derived = await withEmbeddingBackend(descriptor, () => ({
-        endpoint: embeddingEndpoint(),
-        model: injectedEmbeddingModel(),
+      const derived = await side.install(descriptor, () => ({
+        endpoint: side.endpointReader(),
+        model: side.modelReader(),
       }));
 
       // Not a single URL is named here: the expectation IS the instance's own
       // report, so a provider added later is covered without touching this file.
       expect(derived.endpoint).toEqual({
-        endpoint: `${descriptor.baseURL}/embeddings`,
+        endpoint: `${descriptor.baseURL}/${side.path}`,
         apiKey: descriptor.apiKey,
       });
       expect(derived.model).toBe(descriptor.model);
@@ -320,13 +382,21 @@ describe("every provider reporting an embedding backend matches what the bridge 
   });
 
   it("leaves nothing injected once the call that received it returns", async () => {
-    const provider = descriptorProviders()[0];
-    if (provider === undefined) throw new Error("no provider reports an embedding backend");
+    const provider = providersReporting(side.member)[0];
+    if (provider === undefined) throw new Error("no provider reports a descriptor");
 
-    await withEmbeddingBackend(provider.describeEmbeddingBackend?.(), () => undefined);
+    await side.install(provider[side.member]?.(), () => undefined);
 
-    expect(injectedEmbeddingEndpoint()).toBeUndefined();
-    expect(injectedEmbeddingModel()).toBeUndefined();
+    expect(side.injectedEndpoint()).toBeUndefined();
+    expect(side.injectedModel()).toBeUndefined();
+  });
+});
+
+describe("both sides report the SAME OpenAI-compatible providers (S2)", () => {
+  it("keeps the two descriptor lists identical", () => {
+    expect(providersReporting("describeChatBackend").length).toBe(
+      providersReporting("describeEmbeddingBackend").length,
+    );
   });
 });
 
@@ -347,5 +417,42 @@ describe("an OpenAI-compatible instance reports its own credentials (S2, S5)", (
     expect(descriptor.apiKey).toBe("");
     expect(descriptor.baseURL).toBe("https://placeholder.invalid/v1");
     expect(descriptor.model).toBe(PROBE);
+  });
+});
+
+describe("a chat descriptor reports the CHAT client, never the embeddings one (S2)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("reports the chat host, key and model when an embeddings override is set", () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-key-not-real-chat");
+    vi.stubEnv("OPENAI_EMBEDDINGS_API_KEY", "test-key-not-real-embed");
+    vi.stubEnv("LLMWIKI_EMBEDDING_MODEL", "wiki-embed-768");
+    const provider = new OpenAIProvider("chat-model-not-real", {
+      baseURL: "https://chat.invalid/api/v1",
+      embeddingsBaseURL: "https://embed.invalid/openai/v1",
+    });
+
+    const chat = provider.describeChatBackend();
+    const embeddings = provider.describeEmbeddingBackend();
+
+    expect(chat).toEqual({
+      baseURL: "https://chat.invalid/api/v1",
+      apiKey: "test-key-not-real-chat",
+      model: "chat-model-not-real",
+    });
+    expect(embeddings.baseURL).toBe("https://embed.invalid/openai/v1");
+    expect(chat.baseURL).not.toBe(embeddings.baseURL);
+    expect(chat.model).not.toBe(embeddings.model);
+  });
+
+  it("reports no credential when the chat client only ever received a placeholder", () => {
+    vi.stubEnv("OPENAI_API_KEY", undefined);
+    const provider = new OpenAIProvider("chat-model-not-real", {
+      baseURL: "https://placeholder.invalid/v1",
+    });
+
+    expect(provider.describeChatBackend().apiKey).toBe("");
   });
 });

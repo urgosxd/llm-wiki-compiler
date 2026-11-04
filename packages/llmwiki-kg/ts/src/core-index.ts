@@ -121,6 +121,25 @@ export type {
   EmbeddingBackendRun,
 } from "./embedding-backend.js";
 
+// The CHAT backend a HOST resolved, injected per call (shared-credential
+// feature, extraction side).
+//
+// A separate surface from the embedding one on purpose: the two are different
+// services in a real deployment, so a consumer installs each around its own
+// call and neither can supply the other's request.
+export {
+  configuresOwnChatBackend,
+  findExtractionCredentialProblem,
+  KG_CHAT_BACKEND_VARIABLES,
+  prepareChatBackend,
+  withChatBackend,
+} from "./chat-backend.js";
+export type {
+  ChatBackendDescriptor,
+  ChatBackendRun,
+  ExtractionCredentialConfig,
+} from "./chat-backend.js";
+
 export {
   parseTypeFilter,
   readEntities,

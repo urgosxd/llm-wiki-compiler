@@ -49,5 +49,12 @@ export function prepareCoreExports(core: CoreModule, databaseUrl: string) {
     configuresOwnEmbeddingBackend: core.configuresOwnEmbeddingBackend,
     prepareEmbeddingBackend: core.prepareEmbeddingBackend,
     withEmbeddingBackend: core.withEmbeddingBackend,
+    // The same seam on the EXTRACTION side. Its canonical lookups read
+    // `EXTRACTION_PROVIDER` from the config above (absent here), so these
+    // wiring suites are refused by nothing: the door exists but stays open.
+    configuresOwnChatBackend: core.configuresOwnChatBackend,
+    findExtractionCredentialProblem: core.findExtractionCredentialProblem,
+    prepareChatBackend: core.prepareChatBackend,
+    withChatBackend: core.withChatBackend,
   };
 }

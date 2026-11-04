@@ -10,7 +10,7 @@ The request that authorizes this feature, quoted verbatim and unsummarized:
 
 > 2 usa las mismas credenciales de la dimension wiki en la dimension KG
 
-Its scope: one credential source for both dimensions, no duplicated configuration. Non-goals, binding: do not redesign the KG's embedding client, do not add a new provider, do not change which providers llmwiki supports.
+Its scope: one credential source for both dimensions, no duplicated configuration. Non-goals, binding: do not redesign the KG's embedding client, do not add a new provider, do not change which providers llmwiki supports. Extraction is in scope: the same mechanism, with the same precedence, supplies the kg dimension's extraction endpoint, credential and model from the provider the wiki dimension resolved. Only an embedding credential would be half the credentials the request names.
 
 ### S2 — Credential bridge
 
@@ -26,7 +26,7 @@ When a KG-namespace variable is ABSENT, the kg dimension resolves that value fro
 
 Definitions: `W` is the wiki embedding provider, `LLMWIKI_EMBEDDING_PROVIDER` when set, otherwise `LLMWIKI_PROVIDER`, lowercased and trimmed; when both are unset `W` is `anthropic`, which has no kg equivalent. "The wiki embedding endpoint override is set" means `OPENAI_EMBEDDINGS_BASE_URL` or `OPENAI_BASE_URL` is non-empty. Empty and whitespace-only values count as absent, everywhere.
 
-Only these five variables are bridged: `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`, `GATEWAY_URL`, `GATEWAY_API_KEY` and `EMBEDDING_MODEL`. Everything else keeps its own resolution and is never derived from the wiki side: `EXTRACTION_*`, `DATABASE_URL` and `AKS_API_KEY` describe unrelated credentials, and `EMBEDDING_DIM` is metadata the client never sends. `EMBEDDING_MODEL` travels because the model decides the vector width and the kg column is `vector(768)`; it is taken only from an explicitly set `LLMWIKI_EMBEDDING_MODEL`, never from the wiki's default model table, whose default for these providers is 1536-wide and therefore unstorable.
+Only these five variables are bridged: `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`, `GATEWAY_URL`, `GATEWAY_API_KEY` and `EMBEDDING_MODEL`. Everything else keeps its own resolution and is never derived from the wiki side: `DATABASE_URL` and `AKS_API_KEY` describe unrelated credentials, and `EMBEDDING_DIM` is metadata the client never sends. `EXTRACTION_*` is not bridged through THIS table either: the extraction side travels on the provider descriptor named in S1, which supplies endpoint, credential and model per request and never touches these five variables. `EMBEDDING_MODEL` travels because the model decides the vector width and the kg column is `vector(768)`; it is taken only from an explicitly set `LLMWIKI_EMBEDDING_MODEL`, never from the wiki's default model table, whose default for these providers is 1536-wide and therefore unstorable.
 
 When `EMBEDDING_PROVIDER` is absent and `W` has no kg-dimension equivalent, the key and endpoint rows are not derived either: the 2nd and 3rd sources apply only when a provider that the kg dimension can use actually results. The configuration is then refused by S4's no-equivalent message rather than silently falling back to the schema default, because a key the wiki dimension never used would otherwise be sent to a provider the operator never chose.
 
@@ -75,6 +75,7 @@ An ingest with `LLMWIKI_DIMENSIONS=wiki,kg` reaches the embedding provider and s
 | T4 | S8, S6 | gentle-ai-verify, independent | — |
 | T5 | S2, S4, S6 | worker, `packages/llmwiki-kg/ts/src/{config,db}.ts`, `src/cli*` | C1 (same isolated commit) |
 | T6 | S2, S7 | worker, `src/dimensions/kg/shared-provider-conformance.test.ts`, `docs/**` | C2 |
+| T7 | S1, S2, S4, S6 | worker, `packages/llmwiki-kg/ts/src/chat-backend.ts`, `src/dimensions/kg/*` | C10 |
 
 ## Log
 
@@ -101,3 +102,5 @@ L11: The product owner approved sharing the embedding model, verbatim: "Model br
 L12: Independent verification found the provider seam unreachable in any real deployment: `configuresOwnEmbeddingBackend()` counted `OPENAI_API_KEY` — the variable both namespaces share — as a KG-side choice, so the descriptor was never installed, and its regression test could not fail when the descriptor reported the chat client. Fixed by narrowing the set to the variables the KG side alone owns, and by making the test exercise the descriptor path and prove it has teeth under mutation.
 
 L13: C8 cbcba3a8 narrows the kg-side backend set to the variables the kg side alone owns, makes the provider descriptor reachable in a real deployment, and gives its regression test teeth under mutation.
+
+L14: The product owner withdrew the extraction non-goal, verbatim: "The non-goal on extraction is withdrawn." The human's own environment proved the narrower scope unusable: with his `.env` the kg dimension embedded successfully against a real endpoint and then reached ANTHROPIC for extraction, which is half the credentials the request names. The chat backend now gets the same descriptor treatment, with the same precedence and the same fail-closed rules, and the chat/embeddings descriptors are pinned apart by a different-hosts test in both directions.
