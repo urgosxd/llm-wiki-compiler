@@ -99,3 +99,5 @@ L10: C5 09f84 shares the wiki embedding model with the kg dimension (the load-be
 L11: The product owner approved sharing the embedding model, verbatim: "Model bridge: APPROVED, with one condition attached." The condition: a user who never names a model must be refused before any request with a message naming the variable and the 768 requirement, not left to discover it in Postgres. Implemented as the width/provenance gate in C5.
 
 L12: Independent verification found the provider seam unreachable in any real deployment: `configuresOwnEmbeddingBackend()` counted `OPENAI_API_KEY` — the variable both namespaces share — as a KG-side choice, so the descriptor was never installed, and its regression test could not fail when the descriptor reported the chat client. Fixed by narrowing the set to the variables the KG side alone owns, and by making the test exercise the descriptor path and prove it has teeth under mutation.
+
+L13: C8 cbcba3a8 narrows the kg-side backend set to the variables the kg side alone owns, makes the provider descriptor reachable in a real deployment, and gives its regression test teeth under mutation.
