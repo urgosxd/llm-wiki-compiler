@@ -40,6 +40,7 @@ import { registerReviewCommands } from "./cli/review-commands.js";
 import { registerEvalCommands } from "./cli/eval-commands.js";
 import { addProviderOption, applyProviderOption, type ProviderOption } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { loadCliEnvironment } from "./cli/environment.js";
+import { addStackOption, applyStackOption, type StackOption } from "./cli/stack-option.js";
 
 loadCliEnvironment();
 
@@ -62,19 +63,21 @@ program
   .description("The knowledge compiler — raw sources in, interlinked wiki out")
   .version(version);
 
-program
-  .command("ingest <source>")
-  .description("Ingest a URL or local file into sources/")
-  .option("--verbose", "Print detailed progress (or set LLMWIKI_VERBOSE=1)")
-  .action(async (source: string, options: { verbose?: boolean }) => {
-    try {
-      setVerbose(verboseEnabled(options.verbose));
-      await ingestCommand(source);
-    } catch (err) {
-      console.error(`\x1b[31mError:\x1b[0m ${err instanceof Error ? err.message : err}`);
-      process.exit(1);
-    }
-  });
+addStackOption(
+  program
+    .command("ingest <source>")
+    .description("Ingest a URL or local file into sources/")
+    .option("--verbose", "Print detailed progress (or set LLMWIKI_VERBOSE=1)"),
+).action(async (source: string, options: StackOption & { verbose?: boolean }) => {
+  try {
+    await applyStackOption(options);
+    setVerbose(verboseEnabled(options.verbose));
+    await ingestCommand(source);
+  } catch (err) {
+    console.error(`\x1b[31mError:\x1b[0m ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+});
 
 program
   .command("ingest-session <path>")
@@ -133,7 +136,9 @@ program
     }
   });
 
-addProviderOption(program.command("compile").description("Compile sources/ into an interlinked wiki"))
+addStackOption(
+  addProviderOption(program.command("compile").description("Compile sources/ into an interlinked wiki")),
+)
   .option("--instructions <path>", "Add UTF-8 project instructions for this compile (max 64 KiB); changing or omitting them recompiles affected pages")
   .option(
     "--review",
@@ -152,7 +157,7 @@ addProviderOption(program.command("compile").description("Compile sources/ into 
     "Max concurrent LLM calls during compile (or set LLMWIKI_COMPILE_CONCURRENCY; default 5)",
   )
   .option("--verbose", "Print detailed progress (or set LLMWIKI_VERBOSE=1)")
-  .action(async (options: ProviderOption & {
+  .action(async (options: ProviderOption & StackOption & {
     review?: boolean;
     lang?: string;
     sourcesSection?: boolean;
@@ -161,6 +166,7 @@ addProviderOption(program.command("compile").description("Compile sources/ into 
     verbose?: boolean;
   }) => {
     try {
+      await applyStackOption(options);
       applyProviderOption(options);
       setVerbose(verboseEnabled(options.verbose));
       applyLanguageOption(options.lang);
@@ -188,7 +194,9 @@ program
     }
   });
 
-addProviderOption(program.command("refresh").description("Recompile only stale/changed pages without touching unrelated new sources"))
+addStackOption(
+  addProviderOption(program.command("refresh").description("Recompile only stale/changed pages without touching unrelated new sources")),
+)
   .option("--stale", "Resolve stale/orphaned pages and recompile them")
   .option("--dry-run", "Print the refresh plan without calling the LLM or writing files")
   .option(
@@ -196,8 +204,9 @@ addProviderOption(program.command("refresh").description("Recompile only stale/c
     "Max concurrent LLM calls during the recompile (or set LLMWIKI_COMPILE_CONCURRENCY; default 5)",
   )
   .option("--verbose", "Print detailed progress (or set LLMWIKI_VERBOSE=1)")
-  .action(async (options: ProviderOption & { stale?: boolean; dryRun?: boolean; concurrency?: string; verbose?: boolean }) => {
+  .action(async (options: ProviderOption & StackOption & { stale?: boolean; dryRun?: boolean; concurrency?: string; verbose?: boolean }) => {
     try {
+      await applyStackOption(options);
       applyProviderOption(options);
       setVerbose(verboseEnabled(options.verbose));
       const code = await refreshCommand(
@@ -228,7 +237,9 @@ program
 
 registerRulesCommand(program, requireProvider);
 
-addProviderOption(program.command("query <question>").description("Ask a question against the wiki"))
+addStackOption(
+  addProviderOption(program.command("query <question>").description("Ask a question against the wiki")),
+)
   .option("--save", "Save the answer as a wiki page")
   .option("--review", "Stage the answer for review instead of publishing (requires --save)")
   .option("--debug", "Print which pages and chunks were selected and their scores")
@@ -240,10 +251,13 @@ addProviderOption(program.command("query <question>").description("Ask a questio
   .action(
     async (
       question: string,
-      options: ProviderOption & { save?: boolean; review?: boolean; debug?: boolean; lang?: string; verbose?: boolean },
+      options: ProviderOption & StackOption & {
+        save?: boolean; review?: boolean; debug?: boolean; lang?: string; verbose?: boolean;
+      },
     ) => {
       try {
         assertQuerySaveOptions(options);
+        await applyStackOption(options);
         applyProviderOption(options);
         setVerbose(verboseEnabled(options.verbose));
         applyLanguageOption(options.lang);
@@ -256,13 +270,16 @@ addProviderOption(program.command("query <question>").description("Ask a questio
     },
   );
 
-addProviderOption(program.command("watch").description("Watch sources/ and auto-recompile on changes"))
+addStackOption(
+  addProviderOption(program.command("watch").description("Watch sources/ and auto-recompile on changes")),
+)
   .option(
     "--concurrency <n>",
     "Max concurrent LLM calls per recompile (or set LLMWIKI_COMPILE_CONCURRENCY; default 5)",
   )
-  .action(async (options: ProviderOption & { concurrency?: string }) => {
+  .action(async (options: ProviderOption & StackOption & { concurrency?: string }) => {
     try {
+      await applyStackOption(options);
       applyProviderOption(options);
       requireCompileProvider();
       await watchCommand({ concurrency: parseConcurrencyFlag(options.concurrency) });

@@ -34,11 +34,12 @@
  * BEFORE resolving, from the switch alone, so the answer never depends on an error
  * message or on a connection.
  *
- * ## No flag parameter yet
+ * ## Where `--stack` enters
  *
- * `--stack` reaches selection through the caller once the CLI option exists; this
- * signature stays narrow until then rather than carrying an argument the ingest and
- * compile paths cannot supply.
+ * At the CLI, and through the environment slot: `src/cli/stack-option.ts` validates a
+ * named id and writes `AKS_STACK_ID` for the run, so `selectStack` sees a flag as an
+ * `explicit` selection and this signature never has to carry a second Stack argument.
+ * The flag is the caller-level override; the resolution stays here, once.
  */
 
 import type { Database } from "llmwiki-kg";

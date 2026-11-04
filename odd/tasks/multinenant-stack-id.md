@@ -52,10 +52,17 @@ Rules:
 
 `--stack <id>` given with an id that is not an existing Stack row must fail with an error whose message contains the offending id and the word `stack`, and must not fall back to the default Stack. A malformed (non-uuid) `--stack` value must fail the same way, before any query. An explicit selection must never silently become the default.
 
-### S5 — The active Stack is observable, and Stacks are listable
+### S5 — The default Stack is announced, and explicit selection is validated
 
-* Every Stack-scoped command states which Stack it used and where that came from: one of `--stack`, `AKS_STACK_ID`, or the default. The statement must name the resolved Stack id.
-* `llmwiki stack list` exists, is registered on the root program, and prints the Stacks of the current connection. Help text: `List the knowledge Stacks this connection can see.`
+When a Stack-scoped command resolves to the default Stack (neither `--stack` nor `AKS_STACK_ID` configured), it prints exactly one line to stderr:
+
+```
+Using the default Stack (no --stack or AKS_STACK_ID configured).
+```
+
+Stdout is untouched, so the `--json` output contracts hold. When a Stack is configured, no such line is printed: the caller already chose it, so there is nothing to announce and no existing output changes.
+
+Stack enumeration is out of scope. Row-level security limits visibility on `stacks` to the bound Stack (`using (id = nullif(current_setting('app.stack_id', true), '')::uuid or domain = nullif(current_setting('app.stack_domain', true), ''))`, `packages/llmwiki-kg/db/migration_rls_tenancy.sql:50-78`), and `listStacks` takes a bound Stack id, so a CLI `stack list` could only ever print one row. Enumeration stays in the HTTP API.
 
 ### S6 — Help text and docs teach the resolution order
 
@@ -73,11 +80,11 @@ That message and the `{ unavailable: ... }` result must remain reachable for an 
 
 ## Tasks
 
-- T1 — S1, S2 — resolver with precedence, no throw on absence; keep strict entry point for callers that must refuse — worker — commit: pending
-- T2 — S3 — idempotent default Stack ensure — worker — commit: pending
-- T3 — S1, S3 — wire ingest write path and rule-state to the resolver — worker — commit: pending
-- T4 — S4 — `--stack` option, fail-closed on unknown/malformed id — worker — commit: pending
-- T5 — S5 — active-Stack line and `llmwiki stack list` — worker — commit: pending
+- T1 — S1, S2 — resolver with precedence, no throw on absence; keep strict entry point for callers that must refuse — worker — commit: 44209e2
+- T2 — S3 — idempotent default Stack ensure — worker — commit: 44209e2
+- T3 — S1, S3 — wire ingest write path and rule-state to the resolver — worker — commit: 3fc4aa9
+- T4 — S4 — `--stack` option, flag wins over env, fail-closed on unknown/malformed id — worker — commit: pending
+- T5 — S5 — announce the default Stack on stderr; no `stack list` (RLS makes it a one-row lie) — worker — commit: pending
 - T6 — S6 — help text and docs corrected — worker — commit: pending
 - T7 — S7 — regression tests proving MCP refusal and `buildIngestEnv` are unchanged — worker — commit: pending
 
@@ -88,3 +95,4 @@ That message and the `{ unavailable: ... }` result must remain reachable for an 
 - L3 — evidence: `stacks` table has `id uuid` and `domain text not null unique` (`packages/llmwiki-kg/db/schema.sql:16-37`); `src/services/stacks/stack-store.ts` exposes only `stackExists` and `listStacks`; the CLI registers no `stack` command.
 - L4 — decision (lead): the recorded refusal in `src/dimensions/activation.ts:20-36` is superseded for the CLI by the human's request. The default is a named, materialized Stack (`domain` = `default`, `name` = `Default`) rather than a silent unnamed fallback, which answers the original objection that defaulting would scatter entities into one unnamed Stack.
 - L5 — decision (lead): the MCP deployment binding keeps refusing (S7) because that path serves an explicitly bound Stack; defaulting there would silently retarget a deployed server.
+- L6 — decision (lead): S5's original `llmwiki stack list` bullet is withdrawn. Row-level security restricts `stacks` visibility to the bound Stack, so the command could only ever print one row; enumeration stays in the HTTP API. S5 now requires announcing the default Stack on stderr only, which is new behaviour in a path that previously refused, so no existing output contract changes.
