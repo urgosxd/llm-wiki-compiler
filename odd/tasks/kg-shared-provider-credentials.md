@@ -1,0 +1,94 @@
+# KG dimension: reuse the wiki dimension's provider credentials
+
+Branch `feat-kg-shared-provider-credentials`, base `2c42ef3`. Enabling the `kg` dimension dies against the embedding provider before it reaches the database, because the vendored core reads its own provider namespace and never sees the settings llmwiki already resolves. This document is the specification for the bridge, its precedence order, and its fail-closed rules.
+
+## Specs
+
+### S1 — The authorized request
+
+The request that authorizes this feature, quoted verbatim and unsummarized:
+
+> 2 usa las mismas credenciales de la dimension wiki en la dimension KG
+
+Its scope: one credential source for both dimensions, no duplicated configuration. Non-goals, binding: do not redesign the KG's embedding client, do not add a new provider, do not change which providers llmwiki supports.
+
+### S2 — Credential bridge
+
+When a KG-namespace variable is ABSENT, the kg dimension resolves that value from the variables the wiki dimension already uses. Per-variable order, first present value wins:
+
+| KG variable | 1st | 2nd | 3rd | fallback |
+| --- | --- | --- | --- | --- |
+| `EMBEDDING_PROVIDER` | `EMBEDDING_PROVIDER` | `gateway`, derived when `W` is `openai` and the wiki embedding endpoint override is set | `openai`, derived when `W` is `openai` | schema default `openai` |
+| `OPENAI_API_KEY` | `OPENAI_API_KEY` | `OPENAI_EMBEDDINGS_API_KEY`, only when the resolved provider is `openai` | — | `""`, then S4 |
+| `GATEWAY_URL` | `GATEWAY_URL` | `OPENAI_EMBEDDINGS_BASE_URL`, then `OPENAI_BASE_URL`; only when the resolved provider is `gateway` | — | `""`, then S4 |
+| `GATEWAY_API_KEY` | `GATEWAY_API_KEY` | `OPENAI_EMBEDDINGS_API_KEY`, then `OPENAI_API_KEY`; only when the resolved provider is `gateway` | — | `""`, then S4 |
+
+Definitions: `W` is the wiki embedding provider, `LLMWIKI_EMBEDDING_PROVIDER` when set, otherwise `LLMWIKI_PROVIDER`, lowercased and trimmed; when both are unset `W` is `anthropic`, which has no kg equivalent. "The wiki embedding endpoint override is set" means `OPENAI_EMBEDDINGS_BASE_URL` or `OPENAI_BASE_URL` is non-empty. Empty and whitespace-only values count as absent, everywhere.
+
+Only these four variables are bridged. `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `EXTRACTION_*`, `DATABASE_URL` and `AKS_API_KEY` keep their own resolution and are never derived from the wiki side: they describe storage shape and unrelated credentials, not the shared embedding credential.
+
+When `EMBEDDING_PROVIDER` is absent and `W` has no kg-dimension equivalent, the key and endpoint rows are not derived either: the 2nd and 3rd sources apply only when a provider that the kg dimension can use actually results. The configuration is then refused by S4's no-equivalent message rather than silently falling back to the schema default, because a key the wiki dimension never used would otherwise be sent to a provider the operator never chose.
+
+### S3 — An explicit KG-side value still wins
+
+This is backward compatibility and it is not negotiable: a deployment that already sets `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`, `GATEWAY_URL` or `GATEWAY_API_KEY` keeps exactly the behavior it has today. The bridge only fills absences. A KG-side value is never overwritten, never normalized against, and never merged with a wiki-side one.
+
+### S4 — Fail closed, with a deterministic message
+
+A missing or partial credential fails before any HTTP request, with a message naming the variable the operator must set. A provider 401 and a stack trace are both defects. The required message text is fixed:
+
+- resolved provider `openai`, no key:
+  `EMBEDDING_PROVIDER=openai but no API key is configured. Set OPENAI_API_KEY, or OPENAI_EMBEDDINGS_API_KEY to reuse the wiki dimension's credential.`
+- resolved provider `gateway`, no URL:
+  `EMBEDDING_PROVIDER=gateway but GATEWAY_URL is not set. Set GATEWAY_URL, or OPENAI_EMBEDDINGS_BASE_URL to reuse the wiki dimension's endpoint.`
+- resolved provider `gateway`, URL but no key:
+  `EMBEDDING_PROVIDER=gateway but GATEWAY_API_KEY is not set. Set GATEWAY_API_KEY, or OPENAI_EMBEDDINGS_API_KEY to reuse the wiki dimension's credential.`
+- `W` has no kg equivalent:
+  `LLMWIKI_EMBEDDING_PROVIDER="<value>" has no kg-dimension equivalent. The kg dimension embeds through EMBEDDING_PROVIDER=openai or gateway; set one of those with its credential.`
+
+The check runs on the kg dimension path, immediately before the first provider call, and it applies only to the kg dimension. `validateConfig` and the standalone server's startup validation keep their current behavior exactly, message for message.
+
+### S5 — No secret exposure
+
+No credential value may appear in stdout, stderr, logs, thrown errors, or test output, on the failing path or the succeeding path. No environment dump, and no debug print of the resolved config object that could serialize a key. Tests use obvious fake credentials such as `test-key-not-real`.
+
+### S6 — Tests
+
+One RED-first test per rule this change adds or modifies, observed failing before the implementation. Plus one test proving an explicitly set KG-side variable still wins (S3), because that existing behavior shares the code being changed. Each test asserts the observable effect of its rule: the resolved value, the exact error message, and that a rejected configuration performs no HTTP request. Tests use fake credentials only.
+
+### S7 — Documentation
+
+Whatever page documents dimensions and providers must state the shared-credential behavior and the S2 precedence table, so a user can discover it without reading source.
+
+### S8 — End-to-end proof
+
+An ingest with `LLMWIKI_DIMENSIONS=wiki,kg` reaches the embedding provider and succeeds, and the kg rows land in the same `stacks.id` as the wiki rows for the freshly ingested source. If a live provider cannot be used, the cheapest legitimate local substitute is used and the report states precisely what it proves and what it does not.
+
+## Tasks
+
+| ID | Specs | Route | Commit |
+| --- | --- | --- | --- |
+| T1 | S1-S8 (tracking) | worker, `odd/tasks/kg-shared-provider-credentials.md` | C0 |
+| T2 | S2, S3, S4, S5, S6 | worker, `packages/llmwiki-kg/ts/src/*`, `src/dimensions/kg/*` | C1 (isolated: Risk item 2) |
+| T3 | S7 | worker, `docs/**/*.mdx` | C2 |
+| T4 | S8, S6 | gentle-ai-verify, independent | — |
+| T5 | S2, S4, S6 | worker, `packages/llmwiki-kg/ts/src/{config,db}.ts`, `src/cli*` | C1 (same isolated commit) |
+| T6 | S2, S7 | worker, `src/dimensions/kg/shared-provider-conformance.test.ts`, `docs/**` | C2 |
+
+## Log
+
+L1: "2 usa las mismas credenciales de la dimension wiki en la dimension KG"
+
+L2: Manager relayed a second human instruction, verbatim: "la dimension wiki usa un endpoint open-ai like, revisa como esta y mandale a que lo haga asi" — the wiki dimension already talks to an OpenAI-compatible endpoint, and the kg dimension must use that same mechanism the same way, not a second convention invented next to it.
+
+L3: Decision (architecture): the bridge lives in the vendored core's env resolution, not in the host. `packages/llmwiki-kg/ts` is the standalone private package `aks-reference-server` with its own build and its own HTTP server entry, so it cannot import the host's `src/utils/embedding-provider.ts` without inverting the dependency. Non-drift between the two dimensions is enforced by a conformance test that derives the expected variable names from the host tables instead.
+
+L4: Decision (precedence order): S4's no-equivalent case is reported before the missing-key case only when the KG side sets no `EMBEDDING_PROVIDER` and no `OPENAI_API_KEY`. A literal reading of S2 would newly fail every deployment that works today on the `openai` schema default with its own key, which S3 forbids.
+
+L5: Decision (verbatim copy): a KG-side value that is present is copied into the schema verbatim, without trimming or lowercasing; only blankness is judged by trim, so a configured value reaches the schema exactly as it did before this feature.
+
+L6: Defect found by independent verification and fixed: configuration supplied only through a project `.env` never reached the bridge, because `config.ts` and `db.ts` snapshot `process.env` at module init and the CLI facade externalizes `@atomicstrata/llmwiki-core`, whose chunk is evaluated before the entry body. Evidence: an `env -i` ingest with only a project `.env` exited 1 with the S4 message and the stub received zero requests (`STUB_LINES before=6 after=6`). Fix: both snapshots resolve on first access and memoize, and `.env` is loaded as the CLI's first import. After the fix the same run exits 0 and the stub logs `POST /v1/embeddings auth=Bearer test-key-not-real`.
+
+L7: Observed fact for S8: the kg dimension's ingest write set is `stack_documents`, `entity_source_documents`, `ontology_entities` and `ontology_relationships`. `document_chunks` is written only by the vendored HTTP route (`src/dimensions/kg/reader.ts:19`), so it stays at zero rows on the ingest path; that is pre-existing behavior, not an effect of this change.
+
+L8: Accepted side effect: loading `.env` earlier also lets `packages/llmwiki-kg/ts/src/mcp/config.ts:11,14` (`AKS_BASE_URL`, `AKS_API_KEY`, outside the CLI ingest graph) see the project file where they previously always fell back to defaults.
