@@ -87,7 +87,7 @@ That message and the `{ unavailable: ... }` result must remain reachable for an 
 - T5 — S5 — announce the default Stack on stderr; no `stack list` (RLS makes it a one-row lie) — worker — commit: 57a2f3a
 - T6 — S6 — help text and docs corrected — worker — commit: c152d84
 - T7 — S7 — regression tests proving MCP refusal and `buildIngestEnv` are unchanged — worker — commit: c152d84
-- T8 — S1, S3 — pin the same-id guarantee: wiki and kg receive one resolved default Stack id — worker — commit: pending
+- T8 — S1, S3 — pin the same-id guarantee: wiki and kg receive one resolved default Stack id — worker — commit: 84c45c0
 
 ## Log
 
@@ -103,3 +103,4 @@ That message and the `{ unavailable: ... }` result must remain reachable for an 
 - L10 — process finding: three worker turns were killed by an approval prompt on `rm -rf` in their own cleanup steps, not by product defects. Work already on disk survived each time; recovery was to re-drive only the remaining steps with `rm` forbidden.
 - L11 — gate gap closed: `test/quickstart-json-stdout.test.ts` pins stdout/stderr bytes of a spawned CLI, so `scripts/test-partition.ts` classifies it `integration` and `scripts/run-affected-tests.ts` — which runs only the unit tier on a global change — could never select it. It was green only because it was run by hand. `test:affected` now always adds a minimal, documented output-contract list on top of whichever tier it selects, initially that one file, and builds once if `dist/cli.js` is missing. The spawn-free unit tier is unchanged, and no assertion was moved, weakened or suppressed.
 - L12 — gap found by the KG testing project's re-baseline on this branch: the single-resolution guarantee (both dimensions receive the SAME resolved default Stack id) existed only in source, not in any test. `default-stack-ingest.test.ts` builds the wiki dimension only, and `stack-selection.test.ts:117-126` passes an explicit id and asserts only the dimension-name array. Now pinned by `test/dimensions/default-stack-both-dimensions.test.ts`, proven to bite by a temporary mutation that gave the kg dimension a different id.
+- L13 — bookkeeping: T8's SHA is recorded post-hoc (84c45c0) because a commit cannot contain its own hash; the entry was authored while the commit was still uncommitted. Recorded rather than left as `pending`, since a stale record is worse than a missing one.
