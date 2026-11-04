@@ -22,12 +22,17 @@
  *
  * ## Precedence, which is backward compatibility first
  *
- * An explicitly configured KG-side variable ALWAYS wins: a deployment that
- * already sets `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`, `GATEWAY_URL` or
- * `GATEWAY_API_KEY` keeps exactly the behaviour it has today, and the descriptor
+ * An explicitly chosen KG-side variable ALWAYS wins: a deployment that already
+ * sets `EMBEDDING_PROVIDER`, `GATEWAY_URL`, `GATEWAY_API_KEY` or
+ * `EMBEDDING_MODEL` keeps exactly the behaviour it has today, and the descriptor
  * is not even resolved for it. The injected backend only fills what the KG side
  * left blank, and an explicitly chosen `EMBEDDING_MODEL` still decides the model
  * sent in the request body.
+ *
+ * `OPENAI_API_KEY` is NOT one of those variables, because both namespaces read
+ * it: setting it says nothing about where the kg dimension should send its
+ * request, and treating it as a choice made the descriptor unreachable in every
+ * deployment that shares one credential.
  */
 
 import {
@@ -111,21 +116,30 @@ export function injectedEmbeddingEndpoint(): { endpoint: string; apiKey: string 
  * An explicitly chosen `EMBEDDING_MODEL` wins: it is a KG-side setting, and S3
  * gives it precedence over anything derived. `LLMWIKI_EMBEDDING_MODEL` needs no
  * handling here because the descriptor's model already reflects it.
+ *
+ * @param env - Environment to read; never modified. Defaults to the ambient one,
+ *   which is what the vendored request path reads; a caller holding a resolved
+ *   environment passes it in, so an injected environment is honoured end to end
+ *   instead of being half-read.
+ * @returns The model to request, or `undefined` when nothing is installed.
  */
-export function injectedEmbeddingModel(): string | undefined {
+export function injectedEmbeddingModel(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   const backend = installedBackend;
   if (backend === undefined) return undefined;
-  return readPresent(process.env, KG_MODEL_VARIABLE) ?? backend.model;
+  return readPresent(env, KG_MODEL_VARIABLE) ?? backend.model;
 }
 
 /**
  * True when the KG side configured its own embedding backend.
  *
  * Reuses {@link KG_BACKEND_VARIABLES} rather than restating the names: the set
- * the bridge may fill is exactly the set whose explicit value must win. The
- * model is not a member — naming a model says nothing about where the request
- * goes, and an explicit model still overrides the descriptor's (see
- * {@link injectedEmbeddingModel}).
+ * the bridge may fill is exactly the set whose explicit value must win. That set
+ * deliberately excludes `OPENAI_API_KEY`, which BOTH namespaces read — sharing
+ * it is the point of the bridge, so it cannot mean "the operator chose the kg
+ * backend". Counting it did exactly that, hiding the descriptor path in every
+ * real deployment that sets a shared key.
  *
  * @param env - Environment to read; never modified.
  * @returns True when any backend variable holds a non-blank value.

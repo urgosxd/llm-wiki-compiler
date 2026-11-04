@@ -22,16 +22,17 @@ When a KG-namespace variable is ABSENT, the kg dimension resolves that value fro
 | `OPENAI_API_KEY` | `OPENAI_API_KEY` | `OPENAI_EMBEDDINGS_API_KEY`, only when the resolved provider is `openai` | — | `""`, then S4 |
 | `GATEWAY_URL` | `GATEWAY_URL` | `OPENAI_EMBEDDINGS_BASE_URL`, then `OPENAI_BASE_URL`; only when the resolved provider is `gateway` | — | `""`, then S4 |
 | `GATEWAY_API_KEY` | `GATEWAY_API_KEY` | `OPENAI_EMBEDDINGS_API_KEY`, then `OPENAI_API_KEY`; only when the resolved provider is `gateway` | — | `""`, then S4 |
+| `EMBEDDING_MODEL` | `EMBEDDING_MODEL` | `LLMWIKI_EMBEDDING_MODEL`, only when that variable is explicitly set | — | schema default `text-embedding-3-small`; the wiki default table is never mirrored |
 
 Definitions: `W` is the wiki embedding provider, `LLMWIKI_EMBEDDING_PROVIDER` when set, otherwise `LLMWIKI_PROVIDER`, lowercased and trimmed; when both are unset `W` is `anthropic`, which has no kg equivalent. "The wiki embedding endpoint override is set" means `OPENAI_EMBEDDINGS_BASE_URL` or `OPENAI_BASE_URL` is non-empty. Empty and whitespace-only values count as absent, everywhere.
 
-Only these four variables are bridged. `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `EXTRACTION_*`, `DATABASE_URL` and `AKS_API_KEY` keep their own resolution and are never derived from the wiki side: they describe storage shape and unrelated credentials, not the shared embedding credential.
+Only these five variables are bridged: `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`, `GATEWAY_URL`, `GATEWAY_API_KEY` and `EMBEDDING_MODEL`. Everything else keeps its own resolution and is never derived from the wiki side: `EXTRACTION_*`, `DATABASE_URL` and `AKS_API_KEY` describe unrelated credentials, and `EMBEDDING_DIM` is metadata the client never sends. `EMBEDDING_MODEL` travels because the model decides the vector width and the kg column is `vector(768)`; it is taken only from an explicitly set `LLMWIKI_EMBEDDING_MODEL`, never from the wiki's default model table, whose default for these providers is 1536-wide and therefore unstorable.
 
 When `EMBEDDING_PROVIDER` is absent and `W` has no kg-dimension equivalent, the key and endpoint rows are not derived either: the 2nd and 3rd sources apply only when a provider that the kg dimension can use actually results. The configuration is then refused by S4's no-equivalent message rather than silently falling back to the schema default, because a key the wiki dimension never used would otherwise be sent to a provider the operator never chose.
 
 ### S3 — An explicit KG-side value still wins
 
-This is backward compatibility and it is not negotiable: a deployment that already sets `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`, `GATEWAY_URL` or `GATEWAY_API_KEY` keeps exactly the behavior it has today. The bridge only fills absences. A KG-side value is never overwritten, never normalized against, and never merged with a wiki-side one.
+This is backward compatibility and it is not negotiable. The variables that decide the KG side's own embedding backend are `EMBEDDING_PROVIDER`, `GATEWAY_URL`, `GATEWAY_API_KEY` and `EMBEDDING_MODEL`; an explicitly set one of those keeps exactly the behavior it has today, and the bridge only fills absences. `OPENAI_API_KEY` is deliberately NOT in that set: both namespaces read it, so setting it cannot mean the operator chose the KG backend. It is treated as the shared credential, and when the KG side names no backend of its own the resolved provider descriptor supplies the endpoint, credential and model — which reach the same endpoint and the same credential the configuration already implied.
 
 ### S4 — Fail closed, with a deterministic message
 
@@ -94,3 +95,7 @@ L7: Observed fact for S8: the kg dimension's ingest write set is `stack_document
 L8: Accepted side effect: loading `.env` earlier also lets `packages/llmwiki-kg/ts/src/mcp/config.ts:11,14` (`AKS_BASE_URL`, `AKS_API_KEY`, outside the CLI ingest graph) see the project file where they previously always fell back to defaults.
 L9: Work-unit commits on feat/kg-shared-provider-credentials: C0 748dbe0 (feature document), C1 b1a6475 (credential bridge and import-time snapshot fix, isolated as Risk item 2), C2 087090c (conformance test), C3 dc7afb2 (documentation).
 L10: C5 09f84 shares the wiki embedding model with the kg dimension (the load-bearing fix for a real deployment whose wiki embeddings use a non-OpenAI model); C6 ef5ef adds the optional provider seam.
+
+L11: The product owner approved sharing the embedding model, verbatim: "Model bridge: APPROVED, with one condition attached." The condition: a user who never names a model must be refused before any request with a message naming the variable and the 768 requirement, not left to discover it in Postgres. Implemented as the width/provenance gate in C5.
+
+L12: Independent verification found the provider seam unreachable in any real deployment: `configuresOwnEmbeddingBackend()` counted `OPENAI_API_KEY` — the variable both namespaces share — as a KG-side choice, so the descriptor was never installed, and its regression test could not fail when the descriptor reported the chat client. Fixed by narrowing the set to the variables the KG side alone owns, and by making the test exercise the descriptor path and prove it has teeth under mutation.

@@ -132,6 +132,68 @@ describe("an injected backend supplies the embedding request (S2, S4)", () => {
   });
 });
 
+/**
+ * The deployment this feature exists for: the wiki names the shared key and the
+ * embedding model, the kg side names nothing at all.
+ */
+const SHARED_KEY_ONLY_ENV: Record<string, string> = {
+  OPENAI_API_KEY: "test-key-not-real-shared",
+  LLMWIKI_PROVIDER: "openai",
+  LLMWIKI_EMBEDDING_MODEL: "wiki-embed-768",
+  EMBEDDING_PROVIDER: "",
+  GATEWAY_URL: "",
+  GATEWAY_API_KEY: "",
+  EMBEDDING_MODEL: "",
+};
+
+describe("the shared credential alone does not mean the kg side configured itself (S2)", () => {
+  it("installs the descriptor when only the shared key is set", async () => {
+    // Counting the SHARED key as a kg-side choice left the descriptor
+    // uninstalled here, in every real deployment that shares a credential.
+    const { backend } = await loadModules(SHARED_KEY_ONLY_ENV);
+
+    const run = backend.prepareEmbeddingBackend(INJECTED, process.env);
+
+    expect(run.problem).toBeNull();
+    expect(run.backend).toEqual(INJECTED);
+  });
+
+  it("still keeps the env path when the kg side named its own provider", async () => {
+    const { backend } = await loadModules({ ...SHARED_KEY_ONLY_ENV, EMBEDDING_PROVIDER: "gateway" });
+
+    expect(backend.configuresOwnEmbeddingBackend(process.env)).toBe(true);
+    expect(backend.prepareEmbeddingBackend(INJECTED, process.env).backend).toBeUndefined();
+  });
+
+  it("still keeps the env path when the kg side named its own gateway endpoint", async () => {
+    const { backend } = await loadModules({ ...SHARED_KEY_ONLY_ENV, GATEWAY_URL: "https://kg-own.invalid/v1" });
+
+    expect(backend.configuresOwnEmbeddingBackend(process.env)).toBe(true);
+  });
+});
+
+describe("an injected environment is honoured, not the process one (S3)", () => {
+  it("reads EMBEDDING_MODEL from the environment it was given", async () => {
+    const { backend } = await loadModules({ ...CLEAN_ENV, EMBEDDING_MODEL: "process-model-not-real" });
+
+    const model = await backend.withEmbeddingBackend(INJECTED, () =>
+      backend.injectedEmbeddingModel({ EMBEDDING_MODEL: "injected-model-not-real" }),
+    );
+
+    expect(model).toBe("injected-model-not-real");
+  });
+
+  it("falls back to the descriptor's model for a blank injected value", async () => {
+    const { backend } = await loadModules({ ...CLEAN_ENV, EMBEDDING_MODEL: "process-model-not-real" });
+
+    const model = await backend.withEmbeddingBackend(INJECTED, () =>
+      backend.injectedEmbeddingModel({ EMBEDDING_MODEL: "  " }),
+    );
+
+    expect(model).toBe(INJECTED.model);
+  });
+});
+
 describe("the injected backend only fills what the KG side left blank (S3)", () => {
   it("leaves an explicitly configured KG backend in charge", async () => {
     const { backend } = await loadModules();

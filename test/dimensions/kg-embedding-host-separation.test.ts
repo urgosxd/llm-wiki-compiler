@@ -78,20 +78,51 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * Assert that the request just captured went to the wiki's embeddings host with
+ * the wiki's model and credential, and never to the chat host.
+ *
+ * Shared by the descriptor case and the env-bridge case: they pin two different
+ * paths to the SAME destination, so one copy of the expectation keeps them from
+ * drifting into asserting different things.
+ */
+function expectRequestOnEmbeddingsHost(): void {
+  const request = capturedEmbeddingRequest(fetchSpy.mock.calls[0] as unknown[]);
+  expect(request.url).toBe(`${EMBEDDINGS_HOST}/embeddings`);
+  expect(request.url).not.toContain(new URL(CHAT_HOST).hostname);
+  expect(request.model).toBe(WIKI_MODEL);
+  expect(request.authorization).toBe(`Bearer ${EMBED_KEY}`);
+}
+
 describe("the kg dimension embeds against the wiki's embeddings host (S2, S4)", () => {
   it("posts the wiki's model to the embeddings host, never to the chat host", async () => {
     const [host, embeddings, backend] = await loadModules();
     const descriptor = host.getEmbeddingProvider().describeEmbeddingBackend?.();
-    const run = backend.prepareEmbeddingBackend(descriptor, process.env);
 
+    // The descriptor path, asserted at the seam AND at the request: with the
+    // shared key in the environment this case is the REAL deployment, and the
+    // wiki-resolved backend is the one that must drive it.
+    expect(descriptor?.baseURL).toBe(EMBEDDINGS_HOST);
+    expect(descriptor?.apiKey).toBe(EMBED_KEY);
+    expect(descriptor?.model).toBe(WIKI_MODEL);
+
+    const run = backend.prepareEmbeddingBackend(descriptor, process.env);
     expect(run.problem).toBeNull();
+    expect(run.backend).toEqual(descriptor);
     await backend.withEmbeddingBackend(run.backend, () => embeddings.embedTexts(["a"]));
 
-    const request = capturedEmbeddingRequest(fetchSpy.mock.calls[0] as unknown[]);
-    expect(request.url).toBe(`${EMBEDDINGS_HOST}/embeddings`);
-    expect(request.url).not.toContain(new URL(CHAT_HOST).hostname);
-    expect(request.model).toBe(WIKI_MODEL);
-    expect(request.authorization).toBe(`Bearer ${EMBED_KEY}`);
+    expectRequestOnEmbeddingsHost();
+  });
+
+  it("lands on the embeddings host through the env bridge too, with the shared key set", async () => {
+    // The SECOND path, pinned so a broken bridge cannot hide behind a working
+    // descriptor (or the reverse): no backend is installed here, so the request
+    // is derived from the bridged KG environment alone.
+    const [, embeddings, backend] = await loadModules();
+
+    await backend.withEmbeddingBackend(undefined, () => embeddings.embedTexts(["a"]));
+
+    expectRequestOnEmbeddingsHost();
   });
 
   it("keeps a kg-side backend in charge when the operator configured one (S3)", async () => {

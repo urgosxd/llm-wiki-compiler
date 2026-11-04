@@ -79,8 +79,23 @@ function isLoopbackEndpoint(url: string): boolean {
   }
 }
 
-/** Stands in for a credential removed from a URL before it is printed. */
+/** Stands in for a missing credential source: absent, empty and whitespace-only. */
 const REDACTED = "***";
+
+/**
+ * The first value that is a real setting.
+ *
+ * A declared-but-empty variable (`OPENAI_API_KEY=`) is how a `.env` leaves a
+ * credential unset while still listing it, so it has to read as absent here.
+ * Passing that `""` to the SDK made ITS constructor throw "Missing credentials",
+ * which then surfaced as if it were this project's own configuration message.
+ */
+function firstPresent(...values: readonly (string | undefined)[]): string | undefined {
+  for (const value of values) {
+    if (value !== undefined && value.trim() !== "") return value;
+  }
+  return undefined;
+}
 
 /**
  * `url` with any embedded credential removed: userinfo replaced, and every query
@@ -162,7 +177,11 @@ export class OpenAIProvider implements LLMProvider {
     // The OpenAI SDK (v6+) throws on a missing/empty key at construction. Real
     // credential validation is owned by the provider guard, so pass a
     // placeholder when unset to defer the check to that single source of truth.
-    const resolvedKey = options.apiKey ?? process.env.OPENAI_API_KEY ?? PLACEHOLDER_API_KEY;
+    // Blank counts as unset: a `OPENAI_API_KEY=` line is not a credential, and
+    // handing its `""` to the SDK replaced the guard's named message with the
+    // SDK's own "Missing credentials".
+    const resolvedKey =
+      firstPresent(options.apiKey, process.env.OPENAI_API_KEY) ?? PLACEHOLDER_API_KEY;
     const timeout = options.timeoutMs ?? resolveOpenAITimeoutMs() ?? OPENAI_DEFAULT_TIMEOUT_MS;
     this.client = new OpenAI({
       apiKey: resolvedKey,

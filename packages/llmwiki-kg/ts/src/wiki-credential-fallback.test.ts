@@ -17,6 +17,8 @@ import {
   bridgeEnvWithWikiCredentials,
   findEmbeddingCredentialProblem,
   findEmbeddingModelProblem,
+  KG_BACKEND_VARIABLES,
+  KG_BRIDGED_VARIABLES,
   resolveWikiEmbeddingEndpoint,
   resolveWikiEmbeddingKey,
   resolveWikiEmbeddingProvider,
@@ -256,6 +258,64 @@ describe("an explicit KG-side value still wins (S3)", () => {
     });
     expect(bridged.EMBEDDING_PROVIDER).toBe("openai");
     expect(bridged.OPENAI_API_KEY).toBe(FAKE_KEY);
+  });
+});
+
+describe("the set that decides 'the operator configured the kg side' (S3)", () => {
+  it("leaves out the credential both namespaces share", () => {
+    // OPENAI_API_KEY is read by the wiki dimension too, so setting it cannot
+    // mean "the operator chose the kg backend": counting it here made the
+    // wiki-resolved descriptor unreachable in every deployment that shares it.
+    expect([...KG_BACKEND_VARIABLES]).not.toContain("OPENAI_API_KEY");
+  });
+
+  it("keeps the variables only the kg side owns, the model included", () => {
+    expect([...KG_BACKEND_VARIABLES]).toEqual([
+      "EMBEDDING_PROVIDER",
+      "GATEWAY_URL",
+      "GATEWAY_API_KEY",
+      "EMBEDDING_MODEL",
+    ]);
+  });
+
+  it("still bridges all five variables, shared key included", () => {
+    expect([...KG_BRIDGED_VARIABLES]).toEqual([
+      "EMBEDDING_PROVIDER",
+      "OPENAI_API_KEY",
+      "GATEWAY_URL",
+      "GATEWAY_API_KEY",
+      "EMBEDDING_MODEL",
+    ]);
+  });
+});
+
+describe("a blank EMBEDDING_MODEL is absent, never an empty model (S2, S4)", () => {
+  /** The model the schema applies when EMBEDDING_MODEL is absent. */
+  const schemaDefault = parseConfig({}).EMBEDDING_MODEL;
+
+  it("falls to the schema default instead of resolving to an empty string", () => {
+    const bridged = bridgeEnvWithWikiCredentials({ EMBEDDING_MODEL: "", LLMWIKI_PROVIDER: "openai" });
+    expect(parseConfig(bridged).EMBEDDING_MODEL).toBe(schemaDefault);
+  });
+
+  it("falls to the schema default for a whitespace-only value too", () => {
+    const bridged = bridgeEnvWithWikiCredentials({ EMBEDDING_MODEL: "  ", LLMWIKI_PROVIDER: "openai" });
+    expect(parseConfig(bridged).EMBEDDING_MODEL).toBe(schemaDefault);
+  });
+
+  it("names a real model in the 768 refusal, never an empty one", () => {
+    const env: NodeJS.ProcessEnv = { EMBEDDING_MODEL: "", LLMWIKI_PROVIDER: "openai" };
+    const message = findEmbeddingModelProblem(parseConfig(bridgeEnvWithWikiCredentials(env)).EMBEDDING_MODEL, env);
+
+    expect(message).toContain(`"${schemaDefault}"`);
+    expect(message).not.toContain('""');
+  });
+
+  it("names the schema default when the model it is handed is blank", () => {
+    const message = findEmbeddingModelProblem("", { LLMWIKI_PROVIDER: "openai" });
+
+    expect(message).toContain(`"${schemaDefault}"`);
+    expect(message).not.toContain('""');
   });
 });
 

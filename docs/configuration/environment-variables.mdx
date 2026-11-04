@@ -326,8 +326,14 @@ already part of a normal llmwiki setup: `OPENAI_API_KEY`,
 `OPENAI_BASE_URL`, and `LLMWIKI_EMBEDDING_PROVIDER`.
 
 An explicitly set KG-side variable always wins. The bridge only fills absences, so a
-deployment that already configures `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`,
-`GATEWAY_URL`, or `GATEWAY_API_KEY` keeps exactly the behavior it has today.
+deployment that already configures `EMBEDDING_PROVIDER`, `GATEWAY_URL`,
+`GATEWAY_API_KEY`, or `EMBEDDING_MODEL` keeps exactly the behavior it has today.
+
+`OPENAI_API_KEY` is deliberately not in that list. Both dimensions read it — it is
+the shared credential this section is about — so setting it says nothing about
+which backend the `kg` dimension should use. With only a shared key configured, the
+`kg` dimension reuses the backend the wiki dimension resolved, which is the same
+endpoint and credential, resolved once.
 
 Per variable, the first present value wins. The left column is the `kg` dimension's
 own variable; the other columns are the values it falls back to when that variable
@@ -387,9 +393,11 @@ one whose URL no variable names: a provider with a fixed endpoint needs no
 
 Resolution order for that backend, first applicable rule winning:
 
-1. An explicitly set `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`, `GATEWAY_URL` or
-   `GATEWAY_API_KEY` keeps the configuration exactly as the table above describes,
-   and the wiki-side backend is not consulted at all.
+1. An explicitly set `EMBEDDING_PROVIDER`, `GATEWAY_URL`, `GATEWAY_API_KEY` or
+   `EMBEDDING_MODEL` keeps the configuration exactly as the table above describes,
+   and the wiki-side backend is not consulted at all. A shared `OPENAI_API_KEY` on
+   its own does not count: both dimensions read it, so it cannot say which backend
+   the `kg` side chose.
 2. Otherwise the wiki dimension's resolved backend supplies the endpoint, the
    credential and the model.
 3. An explicitly set `EMBEDDING_MODEL` still decides the model sent in the request

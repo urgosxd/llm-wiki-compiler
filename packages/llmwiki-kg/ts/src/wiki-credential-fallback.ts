@@ -52,19 +52,27 @@ const KG_GATEWAY_API_KEY = "GATEWAY_API_KEY";
 const KG_MODEL = "EMBEDDING_MODEL";
 
 /**
- * The KG-side variables that configure the embedding backend: provider, endpoint
- * and credentials.
+ * The KG-side variables that configure the embedding backend: provider, gateway
+ * endpoint and gateway credential, plus the model the operator chose.
  *
  * EXPORTED because "the operator configured this side itself" is decided by
  * exactly this set, and a second list of the same names would be a second answer
- * to the same question. `EMBEDDING_MODEL` is deliberately NOT a member: naming a
- * model does not tell the kg dimension where to send the request.
+ * to the same question.
+ *
+ * WHY `OPENAI_API_KEY` IS NOT A MEMBER. That variable is SHARED: the wiki
+ * dimension reads it as its own embedding credential and the kg side reads it as
+ * the OpenAI provider's key — sharing it is the whole point of this bridge.
+ * Setting it therefore says nothing about which backend the kg side should use,
+ * so counting it as "the operator configured the kg backend" left the
+ * wiki-resolved descriptor uninstalled in every deployment that shares a key.
+ * The provider, the gateway endpoint, the gateway key and the model are the kg
+ * side's alone, so those keep deciding.
  */
 export const KG_BACKEND_VARIABLES = [
   KG_PROVIDER,
-  KG_OPENAI_KEY,
   KG_GATEWAY_URL,
   KG_GATEWAY_API_KEY,
+  KG_MODEL,
 ] as const;
 
 /**
@@ -74,8 +82,18 @@ export const KG_BACKEND_VARIABLES = [
  * wiki dimension's own variable tables. The test derives the names the wiki side
  * publishes and asserts this bridge honours exactly those, so a rename or a new
  * override on either side has to fail a test instead of drifting silently.
+ *
+ * Stated rather than derived from {@link KG_BACKEND_VARIABLES}: `OPENAI_API_KEY`
+ * is bridged but is NOT a kg-only backend choice (see that constant), so the two
+ * lists answer two different questions.
  */
-export const KG_BRIDGED_VARIABLES = [...KG_BACKEND_VARIABLES, KG_MODEL] as const;
+export const KG_BRIDGED_VARIABLES = [
+  KG_PROVIDER,
+  KG_OPENAI_KEY,
+  KG_GATEWAY_URL,
+  KG_GATEWAY_API_KEY,
+  KG_MODEL,
+] as const;
 
 /** Wiki-side sources, most- to least-specific. */
 const WIKI_EMBEDDING_PROVIDER = "LLMWIKI_EMBEDDING_PROVIDER";
@@ -92,6 +110,16 @@ const WIKI_EMBEDDING_MODEL = "LLMWIKI_EMBEDDING_MODEL";
  * chunk write has begun, so the width is judged before the first request.
  */
 const EMBEDDING_COLUMN_WIDTH = 768;
+
+/**
+ * The model the KG schema applies when `EMBEDDING_MODEL` is absent.
+ *
+ * Mirrored here for ONE reason: a blank resolved model still has to be refused
+ * by a message that names a real model, and this module cannot import the schema
+ * (the schema imports this bridge). `wiki-credential-fallback.test.ts` pins this
+ * value against `parseConfig({})`, so a change to either has to fail a test.
+ */
+const KG_SCHEMA_DEFAULT_MODEL = "text-embedding-3-small";
 
 /** The wiki provider assumed when neither provider variable is set. */
 const WIKI_PROVIDER_DEFAULT = "anthropic";
@@ -254,6 +282,10 @@ export function bridgeEnvWithWikiCredentials(env: NodeJS.ProcessEnv): NodeJS.Pro
   // so it is derived whichever provider resulted — and only when the operator
   // named one on the wiki side.
   fillIfAbsent(bridged, KG_MODEL, readPresent(env, WIKI_EMBEDDING_MODEL));
+  // A blank value is not a setting. Leaving `EMBEDDING_MODEL=` in the copy would
+  // defeat the schema default and make the width refusal interpolate an empty
+  // model name; dropping it lets the schema answer exactly as when it is absent.
+  if (isBlank(bridged[KG_MODEL])) delete bridged[KG_MODEL];
 
   const provider = (readPresent(bridged, KG_PROVIDER) ?? "").trim().toLowerCase();
   const wikiKey = resolveWikiEmbeddingKey(env);
@@ -324,13 +356,15 @@ export function findEmbeddingCredentialProblem(
 /**
  * The message refusing a model nobody chose, naming the variable that fixes it.
  *
- * @param resolvedModel - The model the configuration resolved to.
+ * @param resolvedModel - The model the configuration resolved to; blank when it
+ *   resolved none, in which case the schema default is what it would have sent.
  * @returns The exact 768-width message, never a credential value.
  */
 function dimensionProblem(resolvedModel: string): string {
+  const named = isBlank(resolvedModel) ? KG_SCHEMA_DEFAULT_MODEL : resolvedModel;
   return (
     `The kg dimension's embedding column is ${EMBEDDING_COLUMN_WIDTH} dimensions wide, ` +
-    `but the resolved model "${resolvedModel}" was not chosen by the operator. ` +
+    `but the resolved model "${named}" was not chosen by the operator. ` +
     `Set ${WIKI_EMBEDDING_MODEL} to a model that emits ` +
     `${EMBEDDING_COLUMN_WIDTH}-dimensional vectors.`
   );
