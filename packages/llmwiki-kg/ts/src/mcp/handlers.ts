@@ -24,7 +24,14 @@ export function textResult(text: string): CallToolResult {
   return { content: [{ type: "text", text }] };
 }
 
-const MISSING_STACK_ERROR = "Error: either 'domain' or 'stack_id' must be provided.";
+/**
+ * What every graph tool answers when the client names no Stack.
+ *
+ * The Stack is the tool argument and nothing else: there is no default Stack to
+ * fall back to and nothing in the environment to resolve one from, so an absent
+ * `stack_id` is a refusal rather than a request for "some" Stack.
+ */
+const MISSING_STACK_ERROR = "Error: 'stack_id' must be provided.";
 
 /** Narrow the tool-call `arguments` payload to a plain record. */
 export function asArguments(value: Readonly<Record<string, unknown>> | undefined): Record<string, unknown> {
@@ -54,13 +61,47 @@ function requiredArg(args: Record<string, unknown>, key: string): unknown {
   return args[key];
 }
 
+/** An absent-or-string value, already stringified for the query. */
+function stringParam(value: unknown): QueryValue {
+  return typeof value === "string" ? rawParam(value) : undefined;
+}
+
 /** An absent-or-string tool argument, already stringified for the query. */
 function optionalStringParam(
   args: Record<string, unknown>,
   key: string,
 ): QueryValue {
-  const value = args[key];
-  return typeof value === "string" ? rawParam(value) : undefined;
+  return stringParam(args[key]);
+}
+
+/** The Stack a graph tool names, and the domain filter it may add to it. */
+interface StackSelection {
+  readonly stackId: unknown;
+  readonly domain: unknown;
+  readonly hasDomain: boolean;
+}
+
+/**
+ * `stack_id`, which every graph tool requires, plus the optional `domain` filter.
+ *
+ * `stack_id` is the only way these tools name a Stack: it is forwarded as given,
+ * with no default and no fallback. `domain` used to be an alternative selector,
+ * and that either/or is gone — `domain` alone is refused, exactly like no
+ * argument at all, and when both are supplied `domain` is forwarded only as an
+ * additional narrowing filter. Returns `undefined` when `stack_id` is absent,
+ * which the handler must answer with {@link MISSING_STACK_ERROR}.
+ */
+function stackSelection(
+  args: Record<string, unknown>,
+): StackSelection | undefined {
+  if (!("stack_id" in args)) {
+    return undefined;
+  }
+  return {
+    stackId: args["stack_id"],
+    domain: args["domain"],
+    hasDomain: "domain" in args,
+  };
 }
 
 /**
@@ -130,14 +171,13 @@ export async function queryStack(
     max_entities: argOr(args, "max_entities", 8),
   };
 
-  // `if "domain" in args: ... elif "stack_id" in args:` — the Python tests key
-  // presence, not truthiness, and `domain` wins when both are supplied.
-  if ("domain" in args) {
-    payload["domain"] = args["domain"];
-  } else if ("stack_id" in args) {
-    payload["stack_id"] = args["stack_id"];
-  } else {
+  const stack = stackSelection(args);
+  if (stack === undefined) {
     return textResult(MISSING_STACK_ERROR);
+  }
+  payload["stack_id"] = stack.stackId;
+  if (stack.hasDomain) {
+    payload["domain"] = stack.domain;
   }
 
   const response = await deps.fetchImpl(`${deps.baseUrl}/aks/v1/context`, {
@@ -160,18 +200,20 @@ export async function traverseStack(
 ): Promise<CallToolResult> {
   // `max_depth` is declared `"type": "integer"` in the advertised schema.
   const maxDepth = argOr(args, "max_depth", 2);
-  const params: Record<string, QueryValue> = {
-    start: rawParam(asText(requiredArg(args, "start"))),
-    max_depth: typeof maxDepth === "number" ? intParam(maxDepth) : undefined,
-  };
-
-  if ("domain" in args) {
-    params["domain"] = optionalStringParam(args, "domain");
-  } else if ("stack_id" in args) {
-    params["stack_id"] = optionalStringParam(args, "stack_id");
-  } else {
+  // `start` is read before the Stack is: that is the order the Python's
+  // `args["start"]` ran in, and a client error there must still be a KeyError.
+  const start = rawParam(asText(requiredArg(args, "start")));
+  const stack = stackSelection(args);
+  if (stack === undefined) {
     return textResult(MISSING_STACK_ERROR);
   }
+
+  const params: Record<string, QueryValue> = {
+    start,
+    max_depth: typeof maxDepth === "number" ? intParam(maxDepth) : undefined,
+    stack_id: stringParam(stack.stackId),
+    domain: stack.hasDomain ? stringParam(stack.domain) : undefined,
+  };
 
   if ("relationship_types" in args) {
     params["relationship_types"] = optionalStringParam(args, "relationship_types");
@@ -202,18 +244,17 @@ export async function getEntities(
   // `str(0.0)` is "0.0"); `limit` is declared `"type": "integer"`.
   const minConfidence = argOr(args, "min_confidence", 0.0);
   const limit = argOr(args, "limit", 100);
+  const stack = stackSelection(args);
+  if (stack === undefined) {
+    return textResult(MISSING_STACK_ERROR);
+  }
+
   const params: Record<string, QueryValue> = {
     min_confidence: typeof minConfidence === "number" ? floatParam(minConfidence) : undefined,
     limit: typeof limit === "number" ? intParam(limit) : undefined,
+    stack_id: stringParam(stack.stackId),
+    domain: stack.hasDomain ? stringParam(stack.domain) : undefined,
   };
-
-  if ("domain" in args) {
-    params["domain"] = optionalStringParam(args, "domain");
-  } else if ("stack_id" in args) {
-    params["stack_id"] = optionalStringParam(args, "stack_id");
-  } else {
-    return textResult(MISSING_STACK_ERROR);
-  }
 
   if ("type" in args) {
     params["type"] = optionalStringParam(args, "type");

@@ -5,7 +5,6 @@
 
 import { describe, expect, it } from "vitest";
 import { MCP_TOOLS, listTools } from "./mcp.js";
-import { PYTHON_TOOLS } from "./mcp-harness.js";
 
 describe("listTools", () => {
   it("advertises exactly the four Python tools, including list_stacks", () => {
@@ -29,24 +28,25 @@ describe("listTools", () => {
     expect(MCP_TOOLS.filter((tool) => tool.name === "list_stacks")).toHaveLength(1);
   });
 
-  it("matches the Python Tool literals exactly, in order", () => {
-    // Full deep equality over name, description and inputSchema. Order matters:
-    // clients may render the list as-is, and the Python's order is the contract.
-    expect(JSON.parse(JSON.stringify(listTools()))).toEqual(PYTHON_TOOLS);
-  });
-
   it("returns a fresh array so a caller cannot mutate the registry", () => {
     const first = listTools();
     first.pop();
     expect(listTools()).toHaveLength(4);
   });
 
-  it("omits `required` where the Python omits it", () => {
+  it("requires stack_id on all three graph tools", () => {
+    // The Stack is only ever the argument: no default and no fallback, so the
+    // schema names it instead of letting a call arrive without one.
     const byName = new Map(MCP_TOOLS.map((tool) => [tool.name, tool.inputSchema]));
-    expect(byName.get("query_stack")?.["required"]).toEqual(["query"]);
-    expect(byName.get("traverse_stack")?.["required"]).toEqual(["start"]);
-    // Not `[]` — the key is absent entirely for these two.
-    expect(Object.hasOwn(byName.get("get_entities") ?? {}, "required")).toBe(false);
+    expect(byName.get("query_stack")?.["required"]).toEqual(["query", "stack_id"]);
+    expect(byName.get("traverse_stack")?.["required"]).toEqual(["start", "stack_id"]);
+    expect(byName.get("get_entities")?.["required"]).toEqual(["stack_id"]);
+  });
+
+  it("declares no `required` on list_stacks", () => {
+    // `list_stacks` discovers Stacks and takes no Stack argument, so it declares
+    // no `required`. Not `[]` — the key is absent entirely, a different schema.
+    const byName = new Map(MCP_TOOLS.map((tool) => [tool.name, tool.inputSchema]));
     expect(Object.hasOwn(byName.get("list_stacks") ?? {}, "required")).toBe(false);
   });
 

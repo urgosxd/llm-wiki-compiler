@@ -13,16 +13,38 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 // ============================================================
 
 /**
+ * How every graph tool describes the Stack argument it requires.
+ *
+ * The wording states both halves of the contract an LLM client has to read: the
+ * argument is mandatory, and there is nothing behind it to supply one, so
+ * omitting it is a refusal rather than "use whatever Stack is around".
+ */
+const REQUIRED_STACK_DESCRIPTION =
+  "UUID of the Stack. Required: no default Stack is assumed and none is resolved from the environment.";
+
+/**
+ * How every graph tool describes the `domain` filter.
+ *
+ * Deliberately not "narrows the query": with `stack_id` present the API resolves
+ * the Stack by id and never looks `domain` up (`core/stack_resolver.ts`), so the
+ * argument is forwarded as an additional filter and must not promise more.
+ */
+const OPTIONAL_DOMAIN_DESCRIPTION =
+  "Optional domain slug of the Stack, forwarded alongside stack_id as an additional filter; it never replaces stack_id.";
+
+/**
  * The tool definitions advertised by `list_tools()`.
  *
- * Every string below is copied verbatim from `app/mcp_server.py`. Descriptions
- * and JSON-Schema fragments are part of the client-facing contract: an LLM
- * client picks tools by reading them, so a reworded description is a behavior
- * change even though no test would call it one.
+ * Descriptions and JSON-Schema fragments are part of the client-facing contract:
+ * an LLM client picks tools by reading them, so a reworded description is a
+ * behavior change even though no test would call it one.
  *
- * `required` is absent for `get_entities` and `list_stacks` because the Python
- * omits it there — parse both branches explicitly rather than emitting an empty
- * `required: []`, which is a different schema.
+ * `required` names `stack_id` on all three graph tools — the Stack is only ever
+ * the argument, never a default and never a fallback, so the schema says so out
+ * loud instead of letting a call arrive without one. It stays absent for
+ * `list_stacks`, which lists every Stack on the server and has no Stack
+ * dimension of its own; an empty `required: []` would be a different schema, and
+ * a decorative required argument there would be a lie.
  */
 export const MCP_TOOLS: readonly Tool[] = [
   {
@@ -38,12 +60,11 @@ export const MCP_TOOLS: readonly Tool[] = [
         },
         domain: {
           type: "string",
-          description:
-            "Domain slug of the Stack (e.g. 'incident-response'). Either domain or stack_id is required.",
+          description: OPTIONAL_DOMAIN_DESCRIPTION,
         },
         stack_id: {
           type: "string",
-          description: "UUID of the Stack. Either domain or stack_id is required.",
+          description: REQUIRED_STACK_DESCRIPTION,
         },
         max_entities: {
           type: "integer",
@@ -51,7 +72,7 @@ export const MCP_TOOLS: readonly Tool[] = [
           default: 8,
         },
       },
-      required: ["query"],
+      required: ["query", "stack_id"],
     },
   },
   {
@@ -67,11 +88,11 @@ export const MCP_TOOLS: readonly Tool[] = [
         },
         domain: {
           type: "string",
-          description: "Domain slug of the Stack",
+          description: OPTIONAL_DOMAIN_DESCRIPTION,
         },
         stack_id: {
           type: "string",
-          description: "UUID of the Stack",
+          description: REQUIRED_STACK_DESCRIPTION,
         },
         max_depth: {
           type: "integer",
@@ -84,7 +105,7 @@ export const MCP_TOOLS: readonly Tool[] = [
             "Optional comma-separated list of relationship types to follow (e.g. 'requires,triggers')",
         },
       },
-      required: ["start"],
+      required: ["start", "stack_id"],
     },
   },
   {
@@ -96,11 +117,11 @@ export const MCP_TOOLS: readonly Tool[] = [
       properties: {
         domain: {
           type: "string",
-          description: "Domain slug of the Stack",
+          description: OPTIONAL_DOMAIN_DESCRIPTION,
         },
         stack_id: {
           type: "string",
-          description: "UUID of the Stack",
+          description: REQUIRED_STACK_DESCRIPTION,
         },
         type: {
           type: "string",
@@ -117,6 +138,7 @@ export const MCP_TOOLS: readonly Tool[] = [
           default: 100,
         },
       },
+      required: ["stack_id"],
     },
   },
   {

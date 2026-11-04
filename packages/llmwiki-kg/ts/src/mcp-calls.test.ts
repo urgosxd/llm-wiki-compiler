@@ -7,6 +7,12 @@ import { describe, expect, it } from "vitest";
 import { callTool } from "./mcp.js";
 import { BASE_URL, EXPECTED_CTX, EXPECTED_ENTS, EXPECTED_STACKS, EXPECTED_TRAV, ORACLE_STACKS_BODY, ORACLE_TRAVERSE_404_BODY, SYNTHETIC_CONTEXT_RESPONSE, SYNTHETIC_ENTITIES_RESPONSE, SYNTHETIC_TRAVERSE_RESPONSE, recordingFetch, textOf } from "./mcp-harness.js";
 
+/** A Stack id with the canonical lowercase-UUID shape the API accepts. */
+const STACK = "20efd96a-f6e1-4994-8812-65113f8db4db";
+
+/** The refusal every graph tool answers when the Stack argument is absent. */
+const MISSING_STACK_TEXT = "Error: 'stack_id' must be provided.";
+
 describe("callTool routing", () => {
   it("returns `Unknown tool: <name>` as text, exactly like Python", () => {
     const { fetchImpl, requests } = recordingFetch({ status: 200, body: "{}" });
@@ -24,7 +30,7 @@ describe("callTool routing", () => {
     });
     const result = await callTool(
       "query_stack",
-      { query: "how are refunds handled?", domain: "incident-response" },
+      { query: "how are refunds handled?", stack_id: STACK },
       { fetchImpl, baseUrl: BASE_URL },
     );
 
@@ -32,24 +38,25 @@ describe("callTool routing", () => {
     const request = requests[0];
     expect(request?.method).toBe("POST");
     expect(request?.url).toBe("http://localhost:8000/aks/v1/context");
-    // `max_entities` defaults to 8; only `domain` is forwarded, not `stack_id`.
-    expect(request?.body).toBe('{"query":"how are refunds handled?","max_entities":8,"domain":"incident-response"}');
+    // `max_entities` defaults to 8; the Stack is forwarded as the argument gave it.
+    expect(request?.body).toBe(`{"query":"how are refunds handled?","max_entities":8,"stack_id":"${STACK}"}`);
     expect(textOf(result)).toBe(EXPECTED_CTX);
   });
 
-  it("prefers `domain` over `stack_id` when both are supplied", async () => {
-    // Python: `if "domain" in args: ... elif "stack_id" in args:`.
+  it("forwards stack_id and passes domain only as an additional filter", async () => {
+    // `stack_id` names the Stack; `domain` narrows the query and never replaces it.
     const { fetchImpl, requests } = recordingFetch({
       status: 200,
       body: SYNTHETIC_CONTEXT_RESPONSE,
     });
     await callTool(
       "query_stack",
-      { query: "q", domain: "dom", stack_id: "00000000-0000-4000-8000-000000000000" },
+      { query: "q", domain: "dom", stack_id: STACK },
       { fetchImpl, baseUrl: BASE_URL },
     );
-    expect(requests[0]?.body).toContain('"domain":"dom"');
-    expect(requests[0]?.body).not.toContain("stack_id");
+    expect(requests[0]?.body).toBe(
+      `{"query":"q","max_entities":8,"stack_id":"${STACK}","domain":"dom"}`,
+    );
   });
 
   it("uses stack_id when domain is absent", async () => {
@@ -67,11 +74,11 @@ describe("callTool routing", () => {
     );
   });
 
-  it("errors without an HTTP call when neither domain nor stack_id is given", async () => {
+  it("refuses a call with no stack argument and issues no request", async () => {
     const { fetchImpl, requests } = recordingFetch({ status: 200, body: "{}" });
-    // Each tool's required argument is supplied so the missing-stack-selector
-    // branch is the one under test, matching the Python's order: `args["query"]`
-    // is read first, then the domain/stack_id check.
+    // Each tool's other required argument is supplied so the missing-Stack branch
+    // is the one under test, matching the Python's order: `args["query"]` is read
+    // first, then the Stack check.
     const required: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
       ["query_stack", { query: "q" }],
       ["traverse_stack", { start: "X" }],
@@ -79,9 +86,23 @@ describe("callTool routing", () => {
     ];
     for (const [tool, args] of required) {
       const result = await callTool(tool, args, { fetchImpl, baseUrl: BASE_URL });
-      expect(textOf(result), tool).toBe(
-        "Error: either 'domain' or 'stack_id' must be provided.",
-      );
+      expect(textOf(result), tool).toBe(MISSING_STACK_TEXT);
+    }
+    expect(requests).toHaveLength(0);
+  });
+
+  it("refuses a domain-only call and issues no request", async () => {
+    // `domain` is a filter, not a Stack identity: it cannot stand in for
+    // `stack_id`, and a refusal that still fired a request would be a bug.
+    const { fetchImpl, requests } = recordingFetch({ status: 200, body: "{}" });
+    const domainOnly: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+      ["query_stack", { query: "q", domain: "w1doc-probe-main" }],
+      ["traverse_stack", { start: "X", domain: "w1doc-probe-main" }],
+      ["get_entities", { domain: "w1doc-probe-main" }],
+    ];
+    for (const [tool, args] of domainOnly) {
+      const result = await callTool(tool, args, { fetchImpl, baseUrl: BASE_URL });
+      expect(textOf(result), tool).toBe(MISSING_STACK_TEXT);
     }
     expect(requests).toHaveLength(0);
   });
@@ -106,15 +127,15 @@ describe("callTool routing", () => {
     });
     const result = await callTool(
       "traverse_stack",
-      { start: "Payment Service", domain: "w1doc-probe-main", relationship_types: "requires,triggers" },
+      { start: "Payment Service", stack_id: STACK, relationship_types: "requires,triggers" },
       { fetchImpl, baseUrl: BASE_URL },
     );
 
     expect(requests[0]?.method).toBe("GET");
-    // Param order follows the Python dict: start, max_depth, then the stack
-    // selector, then relationship_types.
+    // Param order follows the Python dict: start, max_depth, then the Stack,
+    // then relationship_types.
     expect(requests[0]?.url).toBe(
-      "http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&domain=w1doc-probe-main&relationship_types=requires%2Ctriggers",
+      `http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&stack_id=${STACK}&relationship_types=requires%2Ctriggers`,
     );
     expect(textOf(result)).toBe(EXPECTED_TRAV);
   });
@@ -126,13 +147,13 @@ describe("callTool routing", () => {
     });
     const result = await callTool(
       "get_entities",
-      { domain: "w1doc-probe-main", type: "System" },
+      { stack_id: STACK, type: "System" },
       { fetchImpl, baseUrl: BASE_URL },
     );
 
     expect(requests[0]?.method).toBe("GET");
     expect(requests[0]?.url).toBe(
-      "http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&domain=w1doc-probe-main&type=System",
+      `http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&stack_id=${STACK}&type=System`,
     );
     expect(textOf(result)).toBe(EXPECTED_ENTS);
   });
@@ -146,24 +167,24 @@ describe("callTool routing", () => {
       {
         start: "Payment Service",
         max_depth: 2,
-        domain: "w1doc-probe-main",
+        stack_id: STACK,
         relationship_types: "requires,triggers",
       },
       { ...traverse, baseUrl: BASE_URL },
     );
     expect(traverse.requests[0]?.url).toBe(
-      "http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&domain=w1doc-probe-main&relationship_types=requires%2Ctriggers",
+      `http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&stack_id=${STACK}&relationship_types=requires%2Ctriggers`,
     );
 
     const entities = recordingFetch({ status: 200, body: SYNTHETIC_ENTITIES_RESPONSE });
     await callTool(
       "get_entities",
-      { domain: "w1doc-probe-main", type: "System" },
+      { stack_id: STACK, type: "System" },
       { ...entities, baseUrl: BASE_URL },
     );
     // min_confidence is a Python float (0.0), limit a Python int (100).
     expect(entities.requests[0]?.url).toBe(
-      "http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&domain=w1doc-probe-main&type=System",
+      `http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&stack_id=${STACK}&type=System`,
     );
   });
 
@@ -195,7 +216,7 @@ describe("callTool routing", () => {
     });
     await callTool(
       "query_stack",
-      { query: "q", domain: "d" },
+      { query: "q", stack_id: STACK },
       { fetchImpl, baseUrl: BASE_URL, apiKey: "k-123" },
     );
     expect(requests[0]?.headers["X-API-Key"]).toBe("k-123");
@@ -207,7 +228,7 @@ describe("callTool routing", () => {
     const { fetchImpl } = recordingFetch({ status: 404, body: ORACLE_TRAVERSE_404_BODY });
     const result = await callTool(
       "traverse_stack",
-      { start: "Nope", domain: "w1doc-probe-main" },
+      { start: "Nope", stack_id: STACK },
       { fetchImpl, baseUrl: BASE_URL },
     );
     expect(textOf(result)).toBe(
@@ -221,7 +242,7 @@ describe("callTool routing", () => {
     const { fetchImpl } = recordingFetch({ status: 500, body: "Internal Server Error" });
     const result = await callTool(
       "query_stack",
-      { query: "q", domain: "d" },
+      { query: "q", stack_id: STACK },
       { fetchImpl, baseUrl: BASE_URL },
     );
     expect(textOf(result)).toBe("AKS server returned 500: Internal Server Error");

@@ -7,32 +7,56 @@ import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createMcpServer } from "./mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { BASE_URL, EXPECTED_STACKS, ORACLE_STACKS_BODY, PYTHON_TOOLS, recordingFetch } from "./mcp-harness.js";
+import {
+  BASE_URL,
+  EXPECTED_CTX,
+  EXPECTED_ENTS,
+  EXPECTED_STACKS,
+  EXPECTED_TRAV,
+  ORACLE_STACKS_BODY,
+  SYNTHETIC_CONTEXT_RESPONSE,
+  SYNTHETIC_ENTITIES_RESPONSE,
+  SYNTHETIC_TRAVERSE_RESPONSE,
+  recordingFetch,
+  textOf,
+} from "./mcp-harness.js";
 import type { RecordedRequest, StubResponse } from "./mcp-harness.js";
 
-describe("MCP handshake over the in-memory transport", () => {
-  /** Connect a real SDK client to the server under test. */
-  async function connect(screen: StubResponse): Promise<{
-    client: Client;
-    requests: RecordedRequest[];
-    close: () => Promise<void>;
-  }> {
-    const { fetchImpl, requests } = recordingFetch(screen);
-    const server = createMcpServer({ fetchImpl, baseUrl: BASE_URL, apiKey: "" });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await server.connect(serverTransport);
-    const client = new Client({ name: "mcp-test-client", version: "1.0.0" });
-    await client.connect(clientTransport);
-    return {
-      client,
-      requests,
-      close: async () => {
-        await client.close();
-        await server.close();
-      },
-    };
-  }
+/** Connect a real SDK client to the server under test. */
+async function connect(screen: StubResponse): Promise<{
+  client: Client;
+  requests: RecordedRequest[];
+  close: () => Promise<void>;
+}> {
+  const { fetchImpl, requests } = recordingFetch(screen);
+  const server = createMcpServer({ fetchImpl, baseUrl: BASE_URL, apiKey: "" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: "mcp-test-client", version: "1.0.0" });
+  await client.connect(clientTransport);
+  return {
+    client,
+    requests,
+    close: async () => {
+      await client.close();
+      await server.close();
+    },
+  };
+}
 
+/* A Stack id with the canonical lowercase-UUID shape the API accepts. */
+const VALID_STACK = "20efd96a-f6e1-4994-8812-65113f8db4db";
+
+/** The three graph tools, each with every argument it needs except the Stack. */
+const GRAPH_TOOLS = [
+  { name: "query_stack", args: { query: "how are refunds handled?" } },
+  { name: "traverse_stack", args: { start: "Payment Service" } },
+  { name: "get_entities", args: {} },
+] as const;
+
+const MISSING_STACK_TEXT = "Error: 'stack_id' must be provided.";
+
+describe("MCP handshake over the in-memory transport", () => {
   it("answers tools/list with the four tools", async () => {
     const harness = await connect({ status: 200, body: ORACLE_STACKS_BODY });
     try {
@@ -43,8 +67,6 @@ describe("MCP handshake over the in-memory transport", () => {
         "get_entities",
         "list_stacks",
       ]);
-      // The protocol layer serializes inputSchema; it must survive unchanged.
-      expect(JSON.parse(JSON.stringify(response.tools))).toEqual(PYTHON_TOOLS);
     } finally {
       await harness.close();
     }
@@ -72,6 +94,135 @@ describe("MCP handshake over the in-memory transport", () => {
       const [first] = result.content as ReadonlyArray<{ type: string; text?: string }>;
       expect(first?.text).toBe("Unknown tool: bogus");
       expect(harness.requests).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe("stack_id is a required tool argument", () => {
+  it("advertises stack_id in `required` on all three graph tools", async () => {
+    const harness = await connect({ status: 200, body: ORACLE_STACKS_BODY });
+    try {
+      const { tools } = await harness.client.listTools();
+      const schemas = new Map(tools.map((tool) => [tool.name, tool.inputSchema]));
+      for (const { name } of GRAPH_TOOLS) {
+        const required = schemas.get(name)?.["required"] as readonly string[] | undefined;
+        expect(required, name).toContain("stack_id");
+      }
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("declares list_stacks exempt from the required stack_id", async () => {
+    const harness = await connect({ status: 200, body: ORACLE_STACKS_BODY });
+    try {
+      const { tools } = await harness.client.listTools();
+      const list = tools.find((tool) => tool.name === "list_stacks");
+      // A discovery tool cannot require the identifier of the thing it
+      // discovers, so the exemption is decided rather than overlooked.
+      expect(list?.inputSchema.properties).toEqual({});
+      expect(list?.inputSchema["required"]).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("refuses a call with no stack_id and issues no graph request", async () => {
+    const harness = await connect({ status: 200, body: ORACLE_STACKS_BODY });
+    try {
+      for (const { name, args } of GRAPH_TOOLS) {
+        const result = await harness.client.callTool({ name, arguments: { ...args } });
+        expect(textOf(result), name).toBe(MISSING_STACK_TEXT);
+      }
+      // Nothing reached the backend, so nothing could have been written.
+      expect(harness.requests).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("refuses a call that passes only domain", async () => {
+    const harness = await connect({ status: 200, body: ORACLE_STACKS_BODY });
+    try {
+      for (const { name, args } of GRAPH_TOOLS) {
+        const result = await harness.client.callTool({
+          name,
+          arguments: { ...args, domain: "w1doc-probe-main" },
+        });
+        // `domain` no longer substitutes for the Stack (S7).
+        expect(textOf(result), name).toBe(MISSING_STACK_TEXT);
+      }
+      expect(harness.requests).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("forwards stack_id plus domain when both are supplied", async () => {
+    const harness = await connect({ status: 200, body: SYNTHETIC_CONTEXT_RESPONSE });
+    try {
+      const result = await harness.client.callTool({
+        name: "query_stack",
+        arguments: {
+          query: "how are refunds handled?",
+          stack_id: VALID_STACK,
+          domain: "w1doc-probe-main",
+        },
+      });
+      expect(harness.requests[0]?.body).toBe(
+        `{"query":"how are refunds handled?","max_entities":8,"stack_id":"${VALID_STACK}","domain":"w1doc-probe-main"}`,
+      );
+      expect(textOf(result)).toBe(EXPECTED_CTX);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("query_stack still answers with a stack_id", async () => {
+    const harness = await connect({ status: 200, body: SYNTHETIC_CONTEXT_RESPONSE });
+    try {
+      const result = await harness.client.callTool({
+        name: "query_stack",
+        arguments: { query: "how are refunds handled?", stack_id: VALID_STACK },
+      });
+      expect(harness.requests[0]?.body).toBe(
+        `{"query":"how are refunds handled?","max_entities":8,"stack_id":"${VALID_STACK}"}`,
+      );
+      expect(textOf(result)).toBe(EXPECTED_CTX);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("traverse_stack still answers with a stack_id", async () => {
+    const harness = await connect({ status: 200, body: SYNTHETIC_TRAVERSE_RESPONSE });
+    try {
+      const result = await harness.client.callTool({
+        name: "traverse_stack",
+        arguments: { start: "Payment Service", stack_id: VALID_STACK },
+      });
+      expect(harness.requests[0]?.url).toBe(
+        `http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&stack_id=${VALID_STACK}`,
+      );
+      expect(textOf(result)).toBe(EXPECTED_TRAV);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("get_entities still answers with a stack_id", async () => {
+    const harness = await connect({ status: 200, body: SYNTHETIC_ENTITIES_RESPONSE });
+    try {
+      const result = await harness.client.callTool({
+        name: "get_entities",
+        arguments: { stack_id: VALID_STACK, type: "System" },
+      });
+      expect(harness.requests[0]?.url).toBe(
+        `http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&stack_id=${VALID_STACK}&type=System`,
+      );
+      expect(textOf(result)).toBe(EXPECTED_ENTS);
     } finally {
       await harness.close();
     }
