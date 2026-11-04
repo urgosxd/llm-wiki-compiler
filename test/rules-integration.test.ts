@@ -43,6 +43,15 @@ function makeCandidate(): RuleCandidate {
   };
 }
 
+/**
+ * A settings path that cannot exist.
+ *
+ * Pin it because resolveAnthropicAuthFromEnv falls back to the developer's real
+ * ~/.claude/settings.json; without it a credential-free test passes locally and
+ * fails in CI.
+ */
+const ABSENT_CLAUDE_SETTINGS_PATH = path.join(tmpdir(), "llmwiki-nonexistent-claude-settings.json");
+
 /** Write a candidate JSON into the pending rule-candidate directory. */
 async function writeCandidate(cwd: string, candidate: RuleCandidate): Promise<void> {
   const dir = path.join(cwd, ".llmwiki", "rule-candidates");
@@ -114,10 +123,15 @@ describe("rules CLI integration", () => {
     try {
       await writeFile(path.join(cwd, "sources", "guide.md"), "Always run tests.\nNo exceptions.\n", "utf-8");
       const result = await runCLI(["rules", "extract"], cwd, {
+        // The shared corpus pins LLMWIKI_PROVIDER=offline, a provider whose guard is a
+        // no-op, so the credential-preflight provider has to be pinned here instead.
+        LLMWIKI_PROVIDER: "anthropic",
         ANTHROPIC_API_KEY: "",
         ANTHROPIC_AUTH_TOKEN: "",
+        LLMWIKI_CLAUDE_SETTINGS_PATH: ABSENT_CLAUDE_SETTINGS_PATH,
       });
       expectCLIFailure(result);
+      expect(result.stderr).toContain('Anthropic credentials are required for the "anthropic" provider.');
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
