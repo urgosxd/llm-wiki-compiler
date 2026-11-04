@@ -96,8 +96,30 @@ export type { Config as KgConfig } from "./config.js";
 // consumer that has to REFUSE a configuration before it calls a provider, and
 // `ConfigValidationError` is the error type it raises: re-exporting the message
 // without the check would make every consumer re-derive the precedence rules.
-export { findEmbeddingCredentialProblem } from "./wiki-credential-fallback.js";
+export {
+  findEmbeddingCredentialProblem,
+  findEmbeddingModelProblem,
+  KG_BACKEND_VARIABLES,
+  KG_BRIDGED_VARIABLES,
+} from "./wiki-credential-fallback.js";
 export type { EmbeddingCredentialConfig } from "./wiki-credential-fallback.js";
+
+// The embedding backend a HOST resolved, injected per call (shared-credential
+// feature).
+//
+// Exported because the compiler is the consumer that resolves a provider the kg
+// dimension must reuse: it decides when the descriptor is allowed to drive the
+// run (`prepareEmbeddingBackend`), reports the reason when it cannot, and
+// installs it around the one call that embeds (`withEmbeddingBackend`).
+export {
+  configuresOwnEmbeddingBackend,
+  prepareEmbeddingBackend,
+  withEmbeddingBackend,
+} from "./embedding-backend.js";
+export type {
+  EmbeddingBackendDescriptor,
+  EmbeddingBackendRun,
+} from "./embedding-backend.js";
 
 export {
   parseTypeFilter,

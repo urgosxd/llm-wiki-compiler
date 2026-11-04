@@ -15,10 +15,17 @@
  *
  * ## What is bridged, and what deliberately is not
  *
- * Only the four variables above. `EMBEDDING_MODEL`, `EMBEDDING_DIM`,
- * `EXTRACTION_*`, `DATABASE_URL` and `AKS_API_KEY` describe storage shape or
- * unrelated credentials and keep their own resolution: deriving them from the
- * wiki side would silently reshape the graph to match the wiki.
+ * Only the five variables above. `EMBEDDING_DIM`, `EXTRACTION_*`, `DATABASE_URL`
+ * and `AKS_API_KEY` describe storage shape or unrelated credentials and keep
+ * their own resolution: deriving them from the wiki side would silently reshape
+ * the graph to match the wiki.
+ *
+ * `EMBEDDING_MODEL` is bridged, but ONLY from a value the operator actually
+ * named (`LLMWIKI_EMBEDDING_MODEL`). The wiki's own default table is never
+ * mirrored: those defaults are 1536-wide for an OpenAI endpoint, and the kg
+ * embedding columns are `vector(768)`, so inheriting a default would inherit an
+ * unusable model. No named model means no bridged model, and
+ * {@link findEmbeddingModelProblem} refuses the run instead.
  *
  * ## Precedence, which is backward compatibility first
  *
@@ -36,11 +43,29 @@
  * answers that question and never includes a credential VALUE.
  */
 
-/** The four KG-side variables this module owns. Nothing else is derived. */
+/** The four KG-side variables that configure the embedding BACKEND itself. */
 const KG_PROVIDER = "EMBEDDING_PROVIDER";
 const KG_OPENAI_KEY = "OPENAI_API_KEY";
 const KG_GATEWAY_URL = "GATEWAY_URL";
 const KG_GATEWAY_API_KEY = "GATEWAY_API_KEY";
+/** The KG-side variable that names the embedding model to request. */
+const KG_MODEL = "EMBEDDING_MODEL";
+
+/**
+ * The KG-side variables that configure the embedding backend: provider, endpoint
+ * and credentials.
+ *
+ * EXPORTED because "the operator configured this side itself" is decided by
+ * exactly this set, and a second list of the same names would be a second answer
+ * to the same question. `EMBEDDING_MODEL` is deliberately NOT a member: naming a
+ * model does not tell the kg dimension where to send the request.
+ */
+export const KG_BACKEND_VARIABLES = [
+  KG_PROVIDER,
+  KG_OPENAI_KEY,
+  KG_GATEWAY_URL,
+  KG_GATEWAY_API_KEY,
+] as const;
 
 /**
  * Every KG-side variable this module fills, in the order the table documents.
@@ -50,12 +75,7 @@ const KG_GATEWAY_API_KEY = "GATEWAY_API_KEY";
  * publishes and asserts this bridge honours exactly those, so a rename or a new
  * override on either side has to fail a test instead of drifting silently.
  */
-export const KG_BRIDGED_VARIABLES = [
-  KG_PROVIDER,
-  KG_OPENAI_KEY,
-  KG_GATEWAY_URL,
-  KG_GATEWAY_API_KEY,
-] as const;
+export const KG_BRIDGED_VARIABLES = [...KG_BACKEND_VARIABLES, KG_MODEL] as const;
 
 /** Wiki-side sources, most- to least-specific. */
 const WIKI_EMBEDDING_PROVIDER = "LLMWIKI_EMBEDDING_PROVIDER";
@@ -63,6 +83,15 @@ const WIKI_PROVIDER = "LLMWIKI_PROVIDER";
 const WIKI_EMBEDDING_KEY = "OPENAI_EMBEDDINGS_API_KEY";
 const WIKI_EMBEDDING_ENDPOINT = "OPENAI_EMBEDDINGS_BASE_URL";
 const WIKI_SHARED_ENDPOINT = "OPENAI_BASE_URL";
+/** The model the operator named for the wiki dimension's embeddings. */
+const WIKI_EMBEDDING_MODEL = "LLMWIKI_EMBEDDING_MODEL";
+/**
+ * Width of the kg dimension's `vector(768)` embedding columns (`schema.ts`).
+ *
+ * Postgres rejects a vector of any other width, and it does so only once the
+ * chunk write has begun, so the width is judged before the first request.
+ */
+const EMBEDDING_COLUMN_WIDTH = 768;
 
 /** The wiki provider assumed when neither provider variable is set. */
 const WIKI_PROVIDER_DEFAULT = "anthropic";
@@ -102,15 +131,28 @@ export interface EmbeddingCredentialConfig {
  * Every rule in this module treats those identically: an empty string is not a
  * credential, and a variable holding spaces is not a configured provider.
  *
+ * Exported because the injected-backend precedence in `embedding-backend.ts`
+ * judges blankness the same way; two definitions of "blank" would be two
+ * answers to the same question.
+ *
  * @param value - A raw environment or config string.
  * @returns True when the value cannot be used as a setting.
  */
-function isBlank(value: string | undefined): boolean {
+export function isBlank(value: string | undefined): boolean {
   return value === undefined || value.trim() === "";
 }
 
-/** The raw value of `name`, or `undefined` when it is blank. */
-function readPresent(env: NodeJS.ProcessEnv, name: string): string | undefined {
+/**
+ * The raw value of `name`, or `undefined` when it is blank.
+ *
+ * Exported for the same reason as {@link isBlank}: the injected-backend
+ * precedence has to read the operator's own choices exactly as the bridge does.
+ *
+ * @param env - Environment to read; never modified.
+ * @param name - Variable name.
+ * @returns The value as configured, or `undefined` when absent or blank.
+ */
+export function readPresent(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const value = env[name];
   return isBlank(value) ? undefined : value;
 }
@@ -196,17 +238,22 @@ function fillIfAbsent(
  * | `OPENAI_API_KEY` | itself | the wiki embedding key, when the provider is `openai` | — | `""` |
  * | `GATEWAY_URL` | itself | the wiki endpoint, when the provider is `gateway` | — | `""` |
  * | `GATEWAY_API_KEY` | itself | the wiki embedding key, when the provider is `gateway` | — | `""` |
+ * | `EMBEDDING_MODEL` | itself | `LLMWIKI_EMBEDDING_MODEL`, and only when that is set | — | schema default, then {@link findEmbeddingModelProblem} |
  *
  * Every other variable is copied through unchanged, and the argument is never
  * mutated: callers rely on `process.env` staying exactly as it was.
  *
  * @param env - Environment to bridge; never modified.
- * @returns A new environment object with the four KG variables filled.
+ * @returns A new environment object with the five KG variables filled.
  */
 export function bridgeEnvWithWikiCredentials(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const bridged: NodeJS.ProcessEnv = { ...env };
   const derivedProvider = deriveKgProvider(env, resolveWikiEmbeddingProvider(env));
   fillIfAbsent(bridged, KG_PROVIDER, derivedProvider);
+  // The model travels on its own: it names what to ask for, not where to ask,
+  // so it is derived whichever provider resulted — and only when the operator
+  // named one on the wiki side.
+  fillIfAbsent(bridged, KG_MODEL, readPresent(env, WIKI_EMBEDDING_MODEL));
 
   const provider = (readPresent(bridged, KG_PROVIDER) ?? "").trim().toLowerCase();
   const wikiKey = resolveWikiEmbeddingKey(env);
@@ -272,4 +319,48 @@ export function findEmbeddingCredentialProblem(
   if (provider === GATEWAY && isBlank(cfg.GATEWAY_URL)) return GATEWAY_URL_PROBLEM;
   if (provider === GATEWAY && isBlank(cfg.GATEWAY_API_KEY)) return GATEWAY_KEY_PROBLEM;
   return null;
+}
+
+/**
+ * The message refusing a model nobody chose, naming the variable that fixes it.
+ *
+ * @param resolvedModel - The model the configuration resolved to.
+ * @returns The exact 768-width message, never a credential value.
+ */
+function dimensionProblem(resolvedModel: string): string {
+  return (
+    `The kg dimension's embedding column is ${EMBEDDING_COLUMN_WIDTH} dimensions wide, ` +
+    `but the resolved model "${resolvedModel}" was not chosen by the operator. ` +
+    `Set ${WIKI_EMBEDDING_MODEL} to a model that emits ` +
+    `${EMBEDDING_COLUMN_WIDTH}-dimensional vectors.`
+  );
+}
+
+/**
+ * The reason the resolved embedding model cannot be used, or `null` when it can.
+ *
+ * WHY A MODEL NOBODY CHOSE IS REFUSED. The kg columns are `vector(768)` and the
+ * kg dimension performs no dimension reduction, so a provider default — 1536
+ * wide for an OpenAI endpoint — fails only inside Postgres, after the expensive
+ * chunk write has begun. That default is exactly what an installation which
+ * configured the wiki side and nothing else would inherit.
+ *
+ * WHY THE EXPLICIT CASES ARE ACCEPTED UNCONDITIONALLY. An operator who set
+ * `EMBEDDING_PROVIDER` is configuring this side itself, and S3 freezes that
+ * behaviour as it is today, unusable width included; naming a model does the
+ * same. The refusal therefore applies only to a configuration derived entirely
+ * from the wiki side.
+ *
+ * @param resolvedModel - The model the run would actually ask for.
+ * @param env - Environment to read; never modified.
+ * @returns The exact message to raise, or `null` when the model may be sent.
+ */
+export function findEmbeddingModelProblem(
+  resolvedModel: string,
+  env: NodeJS.ProcessEnv,
+): string | null {
+  if (readPresent(env, KG_PROVIDER) !== undefined) return null;
+  if (readPresent(env, KG_MODEL) !== undefined) return null;
+  if (readPresent(env, WIKI_EMBEDDING_MODEL) !== undefined) return null;
+  return dimensionProblem(resolvedModel);
 }

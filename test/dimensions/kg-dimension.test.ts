@@ -38,6 +38,7 @@ vi.mock("llmwiki-kg", async () => {
   // routes through it, and a stub would make the import fail rather than let the
   // suite state its own `loadOntology`. Tests may import packages freely.
   const core = await import("../../packages/llmwiki-kg/ts/src/core-index.js");
+  const { prepareCoreExports } = await import("./kg-core-mock.js");
   return {
     chunkAndEmbed,
     extractGraphFromChunks,
@@ -46,23 +47,7 @@ vi.mock("llmwiki-kg", async () => {
     consolidateEntityRows,
     consolidateRelationshipRows,
     registerDocumentRow,
-    kgConfig: {
-      DATABASE_URL: "postgres://from-config",
-      // A usable embedding credential, so the fail-closed door `prepare` opens
-      // with is not what this suite measures. Obviously fake: no provider is
-      // ever reached, the whole provider layer is replaced here.
-      EMBEDDING_PROVIDER: "openai",
-      OPENAI_API_KEY: "test-key-not-real",
-      GATEWAY_URL: "",
-      GATEWAY_API_KEY: "",
-    },
-    readStackOntology: core.readStackOntology,
-    defaultOntology: core.defaultOntology,
-    // The credential door `prepare` now opens with is real: this suite replaces
-    // the provider layer, not the rule that refuses a configuration with no
-    // credential, so both exports have to come through the mock.
-    findEmbeddingCredentialProblem: core.findEmbeddingCredentialProblem,
-    ConfigValidationError: core.ConfigValidationError,
+    ...prepareCoreExports(core, "postgres://from-config"),
   };
 });
 
@@ -79,6 +64,10 @@ function dimension(options: { dryRun?: boolean; databaseUrl?: string } = {}) {
     // declaration" keeps it free of a database without pretending the default
     // reader does not exist — the default is what a real run uses.
     loadOntology: async () => undefined,
+    // This suite is about sequencing, not the provider resolution it replaces,
+    // so it reports no embedding backend and stays independent of the machine's
+    // own provider environment.
+    describeEmbeddingBackend: () => undefined,
   }) as unknown as ReturnType<typeof createKgDimension>;
 }
 
@@ -86,6 +75,9 @@ function dimension(options: { dryRun?: boolean; databaseUrl?: string } = {}) {
 const INPUT = { source: "https://example.test/a", title: "A", document: "# A\nbody", body: "body" };
 
 beforeEach(() => {
+  // The model the operator named: `prepare` refuses a model nobody chose, and
+  // this suite measures the adapter, not that door.
+  vi.stubEnv("LLMWIKI_EMBEDDING_MODEL", "test-model-not-real");
   vi.clearAllMocks();
   chunkAndEmbed.mockResolvedValue([CHUNK]);
   extractGraphFromChunks.mockResolvedValue({ entities: [ENTITY], relationships: [RELATIONSHIP] });

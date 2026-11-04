@@ -25,18 +25,28 @@
  * Every credential below is obviously fake and no case opens a socket.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   findEmbeddingProviderProblem,
   resolveEmbeddingEndpoint,
 } from "../../utils/embedding-provider.js";
+import type { LLMProvider } from "../../utils/provider.js";
+import { buildProvider } from "../../utils/provider.js";
+import { SUPPORTED_PROVIDER_INPUTS, normalizeProviderName } from "../../utils/constants.js";
+import { OpenAIProvider } from "../../providers/openai.js";
 import { parseConfig } from "../../../packages/llmwiki-kg/ts/src/config.js";
 import {
   bridgeEnvWithWikiCredentials,
   findEmbeddingCredentialProblem,
   KG_BRIDGED_VARIABLES,
 } from "../../../packages/llmwiki-kg/ts/src/wiki-credential-fallback.js";
+import {
+  withEmbeddingBackend,
+  injectedEmbeddingEndpoint,
+  injectedEmbeddingModel,
+} from "../../../packages/llmwiki-kg/ts/src/embedding-backend.js";
+import { embeddingEndpoint } from "../../../packages/llmwiki-kg/ts/src/core/llm/endpoints.js";
 
 /** The one wiki provider the kg dimension has an equivalent for. */
 const WIKI_OPENAI = "openai";
@@ -208,7 +218,10 @@ describe("the bridged names are exactly the ones the vendored core reads (S2)", 
     // The core's parsed config IS the list of variables it reads, so comparing
     // against it needs no second copy of the names.
     const coreNames = new Set(Object.keys(parseConfig({})));
-    expect([...KG_BRIDGED_VARIABLES]).toHaveLength(4);
+    // Four backend variables plus the model: the bridge fills exactly these, and
+    // a sixth would arrive here undeclared.
+    expect([...KG_BRIDGED_VARIABLES]).toHaveLength(5);
+    expect([...KG_BRIDGED_VARIABLES]).toContain("EMBEDDING_MODEL");
     for (const name of KG_BRIDGED_VARIABLES) expect(coreNames).toContain(name);
 
     const keyVars = wikiKeyVars(WIKI_OPENAI);
@@ -225,5 +238,114 @@ describe("the bridged names are exactly the ones the vendored core reads (S2)", 
     const added = Object.keys(bridgeEnvWithWikiCredentials(env)).filter((name) => !(name in env));
     expect(added.length).toBeGreaterThan(0);
     for (const name of added) expect([...KG_BRIDGED_VARIABLES]).toContain(name);
+  });
+});
+
+/**
+ * Fake credential for every provider the factory can build, so the enumeration
+ * below never depends on the operator's own keys. Nothing here opens a socket.
+ */
+const BUILD_ENV: Record<string, string> = {
+  OPENAI_API_KEY: PROBE,
+  ORCAROUTER_API_KEY: PROBE,
+  MINIMAX_API_KEY: PROBE,
+  GITHUB_TOKEN: PROBE,
+  ATLASCLOUD_API_KEY: PROBE,
+  ANTHROPIC_API_KEY: PROBE,
+  LLMWIKI_EMBEDDING_MODEL: PROBE,
+  EMBEDDING_MODEL: "",
+};
+
+/** A provider the factory can build, or `undefined` when it refuses to be built. */
+function buildQuietly(name: string): LLMProvider | undefined {
+  try {
+    return buildProvider(name);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Every provider the factory builds that reports an embedding backend.
+ *
+ * DERIVED, NOT LISTED: a new OpenAI-compatible provider is picked up here with
+ * no edit, which is the point of the seam — the kg bridge carries no provider
+ * knowledge, so the conformance check must not carry a name table either.
+ */
+function descriptorProviders(): LLMProvider[] {
+  const seen = new Set<string>();
+  const reporting: LLMProvider[] = [];
+  for (const input of SUPPORTED_PROVIDER_INPUTS) {
+    const name = normalizeProviderName(input);
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const provider = buildQuietly(name);
+    if (provider !== undefined && typeof provider.describeEmbeddingBackend === "function") {
+      reporting.push(provider);
+    }
+  }
+  return reporting;
+}
+describe("every provider reporting an embedding backend matches what the bridge derives (S2)", () => {
+  beforeEach(() => {
+    for (const [name, value] of Object.entries(BUILD_ENV)) vi.stubEnv(name, value);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("finds at least the OpenAI-compatible providers", () => {
+    expect(descriptorProviders().length).toBeGreaterThan(0);
+  });
+
+  it("derives the instance's own endpoint, credential and model", async () => {
+    for (const provider of descriptorProviders()) {
+      const descriptor = provider.describeEmbeddingBackend?.();
+      if (descriptor === undefined) throw new Error("provider announced no descriptor");
+
+      const derived = await withEmbeddingBackend(descriptor, () => ({
+        endpoint: embeddingEndpoint(),
+        model: injectedEmbeddingModel(),
+      }));
+
+      // Not a single URL is named here: the expectation IS the instance's own
+      // report, so a provider added later is covered without touching this file.
+      expect(derived.endpoint).toEqual({
+        endpoint: `${descriptor.baseURL}/embeddings`,
+        apiKey: descriptor.apiKey,
+      });
+      expect(derived.model).toBe(descriptor.model);
+    }
+  });
+
+  it("leaves nothing injected once the call that received it returns", async () => {
+    const provider = descriptorProviders()[0];
+    if (provider === undefined) throw new Error("no provider reports an embedding backend");
+
+    await withEmbeddingBackend(provider.describeEmbeddingBackend?.(), () => undefined);
+
+    expect(injectedEmbeddingEndpoint()).toBeUndefined();
+    expect(injectedEmbeddingModel()).toBeUndefined();
+  });
+});
+
+describe("an OpenAI-compatible instance reports its own credentials (S2, S5)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("reports no credential when the client only ever received a placeholder", () => {
+    vi.stubEnv("OPENAI_API_KEY", undefined);
+    const provider = new OpenAIProvider("chat-model", {
+      baseURL: "https://placeholder.invalid/v1",
+      embeddingModel: PROBE,
+    });
+
+    const descriptor = provider.describeEmbeddingBackend();
+
+    expect(descriptor.apiKey).toBe("");
+    expect(descriptor.baseURL).toBe("https://placeholder.invalid/v1");
+    expect(descriptor.model).toBe(PROBE);
   });
 });

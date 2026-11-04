@@ -36,6 +36,7 @@ const createDatabase = vi.fn(() => ({
 // something. Tests may import packages freely; only `src/` may not.
 vi.mock("llmwiki-kg", async () => {
   const core = await import("../../packages/llmwiki-kg/ts/src/core-index.js");
+  const { prepareCoreExports } = await import("./kg-core-mock.js");
   return {
     chunkAndEmbed,
     extractGraphFromChunks,
@@ -45,20 +46,8 @@ vi.mock("llmwiki-kg", async () => {
     forgetDocumentRows: vi.fn(),
     createClient,
     createDatabase,
-    readStackOntology: core.readStackOntology,
-    defaultOntology: core.defaultOntology,
     OntologyError: core.OntologyError,
-    kgConfig: {
-      DATABASE_URL: "postgres://invalid/none",
-      // A usable embedding credential: this suite exercises the ontology
-      // wiring, not the credential door `prepare` opens with first.
-      EMBEDDING_PROVIDER: "openai",
-      OPENAI_API_KEY: "test-key-not-real",
-      GATEWAY_URL: "",
-      GATEWAY_API_KEY: "",
-    },
-    findEmbeddingCredentialProblem: core.findEmbeddingCredentialProblem,
-    ConfigValidationError: core.ConfigValidationError,
+    ...prepareCoreExports(core, "postgres://invalid/none"),
   };
 });
 
@@ -97,10 +86,17 @@ function build(loadOntology: () => Promise<unknown>) {
     stackName: "demo",
     dryRun: true,
     loadOntology,
+    // This suite replaces the provider layer, so it reports no embedding
+    // backend: the default resolver would consult the machine's own provider
+    // environment, which has nothing to do with what is under test here.
+    describeEmbeddingBackend: () => undefined,
   });
 }
 
 beforeEach(() => {
+  // The model door `prepare` opens with the credential one: a model the
+  // operator named, so this suite measures the ontology wiring.
+  vi.stubEnv("LLMWIKI_EMBEDDING_MODEL", "test-model-not-real");
   // Reset call history only. `clearAllMocks` would also drop the `createDatabase`
   // and `createClient` implementations this suite installs at module scope, and a
   // suite whose assertions read call history must not inherit the previous test's.
@@ -143,6 +139,7 @@ describe("kg dimension ontology wiring", () => {
       stackName: "demo",
       dryRun: true,
       loadOntology,
+      describeEmbeddingBackend: () => undefined,
     }).prepare(INPUT);
 
     expect(loadOntology).toHaveBeenCalledWith("stack-under-test", undefined);
@@ -174,6 +171,7 @@ describe("kg dimension ontology wiring", () => {
       dryRun: true,
       ontology: explicit,
       loadOntology,
+      describeEmbeddingBackend: () => undefined,
     }).prepare(INPUT);
 
     expect(loadOntology).not.toHaveBeenCalled();

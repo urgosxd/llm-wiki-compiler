@@ -39,6 +39,7 @@ const PROJECT_ENV = [
   "LLMWIKI_EMBEDDING_PROVIDER=openai",
   `OPENAI_EMBEDDINGS_BASE_URL=${CLOSED_ENDPOINT}`,
   "OPENAI_EMBEDDINGS_API_KEY=test-key-not-real",
+  "LLMWIKI_EMBEDDING_MODEL=test-model-not-real-768",
   "EXTRACTION_PROVIDER=gateway",
   `AKS_DATABASE_URL=${testDatabaseUrl()}`,
   "",

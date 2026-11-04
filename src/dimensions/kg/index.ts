@@ -30,12 +30,20 @@
  * configuration the bridge could not complete BEFORE any provider or database
  * call. A missing credential has to name the variable to set; a 401 from a
  * remote provider names nothing and costs a round trip.
+ *
+ * The bridge is the env-shaped half. The other half is the descriptor the wiki
+ * dimension's own provider reports (`describeEmbeddingBackend`): endpoint,
+ * credential and model as they were actually resolved, so the kg dimension
+ * reaches the same OpenAI-compatible service whatever that service is, with no
+ * provider table and no second endpoint convention. It is injected per call and
+ * only fills what the KG side left blank.
  */
 
 import { createHash } from "node:crypto";
 import {
   chunkAndEmbed,
   ConfigValidationError,
+  configuresOwnEmbeddingBackend,
   consolidateEntityRows,
   consolidateRelationshipRows,
   registerDocumentRow,
@@ -43,16 +51,22 @@ import {
   createDatabase,
   extractGraphFromChunks,
   findEmbeddingCredentialProblem,
+  findEmbeddingModelProblem,
   kgConfig,
   forgetDocumentRows,
+  prepareEmbeddingBackend,
   readStackOntology,
+  withEmbeddingBackend,
   type ChunkResult,
+  type EmbeddingBackendDescriptor,
+  type EmbeddingBackendRun,
   type ExtractedEntity,
   type ExtractedRelationship,
 } from "llmwiki-kg";
 import { defaultOntology } from "llmwiki-kg";
 import type { Database, ExtractionResult, Ontology } from "llmwiki-kg";
 
+import { getEmbeddingProvider } from "../../utils/embedding-provider.js";
 import { loadStoredOntology } from "./ontology-store.js";
 import type {
   CommittedWrite,
@@ -151,6 +165,16 @@ export interface KgDimensionOptions {
    * read.
    */
   readonly loadOntology?: (stackId: string, databaseUrl?: string) => Promise<unknown>;
+  /**
+   * Describes the embedding backend the wiki dimension resolved, called once per
+   * `prepare`.
+   *
+   * Injected for the same reason as {@link loadOntology}: the compiler supplies
+   * the host's real resolution, while tests supply a stub. Omitted means the
+   * host's own resolution is used, so a caller never has to know how the wiki
+   * side builds its provider.
+   */
+  readonly describeEmbeddingBackend?: () => EmbeddingBackendDescriptor | undefined;
 }
 
 /**
@@ -345,6 +369,93 @@ async function deleteGraphRows(options: KgDimensionOptions, source: string): Pro
 }
 
 /**
+ * Describe the embedding backend the active embedding provider resolved.
+ *
+ * The default for {@link KgDimensionOptions.describeEmbeddingBackend}: this is
+ * the provider the wiki dimension embeds with, so its report is the endpoint,
+ * credential and model that dimension will actually use.
+ *
+ * @returns The descriptor, or `undefined` for a provider that reports none.
+ * @throws {Error} Whatever the provider factory throws for an unusable provider.
+ */
+function describeActiveEmbeddingBackend(): EmbeddingBackendDescriptor | undefined {
+  return getEmbeddingProvider().describeEmbeddingBackend?.();
+}
+
+/** What a backend resolver reported: its descriptor, or why it could not answer. */
+interface BackendResolution {
+  readonly backend: EmbeddingBackendDescriptor | undefined;
+  readonly problem: string | null;
+}
+
+/**
+ * Ask the injected (or default) resolver for the backend, keeping its MESSAGE
+ * when it throws.
+ *
+ * A stack trace from a provider factory tells an operator nothing about which
+ * variable to set, so only the message is kept.
+ *
+ * @param options - Stack binding carrying the injected resolver, if any.
+ * @returns The reported backend, or the resolver's message.
+ */
+function describeBackend(options: KgDimensionOptions): BackendResolution {
+  const describe = options.describeEmbeddingBackend ?? describeActiveEmbeddingBackend;
+  try {
+    return { backend: describe(), problem: null };
+  } catch (error) {
+    return {
+      backend: undefined,
+      problem: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * The backend this run should install, and the reason it cannot run at all.
+ *
+ * WHY THE PROVIDER IS NOT BUILT WHEN THE KG SIDE CONFIGURED ITSELF: resolving a
+ * provider can fail for reasons that have nothing to do with this run — the wiki
+ * side's own credential, say — and a deployment already working on its KG-side
+ * variables must not start failing because of the wiki side.
+ *
+ * WHY THE RESOLVER'S FAILURE COMES LAST: when the env-derived rules explain the
+ * refusal, that explanation names the variable to set. Only when they are
+ * satisfied does the factory's own reason become the useful answer.
+ *
+ * @param options - Stack binding carrying the injected resolver, if any.
+ * @returns The descriptor to install, or the message to raise before any request.
+ */
+function resolveEmbeddingBackendRun(options: KgDimensionOptions): EmbeddingBackendRun {
+  const credentialProblem = findEmbeddingCredentialProblem(kgConfig, process.env);
+  if (configuresOwnEmbeddingBackend(process.env)) {
+    // Nothing to install, but the width rule still applies: a KG-side key with no
+    // provider of its own is still a provider derived from the wiki side.
+    return { backend: undefined, problem: credentialProblem ?? modelProblem() };
+  }
+  const resolution = describeBackend(options);
+  if (resolution.backend !== undefined) {
+    const run = prepareEmbeddingBackend(resolution.backend, process.env);
+    if (run.backend !== undefined || run.problem !== null) return run;
+  }
+  return {
+    backend: undefined,
+    problem: credentialProblem ?? resolution.problem ?? modelProblem(),
+  };
+}
+
+/**
+ * The width refusal for the model the KG config would ask for, or `null`.
+ *
+ * Judged LAST: it presumes a configuration that can embed at all, so a missing
+ * credential or a provider that cannot serve embeddings outranks a width worry.
+ *
+ * @returns The exact message, or `null` when the model may be sent.
+ */
+function modelProblem(): string | null {
+  return findEmbeddingModelProblem(kgConfig.EMBEDDING_MODEL, process.env);
+}
+
+/**
  * Build the graph dimension.
  *
  * @param options - Stack binding and an optional database override.
@@ -357,8 +468,8 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       // FIRST, before the ontology read and before any provider call. A missing
       // or partial embedding credential must fail closed with the variable to
       // set, never surface as a provider 401 or a stack trace.
-      const credentialProblem = findEmbeddingCredentialProblem(kgConfig, process.env);
-      if (credentialProblem !== null) throw new ConfigValidationError(credentialProblem);
+      const backendRun = resolveEmbeddingBackendRun(options);
+      if (backendRun.problem !== null) throw new ConfigValidationError(backendRun.problem);
       // Chunk labels carry the source identity only. The authoritative document
       // id does not exist yet — Postgres assigns it during `commit` — and chunks
       // stay in memory, so nothing depends on this placeholder matching a row.
@@ -367,7 +478,12 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       // before the expensive half spends a provider call, and it must fail rather
       // than degrade to permissive extraction.
       const ontology = await resolveOntology(options);
-      const chunks = await chunkAndEmbed(input.body, options.stackId, chunkLabel);
+      // Installed around this call alone: the override decides the endpoint,
+      // credential and model of the requests chunking makes, and is cleared
+      // again even when embedding fails.
+      const chunks = await withEmbeddingBackend(backendRun.backend, () =>
+        chunkAndEmbed(input.body, options.stackId, chunkLabel),
+      );
       // The ontology is spread rather than passed as `undefined`, so a run
       // without one calls extraction with exactly the two arguments it always
       // did. Call arity is observable to spies and mocks, and "no ontology

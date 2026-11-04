@@ -43,13 +43,36 @@ vi.mock("llmwiki-kg", async () => {
 
 const { createKgDimension } = await import("../../../src/dimensions/kg/index.js");
 const { ConfigValidationError } = await import("llmwiki-kg");
+// The injected wiring itself, read through the real modules so the assertions
+// observe the endpoint a request would actually use.
+const { injectedEmbeddingEndpoint } = await import(
+  "../../../packages/llmwiki-kg/ts/src/embedding-backend.js"
+);
+const { embeddingEndpoint } = await import(
+  "../../../packages/llmwiki-kg/ts/src/core/llm/endpoints.js"
+);
 
-/** Build the dimension under test with a stable stack binding. */
-function dimension() {
+/** The backend the wiki dimension reports for the injected cases below. */
+const INJECTED_BACKEND = {
+  baseURL: "https://wiki-embed.invalid/v1",
+  apiKey: FAKE_KEY,
+  model: "wiki-embed-768",
+};
+
+/**
+ * Build the dimension under test with a stable stack binding.
+ *
+ * `describeEmbeddingBackend` is the injected resolver the compiler supplies in
+ * production; `undefined` stands for a provider that does not implement it.
+ */
+function dimension(
+  describeEmbeddingBackend?: () => typeof INJECTED_BACKEND | undefined,
+) {
   return createKgDimension({
     stackId: "stack-1",
     stackName: "Stack One",
     loadOntology,
+    ...(describeEmbeddingBackend === undefined ? {} : { describeEmbeddingBackend }),
   });
 }
 
@@ -62,9 +85,11 @@ const INPUT = {
 };
 
 /** Run `prepare` and return the message it rejected with. */
-async function rejectionMessage(): Promise<string> {
+async function rejectionMessage(
+  describeEmbeddingBackend?: () => typeof INJECTED_BACKEND | undefined,
+): Promise<string> {
   try {
-    await dimension().prepare(INPUT);
+    await dimension(describeEmbeddingBackend).prepare(INPUT);
   } catch (error) {
     expect(error).toBeInstanceOf(ConfigValidationError);
     return (error as Error).message;
@@ -131,6 +156,8 @@ beforeEach(() => {
   vi.stubEnv("OPENAI_API_KEY", "");
   vi.stubEnv("GATEWAY_URL", "");
   vi.stubEnv("GATEWAY_API_KEY", "");
+  vi.stubEnv("EMBEDDING_MODEL", "");
+  vi.stubEnv("LLMWIKI_EMBEDDING_MODEL", "");
   chunkAndEmbed.mockResolvedValue([{ text: "body", embedding: [0.1], index: 0 }]);
   extractGraphFromChunks.mockResolvedValue({ entities: [], relationships: [] });
   fetchSpy = spyOnFetch();
@@ -166,7 +193,13 @@ describe("prepare refuses an unusable embedding credential (S4)", () => {
 
   it("still prepares a document when the credential is complete", async () => {
     state.config = { EMBEDDING_PROVIDER: "openai", OPENAI_API_KEY: FAKE_KEY, GATEWAY_URL: "", GATEWAY_API_KEY: "" };
+    // The credential the parsed config carries is the one the environment holds:
+    // an explicit KG-side key, which is exactly the deployment that must keep
+    // working and therefore never has its backend re-derived. The operator also
+    // named the model, so the 768-width door stays shut.
+    vi.stubEnv("OPENAI_API_KEY", FAKE_KEY);
     vi.stubEnv("LLMWIKI_EMBEDDING_PROVIDER", "openai");
+    vi.stubEnv("LLMWIKI_EMBEDDING_MODEL", "operator-chosen-768");
     loadOntology.mockResolvedValue(undefined);
 
     const prepared = await dimension().prepare(INPUT);
@@ -180,5 +213,78 @@ describe("prepare refuses an unusable embedding credential (S4)", () => {
     vi.stubEnv("LLMWIKI_EMBEDDING_PROVIDER", "openai");
 
     expect(await rejectionMessage()).not.toContain(FAKE_KEY);
+  });
+});
+
+/** The message the descriptor path adds when the wiki side resolved no key. */
+const NO_CREDENTIAL_MESSAGE =
+  "The wiki dimension's embedding backend resolved with no API key. " +
+  "Set the wiki dimension's embedding credential (OPENAI_EMBEDDINGS_API_KEY) " +
+  "or GATEWAY_API_KEY to reuse that backend in the kg dimension.";
+
+describe("the backend the wiki dimension resolved drives the kg dimension (S2, S4)", () => {
+  it("refuses a resolved backend that carries no credential, before any request", async () => {
+    const credentialless = { ...INJECTED_BACKEND, apiKey: "" };
+
+    expect(await rejectionMessage(() => credentialless)).toBe(NO_CREDENTIAL_MESSAGE);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(chunkAndEmbed).not.toHaveBeenCalled();
+  });
+
+  it("refuses a resolved model the operator did not choose, naming the 768 column", async () => {
+    const message = await rejectionMessage(() => INJECTED_BACKEND);
+
+    expect(message).toContain(INJECTED_BACKEND.model);
+    expect(message).toContain("768");
+    expect(message).toContain("LLMWIKI_EMBEDDING_MODEL");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(chunkAndEmbed).not.toHaveBeenCalled();
+  });
+
+  it("keeps the named refusal when the provider does not implement the member", async () => {
+    state.config = { EMBEDDING_PROVIDER: "openai", OPENAI_API_KEY: "", GATEWAY_URL: "", GATEWAY_API_KEY: "" };
+    vi.stubEnv("LLMWIKI_EMBEDDING_PROVIDER", "anthropic");
+
+    const message = await rejectionMessage(() => undefined);
+
+    expect(message).toBe(
+      'LLMWIKI_EMBEDDING_PROVIDER="anthropic" has no kg-dimension equivalent. ' +
+        "The kg dimension embeds through EMBEDDING_PROVIDER=openai or gateway; " +
+        "set one of those with its credential.",
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a resolver failure as its message, never a stack trace", async () => {
+    state.config = { EMBEDDING_PROVIDER: "openai", OPENAI_API_KEY: FAKE_KEY, GATEWAY_URL: "", GATEWAY_API_KEY: "" };
+    vi.stubEnv("LLMWIKI_EMBEDDING_PROVIDER", "openai");
+    const failing = () => {
+      throw new Error('LLMWIKI_EMBEDDING_PROVIDER="x" cannot serve embeddings.');
+    };
+
+    const message = await rejectionMessage(failing);
+
+    expect(message).toBe('LLMWIKI_EMBEDDING_PROVIDER="x" cannot serve embeddings.');
+    expect(message).not.toContain("    at ");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("installs the resolved backend for the embedding call and clears it afterwards", async () => {
+    state.config = { EMBEDDING_PROVIDER: "openai", OPENAI_API_KEY: "", GATEWAY_URL: "", GATEWAY_API_KEY: "" };
+    vi.stubEnv("LLMWIKI_EMBEDDING_MODEL", "operator-chosen-768");
+    loadOntology.mockResolvedValue(undefined);
+    let insideEndpoint: unknown;
+    chunkAndEmbed.mockImplementationOnce(async () => {
+      insideEndpoint = embeddingEndpoint();
+      return [{ text: "body", embedding: [0.1], index: 0 }];
+    });
+
+    await dimension(() => INJECTED_BACKEND).prepare(INPUT);
+
+    expect(insideEndpoint).toEqual({
+      endpoint: `${INJECTED_BACKEND.baseURL}/embeddings`,
+      apiKey: FAKE_KEY,
+    });
+    expect(injectedEmbeddingEndpoint()).toBeUndefined();
   });
 });

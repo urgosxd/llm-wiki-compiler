@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 import {
   bridgeEnvWithWikiCredentials,
   findEmbeddingCredentialProblem,
+  findEmbeddingModelProblem,
   resolveWikiEmbeddingEndpoint,
   resolveWikiEmbeddingKey,
   resolveWikiEmbeddingProvider,
@@ -29,6 +30,15 @@ const FAKE_KEY = "test-key-not-real";
 const FAKE_ENDPOINT = "https://gateway.invalid/v1";
 /** A second endpoint, to prove which override wins. */
 const OTHER_ENDPOINT = "https://other.invalid/v1";
+/** An embedding model shaped like the one an OpenAI-compatible host names. */
+const WIKI_MODEL = "hf:nomic-ai/nomic-embed-text-v1.5";
+/** The 1536-wide model the KG schema falls back to on its own. */
+const DEFAULT_KG_MODEL = "text-embedding-3-small";
+/** The exact 768-width refusal, which interpolates the model that resolved. */
+const DIMENSION_PROBLEM =
+  `The kg dimension's embedding column is 768 dimensions wide, but the resolved model ` +
+  `"${DEFAULT_KG_MODEL}" was not chosen by the operator. Set LLMWIKI_EMBEDDING_MODEL to a ` +
+  `model that emits 768-dimensional vectors.`;
 
 /** A KG-side config carrying exactly the four variables the check reads. */
 function kgConfig(
@@ -151,6 +161,70 @@ describe("bridgeEnvWithWikiCredentials (S2)", () => {
     expect(bridged.ANTHROPIC_API_KEY).toBe(FAKE_KEY);
     expect(bridged).not.toBe(env);
     expect(env).toEqual(before);
+  });
+});
+
+describe("EMBEDDING_MODEL is bridged only when the wiki side named one (S2)", () => {
+  it("derives the wiki's embedding model when the KG side has none", () => {
+    const bridged = bridgeEnvWithWikiCredentials({
+      LLMWIKI_EMBEDDING_PROVIDER: "openai",
+      LLMWIKI_EMBEDDING_MODEL: WIKI_MODEL,
+    });
+    expect(bridged.EMBEDDING_MODEL).toBe(WIKI_MODEL);
+  });
+
+  it("never mirrors a wiki default when no model was named", () => {
+    const bridged = bridgeEnvWithWikiCredentials({
+      LLMWIKI_PROVIDER: "openai",
+      OPENAI_BASE_URL: OTHER_ENDPOINT,
+    });
+    expect(bridged).not.toHaveProperty("EMBEDDING_MODEL");
+  });
+
+  it("keeps an explicitly set KG-side model (S3)", () => {
+    const bridged = bridgeEnvWithWikiCredentials({
+      EMBEDDING_MODEL: "kg-own-model",
+      LLMWIKI_EMBEDDING_MODEL: WIKI_MODEL,
+    });
+    expect(bridged.EMBEDDING_MODEL).toBe("kg-own-model");
+  });
+
+  it("counts a blank KG-side model as absent and fills it", () => {
+    const bridged = bridgeEnvWithWikiCredentials({
+      EMBEDDING_MODEL: "   ",
+      LLMWIKI_EMBEDDING_MODEL: WIKI_MODEL,
+    });
+    expect(bridged.EMBEDDING_MODEL).toBe(WIKI_MODEL);
+  });
+
+  it("reaches the parsed KG config as the model its requests ask for", () => {
+    const env = { LLMWIKI_PROVIDER: "openai", LLMWIKI_EMBEDDING_MODEL: WIKI_MODEL };
+    expect(parseConfig(bridgeEnvWithWikiCredentials(env)).EMBEDDING_MODEL).toBe(WIKI_MODEL);
+  });
+});
+
+describe("findEmbeddingModelProblem refuses a model nobody chose (S4)", () => {
+  it("names LLMWIKI_EMBEDDING_MODEL and the 768 requirement", () => {
+    expect(findEmbeddingModelProblem(DEFAULT_KG_MODEL, { LLMWIKI_PROVIDER: "openai" })).toBe(
+      DIMENSION_PROBLEM,
+    );
+  });
+
+  it("accepts a model chosen on either side", () => {
+    const derived = { LLMWIKI_PROVIDER: "openai" };
+
+    expect(
+      findEmbeddingModelProblem(DEFAULT_KG_MODEL, { ...derived, LLMWIKI_EMBEDDING_MODEL: WIKI_MODEL }),
+    ).toBeNull();
+    expect(
+      findEmbeddingModelProblem(DEFAULT_KG_MODEL, { ...derived, EMBEDDING_MODEL: "kg-own-model" }),
+    ).toBeNull();
+  });
+
+  it("keeps today's behaviour for an explicit KG-side EMBEDDING_PROVIDER", () => {
+    expect(
+      findEmbeddingModelProblem(DEFAULT_KG_MODEL, { EMBEDDING_PROVIDER: "openai" }),
+    ).toBeNull();
   });
 });
 

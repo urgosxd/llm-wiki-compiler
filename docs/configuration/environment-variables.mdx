@@ -339,6 +339,7 @@ is empty or whitespace-only.
 | `OPENAI_API_KEY` | `OPENAI_API_KEY` | `OPENAI_EMBEDDINGS_API_KEY`, only when the resolved provider is `openai` | — | `""`, then the error below |
 | `GATEWAY_URL` | `GATEWAY_URL` | `OPENAI_EMBEDDINGS_BASE_URL`, then `OPENAI_BASE_URL`; only when the resolved provider is `gateway` | — | `""`, then the error below |
 | `GATEWAY_API_KEY` | `GATEWAY_API_KEY` | `OPENAI_EMBEDDINGS_API_KEY`, then `OPENAI_API_KEY`; only when the resolved provider is `gateway` | — | `""`, then the error below |
+| `EMBEDDING_MODEL` | `EMBEDDING_MODEL` | `LLMWIKI_EMBEDDING_MODEL`, only when you set it | — | the `kg` schema default, then the 768-width error below |
 
 `W` is the wiki embedding provider: `LLMWIKI_EMBEDDING_PROVIDER` when set, otherwise
 `LLMWIKI_PROVIDER`, lowercased and trimmed. When both are unset, `W` is `anthropic`,
@@ -346,8 +347,11 @@ which has no `kg` equivalent. "The wiki embedding endpoint override is set" mean
 `OPENAI_EMBEDDINGS_BASE_URL` or `OPENAI_BASE_URL` is non-empty. Empty and
 whitespace-only values count as absent, everywhere.
 
-Only those four variables are shared. `EMBEDDING_MODEL`, `EMBEDDING_DIM`,
-`EXTRACTION_MODEL`, `EXTRACTION_PROVIDER`, `EXTRACTION_STRICT_SCHEMA`,
+Only those five variables are shared. `EMBEDDING_MODEL` is shared **only from a model you
+named** in `LLMWIKI_EMBEDDING_MODEL`; the wiki dimension's own default model table is
+never mirrored, because its `openai` default is 1536-wide and the `kg` embedding
+columns are `vector(768)`, so inheriting a default would inherit an unusable model.
+`EMBEDDING_DIM`, `EXTRACTION_MODEL`, `EXTRACTION_PROVIDER`, `EXTRACTION_STRICT_SCHEMA`,
 `DATABASE_URL`, and `AKS_API_KEY` keep their own resolution and are never derived
 from the wiki side: they describe storage shape and unrelated credentials, not the
 shared embedding credential. In particular, the `kg` dimension's extraction provider
@@ -372,6 +376,25 @@ next section rather than mapped onto `openai`, because no equivalent mapping is
 defined. The `kg` dimension embeds through `EMBEDDING_PROVIDER=openai` or `gateway`,
 with one of those two configured.
 
+### How the `kg` dimension reuses the wiki backend
+
+Beyond the four variables above, the `kg` dimension asks the wiki dimension's own
+embedding provider for the backend it actually resolved — the base URL, the
+credential and the model id — and uses that triple for its own embedding requests.
+This is what makes the reuse work for **any** OpenAI-compatible endpoint, including
+one whose URL no variable names: a provider with a fixed endpoint needs no
+`GATEWAY_URL` at all as long as the wiki dimension can embed with it.
+
+Resolution order for that backend, first applicable rule winning:
+
+1. An explicitly set `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`, `GATEWAY_URL` or
+   `GATEWAY_API_KEY` keeps the configuration exactly as the table above describes,
+   and the wiki-side backend is not consulted at all.
+2. Otherwise the wiki dimension's resolved backend supplies the endpoint, the
+   credential and the model.
+3. An explicitly set `EMBEDDING_MODEL` still decides the model sent in the request
+   body, even when the rest of the backend comes from rule 2.
+
 ### When the shared credential is incomplete
 
 The `kg` dimension checks its embedding credential immediately before the first
@@ -384,11 +407,18 @@ so you never see a provider `401` or a stack trace for this. These are the messa
 | Resolved provider `gateway`, no URL | `EMBEDDING_PROVIDER=gateway but GATEWAY_URL is not set. Set GATEWAY_URL, or OPENAI_EMBEDDINGS_BASE_URL to reuse the wiki dimension's endpoint.` |
 | Resolved provider `gateway`, URL but no key | `EMBEDDING_PROVIDER=gateway but GATEWAY_API_KEY is not set. Set GATEWAY_API_KEY, or OPENAI_EMBEDDINGS_API_KEY to reuse the wiki dimension's credential.` |
 | `W` (the wiki embedding provider) has no `kg` equivalent | `LLMWIKI_EMBEDDING_PROVIDER="<value>" has no kg-dimension equivalent. The kg dimension embeds through EMBEDDING_PROVIDER=openai or gateway; set one of those with its credential.` |
+| The wiki backend resolved, but without a credential | `The wiki dimension's embedding backend resolved with no API key. Set the wiki dimension's embedding credential (OPENAI_EMBEDDINGS_API_KEY) or GATEWAY_API_KEY to reuse that backend in the kg dimension.` |
+| The wiki backend resolved, but no model was chosen | `The kg dimension's embedding column is 768 dimensions wide, but the resolved model "<model>" was not chosen by the operator. Set LLMWIKI_EMBEDDING_MODEL to a model that emits 768-dimensional vectors.` |
 
 Each message names the fix. Setting the variable it names is enough; setting both
 sides is not required. This check applies to the `kg` dimension only, and it leaves
 the startup validation described in [Provider selection](#provider-selection)
 unchanged.
+
+The last two messages describe the wiki-side backend: it resolved without a key,
+or its model is a provider default rather than your choice. In both cases nothing is
+sent to the provider, so the `kg` dimension never stores a vector of the wrong width
+or asks an endpoint to authenticate a key it never received.
 
 ### The kg embedding column is 768 wide
 
@@ -396,6 +426,14 @@ The `kg` dimension stores embeddings in a `vector(768)` column and, like the wik
 dimension, performs no dimension reduction on the provider's response. The shared
 credential must therefore point at an embedding source that emits 768-dimensional
 vectors.
+
+When the embedding model comes from the wiki side rather than from your own
+configuration, the `kg` dimension enforces this before the first request: with no
+`EMBEDDING_PROVIDER` set on the `kg` side, and neither `LLMWIKI_EMBEDDING_MODEL` nor
+`EMBEDDING_MODEL` set, the model is a provider default — commonly 1536 dimensions —
+so the run is refused with the last message in the table above instead of failing
+later inside Postgres. An explicitly set `EMBEDDING_PROVIDER` or `EMBEDDING_MODEL`
+keeps exactly the behavior it had before this bridge existed.
 
 ---
 

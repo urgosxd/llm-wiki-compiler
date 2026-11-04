@@ -13,7 +13,7 @@
  * credentials, and no network. What is under test is the wiring, not the model.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { validateOntology } from "../../packages/llmwiki-kg/ts/src/core/ontology.js";
 
@@ -29,6 +29,7 @@ vi.mock("llmwiki-kg", async () => {
   // routes through it, and a stub would make the import fail rather than let the
   // suite state its own `loadOntology`. Tests may import packages freely.
   const core = await import("../../packages/llmwiki-kg/ts/src/core-index.js");
+  const { prepareCoreExports } = await import("./kg-core-mock.js");
   return {
     chunkAndEmbed,
     extractGraphFromChunks,
@@ -40,19 +41,7 @@ vi.mock("llmwiki-kg", async () => {
     createDatabase: vi.fn(() => ({
       transaction: async (run: (tx: unknown) => Promise<void>) => run({}),
     })),
-    kgConfig: {
-      DATABASE_URL: "postgres://invalid/none",
-      // A usable embedding credential: this suite exercises the ontology
-      // wiring, not the credential door `prepare` opens with first.
-      EMBEDDING_PROVIDER: "openai",
-      OPENAI_API_KEY: "test-key-not-real",
-      GATEWAY_URL: "",
-      GATEWAY_API_KEY: "",
-    },
-    readStackOntology: core.readStackOntology,
-    defaultOntology: core.defaultOntology,
-    findEmbeddingCredentialProblem: core.findEmbeddingCredentialProblem,
-    ConfigValidationError: core.ConfigValidationError,
+    ...prepareCoreExports(core, "postgres://invalid/none"),
   };
 });
 
@@ -88,9 +77,18 @@ async function commitWith(extraction: Record<string, unknown>) {
     stackName: "demo",
     ontology: ONTOLOGY,
     loadOntology: async () => undefined,
+    // The provider layer is replaced here, so no embedding backend is reported:
+    // the default resolver would consult the machine's own provider environment.
+    describeEmbeddingBackend: () => undefined,
   });
   return dimension.commit(await dimension.prepare(INPUT));
 }
+
+beforeEach(() => {
+  // The model the operator named: `prepare` refuses a model nobody chose, so
+  // this suite states that wiring too and measures the ontology path instead.
+  vi.stubEnv("LLMWIKI_EMBEDDING_MODEL", "test-model-not-real");
+});
 
 describe("kg dimension with a declared ontology", () => {
   it("passes the ontology through to extraction", async () => {
@@ -107,6 +105,7 @@ describe("kg dimension with a declared ontology", () => {
       stackName: "demo",
       ontology: ONTOLOGY,
       dryRun: true,
+      describeEmbeddingBackend: () => undefined,
     }).prepare(INPUT);
 
     expect(extractGraphFromChunks).toHaveBeenCalledWith([CHUNK], "demo", ONTOLOGY);
@@ -150,6 +149,7 @@ describe("kg dimension without an ontology", () => {
       stackName: "demo",
       dryRun: true,
       loadOntology: async () => undefined,
+      describeEmbeddingBackend: () => undefined,
     }).prepare(INPUT);
 
     // Exactly three arguments, the third being the default ontology. This used to
