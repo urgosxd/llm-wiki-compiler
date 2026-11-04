@@ -22,6 +22,15 @@ import { runCLI, expectCLIExit, expectCLIFailure } from "./fixtures/run-cli.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * A settings path that cannot exist.
+ *
+ * Pin it because resolveAnthropicAuthFromEnv falls back to the developer's real
+ * ~/.claude/settings.json; without it a credential-free test passes locally and
+ * fails in CI.
+ */
+const ABSENT_CLAUDE_SETTINGS_PATH = path.join(tmpdir(), "llmwiki-nonexistent-claude-settings.json");
+
 /** Create a disposable temp directory with a sources/ sub-folder. */
 async function makeTempWorkspace(suffix: string): Promise<string> {
   const cwd = path.join(tmpdir(), `llmwiki-review-test-${suffix}-${Date.now()}`);
@@ -142,11 +151,16 @@ describe("review integration tests", () => {
     const cwd = await makeTempWorkspace("compile-review-no-key");
     try {
       const result = await runCLI(["compile", "--review"], cwd, {
+        // The shared corpus pins LLMWIKI_PROVIDER=offline, a provider whose guard is a
+        // no-op, so the credential-preflight provider has to be pinned here instead.
+        LLMWIKI_PROVIDER: "anthropic",
         ANTHROPIC_API_KEY: "",
         ANTHROPIC_AUTH_TOKEN: "",
+        LLMWIKI_CLAUDE_SETTINGS_PATH: ABSENT_CLAUDE_SETTINGS_PATH,
       });
       expectCLIFailure(result);
       expect(result.stderr).toContain("Error:");
+      expect(result.stderr).toContain('Anthropic credentials are required for the "anthropic" provider.');
     } finally {
       await cleanupDir(cwd);
     }
