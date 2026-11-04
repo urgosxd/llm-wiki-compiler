@@ -93,3 +93,4 @@ L7: Observed fact for S8: the kg dimension's ingest write set is `stack_document
 
 L8: Accepted side effect: loading `.env` earlier also lets `packages/llmwiki-kg/ts/src/mcp/config.ts:11,14` (`AKS_BASE_URL`, `AKS_API_KEY`, outside the CLI ingest graph) see the project file where they previously always fell back to defaults.
 L9: Work-unit commits on feat/kg-shared-provider-credentials: C0 748dbe0 (feature document), C1 b1a6475 (credential bridge and import-time snapshot fix, isolated as Risk item 2), C2 087090c (conformance test), C3 dc7afb2 (documentation).
+L10: C5 09f84 shares the wiki embedding model with the kg dimension (the load-bearing fix for a real deployment whose wiki embeddings use a non-OpenAI model); C6 ef5ef adds the optional provider seam.
