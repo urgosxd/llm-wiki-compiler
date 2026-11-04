@@ -48,6 +48,9 @@ describe("codex-agent environment-file isolation", () => {
     await writeFile(path.join(cwd, ".env"), "LLMWIKI_VERBOSE=1\n", "utf8");
     const result = await runCLI(["--version"], cwd, {
       ...trackedEnv(logPath),
+      // The shared corpus redirects DOTENV_CONFIG_PATH at dotenv-test.conf, so the tracker
+      // would never observe the workspace .env this case exists to prove is still read.
+      DOTENV_CONFIG_PATH: path.join(cwd, ".env"),
       LLMWIKI_PROVIDER: "",
     });
     expectCLIExit(result, 0);
