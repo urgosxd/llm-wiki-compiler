@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 
 import type { Database } from "../db.js";
 import { bindCallerStack } from "./stack_resolver.js";
-import { config } from "../config.js";
+import { extractionModel } from "./llm/endpoints.js";
 import type { ExtractedEntity, ExtractedRelationship } from "./extraction.js";
 
 /**
@@ -86,7 +86,10 @@ async function updateEntity(
   return existing.id;
 }
 
-/** Inserts a new entity, populating `extracted_by_model` from config. */
+/**
+ * Inserts a new entity, populating `extracted_by_model` with the model the
+ * extraction actually asked for.
+ */
 async function insertEntity(
   tx: Database,
   stackId: string,
@@ -99,7 +102,7 @@ async function insertEntity(
     )
     values (
       ${stackId}, ${entity.name}, ${entity.type}, ${entity.description},
-      ${entity.confidence}, ${config.EXTRACTION_MODEL},
+      ${entity.confidence}, ${extractionModel()},
       ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE}
     )
     returning id
@@ -161,8 +164,9 @@ async function recordContribution(
  * 3. **The description is replaced only when strictly longer.** `if
  *    ent.description and len(ent.description) > len(existing_desc)`.
  *
- * `extracted_by_model` is populated from `config.EXTRACTION_MODEL` on insert and
- * is **not** touched on update, matching the Python `update` statement.
+ * `extracted_by_model` is populated with the model the extraction call asked for
+ * — see {@link extractionModel}, which honours an injected chat backend — and is
+ * **not** touched on update, matching the Python `update` statement.
  *
  * @returns lowercased entity name → entity id, consumed by
  *   {@link consolidateRelationshipRows}.
@@ -245,7 +249,7 @@ export async function consolidateRelationshipRows(
       values (
         ${stackId}, ${fromId}, ${toId}, ${relationship.type},
         ${relationship.description}, ${relationship.confidence},
-        ${config.EXTRACTION_MODEL}, ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE}
+        ${extractionModel()}, ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE}
       )
       on conflict (stack_id, from_entity_id, to_entity_id, type)
       do update set

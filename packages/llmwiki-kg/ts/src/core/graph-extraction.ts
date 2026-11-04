@@ -18,8 +18,8 @@
  * the degradation is visible instead of silent.
  */
 
-import { config } from "../config.js";
 import { callTool } from "./llm_clients.js";
+import { extractionModel } from "./llm/endpoints.js";
 import { ProviderUnavailableError, withProviderRetry } from "./llm/retry.js";
 import { buildExtractionPrompt, buildToolSchema } from "./graph-prompt.js";
 import {
@@ -48,7 +48,10 @@ function emptyResult(): ExtractionResult {
   return {
     entities: [],
     relationships: [],
-    model: config.EXTRACTION_MODEL,
+    // The model this run ASKED, which is the one an injected chat backend
+    // supplies: a result that reported the configured default would be the same
+    // false provenance the consolidation writes were caught recording.
+    model: extractionModel(),
     pipeline: EXTRACTION_PIPELINE,
   };
 }
@@ -279,7 +282,7 @@ export async function extractGraphFromChunks(
   return {
     entities: [...entityMap.values()],
     relationships: [...mergeRelationships(relationshipList).values()],
-    model: config.EXTRACTION_MODEL,
+    model: extractionModel(),
     pipeline: EXTRACTION_PIPELINE,
     // Reported only when an ontology was enforced, so a default run keeps the
     // oracle's result shape instead of carrying a permanently empty array.

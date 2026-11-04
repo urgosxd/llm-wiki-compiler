@@ -431,8 +431,9 @@ The two sides are never crossed. An embedding descriptor supplies embedding requ
 only and a chat descriptor supplies extraction requests only, whichever hosts the
 wiki dimension resolved — so a deployment whose chat and embeddings live on different
 services reaches both, each with its own credential. `EXTRACTION_STRICT_SCHEMA` keeps
-its own resolution, and the `extracted_by_model` column continues to record the `kg`
-configuration's `EXTRACTION_MODEL`.
+its own resolution, and the `extracted_by_model` column records the model that
+actually produced each row: the wiki chat backend's model under rule 2, and the
+`kg` configuration's `EXTRACTION_MODEL` under rules 1 and 3.
 
 ### When the shared credential is incomplete
 

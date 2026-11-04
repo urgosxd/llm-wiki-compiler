@@ -190,8 +190,9 @@ export interface KgDimensionOptions {
    */
   readonly describeEmbeddingBackend?: () => EmbeddingBackendDescriptor | undefined;
   /**
-   * Describes the CHAT backend the wiki dimension resolved, called once per
-   * `prepare`.
+   * Describes the CHAT backend the wiki dimension resolved, called once per step
+   * that needs it: the extraction call in `prepare`, and the graph write in
+   * `commit` that records which model produced each row.
    *
    * Injected for the same reason as {@link describeEmbeddingBackend}, and kept a
    * separate member for a stronger one: the wiki's chat and embedding services
@@ -611,8 +612,18 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
           summary: `kg:dry-run(${handle.chunks.length} chunks, ${handle.entities.length} entities)${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}`,
         };
       }
-      // `writeGraph` replaces the placeholder with the id Postgres assigned.
-      await writeGraph(options, handle, scope?.tx as Database | undefined);
+      // `writeGraph` replaces the placeholder with the id Postgres assigned, and
+      // stamps `extracted_by_model` from the same override the extraction used,
+      // so the descriptor has to be installed for the WRITE as well: the scope in
+      // `prepare` is closed by now, and a row stamped with the configured default
+      // names a model that never ran (L15). Re-resolved here rather than carried
+      // on the handle, so no credential outlives the call that needed it;
+      // `prepare` already refused any unusable backend, so a problem at this
+      // point leaves today's env-derived path in place.
+      const writeRun = resolveChatBackendRun(options);
+      await withChatBackend(writeRun.backend, () =>
+        writeGraph(options, handle, scope?.tx as Database | undefined),
+      );
       return {
         // Keyed on the real row id, so the outbox replay targets the same document
         // rather than the label it was prepared under.

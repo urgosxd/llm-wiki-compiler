@@ -8,12 +8,15 @@
  * nothing else needs.
  */
 
-import { config } from "../../config.js";
 import {
   ANTHROPIC_VERSION,
   DEFAULT_MAX_TOKENS,
 } from "./constants.js";
-import { extractionEndpoint } from "./endpoints.js";
+import {
+  extractionEndpoint,
+  extractionModel,
+  extractionUsesAnthropicScheme,
+} from "./endpoints.js";
 import { LlmError } from "./errors.js";
 import { asArray, asRecord, asString, postJson } from "./json.js";
 
@@ -42,12 +45,16 @@ export async function complete(
 ): Promise<string> {
   const { endpoint, apiKey } = extractionEndpoint();
 
-  if (config.EXTRACTION_PROVIDER === "anthropic") {
+  // The WIRE SHAPE is decided the same way `tool-call.ts` decides it: an
+  // injected chat backend is OpenAI-compatible by construction, so reading
+  // `config.EXTRACTION_PROVIDER` here would post an Anthropic body and
+  // `x-api-key` header to the descriptor's OpenAI-compatible endpoint.
+  if (extractionUsesAnthropicScheme()) {
     const { body } = await postJson(
       endpoint,
       { "x-api-key": apiKey, "anthropic-version": ANTHROPIC_VERSION },
       {
-        model: config.EXTRACTION_MODEL,
+        model: extractionModel(),
         max_tokens: maxTokens,
         messages: [{ role: "user", content: prompt }],
       },
@@ -59,7 +66,7 @@ export async function complete(
     endpoint,
     { authorization: `Bearer ${apiKey}` },
     {
-      model: config.EXTRACTION_MODEL,
+      model: extractionModel(),
       max_tokens: maxTokens,
       messages: [{ role: "user", content: prompt }],
     },

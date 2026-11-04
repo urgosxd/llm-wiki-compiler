@@ -76,6 +76,7 @@ An ingest with `LLMWIKI_DIMENSIONS=wiki,kg` reaches the embedding provider and s
 | T5 | S2, S4, S6 | worker, `packages/llmwiki-kg/ts/src/{config,db}.ts`, `src/cli*` | C1 (same isolated commit) |
 | T6 | S2, S7 | worker, `src/dimensions/kg/shared-provider-conformance.test.ts`, `docs/**` | C2 |
 | T7 | S1, S2, S4, S6 | worker, `packages/llmwiki-kg/ts/src/chat-backend.ts`, `src/dimensions/kg/*` | C10 |
+| T8 | S2, S6 | worker, `packages/llmwiki-kg/ts/src/core/**`, `packages/llmwiki-kg/ts/src/document-consolidation.ts` | C11 |
 
 ## Log
 
@@ -104,3 +105,5 @@ L12: Independent verification found the provider seam unreachable in any real de
 L13: C8 cbcba3a8 narrows the kg-side backend set to the variables the kg side alone owns, makes the provider descriptor reachable in a real deployment, and gives its regression test teeth under mutation.
 
 L14: The product owner withdrew the extraction non-goal, verbatim: "The non-goal on extraction is withdrawn." The human's own environment proved the narrower scope unusable: with his `.env` the kg dimension embedded successfully against a real endpoint and then reached ANTHROPIC for extraction, which is half the credentials the request names. The chat backend now gets the same descriptor treatment, with the same precedence and the same fail-closed rules, and the chat/embeddings descriptors are pinned apart by a different-hosts test in both directions.
+
+L15: Verifying the live run found the stored provenance naming the configured model rather than the model that actually ran: `extracted_by_model` recorded `claude-sonnet-4-5` while the request used `deepseek/deepseek-v4-flash`. Corrected so stored rows name the model that produced them, with a test for both the injected and the un-injected path.

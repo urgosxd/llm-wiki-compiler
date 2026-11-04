@@ -9,8 +9,8 @@
 
 import { sql } from "drizzle-orm";
 
-import { config } from "../../config.js";
 import type { Database } from "../../db.js";
+import { extractionModel } from "../llm/endpoints.js";
 import { computeGraphVersion } from "./graph-version.js";
 import { gatherEntityContext, generateMarkdown } from "./context-read.js";
 import { pydanticUtcNow } from "./utc-now.js";
@@ -109,7 +109,7 @@ async function storePage(tx: Database, write: PageWrite): Promise<void> {
     values (
       ${entityId}, ${entity.stack_id}, ${entity.name}, ${markdown},
       ${graphVersion}, ${COMPILED_SOURCE_TYPE}, ${generatedAt},
-      ${config.EXTRACTION_MODEL}
+      ${extractionModel()}
     )
     on conflict (entity_id) do update set
       markdown = excluded.markdown,
