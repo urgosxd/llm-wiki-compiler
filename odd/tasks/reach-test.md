@@ -33,7 +33,7 @@ S9. Out of scope, still open, not to be fixed on this branch: the two Project-1 
 T0 — Open this feature document and mirror it in memory. S1-S9. Route: worker. Commit: 7bcacad.
 T1 — Provision the worktree's dependencies so any gate can run at all (`node_modules` is absent). S1-S8 prerequisite. Route: worker. Commit: none (install output only).
 T2 — Per-run database/schema isolation for every suite that touches Postgres, applied to the four shared fixtures. S2, S4, S6, S7. Route: worker. Commit: 7f78ecf.
-T2b — Close the residual shared-database paths: `test/lock-postgres*.test.ts` on the per-run fixture, a comment-only note on the `vitest.config.ts` seed, and a reaper-safety case proving a live sibling and a foreign name are never candidates. S2, S6, S7. Route: worker. Commit: this slice (its SHA is named in the doc-only commit that follows it, as T2's is).
+T2b — Close the residual shared-database paths: `test/lock-postgres*.test.ts` on the per-run fixture, a comment-only note on the `vitest.config.ts` seed, and a reaper-safety case proving a live sibling and a foreign name are never candidates. S2, S6, S7. Route: worker. Commit: 6b0a805.
 T3 — Wire a gate that runs the KG package typecheck and pin a ratchet over the 20-diagnostic baseline without widening an ignore list. S3. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
 T4 — The real end-to-end KG MCP probe: real Postgres, real KG API, `runStdio()`, real client handshake, exact payloads. S1, S6, S7. Route: worker. Commit: pending.
 T5 — `db.test.ts:413` under parallel load. S4. Route: worker. Commit: pending.
@@ -166,8 +166,9 @@ L11 (evidence, T2b — the residual shared-database paths are closed; measured a
   `packages/llmwiki-kg/ts/vitest.config.ts` still defaults `src/routes/**` suites to
   `AKS_TEST_DATABASE_URL ?? postgresql://aks:aks@localhost:5434/aks`, i.e. the one shared database, because those
   harnesses resolve their own DSN and the package config is not in this task's surface.
-- COMMIT — this work unit is one slice. Its SHA cannot live inside itself, so it is named in the doc-only commit that
-  follows, exactly as T2's is.
+- COMMIT — this work unit is `6b0a805` (`test(isolation): close the residual shared-database paths`): the three
+  lock suites, the `vitest.config.ts` comment line, the three reaper cases and this entry, in one slice. The SHA cannot
+  live inside its own commit, so it is recorded here in the doc-only commit that follows, exactly as T2's is.
 
 L11 (evidence + decision, T6 — the four inert quickstart expectations, S5/S6/S7). All four `it.skip`
 sites in `test/quickstart-integration.test.ts` (L302/437/452/466 before this task) were proven inert
