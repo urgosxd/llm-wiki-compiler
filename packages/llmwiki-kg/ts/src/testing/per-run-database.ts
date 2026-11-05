@@ -392,7 +392,7 @@ async function assertRequiredTables(client: Sql): Promise<void> {
   }
 }
 
-/** Program the process-exit teardown runs: drop this process's database. */
+/** Program the teardown runs: drop one database, from a synchronous child process. */
 const DROP_SCRIPT = [
   'import postgres from "postgres";',
   'const url = process.env.PER_RUN_ADMIN_URL ?? "";',
@@ -402,40 +402,126 @@ const DROP_SCRIPT = [
   "await sql.end({ timeout: 5 }).catch(() => {});",
 ].join("\n");
 
+/** Signals whose exit path this module takes over while it owns a database. */
+const SIGNALS = ["SIGTERM", "SIGINT"] as const;
+
+/** One hook per signal, kept so removal can name the exact function it installed. */
+const signalHooks: Record<(typeof SIGNALS)[number], () => void> = {
+  SIGTERM: () => handleSignal("SIGTERM"),
+  SIGINT: () => handleSignal("SIGINT"),
+};
+
+/** Databases this process minted and has not dropped yet: database name -> server base. */
+const owned = new Map<string, string>();
+
+/** Are this module's signal hooks installed right now? */
+let watchingSignals = false;
+
+/** Is the `exit` hook installed? Installed once, and never removed. */
+let watchingExit = false;
+
 /**
- * Drop this process's database after the process is done with it.
+ * Is `name` a database THIS process minted?
  *
- * An `exit` handler cannot await, and the driver has no synchronous mode, so the drop
- * runs in a synchronous child process instead.
- *
- * ## Why signals and not only `exit`
- *
- * MEASURED: with only the `exit` handler, every vitest suite file leaked its database.
- * A test worker is torn down with a signal, and Node does NOT emit `exit` for a process
- * that dies from one, so the handler never ran. The plain-node callers cleaned up
- * perfectly (34 databases -> 32), which is what made the difference visible. SIGTERM and
- * SIGINT therefore drop first and then exit as they otherwise would have.
- *
- * Still best effort: a SIGKILLed process runs nothing, and such a database is reaped by
- * {@link reapStalePerRunDatabases} on a later run.
+ * A per-run name carries the pid of the process that created it, so ownership is
+ * readable from the name alone. Teardown must never rely on the registry being right: a
+ * database this process does not own is not a candidate, whatever registered it.
  */
-function dropOnExit(base: string, name: string): void {
-  const drop = (): void => {
-    if (dropped.has(name)) return;
+function ownedByName(name: string): boolean {
+  return isPerRunDatabaseName(name) && name.split("_")[3] === String(process.pid);
+}
+
+/**
+ * Drop every database this process minted. Synchronous, idempotent, owner-checked.
+ *
+ * An `exit` handler and a signal handler cannot await, and the driver has no synchronous
+ * mode, so each drop runs in a synchronous child process instead. A name that is not
+ * ours, or that was already dropped, is skipped rather than retried.
+ */
+function dropOwnedDatabases(): void {
+  for (const [name, base] of owned) {
+    if (dropped.has(name) || !ownedByName(name)) continue;
+    dropped.add(name);
     spawnSync(process.execPath, ["--input-type=module", "-e", DROP_SCRIPT], {
       cwd: REPO_ROOT,
       stdio: "ignore",
       timeout: 30_000,
       env: { ...process.env, PER_RUN_ADMIN_URL: adminUrlFor(base), PER_RUN_DATABASE_NAME: name },
     });
-  };
-  process.once("exit", drop);
-  for (const signal of ["SIGTERM", "SIGINT"] as const) {
-    process.once(signal, () => {
-      drop();
-      process.exit(0);
-    });
   }
+}
+
+/** Install this module's signal hooks. Idempotent. */
+function watchSignals(): void {
+  if (watchingSignals) return;
+  watchingSignals = true;
+  for (const signal of SIGNALS) process.on(signal, signalHooks[signal]);
+}
+
+/** Remove this module's signal hooks, and nothing else's. Idempotent. */
+function unwatchSignals(): void {
+  if (!watchingSignals) return;
+  watchingSignals = false;
+  for (const signal of SIGNALS) process.removeListener(signal, signalHooks[signal]);
+}
+
+/**
+ * Drop this process's databases when it ends, without ever deciding that it ends.
+ *
+ * Three things this must NOT do, each one a defect this function replaces:
+ *
+ * - It must not call `process.exit`. A hook that exits consumes the exit path of every
+ *   other owner in the process, and a caller that controls `process.exit` (a test
+ *   double, a supervisor, another subsystem's shutdown) never gets its turn. MEASURED:
+ *   `test/commands/host-command.test.ts` emits `SIGTERM` in process to stop the host,
+ *   the exit that used to be called here was absorbed by that suite's own spy, the
+ *   worker survived with its database already dropped, and its next test could never
+ *   boot.
+ * - It must not touch a database this process does not own, and dropping must be
+ *   idempotent. {@link dropOwnedDatabases} enforces both.
+ * - It must remove its own listener before acting, so handling a signal cannot recurse
+ *   and so repeated signals cannot accumulate hooks.
+ *
+ * What it does instead, in order: remove its own hooks, and then
+ *
+ * - if another listener for this signal is still registered, stay out of its way: that
+ *   component owns the exit, and this process's database is dropped by the `exit` hook
+ *   when it eventually exits. The hooks are re-armed a turn later, because a listener
+ *   that does not exit has not ended anything and this process still owns its teardown.
+ * - otherwise, drop first and then re-raise the ORIGINAL signal with
+ *   `process.kill(process.pid, signal)`, which restores the default disposition that the
+ *   mere existence of a listener had suppressed: the process now dies from the very
+ *   signal it received (exit 143 for SIGTERM, 130 for SIGINT) instead of pretending to
+ *   have exited with 0. Measured on Node v22: removing the last listener restores the
+ *   default action, so a genuine external SIGTERM terminates the process here.
+ *
+ * Best effort: a `SIGKILL`ed process runs nothing, and such a database is reaped by
+ * {@link reapStalePerRunDatabases} on a later run.
+ */
+function handleSignal(signal: (typeof SIGNALS)[number]): void {
+  unwatchSignals();
+  if (process.listenerCount(signal) > 0) {
+    setImmediate(watchSignals);
+    return;
+  }
+  dropOwnedDatabases();
+  process.kill(process.pid, signal);
+}
+
+/**
+ * Hand `name` to this process's teardown: an `exit` hook plus the signal hooks.
+ *
+ * The `exit` hook is what covers a caller that ends the process through
+ * `process.exit` — including another component's shutdown handler, which is exactly the
+ * path this module must not consume.
+ */
+function registerOwnedDatabase(base: string, name: string): void {
+  owned.set(name, base);
+  if (!watchingExit) {
+    watchingExit = true;
+    process.once("exit", dropOwnedDatabases);
+  }
+  watchSignals();
 }
 
 /**
@@ -480,7 +566,7 @@ export function perRunDatabase(base: string): Promise<SuiteDatabase> {
   const existing = ownSuites.get(base);
   if (existing !== undefined) return existing;
   const created = createSuiteDatabase(base, `process-${process.pid}`).then((suite) => {
-    dropOnExit(base, suite.name);
+    registerOwnedDatabase(base, suite.name);
     return suite;
   });
   ownSuites.set(base, created);
