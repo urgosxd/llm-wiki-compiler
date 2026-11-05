@@ -31,30 +31,55 @@ import { useQuickstartProcessLifecycle } from "./fixtures/run-cli-server.js";
 import { LLMWIKI_DIR, LAST_LINT_FILE } from "../src/utils/constants.js";
 import { countConceptPages, listSourceFilenames } from "./fixtures/source-corpus.js";
 import { useStackEnv } from "./fixtures/stack-env.js";
+import { holdProjectLockOnNextRelease } from "./fixtures/quickstart-lock-holder.js";
 
 // Every suite here drives quickstart end to end, which ingests.
 useStackEnv("quickstart-integration");
 
 /**
- * Why the four expectations below that carry `it.skip` are inert.
+ * The two honest outcomes the four formerly-inert expectations now have.
  *
- * They have NEVER executed, in no configuration at all. They were gated by an
- * `it.skipIf(stackAlwaysOn)` predicate defined as `testDatabaseUrl() !== ""`, and
- * that predicate was a tautology: `testDatabaseUrl()` returns
- * `DEFAULT_TEST_DATABASE_URL` when the override is empty and never returns `""`
- * (`test/fixtures/test-database.ts:62-65`), so it evaluated to the constant `true`
- * everywhere. A predicate that reads like a live guard gated nothing; the honest
- * form is an explicit `it.skip` carrying the real reason, which is this one.
+ * All four used to be gated by `it.skipIf(stackAlwaysOn)`, where `stackAlwaysOn`
+ * was `testDatabaseUrl() !== ""` -- a tautology, because `testDatabaseUrl()`
+ * returns `DEFAULT_TEST_DATABASE_URL` when the override is empty and never returns
+ * `""` (`test/fixtures/test-database.ts:62-65`). A predicate that reads like a
+ * live guard gated nothing, and none of the four ever executed.
  *
- * The reason these tests were skipped in the first place still holds: the project
- * lock is a Postgres advisory lock keyed by Stack id, so the shared-fixture
- * assumptions they were written against -- a `.llmwiki/lock` FILE contending for
- * the lock, a fixture short enough that no page is produced -- are no longer true
- * against a Stack. Repairing them means standing up Postgres, the API and
- * database-level isolation, which is Project 3, branch `feat/reach-test`. Until
- * that lands these stay non-executing, and the source says so plainly instead of
- * claiming an always-true predicate activates them.
+ * RESURRECTED (executes in the default run): the lock-contention expectation. The
+ * lock moved from a `.llmwiki/lock` FILE to a Postgres advisory lock keyed by the
+ * Stack id, so the contention is now produced honestly by holding that advisory
+ * lock from a second session -- see `fixtures/quickstart-lock-holder.ts` for why it
+ * has to queue behind the ingest rather than be held up front.
+ *
+ * RETIRED (marked with the measured reason they can never be true): the three
+ * viewer-handoff expectations. They are not waiting on a database or an opt-in; the
+ * condition they name cannot be produced by the product at all, on any
+ * configuration. `quickstart` decides the handoff with `hasRenderablePages`,
+ * which reads `collectProjectState` (`src/project/state.ts:170-181`), and that
+ * collector counts pages as MARKDOWN FILES under `wiki/concepts` and `wiki/queries`
+ * while a compiled page is a Postgres ROW (`src/dimensions/activation.ts:16`: the
+ * file-backed wiki dimension is gone). Measured: after a quickstart that reports
+ * `1 compiled` and `Index updated with 2 pages`, the collector still reports zero
+ * pages and the run ends with `next: llmwiki compile` instead of the handoff. The
+ * fix belongs to `collectProjectState`/`quickstart`, not to this suite. They stay in
+ * place marked RETIRED; removing them is a human decision, and its exact command is
+ * reported with this task rather than executed here.
  */
+
+/**
+ * Env overrides that pin the provider for a run that must never reach a provider.
+ *
+ * `offline` needs no credential, so `ensureCompileProviderAvailable` -- which runs
+ * BEFORE the compile takes the project lock -- passes without aimock and without a
+ * network call, which keeps the lock-contention test about the lock.
+ */
+const OFFLINE_PROVIDER_ENV: NodeJS.ProcessEnv = {
+  LLMWIKI_PROVIDER: "offline",
+  LLMWIKI_MODEL: "offline-deterministic",
+};
+
+/** The exact string `compileAndReport` returns when it cannot take the lock. */
+const LOCK_BUSY_ERROR = "Could not acquire .llmwiki/lock — another compile is in progress.";
 
 const aimock = useAimockLifecycle("quickstart");
 
@@ -291,51 +316,89 @@ describe("`llmwiki quickstart <missing>`", () => {
   });
 });
 
-describe("`llmwiki quickstart --json` — compile returns errors (lock contention)", () => {
-  // `it.skip`, and this expectation has never run -- see the note near the top of
-  // this file. This suite seeded `.llmwiki/lock` as a FILE to make the compile's
-  // acquire fail. The lock is a Postgres advisory lock keyed by the Stack id now, so
-  // a file contends with nothing. Taking the real lock instead blocks the INGEST
-  // rather than the compile, which is a different scenario than the one under test.
-  // Reproducing "ingest succeeds, compile is locked out" needs a second process
-  // holding the lock between the two phases -- Project 3, `feat/reach-test`.
-  it.skip("preserves CompileResult.errors verbatim and reports compile.ok=false", async () => {
-    const { handle, cwd, fixturePath } = await bootQuickstart(
-      "# Src\n\nLock-contention test.\n",
-    );
-    // Seed a live .llmwiki/lock holding the test process PID so the
-    // compile pipeline's acquireLock fails and returns a CompileResult
-    // with a populated `errors` array (the documented returned-error
-    // path that buildCompileEnvelopeFromResult handles).
-    await mkdir(path.join(cwd, ".llmwiki"), { recursive: true });
-    await writeFile(path.join(cwd, ".llmwiki", "lock"), String(process.pid), "utf-8");
+/**
+ * Create a workspace and a fixture file for the lock-contention run.
+ *
+ * No aimock: the compile cannot take the lock, so it never reaches a provider, and
+ * `OFFLINE_PROVIDER_ENV` is what makes the provider GUARD (which runs first) pass.
+ */
+async function bootLockFixture(): Promise<{ cwd: string; fixturePath: string }> {
+  const cwd = await aimock.makeWorkspace("# placeholder\n", "placeholder.md");
+  const fixturePath = path.join(cwd, "fixture-source.md");
+  await writeFile(
+    fixturePath,
+    "# Src\n\nThe compile-lock source for the quickstart integration test.\n",
+    "utf-8",
+  );
+  return { cwd, fixturePath };
+}
 
-    const result = await runCLI(
-      ["quickstart", fixturePath, "--json", "--no-open"],
-      cwd,
-      mockClaudeEnv(handle),
-    );
-    expectCLIExit(result, 0);
-    const envelope = JSON.parse(result.stdout) as Record<string, unknown>;
-    const compile = envelope.compile as Record<string, unknown>;
-    expect(compile.ok).toBe(false);
-    expect(compile.error).toBeNull();
-    const errors = compile.errors as unknown[];
-    expect(Array.isArray(errors)).toBe(true);
-    expect(errors.length).toBeGreaterThanOrEqual(1);
-    expect(typeof errors[0]).toBe("string");
-    expect(errors[0] as string).toContain("lock");
-    // No ANSI escapes in the verbatim error string.
-    // eslint-disable-next-line no-control-regex
-    expect(errors[0] as string).not.toMatch(/\x1b\[/);
-    // Returned counters preserved verbatim (lock contention zeroes them).
-    expect(compile.compiled).toBe(0);
-    expect(compile.skipped).toBe(0);
-    expect(compile.deleted).toBe(0);
-    // Resumable: next action steers the user back to `llmwiki compile`.
-    const next = envelope.next as Record<string, unknown>;
-    expect(next.command).toBe("llmwiki compile");
+/** The Stack the suite bound for this test. The advisory lock is keyed by it. */
+function boundStackId(): string {
+  const stackId = (process.env.AKS_STACK_ID ?? "").trim();
+  if (stackId === "") throw new Error("no AKS_STACK_ID: useStackEnv did not provision a Stack");
+  return stackId;
+}
+
+/** The database carrying that Stack; the SAME value the spawned CLI receives. */
+function boundDatabaseUrl(): string {
+  const dsn = (process.env.AKS_DATABASE_URL ?? "").trim();
+  if (dsn === "") throw new Error("no AKS_DATABASE_URL: useStackEnv did not name a database");
+  return dsn;
+}
+
+/**
+ * Every observable effect of "the compile could not take the project lock": the
+ * exact exit code, the exact returned error string, the zeroed counters it was
+ * returned with, the untouched viewer envelope, and the resumable next action.
+ */
+function expectLockedOutEnvelope(result: CLIResult): void {
+  expectCLIExit(result, 0);
+  const envelope = JSON.parse(result.stdout) as Record<string, unknown>;
+  expect(envelope.ingest).toMatchObject({ ok: true, sourceType: "file", error: null });
+  expect(envelope.compile).toEqual({
+    ok: false,
+    compiled: 0,
+    skipped: 0,
+    deleted: 0,
+    pendingCandidates: 0,
+    errors: [LOCK_BUSY_ERROR],
+    error: null,
   });
+  expect(envelope.viewer).toEqual({ opened: false, url: null });
+  expect(envelope.next).toEqual({
+    command: "llmwiki compile",
+    reason: "Compile reported errors. Address them and rerun compile.",
+    executable: { binary: "llmwiki", args: ["compile"] },
+  });
+}
+
+describe("`llmwiki quickstart --json` — compile returns errors (lock contention)", () => {
+  it("preserves CompileResult.errors verbatim and reports compile.ok=false", async () => {
+    const { cwd, fixturePath } = await bootLockFixture();
+    // The holder starts BEFORE the child, then queues a blocking acquire behind the
+    // child's ingest: the ingest holds the same lock (`tryWithOrdinaryMutationLock`),
+    // so holding it up front would fail the INGEST instead of the compile.
+    const holder = await holdProjectLockOnNextRelease(boundStackId(), boundDatabaseUrl());
+    try {
+      const result = await runCLI(
+        ["quickstart", fixturePath, "--json", "--no-open"],
+        cwd,
+        OFFLINE_PROVIDER_ENV,
+      );
+      // Rejects unless the child really took the lock and this process now owns it,
+      // so a run that never contended fails here instead of asserting nothing.
+      await holder.hold();
+      expectLockedOutEnvelope(result);
+      // A refused compile stores nothing: the ingest is the only phase that wrote, and
+      // the single concept page below is the ingest's own stub row
+      // (`src/dimensions/wiki/store-dimension.ts` upserts it), not a compiled page.
+      expect(await listSourceFilenames(cwd)).toHaveLength(1);
+      expect(await countConceptPages(cwd)).toBe(1);
+    } finally {
+      await holder.release();
+    }
+  }, 60_000);
 });
 
 describe("`llmwiki quickstart --json` — compile provider failure after ingest", () => {
@@ -423,16 +486,20 @@ describe("`llmwiki quickstart --lang`", () => {
   });
 });
 
-describe("`llmwiki quickstart` — viewer handoff (Slice 3)", () => {
+describe("`llmwiki quickstart` — viewer handoff (Slice 3) — RETIRED", () => {
   const lifecycle = useQuickstartProcessLifecycle();
 
-  // The three expectations in this describe are `it.skip`, and none has ever run
-  // (see the note near the top of this file). Their original reason still holds: the
-  // fixture below is 33 chars, under the compile minimum, so no page is produced and
-  // the viewer never starts. On a Stack the compile is what gates the handoff, and
-  // enlarging the fixture would change what the suite measures. Reactivating them is
-  // Project 3, `feat/reach-test`, which stands up Postgres, the API and
-  // database-level isolation, including the viewer's row-backed handoff path.
+  // RETIRED, not skipped pending work: these three can never be true against this
+  // product, on any configuration (see the note at the top of this file, and
+  // `src/project/state.ts:170-181` versus `src/dimensions/activation.ts:16`).
+  // `quickstart` gates the handoff on `hasRenderablePages(collectProjectState(root))`,
+  // and that collector counts markdown FILES that a Stack-backed compile never
+  // writes, so the gate is unreachable: measured after `1 compiled` plus `Index
+  // updated with 2 pages`, the run still ends with `next: llmwiki compile`. The
+  // fixture length the old comment blamed (33 chars) is a red herring: the compile
+  // does produce a page, and the collector still reports zero. Same for the lint
+  // variant -- `hasLintErrors` DOES outrank `wiki-ready`, but a non-view `Next:` line
+  // can only survive a handoff that never starts.
 
   it.skip("prints the lifecycle line and hands off to the foreground viewer when pages exist", async () => {
     const { handle, cwd, fixturePath } = await bootQuickstart(
@@ -448,7 +515,7 @@ describe("`llmwiki quickstart` — viewer handoff (Slice 3)", () => {
     expect(proc.port).toBeGreaterThan(0);
   });
 
-  // Never executed; see the note at the top of this describe.
+  // Retired; see the note at the top of this describe.
   it.skip("suppresses the `Next:` line when handing off (viewer is the action)", async () => {
     const { handle, cwd, fixturePath } = await bootQuickstart(
       "# Src\n\nNext-line suppression test.\n",
@@ -462,7 +529,7 @@ describe("`llmwiki quickstart` — viewer handoff (Slice 3)", () => {
     expect(proc.stdout).not.toMatch(/^Next:$/m);
   });
 
-  // Never executed; see the note at the top of this describe.
+  // Retired; see the note at the top of this describe.
   it.skip("preserves a non-view `Next:` recommendation during handoff (lint errors)", async () => {
     // Seed a populated lint cache with errors BEFORE quickstart runs.
     // After compile the project state hits lint-attention (errors > 0

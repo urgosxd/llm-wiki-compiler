@@ -35,7 +35,7 @@ T1 — Provision the worktree's dependencies so any gate can run at all (`node_m
 T2 — Per-run database/schema isolation for every suite that touches Postgres, applied to the four shared fixtures. S2, S4, S6, S7. Route: worker. Commit: 7f78ecf.
 T2b — Close the residual shared-database paths: `test/lock-postgres*.test.ts` on the per-run fixture, a comment-only note on the `vitest.config.ts` seed, and a reaper-safety case proving a live sibling and a foreign name are never candidates. S2, S6, S7. Route: worker. Commit: 6b0a805.
 T3 — Wire a gate that runs the KG package typecheck and pin a ratchet over the 20-diagnostic baseline without widening an ignore list. S3. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
-T4 — The real end-to-end KG MCP probe: real Postgres, real KG API, `runStdio()`, real client handshake, exact payloads. S1, S6, S7. Route: worker. Commit: pending.
+T4 — The real end-to-end KG MCP probe: real Postgres, real KG API, `runStdio()`, real client handshake, exact payloads. S1, S6, S7. Route: worker. Commit: not made by the worker (terminal git actions are parent-owned); files staged for review: `test/fixtures/ephemeral-postgres.ts`, `test/kg-mcp-e2e/**`.
 T5 — `db.test.ts:413` under parallel load. S4. Route: worker. Commit: pending.
 T6 — Resolve the four inert quickstart expectations honestly (resurrect under an explicit opt-in with a correct predicate, or retire with a documented reason). S5. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
 T7 — Independent verification: one verdict per S#, run against isolated state. S1-S6. Route: gentle-ai-verify. Commit: none.
@@ -268,3 +268,79 @@ L12 (T10 — the stray statement terminator in `src/dimensions/wiki/migration_wi
   the file header already documents that `wiki.relation_edges` was retired, and deleting them would be unrequested scope.
   Scratch left in place: `/tmp/t5a-sql-typo-3636522/` (`psql-probe` wrapper, `fixture-tables.mts`, the three table dumps,
   `fallback-run.log`, `graph-head.sql`).
+
+L13 (evidence, T4 — the end-to-end KG MCP probe; S1, S6, S7). Files: `test/fixtures/ephemeral-postgres.ts` (new),
+`test/kg-mcp-e2e/{counting-proxy,kg-api-child,kg-mcp-child,probe-database,probe-harness}.ts` (new),
+`test/kg-mcp-e2e/kg-mcp-probe.test.ts` (new), plus the export of two EXISTING helpers in
+`packages/llmwiki-kg/ts/src/testing/per-run-database.ts` (`withClient`, `applySchema`; `export` keyword only, no
+behaviour change) so the probe replays the same SCHEMA_FILES list and the same statement-granularity fallback instead of
+keeping a second copy.
+- ENTRY POINT, and why. The API is spawned as a real child: `node packages/llmwiki-kg/ts/dist/index.js` with `PORT` set
+  to an OS-granted port. NOT `createApp().listen(0)`: importing `src/index.ts` is impossible (it binds a listener at
+  import and `process.exit`s on a bad config), and `listen(0)` on `createApp()` would skip exactly the parts a probe
+  must not skip — `PORT` parsing, `validateConfig`, the Drizzle pool built from `DATABASE_URL` at first access. The port
+  strategy is the only one that entry allows: bind port 0 on loopback, release it, hand the number to the child as
+  `PORT` (a probed free port). The MCP server is spawned by `StdioClientTransport` and started through `runStdio()` from
+  `dist/mcp/server.js`, not `dist/mcp.js` — the public surface module does not re-export `runStdio`, which is how the
+  first run failed (`TypeError: runStdio is not a function`). Postgres is a container this test owns:
+  `docker run -d --name llmwiki-probe-… --publish 127.0.0.1::5432 --label llmwiki-probe=1 pgvector/pgvector:pg16`, port
+  read back from `docker port`, so collisions are structurally impossible and nothing a human started is involved.
+- COUNTING PROXY. `test/kg-mcp-e2e/counting-proxy.ts` is a transparent `node:http` server on `listen(0)` that records
+  `{method, path, body}` and forwards to the real API, returning its status and body verbatim. `AKS_BASE_URL` points at
+  it, so `fetchImpl` is never injected and the MCP server cannot tell it apart from the API. Its counter is what makes
+  "zero downstream requests" measurable, and one test (`forwards a named Stack to the real API`) proves the zero is not
+  vacuous: the same counter reads 1 for `POST /aks/v1/context` when a call DOES carry a valid `stackId`, and the recorded
+  body carries that exact id.
+- PROOF PER CLAUSE (test names are in `test/kg-mcp-e2e/kg-mcp-probe.test.ts`).
+  (a) `advertises stackId as required on every graph tool` — `tools/list` over the real handshake: `required` is
+  `["query","stackId"]` for `query_stack`, `["start","stackId"]` for `traverse_stack`, `["stackId"]` for `get_entities`,
+  and absent for `list_stacks`. `refuses each graph tool without stackId, with zero downstream requests` — each of the
+  three answers `isError: true`, the exact text `Error: 'stackId' must be provided.`, the proxy records no request at
+  all, and the four row counts are unchanged.
+  (b) `answers list_stacks with the shared {stacks, count} contract` — envelope keys exactly `["stacks","count"]`,
+  `count === stacks.length`, each entry's keys exactly `CONTRACT_STACK_KEYS` (the constant the cross-dimension suite
+  `test/mcp/list-stacks-contract.test.ts` pins, imported from `packages/llmwiki-kg/ts/src/mcp-harness.ts`), and both
+  seeded Stacks compared field for field, `isCurrent` false in both because this dimension has no bound Stack. WHY THIS
+  ROUTE: the wiki dimension's equivalent is already driven against that same constant by the cross-dimension suite;
+  driving the wiki server again here would need a second server, a second ScratchProjectRoot and a bound Stack, and
+  would re-pin a contract that already has its own pin — what S1(b) adds is that the KG side satisfies the SHARED
+  contract against a REAL API rather than a recorded body, and that is what this case asserts.
+  (c) `returns only the rows of the Stack it was given` and `traverses only within the Stack it was given` — two Stacks
+  with disjoint vocabulary (`Alpha …` / `Beta …`) seeded in the container; `get_entities` and `traverse_stack` are
+  called once per id and the FULL formatted payloads are compared byte for byte, then each payload is asserted not to
+  contain the other Stack's name. `query_stack` is deliberately not asserted on a model answer: its `POST
+  /aks/v1/context` path needs an embedding provider and an LLM, which would be a simulated dependency. It is asserted at
+  the boundary where its Stack matters — the request it sends — in the `forwards a named Stack` case, and the API's
+  providers are configured to an unreachable loopback port so the run stays offline and deterministic.
+  (d) `refuses a malformed Stack id before any request reaches the API` — `not-a-uuid` on all four tools answers
+  `isError: true` with `Error: 'not-a-uuid' is not a Stack id. Stack ids are UUIDs — call list_stacks to see the ones
+  this endpoint can reach.`, the proxy records no request, and the row counts are unchanged.
+- TEST-FIRST. RED observed against a deliberately wrong expectation: `MISSING_STACK_TEXT = "Error: 'stackId' is
+  required."` failed with `expected 'Error: 'stackId' must be provided.' to be 'Error: 'stackId' is required.'` on
+  `query_stack`, i.e. the text came out of a real stdio handshake against a real API. Two further expectations were
+  wrong for real reasons and were corrected from the observed payloads: timestamps arrive with microsecond precision
+  (`2026-01-01T00:00:00.000000Z`, not `.000Z`), and `traverse_stack` renders depth 1 with a two-space indent
+  (`"  • … (depth 1, conf 0.75)"`), not depth 0. GREEN: 7/7.
+- MEASURED (ms, three consecutive green runs): package build 4079 / 4151 / 4240 (cold-FS first run: 16.0 s);
+  container ready 1336 / 1345 / 1360; schema applied 173 / 175 / 175 (fifteen files, whole-file path, the
+  statement-granularity fallback no longer fires after L12); seed 21 / 22 / 29; API ready 739 / 741 / 741; MCP handshake
+  188 / 193 / 198; `npx vitest run test/kg-mcp-e2e` 32.0 / 32.5 / 37.0 s wall clock, of which the root `globalSetup`
+  tsup build is ~21 s.
+- TEARDOWN. `afterAll` calls one `stop()` that unwinds in reverse registration order (MCP child → proxy → API child →
+  pool → `docker rm -f`). MEASURED DEFECT AND FIX: with only the success path tearing down, the first run — which failed
+  inside the handshake — left `llmwiki-probe-kg-mcp-e2e-ea040fe6` running. `bringUp(undo)` now registers each piece's
+  undo the moment the piece exists, so a failure anywhere unwinds what was started; re-measured by pointing the MCP
+  entry at a module without `runStdio` on purpose: the suite failed and `docker ps -a --filter label=llmwiki-probe=1`
+  came back EMPTY. The MCP child is additionally proven gone (`process.kill(pid, 0)`) before `stop()` resolves.
+- GATES (exact scope). `npx vitest run test/kg-mcp-e2e` → 7 passed / 0 failed, 32.0 s. `npm run typecheck:kg` → "227
+  files checked; 0 diagnostics baselined across 0 entries; no regression." exit 0. `npx tsc --noEmit` → no output,
+  exit 0. `npx vitest run test/dimensions/kg-postgres-integrity.test.ts` → 4 passed, exit 0.
+  `docker ps -a --format '{{.Names}}|{{.Status}}'` after the final run → no `llmwiki-probe-*` entry; `llmwiki-kg-db-1`
+  untouched (Up 14 hours).
+- COMMIT: NOT MADE BY THIS WORKER. Terminal git actions are parent-owned, and a concurrent writer is committing in this
+  same worktree, which already caused a real incident: the `export` edits to `per-run-database.ts` were swept into
+  `cd4b669` ("fix(schema): remove the stray statement terminator …"), a commit about something else. That export is in
+  HEAD, so the parent's slice for T4 is `test/fixtures/ephemeral-postgres.ts` + `test/kg-mcp-e2e/**` + this Log entry.
+- SCRATCH LEFT IN PLACE (not deleted, per L2): container `llmwiki-probe-kg-mcp-e2e-ea040fe6` from the pre-fix failed
+  run — remove it with `docker rm -f llmwiki-probe-kg-mcp-e2e-ea040fe6`. The package build wrote
+  `packages/llmwiki-kg/ts/dist/` (gitignored). No temp directory was created outside the worktree.
