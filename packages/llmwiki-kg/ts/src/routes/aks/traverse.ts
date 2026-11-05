@@ -3,18 +3,13 @@
  * @description `GET /aks/v1/traverse` — the recursive graph walk.
  */
 
-import { sql } from "drizzle-orm";
 import type { Request, Response } from "express";
 
-import {
-  toPostgresArrayLiteral,
-} from "../../core/aks_serializers.js";
-import { parseTypeFilter, toApiError, traverseGraph } from "../../core/graph_read.js";
+import { toApiError, traverseGraph } from "../../core/graph_read.js";
 import type { Database } from "../../db.js";
 import { AKSTraverseResponse } from "../../dto.js";
-import type { AKSTraverseResponseDto } from "../../dto.js";
-import { apiError, toFastApiValidationError } from "../../errors.js";
-import { isFilterSet, sendApiError, sendValidationError } from "./response.js";
+import { toFastApiValidationError } from "../../errors.js";
+import { sendApiError, sendValidationError } from "./response.js";
 import { TRAVERSE_QUERY_KEYS, TraverseQuery, readQuery } from "./query-params.js";
 
 // GET /aks/v1/traverse

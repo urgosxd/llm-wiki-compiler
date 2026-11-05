@@ -77,7 +77,7 @@ const TRIPLET = {
 };
 
 /** One `ontology_entities` row, as this suite asserts on it. */
-interface EntityRow {
+interface EntityRow extends Record<string, unknown> {
   readonly id: string;
   readonly stack_id: string;
   readonly name: string;
@@ -90,7 +90,7 @@ interface EntityRow {
 }
 
 /** One `ontology_relationships` row. */
-interface RelationshipRow {
+interface RelationshipRow extends Record<string, unknown> {
   readonly id: string;
   readonly stack_id: string;
   readonly from_entity_id: string;

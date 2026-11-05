@@ -13,7 +13,7 @@ import { sql } from "drizzle-orm";
 import express from "express";
 import type { Express } from "express";
 import type { Sql } from "postgres";
-import { afterAll, expect, vi } from "vitest";
+import { vi } from "vitest";
 
 import { createRequireApiKey } from "../auth.js";
 import { parseConfig } from "../config.js";

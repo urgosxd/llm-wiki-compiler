@@ -342,7 +342,9 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    const audit = await documentAudit(stackId, documentId);
+    // The helper's declared `unknown` is honest for a jsonb column but useless
+    // to index, so the shape is narrowed here, where the assertion lives.
+    const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
     const samples = (audit["ontology"] as { samples: Array<{ subject: string; object: string }> })
       .samples;
     expect(samples.map((sample) => [sample.subject, sample.object])).toEqual([
@@ -368,7 +370,8 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    const ontology = (await documentAudit(stackId, documentId))["ontology"] as {
+    const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
+    const ontology = audit["ontology"] as {
       rejected: number;
       samples: unknown[];
     };

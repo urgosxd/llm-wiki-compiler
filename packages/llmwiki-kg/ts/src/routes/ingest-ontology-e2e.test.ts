@@ -22,7 +22,6 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express from "express";
 import type { Express } from "express";
-import { sql } from "drizzle-orm";
 
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../core/extraction-harness.js";
 import { createRequireApiKey } from "../auth.js";

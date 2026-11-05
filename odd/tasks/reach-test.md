@@ -30,10 +30,10 @@ S9. Out of scope, still open, not to be fixed on this branch: the two Project-1 
 
 ## Tasks
 
-T0 — Open this feature document and mirror it in memory. S1-S9. Route: worker. Commit: (recorded below).
+T0 — Open this feature document and mirror it in memory. S1-S9. Route: worker. Commit: 7bcacad.
 T1 — Provision the worktree's dependencies so any gate can run at all (`node_modules` is absent). S1-S8 prerequisite. Route: worker. Commit: none (install output only).
 T2 — Per-run database/schema isolation for every suite that touches Postgres, applied to the four shared fixtures. S2, S4. Route: worker. Commit: pending.
-T3 — Wire a gate that runs the KG package typecheck and pin a ratchet over the 20-diagnostic baseline without widening an ignore list. S3. Route: worker. Commit: pending.
+T3 — Wire a gate that runs the KG package typecheck and pin a ratchet over the 20-diagnostic baseline without widening an ignore list. S3. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
 T4 — The real end-to-end KG MCP probe: real Postgres, real KG API, `runStdio()`, real client handshake, exact payloads. S1, S6, S7. Route: worker. Commit: pending.
 T5 — `db.test.ts:413` under parallel load. S4. Route: worker. Commit: pending.
 T6 — Resolve the four inert quickstart expectations honestly (resurrect under an explicit opt-in with a correct predicate, or retire with a documented reason). S5. Route: worker. Commit: pending.
@@ -65,3 +65,33 @@ L6 (evidence, blocker): this worktree has no `node_modules/` and no `tsc` on PAT
 L7 (decision): S3's ratchet is a machine-checked baseline file, not a widened ignore list. A gate that greens by ignoring the package is the defect S3 names, so no task here may add `packages/llmwiki-kg/**` to `.fallowrc.json` or to any new ignore list.
 
 L8 (decision): S5's two honest outcomes are both acceptable only with evidence — an opt-in resurrection whose predicate is provably false in the default environment and whose tests PASS under the opt-in, or a retirement that names why the expectation can never hold. "Skipped for now" is a defect, not an outcome.
+
+L9 (evidence, T3 — the KG gate): `npm run typecheck:kg` (root `package.json`) runs `node scripts/kg-typecheck.ts`, which loads
+`packages/llmwiki-kg/ts/tsconfig.json` exactly as `tsc -p ... --noEmit` does, collects error diagnostics and compares them
+against `kg-typecheck-baseline.json`, keyed by `<repository-relative path> TS<code>` (never by line, so an unrelated edit
+cannot rot an allowance); `npm run typecheck:kg:update` is the only way to change it and only accepts a decrease.
+`.github/workflows/ci.yml` runs it as the step "Type-check the KG package against its diagnostic ratchet"
+(`run: npm run typecheck:kg`), immediately after `- run: npm run build` in the `build-and-test` job — the gate of record.
+Baseline before the fixes: 20 diagnostics across 9 entries (15× TS6133, 1× TS6192, 2× TS2344, 1× TS18046, 1× TS2571).
+After: **empty** — `{"version":1,"typescript":"5.9.3","configuration":"53797bc6...","counts":{}}` over 225 checked
+files, because all 20 were fixed rather than absorbed. Nothing remains baselined. 15 unused imports/locals and the one
+all-unused import declaration were removed from `routes/aks/traverse.ts`, `routes/aks/entities.ts`,
+`routes/aks-harness.ts`, `routes/ingest-harness.ts` and `routes/ingest-ontology-e2e.test.ts`; the two test-local row
+interfaces in `routes/ingest-formation.test.ts` now `extends Record<string, unknown>` so `tx.execute<T>` accepts them; the
+two `unknown` indexing sites in `routes/ingest-ontology.test.ts` narrow the jsonb audit blob to `Record<string, unknown>`
+at the assertion that reads it. Root `tsc --noEmit` stayed exit 0 with 0 diagnostics; `tsconfig.build.json --noEmit` went
+from 15 to 0. No ignore list was widened and `.fallowrc.json` was not touched. A root `tsconfig.json` project reference is
+NOT feasible without making the package config `composite` (which forces declaration emit and `.tsbuildinfo`), so the gate
+is the npm script plus the CI step.
+
+L10 (evidence, T3 — the ratchet is not vacuous): clean run `npm run typecheck:kg` → "225 files checked; 0 diagnostics
+baselined across 0 entries in packages/llmwiki-kg/ts/tsconfig.json; no regression." exit 0. With `export const
+kgRatchetProbe: number = "probe";` appended to `routes/aks/traverse.ts`: exit 1 and
+`packages/llmwiki-kg/ts/src/routes/aks/traverse.ts:110 TS2322 Type 'string' is not assignable to type 'number'.
+(packages/llmwiki-kg/ts/src/routes/aks/traverse.ts TS2322: 1 exceeds baseline 0); if this is deliberate, refresh with npm
+run typecheck:kg:update`. The probe line was removed (grep count 0) and the clean run restored. The two suites touched by
+the fixes ran green against a reachable database: `routes/ingest-formation.test.ts` 16 passed, `routes/ingest-ontology.test.ts`
+11 passed. fallow feasibility, one bounded measurement with the `packages/llmwiki-kg/**` ignore line removed in a scratch
+config (`/tmp/kg-fallow-probe.zZojWV/fallow-probe.json`): `fallow dead-code` reports 931 issues (722 unused files, 166
+unused exports, 31 unused types, 7 unresolved imports, 5 duplicate exports). Making the package fallow-visible is its own
+task: it needs the package's real entry points declared before those counts mean anything.

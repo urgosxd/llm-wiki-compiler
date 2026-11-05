@@ -33,6 +33,8 @@
     "test:watch": "vitest",
     "typecheck:tests": "node scripts/typecheck-tests.ts",
     "typecheck:tests:update": "node scripts/typecheck-tests.ts --update",
+    "typecheck:kg": "node scripts/kg-typecheck.ts",
+    "typecheck:kg:update": "node scripts/kg-typecheck.ts --update",
     "fallow:ci": "bash scripts/fallow-ci.sh",
     "prepublishOnly": "npm run release:check-docs:current && npm run build && npm pack --dry-run --ignore-scripts",
     "prepare": "husky",

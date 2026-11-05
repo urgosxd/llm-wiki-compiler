@@ -6,18 +6,10 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 
-import { sql } from "drizzle-orm";
-
-import {
-  ENTITY_COLUMNS,
-  fetchContributingDocuments,
-  rowToEntity,
-} from "../../core/aks_serializers.js";
 import { readEntities, readEntityByName, toApiError } from "../../core/graph_read.js";
-import type { EntityRow } from "../../core/aks_serializers.js";
 import type { Database } from "../../db.js";
-import { apiError, pydanticString, toFastApiValidationError } from "../../errors.js";
-import { isFilterSet, sendApiError, sendValidationError } from "./response.js";
+import { pydanticString, toFastApiValidationError } from "../../errors.js";
+import { sendApiError, sendValidationError } from "./response.js";
 import {
   ENTITIES_QUERY_KEYS,
   ENTITY_QUERY_KEYS,

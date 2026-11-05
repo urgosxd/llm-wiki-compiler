@@ -77,6 +77,13 @@ jobs:
           --dev /dev --proc /proc -- "$(command -v node)" --version
       - run: npm run release:check-docs
       - run: npm run build
+      # The KG package carries its own tsconfig, and nothing else here reads it:
+      # root `tsc` includes only `src/**`, and `codebase-health` ignores
+      # `packages/llmwiki-kg/**`. Without this step its diagnostics are invisible
+      # to every gate. `typecheck:kg` fails on any diagnostic that is not in
+      # `kg-typecheck-baseline.json`, and on a baselined one that disappeared.
+      - name: Type-check the KG package against its diagnostic ratchet
+        run: npm run typecheck:kg
       # Build the schema from the same runner operators use, before any test needs
       # it. If a migration is missing from the runner, this is where it shows up --
       # `--check` asserts every tenant table exists AND enforces row-level security.
