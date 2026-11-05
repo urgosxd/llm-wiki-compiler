@@ -40,6 +40,7 @@ import { verbose } from "../../utils/output.js";
 import ingestWeb from "../../ingest/web.js";
 import ingestFile from "../../ingest/file.js";
 import ingestPdf from "../../ingest/pdf.js";
+import ingestDocx from "../../ingest/docx.js";
 import ingestImage from "../../ingest/image.js";
 import ingestTranscript from "../../ingest/transcript.js";
 import { buildDocument, enforceCharLimit, enforceMinContent } from "./document.js";
@@ -76,6 +77,8 @@ async function fetchContent(
       return ingestWeb(source);
     case "pdf":
       return ingestPdf(source);
+    case "docx":
+      return ingestDocx(source);
     case "image":
       return ingestImage(source);
     case "transcript":
@@ -190,10 +193,10 @@ async function writeToDimensions(
 }
 
 /**
- * Ingest a source (URL, file, PDF, image, or transcript) into `sources/`.
+ * Ingest a source (URL, file, PDF, DOCX, image, or transcript) into `sources/`.
  *
  * @param root - Project root.
- * @param source - A URL (http/https), YouTube URL, local file, PDF, or image path.
+ * @param source - A URL (http/https), YouTube URL, local file, PDF, DOCX, or image path.
  * @param observer - Optional job observer.
  * @param env - Environment the dimensions write with; defaults to `process.env`.
  * @param stack - A Stack the caller named. Absent for every existing caller, which

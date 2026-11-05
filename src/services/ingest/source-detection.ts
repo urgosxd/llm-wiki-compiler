@@ -143,6 +143,11 @@ export async function detectSourceType(source: string): Promise<SourceType> {
   if (!isUrl(source)) {
     const ext = path.extname(source).toLowerCase();
     if (ext === ".pdf") return "pdf";
+    // `.docx` is a zip of OOXML parts, so like `.pdf` it is decided by extension
+    // alone and routed to its own adapter. Legacy `.doc` and `.xlsx` deliberately
+    // have no branch: they fall through to `file`, whose guard owns the actionable
+    // refusal (S3, S4) rather than detection mis-reporting what kind of thing they are.
+    if (ext === ".docx") return "docx";
     if (IMAGE_EXTENSIONS.has(ext)) return "image";
     if (TRANSCRIPT_EXTENSIONS.has(ext)) return "transcript";
     if (ext === ".txt") {

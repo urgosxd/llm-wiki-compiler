@@ -491,8 +491,14 @@ export interface QueryResult {
   warnings?: QueryWarning[];
 }
 
-/** Source type tag persisted in frontmatter to describe the ingest origin. */
-export type SourceType = "web" | "file" | "image" | "pdf" | "transcript";
+/**
+ * Source type tag persisted in frontmatter to describe the ingest origin.
+ *
+ * `file` covers the text-shaped formats handled by `src/ingest/file.ts`
+ * (`.md`, `.txt`); `docx` is its own member because a Word document is a zip of
+ * OOXML parts and needs a dedicated adapter, exactly as `pdf` does.
+ */
+export type SourceType = "web" | "file" | "image" | "pdf" | "docx" | "transcript";
 
 /** Outcome of a source write: a new file, a content change, or a no-op. */
 export type WriteStatus = "created" | "updated" | "unchanged";
