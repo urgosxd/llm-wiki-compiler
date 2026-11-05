@@ -8,10 +8,24 @@
  * golden-tested under the seeded-stub harness in a later phase.
  *
  * This file builds the fixed `parity-corpus` once, then captures each
- * deterministic surface (SDK / CLI / MCP / viewer) and snapshots it via
+ * deterministic surface (SDK / CLI / MCP resources / viewer) and snapshots it via
  * `assertGolden`. A coverage gate at the end asserts the captured set equals
  * `DETERMINISTIC_SURFACES` minus anything justifiably deferred. NOTHING in
  * this file touches `src/` — it only reads through public surfaces.
+ *
+ * ## Why the three MCP TOOL captures are not here
+ *
+ * `mcp.wiki_status`, `mcp.lint_wiki` and `mcp.read_page` were retired rather than
+ * rebound. Their goldens describe a FILESYSTEM corpus — page counts, `<ROOT>/wiki/
+ * concepts/*.md` findings, and the corpus page whose stem is `Foo Bar`. Every MCP tool
+ * is Stack/row-only now, and `isSlugSafe` (`src/utils/page-identity.ts:35-47`) rejects
+ * a space, so that page has no row form at all: the golden asserts a payload that
+ * cannot exist, which is not a regression. Rebinding them to a Stack would have
+ * replaced the frozen bytes with a second copy of a row assertion rather than kept a
+ * parity check, so the same three payload shapes are pinned instead in
+ * `test/mcp/retired-parity-payloads.test.ts` against seeded rows and a real handshake.
+ * The `mcp.resources` capture stays: resources keep resolving their Stack from the
+ * server environment by design.
  *
  * Surfaces requiring an LLM / embeddings / provider (search, query,
  * context-pack, eval) are explicitly OUT of scope and are NOT captured here;
@@ -27,14 +41,17 @@ import { createWiki } from "../src/index.js";
 import { buildViewerSnapshot } from "../src/viewer/snapshot.js";
 import { buildParityCorpus } from "./fixtures/parity-corpus.js";
 import { runCLI } from "./fixtures/run-cli.js";
-import { buildServer, callTool, connectMcpClient } from "./fixtures/mcp-test-env.js";
+import { connectMcpClient } from "./fixtures/mcp-test-env.js";
 import { assertGolden } from "./parity/golden.js";
 
 /** Every deterministic, no-LLM surface the profile refactor must reproduce. */
 const DETERMINISTIC_SURFACES = [
   "sdk.status", "sdk.lint", "sdk.exportJson", "sdk.listPages", "sdk.getPage", "sdk.exportOkf",
   "cli.lint", "cli.export", "cli.next", "cli.review.list",
-  "mcp.wiki_status", "mcp.lint_wiki", "mcp.read_page", "mcp.resources",
+  // `mcp.wiki_status`, `mcp.lint_wiki` and `mcp.read_page` were retired rather than
+  // rebound; the file header records why. `mcp.resources` stays: resources keep
+  // resolving their Stack from the server environment by design.
+  "mcp.resources",
   "viewer.snapshot",
 ] as const;
 
@@ -127,12 +144,6 @@ function blankExportTime(text: string): string {
     .replace(/## \d{4}-\d{2}-\d{2}\b/g, "## <DATE>");
 }
 
-/** Parse the single JSON envelope a tool handler returns from its text content. */
-function parseToolJson(envelope: { content: Array<{ type: string; text: string }> }): unknown {
-  const text = envelope.content.filter((c) => c.type === "text").map((c) => c.text).join("");
-  return JSON.parse(text);
-}
-
 /**
  * Recursively snapshot a written directory tree as `{ relPath: bytes }`,
  * with each file's text normalized (root paths stripped). Volatile JSON
@@ -219,13 +230,6 @@ describe("CLI deterministic surfaces", () => {
 });
 
 describe("MCP deterministic surfaces", () => {
-  it("captures wiki_status, lint_wiki, read_page (in-process handlers)", async () => {
-    const server = buildServer(root);
-    capture("mcp.wiki_status", parseToolJson(await callTool(server, "wiki_status", {})));
-    capture("mcp.lint_wiki", parseToolJson(await callTool(server, "lint_wiki", {})));
-    capture("mcp.read_page", parseToolJson(await callTool(server, "read_page", { slug: "Foo Bar" })));
-  });
-
   it("captures the resource list and a read resource (stdio client)", async () => {
     const { client, transport } = await connectMcpClient(root);
     try {
