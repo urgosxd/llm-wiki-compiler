@@ -40,6 +40,7 @@ import { fileURLToPath } from "node:url";
 import { createClient } from "llmwiki-kg";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
+import { firstJsonReport } from "./child-report.js";
 import { perRunDatabase } from "./per-run-database.js";
 
 /** This worker's own database: the one a spurious in-process signal must never drop. */
@@ -116,7 +117,7 @@ async function startChild(): Promise<ChildSuite> {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, PER_RUN_SIGNAL_BASE: serverUrl() },
   });
-  const name = await firstReportedName(child);
+  const { name } = await firstJsonReport<{ name: string }>(child, "child");
   spawned.push(name);
   return { name, child, directory };
 }
@@ -125,26 +126,6 @@ async function startChild(): Promise<ChildSuite> {
 function finish(child: ChildSuite): void {
   if (child.child.exitCode === null && child.child.signalCode === null) child.child.kill("SIGKILL");
   rmSync(child.directory, { recursive: true, force: true });
-}
-
-/** Resolve with the database name the child reports; reject if it exits first. */
-function firstReportedName(child: ChildProcess): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let buffered = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk: Buffer) => {
-      buffered += chunk.toString();
-      const line = buffered.split("\n").find((entry) => entry.trim() !== "");
-      if (line === undefined) return;
-      resolve(JSON.parse(line).name as string);
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.once("exit", (code) => {
-      reject(new Error(`child exited before reporting (status ${String(code)}): ${stderr}`));
-    });
-  });
 }
 
 /** Signal the child and resolve with how it died. */

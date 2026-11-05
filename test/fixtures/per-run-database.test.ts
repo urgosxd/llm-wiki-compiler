@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { createClient } from "llmwiki-kg";
 import { afterAll, describe, expect, it } from "vitest";
 
+import { firstJsonReport } from "./child-report.js";
 import {
   PER_RUN_DATABASE_PREFIX,
   createSuiteDatabase,
@@ -315,32 +316,8 @@ async function startLiveSibling(): Promise<LiveSibling> {
   const script = path.join(directory, "live.mts");
   writeFileSync(script, LIVE_SIBLING_SOURCE.replace("__FIXTURE__", fixture));
   const child = spawn(tsx, [script], { stdio: ["ignore", "pipe", "pipe"] });
-  const report = await firstReport(child);
+  const report = await firstJsonReport<ChildReport>(child, "sibling");
   return { ...report, stop: () => stopChild(child, directory) };
-}
-
-/** Resolve with the first JSON line the child prints; reject if it exits first. */
-function firstReport(child: ChildProcess): Promise<ChildReport> {
-  return new Promise((resolve, reject) => {
-    let buffered = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk: Buffer) => {
-      buffered += chunk.toString();
-      const line = buffered.split("\n").find((entry) => entry.trim() !== "");
-      if (line === undefined) return;
-      try {
-        resolve(JSON.parse(line) as ChildReport);
-      } catch (error) {
-        reject(error as Error);
-      }
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.once("exit", (code) => {
-      reject(new Error(`sibling exited before reporting (status ${String(code)}): ${stderr}`));
-    });
-  });
 }
 
 /** Signal the sibling, wait for it to go, and remove its script directory. */
