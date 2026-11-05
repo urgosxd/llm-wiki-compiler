@@ -150,6 +150,31 @@ jobs:
     needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: aks
+          POSTGRES_PASSWORD: aks
+          POSTGRES_DB: aks
+        ports:
+          - 5432:5432
+        # Wait for readiness explicitly. Without a healthcheck the steps below can
+        # start against a socket that is not accepting yet, which reads as a flaky
+        # database rather than a race.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The test suites read these two: LLMWIKI_TEST_DATABASE_URL is the explicit
+      # override, and vitest.config.ts seeds AKS_DATABASE_URL from the same target.
+      LLMWIKI_TEST_DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
+      AKS_DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
+      # scripts/apply-schemas.sh reads DATABASE_URL specifically (not the two above),
+      # so the schema steps and the tests hit the same database.
+      DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
     steps:
       - name: Checkout public_sha
         uses: actions/checkout@v4
@@ -224,6 +249,13 @@ jobs:
         run: >-
           bwrap --cap-drop ALL --unshare-net --ro-bind / /
           --dev /dev --proc /proc -- "$(command -v node)" --version
+      # The service above only supplies an empty pgvector database, so without this
+      # the suite runs against a schema that does not exist yet. Both steps resolve
+      # their target from $1 or DATABASE_URL, which this job defines in `env` above.
+      - name: Apply database schemas
+        run: ./scripts/apply-schemas.sh
+      - name: Verify tenant isolation is enforced
+        run: CHECK_ONLY=true ./scripts/apply-schemas.sh
       - name: Install, validate docs, build, test, pack
         run: |
           set -euo pipefail

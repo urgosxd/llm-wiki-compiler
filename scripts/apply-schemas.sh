@@ -92,6 +92,16 @@ readonly REQUIRED_TENANT_TABLES=(
   "wiki.rule_extractor_state"
 )
 
+# Fail before doing anything when no target was supplied, unless `PSQL` is set (that wrapper
+# carries its own connection). Split out of `psql_run` because `require_connection` redirects the
+# probe's stderr, which used to swallow this message and leave CI with a bare exit code 2.
+require_target() {
+  if [[ -z "${PSQL:-}" && ( -z "$TARGET" || "$TARGET" == "x" ) ]]; then
+    echo "error: no target. Pass a connection string or set DATABASE_URL." >&2
+    exit 2
+  fi
+}
+
 # Run psql against the target, using whatever invocation the environment provides.
 #
 # `PSQL` exists because the dev database lives in a container: the file to apply is on
@@ -100,11 +110,9 @@ psql_run() {
   if [[ -n "${PSQL:-}" ]]; then
     # shellcheck disable=SC2086
     $PSQL "$@"
-  elif [[ -n "$TARGET" && "$TARGET" != "x" ]]; then
-    psql "$TARGET" "$@"
   else
-    echo "error: no target. Pass a connection string or set DATABASE_URL." >&2
-    exit 2
+    require_target
+    psql "$TARGET" "$@"
   fi
 }
 
@@ -119,7 +127,12 @@ apply_file() {
 }
 
 # Fail early and clearly rather than midway through a partial migration.
+#
+# `require_target` runs first, and outside the redirection below: a missing target is a
+# configuration error whose message the reader has to see, and the `2>&1` that hides
+# psql's connection noise would hide it too.
 require_connection() {
+  require_target
   if ! psql_run -tAc "select 1" >/dev/null 2>&1; then
     echo "error: cannot connect to the database." >&2
     exit 2
