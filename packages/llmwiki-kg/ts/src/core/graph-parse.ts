@@ -6,22 +6,40 @@
  * triples. The oracle therefore recovers what it can: a loose JSON parse, then a
  * shape check per entity and relation. This module reproduces that recovery
  * order, because "which triples survive" is observable in the database.
+ *
+ * One deliberate departure from the oracle is documented on
+ * {@link normalizeEntityType}: type labels are trimmed of surrounding whitespace
+ * before they are normalised. Everything else about the order is unchanged.
  */
 
 /**
- * Normalises a relation label the way llama_index's `validate` does.
+ * Normalises a relation label the way llama_index's `validate` does, plus a trim.
  *
- * `type.replace(" ", "_").upper()` — only the first space style is replaced, and
- * every occurrence, so `"used for"` becomes `USED_FOR`. Consolidation lowercases
- * it again when writing, which is why the stored value is `used_for`.
+ * `type.trim().replaceAll(" ", "_").toUpperCase()` — every internal space becomes
+ * one underscore and nothing is collapsed, so `"used for"` becomes `USED_FOR`.
+ * Consolidation lowercases it again when writing, which is why the stored value
+ * is `used_for`.
+ *
+ * The trim is the one place this module knowingly departs from the oracle: `validate`
+ * does not trim, so `" used_for"` becomes `_USED_FOR`, a label no declaration can
+ * match, and the triplet is then rejected for a verb the ontology does declare.
+ * Padding around a label carries no meaning in the source document, so dropping it
+ * can only recover the triplet the model meant.
  */
 function normalizeRelationType(raw: string): string {
-  return raw.replaceAll(" ", "_").toUpperCase();
+  return raw.trim().replaceAll(" ", "_").toUpperCase();
 }
 
-/** Normalises an entity type the same way, per the same `validate` block. */
+/**
+ * Normalises an entity type the same way, per the same `validate` block.
+ *
+ * Includes the same deliberate trim: `" company"`, `"company "`, and
+ * `" company "` all resolve to `COMPANY`, and {@link normalizeType} in
+ * `ontology.ts` applies the identical rule so a padded DECLARATION matches a
+ * padded emission instead of reading as an undeclared type on either side.
+ */
 function normalizeEntityType(raw: string): string {
-  return raw.replaceAll(" ", "_").toUpperCase();
+  return raw.trim().replaceAll(" ", "_").toUpperCase();
 }
 
 export interface Triplet {
@@ -80,7 +98,8 @@ function readEntity(value: unknown): { name: string; type: string } | undefined 
  * Reproduces llama_index's `validate` (a `field_validator` on `triplets`,
  * `mode="before"`) followed by `_prune_invalid_triplets`:
  *
- * 1. Every endpoint's `type` is rewritten as `replace(" ", "_").upper()`. A
+ * 1. Every endpoint's `type` is rewritten as `trim().replaceAll(" ", "_").toUpperCase()`
+ *    (the trim is this module's documented departure from the oracle). A
  *    triplet whose endpoint is missing `type` or `name` fails Pydantic
  *    validation and is **dropped**, not fatal — this is why a model that emits
  *    one malformed triplet still contributes the rest.
@@ -171,6 +190,31 @@ export function parseStandaloneEntities(argumentsJson: string): StandaloneEntity
     out.push({ name, type: normalizeEntityType(entity.type) });
   }
   return out;
+}
+
+/**
+ * Whether a response arrived intact but carries no usable envelope.
+ *
+ * The third outcome of a chunk, and the one that used to be invisible: a
+ * response with no `triplets` array and no `entities` array parses to zero of
+ * both, exactly like a chunk whose prose contained nothing to extract. Counting
+ * it is what stops "0 triplets" from being ambiguous.
+ *
+ * A blank response is NOT mangled: the provider said nothing, which the caller
+ * already reports as a failure. An array that is present but empty is NOT
+ * mangled either — that is the model's legitimate "nothing here" answer, and so
+ * is an array whose individual entries are malformed, because those are dropped
+ * one by one per oracle parity while the envelope itself was readable.
+ *
+ * @param argumentsJson - The model's tool-call argument string.
+ * @returns True when the text is non-blank and neither envelope array exists.
+ */
+export function isShapeMangled(argumentsJson: string): boolean {
+  if (argumentsJson.trim() === "") {
+    return false;
+  }
+  const payload = asRecord(parseJsonLoosely(argumentsJson));
+  return !Array.isArray(payload?.["triplets"]) && !Array.isArray(payload?.["entities"]);
 }
 
 /**

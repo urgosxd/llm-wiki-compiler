@@ -16,11 +16,12 @@
  *
  * With no hierarchy, admission is set membership, so the whole feature rests on
  * the declaration and the model agreeing on a spelling. Both sides normalise with
- * the same rule — `replaceAll(" ", "_").toUpperCase()` in `ontology.ts` and in
- * `graph-parse.ts` — and the tests below state that agreement from both
+ * the same rule — `trim().replaceAll(" ", "_").toUpperCase()` in `ontology.ts` and
+ * in `graph-parse.ts` — and the tests below state that agreement from both
  * directions: a model that emits `company`, a declaration that says
- * `organic organization`. Break either side and every triplet is rejected while
- * the declaration still looks correct.
+ * `organic organization`, a label padded with whitespace on either end. Break
+ * either side and every triplet is rejected while the declaration still looks
+ * correct.
  *
  * ## What is deliberately NOT tested here
  *
@@ -107,19 +108,102 @@ describe("a flat ontology admits exactly what it declares", () => {
     expect(rejected[0]?.offendingType).toBe("ALIEN_CONSTRUCT");
   });
 
-  it("rejects a type that differs from a declared one only by a trailing space", () => {
-    // Trimming happens on names, not on types; a padded type is a different
-    // string and must not be silently accepted by a lookup that normalises late.
-    const { rejected } = parseTripletsWithOntology(
+});
+
+describe("a flat ontology agrees with the model on spelling", () => {
+  it("admits a type that differs from a declared one only by a trailing space", () => {
+    // Tolerance is what this file already endorses: a lowercase `company` and an
+    // internal-space `organic organization` both match the declaration, so
+    // rejecting a padded label was the outlier, not the rule. Whitespace around a
+    // type carries no meaning in the document, so the normaliser trims it before
+    // it uppercases and the label resolves to the declared COMPANY.
+    const { triplets, rejected } = parseTripletsWithOntology(
       payload("COMPANY ", "SUPPLIES", "PERSON"),
       FLAT,
     );
 
-    expect(rejected[0]?.reason).toBe("UNKNOWN_ENTITY_TYPE");
+    expect(rejected).toEqual([]);
+    expect(triplets[0]?.subjectType).toBe("COMPANY");
   });
-});
 
-describe("a flat ontology agrees with the model on spelling", () => {
+  it("admits a type with a leading space", () => {
+    const { triplets, rejected } = parseTripletsWithOntology(
+      payload(" COMPANY", "SUPPLIES", "PERSON"),
+      FLAT,
+    );
+
+    expect(rejected).toEqual([]);
+    expect(triplets[0]?.subjectType).toBe("COMPANY");
+  });
+
+  it("admits a type padded on both sides", () => {
+    const { triplets, rejected } = parseTripletsWithOntology(
+      payload(" COMPANY ", "SUPPLIES", " PERSON "),
+      FLAT,
+    );
+
+    expect(rejected).toEqual([]);
+    expect(triplets.map((triplet) => [triplet.subjectType, triplet.objectType])).toEqual([
+      ["COMPANY", "PERSON"],
+    ]);
+  });
+
+  it("turns each internal space into one underscore, without collapsing them", () => {
+    // Pinned on purpose: two internal spaces stay two underscores. Collapsing
+    // would make this label match a differently-spelled declaration, which is a
+    // spelling rule nobody asked to change.
+    const spaced = validateOntology({
+      entityTypes: ["ORGANIC  ORGANIZATION", "PERSON"],
+      relationshipTypes: ["supplies"],
+    });
+
+    const { triplets, rejected } = parseTripletsWithOntology(
+      payload(" organic  organization ", "SUPPLIES", "person"),
+      spaced,
+    );
+
+    expect(rejected).toEqual([]);
+    expect(triplets[0]?.subjectType).toBe("ORGANIC__ORGANIZATION");
+  });
+
+  it("reports no rejection at all for padded types", () => {
+    // The defect reported a padded label as an UNKNOWN_ENTITY_TYPE named
+    // `_COMPANY`. The rule is gone, so the rejection COLLECTION must be empty;
+    // asserting only one triplet's type would let a different rejection hide.
+    const body = JSON.stringify({
+      triplets: [
+        {
+          subject: { type: " COMPANY", name: "Acme" },
+          relation: { type: "SUPPLIES" },
+          object: { type: "PERSON ", name: "Ada" },
+        },
+        {
+          subject: { type: "COMPANY", name: "Globex" },
+          relation: { type: "SUPPLIES" },
+          object: { type: " PERSON", name: "Grace" },
+        },
+      ],
+    });
+
+    const { triplets, rejected } = parseTripletsWithOntology(body, FLAT);
+
+    expect(rejected).toEqual([]);
+    expect(triplets.map((triplet) => triplet.subjectType)).toEqual(["COMPANY", "COMPANY"]);
+  });
+
+  it("admits a relationship type that only differs by a leading space", () => {
+    // Same defect class on the other label: untrimmed it became `_SUPPLIES`,
+    // which no declaration can match, so a triplet using the declared verb was
+    // reported as UNKNOWN_RELATIONSHIP_TYPE.
+    const { triplets, rejected } = parseTripletsWithOntology(
+      payload("COMPANY", " supplies", "PERSON"),
+      FLAT,
+    );
+
+    expect(rejected).toEqual([]);
+    expect(triplets[0]?.relationType).toBe("SUPPLIES");
+  });
+
   it("admits types the model emits in lowercase", () => {
     const { triplets } = parseTripletsWithOntology(
       payload("company", "supplies", "person"),

@@ -126,9 +126,22 @@ export class OntologyError extends Error {
   }
 }
 
-/** Normalises a type label exactly as `graph-parse.ts` normalises model output. */
+/**
+ * Normalises a type label exactly as `graph-parse.ts` normalises model output.
+ *
+ * Surrounding whitespace is dropped first, so a declaration written `" company "`
+ * and a model emission of `" company"` both resolve to `COMPANY`. Without the
+ * trim, each caller had to remember to trim first: the allowlists did, and
+ * `readSubtypes` did not, so a `subtypes` entry written `" company"` normalised
+ * to `_COMPANY` and the declaration was refused for referencing a type it plainly
+ * names.
+ *
+ * Internal spaces are not collapsed: one space is one underscore, so
+ * `"organic  organization"` keeps two of them. That spelling rule is shared with
+ * the model-facing normaliser and is not changed here.
+ */
 function normalizeType(raw: string): string {
-  return raw.replaceAll(" ", "_").toUpperCase();
+  return raw.trim().replaceAll(" ", "_").toUpperCase();
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
