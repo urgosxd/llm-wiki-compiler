@@ -39,7 +39,7 @@ const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
  * and calling `runStdio()` fails with "runStdio is not a function". The entry S1
  * names lives one level down, in the module that binds stdio.
  */
-export const MCP_ENTRY = `${REPO_ROOT}/packages/llmwiki-kg/ts/dist/mcp/server.js`;
+const MCP_ENTRY = `${REPO_ROOT}/packages/llmwiki-kg/ts/dist/mcp/server.js`;
 
 /** How long the handshake may take before it is called a failure. */
 const CONNECT_TIMEOUT_MS = 30_000;
@@ -75,7 +75,7 @@ function runStdioProgram(): string {
 }
 
 /** Is `pid` still a live process? `kill(pid, 0)` asks without signalling. */
-export function processAlive(pid: number): boolean {
+function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
