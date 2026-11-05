@@ -13,6 +13,26 @@ describe("stackId guard", () => {
     expect(stackIdProblem("b8b8e801-b423-4a32-ab0b-e1ea2d82ead8")).toBeUndefined();
   });
 
+  // Preservation: the adapter moved onto the KG package's shared rule (spec S1),
+  // and these two pin that the WIKI callers still get byte-identical answers. The
+  // full string is asserted, not `toBeDefined()`, because every wiki surface that
+  // renders this text hands it straight to a client.
+  it("keeps the exact message the wiki surfaces render", () => {
+    expect(stackIdProblem("not-a-uuid")).toBe(
+      "'not-a-uuid' is not a Stack id. Stack ids are UUIDs — call list_stacks to see " +
+        "the ones this endpoint can reach.",
+    );
+    expect(stackIdProblem("")).toBe(
+      "'' is not a Stack id. Stack ids are UUIDs — call list_stacks to see " +
+        "the ones this endpoint can reach.",
+    );
+  });
+
+  it("keeps accepting a canonical id through the adapter", () => {
+    expect(stackIdProblem("00000000-0000-0000-0000-000000000000")).toBeUndefined();
+    expect(stackIdProblem("B8B8E801-B423-4A32-AB0B-E1EA2D82EAD8")).toBeUndefined();
+  });
+
   it("reports an unknown id as unknown, not as an empty result", async () => {
     const { createDimensionsDatabase } = await import("../../src/dimensions/activation.js");
     const h = createDimensionsDatabase(process.env);

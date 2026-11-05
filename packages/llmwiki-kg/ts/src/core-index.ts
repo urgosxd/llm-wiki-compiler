@@ -158,3 +158,11 @@ export type { RetrievedChunk } from "./core/retrieval.js";
 
 export { embedQuery } from "./core/extraction.js";
 export type { AKSEntityDto, AKSRelationshipDto } from "./dto.js";
+
+// The Stack-id rule both dimensions validate against (spec S1).
+//
+// Exported through this barrel because the compiler is the other consumer that has
+// to apply the SAME rule: a copy on each side drifts, and the drift surfaces as one
+// dimension refusing an id the other accepts. The compiler reaches it by importing
+// the package name, which it already depends on, so nothing new is wired here.
+export { isStackId, stackIdProblem, STACK_ID_PATTERN } from "./stack-id.js";
