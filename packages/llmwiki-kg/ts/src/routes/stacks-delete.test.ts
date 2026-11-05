@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/stacks-delete.test.ts
- * @description `DELETE /stacks/:stack_id`.
+ * @description `DELETE /stacks/:stackId`.
  */
 
 import { describe, expect, it, beforeEach } from "vitest";
@@ -28,7 +28,7 @@ describe.skipIf(skipReason !== false)("/stacks delete (live database)", () => {
     // before its own assertions ran.
     beforeEach(deleteFixtureRows);
 
-    it("DELETE /stacks/:stack_id returns 204 with a truly empty body, then 404", async () => {
+    it("DELETE /stacks/:stackId returns 204 with a truly empty body, then 404", async () => {
       const app = buildApp();
       const created = await request(app)
         .post("/stacks")

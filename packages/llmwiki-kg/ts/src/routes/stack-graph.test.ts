@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/stack-graph.test.ts
- * @description `GET /domain/kg/stacks/{stack_id}/graph` — the render payload.
+ * @description `GET /domain/kg/stacks/{stackId}/graph` — the render payload.
  *
  * The suite asserts the wire contract a renderer consumes: envelope key order,
  * the entity→node and relationship→edge projections, and the three ways a
@@ -170,7 +170,7 @@ describe.skipIf(state.skipReason !== false)("stack graph (live database)", () =>
       .get(`${GRAPH_BASE}/not-a-uuid/graph`)
       .expect(422);
     const detail = (response.body as { detail: Array<Record<string, unknown>> }).detail;
-    expect(detail[0]?.["loc"]).toEqual(["path", "stack_id"]);
+    expect(detail[0]?.["loc"]).toEqual(["path", "stackId"]);
     expect(detail[0]?.["input"]).toBe("not-a-uuid");
   });
 

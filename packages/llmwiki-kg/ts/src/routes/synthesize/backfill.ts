@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/synthesize/backfill.ts
- * @description `POST /stacks/{stack_id}/synthesize-descriptions`.
+ * @description `POST /stacks/{stackId}/synthesize-descriptions`.
  *
  * Split out of `routes/synthesize.ts` as its own unit because candidate
  * selection — the truthiness test on `entity_ids`, the `only_missing` narrow, and
@@ -20,7 +20,7 @@ import { fetchEntityNames, synthesizeOne } from "./description.js";
 import { sendApiError, sendValidationError } from "./query.js";
 
 // ---------------------------------------------------------------------------
-// POST /stacks/{stack_id}/synthesize-descriptions
+// POST /stacks/{stackId}/synthesize-descriptions
 // ---------------------------------------------------------------------------
 
 /** One candidate row for the backfill. */
@@ -72,21 +72,21 @@ async function readBodyOutcome(
  *
  * FastAPI reports both failure sets in one 422 (measured:
  * `POST /stacks/nope/synthesize-descriptions` with `{"only_missing":null}` yields
- * `uuid_parsing` for `["path","stack_id"]` then `bool_type` for
+ * `uuid_parsing` for `["path","stackId"]` then `bool_type` for
  * `["body","only_missing"]`), so they cannot be short-circuited.
  */
 async function validateRequest(req: Request): Promise<ValidatedBackfill | RefusedBackfill> {
-  const stackId = StackIdParams.safeParse({ stack_id: req.params["stack_id"] });
+  const stackId = StackIdParams.safeParse({ stackId: req.params["stackId"] });
   const body = await readBodyOutcome(req);
 
   if (stackId.success && "payload" in body) {
-    return { ok: true, stackId: stackId.data.stack_id, payload: body.payload };
+    return { ok: true, stackId: stackId.data.stackId, payload: body.payload };
   }
 
   const pathDetails = stackId.success
     ? []
     : toFastApiValidationError(stackId.error, "path", {
-        stack_id: req.params["stack_id"],
+        stackId: req.params["stackId"],
       }).body.detail;
   const bodyDetails = "failure" in body ? body.failure.body.detail : [];
   return { ok: false, failure: { status: 422, body: { detail: [...pathDetails, ...bodyDetails] } } };
@@ -141,7 +141,7 @@ async function synthesizeCandidates(
 }
 
 /**
- * `POST /stacks/{stack_id}/synthesize-descriptions` — backfill, many at once.
+ * `POST /stacks/{stackId}/synthesize-descriptions` — backfill, many at once.
  *
  * Candidate selection, in the Python order:
  *

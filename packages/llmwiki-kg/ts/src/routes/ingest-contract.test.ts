@@ -49,7 +49,7 @@ describe.skipIf(skipReason !== false)("ingest request handling (no gateway)", ()
     });
 
     it("answers 422 for both malformed uuids, in declaration order", async () => {
-      // Measured on the oracle: `stack_id` entry first, then `doc_id`, each with
+      // Measured on the oracle: `stackId` entry first, then `doc_id`, each with
       // Pydantic's `uuid_parsing` details.
       const response = await request(app)
         .post("/stacks/not-a-uuid/documents/also-bad/ingest")
@@ -57,7 +57,7 @@ describe.skipIf(skipReason !== false)("ingest request handling (no gateway)", ()
 
       const detail = response.body.detail as Array<{ type: string; loc: string[]; input: string }>;
       expect(detail).toHaveLength(2);
-      expect(detail[0]?.loc).toEqual(["path", "stack_id"]);
+      expect(detail[0]?.loc).toEqual(["path", "stackId"]);
       expect(detail[0]?.input).toBe("not-a-uuid");
       expect(detail[0]?.type).toBe("uuid_parsing");
       expect(detail[1]?.loc).toEqual(["path", "doc_id"]);
@@ -65,14 +65,14 @@ describe.skipIf(skipReason !== false)("ingest request handling (no gateway)", ()
     });
 
     it("reports path and query failures together, path entries first", async () => {
-      // Measured: three entries in the order stack_id, doc_id, query.
+      // Measured: three entries in the order stackId, doc_id, query.
       const response = await request(app)
         .post("/stacks/nope/documents/nope2/ingest?synthesize_descriptions=maybe")
         .expect(422);
 
       const detail = response.body.detail as Array<{ type: string; loc: string[] }>;
       expect(detail.map((entry) => entry.loc)).toEqual([
-        ["path", "stack_id"],
+        ["path", "stackId"],
         ["path", "doc_id"],
         ["query", "synthesize_descriptions"],
       ]);

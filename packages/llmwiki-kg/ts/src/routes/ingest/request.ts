@@ -26,13 +26,13 @@ export type ParamParse =
   | { readonly ok: true; readonly value: string }
   | { readonly ok: false; readonly failure: ValidationFailure };
 
-/** Validates `:stack_id` the way FastAPI's `UUID` path parameter does. */
+/** Validates `:stackId` the way FastAPI's `UUID` path parameter does. */
 export function parseStackId(raw: unknown): ParamParse {
-  const parsed = StackIdParams.safeParse({ stack_id: raw });
+  const parsed = StackIdParams.safeParse({ stackId: raw });
   if (!parsed.success) {
-    return { ok: false, failure: toFastApiValidationError(parsed.error, "path", { stack_id: raw }) };
+    return { ok: false, failure: toFastApiValidationError(parsed.error, "path", { stackId: raw }) };
   }
-  return { ok: true, value: parsed.data.stack_id };
+  return { ok: true, value: parsed.data.stackId };
 }
 
 /** Validates `:doc_id` the way FastAPI's `UUID` path parameter does. */
@@ -139,10 +139,10 @@ export interface IngestRefusal {
 /**
  * Validates both path parameters and the query flag, reported together.
  *
- * Order is `stack_id`, `doc_id`, then the query entry — measured on the oracle.
+ * Order is `stackId`, `doc_id`, then the query entry.
  */
 export function parseIngestRequest(req: Request): IngestParams | IngestRefusal {
-  const stackId = parseStackId(req.params["stack_id"]);
+  const stackId = parseStackId(req.params["stackId"]);
   const docId = parseDocId(req.params["doc_id"]);
   const rawQuery = { synthesize_descriptions: queryValue(req, "synthesize_descriptions") };
   const query = IngestQuery.safeParse(rawQuery);
@@ -182,9 +182,9 @@ export function sendDocumentNotFound(res: Response, params: IngestParams): void 
  * An unknown Stack and an unknown document are therefore the same 404 carrying
  * both ids — the measured wording.
  *
- * The tenant is bound from the path's `:stack_id` before the query runs. Both
+ * The tenant is bound from the path's `:stackId` before the query runs. Both
  * tables are tenant-scoped, so under RLS an unbound join matches nothing and every
- * ingest would answer 404. `:stack_id` is the caller's own claim and is already the
+ * ingest would answer 404. `:stackId` is the caller's own claim and is already the
  * filter in the WHERE clause, so binding it grants nothing that the query wasn't
  * already asking for — it only lets the policies see the rows the filter selects.
  */

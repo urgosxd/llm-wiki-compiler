@@ -59,7 +59,7 @@ export async function traverse(req: Request, res: Response, tx: Database): Promi
   }
   const {
     start,
-    stack_id: stackId,
+    stackId,
     domain,
     max_depth: maxDepth,
     relationship_types: relationshipTypes,

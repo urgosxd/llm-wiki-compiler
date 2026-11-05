@@ -10,6 +10,7 @@ import {
   pydanticString,
   pydanticUuid,
 } from "./errors.js";
+import type { PydanticErrorDetail, ValidationFailure } from "./errors.js";
 
 /**
  * Request and response DTOs — the TypeScript mirror of `app/models/api.py`.
@@ -18,11 +19,16 @@ import {
  * over: validating a request body, serializing a response, and describing both
  * in OpenAPI.
  *
- * ## Field names are snake_case verbatim
+ * ## Field names are snake_case verbatim, except the Stack field
  *
  * `app/models/api.py` declares no aliases and no alias generator, so the JSON
- * keys are the Python attribute names exactly. Nothing is camelCased here, and
- * no `.transform` renames keys.
+ * keys are the Python attribute names exactly, and no `.transform` renames keys.
+ *
+ * The one exception is the Stack field on a request model, which is `stackId`:
+ * the single name this project settled on for that concept in both dimensions.
+ * It is not the Python attribute name, so it is stated here rather than inferred,
+ * and a caller still sending the old key is told so — see
+ * {@link legacyStackFieldFailure}.
  *
  * ## Declaration order is load-bearing
  *
@@ -38,6 +44,10 @@ import {
  * default too. The oracle answers `201` for a body carrying an unexpected
  * `bogus` key (recorded as `unknown_field` in the validation corpus). Do **not**
  * add `.strict()` / `.passthrough()`.
+ *
+ * The retired Stack key is the single deliberate exception, and it is refused by
+ * an explicit check rather than by tightening these models: see
+ * {@link legacyStackFieldFailure}.
  *
  * ## Timestamps are `string`, never `Date`
  *
@@ -87,6 +97,72 @@ const Timestamp = pydanticString();
 
 /** `dict` with Pydantic's `= {}` default, fresh per parse. */
 const JsonDictDefault = pydanticDict().default(() => ({}));
+
+// ---------------------------------------------------------------------------
+// The Stack field's one name
+// ---------------------------------------------------------------------------
+
+/**
+ * The Stack field's name on a request body.
+ *
+ * One concept, one name: the wiki dimension's MCP tools and this HTTP API both
+ * call it `stackId`. Response models keep `stack_id`, because those keys come
+ * from the oracle's own models and renaming an outbound field is a separate
+ * decision.
+ */
+export const STACK_FIELD = "stackId";
+
+/**
+ * The name {@link STACK_FIELD} retired, kept only so a stale caller is told.
+ *
+ * Zod strips unknown keys, which is the right default — a consumer may send extra
+ * fields — but the wrong answer for THIS key: `stack_id` would vanish, the Stack
+ * would go unresolved, and the request would fall through to domain-only
+ * resolution. That is a wrong answer instead of a refusal, which is the one
+ * outcome a breaking rename must not produce.
+ */
+export const LEGACY_STACK_FIELD = "stack_id";
+
+/**
+ * The 422 entry a body still carrying {@link LEGACY_STACK_FIELD} produces.
+ *
+ * `value_error` is what Pydantic emits for a validator that raised, and the
+ * message keeps Python's `"Value error, " + str(exc)` convention. The `loc` names
+ * the key the caller actually sent, so the entry points at their mistake.
+ */
+function legacyStackEntry(value: unknown): PydanticErrorDetail {
+  return {
+    type: "value_error",
+    loc: ["body", LEGACY_STACK_FIELD],
+    msg:
+      `Value error, \`${LEGACY_STACK_FIELD}\` was renamed to \`${STACK_FIELD}\`; ` +
+      `send \`${STACK_FIELD}\` instead`,
+    input: value,
+  };
+}
+
+/**
+ * Refuses a request body that still carries {@link LEGACY_STACK_FIELD}.
+ *
+ * Narrow on purpose: exactly one key is refused and every other unknown key is
+ * still stripped silently, so a consumer sending extra fields keeps working.
+ * Applied by the two endpoints whose body model carries the field —
+ * `POST /aks/v1/context` and `POST /aks/v1/backfeed/flag` — before any parse, so
+ * the refusal is what reaches the caller rather than a stripped body.
+ *
+ * @param rawBody - The request body exactly as received, before any parse.
+ * @returns The 422 to send, or `undefined` when the body is free of the old key.
+ */
+export function legacyStackFieldFailure(rawBody: unknown): ValidationFailure | undefined {
+  if (typeof rawBody !== "object" || rawBody === null) {
+    return undefined;
+  }
+  if (!Object.hasOwn(rawBody, LEGACY_STACK_FIELD)) {
+    return undefined;
+  }
+  const legacyValue = Reflect.get(rawBody, LEGACY_STACK_FIELD);
+  return { status: 422, body: { detail: [legacyStackEntry(legacyValue)] } };
+}
 
 // ============================================================
 // Stack models (Group 1, extended with synthesize_descriptions in Group 5b)
@@ -298,7 +374,9 @@ export const AKSRelationship = z.object({
 export const AKSContextRequest = z.object({
   // Field(..., min_length=1): an empty query is a 422, not a 400.
   query: pydanticString({ minLength: 1 }),
-  stack_id: pydanticUuid().nullable().default(null),
+  // The one renamed field: `pydanticUuid` is untouched, so every text form the
+  // oracle accepted — 32-hex, `{8-4-4-4-12}`, `urn:uuid:` — still parses here.
+  stackId: pydanticUuid().nullable().default(null),
   domain: pydanticString().nullable().default(null),
   // Field(default=8, ge=1, le=50) — the bounds are inclusive on both ends.
   max_entities: pydanticInt({ ge: 1, le: 50 }).default(8),
@@ -431,7 +509,8 @@ export const BackfeedProposal = z.object({
 
 /** Request body for `POST /aks/v1/backfeed/flag`. */
 export const BackfeedFlagRequest = z.object({
-  stack_id: pydanticUuid().nullable().default(null),
+  // The renamed Stack field — see `legacyStackFieldFailure` above.
+  stackId: pydanticUuid().nullable().default(null),
   domain: pydanticString().nullable().default(null),
   origin: z.literal(BACKFEED_ORIGINS).default("direct"),
   trigger_type: z.literal(BACKFEED_TRIGGER_TYPES).default("manual"),

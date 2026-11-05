@@ -57,10 +57,10 @@ export function createDocumentsRouter(
 
   router.use(deps.apiKey);
 
-  router.post("/stacks/:stack_id/documents", deps.wrap(uploadDocument));
-  router.get("/stacks/:stack_id/documents", deps.wrap(listDocuments));
-  router.get("/stacks/:stack_id/documents/:doc_id", deps.wrap(getDocument));
-  router.delete("/stacks/:stack_id/documents/:doc_id", deps.wrap(deleteDocument));
+  router.post("/stacks/:stackId/documents", deps.wrap(uploadDocument));
+  router.get("/stacks/:stackId/documents", deps.wrap(listDocuments));
+  router.get("/stacks/:stackId/documents/:doc_id", deps.wrap(getDocument));
+  router.delete("/stacks/:stackId/documents/:doc_id", deps.wrap(deleteDocument));
 
   return router;
 }

@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/stacks-read.test.ts
- * @description `GET /stacks` and `GET /stacks/:stack_id`.
+ * @description `GET /stacks` and `GET /stacks/:stackId`.
  */
 
 import { describe, expect, it, beforeEach } from "vitest";
@@ -79,7 +79,7 @@ describe.skipIf(skipReason !== false)("/stacks read (live database)", () => {
       }
     });
 
-    it("GET /stacks/:stack_id returns 200 for a known id and 404 for an unknown one", async () => {
+    it("GET /stacks/:stackId returns 200 for a known id and 404 for an unknown one", async () => {
       const app = buildApp();
       const created = await request(app)
         .post("/stacks")

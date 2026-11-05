@@ -17,7 +17,7 @@ import { createApp } from "../server.js";
  */
 const UUID_PATH_DETAIL = {
   type: "uuid_parsing",
-  loc: ["path", "stack_id"],
+  loc: ["path", "stackId"],
   msg: "Input should be a valid UUID, invalid character: found `n` at 0",
   input: "not-a-uuid",
   ctx: { error: "invalid character: found `n` at 0" },
@@ -52,7 +52,7 @@ describe.skipIf(skipReason !== false)("/stacks validation and auth (live databas
           detail: [
             {
               type: "uuid_parsing",
-              loc: ["path", "stack_id"],
+              loc: ["path", "stackId"],
               msg: "Input should be a valid UUID, invalid character: found `n` at 0",
               input: "not-a-uuid",
               ctx: { error: "invalid character: found `n` at 0" },

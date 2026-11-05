@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/documents/list.ts
- * @description `GET /stacks/:stack_id/documents` — every document in a Stack.
+ * @description `GET /stacks/:stackId/documents` — every document in a Stack.
  */
 
 import { sql } from "drizzle-orm";
@@ -14,13 +14,13 @@ import { parseStackId, sendApiError, sendValidationError } from "./params.js";
 import { toDocumentResponse } from "./response.js";
 
 /** Separated from its doc comment so the extraction pipeline above stays readable. */
-/** `GET /stacks/:stack_id/documents` — every document in a Stack, newest first. */
+/** `GET /stacks/:stackId/documents` — every document in a Stack, newest first. */
 export async function listDocuments(
   req: Request,
   res: Response,
   tx: Database,
 ): Promise<void> {
-  const stackId = parseStackId(req.params["stack_id"]);
+  const stackId = parseStackId(req.params["stackId"]);
   if (!stackId.ok) {
     sendValidationError(res, stackId.failure);
     return;

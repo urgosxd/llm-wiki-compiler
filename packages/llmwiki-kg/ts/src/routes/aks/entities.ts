@@ -44,7 +44,7 @@ export async function listEntities(req: Request, res: Response, tx: Database): P
     return;
   }
 
-  const { stack_id: stackId, domain, type, min_confidence: minConfidence, limit } = query.data;
+  const { stackId, domain, type, min_confidence: minConfidence, limit } = query.data;
 
   // The query itself lives in `core/graph_read.ts` so a non-HTTP caller (the `kg`
   // dimension, MCP, a test) can read the graph without going through Express.
@@ -88,7 +88,7 @@ export async function getEntity(req: Request, res: Response, tx: Database): Prom
   // Express routed here; it exists so the value is narrowed without a cast.
   const name = EntityNameParams.parse({ name: req.params["name"] }).name;
 
-  const result = await readEntityByName(tx, query.data.stack_id, query.data.domain, name);
+  const result = await readEntityByName(tx, query.data.stackId, query.data.domain, name);
   if (!result.ok) {
     sendApiError(res, toApiError(result.error));
     return;

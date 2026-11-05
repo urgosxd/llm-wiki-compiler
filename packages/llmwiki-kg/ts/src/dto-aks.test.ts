@@ -97,7 +97,7 @@ describe("AKSContextRequest", () => {
   it("applies the Python defaults", () => {
     expect(parseOk(AKSContextRequest, { query: "auth" })).toEqual({
       query: "auth",
-      stack_id: null,
+      stackId: null,
       domain: null,
       max_entities: 8,
       include_relationships: true,

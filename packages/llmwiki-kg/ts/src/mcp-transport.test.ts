@@ -175,7 +175,7 @@ describe("stackId is a required tool argument", () => {
         },
       });
       expect(harness.requests[0]?.body).toBe(
-        `{"query":"how are refunds handled?","max_entities":8,"stack_id":"${VALID_STACK}","domain":"w1doc-probe-main"}`,
+        `{"query":"how are refunds handled?","max_entities":8,"stackId":"${VALID_STACK}","domain":"w1doc-probe-main"}`,
       );
       expect(textOf(result)).toBe(EXPECTED_CTX);
     } finally {
@@ -183,7 +183,7 @@ describe("stackId is a required tool argument", () => {
     }
   });
 
-  it("query_stack still reaches HTTP under the stack_id key", async () => {
+  it("query_stack still reaches HTTP under the stackId key", async () => {
     const harness = await connect({ status: 200, body: SYNTHETIC_CONTEXT_RESPONSE });
     try {
       const result = await harness.client.callTool({
@@ -191,7 +191,7 @@ describe("stackId is a required tool argument", () => {
         arguments: { query: "how are refunds handled?", stackId: VALID_STACK },
       });
       expect(harness.requests[0]?.body).toBe(
-        `{"query":"how are refunds handled?","max_entities":8,"stack_id":"${VALID_STACK}"}`,
+        `{"query":"how are refunds handled?","max_entities":8,"stackId":"${VALID_STACK}"}`,
       );
       expect(textOf(result)).toBe(EXPECTED_CTX);
     } finally {
@@ -199,7 +199,7 @@ describe("stackId is a required tool argument", () => {
     }
   });
 
-  it("traverse_stack still reaches HTTP under the stack_id key", async () => {
+  it("traverse_stack still reaches HTTP under the stackId key", async () => {
     const harness = await connect({ status: 200, body: SYNTHETIC_TRAVERSE_RESPONSE });
     try {
       const result = await harness.client.callTool({
@@ -207,7 +207,7 @@ describe("stackId is a required tool argument", () => {
         arguments: { start: "Payment Service", stackId: VALID_STACK },
       });
       expect(harness.requests[0]?.url).toBe(
-        `http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&stack_id=${VALID_STACK}`,
+        `http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&stackId=${VALID_STACK}`,
       );
       expect(textOf(result)).toBe(EXPECTED_TRAV);
     } finally {
@@ -215,7 +215,7 @@ describe("stackId is a required tool argument", () => {
     }
   });
 
-  it("get_entities still reaches HTTP under the stack_id key", async () => {
+  it("get_entities still reaches HTTP under the stackId key", async () => {
     const harness = await connect({ status: 200, body: SYNTHETIC_ENTITIES_RESPONSE });
     try {
       const result = await harness.client.callTool({
@@ -223,7 +223,7 @@ describe("stackId is a required tool argument", () => {
         arguments: { stackId: VALID_STACK, type: "System" },
       });
       expect(harness.requests[0]?.url).toBe(
-        `http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&stack_id=${VALID_STACK}&type=System`,
+        `http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&stackId=${VALID_STACK}&type=System`,
       );
       expect(textOf(result)).toBe(EXPECTED_ENTS);
     } finally {
@@ -274,7 +274,7 @@ describe("stackId is the one caller-facing Stack argument (S1)", () => {
     }
   });
 
-  it("still sends a well-formed stackId under the HTTP stack_id key", async () => {
+  it("still sends a well-formed stackId under the HTTP stackId key", async () => {
     // The rename is caller-facing only. The published HTTP body keeps its
     // snake_case key until the DTO and the routes rename together.
     const harness = await connect({ status: 200, body: SYNTHETIC_CONTEXT_RESPONSE });
@@ -284,7 +284,7 @@ describe("stackId is the one caller-facing Stack argument (S1)", () => {
         arguments: { query: "q", stackId: VALID_STACK },
       });
       expect(harness.requests[0]?.body).toBe(
-        `{"query":"q","max_entities":8,"stack_id":"${VALID_STACK}"}`,
+        `{"query":"q","max_entities":8,"stackId":"${VALID_STACK}"}`,
       );
     } finally {
       await harness.close();

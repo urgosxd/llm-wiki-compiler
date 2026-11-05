@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/stacks-update.test.ts
- * @description `PATCH /stacks/:stack_id` and its `exclude_unset` semantics.
+ * @description `PATCH /stacks/:stackId` and its `exclude_unset` semantics.
  */
 
 import { describe, expect, it, beforeEach } from "vitest";
@@ -28,7 +28,7 @@ describe.skipIf(skipReason !== false)("/stacks update (live database)", () => {
     // before its own assertions ran.
     beforeEach(deleteFixtureRows);
 
-    it("PATCH /stacks/:stack_id updates only the fields present in the body", async () => {
+    it("PATCH /stacks/:stackId updates only the fields present in the body", async () => {
       const app = buildApp();
       const payloadDomain = uniqueDomain("patch");
       const created = await request(app)
@@ -53,7 +53,7 @@ describe.skipIf(skipReason !== false)("/stacks update (live database)", () => {
       expectOracleTimestamp(patched.body.updated_at);
     });
 
-    it("PATCH /stacks/:stack_id distinguishes an absent key from an explicit null", async () => {
+    it("PATCH /stacks/:stackId distinguishes an absent key from an explicit null", async () => {
       const app = buildApp();
       const created = await request(app)
         .post("/stacks")
@@ -74,7 +74,7 @@ describe.skipIf(skipReason !== false)("/stacks update (live database)", () => {
       expect(nulled.body.description).toBeNull();
     });
 
-    it("PATCH /stacks/:stack_id rejects an empty body with 400, not 422", async () => {
+    it("PATCH /stacks/:stackId rejects an empty body with 400, not 422", async () => {
       const app = buildApp();
       const created = await request(app)
         .post("/stacks")
@@ -89,7 +89,7 @@ describe.skipIf(skipReason !== false)("/stacks update (live database)", () => {
       expect(response.body).toEqual({ detail: "At least one field must be provided" });
     });
 
-    it("PATCH /stacks/:stack_id returns 404 for an unknown id", async () => {
+    it("PATCH /stacks/:stackId returns 404 for an unknown id", async () => {
       const app = buildApp();
       const missingId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 

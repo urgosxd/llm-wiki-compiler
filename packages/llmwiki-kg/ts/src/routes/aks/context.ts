@@ -15,7 +15,7 @@ import { embedQuery } from "../../core/extraction.js";
 import { complete } from "../../core/llm_clients.js";
 import { retrieveRelevantChunks } from "../../core/retrieval.js";
 import type { Database } from "../../db.js";
-import { AKSContextRequest, AKSContextResponse } from "../../dto.js";
+import { AKSContextRequest, AKSContextResponse, legacyStackFieldFailure } from "../../dto.js";
 import type { AKSRelationshipDto } from "../../dto.js";
 import {
   ENTITY_COLUMNS,
@@ -347,6 +347,12 @@ async function selectEntities(
 
 export async function contextQuery(req: Request, res: Response, tx: Database): Promise<void> {
   const rawBody: unknown = req.body;
+  // The retired Stack key is refused, not stripped: see `legacyStackFieldFailure`.
+  const legacy = legacyStackFieldFailure(rawBody);
+  if (legacy !== undefined) {
+    sendValidationError(res, legacy);
+    return;
+  }
   const parsed = AKSContextRequest.safeParse(rawBody);
   if (!parsed.success) {
     sendValidationError(res, toFastApiValidationError(parsed.error, "body", rawBody));
@@ -354,7 +360,7 @@ export async function contextQuery(req: Request, res: Response, tx: Database): P
   }
   const payload = parsed.data;
 
-  const stack = await resolveStack(tx, payload.stack_id, payload.domain);
+  const stack = await resolveStack(tx, payload.stackId, payload.domain);
   if (!stack.ok) {
     sendApiError(res, stack.error);
     return;

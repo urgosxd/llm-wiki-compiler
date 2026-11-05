@@ -48,9 +48,9 @@
  *
  * Python types it `Optional[str]` and compares in the body, so an invalid value
  * is a 400 `{"detail": "<string>"}`, not a 422. Measured on the oracle:
- * `?item_status=bogus` answers 400 while a bad `stack_id` on the same request
+ * `?item_status=bogus` answers 400 while a bad `stackId` on the same request
  * answers 422 — and the query-parameter 422s are produced *before* the handler
- * runs, so `?stack_id=nope&item_status=bogus` reports the UUID error first.
+ * runs, so `?stackId=nope&item_status=bogus` reports the UUID error first.
  */
 
 export { createBackfeedRouter } from "./backfeed/router.js";

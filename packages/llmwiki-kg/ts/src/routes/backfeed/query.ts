@@ -9,9 +9,9 @@
  * `item_status` is validated in the handler, not by the DTO: Python types it
  * `Optional[str]` and compares in the body, so an invalid value is a 400
  * `{"detail": "<string>"}`, not a 422. Measured on the oracle:
- * `?item_status=bogus` answers 400 while a bad `stack_id` on the same request
+ * `?item_status=bogus` answers 400 while a bad `stackId` on the same request
  * answers 422 — and the query-parameter 422s are produced *before* the handler
- * runs, so `?stack_id=nope&item_status=bogus` reports the UUID error first.
+ * runs, so `?stackId=nope&item_status=bogus` reports the UUID error first.
  */
 
 import type { Request, Response } from "express";
@@ -33,10 +33,10 @@ export const BackfeedItemParams = z.object({ item_id: pydanticUuid() });
 /**
  * Query-parameter validator for `GET /queue`.
  *
- * Declaration order is the Python signature's order — `stack_id`, `domain`,
+ * Declaration order is the Python signature's order — `stackId`, `domain`,
  * `item_status`, `limit` — because Pydantic reports one entry per failing
  * parameter in that order and `toFastApiValidationError` preserves Zod's issue
- * order. Measured: `?stack_id=nope&limit=0` answers the `uuid_parsing` entry
+ * order. Measured: `?stackId=nope&limit=0` answers the `uuid_parsing` entry
  * first, then the `greater_than_equal` entry.
  *
  * `item_status` carries its `"pending"` default here so the handler sees the
@@ -44,7 +44,7 @@ export const BackfeedItemParams = z.object({ item_id: pydanticUuid() });
  * the handler (400, not 422).
  */
 export const QueueQuery = z.object({
-  stack_id: pydanticUuid().nullable().default(null),
+  stackId: pydanticUuid().nullable().default(null),
   domain: pydanticString().nullable().default(null),
   item_status: pydanticString().nullable().default("pending"),
   limit: pydanticInt({ ge: 1, le: 200 }).default(50),
@@ -97,7 +97,7 @@ export function readQueryValue(value: unknown): string | undefined {
  */
 export function readQueueQuery(req: Request): Record<string, unknown> {
   const raw: Record<string, unknown> = {};
-  for (const key of ["stack_id", "domain", "item_status", "limit"] as const) {
+  for (const key of ["stackId", "domain", "item_status", "limit"] as const) {
     const value = readQueryValue(req.query[key]);
     if (value !== undefined) {
       raw[key] = value;
@@ -115,7 +115,7 @@ export function parseQueueQuery(req: Request): QueueQueryParse {
   }
   return {
     ok: true,
-    stackId: parsed.data.stack_id,
+    stackId: parsed.data.stackId,
     domain: parsed.data.domain,
     itemStatus: parsed.data.item_status,
     limit: parsed.data.limit,

@@ -1,10 +1,10 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/backfeed/stack.ts
- * @description `resolve_stack` — turning a `stack_id`/`domain` pair into an id.
+ * @description `resolve_stack` — turning a `stackId`/`domain` pair into an id.
  *
  * Split out of `routes/backfeed.ts` as its own unit because its three measured
  * failure modes (422 for neither, 404 for unknown) are shared by the flag and
- * queue endpoints, and `stack_id` wins when both are supplied.
+ * queue endpoints, and `stackId` wins when both are supplied.
  */
 
 import { sql } from "drizzle-orm";
@@ -24,14 +24,14 @@ export type StackResolution =
  *
  * Three distinct failures, all measured:
  *
- * - neither `stack_id` nor `domain` supplied (including `domain: ""`, because
+ * - neither `stackId` nor `domain` supplied (including `domain: ""`, because
  *   Python's check is a truthiness test) -> **422** with a plain-string
  *   `detail`, not the 422 error array;
- * - `stack_id` given but unknown -> 404, naming the canonical lowercase UUID;
+ * - `stackId` given but unknown -> 404, naming the canonical lowercase UUID;
  * - `domain` given but unknown -> 404, naming the domain.
  *
- * When both are supplied `stack_id` wins, because Python branches on it first.
- * Measured: a valid `stack_id` with a nonexistent `domain` answers 201.
+ * When both are supplied `stackId` wins, because Python branches on it first.
+ * Measured: a valid `stackId` with a nonexistent `domain` answers 201.
  */
 export async function resolveStack(
   tx: Database,
@@ -43,13 +43,13 @@ export async function resolveStack(
   if (stackId === null && !hasDomain) {
     return {
       ok: false,
-      error: apiError(422, "Either stack_id (UUID) or domain (slug) must be provided"),
+      error: apiError(422, "Either stackId (UUID) or domain (slug) must be provided"),
     };
   }
 
   // Bind the tenant named by the caller BEFORE reading. The `stacks` read policy
   // matches only the bound tenant, so an unbound lookup answers 404 for a Stack that
-  // exists. `stack_id`/`domain` are the caller's own reference and this query's own
+  // exists. `stackId`/`domain` are the caller's own reference and this query's own
   // filter, so binding them grants nothing extra.
   await bindCallerStack(tx, stackId, domain);
 

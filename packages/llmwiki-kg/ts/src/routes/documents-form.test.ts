@@ -68,7 +68,7 @@ describe.skipIf(skipReason !== false)("documents form validation (live database)
           detail: [
             {
               type: "uuid_parsing",
-              loc: ["path", "stack_id"],
+              loc: ["path", "stackId"],
               msg: "Input should be a valid UUID, invalid character: found `n` at 0",
               input: "not-a-uuid",
               ctx: { error: "invalid character: found `n` at 0" },

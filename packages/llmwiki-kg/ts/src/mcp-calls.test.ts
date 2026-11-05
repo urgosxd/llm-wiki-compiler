@@ -39,7 +39,7 @@ describe("callTool routing", () => {
     expect(request?.method).toBe("POST");
     expect(request?.url).toBe("http://localhost:8000/aks/v1/context");
     // `max_entities` defaults to 8; the Stack is forwarded as the argument gave it.
-    expect(request?.body).toBe(`{"query":"how are refunds handled?","max_entities":8,"stack_id":"${STACK}"}`);
+    expect(request?.body).toBe(`{"query":"how are refunds handled?","max_entities":8,"stackId":"${STACK}"}`);
     expect(textOf(result)).toBe(EXPECTED_CTX);
   });
 
@@ -55,7 +55,7 @@ describe("callTool routing", () => {
       { fetchImpl, baseUrl: BASE_URL },
     );
     expect(requests[0]?.body).toBe(
-      `{"query":"q","max_entities":8,"stack_id":"${STACK}","domain":"dom"}`,
+      `{"query":"q","max_entities":8,"stackId":"${STACK}","domain":"dom"}`,
     );
   });
 
@@ -70,7 +70,7 @@ describe("callTool routing", () => {
       { fetchImpl, baseUrl: BASE_URL },
     );
     expect(requests[0]?.body).toBe(
-      '{"query":"q","max_entities":3,"stack_id":"00000000-0000-4000-8000-000000000000"}',
+      '{"query":"q","max_entities":3,"stackId":"00000000-0000-4000-8000-000000000000"}',
     );
   });
 
@@ -162,7 +162,7 @@ describe("callTool routing", () => {
     // Param order follows the Python dict: start, max_depth, then the Stack,
     // then relationship_types.
     expect(requests[0]?.url).toBe(
-      `http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&stack_id=${STACK}&relationship_types=requires%2Ctriggers`,
+      `http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&stackId=${STACK}&relationship_types=requires%2Ctriggers`,
     );
     expect(textOf(result)).toBe(EXPECTED_TRAV);
   });
@@ -180,7 +180,7 @@ describe("callTool routing", () => {
 
     expect(requests[0]?.method).toBe("GET");
     expect(requests[0]?.url).toBe(
-      `http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&stack_id=${STACK}&type=System`,
+      `http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&stackId=${STACK}&type=System`,
     );
     expect(textOf(result)).toBe(EXPECTED_ENTS);
   });
@@ -200,7 +200,7 @@ describe("callTool routing", () => {
       { ...traverse, baseUrl: BASE_URL },
     );
     expect(traverse.requests[0]?.url).toBe(
-      `http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&stack_id=${STACK}&relationship_types=requires%2Ctriggers`,
+      `http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&stackId=${STACK}&relationship_types=requires%2Ctriggers`,
     );
 
     const entities = recordingFetch({ status: 200, body: SYNTHETIC_ENTITIES_RESPONSE });
@@ -211,7 +211,7 @@ describe("callTool routing", () => {
     );
     // min_confidence is a Python float (0.0), limit a Python int (100).
     expect(entities.requests[0]?.url).toBe(
-      `http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&stack_id=${STACK}&type=System`,
+      `http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&stackId=${STACK}&type=System`,
     );
   });
 

@@ -49,15 +49,17 @@ export function errorResult(text: string): CallToolResult {
 const MISSING_STACK_ERROR = "Error: 'stackId' must be provided.";
 
 /**
- * The HTTP wire key for the Stack, still snake_case on purpose.
+ * The HTTP wire key for the Stack.
  *
- * This module renames what MCP *callers* see. The published HTTP body and query
- * string keep `stack_id` until the DTO and the routes are renamed together by
- * the follow-up task; the handler is the translation point between the two
- * names, so the wire key is not a leftover — renaming it here alone would break
- * every route this change leaves untouched.
+ * The MCP tools, the HTTP body, the HTTP query string and the path-parameter
+ * labels all carry one name for this concept, so this is not a translation point
+ * but the same name stated once: `stackId`. The DTO field, the route schemas and
+ * the core parameters were renamed together with it.
+ *
+ * Response models still emit `stack_id`, because those keys come from the
+ * oracle's own models and renaming an outbound field is a separate decision.
  */
-const HTTP_STACK_FIELD = "stack_id";
+const HTTP_STACK_FIELD = "stackId";
 
 /** Narrow the tool-call `arguments` payload to a plain record. */
 export function asArguments(value: Readonly<Record<string, unknown>> | undefined): Record<string, unknown> {

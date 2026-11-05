@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/documents/get.ts
- * @description `GET /stacks/:stack_id/documents/:doc_id` — one record, or 404.
+ * @description `GET /stacks/:stackId/documents/:doc_id` — one record, or 404.
  *
  * ## Why the Stack is in the path
  *
@@ -32,7 +32,7 @@ import { parseDocId, parseStackId, sendApiError, sendValidationError } from "./p
 import { toDocumentResponse } from "./response.js";
 
 /**
- * `GET /stacks/:stack_id/documents/:doc_id` — one record, or 404.
+ * `GET /stacks/:stackId/documents/:doc_id` — one record, or 404.
  *
  * Never returns file contents.
  */
@@ -41,7 +41,7 @@ export async function getDocument(
   res: Response,
   tx: Database,
 ): Promise<void> {
-  const stackId = parseStackId(req.params["stack_id"]);
+  const stackId = parseStackId(req.params["stackId"]);
   if (!stackId.ok) {
     sendValidationError(res, stackId.failure);
     return;

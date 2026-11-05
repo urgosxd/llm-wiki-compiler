@@ -135,7 +135,7 @@ describe.skipIf(state.skipReason !== false)("pages endpoints (LLM stubbed)", () 
     const fixture = await createFixture();
 
     const lower = await request(app)
-      .get(`/aks/v1/pages/billing%20service?stack_id=${fixture.stackId}`)
+      .get(`/aks/v1/pages/billing%20service?stackId=${fixture.stackId}`)
       .expect(200);
     expect((lower.body as { entity_name: string }).entity_name).toBe("Billing Service");
 
@@ -362,15 +362,15 @@ describe.skipIf(state.skipReason !== false)("pages endpoints (LLM stubbed)", () 
 
   it("rejects malformed query parameters before resolving the Stack", async () => {
     // Measured: FastAPI reports both failing parameters together, in declaration
-    // order, so a bad `stack_id` does not mask a bad `min_confidence`.
+    // order, so a bad `stackId` does not mask a bad `min_confidence`.
     const response = await request(app)
-      .get("/aks/v1/pages?stack_id=nope&min_confidence=2")
+      .get("/aks/v1/pages?stackId=nope&min_confidence=2")
       .expect(422);
 
     expect((response.body as { detail: unknown[] }).detail).toEqual([
       {
         type: "uuid_parsing",
-        loc: ["query", "stack_id"],
+        loc: ["query", "stackId"],
         msg: "Input should be a valid UUID, invalid character: found `n` at 0",
         input: "nope",
         ctx: { error: "invalid character: found `n` at 0" },
@@ -403,7 +403,7 @@ describe.skipIf(state.skipReason !== false)("pages endpoints (LLM stubbed)", () 
     for (const path of ["/aks/v1/pages", "/aks/v1/pages/Gateway"]) {
       const response = await request(app).get(path).expect(422);
       expect(response.body, path).toEqual({
-        detail: "Either stack_id (UUID) or domain (slug) must be provided",
+        detail: "Either stackId (UUID) or domain (slug) must be provided",
       });
     }
   });

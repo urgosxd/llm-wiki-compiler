@@ -147,20 +147,20 @@ function ontologyLiteral(ontology: unknown): SQL | null {
 }
 
 /**
- * Path-parameter validator for `:stack_id`.
+ * Path-parameter validator for `:stackId`.
  *
  * Deliberately an object with the parameter's own name as its key, not the bare
  * {@link pydanticUuid} primitive. FastAPI reports a path parameter failure as
- * `loc: ["path", "stack_id"]`, and `toFastApiValidationError` derives the tail
+ * `loc: ["path", "stackId"]`, and `toFastApiValidationError` derives the tail
  * of `loc` from the Zod issue path. Parsing a bare primitive at the root would
  * leave that path empty and produce `loc: ["path"]`, so the value is wrapped in
- * a one-key object whose key *is* the FastAPI parameter name.
+ * a one-key object whose key *is* the parameter name.
  *
  * The wrapper also makes `input` come out right for free: the mapper reads it
  * from the same path, so it reports the raw `"not-a-uuid"` text rather than a
  * container.
  */
-const StackIdParams = z.object({ stack_id: pydanticUuid() });
+const StackIdParams = z.object({ stackId: pydanticUuid() });
 
 /** Result of validating the path parameter, before any SQL runs. */
 type StackIdParse =
@@ -168,21 +168,21 @@ type StackIdParse =
   | { readonly ok: false; readonly failure: ValidationFailure };
 
 /**
- * Validates `:stack_id` the way FastAPI's `UUID` path parameter does.
+ * Validates `:stackId` the way FastAPI's `UUID` path parameter does.
  *
  * Resolves to the canonical lowercase hyphenated UUID, which is what Pydantic
  * serializes — so the 404 detail always carries the normalized form even when
  * the client sent the simple, braced, `urn:uuid:` or uppercase variant.
  */
 function parseStackId(raw: unknown): StackIdParse {
-  const parsed = StackIdParams.safeParse({ stack_id: raw });
+  const parsed = StackIdParams.safeParse({ stackId: raw });
   if (!parsed.success) {
     return {
       ok: false,
-      failure: toFastApiValidationError(parsed.error, "path", { stack_id: raw }),
+      failure: toFastApiValidationError(parsed.error, "path", { stackId: raw }),
     };
   }
-  return { ok: true, stackId: parsed.data.stack_id };
+  return { ok: true, stackId: parsed.data.stackId };
 }
 
 /** Sends an `HTTPException`-shaped body: `{"detail": "<message>"}`. */
@@ -299,13 +299,13 @@ async function listStacks(
   res.json(rows.map(toStackResponse));
 }
 
-/** `GET /stacks/:stack_id` — one Stack, or 404. */
+/** `GET /stacks/:stackId` — one Stack, or 404. */
 async function getStack(
   req: Request,
   res: Response,
   tx: Database,
 ): Promise<void> {
-  const stackId = parseStackId(req.params["stack_id"]);
+  const stackId = parseStackId(req.params["stackId"]);
   if (!stackId.ok) {
     sendValidationError(res, stackId.failure);
     return;
@@ -313,7 +313,7 @@ async function getStack(
 
   // Bind the tenant named in the path before reading. The `stacks` read policy
   // matches only the bound tenant, so an unbound lookup answers 404 for a Stack
-  // that exists. `:stack_id` is the caller's own reference and the query's own
+  // that exists. `:stackId` is the caller's own reference and the query's own
   // filter, so binding it grants nothing extra — it lets the policy see the row.
   await bindCallerStack(tx, stackId.stackId, null);
   const rows = await tx.execute<StackRow>(sql`
@@ -384,7 +384,7 @@ type UpdateRefusal =
  *
  * Path entries come first. Measured on the oracle: `PATCH /stacks/not-a-uuid`
  * with `{"name": ""}` answers 422 with the `uuid_parsing` entry for
- * `["path","stack_id"]` followed by the `string_too_short` entry for
+ * `["path","stackId"]` followed by the `string_too_short` entry for
  * `["body","name"]`. Reporting only one of the two would be a silent contract
  * change. `{"bogus": 1}` and `{}` are both "no updatable field supplied" — Zod
  * strips the unknown key, so the 400 is what the oracle answers for both.
@@ -449,13 +449,13 @@ async function updateStackRow(
   return rows[0];
 }
 
-/** `PATCH /stacks/:stack_id` — partial update with `exclude_unset` semantics. */
+/** `PATCH /stacks/:stackId` — partial update with `exclude_unset` semantics. */
 async function updateStack(
   req: Request,
   res: Response,
   tx: Database,
 ): Promise<void> {
-  const stackId = parseStackId(req.params["stack_id"]);
+  const stackId = parseStackId(req.params["stackId"]);
   const rawBody: unknown = req.body;
   const body = StackUpdate.safeParse(rawBody);
 
@@ -474,13 +474,13 @@ async function updateStack(
   res.json(toStackResponse(row));
 }
 
-/** `DELETE /stacks/:stack_id` — 204 with a genuinely empty body. */
+/** `DELETE /stacks/:stackId` — 204 with a genuinely empty body. */
 async function deleteStack(
   req: Request,
   res: Response,
   tx: Database,
 ): Promise<void> {
-  const stackId = parseStackId(req.params["stack_id"]);
+  const stackId = parseStackId(req.params["stackId"]);
   if (!stackId.ok) {
     sendValidationError(res, stackId.failure);
     return;
@@ -533,9 +533,9 @@ export function createStacksRouter(
 
   router.post("/", deps.wrap(createStack));
   router.get("/", deps.wrap(listStacks));
-  router.get("/:stack_id", deps.wrap(getStack));
-  router.patch("/:stack_id", deps.wrap(updateStack));
-  router.delete("/:stack_id", deps.wrap(deleteStack));
+  router.get("/:stackId", deps.wrap(getStack));
+  router.patch("/:stackId", deps.wrap(updateStack));
+  router.delete("/:stackId", deps.wrap(deleteStack));
 
   return router;
 }

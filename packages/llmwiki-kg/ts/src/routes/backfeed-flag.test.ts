@@ -117,30 +117,81 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
         expect(relationships[0]).toMatchObject({ description: null, confidence: 0.7 });
       });
 
-      it("POST /flag reaches the Stack by stack_id as well as by domain", async () => {
+      it("POST /flag reaches the Stack by stackId as well as by domain", async () => {
         const app = buildApp();
 
         const byId = await request(app)
           .post("/aks/v1/backfeed/flag")
-          .send({ stack_id: stackId, proposal: { entities: [{ name: "ById", type: "PRODUCT" }] } });
+          .send({ stackId, proposal: { entities: [{ name: "ById", type: "PRODUCT" }] } });
 
         expect(byId.status).toBe(201);
         expect(asRecord(byId.body)["stack_id"]).toBe(stackId);
       });
 
-      it("POST /flag prefers stack_id when both stack_id and domain are supplied", async () => {
+      it("POST /flag prefers stackId when both stackId and domain are supplied", async () => {
         const app = buildApp();
 
-        // Measured: a valid stack_id with a nonexistent domain answers 201.
+        // Measured: a valid stackId with a nonexistent domain answers 201.
         const response = await request(app)
           .post("/aks/v1/backfeed/flag")
           .send({
-            stack_id: stackId,
+            stackId,
             domain: "definitely-not-a-domain",
             proposal: { entities: [{ name: "Both", type: "PRODUCT" }] },
           });
 
         expect(response.status).toBe(201);
+        expect(asRecord(response.body)["stack_id"]).toBe(stackId);
+      });
+
+      it("POST /flag honours the renamed stackId body key", async () => {
+        const app = buildApp();
+
+        const response = await request(app)
+          .post("/aks/v1/backfeed/flag")
+          .send({ stackId, proposal: { entities: [{ name: "Renamed", type: "PRODUCT" }] } });
+
+        expect(response.status).toBe(201);
+        expect(asRecord(response.body)["stack_id"]).toBe(stackId);
+      });
+
+      it("POST /flag refuses the retired stack_id body key instead of ignoring it", async () => {
+        const app = buildApp();
+
+        const response = await request(app)
+          .post("/aks/v1/backfeed/flag")
+          .send({ stack_id: stackId, proposal: { entities: [{ name: "Legacy", type: "PRODUCT" }] } });
+
+        // Silently stripping the key would resolve no Stack and let the request
+        // fall through to domain-only resolution: a wrong answer, not a refusal.
+        expect(response.status).toBe(422);
+        expect(asRecord(response.body)["detail"]).toEqual([
+          {
+            type: "value_error",
+            loc: ["body", "stack_id"],
+            msg: "Value error, `stack_id` was renamed to `stackId`; send `stackId` instead",
+            input: stackId,
+          },
+        ]);
+
+        // Refused before any write: the queue is untouched.
+        expect(await counts()).toMatchObject({ queue: 0, entities: 0, relationships: 0 });
+      });
+
+      it("POST /flag still accepts a lax UUID form on stackId", async () => {
+        const app = buildApp();
+
+        // The 32-hex simple form: accepted before the rename, accepted after it,
+        // because this project changes a name and not validation semantics.
+        const response = await request(app)
+          .post("/aks/v1/backfeed/flag")
+          .send({
+            stackId: stackId.replaceAll("-", ""),
+            proposal: { entities: [{ name: "Lax", type: "PRODUCT" }] },
+          });
+
+        expect(response.status).toBe(201);
+        // Canonicalized on the way in, exactly as `pydanticUuid` already did.
         expect(asRecord(response.body)["stack_id"]).toBe(stackId);
       });
 
@@ -186,7 +237,7 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
         expect(emptyArrays.status).toBe(400);
       });
 
-      it("POST /flag answers 422 when neither stack_id nor domain is given", async () => {
+      it("POST /flag answers 422 when neither stackId nor domain is given", async () => {
         const app = buildApp();
 
         const response = await request(app)
@@ -197,7 +248,7 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
         // the handler, not from request validation.
         expect(response.status).toBe(422);
         expect(response.body).toEqual({
-          detail: "Either stack_id (UUID) or domain (slug) must be provided",
+          detail: "Either stackId (UUID) or domain (slug) must be provided",
         });
       });
 
@@ -211,11 +262,11 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
 
         expect(response.status).toBe(422);
         expect(response.body).toEqual({
-          detail: "Either stack_id (UUID) or domain (slug) must be provided",
+          detail: "Either stackId (UUID) or domain (slug) must be provided",
         });
       });
 
-      it("POST /flag answers 404 for an unknown domain and for an unknown stack_id", async () => {
+      it("POST /flag answers 404 for an unknown domain and for an unknown stackId", async () => {
         const app = buildApp();
 
         const byDomain = await request(app)
@@ -226,7 +277,7 @@ describe.skipIf(skipReason !== false)("backfeed flag (live database)", () => {
 
         const byId = await request(app)
           .post("/aks/v1/backfeed/flag")
-          .send({ stack_id: ABSENT_UUID, proposal: { entities: [{ name: "A", type: "PRODUCT" }] } });
+          .send({ stackId: ABSENT_UUID, proposal: { entities: [{ name: "A", type: "PRODUCT" }] } });
         expect(byId.status).toBe(404);
         expect(byId.body).toEqual({ detail: `Stack '${ABSENT_UUID}' not found` });
       });

@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/stack_graph.ts
- * @description `GET /domain/kg/stacks/{stack_id}/graph` — the KG render payload.
+ * @description `GET /domain/kg/stacks/{stackId}/graph` — the KG render payload.
  *
  * ## Why this is its own router, under a `/domain` prefix
  *
@@ -128,14 +128,14 @@ function parseQuery(req: Request): QueryParse {
 }
 
 /**
- * `GET /domain/kg/stacks/{stack_id}/graph`.
+ * `GET /domain/kg/stacks/{stackId}/graph`.
  *
  * Validation runs in the order a caller can act on: the path parameter first
  * (a malformed UUID is a 422 on the path axis), then the query, then the read —
  * which is where an unknown Stack becomes a 404 raised by the resolver.
  */
 async function getStackGraph(req: Request, res: Response, tx: Database): Promise<void> {
-  const stackId = parseStackId(req.params["stack_id"]);
+  const stackId = parseStackId(req.params["stackId"]);
   if (!stackId.ok) {
     sendValidationError(res, stackId.failure);
     return;
@@ -183,7 +183,7 @@ const DEFAULT_DEPENDENCIES: StackGraphRouterDependencies = {
  * Named rather than inlined because a test asserts it is a full match, and a
  * second copy of the string could drift from the route it describes.
  */
-export const STACK_GRAPH_PATH = "/domain/kg/stacks/:stack_id/graph";
+export const STACK_GRAPH_PATH = "/domain/kg/stacks/:stackId/graph";
 
 /**
  * Builds the graph router, mounted at the root with its absolute path.

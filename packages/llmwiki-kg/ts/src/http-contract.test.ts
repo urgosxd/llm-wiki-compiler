@@ -28,7 +28,7 @@ const ORACLE_ALLOW = {
   /** Only `POST /` is declared on the `/stacks` router. */
   stacksCollection: "POST",
   /**
-   * Only `GET /{stack_id}` is declared — the *consistency* of this value is a
+   * Only `GET /{stackId}` is declared — the *consistency* of this value is a
    * measurement, not a mistake: `PATCH` and `DELETE` exist on the same path and
    * Starlette still reports only the first matching route's methods.
    */
@@ -36,7 +36,7 @@ const ORACLE_ALLOW = {
   /** `@app.get("/health")`. Nothing is registered for HEAD. */
   health: "GET",
   /**
-   * `GET /domain/kg/stacks/{stack_id}/graph` — an extension with no oracle
+   * `GET /domain/kg/stacks/{stackId}/graph` — an extension with no oracle
    * counterpart. Its value is measured from this app, not from Python: only
    * `GET` is declared here, so any other method reports exactly that one.
    */
@@ -223,14 +223,14 @@ describe("method resolution, against measured oracle values", () => {
   const stacks = express.Router();
   stacks.use((_req, _res, next) => next());
   stacks.post("/", (_req, res) => res.end());
-  stacks.get("/:stack_id", (_req, res) => res.end());
-  stacks.patch("/:stack_id", (_req, res) => res.end());
-  stacks.delete("/:stack_id", (_req, res) => res.end());
+  stacks.get("/:stackId", (_req, res) => res.end());
+  stacks.patch("/:stackId", (_req, res) => res.end());
+  stacks.delete("/:stackId", (_req, res) => res.end());
   app.use("/stacks", stacks);
 
   const documents = express.Router();
-  documents.post("/stacks/:stack_id/documents", (_req, res) => res.end());
-  documents.get("/stacks/:stack_id/documents", (_req, res) => res.end());
+  documents.post("/stacks/:stackId/documents", (_req, res) => res.end());
+  documents.get("/stacks/:stackId/documents", (_req, res) => res.end());
   documents.get("/documents/:doc_id", (_req, res) => res.end());
   documents.delete("/documents/:doc_id", (_req, res) => res.end());
   app.use("/", documents);

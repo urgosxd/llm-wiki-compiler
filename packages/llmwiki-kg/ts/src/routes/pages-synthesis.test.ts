@@ -225,7 +225,7 @@ describe.skipIf(state.skipReason !== false)("synthesis endpoints (LLM stubbed)",
     expect((both.body as { detail: unknown[] }).detail).toEqual([
       {
         type: "uuid_parsing",
-        loc: ["path", "stack_id"],
+        loc: ["path", "stackId"],
         msg: "Input should be a valid UUID, invalid character: found `n` at 0",
         input: "nope",
         ctx: { error: "invalid character: found `n` at 0" },
@@ -334,7 +334,7 @@ describe.skipIf(state.skipReason !== false)("synthesis endpoints (LLM stubbed)",
       .post("/aks/v1/entities/Gateway/synthesize-description")
       .expect(422);
     expect(response.body).toEqual({
-      detail: "Either stack_id (UUID) or domain (slug) must be provided",
+      detail: "Either stackId (UUID) or domain (slug) must be provided",
     });
   });
 });

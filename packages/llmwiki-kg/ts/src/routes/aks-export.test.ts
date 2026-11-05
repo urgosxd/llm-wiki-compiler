@@ -157,6 +157,6 @@ describe.skipIf(state.skipReason !== false)("aks export (no gateway)", () => {
     await request(app)
       .get("/aks/v1/export")
       .expect(422)
-      .expect({ detail: "Either stack_id (UUID) or domain (slug) must be provided" });
+      .expect({ detail: "Either stackId (UUID) or domain (slug) must be provided" });
   });
 });

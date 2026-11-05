@@ -34,8 +34,8 @@ export const IngestionResult = z.object({
 /** The response payload, derived from {@link IngestionResult} so they cannot drift. */
 export type IngestionResultDto = z.infer<typeof IngestionResult>;
 
-/** Path-parameter validator for `:stack_id`, keyed by the FastAPI parameter name. */
-export const StackIdParams = z.object({ stack_id: pydanticUuid() });
+/** Path-parameter validator for `:stackId`, keyed by the parameter name. */
+export const StackIdParams = z.object({ stackId: pydanticUuid() });
 
 /** Path-parameter validator for `:doc_id`. */
 export const DocIdParams = z.object({ doc_id: pydanticUuid() });

@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/documents/upload.ts
- * @description `POST /stacks/:stack_id/documents` — upload a file.
+ * @description `POST /stacks/:stackId/documents` — upload a file.
  *
  * Split out of `routes/documents.ts` as its own unit because it is the only
  * endpoint with a parsing pipeline: form parse, joint validation, Stack check,
@@ -70,7 +70,7 @@ async function prepareUpload(req: Request, tx: Database): Promise<PreparedUpload
 
   // Step 2: path parameter and `file` field, reported together with the path
   // entry first (measured on the oracle).
-  const stackId = parseStackId(req.params["stack_id"]);
+  const stackId = parseStackId(req.params["stackId"]);
   const file = resolveFileField(form);
 
   if (!stackId.ok || !file.ok) {
@@ -94,7 +94,7 @@ async function prepareUpload(req: Request, tx: Database): Promise<PreparedUpload
 /**
  * Step 3 and step 4: the Stack must exist, then the byte bounds apply.
  *
- * The Stack check comes first so a bogus `stack_id` never pays for hashing a
+ * The Stack check comes first so a bogus `stackId` never pays for hashing a
  * large upload; measured, an oversized upload to an unknown stack is a 404.
  */
 async function checkStackAndBounds(
@@ -215,7 +215,7 @@ async function storeUpload(tx: Database, prepared: PreparedUpload): Promise<Uplo
   return insertDocument(tx, { stackId, file, sourceHash, stored });
 }
 /**
- * `POST /stacks/:stack_id/documents` — upload a file, 201 with the record.
+ * `POST /stacks/:stackId/documents` — upload a file, 201 with the record.
  *
  * Pipeline, in the oracle's order:
  *

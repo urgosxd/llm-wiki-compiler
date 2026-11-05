@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/documents/delete.ts
- * @description `DELETE /stacks/:stack_id/documents/:doc_id` — 204, removes the file.
+ * @description `DELETE /stacks/:stackId/documents/:doc_id` — 204, removes the file.
  *
  * Split out of `routes/documents.ts` as its own unit because it is the only
  * endpoint that touches the filesystem on the way out, and its deletion order —
@@ -32,7 +32,7 @@ import { apiError } from "../../errors.js";
 import { parseDocId, parseStackId, sendApiError, sendValidationError } from "./params.js";
 
 /**
- * `DELETE /stacks/:stack_id/documents/:doc_id` — 204, removes the stored file.
+ * `DELETE /stacks/:stackId/documents/:doc_id` — 204, removes the stored file.
  *
  * The row is deleted first and the file afterwards, matching the Python order:
  * a failed `unlink` therefore cannot leave the record behind. A file that is
@@ -47,7 +47,7 @@ export async function deleteDocument(
   res: Response,
   tx: Database,
 ): Promise<void> {
-  const stackId = parseStackId(req.params["stack_id"]);
+  const stackId = parseStackId(req.params["stackId"]);
   if (!stackId.ok) {
     sendValidationError(res, stackId.failure);
     return;
@@ -59,7 +59,7 @@ export async function deleteDocument(
     return;
   }
 
-  // `stack_id` is part of the DELETE, not merely of the tenant binding: a
+  // `stackId` is part of the DELETE, not merely of the tenant binding: a
   // statement that loses this clause destroys another Stack's document, and no
   // policy can undo that.
   const rows = await tx.execute<{ storage_path: string }>(sql`

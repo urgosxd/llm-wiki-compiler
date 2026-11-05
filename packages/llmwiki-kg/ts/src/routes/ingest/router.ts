@@ -42,7 +42,7 @@ export function createIngestRouter(
 
   router.use(deps.apiKey);
 
-  router.post("/stacks/:stack_id/documents/:doc_id/ingest", deps.wrap(ingestDocument));
+  router.post("/stacks/:stackId/documents/:doc_id/ingest", deps.wrap(ingestDocument));
 
   return router;
 }

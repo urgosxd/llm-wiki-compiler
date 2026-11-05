@@ -7,7 +7,7 @@ import { sql } from "drizzle-orm";
 import type { Request, Response } from "express";
 
 import type { Database } from "../../db.js";
-import { BackfeedFlagRequest } from "../../dto.js";
+import { BackfeedFlagRequest, legacyStackFieldFailure } from "../../dto.js";
 import { apiError, toFastApiValidationError } from "../../errors.js";
 import { BACKFEED_COLUMNS } from "./model.js";
 import type { BackfeedRow } from "./model.js";
@@ -88,6 +88,12 @@ export async function flagItem(
   tx: Database,
 ): Promise<void> {
   const rawBody: unknown = req.body;
+  // The retired Stack key is refused, not stripped: see `legacyStackFieldFailure`.
+  const legacy = legacyStackFieldFailure(rawBody);
+  if (legacy !== undefined) {
+    sendValidationError(res, legacy);
+    return;
+  }
   const parsed = BackfeedFlagRequest.safeParse(rawBody);
   if (!parsed.success) {
     sendValidationError(res, toFastApiValidationError(parsed.error, "body", rawBody));
@@ -100,7 +106,7 @@ export async function flagItem(
     return;
   }
 
-  const stack = await resolveStack(tx, payload.stack_id, payload.domain);
+  const stack = await resolveStack(tx, payload.stackId, payload.domain);
   if (!stack.ok) {
     sendApiError(res, stack.error);
     return;

@@ -76,8 +76,8 @@ export function modelAttributesType(
   };
 }
 
-/** Path-parameter validator for `{stack_id}`. */
-export const StackIdParams = z.object({ stack_id: pydanticUuid() });
+/** Path-parameter validator for `{stackId}`. */
+export const StackIdParams = z.object({ stackId: pydanticUuid() });
 
 /** Path-parameter validator for `{name}`. */
 export const EntityNameParams = z.object({ name: pydanticString() });

@@ -51,20 +51,20 @@ export function readQuery(req: Request, keys: readonly string[]): Record<string,
 
 /** Query schema for `GET /aks/v1/pages/{entity_name}`. */
 export const EntityPageQuery = z.object({
-  stack_id: pydanticUuid().nullable().default(null),
+  stackId: pydanticUuid().nullable().default(null),
   domain: pydanticString().nullable().default(null),
 });
 
 /** Query schema for `GET /aks/v1/pages`. */
 export const AllPagesQuery = z.object({
-  stack_id: pydanticUuid().nullable().default(null),
+  stackId: pydanticUuid().nullable().default(null),
   domain: pydanticString().nullable().default(null),
   min_confidence: pydanticFloat({ ge: 0, le: 1 }).default(0),
 });
 
 /** Keys each endpoint reads, in the order FastAPI declares them. */
-export const ENTITY_PAGE_QUERY_KEYS = ["stack_id", "domain"] as const;
-export const ALL_PAGES_QUERY_KEYS = ["stack_id", "domain", "min_confidence"] as const;
+export const ENTITY_PAGE_QUERY_KEYS = ["stackId", "domain"] as const;
+export const ALL_PAGES_QUERY_KEYS = ["stackId", "domain", "min_confidence"] as const;
 
 /** Sends an `HTTPException`-shaped body: `{"detail": "<message>"}`. */
 export function sendApiError(res: Response, error: ApiError): void {

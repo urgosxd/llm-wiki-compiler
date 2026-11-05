@@ -151,7 +151,7 @@ export async function exportBundle(req: Request, res: Response, tx: Database): P
     return;
   }
 
-  const { stack_id: stackId, domain } = query.data;
+  const { stackId, domain } = query.data;
 
   const resolved = await resolveStack(tx, stackId, domain);
   if (!resolved.ok) {

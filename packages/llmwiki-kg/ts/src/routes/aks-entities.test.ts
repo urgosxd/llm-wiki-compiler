@@ -125,17 +125,17 @@ describe.skipIf(state.skipReason !== false)("aks entities (no gateway)", () => {
     expect(response.body).toEqual([]);
   });
 
-  it("resolves the Stack by stack_id as well as by domain", async () => {
+  it("resolves the Stack by stackId as well as by domain", async () => {
     const fixture = await createFixture();
 
     const byId = await request(app)
-      .get(`/aks/v1/entities?stack_id=${fixture.stackId}`)
+      .get(`/aks/v1/entities?stackId=${fixture.stackId}`)
       .expect(200);
     expect((byId.body as unknown[]).length).toBe(3);
 
-    // Measured: a valid stack_id wins over a nonexistent domain.
+    // Measured: a valid stackId wins over a nonexistent domain.
     const both = await request(app)
-      .get(`/aks/v1/entities?stack_id=${fixture.stackId}&domain=nonexistent`)
+      .get(`/aks/v1/entities?stackId=${fixture.stackId}&domain=nonexistent`)
       .expect(200);
     expect((both.body as unknown[]).length).toBe(3);
   });
@@ -160,13 +160,13 @@ describe.skipIf(state.skipReason !== false)("aks entities (no gateway)", () => {
     ]);
   });
 
-  it("answers 404 when neither stack_id nor domain is resolvable", async () => {
+  it("answers 404 when neither stackId nor domain is resolvable", async () => {
     await request(app).get("/aks/v1/entities?domain=nonexistent").expect(404).expect({
       detail: "Stack 'nonexistent' not found",
     });
 
     await request(app)
-      .get(`/aks/v1/entities?stack_id=${UNKNOWN_UUID}`)
+      .get(`/aks/v1/entities?stackId=${UNKNOWN_UUID}`)
       .expect(404)
       .expect({ detail: `Stack '${UNKNOWN_UUID}' not found` });
 
@@ -197,12 +197,12 @@ describe.skipIf(state.skipReason !== false)("aks entities (no gateway)", () => {
 
   it("reports every failing query parameter in declaration order", async () => {
     const response = await request(app)
-      .get("/aks/v1/entities?stack_id=nope&min_confidence=2&limit=0")
+      .get("/aks/v1/entities?stackId=nope&min_confidence=2&limit=0")
       .expect(422);
 
     const detail = (response.body as { detail: Array<{ loc: string[]; type: string }> }).detail;
     expect(detail.map((entry) => entry.loc)).toEqual([
-      ["query", "stack_id"],
+      ["query", "stackId"],
       ["query", "min_confidence"],
       ["query", "limit"],
     ]);
@@ -213,20 +213,20 @@ describe.skipIf(state.skipReason !== false)("aks entities (no gateway)", () => {
     ]);
   });
 
-  it("rejects an empty stack_id even when a domain is supplied", async () => {
-    // `?stack_id=` is present-but-unparseable, which is a 422 before the
+  it("rejects an empty stackId even when a domain is supplied", async () => {
+    // `?stackId=` is present-but-unparseable, which is a 422 before the
     // resolver ever sees the domain. Measured.
     const fixture = await createFixture();
 
     const response = await request(app)
-      .get(`/aks/v1/entities?stack_id=&domain=${fixture.domain}`)
+      .get(`/aks/v1/entities?stackId=&domain=${fixture.domain}`)
       .expect(422);
 
     const detail = (response.body as { detail: Array<{ type: string; loc: string[]; input: string }> })
       .detail;
     expect(detail).toHaveLength(1);
     expect(detail[0]?.type).toBe("uuid_parsing");
-    expect(detail[0]?.loc).toEqual(["query", "stack_id"]);
+    expect(detail[0]?.loc).toEqual(["query", "stackId"]);
     expect(detail[0]?.input).toBe("");
   });
 

@@ -48,11 +48,11 @@ export function readQuery(req: Request, keys: readonly string[]): Record<string,
 
 /** Query schema for `POST /aks/v1/entities/{name}/synthesize-description`. */
 export const SynthesizeOneQuery = z.object({
-  stack_id: pydanticUuid().nullable().default(null),
+  stackId: pydanticUuid().nullable().default(null),
   domain: pydanticString().nullable().default(null),
 });
 
-export const SYNTHESIZE_ONE_QUERY_KEYS = ["stack_id", "domain"] as const;
+export const SYNTHESIZE_ONE_QUERY_KEYS = ["stackId", "domain"] as const;
 
 /** Sends an `HTTPException`-shaped body: `{"detail": "<message>"}`. */
 export function sendApiError(res: Response, error: ApiError): void {

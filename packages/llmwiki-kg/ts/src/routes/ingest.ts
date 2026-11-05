@@ -4,7 +4,7 @@
  *
  * The TypeScript port of `app/routers/ingest.py`. One endpoint:
  *
- *   POST /stacks/{stack_id}/documents/{doc_id}/ingest -> 200 with a summary
+ *   POST /stacks/{stackId}/documents/{doc_id}/ingest -> 200 with a summary
  *
  * The module was split into `src/routes/ingest/` to keep each file under the
  * project's size limits. It remains the single import site, so `server.ts` and

@@ -29,7 +29,7 @@
  *    too many parts each answer `400`. `POST /stacks/not-a-uuid/documents` with
  *    no boundary is a `400`, not a `422`.
  * 2. **Request validation** (path parameter + `file` field), reported together
- *    with the path entry first. A bad `stack_id` plus a missing `file` answers
+ *    with the path entry first. A bad `stackId` plus a missing `file` answers
  *    `422` with both entries.
  * 3. **Stack existence** → `404`. An unknown stack with no `file` is the `422`
  *    from step 2, not a 404 — validation wins.

@@ -15,7 +15,7 @@ useDomainPrefix("upload");
 describe.skipIf(skipReason !== false)("documents upload (live database)", () => {
       beforeEach(deleteFixtureRows);
 
-      it("POST /stacks/:stack_id/documents answers 201 with the oracle field set and order", async () => {
+      it("POST /stacks/:stackId/documents answers 201 with the oracle field set and order", async () => {
         const app = buildApp();
         const stackId = await insertStack(uniqueDomain("upload"));
 

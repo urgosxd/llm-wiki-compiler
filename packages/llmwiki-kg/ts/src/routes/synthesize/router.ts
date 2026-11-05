@@ -49,7 +49,7 @@ export function createSynthesizeRouter(
 
   router.use(deps.apiKey);
 
-  router.post("/stacks/:stack_id/synthesize-descriptions", deps.wrap(backfillStack));
+  router.post("/stacks/:stackId/synthesize-descriptions", deps.wrap(backfillStack));
   router.post(
     "/aks/v1/entities/:name/synthesize-description",
     deps.wrap(synthesizeOneEntity),

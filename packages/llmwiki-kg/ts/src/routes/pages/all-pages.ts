@@ -114,7 +114,7 @@ export async function getAllPages(req: Request, res: Response, tx: Database): Pr
 
   const { min_confidence: minConfidence } = query.data;
 
-  const stack = await resolveStack(tx, query.data.stack_id, query.data.domain);
+  const stack = await resolveStack(tx, query.data.stackId, query.data.domain);
   if (!stack.ok) {
     sendApiError(res, stack.error);
     return;

@@ -24,13 +24,13 @@ import type {
 import type { UploadFormResult, UploadedFile } from "../../core/files.js";
 
 /**
- * Path-parameter validator for `:stack_id`.
+ * Path-parameter validator for `:stackId`.
  *
- * A one-key object whose key *is* the FastAPI parameter name, so the mapper
- * derives `loc: ["path", "stack_id"]` exactly. See `stacks.ts` for the full
+ * A one-key object whose key *is* the parameter name, so the mapper
+ * derives `loc: ["path", "stackId"]` exactly. See `stacks.ts` for the full
  * reasoning; the same shape is used here for both parameters.
  */
-export const StackIdParams = z.object({ stack_id: pydanticUuid() });
+export const StackIdParams = z.object({ stackId: pydanticUuid() });
 
 /** Path-parameter validator for `:doc_id`. */
 export const DocIdParams = z.object({ doc_id: pydanticUuid() });
@@ -40,16 +40,16 @@ export type ParamParse =
   | { readonly ok: true; readonly value: string }
   | { readonly ok: false; readonly failure: ValidationFailure };
 
-/** Validates `:stack_id` the way FastAPI's `UUID` path parameter does. */
+/** Validates `:stackId` the way FastAPI's `UUID` path parameter does. */
 export function parseStackId(raw: unknown): ParamParse {
-  const parsed = StackIdParams.safeParse({ stack_id: raw });
+  const parsed = StackIdParams.safeParse({ stackId: raw });
   if (!parsed.success) {
     return {
       ok: false,
-      failure: toFastApiValidationError(parsed.error, "path", { stack_id: raw }),
+      failure: toFastApiValidationError(parsed.error, "path", { stackId: raw }),
     };
   }
-  return { ok: true, value: parsed.data.stack_id };
+  return { ok: true, value: parsed.data.stackId };
 }
 
 /** Validates `:doc_id` the way FastAPI's `UUID` path parameter does. */

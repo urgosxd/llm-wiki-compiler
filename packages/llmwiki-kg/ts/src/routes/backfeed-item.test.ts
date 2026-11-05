@@ -152,7 +152,7 @@ describe.skipIf(skipReason !== false)("backfeed item (live database)", () => {
 
         expect(response.status).toBe(422);
         expect(asRecord(response.body)["detail"]).toBe(
-          "Either stack_id (UUID) or domain (slug) must be provided",
+          "Either stackId (UUID) or domain (slug) must be provided",
         );
       });
 

@@ -67,7 +67,7 @@ export function readQuery(req: Request, keys: readonly string[]): Record<string,
  * their Python defaults and inclusive bounds.
  */
 export const EntitiesQuery = z.object({
-  stack_id: pydanticUuid().nullable().default(null),
+  stackId: pydanticUuid().nullable().default(null),
   domain: pydanticString().nullable().default(null),
   type: pydanticString().nullable().default(null),
   min_confidence: pydanticFloat({ ge: 0, le: 1 }).default(0),
@@ -76,7 +76,7 @@ export const EntitiesQuery = z.object({
 
 /** Query schema for `GET /aks/v1/entities/{name}`. */
 export const EntityQuery = z.object({
-  stack_id: pydanticUuid().nullable().default(null),
+  stackId: pydanticUuid().nullable().default(null),
   domain: pydanticString().nullable().default(null),
 });
 
@@ -85,7 +85,7 @@ export const TraverseQuery = z.object({
   // `Query(..., description=...)`: required, so a missing value is a `missing`
   // entry rather than a default.
   start: pydanticString(),
-  stack_id: pydanticUuid().nullable().default(null),
+  stackId: pydanticUuid().nullable().default(null),
   domain: pydanticString().nullable().default(null),
   max_depth: pydanticInt({ ge: 1, le: 5 }).default(2),
   relationship_types: pydanticString().nullable().default(null),
@@ -93,19 +93,24 @@ export const TraverseQuery = z.object({
 
 /** Query schema for `GET /aks/v1/export`. */
 export const ExportQuery = z.object({
-  stack_id: pydanticUuid().nullable().default(null),
+  stackId: pydanticUuid().nullable().default(null),
   domain: pydanticString().nullable().default(null),
   min_confidence: pydanticFloat({ ge: 0, le: 1 }).default(0),
   verified_only: pydanticBoolean().default(false),
   entity_type: pydanticString().nullable().default(null),
 });
 
-/** Keys each endpoint reads, in the order FastAPI declares them. */
-export const ENTITIES_QUERY_KEYS = ["stack_id", "domain", "type", "min_confidence", "limit"] as const;
-export const ENTITY_QUERY_KEYS = ["stack_id", "domain"] as const;
-export const TRAVERSE_QUERY_KEYS = ["start", "stack_id", "domain", "max_depth", "relationship_types"] as const;
+/**
+ * Keys each endpoint reads, in the order FastAPI declares them.
+ *
+ * `stackId`, not the oracle's `stack_id`: one name for that concept across both
+ * dimensions. Every other parameter keeps its snake_case wire name.
+ */
+export const ENTITIES_QUERY_KEYS = ["stackId", "domain", "type", "min_confidence", "limit"] as const;
+export const ENTITY_QUERY_KEYS = ["stackId", "domain"] as const;
+export const TRAVERSE_QUERY_KEYS = ["start", "stackId", "domain", "max_depth", "relationship_types"] as const;
 export const EXPORT_QUERY_KEYS = [
-  "stack_id",
+  "stackId",
   "domain",
   "min_confidence",
   "verified_only",

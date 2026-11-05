@@ -4,7 +4,7 @@
  *
  * The TypeScript port of `app/routers/synthesize.py`.
  *
- *   POST /stacks/{stack_id}/synthesize-descriptions        backfill many at once
+ *   POST /stacks/{stackId}/synthesize-descriptions        backfill many at once
  *   POST /aks/v1/entities/{name}/synthesize-description    backfill one
  *
  * Both are opt-in and both spend money: one LLM call per entity that has
@@ -63,7 +63,7 @@
  * FastAPI validates the path parameter and the body before the handler runs, and
  * reports both failure sets together, path entries first. Measured:
  * `POST /stacks/nope/synthesize-descriptions` with `{"only_missing":null}`
- * answers 422 with `uuid_parsing` for `["path","stack_id"]` followed by
+ * answers 422 with `uuid_parsing` for `["path","stackId"]` followed by
  * `bool_type` for `["body","only_missing"]`. Both are emitted from
  * `synthesize/backfill.ts`.
  */

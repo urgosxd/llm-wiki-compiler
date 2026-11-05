@@ -220,7 +220,7 @@ function installRouters(
 ): void {
   app.use("/stacks", createStacksRouter(deps));
   // Root mount, no prefix: `stack_graph.ts` carries its full absolute path
-  // (`/domain/kg/stacks/{stack_id}/graph`), so a prefix here would move the
+  // (`/domain/kg/stacks/{stackId}/graph`), so a prefix here would move the
   // endpoint. It sits under `/domain` precisely so it shares no prefix with the
   // oracle-owned `/stacks`, which is what keeps the 405 `Allow` walk preserving
   // the oracle's layer order for every path the oracle knows about.
@@ -232,7 +232,7 @@ function installRouters(
   // routes, so any prefix here would move their endpoints.
   //
   // `documents.py` declares its routes on two prefixes
-  // (`/stacks/{stack_id}/documents` and `/documents/{doc_id}`), so prefixing
+  // (`/stacks/{stackId}/documents` and `/documents/{doc_id}`), so prefixing
   // this mount would move the by-id routes to `/stacks/documents/...` and break
   // the 405 `Allow` ordering. `ingest.py` and `synthesize.py` likewise declare
   // absolute paths; `documents.ts` has no route continuing past `{doc_id}`, so

@@ -210,26 +210,26 @@ describe.skipIf(skipReason !== false)("backfeed queue (live database)", () => {
 
         const response = await request(app)
           .get("/aks/v1/backfeed/queue")
-          .query({ stack_id: "nope", limit: "0" });
+          .query({ stackId: "nope", limit: "0" });
 
         expect(response.status).toBe(422);
         const detail = asRecords(asRecord(response.body)["detail"]);
-        // stack_id is declared before limit in the Python signature.
+        // stackId is declared before limit in the Python signature.
         expect(detail.map((entry) => entry["loc"])).toEqual([
-          ["query", "stack_id"],
+          ["query", "stackId"],
           ["query", "limit"],
         ]);
       });
 
-      it("GET /queue answers 422 for an empty stack_id and 404 for an unknown one", async () => {
+      it("GET /queue answers 422 for an empty stackId and 404 for an unknown one", async () => {
         const app = buildApp();
 
-        const empty = await request(app).get("/aks/v1/backfeed/queue?stack_id=");
+        const empty = await request(app).get("/aks/v1/backfeed/queue?stackId=");
         expect(empty.status).toBe(422);
 
         const unknown = await request(app)
           .get("/aks/v1/backfeed/queue")
-          .query({ stack_id: ABSENT_UUID });
+          .query({ stackId: ABSENT_UUID });
         expect(unknown.status).toBe(404);
         expect(unknown.body).toEqual({ detail: `Stack '${ABSENT_UUID}' not found` });
       });
@@ -241,17 +241,17 @@ describe.skipIf(skipReason !== false)("backfeed queue (live database)", () => {
 
         expect(response.status).toBe(422);
         expect(response.body).toEqual({
-          detail: "Either stack_id (UUID) or domain (slug) must be provided",
+          detail: "Either stackId (UUID) or domain (slug) must be provided",
         });
       });
 
-      it("GET /queue can be addressed by stack_id", async () => {
+      it("GET /queue can be addressed by stackId", async () => {
         const app = buildApp();
         const id = await flag(app);
 
         const response = await request(app)
           .get("/aks/v1/backfeed/queue")
-          .query({ stack_id: stackId });
+          .query({ stackId: stackId });
 
         expect(response.status).toBe(200);
         expect(asRecords(response.body).map((item) => String(item["id"]))).toEqual([id]);

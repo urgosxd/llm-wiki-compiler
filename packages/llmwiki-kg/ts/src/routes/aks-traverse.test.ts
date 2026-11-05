@@ -265,6 +265,6 @@ describe.skipIf(state.skipReason !== false)("aks traverse (no gateway)", () => {
     await request(app)
       .get("/aks/v1/traverse?start=Gateway")
       .expect(422)
-      .expect({ detail: "Either stack_id (UUID) or domain (slug) must be provided" });
+      .expect({ detail: "Either stackId (UUID) or domain (slug) must be provided" });
   });
 });

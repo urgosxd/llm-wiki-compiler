@@ -12,7 +12,7 @@ useDomainPrefix("read");
 describe.skipIf(skipReason !== false)("documents read (live database)", () => {
       beforeEach(deleteFixtureRows);
 
-      it("GET /stacks/:stack_id/documents lists a stack's documents newest first", async () => {
+      it("GET /stacks/:stackId/documents lists a stack's documents newest first", async () => {
         const app = buildApp();
         const stackId = await insertStack(uniqueDomain("list"));
 
@@ -52,7 +52,7 @@ describe.skipIf(skipReason !== false)("documents read (live database)", () => {
         expect(asRows(stillListed.body)).toHaveLength(2);
       });
 
-      it("GET /stacks/:stack_id/documents 404s an unknown stack", async () => {
+      it("GET /stacks/:stackId/documents 404s an unknown stack", async () => {
         const app = buildApp();
 
         const response = await request(app).get(`/stacks/${UNKNOWN_UUID}/documents`);
@@ -67,7 +67,7 @@ describe.skipIf(skipReason !== false)("documents read (live database)", () => {
         expect(uppercase.body).toEqual({ detail: `Stack ${UNKNOWN_UUID} not found` });
       });
 
-      it("GET /stacks/:stack_id/documents/:doc_id returns the document, and 404s an unknown id", async () => {
+      it("GET /stacks/:stackId/documents/:doc_id returns the document, and 404s an unknown id", async () => {
         const app = buildApp();
         const stackId = await insertStack(uniqueDomain("getbyid"));
 

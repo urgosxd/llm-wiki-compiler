@@ -8,7 +8,7 @@ import type { ApiError } from "../errors.js";
  * Resolve a Stack from either a UUID or a domain slug.
  *
  * TypeScript port of `app/core/stack_resolver.py`. Every AKS endpoint accepts
- * both references as alternatives — clients call `?stack_id=<uuid>` or
+ * both references as alternatives — clients call `?stackId=<uuid>` or
  * `?domain=<slug>` — so the lookup and its error contract live here instead of
  * being repeated five times in the router.
  *
@@ -19,17 +19,17 @@ import type { ApiError } from "../errors.js";
  *   `{"detail": "<message>"}`; only `RequestValidationError` renders an array.
  *   Reproducing the wrong one of the two shapes is a visible contract break, so
  *   this returns an {@link ApiError} rather than a `ValidationFailure`.
- * - **`stack_id` supplied but unknown** -> `404`, naming the canonical lowercase
+ * - **`stackId` supplied but unknown** -> `404`, naming the canonical lowercase
  *   UUID (the query-parameter validator has already normalized it).
  * - **`domain` supplied but unknown** -> `404`, naming the domain slug.
  *
  * An *empty* `domain=` counts as absent: Python's guard is a truthiness test
  * (`if not stack_id and not domain`), and `""` is falsy. Measured:
  * `GET /aks/v1/entities?domain=` answers 422, while
- * `?domain=&stack_id=<valid uuid>` answers 200 — because `stack_id` alone then
+ * `?domain=&stackId=<valid uuid>` answers 200 — because `stackId` alone then
  * satisfies the guard.
  *
- * When both are supplied `stack_id` wins, because the Python function branches
+ * When both are supplied `stackId` wins, because the Python function branches
  * on it first; the `domain` value is never even queried.
  */
 
@@ -175,7 +175,7 @@ export type StackResolution =
  * resolver answers 404 for a Stack that exists, and `bindTenant` is never reached.
  *
  * The circularity is avoidable because the caller already told us which tenant it
- * means. `?stack_id=<uuid>` is the binding, and so is `?domain=<slug>`. Hiding the
+ * means. `?stackId=<uuid>` is the binding, and so is `?domain=<slug>`. Hiding the
  * id until after a privileged read was never protecting anything: with a single
  * shared API key (`auth.ts` attaches no principal and owns no rows per key) the id
  * IS the caller's whole authority claim. Binding it up front changes nothing about
@@ -225,7 +225,7 @@ export async function resolveStack(
   if (stackId === null && !hasDomain) {
     return {
       ok: false,
-      error: apiError(422, "Either stack_id (UUID) or domain (slug) must be provided"),
+      error: apiError(422, "Either stackId (UUID) or domain (slug) must be provided"),
     };
   }
 

@@ -54,7 +54,7 @@ describe("backfeed proposal models", () => {
 describe("BackfeedFlagRequest", () => {
   it("applies the Python defaults", () => {
     expect(parseOk(BackfeedFlagRequest, { proposal: {} })).toEqual({
-      stack_id: null,
+      stackId: null,
       domain: null,
       origin: "direct",
       trigger_type: "manual",

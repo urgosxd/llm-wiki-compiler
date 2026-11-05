@@ -136,7 +136,7 @@ export async function chunkAndExtract(
 }
 
 /**
- * `POST /stacks/:stack_id/documents/:doc_id/ingest`.
+ * `POST /stacks/:stackId/documents/:doc_id/ingest`.
  *
  * Pipeline order mirrors the Python handler exactly; see the module comment for
  * the measured request order and the status codes.

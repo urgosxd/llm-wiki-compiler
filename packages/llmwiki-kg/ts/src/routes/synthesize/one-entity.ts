@@ -89,7 +89,7 @@ export async function synthesizeOneEntity(
     return;
   }
 
-  const stack = await resolveStack(tx, query.data.stack_id, query.data.domain);
+  const stack = await resolveStack(tx, query.data.stackId, query.data.domain);
   if (!stack.ok) {
     sendApiError(res, stack.error);
     return;
