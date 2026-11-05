@@ -736,3 +736,23 @@ L17 (owner-authorized follow-ups — teardown fix, `3D000` diagnosis, `fallow` c
   path proven to work); the reaper's missing ownership check; the teardown's ordering dependency and one-tick
   window; the nine-plus `llmwiki-local-workflows` reference sites; and gap 5, `engines.node >=24` against the
   runtime Node v22.23.2.
+
+L18 (duplication slice and the fallow:ci baseline): `npm run fallow:ci` is the CI-parity gate.
+`scripts/check-fallow-report.mjs` sums four counts (`deadCode + duplication + complexity + coverage`)
+and sets a nonzero exit as soon as `total > 0`; there is no baseline, threshold or tolerance.
+- It was ALREADY exit 1 at `35c40f8`, before any close-out unit, with 3 clone groups, all introduced
+  on this branch: `2229464` added `scripts/kg-typecheck.ts:213-224` duplicating
+  `scripts/typecheck-tests.ts:20-25` (12 lines); `6b0a805` added the `isPerRunDatabaseName` assertions
+  duplicated across `test/lock-postgres-crossprocess.test.ts:49-57`,
+  `test/lock-postgres-integration.test.ts:44-49` and `test/lock-postgres.test.ts:68-75` (9 lines,
+  3 instances); `1063fb2` added `test/kg-mcp-e2e/kg-mcp-probe.test.ts:152-158` duplicating `:221-227`
+  (7 lines).
+- Base `dff1d31` and merge-base `8203862` both report 0 clone groups, so none of the three predates
+  the branch; all three are this branch's own earlier commits.
+- The regression test added by `730ecdb` contributed 2 further groups, taking the count to 5.
+  Commit `4afb434` extracts `test/fixtures/child-report.ts` (`firstJsonReport(child, label)`, the label
+  preserving each suite's original rejection message) and returns the count to 3, with both suites
+  still green at 9 and 3 tests and no assertion, spawned command or expected code/signal changed.
+- `npx fallow` exits 0 at every point (dead code clean throughout). `npm run fallow:ci` remains exit 1
+  because of the three groups above, which lie outside this close-out's edit surfaces and are recorded
+  here as the branch's remaining delivery blocker, for an owner decision.
