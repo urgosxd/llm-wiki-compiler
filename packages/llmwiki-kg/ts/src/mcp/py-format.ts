@@ -1,11 +1,10 @@
 /**
  * @file packages/llmwiki-kg/ts/src/mcp/py-format.ts
- * @description Python numeric formatting, reproduced for wire parity.
+ * @description Fixed two-decimal numeric formatting for the text these tools emit.
  *
- * The reference server is a Python oracle, and its JSON carries floats the way
- * Python writes them — `1.0`, not `1`. A client comparing responses byte for
- * byte needs the same text, so these helpers reproduce Python's formatting
- * rather than using `String(number)`.
+ * The wire carries a float as `1.0`, not `1`, and that text is what a client
+ * parses. `String(number)` does not produce it, so the formatting is spelled out
+ * here instead of being delegated.
  */
 
 // ============================================================
@@ -58,7 +57,7 @@ function roundToHundredths(mantissa: bigint, exponent: bigint): bigint {
 }
 
 /**
- * Python's `format(value, ".2f")`, reproduced bit-exactly.
+ * Fixed two-decimal formatting: CPython's `format(value, ".2f")`, bit-exactly.
  *
  * This cannot be `toFixed(2)` or `Intl.NumberFormat`. Python rounds the exact
  * binary value with round-half-to-even, while `toFixed` rounds half away from
@@ -75,8 +74,7 @@ function roundToHundredths(mantissa: bigint, exponent: bigint): bigint {
  * A confidence of exactly `0.125` is reachable — extraction emits round
  * confidences, and `0.125` is a normal one — so this is a live contract risk,
  * not a pedantic one. The implementation decodes the IEEE-754 bits and does the
- * rounding in exact integer arithmetic. Verified against CPython over 3000
- * random doubles (see `mcp.test.ts`).
+ * rounding in exact integer arithmetic.
  */
 export function formatFixed2(value: number): string {
   if (Number.isNaN(value)) return "nan";

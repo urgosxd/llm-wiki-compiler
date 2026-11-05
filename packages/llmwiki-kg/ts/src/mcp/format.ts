@@ -16,10 +16,8 @@ const NO_DESCRIPTION = "(no description)";
 // ============================================================
 // Response formatting
 // ============================================================
-// MCP tool results are text. The AKS endpoints return JSON. These mirror
-// `_format_context_response`, `_format_traverse_response`,
-// `_format_entities_response` and the inline Stack loop in `_list_stacks`,
-// including the bullet character (U+2022) and the exact indentation.
+// MCP tool results are text. The AKS endpoints return JSON. The bullet character
+// (U+2022) and the exact indentation are part of that text, not cosmetic.
 
 /** The context entity's description, or the placeholder for an empty one. */
 function contextDescription(entity: Record<string, unknown>): string {

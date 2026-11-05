@@ -71,7 +71,7 @@ function readAt(root: unknown, path: readonly (string | number)[]): unknown {
  * For a body field Pydantic reports the *parent* object (`{"name": "X"}` for a
  * missing `domain`), because that is the value handed to the field validator.
  * For `path` and `query` parameters it reports `null`, since the parameter was
- * never extracted into a container. Both were measured on the oracle.
+ * never extracted into a container.
  */
 function missingInput(root: unknown, path: readonly (string | number)[], prefix: LocPrefix): unknown {
   if (prefix !== "body" || path.length === 0) {
@@ -228,7 +228,7 @@ function translate(issue: z.core.$ZodIssue, prefix: LocPrefix, root: unknown): P
    * an absent field as `missing` regardless of which constraint Zod tripped on,
    * so this check runs before any code-specific translation. It is what makes
    * `z.literal`, which raises `invalid_value` for a missing key, come out as
-   * `missing` like the oracle.
+   * `missing`.
    */
   if (readAt(root, path) === undefined) {
     return [detail(MISSING, path, prefix, root)];
@@ -265,14 +265,14 @@ function translate(issue: z.core.$ZodIssue, prefix: LocPrefix, root: unknown): P
  *
  * Entries keep Zod's own issue order, which is:
  *
- * 1. the object's schema declaration order — the DTOs declare fields in the same
- *    order as `app/models/api.py`, so that is Pydantic's declaration order;
+ * 1. the object's schema declaration order — the order in which the DTOs in
+ *    `dto.ts` declare their fields;
  * 2. then array index order within a nested list;
  * 3. then constraint order within a single field.
  *
- * That order is deterministic and matches the oracle. Nothing is sorted, so a
- * schema whose declaration order drifts from the Python model surfaces as a diff
- * instead of being papered over.
+ * That order is deterministic and it is the order a client parses. Nothing is
+ * sorted, so a schema whose declaration order changes surfaces as a diff instead
+ * of being papered over.
  */
 export function toFastApiValidationError(
   err: z.ZodError,

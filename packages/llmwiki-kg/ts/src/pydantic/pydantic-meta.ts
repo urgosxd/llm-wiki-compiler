@@ -18,8 +18,7 @@ import { z } from "zod";
 /**
  * The Pydantic error a primitive wants reported. `type` is Pydantic's error
  * code, `msg` its message and `ctx` its optional context. All three are copied
- * into the 422 body verbatim, so they are spelled exactly as the oracle spells
- * them.
+ * into the 422 body verbatim, so the wording here is the wire contract.
  */
 export interface PydanticMeta {
   readonly type: string;
@@ -156,7 +155,6 @@ export function uuidParsing(reason: string): PydanticMeta {
 /**
  * Pydantic's `literal_error` text for a set of allowed values.
  *
- * Measured against the oracle:
  *   two values   -> `Input should be 'run' or 'direct'`
  *   three values -> `Input should be 'stack', 'workspace' or 'domain'`
  *

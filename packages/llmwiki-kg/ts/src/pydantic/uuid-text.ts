@@ -1,13 +1,12 @@
 /**
  * @file packages/llmwiki-kg/ts/src/pydantic/uuid-text.ts
- * @description UUID text parsing, accepting exactly what Pydantic accepts.
+ * @description UUID text parsing for the lax forms the API accepts.
  *
  * Zod's `z.uuid()` enforces RFC 9562 version and variant nibbles; Pydantic does
- * not. The oracle parses `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`, whose version
- * and variant nibbles are invalid under 9562, so a `z.uuid()`-based primitive
- * would reject input the reference server accepts. The text is parsed here by
- * hand with the same slack, including the simple 32-char form and the
- * `urn:uuid:` prefix.
+ * not. `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa` has version and variant nibbles
+ * that are invalid under 9562, so a `z.uuid()`-based primitive would reject
+ * input the API accepts. The text is parsed here by hand with the same slack,
+ * including the simple 32-char form and the `urn:uuid:` prefix.
  */
 
 import { z } from "zod";
@@ -40,11 +39,11 @@ function formatSimpleUuid(simple: string): string {
 }
 
 /**
- * Reproduces the Rust `uuid` parser Pydantic delegates to, including the text of
- * its `Error` variants, because `uuid_parsing` embeds that text in both `msg` and
- * `ctx.error`.
+ * Parses UUID text the way the Rust `uuid` parser Pydantic delegates to does,
+ * including the text of its `Error` variants, because `uuid_parsing` embeds that
+ * text in both `msg` and `ctx.error`.
  *
- * The dispatch matches all 212 probes taken against the live oracle:
+ * The dispatch runs these steps in this order:
  *
  * 1. longer than 45 characters -> `invalid length: found N`
  * 2. **at exactly 36 characters, skip step 3**: the strict hyphenated path is
@@ -139,9 +138,9 @@ function parseSingleGroup(
 /**
  * Parse Pydantic's accepted UUID text forms.
  *
- * Tried in the order the oracle tries them: reject over-long input, strip a
- * wrapper, reject non-hex characters, then accept the five-group hyphenated form
- * or the 32-character simple form.
+ * Tried in this order: reject over-long input, strip a wrapper, reject non-hex
+ * characters, then accept the five-group hyphenated form or the 32-character
+ * simple form.
  */
 function parseUuidText(input: string): UuidParse {
   const originalLength = input.length;
@@ -169,9 +168,8 @@ function parseUuidText(input: string): UuidParse {
 /**
  * `uuid.UUID`.
  *
- * Resolves to the **canonical lowercase hyphenated** form, which is what
- * Pydantic serializes: the oracle answers
- * `/stacks/366173423b684ea781b95bc562bb81d3` with
+ * Resolves to the **canonical lowercase hyphenated** form, which is what the
+ * wire serializes: `/stacks/366173423b684ea781b95bc562bb81d3` answers
  * `Stack 36617342-3b68-4ea7-81b9-5bc562bb81d3 not found`.
  */
 export function pydanticUuid(): z.ZodType<string> {

@@ -50,8 +50,7 @@ export interface StringOptions {
 
 /**
  * `str`. Pydantic's lax mode does not coerce numbers or booleans into strings
- * (verified on the oracle: `{"name": 123}` is `string_type`), so any non-string
- * is a type error.
+ * — `{"name": 123}` is `string_type` — so any non-string is a type error.
  *
  * Constraints run in Pydantic's order — `min_length`, `max_length`, `pattern` —
  * and the first failure aborts, because Pydantic reports at most one constraint
@@ -67,10 +66,9 @@ export function pydanticString(options: StringOptions = {}): z.ZodType<string> {
     }
     // Python's `len()` counts Unicode code points; `String.prototype.length`
     // counts UTF-16 code units. They agree for BMP text and diverge for astral
-    // characters, where one code point (an emoji) is two units. The oracle
-    // accepts a 101-emoji name because it is 101 code points, so counting
-    // `.length` here would reject it at 202 units. `[...value].length` counts
-    // code points by iterating the string's code points, matching Python.
+    // characters, where one code point (an emoji) is two units. A 101-emoji name
+    // is 101 code points, so counting `.length` here would reject it at 202
+    // units. `[...value].length` iterates the string's code points instead.
     const codePointLength = [...value].length;
     if (options.minLength !== undefined && codePointLength < options.minLength) {
       return failHere(stringTooShort(options.minLength));
@@ -93,9 +91,9 @@ export interface NumberOptions {
 /**
  * `int`. Pydantic's lax JSON mode accepts integers, floats with no fractional
  * part (`5.0`), strings whose trimmed form is `[+-]?digits`, and booleans
- * (`true` -> 1); all four were confirmed on the oracle. Each rejection path
- * reports the specific code that explains *why*, which is the only way
- * `int_parsing` and `int_from_float` can be told apart from `int_type`.
+ * (`true` -> 1). Each rejection path reports the specific code that explains
+ * *why*, which is the only way `int_parsing` and `int_from_float` can be told
+ * apart from `int_type`.
  */
 export function pydanticInt(options: NumberOptions = {}): z.ZodType<number> {
   return scalar((value, failHere) => {
@@ -208,8 +206,8 @@ export function pydanticBoolean(): z.ZodType<boolean> {
 }
 
 /**
- * `dict`. Any JSON object. Arrays and `null` are `dict_type`, matching the
- * oracle for `metadata: dict`.
+ * `dict`. Any JSON object. Arrays and `null` are `dict_type`, as for
+ * `metadata: dict`.
  *
  * Use `.default(() => ({}))` at the call site for Pydantic's `= {}`, so each
  * parse gets a fresh object rather than one shared literal.
