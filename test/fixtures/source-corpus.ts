@@ -16,12 +16,28 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { createDimensionsDatabase } from "../../src/dimensions/activation.js";
+import { perRunDatabase } from "./per-run-database.js";
 import { listSourceDocuments } from "../../src/dimensions/wiki/source-documents-store.js";
 import { listStoredPagesUnfiltered } from "../../src/dimensions/wiki/page-store.js";
 
 /** The Stack this process is bound to, or undefined on a filesystem project. */
 function activeStackId(env: NodeJS.ProcessEnv): string | undefined {
   return env.AKS_STACK_ID;
+}
+
+/**
+ * The environment the dimension layer reads, retargeted at this process's database.
+ *
+ * Reading `process.env` alone pointed the handle at the ONE shared database, so these
+ * helpers could read a row a parallel suite had just deleted, or miss the row this
+ * suite had just written. The Stack ids are unchanged; only the server-side database
+ * comes from the per-run fixture.
+ *
+ * @returns A copy of the environment naming the suite database.
+ */
+async function suiteEnv(): Promise<NodeJS.ProcessEnv> {
+  const suite = await perRunDatabase();
+  return { ...process.env, AKS_DATABASE_URL: suite.url };
 }
 
 /**
@@ -35,7 +51,7 @@ export async function listSourceFilenames(cwd: string): Promise<string[]> {
   if (stackId === undefined) {
     return (await readdir(path.join(cwd, "sources"))).sort();
   }
-  const handle = createDimensionsDatabase(process.env);
+  const handle = createDimensionsDatabase(await suiteEnv());
   try {
     const docs = await listSourceDocuments(handle.db, stackId);
     return docs.map((doc) => doc.filename).sort();
@@ -59,7 +75,7 @@ export async function readSourceBodies(cwd: string): Promise<Map<string, string>
     }
     return bodies;
   }
-  const handle = createDimensionsDatabase(process.env);
+  const handle = createDimensionsDatabase(await suiteEnv());
   try {
     const docs = await listSourceDocuments(handle.db, stackId);
     for (const doc of docs) bodies.set(doc.filename, doc.content);
@@ -80,7 +96,7 @@ export async function countConceptPages(cwd: string): Promise<number> {
   if (stackId === undefined) {
     return (await readdir(path.join(cwd, "wiki", "concepts"))).length;
   }
-  const handle = createDimensionsDatabase(process.env);
+  const handle = createDimensionsDatabase(await suiteEnv());
   try {
     const pages = await listStoredPagesUnfiltered(handle.db, stackId);
     return pages.length;

@@ -15,27 +15,56 @@
  * reported them as passed — a green suite proving nothing. So provisioning failure
  * here WARNS LOUDLY and the flag is only false when the database is genuinely
  * unreachable. Callers still decide how to skip; this module refuses to hide why.
+ *
+ * ## Why the harness no longer relies on `cleanup()` for isolation
+ *
+ * It used to be the isolation mechanism: every Stack lived in the ONE database every
+ * suite shared, and `cleanup()` deleted this suite's rows so the next file would not
+ * see them. That only isolates suites that finish, and only if no suite deletes by
+ * pattern — `db.test.ts`'s `delete from stacks where domain like 't04-route-%'` ran
+ * in `afterAll` and removed a parallel worker's rows mid-run, which is what
+ * `expected +0 to be 1` was. So the database itself is now per process
+ * (`test/fixtures/per-run-database.ts`), and `cleanup()` is hygiene, not isolation.
  */
 
 import { randomUUID } from "node:crypto";
 import { createClient, createDatabase } from "llmwiki-kg";
+import { perRunDatabase } from "./per-run-database.js";
 import { testDatabaseUrl } from "./test-database.js";
 
 /**
- * Connection string every fixture connects to.
+ * This process's private database, or `undefined` when it cannot be provisioned.
  *
- * Resolved through {@link testDatabaseUrl} rather than inlined, because the inline
- * form here and the `?? ""` form in seven other fixtures disagreed: this one fell back
- * to the test container, those fell back to the PRODUCTION port. One resolver means
- * the harness and the code under test cannot point at different databases.
+ * Guaranteed at import rather than in a hook because `DATABASE_URL` below is a
+ * string: the suites that read it build an environment at module scope, so the value
+ * has to be known before any test is collected.
  */
-export const DATABASE_URL = testDatabaseUrl();
+const SUITE = await perRunDatabase().catch((error: unknown) => {
+  // Not fatal: an absent or unreachable server must still produce the loud
+  // `reachable === false` failure below, not a module-load crash with no context.
+  console.warn(
+    `kg-postgres: per-run database unavailable — ${(error as Error).message}. ` +
+      `Falling back to the shared database ${testDatabaseUrl()}.`,
+  );
+  return undefined;
+});
+
+/**
+ * Connection string every fixture connects to: this process's OWN database.
+ *
+ * Resolved through {@link testDatabaseUrl} when the per-run database cannot be
+ * created, so an outage still names the server someone should start rather than
+ * silently pointing at the vendored production port.
+ */
+export const DATABASE_URL = SUITE?.url ?? testDatabaseUrl();
 
 /** One suite's private slice of the database. */
 export interface KgPostgresHarness {
   /** Stack this suite owns; cleanup cascades from it. */
   readonly stackId: string;
-  /** Drizzle handle bound to the shared client. */
+  /** Connection string of the database this Stack lives in. */
+  readonly url: string;
+  /** Drizzle handle bound to the suite database. */
   readonly db: ReturnType<typeof createDatabase>;
   /** True only when the database is reachable AND the stack was provisioned. */
   readonly reachable: boolean;
@@ -95,11 +124,15 @@ export async function createKgPostgresHarness(name: string): Promise<KgPostgresH
 
   return {
     stackId,
+    url: DATABASE_URL,
     db,
     reachable,
     cleanup: async () => {
       if (reachable) {
-        // `stack_documents` and `entity_source_documents` cascade from `stacks`.
+        // Hygiene, not isolation: the whole database goes away with the process, but
+        // a suite that re-provisions against the same database must not read this
+        // Stack's rows as its own. `stack_documents` and `entity_source_documents`
+        // cascade from `stacks`.
         await db.execute(`delete from stacks where id = '${stackId}'`).catch(() => undefined);
       }
       await client.end({ timeout: 10 });

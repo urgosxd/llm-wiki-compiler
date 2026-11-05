@@ -14,24 +14,45 @@ import {
 } from "./db.js";
 import type { Database, TransactionRunner } from "./db.js";
 import * as schema from "./schema.js";
+import { perRunDatabase } from "./testing/per-run-database.js";
 
 /**
- * Integration tests against the live compose database.
+ * Integration tests against a real Postgres, in a database this PROCESS owns.
  *
  * The host port is 5434, not 5432: `docker-compose.override.yml` remaps the
  * container's 5432 onto the host. `config.DATABASE_URL` keeps the in-container
  * default (5432) because that is what the api service sees, so these tests
- * build their own client from `AKS_TEST_DATABASE_URL` rather than reaching for
- * the process-wide singleton (which also keeps them from ever touching the
- * oracle's data).
+ * build their own client rather than reaching for the process-wide singleton
+ * (which also keeps them from ever touching the oracle's data).
+ *
+ * ## Why the database is per process
+ *
+ * These tests used to share one database with every other Postgres suite, and the
+ * `withRequestTransaction` block's `afterAll` deletes rows by PATTERN
+ * (`delete from stacks where domain like 't04-route-%'`). Under parallel load that
+ * removed another suite's rows mid-run, which showed up here as the intermittent
+ * `expected +0 to be 1` at the 404 case and as nothing at all when run alone. The
+ * deletions are unchanged; what changed is that they can no longer reach any database
+ * but this process's own (`./testing/per-run-database.ts`).
  *
  * Every integration test skips — never fails — when the database is
  * unreachable, so `npm test` works without Docker. The pure-function tests in
  * the first block always run.
  */
-const TEST_DATABASE_URL =
+/** The server a suite database is provisioned on: the host these tests target. */
+const TEST_SERVER_URL =
   process.env["AKS_TEST_DATABASE_URL"] ??
   "postgresql://aks:aks@localhost:5434/aks";
+
+const SUITE = await perRunDatabase(TEST_SERVER_URL).catch((error: unknown) => {
+  // Loud, not silent: an unreachable server must read as itself, and the
+  // `describe.skipIf` below still decides what runs.
+  console.warn(`[db.test] per-run database unavailable — ${(error as Error).message}`);
+  return undefined;
+});
+
+/** The connection string every test below uses: this process's own database. */
+const TEST_DATABASE_URL = SUITE?.url ?? TEST_SERVER_URL;
 
 /** Small handshake bound so an absent database skips fast instead of hanging. */
 const CONNECT_TIMEOUT_SECONDS = 3;
@@ -384,6 +405,8 @@ describe.skipIf(state.skipReason !== false)("database integration", () => {
 
     afterAll(async () => {
       if (state.skipReason === false) {
+        // Scoped to this process's own database since the fixture landed: the
+        // pattern can no longer match a parallel suite's rows.
         await pool()`delete from stacks where domain like 't04-route-%'`;
       }
     });
