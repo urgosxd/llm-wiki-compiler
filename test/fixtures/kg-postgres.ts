@@ -16,6 +16,22 @@
  * here WARNS LOUDLY and the flag is only false when the database is genuinely
  * unreachable. Callers still decide how to skip; this module refuses to hide why.
  *
+ * ## Two failure conditions, and only one of them may skip
+ *
+ * A `reachable === false` harness is the gate 113 `skipIf` call sites read, so every
+ * way of setting it to false is a way for a suite to report green with no database.
+ * The two conditions that produce it are NOT the same:
+ *
+ *  - the database cannot be obtained at all — nothing answers `select 1` — which
+ *    THROWS the actionable "no database" failure, because skipping there is the
+ *    false green this feature exists to remove;
+ *  - the database answers but an object the fixtures need is genuinely absent (the
+ *    `stacks` table, a schema), which keeps the old skip.
+ *
+ * `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` is the single documented opt-out and restores the
+ * old skip for the first condition too. The throw happens HERE, before any `skipIf` is
+ * evaluated, which is why the gate call sites do not need to change.
+ *
  * ## Why the harness no longer relies on `cleanup()` for isolation
  *
  * It used to be the isolation mechanism: every Stack lived in the ONE database every
@@ -30,6 +46,7 @@
 import { randomUUID } from "node:crypto";
 import { createClient, createDatabase } from "llmwiki-kg";
 import { perRunDatabase } from "./per-run-database.js";
+import { missingTestDatabase } from "./test-database-handoff.js";
 import { testDatabaseUrl } from "./test-database.js";
 
 /**
@@ -92,6 +109,26 @@ function domainFor(label: string): string {
   return slug === "" ? "stack" : slug;
 }
 
+/** A message from an unknown thrown value. */
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Report that this suite has no database: throw, unless the documented opt-out is set.
+ *
+ * @param context - What needed the database, phrased for whoever reads the failure.
+ * @param detail - The observed failure.
+ * @returns `false`, so a caller can `return` it as the unreachable flag.
+ * @throws When no database can be obtained and `LLMWIKI_TEST_ALLOW_NO_DATABASE` is not `1`.
+ */
+function unreachableOrThrow(context: string, detail: string): false {
+  const missing = missingTestDatabase(context, detail);
+  if (missing.error !== undefined) throw missing.error;
+  console.warn(`${context}: every case in this file will be skipped.\n${missing.message}`);
+  return false;
+}
+
 /**
  * Provision a private stack and hand back a bound database handle.
  *
@@ -110,14 +147,25 @@ export async function createKgPostgresHarness(name: string): Promise<KgPostgresH
 
   const reachable = await (async (): Promise<boolean> => {
     try {
+      // The liveness probe is SEPARATE from the provisioning insert on purpose: this one
+      // failing means there is no database, which must never become a skip; the insert
+      // failing means the database is up but the object is missing, which still may.
       await db.execute("select 1");
+    } catch (error) {
+      return unreachableOrThrow(
+        `${name}: the kg harness`,
+        `select 1 against ${DATABASE_URL} failed — ${describe(error)}`,
+      );
+    }
+    try {
       await db.execute(
         `insert into stacks (id, name, domain) values ('${stackId}', '${name}', '${domain}')`,
       );
       return true;
     } catch (error) {
-      // Loud, not silent: a suite that cannot provision must not look like a pass.
-      console.warn(`${name}: no usable Postgres at ${DATABASE_URL} — ${(error as Error).message}`);
+      // Loud, not silent: a suite that cannot provision must not look like a pass. Still a
+      // skip when the opt-out allows it, because the server itself answered.
+      console.warn(`${name}: no usable Postgres at ${DATABASE_URL} — ${describe(error)}`);
       return false;
     }
   })();

@@ -18,6 +18,7 @@ import { parseConfig } from "../config.js";
 import { createClient, createDatabase, createRequestTransactionWrapper } from "../db.js";
 import { createApp } from "../server.js";
 import type { Database } from "../db.js";
+import { noDatabase } from "../testing/no-database.js";
 import { perRunDatabase } from "../testing/per-run-database.js";
 import { FixtureStacks, withFixtureTenant } from "./fixture-tenant.js";
 
@@ -160,7 +161,10 @@ export const state: {
   if (SUITE instanceof Error) {
     // Loud, never a silent pass and never a fallback to a shared database: building
     // the per-run database is what proves the server is reachable AND usable.
-    state.skipReason = `database unreachable at ${TEST_SERVER_URL}: could not create a per-run database (${SUITE.message})`;
+    state.skipReason = noDatabase(
+      "The aks route suites need a Postgres database and none could be obtained.",
+      `database unreachable at ${TEST_SERVER_URL}: could not create a per-run database (${SUITE.message})`,
+    );
   } else {
     const candidate = createClient(SUITE.url, CONNECT_TIMEOUT_SECONDS);
     try {
@@ -169,9 +173,12 @@ export const state: {
       state.database = createDatabase(candidate);
       state.skipReason = false;
     } catch (error) {
-      state.skipReason = `database unreachable at ${SUITE.url}: ${
-        error instanceof Error ? error.message : String(error)
-      }`;
+      state.skipReason = noDatabase(
+        "The aks route suites need a Postgres database and none could be obtained.",
+        `database unreachable at ${SUITE.url}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       await candidate.end({ timeout: 1 }).catch(() => undefined);
     }
   }

@@ -11,6 +11,8 @@ import {
   createRequestTransactionWrapper,
 } from "./db.js";
 import type { Database } from "./db.js";
+import { noDatabase } from "./testing/no-database.js";
+import { perRunDatabase } from "./testing/per-run-database.js";
 import { createApp } from "./server.js";
 import type { StacksRouterDependencies } from "./routes/stacks.js";
 
@@ -57,16 +59,34 @@ describe("unknown route", () => {
 /**
  * The generic 500 path.
  *
- * This needs a real row, so it follows the live-database conventions from
- * `routes/stacks.test.ts`: its own pool from `AKS_TEST_DATABASE_URL` (host port
- * 5434, remapped by `docker-compose.override.yml`), its own cleanup prefix, and
- * a skip — never a failure — when Postgres is unreachable.
+ * This needs a real row, so it follows the same database conventions as the harnesses in
+ * `routes/` and as `db.test.ts`: a server from `AKS_TEST_DATABASE_URL` or the runner's
+ * `LLMWIKI_TEST_DATABASE_URL`, plus a database of this process's own from
+ * `./testing/per-run-database.js`.
+ *
+ * That last part is not decoration. The container a run starts publishes a server whose default
+ * database carries NO schema (measured: zero tables in `public`), so a suite that answered on that
+ * URL and queried it directly would assert against an empty database. And CI publishes only
+ * `LLMWIKI_TEST_DATABASE_URL` on 5432, never 5434: this block SKIPPED there before, and a loud
+ * failure that ignored the documented override would just turn that skip into a red build.
+ *
+ * No database and no opt-out is therefore a FAILURE, not a skip: a skip is reported as a pass while
+ * asserting nothing. `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` is the only path back to the old skip.
  */
-const TEST_DATABASE_URL =
+const TEST_SERVER_URL =
   process.env["AKS_TEST_DATABASE_URL"] ??
+  process.env["LLMWIKI_TEST_DATABASE_URL"] ??
   "postgresql://aks:aks@localhost:5434/aks";
 
-/** Small handshake bound so an absent database skips fast instead of hanging. */
+/** This process's own database, or the error that stopped it from being created. */
+const SUITE = await perRunDatabase(TEST_SERVER_URL).catch((error: unknown) =>
+  error instanceof Error ? error : new Error(String(error)),
+);
+
+/** The connection string every test below uses: this process's own database. */
+const TEST_DATABASE_URL = SUITE instanceof Error ? TEST_SERVER_URL : SUITE.url;
+
+/** Small handshake bound so an absent database fails fast instead of hanging. */
 const CONNECT_TIMEOUT_SECONDS = 3;
 
 /** Domain prefix for every row this block creates. */
@@ -79,17 +99,28 @@ const state: {
 } = { skipReason: "database probe did not run" };
 
 {
-  const candidate = createClient(TEST_DATABASE_URL, CONNECT_TIMEOUT_SECONDS);
-  try {
-    await candidate`select 1`;
-    state.client = candidate;
-    state.database = createDatabase(candidate);
-    state.skipReason = false;
-  } catch (error) {
-    state.skipReason = `database unreachable at ${TEST_DATABASE_URL}: ${
-      error instanceof Error ? error.message : String(error)
-    }`;
-    await candidate.end({ timeout: 1 }).catch(() => undefined);
+  if (SUITE instanceof Error) {
+    // Loud, never a silent pass and never a shared-database fallback.
+    state.skipReason = noDatabase(
+      "The server suite needs a Postgres database and none could be obtained.",
+      `database unreachable at ${TEST_SERVER_URL}: could not create a per-run database (${SUITE.message})`,
+    );
+  } else {
+    const candidate = createClient(SUITE.url, CONNECT_TIMEOUT_SECONDS);
+    try {
+      await candidate`select 1`;
+      state.client = candidate;
+      state.database = createDatabase(candidate);
+      state.skipReason = false;
+    } catch (error) {
+      state.skipReason = noDatabase(
+        "The server suite needs a Postgres database and none could be obtained.",
+        `database unreachable at ${TEST_DATABASE_URL}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      await candidate.end({ timeout: 1 }).catch(() => undefined);
+    }
   }
 }
 

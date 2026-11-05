@@ -4,6 +4,13 @@
  *
  * The `vi.hoisted` provider configuration stays in each test file: it must run
  * before `../config.js` is imported, which a helper module cannot guarantee.
+ *
+ * ## Why "no database" throws here
+ *
+ * Every `describe.skipIf` in this file reads `state.skipReason`, so an unreachable database used to
+ * produce a fully SKIPPED, fully GREEN file. The probe below now throws through
+ * `../testing/no-database.js` (`rootDir: "src"` puts the root fixture above this package, TS6059),
+ * which closes the single opt-out and the pinned image in one shared place.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -23,6 +30,7 @@ import {
   createRequestTransactionWrapper,
 } from "../db.js";
 import type { Database } from "../db.js";
+import { noDatabase } from "../testing/no-database.js";
 import { perRunDatabase } from "../testing/per-run-database.js";
 import { createIngestRouter } from "./ingest.js";
 import type { IngestRouterDependencies } from "./ingest.js";
@@ -99,7 +107,10 @@ export const state: {
 {
   if (SUITE instanceof Error) {
     // Loud, never a silent pass and never a shared-database fallback.
-    state.skipReason = `database unreachable at ${TEST_SERVER_URL}: could not create a per-run database (${SUITE.message})`;
+    state.skipReason = noDatabase(
+      "The ingest route suites need a Postgres database and none could be obtained.",
+      `database unreachable at ${TEST_SERVER_URL}: could not create a per-run database (${SUITE.message})`,
+    );
   } else {
     const candidate = createClient(SUITE.url, CONNECT_TIMEOUT_SECONDS);
     try {
@@ -108,9 +119,12 @@ export const state: {
       state.database = createDatabase(candidate);
       state.skipReason = false;
     } catch (error) {
-      state.skipReason = `database unreachable at ${SUITE.url}: ${
-        error instanceof Error ? error.message : String(error)
-      }`;
+      state.skipReason = noDatabase(
+        "The ingest route suites need a Postgres database and none could be obtained.",
+        `database unreachable at ${SUITE.url}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       await candidate.end({ timeout: 1 }).catch(() => undefined);
     }
   }

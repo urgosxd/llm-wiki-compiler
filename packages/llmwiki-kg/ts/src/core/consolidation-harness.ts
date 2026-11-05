@@ -17,6 +17,7 @@ import {
   createTransactionRunner,
 } from "../db.js";
 import type { Database, TransactionRunner } from "../db.js";
+import { noDatabase } from "../testing/no-database.js";
 import { perRunDatabase } from "../testing/per-run-database.js";
 import { FixtureStacks } from "../routes/fixture-tenant.js";
 import type {
@@ -81,7 +82,10 @@ export const state: {
 {
   if (SUITE instanceof Error) {
     // Loud, never a silent pass and never a shared-database fallback.
-    state.skipReason = `database unreachable at ${TEST_SERVER_URL}: could not create a per-run database (${SUITE.message})`;
+    state.skipReason = noDatabase(
+      "The consolidation suites need a Postgres database and none could be obtained.",
+      `database unreachable at ${TEST_SERVER_URL}: could not create a per-run database (${SUITE.message})`,
+    );
   } else {
     const candidate = createClient(SUITE.url, CONNECT_TIMEOUT_SECONDS);
     try {
@@ -92,9 +96,12 @@ export const state: {
       state.runner = createTransactionRunner(database);
       state.skipReason = false;
     } catch (error) {
-      state.skipReason = `database unreachable at ${SUITE.url}: ${
-        error instanceof Error ? error.message : String(error)
-      }`;
+      state.skipReason = noDatabase(
+        "The consolidation suites need a Postgres database and none could be obtained.",
+        `database unreachable at ${SUITE.url}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       await candidate.end({ timeout: 1 }).catch(() => undefined);
     }
   }

@@ -14,6 +14,7 @@ import {
 } from "./db.js";
 import type { Database, TransactionRunner } from "./db.js";
 import * as schema from "./schema.js";
+import { noDatabase } from "./testing/no-database.js";
 import { perRunDatabase } from "./testing/per-run-database.js";
 
 /**
@@ -35,24 +36,24 @@ import { perRunDatabase } from "./testing/per-run-database.js";
  * deletions are unchanged; what changed is that they can no longer reach any database
  * but this process's own (`./testing/per-run-database.ts`).
  *
- * Every integration test skips — never fails — when the database is
- * unreachable, so `npm test` works without Docker. The pure-function tests in
- * the first block always run.
+ * Every integration test FAILS — never skips — when no database can be obtained,
+ * because a skip is a pass that asserts nothing. `LLMWIKI_TEST_ALLOW_NO_DATABASE=1`
+ * is the only path back to the old skip behavior, and with it the pure-function
+ * tests in the first block still run.
  */
 /** The server a suite database is provisioned on: the host these tests target. */
 const TEST_SERVER_URL =
   process.env["AKS_TEST_DATABASE_URL"] ??
+  process.env["LLMWIKI_TEST_DATABASE_URL"] ??
   "postgresql://aks:aks@localhost:5434/aks";
 
-const SUITE = await perRunDatabase(TEST_SERVER_URL).catch((error: unknown) => {
-  // Loud, not silent: an unreachable server must read as itself, and the
-  // `describe.skipIf` below still decides what runs.
-  console.warn(`[db.test] per-run database unavailable — ${(error as Error).message}`);
-  return undefined;
-});
+/** This process's own database, or the error that stopped it from being created. */
+const SUITE = await perRunDatabase(TEST_SERVER_URL).catch((error: unknown) =>
+  error instanceof Error ? error : new Error(String(error)),
+);
 
 /** The connection string every test below uses: this process's own database. */
-const TEST_DATABASE_URL = SUITE?.url ?? TEST_SERVER_URL;
+const TEST_DATABASE_URL = SUITE instanceof Error ? TEST_SERVER_URL : SUITE.url;
 
 /** Small handshake bound so an absent database skips fast instead of hanging. */
 const CONNECT_TIMEOUT_SECONDS = 3;
@@ -73,20 +74,31 @@ const state: {
 } = { skipReason: "database probe did not run" };
 
 {
-  const candidate = createClient(TEST_DATABASE_URL, CONNECT_TIMEOUT_SECONDS);
-  try {
-    await candidate`select 1`;
-    const db = createDatabase(candidate);
-    state.client = candidate;
-    state.database = db;
-    state.runner = createTransactionRunner(db);
-    state.skipReason = false;
-  } catch (error) {
-    state.skipReason = `database unreachable at ${TEST_DATABASE_URL}: ${
-      error instanceof Error ? error.message : String(error)
-    }`;
-    // Release the failed client so no socket or timer keeps the run alive.
-    await candidate.end({ timeout: 1 }).catch(() => undefined);
+  if (SUITE instanceof Error) {
+    // Loud, never a silent pass and never a shared-database fallback.
+    state.skipReason = noDatabase(
+      "The db integration suite needs a Postgres database and none could be obtained.",
+      `database unreachable at ${TEST_SERVER_URL}: could not create a per-run database (${SUITE.message})`,
+    );
+  } else {
+    const candidate = createClient(TEST_DATABASE_URL, CONNECT_TIMEOUT_SECONDS);
+    try {
+      await candidate`select 1`;
+      const db = createDatabase(candidate);
+      state.client = candidate;
+      state.database = db;
+      state.runner = createTransactionRunner(db);
+      state.skipReason = false;
+    } catch (error) {
+      state.skipReason = noDatabase(
+        "The db integration suite needs a Postgres database and none could be obtained.",
+        `database unreachable at ${TEST_DATABASE_URL}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      // Release the failed client so no socket or timer keeps the run alive.
+      await candidate.end({ timeout: 1 }).catch(() => undefined);
+    }
   }
 }
 

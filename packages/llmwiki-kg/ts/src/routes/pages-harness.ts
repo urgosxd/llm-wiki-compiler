@@ -23,6 +23,7 @@ import {
 } from "../db.js";
 import { createApp } from "../server.js";
 import type { Database } from "../db.js";
+import { noDatabase } from "../testing/no-database.js";
 import { perRunDatabase } from "../testing/per-run-database.js";
 import { FixtureStacks, withFixtureTenant } from "./fixture-tenant.js";
 
@@ -98,7 +99,10 @@ export const state: {
 {
   if (SUITE instanceof Error) {
     // Loud, never a silent pass and never a shared-database fallback.
-    state.skipReason = `database unreachable at ${TEST_SERVER_URL}: could not create a per-run database (${SUITE.message})`;
+    state.skipReason = noDatabase(
+      "The pages route suites need a Postgres database and none could be obtained.",
+      `database unreachable at ${TEST_SERVER_URL}: could not create a per-run database (${SUITE.message})`,
+    );
   } else {
     const candidate = createClient(SUITE.url, CONNECT_TIMEOUT_SECONDS);
     try {
@@ -107,9 +111,12 @@ export const state: {
       state.database = createDatabase(candidate);
       state.skipReason = false;
     } catch (error) {
-      state.skipReason = `database unreachable at ${SUITE.url}: ${
-        error instanceof Error ? error.message : String(error)
-      }`;
+      state.skipReason = noDatabase(
+        "The pages route suites need a Postgres database and none could be obtained.",
+        `database unreachable at ${SUITE.url}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       await candidate.end({ timeout: 1 }).catch(() => undefined);
     }
   }
@@ -154,6 +161,12 @@ export async function countFixtureRows(): Promise<number> {
 }
 
 afterAll(async () => {
+  // One guard, like the sibling harnesses: with the opt-out set there is nothing to clean up, and
+  // `database()` would throw. Without it the opt-out could not produce a green run, which is the
+  // only thing it exists for.
+  if (state.skipReason !== false) {
+    return;
+  }
   await deleteFixtureRows();
   expect(await countFixtureRows()).toBe(0);
 

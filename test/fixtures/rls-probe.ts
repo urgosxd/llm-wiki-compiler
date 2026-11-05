@@ -39,13 +39,62 @@
  * The identical probe existed in two suites; only the counted query differed. Fallow
  * flagged the copies, and more importantly a second copy of a security probe is a
  * second thing that can drift from the one that was measured.
+ *
+ * ## Absent object versus absent database
+ *
+ * Every probe here answers a yes/no question, and a boolean is exactly the shape that
+ * turns a missing database into a skip. Measured: with nothing listening, the `catch`
+ * below returned `false`, `!appRolePresent` skipped `compile-config-isolation`, and the
+ * suite reported GREEN while asserting nothing.
+ *
+ * So a failed probe is re-asked as a liveness question, and the two answers are kept
+ * apart: the server not answering `select 1` is an UNOBTAINABLE database and throws the
+ * actionable failure ({@link missingTestDatabase}); the server answering while the object
+ * is absent stays `false`, which keeps the documented skip for a role a deployment has
+ * not created yet. `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` restores the skip in both cases.
  */
 
 import { sql } from "drizzle-orm";
 import type { Database } from "llmwiki-kg";
+import { missingTestDatabase } from "./test-database-handoff.js";
 
 /** The role the application is meant to run as, once the DSN is switched. */
 export const APP_ROLE = "llmwiki_app";
+
+/** A message from an unknown thrown value. */
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Decide whether a failed probe means "absent" or "no database at all".
+ *
+ * @param db - Database handle whose probe failed.
+ * @param context - Which probe failed, phrased for whoever reads the failure.
+ * @param cause - The probe's own error.
+ * @returns `false` when the server answered and the object is genuinely absent.
+ * @throws When the server does not answer, unless the documented opt-out is set.
+ */
+async function absentOrUnreachable(
+  db: Database,
+  context: string,
+  cause: unknown,
+): Promise<boolean> {
+  try {
+    await db.execute("select 1");
+  } catch (probeError) {
+    const missing = missingTestDatabase(
+      context,
+      `the probe failed (${describe(cause)}), and a select 1 liveness probe then failed too ` +
+        `(${describe(probeError)})`,
+    );
+    if (missing.error !== undefined) throw missing.error;
+    console.warn(`${context}: every case in this file will be skipped.\n${missing.message}`);
+    return false;
+  }
+  // The server answered, so the OBJECT is what is missing. That is the documented skip.
+  return false;
+}
 
 /**
  * Is the app role present in this database?
@@ -55,6 +104,7 @@ export const APP_ROLE = "llmwiki_app";
  *
  * @param db - Database handle to ask.
  * @returns True when `llmwiki_app` exists.
+ * @throws When the database cannot be obtained at all, unless the opt-out is set.
  */
 export async function appRoleExists(db: Database): Promise<boolean> {
   try {
@@ -62,8 +112,8 @@ export async function appRoleExists(db: Database): Promise<boolean> {
       `select count(*)::int as n from pg_roles where rolname = '${APP_ROLE}'`,
     );
     return ((rows[0] as { n: number } | undefined)?.n ?? 0) > 0;
-  } catch {
-    return false;
+  } catch (error) {
+    return absentOrUnreachable(db, "rls-probe: appRoleExists", error);
   }
 }
 
@@ -116,6 +166,7 @@ export async function countAsAppRole(
  * @param db - Database handle to ask.
  * @param tables - Table names the suite cannot run without.
  * @returns True when every named table exists.
+ * @throws When the database cannot be obtained at all, unless the opt-out is set.
  */
 export async function wikiTablesPresent(
   db: Database,
@@ -127,7 +178,7 @@ export async function wikiTablesPresent(
        where table_schema = 'wiki' and table_name in (${tables.map((t) => `'${t}'`).join(", ")})`,
     );
     return ((rows[0] as { n: number } | undefined)?.n ?? 0) === tables.length;
-  } catch {
-    return false;
+  } catch (error) {
+    return absentOrUnreachable(db, "rls-probe: wikiTablesPresent", error);
   }
 }
