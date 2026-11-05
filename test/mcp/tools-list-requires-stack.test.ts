@@ -13,14 +13,16 @@
  * So the handshake here is real: a `Client` and an `McpServer` connected over the
  * SDK's in-memory transport, and the assertion is on the JSON Schema that comes back.
  *
- * ## Why three tools are named and excluded
+ * ## Why the inventory is asserted in full
  *
- * `ingest_source`, `export_okf` and `import_okf` take no Stack argument at all today.
- * They are deliberately NOT asserted here: making them take one is a different task,
- * and pinning their current shape would either pre-commit that task or fail it. So the
- * inventory test asserts no TOTAL and no exact name set — it only requires that a tool
- * outside this exemption never ships an optional Stack. When a later task gives any of
- * the three a required `stackId`, the exemption simply stops being needed.
+ * `ingest_source`, `export_okf` and `import_okf` used to take no Stack argument at all.
+ * All three now declare a required `stackId`, verified through the same real handshake:
+ * the exemption that once covered them is gone, so the ONE tool allowed to omit the
+ * required Stack is `list_stacks`, by S8. The full-inventory case below walks every
+ * tool the production factory registers — it builds through `createWikiMcpServer`
+ * rather than the shared fixture, because the fixture leaves the two OKF tools out —
+ * which is what makes a silent loss of a required Stack fail here instead of surfacing
+ * later at a client that built its arguments from `tools/list`.
  *
  * ## Why `list_stacks` is asserted the OTHER way
  *
@@ -36,6 +38,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../fixtures/mcp-test-env.js";
+import { createWikiMcpServer } from "../../src/mcp/server.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 
 /** The ten tools that must carry a REQUIRED Stack: the whole Stack-scoped surface. */
@@ -53,18 +56,14 @@ const STACK_SCOPED_TOOLS = [
 ] as const;
 
 /**
- * The wiki tools whose Stack argument is NOT required today, and why.
+ * The wiki tools whose Stack argument is NOT required, and why.
  *
- * `ingest_source`, `export_okf` and `import_okf` take no Stack at all yet — other tasks
- * own each of them. `list_stacks` takes one but keeps it optional by ruling: a
- * discovery tool cannot require the identifier of the thing it discovers.
+ * Exactly one: `list_stacks` takes `stackId` but keeps it optional by ruling (S8) — a
+ * discovery tool cannot require the identifier of the thing it discovers. It is the
+ * only remaining exemption; `ingest_source`, `export_okf` and `import_okf` all require
+ * `stackId` now.
  */
-const STACK_ARG_NOT_REQUIRED = [
-  "ingest_source",
-  "export_okf",
-  "import_okf",
-  "list_stacks",
-] as const;
+const STACK_ARG_NOT_REQUIRED = ["list_stacks"] as const;
 
 /** Phrases the shared schema description must carry, per S6's recorded asymmetry. */
 const REQUIRED_PHRASES = ["required", "no default", "no fallback", "resources", "server environment"];
@@ -93,10 +92,17 @@ afterEach(async () => {
  * Drive a real `tools/list` handshake and hand the result to `read`.
  *
  * @param read - Receives every registered tool, keyed by name.
+ * @param build - Server factory. Defaults to the shared test fixture, which registers
+ *   the wiki tools + resources but NOT the two OKF tools; the full-inventory case
+ *   passes the production factory (`createWikiMcpServer`) so `export_okf` and
+ *   `import_okf` are inside the walk as well.
  * @returns Whatever `read` returned.
  */
-async function withListedTools<T>(read: (tools: Map<string, ListedTool>) => T): Promise<T> {
-  const server: McpServer = buildServer(root);
+async function withListedTools<T>(
+  read: (tools: Map<string, ListedTool>) => T,
+  build: (root: string) => McpServer = buildServer,
+): Promise<T> {
+  const server: McpServer = build(root);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "tools-list-requires-stack", version: "0" });
@@ -128,11 +134,38 @@ describe("tools/list declares the Stack argument required", () => {
         .filter((name) => !(tools.get(name)?.inputSchema.required ?? []).includes("stackId")),
     );
 
-    // Deliberately NO total and no "exactly these names" assertion: `export_okf`,
-    // `import_okf` and `ingest_source` are other tasks' to change, and giving them a
-    // required `stackId` must not turn this file red for the wrong reason. A tool that
-    // ships an optional Stack without being named above still fails here.
+    // No total and no "exactly these names" assertion: the exempt set is the data, and
+    // a tool that ships an optional Stack without being named in it fails here.
     expect(unclassified).toEqual([]);
+  });
+
+  it("requires stackId on EVERY tool the server registers, except list_stacks", async () => {
+    const inventory = await withListedTools(
+      (tools) =>
+        [...tools.entries()].map(([name, tool]) => ({
+          name,
+          required: tool.inputSchema.required ?? [],
+          stackId: tool.inputSchema.properties?.stackId,
+        })),
+      (dir) => createWikiMcpServer({ root: dir, version: "0" }),
+    );
+
+    // Coverage guard first: a walk that saw only a handful of tools would satisfy the
+    // rule below without pinning anything, so every tool whose required Stack this
+    // case claims to cover has to be in the walked inventory.
+    const walked = inventory.map((tool) => tool.name);
+    for (const name of [...STACK_SCOPED_TOOLS, "ingest_source", "export_okf", "import_okf"]) {
+      expect(walked, `${name} must be in the walked inventory`).toContain(name);
+    }
+
+    // Then the rule, in both directions: a Stack-scoped tool that silently loses its
+    // required `stackId`, and `list_stacks` silently gaining one, both fail here.
+    const wrong = inventory.filter(
+      (tool) => tool.required.includes("stackId") === (tool.name === "list_stacks"),
+    );
+    expect(wrong.map((tool) => tool.name)).toEqual([]);
+    // `list_stacks` declares the argument, optionally: it marks the current entry.
+    expect(inventory.filter((tool) => tool.name === "list_stacks")[0]?.stackId).toBeDefined();
   });
 
   it("keeps list_stacks exempt: stackId present, optional and still documented", async () => {

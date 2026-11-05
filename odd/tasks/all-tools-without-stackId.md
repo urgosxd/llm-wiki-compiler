@@ -36,6 +36,49 @@ T16. Make the fallow gate green: drop the dead export, dedupe the required-Stack
 
 CARRY-OVER. test/mcp-server.test.ts is 466 raw lines against the repo's 400-line test ceiling; the overage predates P1 (459) and P1's fixtures were extracted to test/fixtures/stack-status-fixtures.ts rather than splitting the file inside the contract diff.
 
+### S5 inventory — callers and tests updated to pass the Stack explicitly
+
+Built from `git diff 8203862..HEAD --name-only` filtered to test files (plus the two
+KG test-support files that the sweep had to touch), cross-checked against the list the
+independent verifier named. Every line below is a file this feature changed IN ORDER TO
+PASS A STACK EXPLICITLY; the files that changed for another reason are named separately
+underneath and are not claimed as S5 updates.
+
+| File | Why it changed |
+| --- | --- |
+| test/ask-no-mutation.test.ts | `query_wiki` now names `stackId`; the journal assertions read that Stack instead of the bound one. |
+| test/mcp-context.test.ts | Every `get_context_pack` call passes `stackId` through a local helper; a comment records that nothing is inherited from the environment. |
+| test/mcp-server.test.ts | In-process tool calls (`compile_wiki`, `read_page`, `wiki_status`, `ingest_jobs_list`) pass the required `stackId` from the extracted fixture. |
+| test/mcp-stdio.test.ts | The stdio `callTool` arguments carry `stackId`; the fixture hands the id out with the harness. |
+| test/mcp/query-wiki-reads-rows.test.ts | Row-scoped reads name the Stack they mean; the case that asserted inheritance of the bound Stack is now an explicit-argument case. |
+| test/mcp/query-sources-use-filesystem.test.ts | The context-pack helper takes a `stackId` parameter, so each request names its Stack. |
+| test/mcp/no-bound-stack-refusal.test.ts | The refusal now comes from the schema, so the suite asserts no fallback reaches the unbound deployment (`AKS_STACK_ID` stays undefined). |
+| test/mcp/unknown-stack-refusal.test.ts | The case that asserted "no Stack named still runs the work" became "an empty Stack argument is refused without running the work", so the suite no longer documents the fallback as supported. |
+| test/okf-mcp-tools.test.ts | `export_okf` / `import_okf` handler calls pass the Stack the page seams resolve. |
+| test/okf-mcp-queue-cap.test.ts | The queue-cap `import_okf` calls pass `stackId` (handler-level, so no schema validation guards them). |
+| test/okf-mcp-stdio.test.ts | The stdio OKF calls pass `stackId`, including the escape-attempt cases. |
+| test/query-publication-sdk-mcp.test.ts | SDK-transported `query_wiki` calls name `stackId`; journal headings are read for that Stack. |
+| packages/llmwiki-kg/ts/src/mcp-calls.test.ts | KG `callTool` cases forward `stack_id`; the domain-substitutes-for-stack routing cases became "domain is an extra filter" cases (S7). |
+| packages/llmwiki-kg/ts/src/mcp-tools.test.ts | The advertised `required` arrays now name `stack_id` on the three graph tools; the Python-oracle comparisons are gone (L12). |
+| packages/llmwiki-kg/ts/src/mcp-transport.test.ts | The handshake cases send `stack_id` and gain the required-argument refusal over a real transport. |
+| packages/llmwiki-kg/ts/src/mcp-harness.ts | Shared test support: `PYTHON_TOOLS_JSON` / `PYTHON_TOOLS` deleted (L12) and `textOf` widened so both result envelopes are readable. |
+
+Not S5 changes in the same diff, one line each:
+
+- test/fixtures/mcp-stack-rows.ts — new seeded-row fixture, authored by this feature rather than updated.
+- test/fixtures/stack-status-fixtures.ts — fixtures extracted out of test/mcp-server.test.ts for the file-size ceiling (see CARRY-OVER), not a Stack update.
+- test/mcp/ambient-state-isolation.test.ts — new S3 pin, not an existing caller.
+- test/mcp/journal-isolation.test.ts — new S2/S3 pin, not an existing caller.
+- test/mcp/lint-compile-isolation.test.ts — new S3 pin, not an existing caller.
+- test/mcp/retired-parity-payloads.test.ts — new file re-pinning the three retired parity payloads (T14).
+- test/mcp/stack-argument-required-refusal.test.ts — new S2/S4 pin.
+- test/mcp/tools-list-requires-stack.test.ts — new S1 `tools/list` pin.
+- test/mcp/tools-required-stack-okf-ingest.test.ts — new S1-S3 pin for the three tools that used to take no Stack.
+- test/parity-default.test.ts — captures RETIRED, not updated: the three MCP tool surfaces were removed rather than rebound, and `mcp.resources` stays (T14).
+- test/mcp/multi-stack-addressing.test.ts — unchanged in this diff and still passing; it passed the Stack explicitly from the start.
+- test/mcp/stack-id-guard.test.ts — unchanged in this diff and still passing (S4's malformed-id guard).
+- The remaining files in `git diff 8203862..HEAD --name-only` are `src/**` (the implementation of T1-T5 and T12-T15), `docs/**` + `README.md` (T7) and this document; none of them is an S5 test sweep.
+
 ## Log
 
 L1 (human request, verbatim, do not translate):
@@ -78,3 +121,5 @@ L16 (named gaps of P1, not silent ones): per-run database isolation is NOT in P1
 L17 (recorded decision, superseded slice kept): commit 0b8bc04 landed the first, weaker form of the refusal write-check before the ruling above arrived. It is kept in history as an interim slice and superseded by the two-test-owned-Stacks form rather than reverted or rewritten: a revert-then-reland pair would add two commits for one file, and rewriting the branch would be destructive history surgery for an assertion whose final form was already landing.
 
 L18 (gate evidence and two defects outside P1's fix, recorded not fixed): on HEAD 36da8db the four gates ran before the fallow fix — npx tsc --noEmit exit 0; npm run build exit 0 (dist/index.js 415.27 KB, dist/cli.js 469.10 KB); npm run test:affected exit 0 with 255 files / 1639 tests passed; fallow RED with 1 dead-code (the export 5c538e8 had added to NO_STACK_MESSAGE, a one-token regression fixed by removing the keyword, not by inventing an importer) and 9 duplication clone groups (213 lines over 10 files, 5 of them new suites this feature authored). After T16 all four are green and the repo's own gate npx fallow --root . --format json | node scripts/check-fallow-report.mjs reports 0 findings. Two defects found in the process belong to other branches, not P1: (a) scripts/test-affected.ts prefers upstream/main, which here is 629a3b5, 486 commits behind the real branch point main=8203862, so its "49 changed files" scope is not measuring this branch's diff; (b) the pre-disposal gate run executed 5 test files / 63 tests out of the node_modules.hardlink-aside tree (1702 before, 1639 after its removal), so that authorized disposal was load-bearing rather than cosmetic.
+
+L19 (independent verification, verdicts and two partials): S1 PASS in both dimensions through a real tools/list handshake; S2 PASS for the wiki server, PARTIAL for KG — the KG server has no SDK input validation because src/mcp/dispatch.ts calls the handlers directly, so a missing stack_id returns the ordinary text result "Error: 'stack_id' must be provided." with no HTTP request issued and no write, rather than an isError envelope; S3 PARTIAL, with src/compiler/index.ts:1191 regenerateIndices(root, process.env) still ambient on the compile_wiki path and src/utils/lock.ts taking no env, both named as L16; S4 PASS including the three legacy guard suites; S5 PARTIAL, now remedied by the inventory above; S6 PASS with src/mcp/resources.ts byte-identical to base; S7 PASS with zero requests on a domain-only call; S8 PASS in both dimensions. Verifier also confirmed npx tsc --noEmit exit 0 and the repo fallow gate at 0 findings, and that the Postgres harness was reachable so the isolation suites really asserted instead of early-returning.
