@@ -19,11 +19,15 @@ import { describe, expect, it } from "vitest";
 
 import type { RejectedTriplet } from "../../core/ontology.js";
 import {
+  buildExtractionAudit,
   buildOntologyAudit,
+  EXTRACTION_AUDIT_KEY,
+  ExtractionAuditSchema,
   MAX_AUDIT_SAMPLES,
   MAX_SAMPLE_NAME_LENGTH,
   ONTOLOGY_AUDIT_KEY,
   OntologyAuditSchema,
+  readExtractionAudit,
   readOntologyAudit,
 } from "./audit.js";
 
@@ -155,5 +159,76 @@ describe("readOntologyAudit", () => {
     const read = readOntologyAudit({ quality: { passed: true }, [ONTOLOGY_AUDIT_KEY]: written });
 
     expect(read).toEqual(written);
+  });
+});
+
+describe("buildExtractionAudit", () => {
+  it("writes nothing when the extraction degraded nothing", () => {
+    // Absence, not zero, is the healthy signal. This is what keeps a healthy
+    // ingest's stored blob byte-identical to the one written before the section
+    // existed, and it survives a caller handing over an explicit 0.
+    expect(buildExtractionAudit({})).toBeUndefined();
+    expect(buildExtractionAudit({ mangledChunks: 0, schemaViolations: 0 })).toBeUndefined();
+  });
+
+  it("reports only the counter that fired", () => {
+    // One can fire without the other: a mangled chunk produces no triplet, so it
+    // cannot also violate the schema, and a violating chunk answered fine.
+    expect(buildExtractionAudit({ mangledChunks: 2 })).toEqual({ mangledChunks: 2 });
+    expect(buildExtractionAudit({ schemaViolations: 3 })).toEqual({ schemaViolations: 3 });
+  });
+
+  it("reports both counters with their own values, never coalesced", () => {
+    // They count different units — chunks versus type positions — so one field,
+    // a sum, or an average would answer neither question.
+    expect(buildExtractionAudit({ mangledChunks: 2, schemaViolations: 5 })).toEqual({
+      mangledChunks: 2,
+      schemaViolations: 5,
+    });
+  });
+
+  it("refuses to store a zero, which would read as a counter that fired", () => {
+    expect(ExtractionAuditSchema.safeParse({ mangledChunks: 0 }).success).toBe(false);
+    expect(ExtractionAuditSchema.safeParse({ schemaViolations: 0 }).success).toBe(false);
+  });
+
+  it("leaves the healthy audit blob byte-identical to the pre-section shape", () => {
+    // The whole payload, not a field: a healthy ingest must write exactly what it
+    // wrote before this slice, so no existing consumer sees a new key.
+    const blob = { [ONTOLOGY_AUDIT_KEY]: buildOntologyAudit(true, []) };
+
+    expect(JSON.stringify(blob)).toBe(
+      '{"ontology":{"enforced":true,"declared":true,"rejected":0,' +
+        '"reason_codes":[],"samples":[]}}',
+    );
+  });
+});
+
+describe("readExtractionAudit", () => {
+  it("finds the section under its own key", () => {
+    const written = buildExtractionAudit({ mangledChunks: 1 });
+
+    expect(readExtractionAudit({ [EXTRACTION_AUDIT_KEY]: written })).toEqual(written);
+  });
+
+  it("returns undefined when no run has degraded", () => {
+    // Not an error: the section is only written after a counter fired, so its
+    // absence is the healthy answer for every clean document ever ingested.
+    expect(readExtractionAudit(null)).toBeUndefined();
+    expect(readExtractionAudit({})).toBeUndefined();
+    expect(readExtractionAudit({ [ONTOLOGY_AUDIT_KEY]: buildOntologyAudit(true, []) })).toBeUndefined();
+  });
+
+  it("does not read the ontology section as the extraction one", () => {
+    // One column, two sections: a reader bound to the wrong key must find nothing
+    // rather than a section that happens to parse.
+    const written = buildExtractionAudit({ schemaViolations: 4 });
+
+    expect(readExtractionAudit({ [ONTOLOGY_AUDIT_KEY]: written })).toBeUndefined();
+    expect(readOntologyAudit({ [EXTRACTION_AUDIT_KEY]: written })).toBeUndefined();
+  });
+
+  it("rejects a stored section carrying a zero it would never have written", () => {
+    expect(() => readExtractionAudit({ [EXTRACTION_AUDIT_KEY]: { mangledChunks: 0 } })).toThrow();
   });
 });

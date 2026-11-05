@@ -85,6 +85,27 @@ const DECLARATION = {
 /** One chunk of prose, so the pipeline has something to send to the model. */
 const BODY = "Acme employs Ada Lovelace. Globex employs nobody at all.";
 
+/**
+ * A body long enough to become more than one chunk.
+ *
+ * Per-chunk counters cannot be told apart on a single-chunk document, and the
+ * default chunk budget is 1024 tokens, so this repeats one sentence far past it.
+ * The tests assert `chunks_created > 1` rather than hard-coding a chunk count:
+ * the chunker's exact boundaries are not what these tests are about.
+ */
+const LONG_BODY = Array.from(
+  { length: 200 },
+  (_, index) => `Acme employs Ada Lovelace in office ${String(index)}.`,
+).join(" ");
+
+/**
+ * A response the parser can read but which exposes neither an envelope array.
+ *
+ * Non-blank and valid JSON, so the provider DID answer: this is the shape-mangled
+ * case, not a failure and not a document with nothing in it.
+ */
+const MANGLED = { status: "ok" };
+
 /** A triplet inside the declaration: kept. */
 const IN_ONTOLOGY = {
   subject: { type: "COMPANY", name: "Acme" },
@@ -329,6 +350,11 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
           },
         ],
       },
+      // Extended, not replaced: the ontology keys above are unchanged and this is
+      // the sibling section the payload gained. Both triplets above carry one bad
+      // type position each -- `ACQUIRED` and `ALIEN_CONSTRUCT` -- and the gateway
+      // provider treats the schema's `enum` as a hint, so both are counted.
+      extraction: { schemaViolations: 2 },
     });
   });
 
@@ -406,6 +432,10 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
           },
         ],
       },
+      // Extended, not replaced. The default ontology declares `COMPANY`, `PERSON`
+      // and `EMPLOYS` and not `ACQUIRED`, so exactly one type position is outside
+      // the schema the model was shown.
+      extraction: { schemaViolations: 1 },
     });
   });
 
@@ -416,7 +446,12 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    expect(await documentAudit(stackId, documentId)).toEqual({
+    const audit = await documentAudit(stackId, documentId);
+    // Byte-identical to the payload written before the degradation section
+    // existed, and neither counter is present as a zero. Absence is the healthy
+    // signal, so a consumer never has to tell a written zero from an unwritten
+    // one.
+    expect(audit).toEqual({
       ontology: {
         enforced: true,
         declared: true,
@@ -425,6 +460,86 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
         samples: [],
       },
     });
+    expect(audit).not.toHaveProperty("extraction");
+    expect(audit).not.toHaveProperty("mangledChunks");
+    expect(audit).not.toHaveProperty("schemaViolations");
+  });
+
+  it("reports a mangled chunk in the audit rather than hiding it", async () => {
+    // A response with neither a `triplets` nor an `entities` array is a degraded
+    // answer, not a document with nothing in it. Before this section existed the
+    // ingest answered 200 with an empty graph and the reason was nowhere.
+    setToolResponse([MANGLED]);
+    const stackId = await createStackWith(app, domain("mangled"), DECLARATION);
+    const documentId = await createDocument(stackId, BODY);
+
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
+    // Only `mangledChunks`: a chunk with no envelope produced no triplet, so it
+    // cannot also have put a type position outside the schema.
+    expect(audit["extraction"]).toEqual({ mangledChunks: 1 });
+  });
+
+  it("reports advisory schema violations without changing what is rejected", async () => {
+    // The gateway treats the schema's `enum` as a hint, so `ALIEN_CONSTRUCT`
+    // arrives untouched. It is counted here AND still travels the normal rejection
+    // path: the counter is a diagnosis, never a filter.
+    setToolResponse([{ triplets: [BAD_ENTITY] }]);
+    const stackId = await createStackWith(app, domain("advisory"), DECLARATION);
+    const documentId = await createDocument(stackId, BODY);
+
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
+    const ontology = audit["ontology"] as { rejected: number; reason_codes: string[] };
+    expect(audit["extraction"]).toEqual({ schemaViolations: 1 });
+    expect(ontology.rejected).toBe(1);
+    expect(ontology.reason_codes).toEqual(["UNKNOWN_ENTITY_TYPE"]);
+  });
+
+  it("counts every mangled chunk, not only the first", async () => {
+    setToolResponse(Array.from({ length: 40 }, () => MANGLED));
+    const stackId = await createStackWith(app, domain("mangled-all"), DECLARATION);
+    const documentId = await createDocument(stackId, LONG_BODY);
+
+    const response = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    // An all-mangled run is degraded, not an outage: it answers 200 with an empty
+    // graph, and this counter is the only place the loss is recorded.
+    expect(response.body.chunks_created).toBeGreaterThan(1);
+    const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
+    expect(audit["extraction"]).toEqual({ mangledChunks: response.body.chunks_created });
+  });
+
+  it("keeps the two counters apart when both fire in one document", async () => {
+    // One mangled chunk, then one chunk whose two out-of-ontology triplets carry
+    // two bad type positions between them. Chunks and positions share no
+    // denominator, so one coalesced number would be wrong for both.
+    setToolResponse([MANGLED, { triplets: [BAD_RELATION, BAD_ENTITY] }]);
+    const stackId = await createStackWith(app, domain("both"), DECLARATION);
+    const documentId = await createDocument(stackId, LONG_BODY);
+
+    const response = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    expect(response.body.chunks_created).toBeGreaterThan(1);
+    const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
+    expect(audit["extraction"]).toEqual({ mangledChunks: 1, schemaViolations: 2 });
+  });
+
+  it("clears a previous run's counters when a re-ingest answers cleanly", async () => {
+    // The section describes the run that produced the current graph. A leftover
+    // one would report degradation against an ingest that no longer has any.
+    setToolResponse([MANGLED]);
+    const stackId = await createStackWith(app, domain("stale"), DECLARATION);
+    const documentId = await createDocument(stackId, BODY);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    expect(await documentAudit(stackId, documentId)).toHaveProperty("extraction");
+
+    setToolResponse([{ triplets: [IN_ONTOLOGY] }]);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    expect(await documentAudit(stackId, documentId)).not.toHaveProperty("extraction");
   });
 
   it("keeps the ingest response at the oracle's nine keys", async () => {
@@ -439,5 +554,9 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     expect(Object.keys(response.body)).toHaveLength(9);
     expect(response.body).not.toHaveProperty("ontology");
     expect(response.body).not.toHaveProperty("ontology_rejections");
+    // And the degradation counters went to the audit blob, not onto the wire: the
+    // nine keys above are the whole response contract.
+    expect(response.body).not.toHaveProperty("mangledChunks");
+    expect(response.body).not.toHaveProperty("schemaViolations");
   });
 });

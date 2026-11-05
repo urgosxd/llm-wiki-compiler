@@ -19,8 +19,8 @@ import {
   synthesizeEntityDescriptions,
 } from "../../core/extraction.js";
 import { defaultOntology } from "../../core/default_ontology.js";
-import { buildOntologyAudit, writeOntologyAudit } from "./audit.js";
-import type { OntologyAudit } from "./audit.js";
+import { buildExtractionAudit, buildOntologyAudit, writeIngestAudit } from "./audit.js";
+import type { ExtractionAudit, OntologyAudit } from "./audit.js";
 import type { ChunkResult, ExtractionResult } from "../../core/extraction-types.js";
 import { validateOntology } from "../../core/ontology.js";
 import type { Ontology } from "../../core/ontology.js";
@@ -99,6 +99,14 @@ export interface ProcessedIngest {
   readonly extraction: ExtractionResult;
   readonly shouldSynthesize: boolean;
   readonly ontologyAudit: OntologyAudit;
+  /**
+   * What the extraction degraded, or absent when it degraded nothing.
+   *
+   * Optional on purpose: the report is built by `buildExtractionAudit`, which
+   * returns nothing unless a counter fired, so a healthy ingest writes neither
+   * this field nor a `0` where it would have gone.
+   */
+  readonly extractionAudit?: ExtractionAudit;
 }
 
 /**
@@ -132,7 +140,14 @@ export async function chunkAndExtract(
   // populated and the remaining distinction is whether the caller declared it.
   const declared = document.stack_ontology !== null && document.stack_ontology !== undefined;
   const audit = buildOntologyAudit(declared, extraction.rejected ?? []);
-  return { chunks, extraction, shouldSynthesize, ontologyAudit: audit };
+  const extractionAudit = buildExtractionAudit(extraction);
+  return {
+    chunks,
+    extraction,
+    shouldSynthesize,
+    ontologyAudit: audit,
+    ...(extractionAudit === undefined ? {} : { extractionAudit }),
+  };
 }
 
 /**
@@ -168,15 +183,26 @@ export async function ingestDocument(
 
   // Steps 5 and 6: chunk, embed, persist, extract, optionally synthesize.
   const processed = await chunkAndExtract(tx, params, loaded.text, document);
-  const { chunks, extraction, shouldSynthesize, ontologyAudit: audit } = processed;
+  const {
+    chunks,
+    extraction,
+    shouldSynthesize,
+    ontologyAudit: audit,
+    extractionAudit,
+  } = processed;
 
   // Step 7: consolidate. Entities first — the relationship pass needs the map.
   const written = await consolidateExtraction(tx, params, extraction);
 
-  // Step 7b: record what the ontology did, in the same transaction as the write
-  // it describes. A separate transaction could land the graph rows and lose the
-  // audit, leaving an ingested document nobody can explain.
-  await writeOntologyAudit(tx, params.docId, audit);
+  // Step 7b: record what the ontology did and what the extraction degraded, in
+  // the same transaction as the write they describe. A separate transaction could
+  // land the graph rows and lose the audit, leaving an ingested document nobody
+  // can explain. Both facts land in the `audit` blob because `IngestionResult` is
+  // nine fixed oracle keys and cannot carry either one.
+  await writeIngestAudit(tx, params.docId, {
+    ontology: audit,
+    ...(extractionAudit === undefined ? {} : { extraction: extractionAudit }),
+  });
 
   // Step 8: totals for the Stack, after consolidation so they include this run.
   const payload = await buildIngestionResult(tx, {

@@ -180,6 +180,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and [embedding configuration](https://llmwiki.atomicstrata.ai/configuration/environment-variables#embeddings)
   for costs, strict-mode failures, and quarantine recovery.
 
+- **The KG ingest audit records extraction degradation, not only ontology
+  rejections.** The `audit` blob returned by
+  `GET /stacks/:stackId/documents/:doc_id` now carries an optional `extraction`
+  section with two independent counters: `mangledChunks` counts chunks whose model
+  response carried no usable envelope (neither a `triplets` nor an `entities`
+  array), and `schemaViolations` counts `type` positions — a subject's, a
+  relation's, or an object's — that the tool schema's `enum` forbids on a
+  provider that treats the schema as a hint. They count different units (chunks
+  versus type positions) and must never be summed.
+
+  Both fields are OMITTED when they counted nothing, so a healthy ingest's audit
+  blob is byte-identical to the one written before this change: absence is the
+  healthy signal, and no consumer has to tell a written `0` from an unwritten
+  one. The `POST .../ingest` response body is unchanged and keeps its nine oracle
+  keys; the audit column is where a consumer can read whether a small
+  `entities_extracted` was a thin document or an impaired run.
+
 ### Changed
 
 - **Query page selection sends the wiki index before the question.** Without embeddings, every query on a wiki selects pages over the same index, which previously came after the question, so no two queries shared a prompt prefix. With the index first, backends that reuse a common prefix can skip it on later queries; the prompt size is unchanged. Replaying 5 queries on an 11-document docs wiki offline, the shared-prefix share of selection prompts rose from 0.4% to 80% (the most possible, since the first query has nothing earlier to share).

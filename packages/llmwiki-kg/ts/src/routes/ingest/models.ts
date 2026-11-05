@@ -18,6 +18,16 @@ import { pydanticBoolean, pydanticUuid } from "../../errors.js";
  * Declared here rather than in `dto.ts` because `dto.ts` is outside this slice's
  * edit surface. Field order is the response's JSON key order, and it matches the
  * oracle byte for byte.
+ *
+ * ## Where the degradation counters are, and why they are not here
+ *
+ * `mangledChunks` and `schemaViolations` are deliberately absent from this wire
+ * shape: the nine keys above are the oracle contract, so the extraction run's
+ * quality cannot travel on the response. It is recorded in the document's `audit`
+ * blob instead — under the `extraction` section, optional and absent on a healthy
+ * ingest — and read back through `GET /stacks/:stackId/documents/:doc_id`. A
+ * caller that wants to know whether a small `entities_extracted` was a thin
+ * document or an impaired run must read that, not this.
  */
 export const IngestionResult = z.object({
   document_id: pydanticUuid(),

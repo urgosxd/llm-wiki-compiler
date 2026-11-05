@@ -231,3 +231,103 @@ alone. Refused, and recorded as refused.
 This entry is carried by the commit `refactor(kg): split the kg dimension summary
 composition` on `feat/kg-extraction-hardening`; its SHA is `git log -1
 --format=%h` on that branch, since a commit cannot contain its own SHA.
+
+### L9 — T6: the counters reach the audit payload
+
+**The gap.** T3 and T4 made the extraction run count two degradation facts —
+`mangledChunks` (chunks whose response envelope was unusable) and
+`schemaViolations` (type positions outside the schema's `enum`s). Both were
+visible in the `kg` dimension's summary string and in `KgHandle`, and **both were
+discarded by the API**. `IngestionResult` is nine fixed oracle keys, so the
+counters could not ride the ingest response, and the document's `audit` blob
+carried only the ontology report. An API consumer therefore saw a 200 with
+`entities_extracted: 2` and had no way to tell a thin document from an impaired
+run — the exact ambiguity S1c exists to close, one layer above where it was
+closed.
+
+**Where they died, re-opened and confirmed.**
+
+- `OntologyAuditSchema` (`packages/llmwiki-kg/ts/src/routes/ingest/audit.ts`,
+  `enforced`/`declared`/`rejected`/`reason_codes`/`samples`) had no field for
+  either counter, and `buildOntologyAudit` received only `rejected`.
+- `chunkAndExtract` (`routes/ingest/pipeline.ts`) held the whole `ExtractionResult`
+  — counters included — and passed only `extraction.rejected` to the builder.
+- `buildIngestionResult` (`routes/ingest/pipeline.ts`) read only
+  `facts.extraction.entities.length` and `facts.extraction.relationships.length`.
+
+**The threading path chosen: no change to `IngestionResult`.** The counters were
+already in `chunkAndExtract`'s scope, so the minimal path never widens the
+response model. `buildExtractionAudit(extraction)` (new, `audit.ts`) turns the two
+optional counts into a section or into `undefined`; `ProcessedIngest` gained an
+optional `extractionAudit`; `writeIngestAudit` writes the ingest's sections in one
+statement. Constraint 1 is intact: nine keys in, nine keys out, key order
+untouched, and the existing nine-key pin still asserts `Object.keys` is 9 while
+additionally pinning that `mangledChunks`/`schemaViolations` are NOT on the wire.
+
+**The payload shape.** A new `extraction` section beside `ontology` in
+`stack_documents.audit`, which `GET /stacks/:stackId/documents/:doc_id` returns:
+
+```json
+{ "ontology": { ... }, "extraction": { "mangledChunks": 1, "schemaViolations": 2 } }
+```
+
+- Names are the same words `ExtractionResult`, `KgHandle` and the summary string
+  already use. One concept, one name.
+- **Units, and why they are not comparable:** `mangledChunks` counts CHUNKS (one
+  per response with neither a `triplets` nor an `entities` array);
+  `schemaViolations` counts TYPE POSITIONS (subject/relation/object `type`), so one
+  triplet can contribute up to three and one chunk many. Stated in the JSDoc where
+  the fields are declared, together with "never sum, divide, or read one as a share
+  of the other".
+- **Optional and omitted when zero**, modelling `ExtractionResult.failedChunks` /
+  `mangledChunks` / `schemaViolations`. A healthy ingest writes
+  `{"ontology":{...}}` — byte-identical to before this slice, pinned both at the
+  unit level (`JSON.stringify` of the exact bytes) and end to end (`toEqual` on the
+  whole stored blob, plus `not.toHaveProperty("extraction")`).
+- Placement is semantic, not convenient: these are extraction-degradation facts,
+  so they are not inside the ontology section, where a reader would blame the
+  declaration — and a mangled chunk produces no triplet for the declaration to
+  judge in the first place.
+- **Stale sections are deleted, not preserved.** An ingest with nothing degraded
+  removes a previous run's `extraction` key in the same `jsonb_set` statement
+  (`jsonb - 'extraction'`). Without it, a document that degraded once would keep
+  reporting those counters forever, describing a graph it no longer matches.
+
+**A defect caught while wiring it.** The single-statement `case` bound
+`JSON.stringify(undefined)` in its unreachable `else` branch; drizzle drops an
+`undefined` parameter, which left a dangling `::jsonb` cast and failed every
+healthy update with a 500. The absent case now binds `{}` and the flag alone
+decides the branch. Observed in RED (four healthy-path 500s), fixed, then green.
+
+**Tests** (`routes/ingest/audit.test.ts` unit, `routes/ingest-ontology.test.ts`
+DB-backed): the value when nonzero (`mangledChunks` equals the chunk count on an
+all-mangled document, `schemaViolations` counts positions); absence when zero, on
+the whole blob; independence in both directions (a mangled run reports only
+`mangledChunks`, a violating run only `schemaViolations`, and a mixed document
+reports `{mangledChunks: 1, schemaViolations: 2}` with distinct values); a clean
+re-ingest clearing a previous run's counters; the schema refusing a stored `0`;
+each section read only under its own key; and the pre-existing audit pins extended
+— never rewritten — with the one sibling key their runs now produce, plus the
+nine-key response pin extended to prove the counters did not leak onto the wire.
+
+**Gates (serial, exact):**
+
+- `npx tsc --noEmit` — exit 0, no diagnostics.
+- `npm run typecheck:kg` — 230 files, 0 diagnostics, no regression, exit 0.
+- `npm run build` — exit 0 (ESM + DTS success).
+- Focused route suites, explicit paths, `--fileParallelism=false`: the two above
+  plus `ingest-ontology-e2e`, `ingest-contract`, `ingest-failures`,
+  `ingest-formation`, `ingest-gateway`, `ingest-truncation`, `documents-read`,
+  `documents-upload`. `ingest-gateway.test.ts` reports **1 test SKIPPED** (no live
+  gateway credential) — reported as skipped, never as green. The other suites
+  passed; two DB assertions (`ingest-formation` provenance, `ingest-ontology`
+  PATCH) failed intermittently in one order and passed in another, and the same
+  class of order-dependent failure reproduces on the BASE sources with these
+  changes reverted, so it is environment flakiness in the shared fixture
+  database, not a regression from this slice.
+- `npm run test:affected` — 626 files / 4599 tests passed, 358.46s, exit 0.
+- `fallow` — run by the pre-commit hook (see the commit).
+
+This entry is carried by `feat(kg): report degraded-chunk and schema-violation
+counters in the ingest audit payload` on `feat/kg-extraction-hardening`; its SHA is
+`git log -1 --format=%h` on that branch, since a commit cannot contain its own SHA.
