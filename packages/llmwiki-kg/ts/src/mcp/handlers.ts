@@ -14,6 +14,7 @@ import { formatContextResponse, formatEntitiesResponse, formatStacksResponse, fo
 import type { QueryValue } from "./query-string.js";
 import { encodeQuery, floatParam, intParam, rawParam } from "./query-string.js";
 import { asText } from "./narrow.js";
+import { stackIdProblem } from "../stack-id.js";
 
 // ============================================================
 // Tool implementations
@@ -29,7 +30,7 @@ export function textResult(text: string): CallToolResult {
  * apart from an answer.
  *
  * The text alone cannot carry that distinction — a client that only branches on
- * `isError` would otherwise read "Error: 'stack_id' must be provided." as a
+ * `isError` would otherwise read "Error: 'stackId' must be provided." as a
  * successful answer. Nothing else changes: the message still names the
  * argument, and no request has been issued by the time it is built.
  */
@@ -42,10 +43,21 @@ export function errorResult(text: string): CallToolResult {
  *
  * The Stack is the tool argument and nothing else: there is no default Stack to
  * fall back to and nothing in the environment to resolve one from, so an absent
- * `stack_id` is a refusal rather than a request for "some" Stack. It is answered
+ * `stackId` is a refusal rather than a request for "some" Stack. It is answered
  * with {@link errorResult}, so the envelope itself marks the call as failed.
  */
-const MISSING_STACK_ERROR = "Error: 'stack_id' must be provided.";
+const MISSING_STACK_ERROR = "Error: 'stackId' must be provided.";
+
+/**
+ * The HTTP wire key for the Stack, still snake_case on purpose.
+ *
+ * This module renames what MCP *callers* see. The published HTTP body and query
+ * string keep `stack_id` until the DTO and the routes are renamed together by
+ * the follow-up task; the handler is the translation point between the two
+ * names, so the wire key is not a leftover — renaming it here alone would break
+ * every route this change leaves untouched.
+ */
+const HTTP_STACK_FIELD = "stack_id";
 
 /** Narrow the tool-call `arguments` payload to a plain record. */
 export function asArguments(value: Readonly<Record<string, unknown>> | undefined): Record<string, unknown> {
@@ -96,26 +108,42 @@ interface StackSelection {
 }
 
 /**
- * `stack_id`, which every graph tool requires, plus the optional `domain` filter.
+ * `stackId`, which every graph tool requires, plus the optional `domain` filter.
  *
- * `stack_id` is the only way these tools name a Stack: it is forwarded as given,
+ * `stackId` is the only way these tools name a Stack: it is forwarded as given,
  * with no default and no fallback. `domain` used to be an alternative selector,
  * and that either/or is gone — `domain` alone is refused, exactly like no
  * argument at all, and when both are supplied `domain` is forwarded only as an
- * additional narrowing filter. Returns `undefined` when `stack_id` is absent,
+ * additional narrowing filter. Returns `undefined` when `stackId` is absent,
  * which the handler must answer with {@link MISSING_STACK_ERROR}.
  */
 function stackSelection(
   args: Record<string, unknown>,
 ): StackSelection | undefined {
-  if (!("stack_id" in args)) {
+  if (!("stackId" in args)) {
     return undefined;
   }
   return {
-    stackId: args["stack_id"],
+    stackId: args["stackId"],
     domain: args["domain"],
     hasDomain: "domain" in args,
   };
+}
+
+/**
+ * The refusal for a Stack argument that is not a Stack id.
+ *
+ * The rule is imported, never restated: `stackIdProblem` is the ONE Stack-id
+ * explanation both dimensions give (S1), so the only thing added here is the
+ * name of the MCP argument the caller has to fix. A malformed id is refused
+ * before the request is built, so nothing unusable can reach the backend.
+ *
+ * @param value - The value the call carried under `stackId`.
+ * @returns The refusal text, or `undefined` when the id is well formed.
+ */
+function malformedStackIdRefusal(value: unknown): string | undefined {
+  const problem = stackIdProblem(typeof value === "string" ? value : asText(value));
+  return problem === undefined ? undefined : `Error: 'stackId' must be a UUID. ${problem}`;
 }
 
 /**
@@ -189,7 +217,11 @@ export async function queryStack(
   if (stack === undefined) {
     return errorResult(MISSING_STACK_ERROR);
   }
-  payload["stack_id"] = stack.stackId;
+  const malformed = malformedStackIdRefusal(stack.stackId);
+  if (malformed !== undefined) {
+    return errorResult(malformed);
+  }
+  payload[HTTP_STACK_FIELD] = stack.stackId;
   if (stack.hasDomain) {
     payload["domain"] = stack.domain;
   }
@@ -221,11 +253,15 @@ export async function traverseStack(
   if (stack === undefined) {
     return errorResult(MISSING_STACK_ERROR);
   }
+  const malformed = malformedStackIdRefusal(stack.stackId);
+  if (malformed !== undefined) {
+    return errorResult(malformed);
+  }
 
   const params: Record<string, QueryValue> = {
     start,
     max_depth: typeof maxDepth === "number" ? intParam(maxDepth) : undefined,
-    stack_id: stringParam(stack.stackId),
+    [HTTP_STACK_FIELD]: stringParam(stack.stackId),
     domain: stack.hasDomain ? stringParam(stack.domain) : undefined,
   };
 
@@ -262,11 +298,15 @@ export async function getEntities(
   if (stack === undefined) {
     return errorResult(MISSING_STACK_ERROR);
   }
+  const malformed = malformedStackIdRefusal(stack.stackId);
+  if (malformed !== undefined) {
+    return errorResult(malformed);
+  }
 
   const params: Record<string, QueryValue> = {
     min_confidence: typeof minConfidence === "number" ? floatParam(minConfidence) : undefined,
     limit: typeof limit === "number" ? intParam(limit) : undefined,
-    stack_id: stringParam(stack.stackId),
+    [HTTP_STACK_FIELD]: stringParam(stack.stackId),
     domain: stack.hasDomain ? stringParam(stack.domain) : undefined,
   };
 

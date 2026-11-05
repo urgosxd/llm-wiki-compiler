@@ -25,12 +25,12 @@ const REQUIRED_STACK_DESCRIPTION =
 /**
  * How every graph tool describes the `domain` filter.
  *
- * Deliberately not "narrows the query": with `stack_id` present the API resolves
+ * Deliberately not "narrows the query": with `stackId` present the API resolves
  * the Stack by id and never looks `domain` up (`core/stack_resolver.ts`), so the
  * argument is forwarded as an additional filter and must not promise more.
  */
 const OPTIONAL_DOMAIN_DESCRIPTION =
-  "Optional domain slug of the Stack, forwarded alongside stack_id as an additional filter; it never replaces stack_id.";
+  "Optional domain slug of the Stack, forwarded alongside stackId as an additional filter; it never replaces stackId.";
 
 /**
  * The tool definitions advertised by `list_tools()`.
@@ -39,7 +39,7 @@ const OPTIONAL_DOMAIN_DESCRIPTION =
  * an LLM client picks tools by reading them, so a reworded description is a
  * behavior change even though no test would call it one.
  *
- * `required` names `stack_id` on all three graph tools — the Stack is only ever
+ * `required` names `stackId` on all three graph tools — the Stack is only ever
  * the argument, never a default and never a fallback, so the schema says so out
  * loud instead of letting a call arrive without one. It stays absent for
  * `list_stacks`, which lists every Stack on the server and has no Stack
@@ -62,7 +62,7 @@ export const MCP_TOOLS: readonly Tool[] = [
           type: "string",
           description: OPTIONAL_DOMAIN_DESCRIPTION,
         },
-        stack_id: {
+        stackId: {
           type: "string",
           description: REQUIRED_STACK_DESCRIPTION,
         },
@@ -72,7 +72,7 @@ export const MCP_TOOLS: readonly Tool[] = [
           default: 8,
         },
       },
-      required: ["query", "stack_id"],
+      required: ["query", "stackId"],
     },
   },
   {
@@ -90,7 +90,7 @@ export const MCP_TOOLS: readonly Tool[] = [
           type: "string",
           description: OPTIONAL_DOMAIN_DESCRIPTION,
         },
-        stack_id: {
+        stackId: {
           type: "string",
           description: REQUIRED_STACK_DESCRIPTION,
         },
@@ -105,7 +105,7 @@ export const MCP_TOOLS: readonly Tool[] = [
             "Optional comma-separated list of relationship types to follow (e.g. 'requires,triggers')",
         },
       },
-      required: ["start", "stack_id"],
+      required: ["start", "stackId"],
     },
   },
   {
@@ -119,7 +119,7 @@ export const MCP_TOOLS: readonly Tool[] = [
           type: "string",
           description: OPTIONAL_DOMAIN_DESCRIPTION,
         },
-        stack_id: {
+        stackId: {
           type: "string",
           description: REQUIRED_STACK_DESCRIPTION,
         },
@@ -138,7 +138,7 @@ export const MCP_TOOLS: readonly Tool[] = [
           default: 100,
         },
       },
-      required: ["stack_id"],
+      required: ["stackId"],
     },
   },
   {

@@ -54,7 +54,7 @@ const GRAPH_TOOLS = [
   { name: "get_entities", args: {} },
 ] as const;
 
-const MISSING_STACK_TEXT = "Error: 'stack_id' must be provided.";
+const MISSING_STACK_TEXT = "Error: 'stackId' must be provided.";
 
 describe("MCP handshake over the in-memory transport", () => {
   it("answers tools/list with the four tools", async () => {
@@ -100,22 +100,22 @@ describe("MCP handshake over the in-memory transport", () => {
   });
 });
 
-describe("stack_id is a required tool argument", () => {
-  it("advertises stack_id in `required` on all three graph tools", async () => {
+describe("stackId is a required tool argument", () => {
+  it("advertises stackId in `required` on all three graph tools", async () => {
     const harness = await connect({ status: 200, body: ORACLE_STACKS_BODY });
     try {
       const { tools } = await harness.client.listTools();
       const schemas = new Map(tools.map((tool) => [tool.name, tool.inputSchema]));
       for (const { name } of GRAPH_TOOLS) {
         const required = schemas.get(name)?.["required"] as readonly string[] | undefined;
-        expect(required, name).toContain("stack_id");
+        expect(required, name).toContain("stackId");
       }
     } finally {
       await harness.close();
     }
   });
 
-  it("declares list_stacks exempt from the required stack_id", async () => {
+  it("declares list_stacks exempt from the required stackId", async () => {
     const harness = await connect({ status: 200, body: ORACLE_STACKS_BODY });
     try {
       const { tools } = await harness.client.listTools();
@@ -129,7 +129,7 @@ describe("stack_id is a required tool argument", () => {
     }
   });
 
-  it("refuses a call with no stack_id and issues no graph request", async () => {
+  it("refuses a call with no stackId and issues no graph request", async () => {
     const harness = await connect({ status: 200, body: ORACLE_STACKS_BODY });
     try {
       for (const { name, args } of GRAPH_TOOLS) {
@@ -163,14 +163,14 @@ describe("stack_id is a required tool argument", () => {
     }
   });
 
-  it("forwards stack_id plus domain when both are supplied", async () => {
+  it("forwards stackId plus domain when both are supplied", async () => {
     const harness = await connect({ status: 200, body: SYNTHETIC_CONTEXT_RESPONSE });
     try {
       const result = await harness.client.callTool({
         name: "query_stack",
         arguments: {
           query: "how are refunds handled?",
-          stack_id: VALID_STACK,
+          stackId: VALID_STACK,
           domain: "w1doc-probe-main",
         },
       });
@@ -183,12 +183,12 @@ describe("stack_id is a required tool argument", () => {
     }
   });
 
-  it("query_stack still answers with a stack_id", async () => {
+  it("query_stack still reaches HTTP under the stack_id key", async () => {
     const harness = await connect({ status: 200, body: SYNTHETIC_CONTEXT_RESPONSE });
     try {
       const result = await harness.client.callTool({
         name: "query_stack",
-        arguments: { query: "how are refunds handled?", stack_id: VALID_STACK },
+        arguments: { query: "how are refunds handled?", stackId: VALID_STACK },
       });
       expect(harness.requests[0]?.body).toBe(
         `{"query":"how are refunds handled?","max_entities":8,"stack_id":"${VALID_STACK}"}`,
@@ -199,12 +199,12 @@ describe("stack_id is a required tool argument", () => {
     }
   });
 
-  it("traverse_stack still answers with a stack_id", async () => {
+  it("traverse_stack still reaches HTTP under the stack_id key", async () => {
     const harness = await connect({ status: 200, body: SYNTHETIC_TRAVERSE_RESPONSE });
     try {
       const result = await harness.client.callTool({
         name: "traverse_stack",
-        arguments: { start: "Payment Service", stack_id: VALID_STACK },
+        arguments: { start: "Payment Service", stackId: VALID_STACK },
       });
       expect(harness.requests[0]?.url).toBe(
         `http://localhost:8000/aks/v1/traverse?start=Payment+Service&max_depth=2&stack_id=${VALID_STACK}`,
@@ -215,17 +215,77 @@ describe("stack_id is a required tool argument", () => {
     }
   });
 
-  it("get_entities still answers with a stack_id", async () => {
+  it("get_entities still reaches HTTP under the stack_id key", async () => {
     const harness = await connect({ status: 200, body: SYNTHETIC_ENTITIES_RESPONSE });
     try {
       const result = await harness.client.callTool({
         name: "get_entities",
-        arguments: { stack_id: VALID_STACK, type: "System" },
+        arguments: { stackId: VALID_STACK, type: "System" },
       });
       expect(harness.requests[0]?.url).toBe(
         `http://localhost:8000/aks/v1/entities?min_confidence=0.0&limit=100&stack_id=${VALID_STACK}&type=System`,
       );
       expect(textOf(result)).toBe(EXPECTED_ENTS);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe("stackId is the one caller-facing Stack argument (S1)", () => {
+  /** A caller-supplied id that is not the canonical UUID form. */
+  const MALFORMED_STACK = "not-a-uuid";
+
+  it("declares stackId, and no stack_id, on all three graph tools", async () => {
+    const harness = await connect({ status: 200, body: ORACLE_STACKS_BODY });
+    try {
+      const { tools } = await harness.client.listTools();
+      const schemas = new Map(tools.map((tool) => [tool.name, tool.inputSchema]));
+      for (const { name } of GRAPH_TOOLS) {
+        const schema = schemas.get(name);
+        const properties = (schema?.["properties"] ?? {}) as Record<string, unknown>;
+        expect(Object.hasOwn(properties, "stackId"), name).toBe(true);
+        // The old spelling must be gone from the caller-facing surface, not
+        // merely deprecated: two names for one concept is the defect (S1).
+        expect(Object.hasOwn(properties, "stack_id"), name).toBe(false);
+        expect(schema?.["required"], name).toContain("stackId");
+      }
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("refuses a malformed stackId before any HTTP request", async () => {
+    const harness = await connect({ status: 200, body: ORACLE_STACKS_BODY });
+    try {
+      for (const { name, args } of GRAPH_TOOLS) {
+        const result = await harness.client.callTool({
+          name,
+          arguments: { ...args, stackId: MALFORMED_STACK },
+        });
+        expect(result.isError, name).toBe(true);
+        expect(textOf(result), name).toContain("stackId");
+      }
+      // The rule is a refusal BEFORE the hop: a request issued here would let
+      // an unusable id reach the backend, which is the defect (S1).
+      expect(harness.requests).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("still sends a well-formed stackId under the HTTP stack_id key", async () => {
+    // The rename is caller-facing only. The published HTTP body keeps its
+    // snake_case key until the DTO and the routes rename together.
+    const harness = await connect({ status: 200, body: SYNTHETIC_CONTEXT_RESPONSE });
+    try {
+      await harness.client.callTool({
+        name: "query_stack",
+        arguments: { query: "q", stackId: VALID_STACK },
+      });
+      expect(harness.requests[0]?.body).toBe(
+        `{"query":"q","max_entities":8,"stack_id":"${VALID_STACK}"}`,
+      );
     } finally {
       await harness.close();
     }

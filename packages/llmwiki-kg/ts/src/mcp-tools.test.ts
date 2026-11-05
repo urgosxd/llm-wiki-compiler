@@ -34,13 +34,13 @@ describe("listTools", () => {
     expect(listTools()).toHaveLength(4);
   });
 
-  it("requires stack_id on all three graph tools", () => {
+  it("requires stackId on all three graph tools", () => {
     // The Stack is only ever the argument: no default and no fallback, so the
     // schema names it instead of letting a call arrive without one.
     const byName = new Map(MCP_TOOLS.map((tool) => [tool.name, tool.inputSchema]));
-    expect(byName.get("query_stack")?.["required"]).toEqual(["query", "stack_id"]);
-    expect(byName.get("traverse_stack")?.["required"]).toEqual(["start", "stack_id"]);
-    expect(byName.get("get_entities")?.["required"]).toEqual(["stack_id"]);
+    expect(byName.get("query_stack")?.["required"]).toEqual(["query", "stackId"]);
+    expect(byName.get("traverse_stack")?.["required"]).toEqual(["start", "stackId"]);
+    expect(byName.get("get_entities")?.["required"]).toEqual(["stackId"]);
   });
 
   it("declares no `required` on list_stacks", () => {
