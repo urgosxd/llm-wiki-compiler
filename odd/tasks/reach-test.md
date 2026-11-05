@@ -753,6 +753,72 @@ and sets a nonzero exit as soon as `total > 0`; there is no baseline, threshold 
   Commit `4afb434` extracts `test/fixtures/child-report.ts` (`firstJsonReport(child, label)`, the label
   preserving each suite's original rejection message) and returns the count to 3, with both suites
   still green at 9 and 3 tests and no assertion, spawned command or expected code/signal changed.
-- `npx fallow` exits 0 at every point (dead code clean throughout). `npm run fallow:ci` remains exit 1
-  because of the three groups above, which lie outside this close-out's edit surfaces and are recorded
-  here as the branch's remaining delivery blocker, for an owner decision.
+- `npx fallow` exits 0 at every point (dead code clean throughout). `npm run fallow:ci` was exit 1
+  because of the three groups above, which lay outside this close-out's edit surfaces; those three groups
+  were subsequently deduped in `L19`, and `npm run fallow:ci` now exits 0. The measurements above are kept
+  as recorded history.
+
+L19 (owner follow-ups: the three dedupes, the reaper ownership guard, and the exit semantics we keep):
+**Dedupes — `fallow:ci` is green.** The three clone groups were removed by honest extraction, with no
+suppression comment, ignore directive, threshold or checker edit anywhere in the diff.
+- `scripts/ratchet-baseline.ts` (new) holds `RatchetBaseline` and `parseRatchetBaseline(text, invalidMessage)`,
+  the single copy of the baseline validation both `scripts/typecheck-tests.ts` and `scripts/kg-typecheck.ts`
+  used to duplicate; the message stays a caller literal, so each ratchet still names its own baseline file.
+- `test/fixtures/per-run-database-assertions.ts` (new) holds `expectPerRunDatabase(dsn)`, asserting both halves
+  (name matches the per-run pattern, DSN is not `DEFAULT_TEST_DATABASE_URL`), called by the three
+  `test/lock-postgres*` suites, whose names, why-comments and placement are unchanged.
+- `test/kg-mcp-e2e/kg-mcp-probe.test.ts` gained a local `expectEveryCallRefused(probe, calls, {reason, text})`;
+  both refusal cases still assert `isError`, the exact returned text, a zero-length request slice per call,
+  and the before/after `counts()` envelope.
+- Measured: `npx fallow` clone groups 3 → 0 and duplicated lines 55 → 0; `npm run fallow:ci` exit 1 → exit 0,
+  "0 dead-code, 0 duplication, 0 complexity, 0 coverage findings". Base parity restated: `dff1d31` and merge
+  base `8203862` both report 0 clone groups, so all three groups were this branch's own.
+- Preserved: the four touched suites still run 19 tests and the ratchet suites 21 tests, unchanged case counts,
+  exit 0 on both sides. The one shared parser that an unnamed gate also uses was differentially checked against
+  the removed bodies over 15 inputs (valid, empty/negative/zero/float counts, counts-as-array, counts missing,
+  version 2, version missing, non-string typescript, configuration missing, null, array, `{}`, malformed JSON):
+  0 differences in returned value, thrown type or message.
+
+**Reaper ownership guard — the latent destruction path is closed.** Reaping was by AGE ONLY, so a database whose
+owning process was still alive became a candidate after 30 minutes; the same destruction class as the `3D000`
+red, never fired because the longest observed suite was 320 s. `reapStalePerRunDatabases` now skips any candidate
+whose name-embedded pid still names a running process (`pidAlive` via `kill(pid, 0)`, with `EPERM` read as alive
+and any non-safe-integer or out-of-range value read as not alive), and the filter ANDs that gate with the age test.
+- RED reproduced the real destruction before the fix: the reaped name embedded the LIVE test process's pid —
+  `expected [ …(2) ] to not include 'llmwiki_suite_mw36xods_440283_c6ca2093'`, 1 failed | 9 passed.
+- GREEN: 10 passed (10). The new case proves BOTH halves in one run — a stale-stamped database with a live owner
+  survives (a no-op reaper fails this half is not possible: see next) while a stale-stamped database with a dead
+  owner is still collected (an age-only reaper fails the first half, a no-op reaper fails this one). A third
+  assertion shows an impossible pid is collected and the reap does not throw.
+- How the age is exceeded without a shortcut: `freshName()` mints `llmwiki_suite_<base36(now)>_<pid>_<hex>` and the
+  reaper reads age from the name, so the test writes the same format with a stamp 45 minutes in the past — exactly
+  what the production path writes for a real killed run. No sleep, no injected clock, no internal state read;
+  every observation is `pg_database` through a real client plus the returned reap list.
+- One pre-existing case was corrected as DATA, not as an assertion: "still reaps a stale run token" fabricated its
+  debris with `process.pid`, the live test process, which the ruled guard must protect. It now uses a dead pid with
+  identical assertions and test name. Proven with a non-mutating probe before the change.
+- Residual, accepted and named: a RECYCLED pid reads as alive, so such debris leaks rather than being destroyed
+  (errs toward keeping); and `pidAlive` treats pids above 4,194,304 as dead, which is unreachable under a default
+  Linux `pid_max` and this repository's container.
+
+**Intentional behaviour change — DO NOT REVERT.** After the teardown fix, a SIGTERM/SIGINT that reaches this
+process as its LAST listener reports death by signal (SIGTERM 143, SIGINT 130) instead of `process.exit(0)`.
+That is correct, not a regression: the old `process.exit(0)` was itself part of the defect that broke
+`test/commands/host-command.test.ts`, and it was consumed by another component's `exitSpy`. A process killed by a
+signal should report the signal. Any future change back to a silent 0 exit re-opens that defect.
+
+**Two named limits of the teardown, accepted with their reasons.**
+1. The discriminator is "is another listener still registered for this signal", which is an ORDERING dependency
+   that the code does not enforce: a foreign `once` shutdown listener registered BEFORE this module's hooks would
+   make the re-raise branch kill the worker. It is safe today only because the per-run fixture registers at module
+   import, before any command registers shutdown. Enforcing it would require an explicit hand-off contract between
+   components, which this close-out did not design.
+2. If a foreign listener neither exits nor re-raises, the re-arm is scheduled with `setImmediate`, leaving a
+   one-tick window in which a genuine signal finds no hook and the process dies without dropping. The consequence
+   is bounded: the dead process's pid makes its databases legitimate reap candidates, and the ownership guard above
+   is what makes that cleanup safe rather than destructive.
+
+**Recorded, not fixed.** `node scripts/typecheck-tests.ts` exits 1 with "TypeScript version or test configuration
+changed; review and regenerate the baseline explicitly". The digest is computed from `tsconfig.test.json` plus the
+root `tsconfig.json`, neither of which this branch modified, so the pin was already stale at `975c558`; CI does not
+run this gate. Regenerating the baseline is an owner decision.
