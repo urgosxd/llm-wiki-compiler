@@ -31,6 +31,8 @@ import { useQuickstartProcessLifecycle } from "./fixtures/run-cli-server.js";
 import { LLMWIKI_DIR, LAST_LINT_FILE } from "../src/utils/constants.js";
 import { countConceptPages, listSourceFilenames } from "./fixtures/source-corpus.js";
 import { useStackEnv } from "./fixtures/stack-env.js";
+import { createDimensionsDatabase } from "../src/dimensions/activation.js";
+import { listStoredPagesUnfiltered } from "../src/dimensions/wiki/page-store.js";
 import { holdProjectLockOnNextRelease } from "./fixtures/quickstart-lock-holder.js";
 
 // Every suite here drives quickstart end to end, which ingests.
@@ -77,6 +79,53 @@ const OFFLINE_PROVIDER_ENV: NodeJS.ProcessEnv = {
   LLMWIKI_PROVIDER: "offline",
   LLMWIKI_MODEL: "offline-deterministic",
 };
+
+/**
+ * One concept page as the wiki's read path exposes it.
+ *
+ * Only the fields that identify WHICH writer produced the page are kept: the compile
+ * renders frontmatter (summary, tags) and its own prose, the ingest writes an empty
+ * summary, no tags, and the source bytes.
+ */
+interface StoredConceptPage {
+  slug: string;
+  title: string;
+  summary: string;
+  tags: string[];
+  body: string;
+}
+
+/**
+ * The concept pages stored for this suite's Stack, page by page.
+ *
+ * `countConceptPages` answers only HOW MANY pages exist, and after a quickstart that
+ * number is already satisfied by the INGEST's own stub row -- `commitPageRow` in
+ * `src/dimensions/wiki/store-dimension.ts` upserts one page per source -- so a `>= 1`
+ * over it proves nothing about the compile. These are the same rows, one page at a
+ * time, read through the page read API the product's own read path uses.
+ *
+ * @returns Every page in the `concepts` directory of the bound Stack.
+ */
+async function storedConceptPages(): Promise<StoredConceptPage[]> {
+  const handle = createDimensionsDatabase({
+    ...process.env,
+    AKS_DATABASE_URL: boundDatabaseUrl(),
+  });
+  try {
+    const pages = await listStoredPagesUnfiltered(handle.db, boundStackId());
+    return pages
+      .filter((page) => page.pageDirectory === "concepts")
+      .map((page) => ({
+        slug: page.slug,
+        title: page.title,
+        summary: page.summary,
+        tags: [...page.tags],
+        body: page.body ?? "",
+      }));
+  } finally {
+    await handle.close();
+  }
+}
 
 /** The exact string `compileAndReport` returns when it cannot take the lock. */
 const LOCK_BUSY_ERROR = "Could not acquire .llmwiki/lock — another compile is in progress.";
@@ -199,9 +248,25 @@ describe("`llmwiki quickstart --json --no-open` — happy path envelope", () => 
     expect(result.stdout).not.toMatch(/\x1b\[/);
   });
 
-  it("writes the compiled concept page into wiki/concepts/", async () => {
-    const { cwd } = await runJsonHappy();
-    expect(await countConceptPages(cwd)).toBeGreaterThanOrEqual(1);
+  it("writes the compiled concept page into the Stack's concepts, past the ingest's stub", async () => {
+    await runJsonHappy();
+    const pages = await storedConceptPages();
+    // The compile's page: the stub extraction names one concept and the stub page body
+    // is the only prose the renderer sees, so these four fields together come from the
+    // compile -- the ingest never writes a summary or a tag.
+    const compiled = pages.find((page) => page.slug === "quickstart-concept");
+    expect(compiled?.title).toBe("Quickstart Concept");
+    expect(compiled?.summary).toBe("Concept produced by aimock for quickstart tests.");
+    expect(compiled?.tags).toEqual(["quickstart-test"]);
+    expect(compiled?.body).toContain("Body produced for the quickstart test.");
+    // ...and it is a SECOND page: the ingest's own stub row is still there, empty
+    // summary, no tags, the source's bytes. A `>= 1` over this set was satisfied by
+    // that stub alone, which is what made it pass with no compile at all.
+    const ingestStub = pages.filter((page) => page.slug !== "quickstart-concept");
+    expect(ingestStub).toHaveLength(1);
+    expect(ingestStub[0]?.summary).toBe("");
+    expect(ingestStub[0]?.tags).toEqual([]);
+    expect(ingestStub[0]?.body).toBe("# Source\n\nA short source for the quickstart test.\n");
   });
 });
 
