@@ -32,7 +32,7 @@ S9. Out of scope, still open, not to be fixed on this branch: the two Project-1 
 
 T0 — Open this feature document and mirror it in memory. S1-S9. Route: worker. Commit: 7bcacad.
 T1 — Provision the worktree's dependencies so any gate can run at all (`node_modules` is absent). S1-S8 prerequisite. Route: worker. Commit: none (install output only).
-T2 — Per-run database/schema isolation for every suite that touches Postgres, applied to the four shared fixtures, then to the KG package's own route/core harnesses. S2, S4, S6, S7. Route: worker. Commit: 7f78ecf (shared fixtures), then the seven package harnesses in the commit L11 records.
+T2 — Per-run database/schema isolation for every suite that touches Postgres, applied to the four shared fixtures, then to the KG package's own route/core harnesses. S2, S4, S6, S7. Route: worker. Commit: 7f78ecf (shared fixtures), then the seven package harnesses in a53cc22.
 T2b — Close the residual shared-database paths: `test/lock-postgres*.test.ts` on the per-run fixture, a comment-only note on the `vitest.config.ts` seed, and a reaper-safety case proving a live sibling and a foreign name are never candidates. S2, S6, S7. Route: worker. Commit: 6b0a805.
 T3 — Wire a gate that runs the KG package typecheck and pin a ratchet over the 20-diagnostic baseline without widening an ignore list. S3. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
 T4 — The real end-to-end KG MCP probe: real Postgres, real KG API, `runStdio()`, real client handshake, exact payloads. S1, S6, S7. Route: worker. Commit: not made by the worker (terminal git actions are parent-owned); files staged for review: `test/fixtures/ephemeral-postgres.ts`, `test/kg-mcp-e2e/**`.
