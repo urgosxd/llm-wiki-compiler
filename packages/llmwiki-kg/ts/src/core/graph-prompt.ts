@@ -2,10 +2,11 @@
  * @file packages/llmwiki-kg/ts/src/core/graph-prompt.ts
  * @description The extraction prompt and its tool schema.
  *
- * Both are copied from the oracle rather than rewritten, because the model's
+ * Both started as copies of the oracle rather than rewrites, because the model's
  * output shape is a function of the prompt text and the tool definition. Changing
  * either changes what gets extracted, which `promptVersion`-style markers cannot
- * repair after the fact.
+ * repair after the fact, so each departure from the oracle is registered in
+ * `odd/findings/aks-spec-conformance.md` rather than made silently.
  */
 
 import type { ToolDefinition } from "./llm_clients.js";
@@ -267,18 +268,28 @@ export const KG_TOOL = {
 } as const satisfies ToolDefinition;
 
 /**
- * `DEFAULT_SCHEMA_PATH_EXTRACT_PROMPT`, verbatim — including the typo
- * `"extracted paths.s"`.
+ * `DEFAULT_SCHEMA_PATH_EXTRACT_PROMPT`, copied from llama_index and corrected
+ * here.
  *
- * The typo is contractual. It is in the prompt the oracle sends, and changing it
- * changes the model's input; a faithful port keeps it and says so.
+ * The oracle sends `"Give the following text"` and
+ * `"...output {max_triplets_per_chunk} extracted paths.s"`. The first is a
+ * grammar slip; the second names the wrong thing — what is extracted are
+ * triplets, not "paths" — and carries a stray `.s`. Copying them faithfully only
+ * propagated them: this text is the model's input on every chunk, so a defect in
+ * it limits every extraction, and no downstream validator can tell a short answer
+ * apart from one the prompt asked for.
+ *
+ * **This is a deliberate departure from the oracle.** The model's input bytes now
+ * differ from what the Python implementation sends, so extraction output can
+ * differ with them. The departure is registered in
+ * `odd/findings/aks-spec-conformance.md`.
  *
  * `{max_triplets_per_chunk}` and `{text}` are filled by
  * {@link buildExtractionPrompt}.
  */
 const EXTRACTION_PROMPT =
-  "Give the following text, extract the knowledge graph according to the provided schema. " +
-  "Try to limit to the output {max_triplets_per_chunk} extracted paths.s\n" +
+  "Given the following text, extract the knowledge graph according to the provided schema. " +
+  "Try to limit to the output {max_triplets_per_chunk} extracted triplets\n" +
   "-------\n" +
   "{text}\n" +
   "-------\n";

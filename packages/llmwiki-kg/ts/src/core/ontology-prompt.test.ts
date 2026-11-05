@@ -42,10 +42,14 @@ describe("default rendering is unchanged", () => {
     expect(description).toContain("typing.Literal['USED_BY', 'USED_FOR'");
   });
 
-  it("keeps the extraction prompt byte-identical, typo included", () => {
+  it("keeps the extraction prompt pinned byte for byte", () => {
+    // Pinned on purpose. A refactor of the renderer that moves a byte of the
+    // model's input should show up here as a deliberate edit, never as an
+    // incidental one. The text departs from the oracle's on purpose; the
+    // departure is registered in `odd/findings/aks-spec-conformance.md`.
     expect(buildExtractionPrompt("body", 0, "demo")).toBe(
-      "Give the following text, extract the knowledge graph according to the provided schema. " +
-        "Try to limit to the output 20 extracted paths.s\n" +
+      "Given the following text, extract the knowledge graph according to the provided schema. " +
+        "Try to limit to the output 20 extracted triplets\n" +
         "-------\n" +
         "chunk_index: 0\nstack_name: demo\n\nbody\n" +
         "-------\n",

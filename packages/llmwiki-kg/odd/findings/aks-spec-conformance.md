@@ -1,6 +1,7 @@
 # AKS spec conformance: where this package diverges, and where the spec is silent
 
-**Status:** open — two real divergences, one extension, several unverified MUSTs
+**Status:** open — two real divergences, one extension, two registered oracle
+departures, several unverified MUSTs
 **Reference:** `ts/oracle/aks-specification-v0.1.0/` (vendored, commit `bc82307`, spec `0.1.0`)
 **Why this exists:** the spec was vendored so protocol decisions can be cited
 instead of remembered. Reading it against the code surfaced two payloads this
@@ -171,7 +172,8 @@ keeping them unrepresentable.
   `entities` returns a valid payload and behaves exactly as before.
 - Standalone entities are enforced against the same ontology allowlist, so the
   addition cannot smuggle an undeclared type into the graph.
-- The prompt text is untouched; only the tool schema changed.
+- The prompt text is untouched; only the tool schema changed. (It is no longer
+  untouched — §2c below is the change that moved it, and it is registered there.)
 
 ### What this costs
 
@@ -181,6 +183,64 @@ described byte-identity (`ontology-prompt.test.ts`,
 that said "offers only triplets" was rewritten to say the opposite. Any future
 consumer comparing this schema to the Python one will find a difference, and this
 section is why.
+
+## 2c. DIVERGENCE: the extraction prompt no longer reproduces the oracle's text
+
+**Severity:** none against the spec, which governs no prompt at all; a real break
+in oracle parity, made on purpose and recorded because `README.local.md:52-54`
+requires a deviation from (1) to be "deliberate and recorded".
+
+What the model is sent, before and after:
+
+```
+# oracle, and this package before the change
+Give the following text, extract the knowledge graph according to the provided schema. Try to limit to the output 20 extracted paths.s
+
+# this package after the change
+Given the following text, extract the knowledge graph according to the provided schema. Try to limit to the output 20 extracted triplets
+```
+
+Both edits are in the prompt constant, `src/core/graph-prompt.ts:290-295`.
+
+### Why
+
+- `Give the following text` is a grammar slip in the oracle's string.
+- `extracted paths.s` names the wrong thing and carries a stray `.s`. What the
+  tool schema asks for is **triplets** — `KG_TOOL.parameters.$defs.Triplet`,
+  `src/core/graph-prompt.ts:256` — so the sentence the model read described a
+  different unit from the one it was asked to produce.
+
+This text is prepended to **every chunk**, so neither defect was a one-off: both
+shipped on each extraction call, in the sentence whose only job is to bound how
+much the model reports.
+
+`{max_triplets_per_chunk}` is not part of this change. It was already substituted
+with `MAX_TRIPLETS_PER_CHUNK` = `20` (`src/core/graph-prompt.ts:298`, `:328-331`),
+so the model always received a number; the sentence around that number was what
+was wrong.
+
+### Why this is not a spec violation
+
+The spec deliberately does not govern the prompt. `DECISIONS.md:123`: *"AKS
+defines what compiled knowledge looks like when it leaves a system. It says
+nothing about how that knowledge was produced."* `CONTRIBUTING.md:66` lists
+"chunking strategy, embedding model, extraction prompt" as internal compilation
+detail. No `CONFORMANCE.md` item and no `SCHEMA.json` property is affected.
+
+It is still a divergence from (1) in the ranking `README.local.md:44-54` sets,
+where the port follows the oracle by default.
+
+### What this costs
+
+The model's input bytes now differ from the oracle's, so the same text can yield
+different triplets and entities than the Python server would. That is the
+intended effect — it is the point of the change — but it means this package can no
+longer claim byte-parity with the oracle on extraction, and a future parity
+harness comparing prompts will find this difference.
+
+Both byte-pins that observe the prompt were rewritten to the new text rather than
+removed (`src/core/ontology-prompt.test.ts`, `src/core/extraction-graph.test.ts`),
+so the bytes stay pinned and any further edit shows up in the diff.
 
 ## 3. UNVERIFIED MUSTs that touch code in this package
 

@@ -92,6 +92,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `contradicted`). Without `citation_manifest` in particular, the integrity check
   that refuses an answer edited after staging had nothing to compare against.
 
+- **The Knowledge Graph extraction prompt now reads `Given` and asks for triplets,
+  not `paths.s`.** The text prepended to every chunk carried two defects copied
+  from the Python oracle: `"Give the following text"`, and
+  `"Try to limit to the output 20 extracted paths.s"` — a stray token naming a
+  unit the tool schema does not have.
+
+  Extraction output can therefore differ for the same source text, because the
+  one sentence whose job is to bound how much the model reports now names the
+  thing it is actually asked to produce. This deliberately stops reproducing the
+  oracle byte for byte; the departure is registered in
+  `packages/llmwiki-kg/odd/findings/aks-spec-conformance.md` §2c, and the new
+  bytes are pinned by tests.
+
 ### Added
 
 - Validated answer publication: `query --save --review` and SDK `review: true`
