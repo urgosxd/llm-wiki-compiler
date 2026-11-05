@@ -26,15 +26,17 @@ S1 decomposes into four clauses, one per task:
 
 ## Tasks
 
-| ID | Spec | Route  | Commit  |
-| -- | ---- | ------ | ------- |
-| T0 | —    | worker | pending |
-| T1 | S1a  | worker | pending |
-| T2 | S1b  | worker | pending |
-| T3 | S1c  | worker | pending |
-| T4 | S1d  | worker | pending |
+| ID | Spec | Route  | Commit               |
+| -- | ---- | ------ | -------------------- |
+| T0 | —    | worker | `3906478`            |
+| T1 | S1a  | worker | `ef1e09d`            |
+| T2 | S1b  | worker | `ba86a4c`            |
+| T3 | S1c  | worker | `059e120`            |
+| T4 | S1d  | worker | `059e120` (with T3)  |
 
 Final commit SHAs are recorded by the closing consolidation task, not by each task.
+T4 shares C3's commit because its changes live in C3's paths; the row says so
+rather than claiming a slice of its own.
 
 ## Log
 
@@ -67,3 +69,39 @@ Final commit SHAs are recorded by the closing consolidation task, not by each ta
 - A chunk is **shape-mangled** when the provider answered (no throw) and the response is non-blank but its parsed form exposes neither a `triplets` array nor an `entities` array. `{"triplets": [], "entities": []}` is legitimately empty, not mangled. Individually malformed triplet entries stay dropped per oracle parity.
 - The existing `, N triplets rejected by ontology` fragment keeps its exact wording AND its position. New counters are appended after it; that fragment is never mutated.
 - T4 uses `zod`, already a dependency of the `aks-reference-server` package and imported throughout its source. `ajv` is NOT declared in that package and adding it would change `package.json`, which is out of scope.
+
+### L6 — the task commits, and how the slice boundaries fell
+
+1. `ef1e09d` — `fix(kg): trim padded type labels in entity and relation normalization` (T1/S1a).
+2. `ba86a4c` — `fix(kg): correct the extraction prompt text and register the oracle divergence` (T2/S1b).
+3. `059e120` — `feat(kg): count degraded chunks and advisory-schema violations` (T3/S1c + T4/S1d).
+4. `docs(odd): record the task commits in the kg extraction hardening document` —
+   this commit. Its own SHA cannot appear inside itself; it is `git log -1` on
+   `feat/kg-extraction-hardening`.
+
+**The slices are split by path, not by task.** Three workers edited this tree
+sequentially, so single files hold two tasks' changes and no honest one-to-one
+mapping exists:
+
+- `ts/src/core/graph-parse.ts` holds both T1's `.trim()` in the normalisers and
+  T3's new `isShapeMangled` predicate, so the predicate landed in C1 while its
+  only consumer (`graph-extraction.ts`) landed in C3. C1 says so in its body.
+- `ts/src/core/extraction-graph.test.ts` holds both T2's prompt byte-pin update
+  and T4's drift fix plus the new counting tests, so T2's pin update landed in
+  C3. C3 says so in its body.
+- `ts/src/core/graph-extraction.ts`, `ts/src/core/extraction-types.ts` and
+  `src/dimensions/kg/index.ts` interleave T3's and T4's counters, so both tasks
+  share C3 and the T4 row records `C3 (with T3)`.
+
+No `git add -p` or hunk surgery was used. Each commit lists its paths explicitly
+and its body states the real composition.
+
+**DB-backed suites do NOT silently skip here, and their status must be reported.**
+`packages/llmwiki-kg/ts/src/routes/aks-harness.ts:38` falls back to
+`postgresql://aks:aks@localhost:5434/aks` when neither `AKS_TEST_DATABASE_URL` nor
+`LLMWIKI_TEST_DATABASE_URL` is set, and a PostgreSQL server is listening on port
+5434 in this environment, so the aks routes suites connect and run for real rather
+than reporting green from an empty skip. The one exit from actually running is the
+`describe.skipIf` gate at `aks-harness.ts:180-181`, which prints
+`[aks.test] skipping integration tests — <reason>` to stderr; if that line appears,
+the suite did not run and must be reported as skipped, not as passing.
