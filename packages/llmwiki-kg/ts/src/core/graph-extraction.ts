@@ -2,27 +2,49 @@
  * @file packages/llmwiki-kg/ts/src/core/graph-extraction.ts
  * @description Graph extraction: chunk batch → triplets → entities and edges.
  *
- * ## Two failures, two different answers
+ * ## Three outcomes per chunk, three different answers
  *
- * A provider failure or an unparseable response for ONE chunk yields no triplets
- * for that chunk and extraction continues, mirroring the oracle's
- * `except (ValueError, TypeError, AttributeError)` around its structured predict.
- * One bad chunk must not fail a document, and that tolerance is what lets a
- * forty-chunk document survive one odd response.
+ * A chunk yields no triplets for three reasons that an operator must be able to
+ * tell apart, because the remedy differs for each:
+ *
+ * - the provider FAILED after every retry, reported in `failedChunks`;
+ * - the provider answered, but with no usable envelope at all, reported in
+ *   `mangledChunks`;
+ * - the model legitimately found nothing, reported by neither counter.
+ *
+ * One bad chunk yields no triplets *for that chunk* and extraction continues,
+ * mirroring the oracle's `except (ValueError, TypeError, AttributeError)` around
+ * its structured predict. One bad chunk must not fail a document, and that
+ * tolerance is what lets a forty-chunk document survive one odd response.
  *
  * But when EVERY chunk failed there is no partial result left to protect: either
  * the provider is down or the credential is wrong. Returning an empty result
  * there is how the `kg` dimension committed a document with an empty graph while
  * reporting success -- indistinguishable from a corpus with nothing to extract.
- * So all-failed raises, and some-failed reports the count in `failedChunks` so
- * the degradation is visible instead of silent.
+ * So all-failed raises, while a mangled response is only ever counted: a
+ * mangled envelope is a degraded answer, not an outage, so even an all-mangled
+ * run returns a result instead of throwing.
+ *
+ * ## A fourth number that is not a fourth outcome
+ *
+ * `schemaViolations` rides alongside those three without changing any of them. On
+ * a provider that treats the tool schema's `enum` as a hint -- everything except
+ * strict-capable OpenAI -- an invented type arrives untouched and is then
+ * rejected for being undeclared, which reads exactly like the model choosing a
+ * type the Stack does not use. Counting those `type` values (see
+ * `llm/schema-validation.ts`) separates "the model drifted" from "this gateway
+ * ignores `strict`", a distinction whose remedy is configuration, not a prompt.
+ * Nothing is filtered by it: the triplet still travels `rejectTriplet`.
  */
 
 import { callTool } from "./llm_clients.js";
 import { extractionModel } from "./llm/endpoints.js";
 import { ProviderUnavailableError, withProviderRetry } from "./llm/retry.js";
-import { buildExtractionPrompt, buildToolSchema } from "./graph-prompt.js";
+import { countSchemaViolations } from "./llm/schema-validation.js";
+import { strictSchemaEnabled } from "./llm/strict-policy.js";
+import { buildExtractionPrompt, buildToolSchema, type ToolSchema } from "./graph-prompt.js";
 import {
+  isShapeMangled,
   parseStandaloneEntities,
   parseTriplets,
   type StandaloneEntity,
@@ -70,6 +92,29 @@ interface ChunkOutput {
    */
   readonly rescued: readonly StandaloneEntity[];
   /**
+   * Type positions the returned payload put outside the schema's `enum`s.
+   *
+   * Not a fourth outcome: the chunk answers like any other, and its triplets are
+   * handled exactly as they always were. This is a diagnostic ABOUT the answer,
+   * and it exists because on a provider that treats the schema's `enum` as a hint
+   * the model's non-compliance used to be invisible — it read like a legitimate
+   * type the model chose.
+   *
+   * Always 0 when the provider enforces the schema (`strict: true`), and always 0
+   * on a run with no ontology, which has no `enum` to fall outside of.
+   */
+  readonly schemaViolations: number;
+  /**
+   * Whether the provider answered with no usable envelope at all.
+   *
+   * The third outcome, and the one that used to be invisible: a response that is
+   * non-blank but exposes neither a `triplets` array nor an `entities` array
+   * yields zero of both, exactly like prose with nothing to extract in it.
+   * Always `false` when {@link failure} is set: the provider never answered, so
+   * there is no shape to judge, and reporting both would double-count one chunk.
+   */
+  readonly shapeMangled: boolean;
+  /**
    * Why this chunk produced nothing, or `undefined` when it answered.
    *
    * Separate from "returned zero triplets", which is a legitimate answer a model
@@ -87,6 +132,10 @@ function emptyOutput(failure?: unknown): ChunkOutput {
     rejected: [],
     standalone: [],
     rescued: [],
+    // A chunk that never got an answer is a failure, not a mangled shape.
+    shapeMangled: false,
+    // And not a schema violation either: there is no payload to judge.
+    schemaViolations: 0,
     ...(failure === undefined ? {} : { failure }),
   };
 }
@@ -108,21 +157,61 @@ async function chunkTriplets(
   ontology: Ontology | undefined,
 ): Promise<ChunkOutput> {
   const prompt = buildExtractionPrompt(chunk.content, chunk.chunkIndex, stackName);
+  // Built once, outside the retry: every attempt advertises the same schema, and
+  // the client-side validator reads its `enum`s from this very object, so the
+  // schema checked here is the one the model was shown.
+  const schema = buildToolSchema(ontology);
   try {
-    const argumentsJson = await withProviderRetry(() =>
-      callTool(prompt, buildToolSchema(ontology)),
-    );
+    const argumentsJson = await withProviderRetry(() => callTool(prompt, schema));
     const standalone = standaloneFor(argumentsJson, ontology);
+    const shapeMangled = isShapeMangled(argumentsJson);
+    const schemaViolations = advisoryViolations(argumentsJson, schema, ontology);
     if (ontology === undefined) {
-      return { triplets: parseTriplets(argumentsJson), rejected: [], standalone, rescued: [] };
+      return {
+        triplets: parseTriplets(argumentsJson),
+        rejected: [],
+        standalone,
+        rescued: [],
+        shapeMangled,
+        schemaViolations,
+      };
     }
-    return { ...parseTripletsWithOntology(argumentsJson, ontology), standalone };
+    return {
+      ...parseTripletsWithOntology(argumentsJson, ontology),
+      standalone,
+      shapeMangled,
+      schemaViolations,
+    };
   } catch (error) {
     // The retries are spent. Report WHY the chunk produced nothing; whether that
     // is fatal is decided by the caller, the only place that knows how many
     // chunks succeeded.
     return emptyOutput(error);
   }
+}
+
+/**
+ * Counts the schema violations this run can actually attribute to the provider.
+ *
+ * Both conditions matter. With no ontology there is no `enum` to fall outside of,
+ * so a count against `DEFAULT_ENTITIES` would invent a constraint the model was
+ * never given. With `strict: true` the provider itself rejects an out-of-schema
+ * type, so a count there would be measuring a rule the request already enforced.
+ *
+ * @param argumentsJson - The model's tool-call argument string.
+ * @param schema - The schema sent with the request.
+ * @param ontology - The enforced declaration, or `undefined` for none.
+ * @returns How many `type` positions fell outside the schema's `enum`s.
+ */
+function advisoryViolations(
+  argumentsJson: string,
+  schema: ToolSchema,
+  ontology: Ontology | undefined,
+): number {
+  if (ontology === undefined || strictSchemaEnabled()) {
+    return 0;
+  }
+  return countSchemaViolations(argumentsJson, schema);
 }
 
 /**
@@ -229,6 +318,76 @@ function mergeRelationships(
   return merged;
 }
 
+/**
+ * Everything one extraction run accumulates across its chunks.
+ *
+ * Grouped rather than kept as five locals so the per-chunk fold can be its own
+ * function: the fold is what a reader has to understand — it is where one
+ * chunk's answer becomes entities, edges, and counters — and naming it is what
+ * keeps `extractGraphFromChunks` a readable end-to-end sequence.
+ */
+interface ExtractionTally {
+  readonly entities: Map<string, ExtractedEntity>;
+  readonly relationships: ExtractedRelationship[];
+  readonly rejected: RejectedTriplet[];
+  readonly failures: unknown[];
+  /** Chunks that answered with no usable envelope, however many they were. */
+  mangledChunks: number;
+  /** Type positions the model put outside the schema's `enum`s, on any chunk. */
+  schemaViolations: number;
+}
+
+/** The tally every run starts from: nothing counted, nothing merged. */
+function emptyTally(): ExtractionTally {
+  return {
+    entities: new Map(),
+    relationships: [],
+    rejected: [],
+    failures: [],
+    mangledChunks: 0,
+    schemaViolations: 0,
+  };
+}
+
+/**
+ * Folds one chunk's output into the running tally.
+ *
+ * Order matters twice here: triplet endpoints are absorbed before standalone
+ * entities, so the type a relationship already constrains wins the dedupe; and
+ * a rejected triplet's rescued endpoints join the entity map LAST, because they
+ * must contribute a node without ever contributing an edge.
+ *
+ * @param tally - The run so far; mutated in place.
+ * @param batch - What one chunk contributed.
+ * @param chunkIndex - The chunk's index, recorded on every row it produces.
+ */
+function foldBatch(tally: ExtractionTally, batch: ChunkOutput, chunkIndex: number): void {
+  if (batch.failure !== undefined) tally.failures.push(batch.failure);
+  // Counted separately from a failure on purpose: the provider answered, so the
+  // remedy is the prompt or the parser, not the endpoint.
+  if (batch.shapeMangled) tally.mangledChunks += 1;
+  tally.schemaViolations += batch.schemaViolations;
+  tally.rejected.push(...batch.rejected);
+  for (const triplet of batch.triplets) {
+    absorbEndpoints(tally.entities, triplet, chunkIndex);
+    tally.relationships.push(tripletRelationship(triplet, chunkIndex));
+  }
+  // A standalone entity is absorbed by name, so a node the model reported in
+  // both shapes stays one row. The triplet endpoints were absorbed first and
+  // `absorbEndpoint` only rewrites a type when confidence strictly increases,
+  // which it never does here — so the triplet's type wins, and it is the one a
+  // relationship already constrains.
+  for (const entity of batch.standalone) {
+    absorbEndpoint(tally.entities, entity.name, entity.type, chunkIndex);
+  }
+  // Endpoints of relationship-only rejections. Both types were already checked
+  // by the ontology, so nothing here needs filtering again; what they must NOT
+  // do is produce a relationship, which is why they join the entity map only.
+  for (const entity of batch.rescued) {
+    absorbEndpoint(tally.entities, entity.name, entity.type, chunkIndex);
+  }
+}
+
 export async function extractGraphFromChunks(
   chunks: readonly ChunkResult[],
   stackName: string,
@@ -238,33 +397,9 @@ export async function extractGraphFromChunks(
     return emptyResult();
   }
 
-  const entityMap = new Map<string, ExtractedEntity>();
-  const relationshipList: ExtractedRelationship[] = [];
-  const rejected: RejectedTriplet[] = [];
-  const failures: unknown[] = [];
-
+  const tally = emptyTally();
   for (const chunk of chunks) {
-    const batch = await chunkTriplets(chunk, stackName, ontology);
-    if (batch.failure !== undefined) failures.push(batch.failure);
-    rejected.push(...batch.rejected);
-    for (const triplet of batch.triplets) {
-      absorbEndpoints(entityMap, triplet, chunk.chunkIndex);
-      relationshipList.push(tripletRelationship(triplet, chunk.chunkIndex));
-    }
-    // A standalone entity is absorbed by name, so a node the model reported in
-    // both shapes stays one row. The triplet endpoints were absorbed first and
-    // `absorbEndpoint` only rewrites a type when confidence strictly increases,
-    // which it never does here — so the triplet's type wins, and it is the one a
-    // relationship already constrains.
-    for (const entity of batch.standalone) {
-      absorbEndpoint(entityMap, entity.name, entity.type, chunk.chunkIndex);
-    }
-    // Endpoints of relationship-only rejections. Both types were already checked
-    // by the ontology, so nothing here needs filtering again; what they must NOT
-    // do is produce a relationship, which is why they join the entity map only.
-    for (const entity of batch.rescued) {
-      absorbEndpoint(entityMap, entity.name, entity.type, chunk.chunkIndex);
-    }
+    foldBatch(tally, await chunkTriplets(chunk, stackName, ontology), chunk.chunkIndex);
   }
 
   // EVERY chunk failed: there is no partial result to protect, so this is an
@@ -272,22 +407,27 @@ export async function extractGraphFromChunks(
   // dimension's `prepare` fail, which is what stops the coordinator committing a
   // document whose graph is empty. Every failure travels with the error, so the
   // operator sees the endpoint and status rather than only a count.
-  if (failures.length === chunks.length) {
+  if (tally.failures.length === chunks.length) {
     throw new ProviderUnavailableError(
       `extraction failed for all ${chunks.length} chunk(s)`,
-      failures,
+      tally.failures,
     );
   }
 
   return {
-    entities: [...entityMap.values()],
-    relationships: [...mergeRelationships(relationshipList).values()],
+    entities: [...tally.entities.values()],
+    relationships: [...mergeRelationships(tally.relationships).values()],
     model: extractionModel(),
     pipeline: EXTRACTION_PIPELINE,
     // Reported only when an ontology was enforced, so a default run keeps the
     // oracle's result shape instead of carrying a permanently empty array.
-    ...(ontology === undefined ? {} : { rejected }),
+    ...(ontology === undefined ? {} : { rejected: tally.rejected }),
     // Absent when nothing failed, so the healthy path keeps the oracle's shape.
-    ...(failures.length === 0 ? {} : { failedChunks: failures.length }),
+    ...(tally.failures.length === 0 ? {} : { failedChunks: tally.failures.length }),
+    // Absent when every chunk's envelope was readable, for the same reason.
+    ...(tally.mangledChunks === 0 ? {} : { mangledChunks: tally.mangledChunks }),
+    // Absent when the model never left the declared schema -- which is every
+    // strict-provider run, so that path's result shape does not move either.
+    ...(tally.schemaViolations === 0 ? {} : { schemaViolations: tally.schemaViolations }),
   };
 }

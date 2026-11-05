@@ -140,6 +140,25 @@ interface KgHandle {
    * `extractGraphFromChunks`, which fails `prepare` and therefore the ingest.
    */
   readonly failedChunks: number;
+  /**
+   * Chunks that answered with no usable envelope at all.
+   *
+   * Carried for the same reason as {@link failedChunks}, and kept separate from
+   * it because the two read differently to an operator: a failed chunk names a
+   * provider problem, while a mangled one names a response the model should
+   * never have produced. Neither is fatal, and neither makes the ingest fail.
+   */
+  readonly mangledChunks: number;
+  /**
+   * `type` values the model emitted outside the schema its Stack declared.
+   *
+   * Carried for the same reason as {@link mangledChunks} and kept separate from
+   * {@link KgHandle.rejected}: a triplet whose type the model invented and a
+   * triplet the ontology turned away are usually the same triplet, but only the
+   * first one names a provider that did not enforce the schema — which is the
+   * difference between "fix the prompt" and "this gateway ignores `strict`".
+   */
+  readonly schemaViolations: number;
 }
 
 /** How this dimension is bound to one knowledge stack. */
@@ -270,6 +289,38 @@ function rejectionNote(rejected: readonly KgRejection[]): string {
  */
 function extractionNote(failedChunks: number): string {
   return failedChunks === 0 ? "" : `, ${failedChunks} chunks failed extraction`;
+}
+
+/**
+ * Renders the shape-mangled chunk count, or nothing when every envelope read.
+ *
+ * The same reasoning as {@link rejectionNote}, for a third distinct cause: a
+ * document whose responses came back uninjured and a document whose responses
+ * came back mangled both show zero of the triplets they might have had, and only
+ * the second one is a defect worth chasing.
+ *
+ * @param mangledChunks - Chunks that answered with no usable envelope.
+ * @returns A leading-comma fragment, or an empty string when none was mangled.
+ */
+function mangledNote(mangledChunks: number): string {
+  return mangledChunks === 0 ? "" : `, ${mangledChunks} chunks returned a mangled response`;
+}
+
+/**
+ * Renders the schema-violation count, or nothing when the model obeyed.
+ *
+ * The same reasoning as {@link rejectionNote}, for the one cause the ontology
+ * cannot see: on a provider that treats the tool schema's `enum` as a hint, an
+ * invented type is rejected exactly like an undeclared one, so a Stack whose
+ * gateway ignores `strict` reads like a Stack whose model simply drifted. This
+ * fragment names the provider's non-enforcement, which is a configuration
+ * remedy, not a prompt one.
+ *
+ * @param schemaViolations - `type` values the model put outside the schema.
+ * @returns A leading-comma fragment, or an empty string when nothing violated.
+ */
+function schemaViolationNote(schemaViolations: number): string {
+  return schemaViolations === 0 ? "" : `, ${schemaViolations} types outside the declared schema`;
 }
 
 /**
@@ -600,6 +651,8 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
         relationships: extraction.relationships,
         rejected: extraction.rejected ?? [],
         failedChunks: extraction.failedChunks ?? 0,
+        mangledChunks: extraction.mangledChunks ?? 0,
+        schemaViolations: extraction.schemaViolations ?? 0,
       };
       return { unchanged: chunks.length === 0, handle };
     },
@@ -609,7 +662,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       if (options.dryRun === true || handle.chunks.length === 0) {
         return {
           idempotencyKey: `kg:${handle.documentId}`,
-          summary: `kg:dry-run(${handle.chunks.length} chunks, ${handle.entities.length} entities)${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}`,
+          summary: `kg:dry-run(${handle.chunks.length} chunks, ${handle.entities.length} entities)${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}${mangledNote(handle.mangledChunks)}${schemaViolationNote(handle.schemaViolations)}`,
         };
       }
       // `writeGraph` replaces the placeholder with the id Postgres assigned, and
@@ -628,7 +681,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
         // Keyed on the real row id, so the outbox replay targets the same document
         // rather than the label it was prepared under.
         idempotencyKey: `kg:${handle.documentId}`,
-        summary: `kg:${handle.chunks.length} chunks, ${handle.entities.length} entities${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}`,
+        summary: `kg:${handle.chunks.length} chunks, ${handle.entities.length} entities${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}${mangledNote(handle.mangledChunks)}${schemaViolationNote(handle.schemaViolations)}`,
       };
     },
 

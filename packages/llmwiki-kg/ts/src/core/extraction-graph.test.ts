@@ -25,6 +25,25 @@ vi.hoisted(() => {
 
 import { extractGraphFromChunks, parseTriplets } from "./extraction.js";
 import { chunk, lastToolPrompt, restoreToolCall, setToolFailure, setToolResponse, stubToolCall, toolCalls } from "./extraction-harness.js";
+import { validateOntology } from "./ontology.js";
+
+/** A declaration whose entity types exclude the model's default `PRODUCT`. */
+const ONTOLOGY = validateOntology({
+  entityTypes: ["COMPANY", "PERSON"],
+  relationshipTypes: ["SUPPLIES"],
+  subtypes: [],
+});
+
+/** One payload carrying a single out-of-ontology entity type. */
+const OFF_SCHEMA = {
+  triplets: [
+    {
+      subject: { type: "PRODUCT", name: "Gateway" },
+      relation: { type: "SUPPLIES" },
+      object: { type: "PERSON", name: "Ada" },
+    },
+  ],
+};
 
 describe("parseTriplets", () => {
   /** A complete, well-formed tool-call payload. */
@@ -280,8 +299,66 @@ describe("extractGraphFromChunks", () => {
     const result = await extractGraphFromChunks(chunks, "w2ex-stack");
 
     expect(result.entities.map((entity) => entity.name)).toEqual(["Gateway", "Routing"]);
-    // Neither chunk failed here: an empty triple list is a legitimate answer.
+    // Neither chunk failed here: the provider answered both times.
     expect(result.failedChunks).toBeUndefined();
+    // The `{}` chunk is not an empty triple list, though: it has no `triplets`
+    // array and no `entities` array, so it is a mangled envelope. Its remedy is
+    // the prompt or the parser, not the endpoint, which is why it is counted
+    // apart from the failures above.
+    expect(result.mangledChunks).toBe(1);
+  });
+
+  it("counts an out-of-ontology type without touching the rejection path", async () => {
+    // `gateway` is the harness default, so `strict` is off and the schema's
+    // `enum` is advisory: the model's non-compliance reaches this process
+    // untouched. The count makes that visible, and the triplet must STILL travel
+    // the normal rejection path -- counting is a diagnostic, not a filter.
+    setToolResponse([OFF_SCHEMA]);
+
+    const result = await extractGraphFromChunks([chunk(0, "first")], "w2ex-stack", ONTOLOGY);
+
+    expect(result.schemaViolations).toBe(1);
+    const rejection = result.rejected?.[0];
+    expect(rejection?.reason).toBe("UNKNOWN_ENTITY_TYPE");
+    expect(rejection?.subject).toBe("Gateway");
+    expect(rejection?.offendingType).toBe("PRODUCT");
+    // Nothing was admitted, so nothing was written: the triplet was rejected,
+    // not silently kept.
+    expect(result.entities).toEqual([]);
+    expect(result.relationships).toEqual([]);
+  });
+
+  it("counts nothing when the provider enforces the schema itself", async () => {
+    // On a strict-capable provider the request makes an out-of-ontology type
+    // impossible, so a count there would report a violation the schema already
+    // prevented. Re-imported against an OpenAI config for the same reason
+    // `llm/strict-mode.test.ts` does it: `config` is parsed once at module load.
+    vi.resetModules();
+    vi.doMock("../config.js", async () => {
+      const actual = await vi.importActual<typeof import("../config.js")>("../config.js");
+      return {
+        ...actual,
+        config: {
+          ...actual.config,
+          EXTRACTION_PROVIDER: "openai",
+          EXTRACTION_STRICT_SCHEMA: "auto",
+          OPENAI_API_KEY: "test-key-not-a-credential",
+        },
+      };
+    });
+    try {
+      const strict = await import("./extraction.js");
+      setToolResponse([OFF_SCHEMA]);
+      const result = await strict.extractGraphFromChunks([chunk(0, "first")], "w2ex-stack", ONTOLOGY);
+      // Absent, not zero: the strict path is byte-identical to what it was, and
+      // that includes the result shape.
+      expect("schemaViolations" in result).toBe(false);
+      // The rejection path itself is unchanged -- only the diagnostic is gone.
+      expect(result.rejected?.map((entry) => entry.reason)).toEqual(["UNKNOWN_ENTITY_TYPE"]);
+    } finally {
+      vi.doUnmock("../config.js");
+      vi.resetModules();
+    }
   });
 });
 
@@ -300,15 +377,18 @@ describe("extraction prompt", () => {
     }
   });
 
-  it("keeps the oracle's prompt text, typo included", async () => {
+  it("pins the extraction prompt text the model receives", async () => {
     setToolResponse([{ triplets: [] }]);
     try {
       await extractGraphFromChunks([chunk(0, "text")], "demo");
       const prompt = lastToolPrompt();
-      // "20 extracted paths.s" — the stray "s" is in the Python prompt. Changing
-      // it would change the model's input, so it is preserved on purpose.
-      expect(prompt).toContain("Try to limit to the output 20 extracted paths.s");
-      expect(prompt.startsWith("Give the following text, extract the knowledge graph")).toBe(true);
+      // Pinned on purpose: these are the exact bytes the model sees, and this
+      // package deliberately departs from the oracle here (the oracle sends
+      // "Give ... extracted paths.s"). The departure is registered in
+      // `odd/findings/aks-spec-conformance.md`, so changing these bytes is a
+      // decision with a record, not an incidental refactor.
+      expect(prompt).toContain("Try to limit to the output 20 extracted triplets");
+      expect(prompt.startsWith("Given the following text, extract the knowledge graph")).toBe(true);
     } finally {
       restoreToolCall();
     }

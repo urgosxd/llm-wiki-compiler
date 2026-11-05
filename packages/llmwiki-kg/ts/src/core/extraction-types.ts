@@ -74,6 +74,39 @@ export interface ExtractionResult {
    * instead, because an empty graph is not a degraded result, it is an outage.
    */
   readonly failedChunks?: number;
+  /**
+   * Chunks whose response arrived intact but carried no usable envelope.
+   *
+   * Modelled exactly like {@link failedChunks}: absent when nothing was mangled,
+   * so a healthy run keeps the oracle's exact result shape. It exists because
+   * the two zero-triplet outcomes need different remedies — a failed chunk points
+   * at the endpoint or the credential, while a mangled one points at the prompt
+   * or the parser, and a run that reported both the same way left the operator
+   * guessing which.
+   *
+   * Never fatal, and therefore never exclusive with `entities: []`: a mangled
+   * envelope is a degraded answer, so an all-mangled run returns a result with
+   * this count set rather than raising the way `failedChunks` does.
+   */
+  readonly mangledChunks?: number;
+  /**
+   * `type` values in the model's payload that the generated schema forbids.
+   *
+   * Modelled exactly like {@link mangledChunks}: absent when nothing violated, so
+   * a healthy run keeps the oracle's exact result shape. It exists because on a
+   * provider that treats the schema's `enum` as a hint — everything except
+   * strict-capable OpenAI — the model's non-compliance was invisible: the triplet
+   * was rejected for an out-of-ontology type, which reads exactly like the model
+   * choosing a type the Stack simply does not declare.
+   *
+   * Counted, never filtered: a violating triplet still travels the normal
+   * rejection path, so this counter answers "did the model obey the schema it was
+   * shown", and `rejected` keeps answering "what did the ontology turn away".
+   *
+   * Never present on a strict-provider run (the request already makes an
+   * out-of-schema type impossible) and never present without an ontology.
+   */
+  readonly schemaViolations?: number;
 }
 
 /**
