@@ -412,10 +412,18 @@ async function readCandidatesByIds(root: string, ids: string[], opts: StrictIoOp
  * per visit should use {@link listCandidatePage} instead.
  * @param root - Project root directory.
  * @param opts - Strict I/O propagates per-file read faults while retaining admission warnings.
+ * @param env - Environment naming the Stack whose queue is read; `process.env` when
+ *   omitted, so the CLI keeps answering about the deployment it was started in. A
+ *   caller answering about a NAMED Stack must pass its own environment here, or the
+ *   queue length it reports belongs to whichever Stack the process serves.
  * @returns All pending review candidates.
  */
-export async function listCandidates(root: string, opts: StrictIoOptions = {}): Promise<ReviewCandidate[]> {
-  const fromRows = await withCandidateSource(process.env, async (source) =>
+export async function listCandidates(
+  root: string,
+  opts: StrictIoOptions = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ReviewCandidate[]> {
+  const fromRows = await withCandidateSource(env, async (source) =>
     source === undefined ? undefined : await source.list(),
   );
   const candidates = fromRows ?? await readCandidatesByIds(root, await pendingCandidateFileIds(root), opts);
@@ -482,8 +490,17 @@ export async function listCandidatePage(root: string, limit: number): Promise<Ca
  * so consumers (e.g. `wiki_status.pendingCandidates`) never report counts
  * that disagree with what `review list` actually shows. Malformed JSON files
  * are skipped here exactly as they are by listCandidates.
+ *
+ * @param root - Project root directory.
+ * @param env - Environment naming the Stack whose queue is counted; `process.env`
+ *   when omitted. `wiki_status` passes the per-request environment so a named
+ *   Stack's answer does not carry the bound deployment's queue length.
+ * @returns The number of pending candidates.
  */
-export async function countCandidates(root: string): Promise<number> {
-  const candidates = await listCandidates(root);
+export async function countCandidates(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<number> {
+  const candidates = await listCandidates(root, {}, env);
   return candidates.length;
 }

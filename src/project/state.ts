@@ -86,16 +86,25 @@ export interface ProjectState {
  * expected absent-file paths — those become `false`/`0`/`null` fields.
  * Returns a `project-unreadable` warning when the root itself cannot be
  * stat-ed; callers escalate that to the `broken-project` primary state.
+ *
+ * @param root - Absolute project root to inspect.
+ * @param env - Environment naming the Stack this state is about; `process.env` when
+ *   omitted, which keeps every CLI caller answering about the deployment it runs in.
+ *   The compile-state read and the review-queue count are Stack-scoped, so a caller
+ *   answering about a NAMED Stack must pass its own environment here.
  */
-export async function collectProjectState(root: string): Promise<ProjectState> {
+export async function collectProjectState(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ProjectState> {
   const rootReadable = await isDirectory(root);
   if (!rootReadable) return brokenProjectState(root);
   const dirs = await collectDirPresence(root);
-  const counts = await collectPageCounts(root, dirs);
+  const counts = await collectPageCounts(root, dirs, env);
   const lint = await collectLintCacheStatus(root);
   const mtimes = await collectMtimes(root, dirs);
   // Read-only; never writes a .bak file — safe for the cheap orientation command.
-  const stateStatus = (await readStateClassifiedFor(root)).status;
+  const stateStatus = (await readStateClassifiedFor(root, env)).status;
   return assembleState({ root, dirs, counts, lint, mtimes, stateStatus });
 }
 
@@ -156,12 +165,16 @@ async function collectDirPresence(root: string): Promise<DirPresence> {
 }
 
 /** Compute page counts plus the wiki/index.md presence flag. */
-async function collectPageCounts(root: string, dirs: DirPresence): Promise<PageCounts> {
+async function collectPageCounts(
+  root: string,
+  dirs: DirPresence,
+  env: NodeJS.ProcessEnv,
+): Promise<PageCounts> {
   const [sources, conceptCount, queryCount, pendingCandidates, hasIndex] = await Promise.all([
     listSelectedSourceFiles(root),
     dirs.hasWikiDir ? countMarkdownFiles(path.join(root, CONCEPTS_DIR)) : 0,
     dirs.hasWikiDir ? countMarkdownFiles(path.join(root, QUERIES_DIR)) : 0,
-    dirs.hasInternalDir ? safeCountCandidates(root) : 0,
+    dirs.hasInternalDir ? safeCountCandidates(root, env) : 0,
     dirs.hasWikiDir ? isFile(path.join(root, INDEX_FILE)) : false,
   ]);
   return { sourceCount: sources.length, conceptCount, queryCount, pendingCandidates, hasIndex };
@@ -427,9 +440,9 @@ async function countMarkdownFiles(dir: string): Promise<number> {
 }
 
 /** Race-tolerant candidate count; defers to `countCandidates` and swallows IO errors. */
-async function safeCountCandidates(root: string): Promise<number> {
+async function safeCountCandidates(root: string, env: NodeJS.ProcessEnv): Promise<number> {
   try {
-    return await countCandidates(root);
+    return await countCandidates(root, env);
   } catch {
     return 0;
   }

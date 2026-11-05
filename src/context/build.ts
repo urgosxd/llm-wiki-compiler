@@ -104,6 +104,17 @@ interface BuildContextPackOptions {
    * stale and the search returns nothing while both halves are perfectly healthy.
    */
   registryPageSource?: RegistryPageSource;
+  /**
+   * Environment naming the Stack this pack is about; `process.env` when omitted.
+   *
+   * Two of the pack's inputs are resolved from an ENVIRONMENT rather than from the
+   * seams: the viewer snapshot's page corpus + compile state + review queue, and the
+   * project state's compile-state status. Defaulted, both describe whichever Stack the
+   * process is bound to, which is how a pack naming one Stack reported another's page
+   * count, freshness and queue length. The MCP tool passes its per-request environment
+   * so the whole pack comes from the Stack the caller named.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -115,7 +126,7 @@ export async function buildContextPack(
   options: BuildContextPackOptions,
 ): Promise<ContextPack> {
   const normalized = normalizeOptions(options);
-  const baseSnapshot = await buildViewerSnapshot(options.root);
+  const baseSnapshot = await buildViewerSnapshot(options.root, options.env);
   // Resolve the active non-default profile ONCE and thread it through the pool
   // augmentation and tier projection, so a single pack is never assembled against
   // two mid-swapped profiles (and re-loads/re-validates are avoided). `null` marks
@@ -132,7 +143,7 @@ export async function buildContextPack(
     baseSnapshot,
     preloadedProfile,
   );
-  const state = await collectProjectState(options.root);
+  const state = await collectProjectState(options.root, options.env);
   const recommendation = recommendNextAction(state);
   // Semantic retrieval is opportunistic — failures surface as stable
   // warning codes on the returned outcome rather than thrown errors so

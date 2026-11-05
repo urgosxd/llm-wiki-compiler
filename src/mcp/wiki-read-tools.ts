@@ -383,6 +383,11 @@ async function buildContextPackFromArgs(
           includeSources: args.includeSources,
           embeddingStoreSource,
           registryPageSource,
+          // The same environment the two seams above were opened with. The pack
+          // builds its page list, its counts, its freshness and its review-queue
+          // length from an environment of its own; defaulted, that is `process.env`
+          // -- the deployment, not the Stack the caller named.
+          env,
         }),
       ),
     ),
