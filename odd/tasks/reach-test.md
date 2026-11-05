@@ -43,7 +43,7 @@ T8 — Gates: root `tsc --noEmit`, `npm run build`, full `npm test`, `fallow`, K
 T9 — Final report: branch and head SHA, per-task commits, verdict per S#, e2e transcript, isolation proof, KG gate wiring and diagnostic baseline, exact test scope and result, blockers/UNAVAILABLE, scratch paths, Risk line. S1-S9. Route: Lead. Commit: none.
 T10 — Remove the stray statement terminator that kept a fresh database from being built, and reword the per-run fixture's statement-splitter warning so it reads as unreachable. S2 (the isolation fixture's reason for the workaround), S7. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
 T6b — Replace the concept-page assertion that the ingest's own stub row already satisfied with one that pins the page the compile writes. S6, S5's honesty requirement. Route: worker. Commit: 2664ac2.
-T11 — Make the build stamp name outputs that exist, so a repeated vitest run skips the ~21 s build and two concurrent runs cannot race inside tsup. S8 (gate integrity), S7. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported to the parent, see L15).
+T11 — Make the build stamp name outputs that exist, so a repeated vitest run skips the ~21 s build and two concurrent runs cannot race inside tsup. S8 (gate integrity), S7. Route: worker. Commit: 35c40f8 (a commit cannot name its own SHA; the SHA is backfilled here, see L15).
 
 ## Log
 
@@ -511,3 +511,228 @@ L15 (T11 — the build stamp now names only outputs that exist; S8's gate integr
 - SCRATCH LEFT IN PLACE (per L2): `/tmp/build-stamp-concurrency-0GSPM5/` — the six concurrency-pair transcripts
   (`pair{1,2,3}-{a,b}.log`), the single forced-build transcript (`forced-a.log`) and the forced-build pair
   (`coldpair-{a,b}.log`), each with its `.exit` file.
+
+L16 (Project 3 close-out: reconciliation, build-stamp proof, four gates — S8's gate report, plus the C1 record
+for S7's no-shared-build-race):
+- SCOPE. Deliberately narrow close-out on a branch cut from `feat/reach-test`, whose previous Lead session died
+  at the model-execution level. Four units only: reconcile the dead worktree, prove the build stamp, run the
+  four gates, report. Out of scope by ruling: fixing any of the five open gaps, reworking per-run isolation,
+  `src/dimensions/wiki/**`, and the template-database implementation.
+- U1 — RECONCILE THE DEAD LEAD'S WORKTREE: NOTHING TO COPY.
+  - `git -C /home/urgosxd/.herdr/worktrees/llm-wiki-compiler/feat-reach-test status --porcelain
+    --untracked-files=all` → empty. No uncommitted source, test, or scratch content.
+  - Both branch refs point at the same commit `35c40f89ded5a0c5d96628889e2ad3cf0f1607cb`;
+    `git rev-list --left-right --count feat/reach-test...HEAD` → `0 0`; `merge-base` = `35c40f8`. Zero divergence.
+  - `odd/tasks/reach-test.md` is byte-identical in both worktrees (sha256
+    `9134f9bf764c6288ccbe2b6d5bcc2949afe67b29d5e57793678be53695c78a60`, 513 lines).
+  - T4 is already committed as `1063fb2`. The dead worktree was read only and modified in no way.
+- U2 — BUILD STAMP: ALREADY FIXED AT HEAD, PROVEN HERE.
+  - `scripts/build-stamp.ts:53-66` `REQUIRED_OUTPUTS = ["dist/cli.js","dist/index.js","dist/index.d.ts",
+    "packages/llmwiki-core/dist/index.js"]` — four real entries, list not emptied; the stale
+    `packages/llmwiki-local-workflows/dist/index.js` entry appears only inside an explanatory comment. That is
+    commit `35c40f8` ("fix(test): make the build stamp name outputs that exist"). The L9 defect record this
+    supersedes described the pre-fix state.
+  - ENVIRONMENT: `CI=1 npm ci --no-audit --no-fund` → exit 0, "added 463 packages in 5s", only EBADENGINE
+    warnings (node v22.23.2 against `>=24`); lockfile unmodified afterwards. The fallback `cp -a --reflink=auto`
+    of the sibling `node_modules` was therefore not needed; `cmp -s` of the two `package-lock.json` files
+    returned 0 (identical) and is recorded for completeness.
+  - `npx tsc --noEmit` → exit 0, empty output. `npm run build` → exit 0, 19.53 s.
+  - `isBuildFresh()` IS `false` immediately after `npm run build` ALONE, because the stamp is written by
+    `test/global-setup.ts` and not by the build; it becomes `true` after the first vitest run, with `inputsHash`
+    `be3fc2feeaecad5602384e3bda550c05a5320ca3a0469a8e01ad68eaf067ff53`. A bare build therefore does not warm
+    the cache.
+  - FRESHNESS, real `vitest.config.ts`, `test/build-stamp.test.ts` (13 tests): cold run 19.54 s Duration /
+    20.14 s wall; immediate repeat 320 ms Duration / 0.90 s wall; third repeat 0.91 s with `dist/cli.js` and
+    `dist/index.js` mtimes UNCHANGED across it. 13/13 passed in all three.
+  - CAVEAT FOR FUTURE PROOFS: `grep -ci tsup` on the transcripts returned 0 in all three runs and is NOT
+    discriminating, because vitest swallows `globalSetup` child output on success. Freshness must be proven by
+    wall time or output mtime, never by tsup line counts.
+  - CONCURRENCY, the target that matters, on the real `vitest.config.ts`: two concurrent
+    `npx vitest run packages/llmwiki-kg/ts/src/db.test.ts` → both `exit=0`, 15/15 tests each, 2.04 s wall each,
+    started the same second, zero tsup lines. No assertion failure and no `23503` /
+    `stack_documents_stack_id_fkey` symptom appeared.
+  - No source change was needed; `scripts/build-stamp.ts` and `test/build-stamp.test.ts` were left untouched. The
+    residual cold-cold race from L15 is unchanged and not claimed fixed.
+- U3 — THE FOUR GATES, MEASURED.
+  - `npx tsc --noEmit`: exit 0, 5,784 ms, zero bytes of output. PASS.
+  - `npm run build`: exit 0, 19,042 ms. All four REQUIRED_OUTPUTS present: `dist/cli.js` 480,693 B;
+    `dist/index.js` 425,652 B; `dist/index.d.ts` 6,844 B; `packages/llmwiki-core/dist/index.js` 22,169 B. PASS.
+  - `npm test`, RUN A (environment overridden by the runner with a scratch `HOME`): exit 1;
+    `Test Files 2 failed | 786 passed | 3 skipped (791)`; `Tests 2 failed | 5997 passed | 7 skipped (6006)`;
+    Duration 256.82 s. One of the two failures was ARTIFICIAL: `test/provider-codex-agent-live.test.ts` failed on
+    `codex login` because `~/.codex/auth.json` lives in the real HOME; re-run alone with the real HOME it passed
+    1/1 in 5.0 s.
+  - `npm test`, RUN B (inherited environment, one run, no retries): exit 1;
+    `Test Files 6 failed | 782 passed | 3 skipped (791)`; `Tests 8 failed | 5991 passed | 7 skipped (6006)`;
+    Duration 276.92 s; wall 277.51 s. The codex file PASSED in this run. Five of the six failing files are new
+    relative to run A and all are KG live-database failures; the run's own suite database disappeared mid-run —
+    `Unhandled Rejection: PostgresError: database "llmwiki_suite_mw35p5dm_4130922_119c511b" does not exist`, code
+    `3D000`. Occurrences of `23503`: zero in the whole log. Run B was NOT on an idle machine:
+    `load average: 10.21, 9.29, 6.94` on 16 cores, a stale `node
+    …/feat-reach-test/packages/llmwiki-kg/ts/dist/index.js` process (pid 3678593, 86 min elapsed) from the dead
+    Lead's worktree alive throughout, and two Postgres clusters up.
+  - NO TRUE IDLE-MACHINE FULL-SUITE NUMBER WAS OBTAINED. Named as missing proof, not averaged.
+  - GAP IN THIS RECORD, noted rather than filled: run A's non-artificial failure is never named here, and the
+    load-independent red floor below is established by its own standalone run, not by run A's log. So "5 of the
+    six failing files are new relative to run A" and "1 failed file independent of load" rest on two different
+    observations, and this entry does not claim they are the same file.
+  - LOAD-INDEPENDENT RED FLOOR, reproduced outside the suite: `test/commands/host-command.test.ts > omits the
+    graph routes when the graph is disabled` fails alone at `1 failed | 2 passed` with a 20.02 s timeout and
+    `Error: no readiness line in:` at `test/commands/host-command.test.ts:82`. BASE CONTROL at `dff1d31`: exit
+    0, 3/3 passed, 2.963 s. Branch-caused. Mechanism observed: `test/commands/host-command.test.ts:88` emits
+    `SIGTERM` in-process, which triggers the branch-new `dropOnExit` registration at
+    `packages/llmwiki-kg/ts/src/testing/per-run-database.ts:431-438`; its `process.exit(0)` is absorbed by the
+    test's `exitSpy`, so the worker survives with its suite database dropped.
+  - MEASURED AMPLIFICATION of the load sensitivity, from these two runs: 1 failed file independent of load, 6
+    failed files under load, i.e. ~5x. Consistent with the ~5x amplification the close-out brief attributes to
+    gap 2.
+  - `fallow`: not on PATH (bare invocation exit 127, `command not found`). `npx fallow` → exit 1:
+    `✗ 2 exports · 1 unlisted dependency (0.23s)`, `3 issues · 11 suppressed · 0 stale suppressions`. Details:
+    unused exports `test/kg-mcp-e2e/kg-mcp-child.ts:42 MCP_ENTRY` and `:78 processAlive`, both from the file added
+    in `1063fb2`; unlisted dependency `postgres`, imported by `test/kg-mcp-e2e/probe-harness.ts:25` and
+    `test/fixtures/ephemeral-postgres.ts:37` while declared only at `packages/llmwiki-kg/ts/package.json:22`.
+    BASE CONTROL: exit 0, `✓ No issues found`. Branch-caused, FAIL. `fallow fix --dry-run` reports it would
+    remove the export from `processAlive` and `MCP_ENTRY`; nothing was modified.
+  - `test/sdk/packaging.test.ts`: not runnable via `npx vitest run` — `No test files found`, because the file is
+    excluded at `vitest.config.ts:68` and was already excluded at base. Its only runner is `npm run test:pack`
+    (`vitest run --config /dev/null`), which performs an `npm install` of ~17 registry dependencies; NOT
+    EXECUTED → UNAVAILABLE, network prohibited. Static indication it would fail: `packDistribution` at `:26` sets
+    `cwd` to `packages/llmwiki-local-workflows`, which `0374a5f` deleted.
+  - `npm run typecheck:kg`: exit 0, `227 files checked; 0 diagnostics baselined across 0 entries … no
+    regression.` PASS.
+- SIXTH OPEN GAP — a dangling reference to a deleted package, with its install question answered.
+  - `package-lock.json:13,20` still list `packages/llmwiki-local-workflows` and the dependency of that name while
+    `0374a5f` deleted the package. Further references: `test/sdk/packaging.test.ts:29`,
+    `contract-cordination.json:25`, `.fallowrc.json`, `.github/workflows/publish.yml:70,186,192`.
+  - THE OPERATIVE QUESTION is whether a fresh clone of this branch can install at all. MEASURED ANSWER: yes.
+    `CI=1 npm ci --no-audit --no-fund` in this worktree exited 0 with "added 463 packages in 5s" and only
+    EBADENGINE warnings; the lockfile was byte-unchanged afterwards (`git status --porcelain` empty).
+  - CONSEQUENCE: L15's inference that "a fresh `npm ci` against this lock names a directory that does not exist"
+    is DISPROVEN for the install path. The residue is confined to the publish pipeline and to
+    `test/sdk/packaging.test.ts`, which is excluded from the suite and cannot run without network.
+  - REGENERATING `package-lock.json` was considered and REJECTED for this close-out as an unauthorized delivery
+    change (risk item 5) on a branch whose purpose is to run four gates.
+- CORRECTION TO INHERITED EVIDENCE. The close-out brief cited a "base 1/6 red vs HEAD 5/6 red" comparison and
+  sha256 `2c176f41…` as coming from this document. They are NOT in this document. What L11 actually records is the
+  respond-before-commit race at KG-subset scope (`cd packages/llmwiki-kg/ts && npx vitest run src/routes
+  src/core`, 61 files / 488 tests): four of ten gate runs red, five of six concurrent single-file runs failed,
+  with `stack_documents_stack_id_fkey` (23503) among the observed shapes. The stronger figures exist only in the
+  brief and are restated here as brief-supplied, never as measured by this document. (The label `L11` is itself
+  duplicated in this file; the entry meant here is the KG-subset one quoted above.)
+- RULE FOR FUTURE LEADS ON DELEGATED RECON. A recon claim about a commit, file, or line is unverified unless it
+  carries the command that produced it and the output verbatim. Two delegates in this close-out produced claims
+  that failed that test: one asserted a `scripts/build-stamp.ts` comment whose wording mirrored the prompt it had
+  been given, and one reported `git cat-file -t 0374a5f` failing with exit 128 — `0374a5f` is a real commit. Both
+  came from a definition with no `bash`.
+- HARNESS DEFECT OBSERVED (for the human, not fixed here). The `gentle-ai-explore` agent definition declares
+  `read, grep, find, codegraph, web_*` and no `bash`, so it cannot execute git or any command; repository-history
+  recon is impossible for it and it fills the gap from its prompt. Recon for this project must be routed to a
+  bash-capable read-only definition (`gentle-ai-verify` was used).
+- AUTHORIZED BUT DELIBERATELY NOT IMPLEMENTED — the one named improvement. A per-run template database in
+  `test/global-setup.ts` plus `CREATE DATABASE … TEMPLATE` per file. Briefed estimate: provisioning falls from
+  ~0.25 s to ~50 ms per suite, shrinking this branch's amplification of gap 2 (measured here at ~5x). STATUS:
+  PENDING. Not measured in this close-out, and left out on purpose to keep the assignment small. No prior Log
+  entry described it.
+- LEFT OPEN AT THE END OF THIS CLOSE-OUT (corrected by `L17`). The five gaps are unchanged. The sixth gap stands
+  as recorded above, with its install question answered. The two measured reds recorded here — the
+  `SIGTERM`/`dropOnExit` teardown defect (`test/commands/host-command.test.ts`, green at base) and the three
+  `fallow` findings — were subsequently authorized by the owner and fixed in the two units recorded in `L17`
+  below. What remains open from those units is the set of residual hazards named in `L17`, not the reds. Head at
+  the time of writing: `35c40f8`.
+
+L17 (owner-authorized follow-ups — teardown fix, `3D000` diagnosis, `fallow` cleanup):
+- OWNER'S RULING. No exemption from AGENTS.md's pre-commit gate: the red gate found two real defects and both were
+  fixed as their own units before the documentation commit.
+- FIX 1 — PER-RUN TEARDOWN (`packages/llmwiki-kg/ts/src/testing/per-run-database.ts`).
+  - CAUSE. At `35c40f8` the module registered `process.once("exit", drop)` plus
+    `process.once(SIGTERM|SIGINT, () => { drop(); process.exit(0); })` (`:422-439`).
+    `test/commands/host-command.test.ts:100` emits the signal IN PROCESS; the handler dropped the worker's own live
+    database and called `process.exit(0)`, which the suite's `exitSpy` (`:56-63`) absorbed. The worker survived
+    with its database gone.
+  - NEW DESIGN. The hook never calls `process.exit`; it drops only databases it owns, idempotently, keyed by a
+    pid-checked ownership map; it removes only its own listeners; and it re-raises the ORIGINAL signal with
+    `process.kill(process.pid, sig)`, restoring default disposition (SIGTERM 143, SIGINT 130) instead of a false
+    exit 0.
+  - DEVIATION FROM THE OWNER'S LITERAL SEQUENCE, recorded for review. The owner specified "drop, remove own
+    listener, then re-raise". Implemented as "when another listener for that signal still exists, stay out of the
+    way — that component owns the exit — and only re-raise when this hook is the last listener". The literal
+    always-drop-then-re-raise order would NOT have fixed the defect, because the test's own handler still needs
+    the database afterwards.
+  - PROOF. `npx vitest run test/commands/host-command.test.ts` branch exit 0, 3/3, 3.18 s (pre-fix: 34.9 s with a
+    20 s timeout); base `dff1d31` exit 0, 3/3, 3.51 s; `npm run test:affected` exit 0, `Test Files 626 passed
+    (626)`, `Tests 4599 passed (4599)`, 158.76 s — the load-independent floor going 1 failed file → 0 on the
+    identical 626-file/4599-test scope; two concurrent `db.test.ts` both exit 0, 15/15 each; suite-database debris
+    0 before and 0 after (`total_databases=7` unchanged).
+  - NEW REGRESSION TEST. `test/fixtures/per-run-database-signal.test.ts`, 3 tests, RED observed first (3 failed,
+    three distinct assertions including
+    `expected { code: +0, signal: null } to deeply equal { code: null, signal: 'SIGTERM' }`), then GREEN 3/3. It
+    is integration-tier (`scripts/test-partition.ts:90-113`, it spawns a child), which is why the unit tier does
+    not select it.
+  - RESIDUAL RISKS, named and not fixed. (a) The discriminator is "is another listener registered for this
+    signal", so a foreign `once` shutdown listener registered BEFORE the per-run hooks would make the re-raise
+    branch kill the worker — today the fixture always registers first, so the ordering dependency is real but
+    unenforced; (b) a foreign listener that neither exits nor re-raises leaves a one-`setImmediate` window where a
+    genuine signal finds no hook; (c) behaviour change by design: a SIGTERM/SIGINT with no other listener now
+    reports death-by-signal (143/130) rather than exit 0 — no existing caller asserted exit 0 after signalling.
+- DIAGNOSIS 2 — THE `3D000` RED UNDER LOAD IS THE SAME DEFECT, NOT A NEW ONE.
+  - Every `3D000` in every transcript traces to the old in-process SIGTERM path: five transcripts, one occurrence
+    each, all naming the run's own database minted 1.8 to 114 s earlier.
+  - CANDIDATE TABLE. The age-based reaper (`per-run-database.ts:69`, `:203-212`, `:535`) is CONTRADICTED as this
+    cause — every affected database was under two minutes old, never 30 minutes. Worker reuse across files with a
+    memoised handle is CONTRADICTED — the pid in each database name matches the live worker that owned it.
+  - PREMISE CORRECTION. The five KG route-file failures in the same loaded run
+    (`backfeed-{queue,approve,envelope,ontology}`, `documents-read`) were visibility assertions — `expected 200 got
+    404`, `expected [] to deeply equal [Array(1)]` — i.e. inherited gap 2, with zero `23503`. Each transcript
+    attributes its single `3D000` to `test/commands/host-command.test.ts`, not to the KG files.
+  - RESIDUAL HAZARD, recorded and NOT fixed because it was never observed. The reaper filters by age only and has
+    no ownership check, so a live database older than 30 minutes would still be dropped. Longest observed full
+    suite: 320 s.
+- INDEPENDENT CHECK 3 — THE TEARDOWN FIX IS EXONERATED FOR THE `db.test.ts` FLAKE.
+  - `packages/llmwiki-kg/ts/src/db.test.ts:436` is `expect(await countByDomain("t04-route-404")).toBe(1)` read
+    through a SEPARATE pooled connection after an HTTP call that answers before COMMIT (`db.ts:341-358`): a
+    visibility/count-after-write assertion, i.e. gap 2. The file's own comment at `:34` already names "the
+    intermittent `expected +0 to be 1` at the 404 case".
+  - The fix is on the import path (`db.test.ts:17`) but executes only at process end; a dropped database would
+    surface as `3D000`, which was absent.
+  - A standalone probe reproduced the same race with teardown completely idle: 10 misses in 200 iterations (~5%).
+  - FLAKE TABLE ON THIS TREE. Concurrent two-process proof 0 failures in 6 runs; solo 0 failures in 3. An earlier
+    observation of `1 failed | 14 passed` on both concurrent processes was this gap-2 flake, not a regression.
+  - A DURABLE PROBE exists in scratch at
+    `/tmp/verify-causality-2N66yL/wt/packages/llmwiki-kg/ts/src/gap2-probe.test.ts`. It is deliberately NOT
+    committed: it is RED today and would only go green once gap 2 is fixed.
+- FIX 4 — `fallow` RETURNED TO EXIT 0.
+  - `test/kg-mcp-e2e/kg-mcp-child.ts`: `export` removed from `MCP_ENTRY` (`:42`) and `processAlive` (`:78`);
+    declarations and internal uses (`:74`, `:136`, `:91`, `:94`) untouched; grep proved no importer outside the
+    file. File stays 155 lines.
+  - `postgres` declared in the ROOT `devDependencies` as `"^3.4.9"`, matching
+    `packages/llmwiki-kg/ts/package.json:22` and the lockfile's resolved `3.4.9`.
+  - LOCKFILE DELTA. Exactly one line, inside the root entry's `devDependencies`;
+    `git diff package-lock.json | grep -E '^[+-].*"version":'` shows no version lines changed.
+  - DEVIATION, recorded. `npm install --package-lock-only` was NOT run in the worktree. An isolated probe showed
+    npm 10.9.8 would also rewrite five pre-existing stale hunks outside the root entry — the ghost
+    `packages/llmwiki-local-workflows` workspace and dependency, its link entry, a missing `express` in the kg
+    workspace entry, and four esbuild `libc` metadata lines — which is precisely the owner's hard-stop condition.
+    The single intended hunk was applied by hand; npm's only postgres-related delta is that identical line.
+  - `npx fallow` now exits 0, `✓ No issues found`; base `dff1d31` was also exit 0, so parity is restored.
+    `npx tsc --noEmit` exit 0.
+  - OPERATIONAL NOTE for future installs: a real `npm install` here runs the root `prepare` hook (`husky`), which
+    writes `.husky/_` outside a writer's surfaces — use `--ignore-scripts` in future lockfile instructions.
+- CORRECTION TO INHERITED EVIDENCE, recorded at the owner's request. The "base 1/6 red vs HEAD 5/6 red"
+  comparison and the sha256 `2c176f41…` quoted during this close-out came from a dead Lead's message and are NOT in
+  this document. This document is authoritative; that restatement was unverified. The discrepancy is recorded here
+  so it is not inherited again.
+- ALSO RECORDED, WITHOUT FIXING. `test/sdk/packaging.test.ts` is excluded at `vitest.config.ts:68` (and at base),
+  so it never runs in the suite; its only runner is `npm run test:pack`, which performs a networked install —
+  UNAVAILABLE. Static indication it would fail: `packDistribution` (`:26`) cds into
+  `packages/llmwiki-local-workflows`, deleted by `0374a5f`.
+- HUMAN BATCHED-DISPOSAL LIST (never dispatched to an agent). `/tmp/verify-gates-y59Lrv/base` (689 MB base copy),
+  orphaned process pid 3678593 (a `node …/feat-reach-test/packages/llmwiki-kg/ts/dist/index.js` from the dead
+  session, 86+ min old), container `llmwiki-probe-kg-mcp-e2e-ea040fe6`, and the scratch directories of this
+  close-out: `/tmp/u2-proof-ACKYLX`, `/tmp/u2-proof-scratch-path.txt`, `/tmp/verify-clean-npmtest.obOng0`,
+  `/tmp/jd-fix-u4-test-affected.log`, `/tmp/u2-teardown-fix`, `/tmp/u2-teardown-probe`, `/tmp/u3-3d000-diag`,
+  `/tmp/verify-causality-2N66yL`, `/tmp/fallow-lock-probe.7RWnXT`, `/tmp/fallow-base.txt`, `/tmp/fallow-after.txt`,
+  `/tmp/fallow-dupes.txt`, `/tmp/fallow-dc.txt`.
+- STILL OPEN. The five gaps from `L16` unchanged; the sixth gap (dangling references to the deleted package, install
+  path proven to work); the reaper's missing ownership check; the teardown's ordering dependency and one-tick
+  window; the nine-plus `llmwiki-local-workflows` reference sites; and gap 5, `engines.node >=24` against the
+  runtime Node v22.23.2.
