@@ -27,16 +27,20 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { createDimensionsDatabase } from "../../src/dimensions/activation.js";
-import { readJournalEntries } from "../../src/dimensions/wiki/activity-log-store.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
+import { journalDescriptions, rowOnlyProviderModule, seedConceptPage } from "../fixtures/mcp-stack-rows.js";
 import { buildServer, callTool } from "../fixtures/mcp-test-env.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 
-/** The one page the stubbed selector picks; it exists only as a row. */
-const SELECTED_PAGE_ID = "concepts/journal-page";
+/**
+ * The page the stubbed selector picks; it only exists as a row.
+ *
+ * `vi.hoisted` because the `vi.mock` factory below runs while this file's imports are
+ * being linked — before a module-body `const` would be initialized — and the factory
+ * has to capture the id at that moment.
+ */
+const SELECTED_PAGE_ID = vi.hoisted(() => "concepts/journal-page");
 
 /** The question text the journal entry must carry. */
 const QUESTION = "what does the journal isolate?";
@@ -47,14 +51,7 @@ const QUESTION = "what does the journal isolate?";
  * Retrieval, the registry seam, the tenant bind, the journal write and the row reads
  * stay production code, because they are what this file measures.
  */
-vi.mock("../../src/utils/llm.js", () => ({
-  callClaude: vi.fn(async (options: { tools?: unknown }) => {
-    if (options.tools) {
-      return JSON.stringify({ pages: [SELECTED_PAGE_ID], reasoning: "the row page" });
-    }
-    return "ANSWER_FROM_ROWS";
-  }),
-}));
+vi.mock("../../src/utils/llm.js", () => rowOnlyProviderModule(SELECTED_PAGE_ID));
 
 describe("tool journal isolation", () => {
   let named: ProbeStack;
@@ -90,9 +87,9 @@ describe("tool journal isolation", () => {
 
     expect(answered.answer).toContain("ANSWER_FROM_ROWS");
     // Both sides: NOT in the ambient Stack...
-    expect(await journalOf(ambient.harness.stackId)).toEqual([]);
+    expect(await journalDescriptions(ambient.harness.stackId)).toEqual([]);
     // ...and written to the named one.
-    expect(await journalOf(named.harness.stackId)).toEqual([QUESTION]);
+    expect(await journalDescriptions(named.harness.stackId)).toEqual([QUESTION]);
     // The rows path answered, so the shared file must not exist either.
     expect(existsSync(path.join(root, "log.md"))).toBe(false);
   }, 60_000);
@@ -104,8 +101,8 @@ describe("tool journal isolation", () => {
 
     expect(answered.answer).toContain("ANSWER_FROM_ROWS");
     // Exactly one entry: the control must not journal twice, once per route.
-    expect(await journalOf(named.harness.stackId)).toEqual([QUESTION]);
-    expect(await journalOf(ambient.harness.stackId)).toEqual([]);
+    expect(await journalDescriptions(named.harness.stackId)).toEqual([QUESTION]);
+    expect(await journalDescriptions(ambient.harness.stackId)).toEqual([]);
   }, 60_000);
 
   it("rebuilds the index from the Stack it names when the answer is saved", async () => {
@@ -127,11 +124,11 @@ describe("tool journal isolation", () => {
 
 /** Seed the page the stubbed selector picks, as a row inside `stack`. */
 async function seedRowOnlyPage(stack: ProbeStack): Promise<void> {
-  await createPageWriteSink(stack.harness.db, stack.harness.stackId)({
-    directory: "concepts",
-    slug: "journal-page",
-    body: `---\ntitle: Journal Page\nsummary: lives in postgres\n---\n\nROW_ONLY_BODY\n`,
-  });
+  await seedConceptPage(
+    stack.harness,
+    "journal-page",
+    `---\ntitle: Journal Page\nsummary: lives in postgres\n---\n\nROW_ONLY_BODY\n`,
+  );
 }
 
 /**
@@ -157,19 +154,4 @@ async function askViaTool(
 ): Promise<{ answer?: string; saved?: unknown }> {
   const envelope = await callTool(server, "query_wiki", { question: QUESTION, stackId, ...extra });
   return JSON.parse(envelope.content[0]?.text ?? "{}") as { answer?: string; saved?: unknown };
-}
-
-/**
- * The journal descriptions `stackId` holds, read straight from the store.
- *
- * Read inside its own transaction so the tenant bind is the stack being inspected,
- * not the one the process happens to be bound to.
- */
-async function journalOf(stackId: string): Promise<string[]> {
-  const handle = createDimensionsDatabase(process.env);
-  try {
-    return (await readJournalEntries(handle.db, stackId)).map((entry) => entry.description);
-  } finally {
-    await handle.close();
-  }
 }

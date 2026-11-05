@@ -29,9 +29,6 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
 import { saveStoredCandidate } from "../../src/dimensions/wiki/candidate-store.js";
 import {
   hashSourceContent,
@@ -41,6 +38,7 @@ import {
 import { writeWikiStateToRows } from "../../src/dimensions/wiki/wiki-state-source.js";
 import type { WikiState } from "../../src/utils/types.js";
 import { buildServer } from "../fixtures/mcp-test-env.js";
+import { callToolPayload, seedConceptPage } from "../fixtures/mcp-stack-rows.js";
 import { provisionStack, type ProvisionedStack } from "../fixtures/stack-harness.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 
@@ -98,14 +96,9 @@ function seededState(): WikiState {
 /** Write the page rows, source-document rows, compile state and one review candidate. */
 async function seedStack(stack: ProvisionedStack): Promise<void> {
   const { db, stackId } = stack.harness;
-  const sink = createPageWriteSink(db, stackId);
-  await sink({ directory: "concepts", slug: "fresh-page", body: pageBody("Fresh", "fresh summary") });
-  await sink({ directory: "concepts", slug: "stale-page", body: pageBody("Stale", "stale summary") });
-  await sink({
-    directory: "concepts",
-    slug: "gone-page",
-    body: pageBody("Gone", "gone summary", true),
-  });
+  await seedConceptPage(stack.harness, "fresh-page", pageBody("Fresh", "fresh summary"));
+  await seedConceptPage(stack.harness, "stale-page", pageBody("Stale", "stale summary"));
+  await seedConceptPage(stack.harness, "gone-page", pageBody("Gone", "gone summary", true));
   for (const identity of [FRESH_IDENTITY, STALE_IDENTITY, NEW_IDENTITY]) {
     await saveSourceDocument(db, stackId, {
       title: identity,
@@ -156,18 +149,7 @@ afterEach(async () => {
  * @returns The decoded JSON payload the handler answered with.
  */
 async function callPayload(name: string, args: Record<string, unknown>): Promise<unknown> {
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  const client = new Client({ name: "retired-parity-payloads", version: "0" });
-  await client.connect(clientTransport);
-  try {
-    const result = await client.callTool({ name, arguments: args });
-    const blocks = result.content as Array<{ type: string; text?: string }>;
-    return JSON.parse(blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join(""));
-  } finally {
-    await client.close();
-    await server.close();
-  }
+  return callToolPayload(server, name, args, "retired-parity-payloads");
 }
 
 describe("payloads the retired parity captures used to freeze", () => {

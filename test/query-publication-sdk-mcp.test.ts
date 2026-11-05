@@ -16,10 +16,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createWiki, ProviderUnavailableError, type QueryResult } from "../src/index.js";
 import queryCommand, { generateAnswer } from "../src/commands/query.js";
-import { createPageWriteSink } from "../src/dimensions/wiki/page-write-sink.js";
 import { saveStoredCandidate } from "../src/dimensions/wiki/candidate-store.js";
-import { createDimensionsDatabase } from "../src/dimensions/activation.js";
-import { readJournalEntries } from "../src/dimensions/wiki/activity-log-store.js";
+import { journalEntries, seedConceptPage } from "./fixtures/mcp-stack-rows.js";
 import { callClaude } from "../src/utils/llm.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { stageCitationWorkspace, citationWorkspaceBytes } from "./fixtures/query-answer-citations.js";
@@ -61,11 +59,11 @@ afterEach(async () => {
  * @param probe - The provisioned Stack to seed.
  */
 async function seedStackCorpus(probe: ProbeStack): Promise<void> {
-  await createPageWriteSink(probe.harness.db, probe.harness.stackId)({
-    directory: "concepts",
-    slug: "alpha",
-    body: "---\ntitle: Alpha\nsummary: Retained grounding\nsources: []\n---\nAlpha body.\n",
-  });
+  await seedConceptPage(
+    probe.harness,
+    "alpha",
+    "---\ntitle: Alpha\nsummary: Retained grounding\nsources: []\n---\nAlpha body.\n",
+  );
   await saveStoredCandidate(probe.harness.db, probe.harness.stackId, {
     id: "pending-beta",
     slug: "beta",
@@ -82,20 +80,11 @@ async function seedStackCorpus(probe: ProbeStack): Promise<void> {
 /**
  * The journal headings `stackId` holds, rendered as `operation | description`.
  *
- * Read inside its own transaction so the tenant bind is the Stack being inspected,
- * not the one the process happens to be bound to.
- *
  * @param stackId - The Stack whose journal to read.
  * @returns Heading lines, oldest first.
  */
-async function journalOf(stackId: string): Promise<string[]> {
-  const handle = createDimensionsDatabase(process.env);
-  try {
-    return (await readJournalEntries(handle.db, stackId))
-      .map((entry) => `${entry.operation} | ${entry.description}`);
-  } finally {
-    await handle.close();
-  }
+async function journalHeadings(stackId: string): Promise<string[]> {
+  return (await journalEntries(stackId)).map((entry) => `${entry.operation} | ${entry.description}`);
 }
 
 /**
@@ -203,7 +192,7 @@ it.each([false, true])("real MCP query returns the answer with save=%s and obser
   expect(await citationWorkspaceBytes(ctx.dir)).toEqual(before);
   // Both sides, because either alone passes for the wrong reason. The entry IS in the
   // journal of the Stack the call named...
-  expect(await journalOf(stack.harness.stackId)).toEqual(["query | Explain alpha"]);
+  expect(await journalHeadings(stack.harness.stackId)).toEqual(["query | Explain alpha"]);
   // ...and it is NOT in the deployment's journal. That is `log.md`, which is what a
   // project whose environment binds no Stack writes; nothing else in the workspace
   // changed above, so the file must not have gained the entry.

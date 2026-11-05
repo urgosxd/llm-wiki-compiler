@@ -36,10 +36,7 @@ import { rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { readJournalEntries } from "../../src/dimensions/wiki/activity-log-store.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
 import {
   hashSourceContent,
   saveSourceDocument,
@@ -50,6 +47,7 @@ import { AnthropicProvider } from "../../src/providers/anthropic.js";
 import { compileAndReport } from "../../src/compiler/index.js";
 import type { WikiState } from "../../src/utils/types.js";
 import { buildServer } from "../fixtures/mcp-test-env.js";
+import { callToolPayload, seedConceptPage } from "../fixtures/mcp-stack-rows.js";
 import { provisionStack, type ProvisionedStack } from "../fixtures/stack-harness.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 
@@ -84,9 +82,8 @@ function pageBody(title: string): string {
  */
 async function seedStacks(stack: ProvisionedStack): Promise<void> {
   const { db, stackId } = stack.harness;
-  const sink = createPageWriteSink(db, stackId);
-  await sink({ directory: "concepts", slug: "fresh-page", body: pageBody("Fresh") });
-  await sink({ directory: "concepts", slug: "stale-page", body: pageBody("Stale") });
+  await seedConceptPage(stack.harness, "fresh-page", pageBody("Fresh"));
+  await seedConceptPage(stack.harness, "stale-page", pageBody("Stale"));
   for (const identity of [FRESH_IDENTITY, STALE_IDENTITY]) {
     await saveSourceDocument(db, stackId, {
       title: identity,
@@ -192,20 +189,12 @@ async function lintOf(server: McpServer, stackId: string): Promise<LintPayload> 
 
 describe("compile_wiki writes to the Stack it names", () => {
   it("journals the compile for the named Stack, not the ambient one", async () => {
-    if (!named.harness.reachable) return;
-    await seedSource(named);
-    stubProvider();
-    // The process is bound to the OTHER Stack: before the fix the compile ran for
-    // the named Stack and journalled into this one.
-    process.env.AKS_STACK_ID = ambient.harness.stackId;
-
-    const result = await callJson(buildServer(root), "compile_wiki", {
-      stackId: named.harness.stackId,
-    });
+    const run = await compileNamedWhileAmbient();
+    if (run === undefined) return;
 
     // The run really compiled: a refusal or an early return would leave both journals
     // empty and make the assertions below pass for the wrong reason.
-    expect(result).toMatchObject({ compiled: 1, errors: [] });
+    expect(run).toMatchObject({ compiled: 1, errors: [] });
     // Both sides: the entry is in the Stack the call named...
     expect(await journalOf(named)).toContain("compile");
     // ...and NOT in the one the deployment serves, which is the cross-tenant write.
@@ -215,16 +204,10 @@ describe("compile_wiki writes to the Stack it names", () => {
   }, 120_000);
 
   it("records the compile state for the named Stack only", async () => {
-    if (!named.harness.reachable) return;
-    await seedSource(named);
-    stubProvider();
-    process.env.AKS_STACK_ID = ambient.harness.stackId;
+    const run = await compileNamedWhileAmbient();
+    if (run === undefined) return;
 
-    const result = await callJson(buildServer(root), "compile_wiki", {
-      stackId: named.harness.stackId,
-    });
-
-    expect(result).toMatchObject({ compiled: 1 });
+    expect(run).toMatchObject({ compiled: 1 });
     expect(await rowCount(named, "wiki.source_compile_state")).toBe(1);
     expect(await rowCount(ambient, "wiki.source_compile_state")).toBe(0);
   }, 120_000);
@@ -254,6 +237,26 @@ describe("compile_wiki writes to the Stack it names", () => {
     expect(existsSync(path.join(root, "log.md"))).toBe(false);
   }, 120_000);
 });
+
+/**
+ * Seed the source, stub the provider and compile the NAMED Stack while the process is
+ * bound to the OTHER one.
+ *
+ * Both compile cases arrange exactly this and differ only in what they assert, so the
+ * arrangement lives here: if the two copies drifted, one of them would stop exercising
+ * the cross-tenant write the other still measures.
+ *
+ * @returns The compile payload, or `undefined` when there is no test database.
+ */
+async function compileNamedWhileAmbient(): Promise<unknown | undefined> {
+  if (!named.harness.reachable) return undefined;
+  await seedSource(named);
+  stubProvider();
+  // The process is bound to the OTHER Stack: before the fix the compile ran for the
+  // named Stack and journalled into this one.
+  process.env.AKS_STACK_ID = ambient.harness.stackId;
+  return callJson(buildServer(root), "compile_wiki", { stackId: named.harness.stackId });
+}
 
 /**
  * Seed the one source document a compile turns into a page.
@@ -319,18 +322,7 @@ async function callJson(
   name: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  const client = new Client({ name: "lint-compile-isolation", version: "0" });
-  await client.connect(clientTransport);
-  try {
-    const result = await client.callTool({ name, arguments: args });
-    const blocks = result.content as Array<{ type: string; text?: string }>;
-    return JSON.parse(blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join(""));
-  } finally {
-    await client.close();
-    await server.close();
-  }
+  return callToolPayload(server, name, args, "lint-compile-isolation");
 }
 
 /**

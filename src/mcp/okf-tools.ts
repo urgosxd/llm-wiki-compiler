@@ -73,6 +73,36 @@ async function importBundle(
   });
 }
 
+/** The envelope shape both OKF cores are wrapped in. */
+type OkfEnvelope = ReturnType<typeof jsonResult>;
+
+/**
+ * Run one OKF tool body under the Stack the call named.
+ *
+ * Both registrations need the same four things around their core call, and each one
+ * was a separate chance to get it wrong: the request env from `withRequestEnv` (so the
+ * page seams read the NAMED Stack), `withQuiet` (the cores print via `output.status`,
+ * which on the stdio transport would land on the JSON-RPC stream and corrupt it), the
+ * refusal translation, and the error envelope.
+ *
+ * @param stackId - The Stack the caller passed as the tool argument.
+ * @param body - The core call, given the environment pointing at that Stack.
+ * @returns The MCP envelope, a refusal, or an error result.
+ */
+async function runOkfTool(
+  stackId: string,
+  body: (env: NodeJS.ProcessEnv) => Promise<OkfEnvelope>,
+): Promise<OkfEnvelope | ReturnType<typeof errorResult>> {
+  return withQuiet(async () => {
+    try {
+      const result = await withRequestEnv(stackId, body);
+      return isRefusal(result) ? refusalResult(result) : result;
+    } catch (err) {
+      return errorResult(err instanceof Error ? err.message : String(err));
+    }
+  });
+}
+
 /** Register the OKF export/import tools. Both confine agent-supplied paths under `root`. `maxPending` is injectable so a test can prove the cap is actually wired into import_okf (default keeps production behavior). */
 export function registerOkfTools(server: McpServer, root: string, maxPending: number = MAX_MCP_PENDING_CANDIDATES): void {
   server.registerTool(
@@ -90,14 +120,7 @@ export function registerOkfTools(server: McpServer, root: string, maxPending: nu
     },
     // withQuiet: the export core can print skipped-reference warnings via output.status;
     // on the MCP stdio transport those would land on the JSON-RPC stream and corrupt it.
-    async ({ out, stackId }) => withQuiet(async () => {
-      try {
-        const result = await withRequestEnv(stackId, (env) => exportBundle(root, out, env));
-        return isRefusal(result) ? refusalResult(result) : result;
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    }),
+    async ({ out, stackId }) => runOkfTool(stackId, (env) => exportBundle(root, out, env)),
   );
 
   server.registerTool(
@@ -115,13 +138,7 @@ export function registerOkfTools(server: McpServer, root: string, maxPending: nu
       },
     },
     // withQuiet: same stdio-stream guard as export_okf (the import core may emit warnings).
-    async ({ dir, dryRun, stackId }) => withQuiet(async () => {
-      try {
-        const result = await withRequestEnv(stackId, (env) => importBundle(root, dir, dryRun, maxPending, env));
-        return isRefusal(result) ? refusalResult(result) : result;
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    }),
+    async ({ dir, dryRun, stackId }) =>
+      runOkfTool(stackId, (env) => importBundle(root, dir, dryRun, maxPending, env)),
   );
 }

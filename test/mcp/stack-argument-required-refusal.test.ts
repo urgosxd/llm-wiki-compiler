@@ -47,9 +47,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
 import { buildServer } from "../fixtures/mcp-test-env.js";
+import {
+  expectNamelessCallsRefused,
+  expectRefusedNamingStackId,
+  seedConceptPage,
+  textOf,
+} from "../fixtures/mcp-stack-rows.js";
 import { useQueryStackFixture } from "../fixtures/query-stack-root.js";
 import type { QueryStackFixture } from "../fixtures/query-stack-root.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
@@ -67,20 +71,6 @@ const NAMED_SLUG = "named-only";
 
 /** Body only the NAMED Stack holds, so the read cannot be answered by the bound one. */
 const NAMED_BODY = "ROW_BODY_only_reachable_through_the_named_stack_argument";
-
-/**
- * What an MCP client prints when the SDK rejects a call missing `stackId`.
- *
- * Frozen deliberately: the prefix is the SDK's (`MCP error -32602: Input validation
- * error: Invalid arguments for tool …`) and the tail is the validator's, naming the
- * argument. A caller switching on the text needs both halves stable.
- */
-function refusalText(toolName: string): string {
-  return (
-    `MCP error -32602: Input validation error: Invalid arguments for tool ${toolName}: ` +
-    "Invalid input: expected string, received undefined at stackId"
-  );
-}
 
 /**
  * Every Stack-scoped tool with the minimum OTHER arguments it needs.
@@ -110,11 +100,11 @@ function textOf(result: CallToolResult): string {
 
 /** Seed the ambient Stack with a page the refusal cases go looking for. */
 async function seedAmbientPage(fixture: QueryStackFixture): Promise<void> {
-  await createPageWriteSink(fixture.stack.harness.db, fixture.stack.harness.stackId)({
-    directory: "concepts",
-    slug: SLUG,
-    body: `---\ntitle: Shared\nsummary: ambient\n---\n\n${ROW_BODY}\n`,
-  });
+  await seedConceptPage(
+    fixture.stack.harness,
+    SLUG,
+    `---\ntitle: Shared\nsummary: ambient\n---\n\n${ROW_BODY}\n`,
+  );
 }
 
 /** Row counts ONE Stack owns: everything a refused call could have written there. */
@@ -167,11 +157,11 @@ async function countsOf(harness: KgPostgresHarness, stackId: string): Promise<St
  * @param probe - The Stack the case names explicitly.
  */
 async function seedNamedPage(probe: ProbeStack): Promise<void> {
-  await createPageWriteSink(probe.harness.db, probe.harness.stackId)({
-    directory: "concepts",
-    slug: NAMED_SLUG,
-    body: `---\ntitle: Named\nsummary: named\n---\n\n${NAMED_BODY}\n`,
-  });
+  await seedConceptPage(
+    probe.harness,
+    NAMED_SLUG,
+    `---\ntitle: Named\nsummary: named\n---\n\n${NAMED_BODY}\n`,
+  );
 }
 
 describe("a tool call that omits the required Stack argument", () => {
@@ -192,11 +182,8 @@ describe("a tool call that omits the required Stack argument", () => {
     await server.close();
   });
 
-  it.each(MISSING_STACK_CALLS)("$name is refused and the refusal names stackId", async ({ name, args }) => {
-    const result = await client.callTool({ name, arguments: args });
-
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toBe(refusalText(name));
+  it.each(MISSING_STACK_CALLS)("$name is refused and the refusal names stackId", async (call) => {
+    await expectRefusedNamingStackId(client, call);
   });
 
   it("pins the exact refusal the previously working read_page call now gets", async () => {
@@ -234,10 +221,7 @@ describe("a tool call that omits the required Stack argument", () => {
       };
 
       // Every nameless call is refused by the schema before a handler can run.
-      for (const { name, args } of MISSING_STACK_CALLS) {
-        const refused = await client.callTool({ name, arguments: args });
-        expect(refused.isError).toBe(true);
-      }
+      await expectNamelessCallsRefused(client, MISSING_STACK_CALLS);
 
       // A call that DOES name a Stack this test owns. It reaches THAT Stack's page —
       // so the seam really resolves the argument — and still writes to neither Stack.

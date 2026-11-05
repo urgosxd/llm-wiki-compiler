@@ -40,11 +40,13 @@ import { stackExists } from "../services/stacks/stack-store.js";
 /**
  * What this module says when a deployment has no Stack bound at all.
  *
- * Only {@link boundStackOrProblem} produces it now. Kept exported because the wording
- * is part of what a client has already seen, and the one tool that can still be called
- * without a Stack — `list_stacks` — must not invent a second vocabulary for it.
+ * Module-local on purpose: {@link boundStackOrProblem} is the only producer, and it
+ * hands the wording out inside a refusal rather than as a symbol a caller could
+ * import. Nothing outside this file needs the constant itself, so nothing outside it
+ * gets one — the one tool that can still be called without a Stack, `list_stacks`,
+ * reports the refusal envelope and never the raw text.
  */
-export const NO_STACK_MESSAGE =
+const NO_STACK_MESSAGE =
   "This project has no AKS_STACK_ID, so no Stack-scoped data can be read. " +
   "Set AKS_STACK_ID to the Stack this deployment serves.";
 

@@ -20,9 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import path from "node:path";
 import { buildCollidingProject, CONCEPT_BODY, echoCallClaudeModule, mockQueryVector } from "./fixtures/typed-grounding.js";
 import { changedPaths as changed, fingerprintTree as fingerprint } from "./fixtures/tree-fingerprint.js";
-import { createPageWriteSink } from "../src/dimensions/wiki/page-write-sink.js";
-import { createDimensionsDatabase } from "../src/dimensions/activation.js";
-import { readJournalEntries } from "../src/dimensions/wiki/activity-log-store.js";
+import { journalDescriptions, seedConceptPage } from "./fixtures/mcp-stack-rows.js";
 import { createProbeStack } from "./dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "./dimensions/harness-lifecycle.js";
 
@@ -76,43 +74,6 @@ afterEach(async () => {
   await stack.harness.cleanup();
 });
 
-/**
- * Store the concept `foo` page as a row on the fixture Stack.
- *
- * A Stack-scoped query reads its corpus from Postgres, so the colliding-slug project
- * on disk is invisible to it. The body is the same one the fixture writes, so the
- * answer this case produces is the answer it always produced. Only the DEFAULT
- * concept namespace is seeded: `wiki.pages.page_directory` admits `concepts` and
- * `queries` only, so the typed `papers/foo` page has no row to live in.
- *
- * @param probe - The provisioned Stack to seed.
- */
-async function seedConceptRow(probe: ProbeStack): Promise<void> {
-  await createPageWriteSink(probe.harness.db, probe.harness.stackId)({
-    directory: "concepts",
-    slug: "foo",
-    body: `---\ntitle: Concept Foo\nsummary: cs\n---\n\n${CONCEPT_BODY}`,
-  });
-}
-
-/**
- * The journal descriptions `stackId` holds, read straight from the store.
- *
- * Read inside its own transaction so the tenant bind is the Stack being inspected,
- * not the one the process happens to be bound to.
- *
- * @param stackId - The Stack whose journal to read.
- * @returns Entry descriptions, oldest first.
- */
-async function journalOf(stackId: string): Promise<string[]> {
-  const handle = createDimensionsDatabase(process.env);
-  try {
-    return (await readJournalEntries(handle.db, stackId)).map((entry) => entry.description);
-  } finally {
-    await handle.close();
-  }
-}
-
 /** Capture the MCP `query_wiki` handler by registering tools against a stub. */
 async function mcpQueryHandler(root: string): Promise<(args: Record<string, unknown>) => Promise<unknown>> {
   const { registerWikiTools } = await import("../src/mcp/tools.js");
@@ -144,7 +105,12 @@ describe("asking a question without saving", () => {
   it("journals the MCP route's question to the named Stack, not the deployment's log.md", async () => {
     if (!stack.harness.reachable) return;
     const root = await project("ask-mcp");
-    await seedConceptRow(stack);
+    // A Stack-scoped query reads its corpus from Postgres, so the colliding-slug project
+    // on disk is invisible to it. The body is the same one the fixture writes, so the
+    // answer this case produces is the answer it always produced. Only the DEFAULT
+    // concept namespace is seeded: `wiki.pages.page_directory` admits `concepts` and
+    // `queries` only, so the typed `papers/foo` page has no row to live in.
+    await seedConceptPage(stack.harness, "foo", `---\ntitle: Concept Foo\nsummary: cs\n---\n\n${CONCEPT_BODY}`);
     const handler = await mcpQueryHandler(root);
     const before = await fingerprint(root);
     expect(before.size).toBeGreaterThan(0);
@@ -160,7 +126,7 @@ describe("asking a question without saving", () => {
 
     // Both sides, because either alone passes for the wrong reason: the entry is in
     // the Stack the call named...
-    expect(await journalOf(stack.harness.stackId)).toEqual(["scaling?"]);
+    expect(await journalDescriptions(stack.harness.stackId)).toEqual(["scaling?"]);
     // ...and the deployment's own journal — `log.md`, which is what a project with no
     // Stack writes — is not touched. Nothing else on disk may change either, so the
     // allowlist stays empty rather than naming a file that should no longer exist.

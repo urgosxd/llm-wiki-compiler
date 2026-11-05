@@ -31,13 +31,19 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
+import { rowOnlyProviderModule, seedConceptPage } from "../fixtures/mcp-stack-rows.js";
 import { buildServer, callTool } from "../fixtures/mcp-test-env.js";
 import { useQueryStackFixture } from "../fixtures/query-stack-root.js";
 import type { QueryStackFixture } from "../fixtures/query-stack-root.js";
 
-/** The page the stubbed selector picks; it only exists as a row. */
-const SELECTED_PAGE_ID = "concepts/row-only-page";
+/**
+ * The page the stubbed selector picks; it only exists as a row.
+ *
+ * `vi.hoisted` because the `vi.mock` factory below runs while this file's imports are
+ * being linked — before a module-body `const` would be initialized — and the factory
+ * has to capture the id at that moment.
+ */
+const SELECTED_PAGE_ID = vi.hoisted(() => "concepts/row-only-page");
 
 /** Body that can only come from Postgres: no file holds this text. */
 const ROW_ONLY_BODY = "ROW_ONLY_BODY_never_written_to_disk";
@@ -49,22 +55,15 @@ const ROW_ONLY_BODY = "ROW_ONLY_BODY_never_written_to_disk";
  * code, because they are what this file measures. The selector returns one qualified
  * page id, which is how the real model answers when it picks from the candidate list.
  */
-vi.mock("../../src/utils/llm.js", () => ({
-  callClaude: vi.fn(async (options: { tools?: unknown }) => {
-    if (options.tools) {
-      return JSON.stringify({ pages: [SELECTED_PAGE_ID], reasoning: "the row page" });
-    }
-    return "ANSWER_FROM_ROWS";
-  }),
-}));
+vi.mock("../../src/utils/llm.js", () => rowOnlyProviderModule(SELECTED_PAGE_ID));
 
 /** Seed one page into the Stack through the same sink a compile uses. */
 async function seedRowOnlyPage(fixture: QueryStackFixture): Promise<void> {
-  await createPageWriteSink(fixture.stack.harness.db, fixture.stack.harness.stackId)({
-    directory: "concepts",
-    slug: "row-only-page",
-    body: `---\ntitle: Row Only\nsummary: lives in postgres\n---\n\n${ROW_ONLY_BODY}\n`,
-  });
+  await seedConceptPage(
+    fixture.stack.harness,
+    "row-only-page",
+    `---\ntitle: Row Only\nsummary: lives in postgres\n---\n\n${ROW_ONLY_BODY}\n`,
+  );
 }
 
 /** Put a compiled page on disk only, to prove the row path does not read it. */

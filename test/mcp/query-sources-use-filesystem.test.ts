@@ -24,7 +24,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
+import { seedConceptPage } from "../fixtures/mcp-stack-rows.js";
 import { buildServer, callTool } from "../fixtures/mcp-test-env.js";
 import { useQueryStackFixture } from "../fixtures/query-stack-root.js";
 import type { QueryStackFixture } from "../fixtures/query-stack-root.js";
@@ -47,13 +47,11 @@ const ROW_BODY = "ROW_BODY_from_postgres about graph traversal";
  * the pack then flattens. Written through the sink a compile uses.
  */
 async function seedPageWithCitation(fixture: QueryStackFixture): Promise<void> {
-  await createPageWriteSink(fixture.stack.harness.db, fixture.stack.harness.stackId)({
-    directory: "concepts",
-    slug: "cited-page",
-    body:
-      `---\ntitle: Cited Page\nsummary: cites a disk file\n---\n\n` +
-      `${ROW_BODY}^[${SOURCE_FILE}:1-2]\n`,
-  });
+  await seedConceptPage(
+    fixture.stack.harness,
+    "cited-page",
+    `---\ntitle: Cited Page\nsummary: cites a disk file\n---\n\n` + `${ROW_BODY}^[${SOURCE_FILE}:1-2]\n`,
+  );
 }
 
 /** Write the cited source file under `sources/` only. */
@@ -64,6 +62,24 @@ async function seedSourceFile(root: string): Promise<void> {
     `${SOURCE_LINE_ONE}\nsecond line of the raw source\n`,
     "utf-8",
   );
+}
+
+/**
+ * The source windows the pack carries for pages of `stackId`.
+ *
+ * Both cases measure the same derived value and differ only in the state of the cited
+ * file, so the request and the flattening live here.
+ *
+ * @param root - Project root whose `sources/` the pack reads.
+ * @param stackId - The Stack the call names.
+ * @returns Every source window the pack's primary pages carry.
+ */
+async function sourceWindowsOf(
+  root: string,
+  stackId: string,
+): Promise<Array<{ text?: string }>> {
+  const pack = await requestPack(buildServer(root), stackId);
+  return pack.primary.flatMap((page) => page.sourceWindows ?? []);
 }
 
 /** Ask the registered tool for a pack that materializes source windows. */
@@ -98,10 +114,8 @@ describe("query sources: rows for pages, filesystem for source text", () => {
   it("materializes a source window by reading sources/ from disk", async () => {
     const { stack, root } = fixture();
     if (!stack.harness.reachable) return;
-    const server = buildServer(root);
 
-    const pack = await requestPack(server, stack.harness.stackId);
-    const windows = pack.primary.flatMap((page) => page.sourceWindows ?? []);
+    const windows = await sourceWindowsOf(root, stack.harness.stackId);
 
     // The text exists nowhere but `sources/article.md`. A row-backed source store
     // would return no window at all, or a window with an empty `text`.
@@ -116,10 +130,8 @@ describe("query sources: rows for pages, filesystem for source text", () => {
     // The citation now points at nothing on disk. The pack must degrade to no
     // windows rather than fabricate one from the row body.
     await rm(path.join(root, "sources", SOURCE_FILE), { force: true });
-    const server = buildServer(root);
 
-    const pack = await requestPack(server, stack.harness.stackId);
-    const windows = pack.primary.flatMap((page) => page.sourceWindows ?? []);
+    const windows = await sourceWindowsOf(root, stack.harness.stackId);
 
     expect(windows).toHaveLength(0);
   }, 90_000);

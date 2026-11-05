@@ -46,7 +46,12 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { registerOkfTools } from "../../src/mcp/okf-tools.js";
 import { registerWikiTools } from "../../src/mcp/tools.js";
 import { STACK_ARG_REQUIRED_NOTE } from "../../src/mcp/stack-arg.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
+import {
+  expectNamelessCallsRefused,
+  expectRefusedNamingStackId,
+  seedConceptPage,
+  textOf,
+} from "../fixtures/mcp-stack-rows.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import { withRowsStack } from "../fixtures/rows-only-stack.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
@@ -80,29 +85,6 @@ interface Session {
   readonly harness: KgPostgresHarness;
   /** Every registered tool from a real `tools/list` handshake, keyed by name. */
   list(): Promise<Map<string, ListedTool>>;
-}
-
-/**
- * What an MCP client prints when the SDK rejects a call missing `stackId`.
- *
- * Frozen deliberately: the prefix is the SDK's and the tail is the validator's,
- * naming the argument. A caller switching on this text needs both halves stable.
- *
- * @param toolName - Tool the refused call named.
- * @returns The exact refusal text.
- */
-function refusalText(toolName: string): string {
-  return (
-    `MCP error -32602: Input validation error: Invalid arguments for tool ${toolName}: ` +
-    "Invalid input: expected string, received undefined at stackId"
-  );
-}
-
-/** Join the text blocks of a tool envelope, which is all a client can branch on. */
-function textOf(result: CallToolResult): string {
-  return (result.content as Array<{ type: string; text?: string }>)
-    .map((block) => block.text ?? "")
-    .join("");
 }
 
 /** Read the JSON payload a tool returned via `jsonResult`. */
@@ -234,11 +216,7 @@ async function sourcesIn(harness: KgPostgresHarness, stackId: string): Promise<n
 
 /** Store one page as a row on `stackId`. */
 async function seedRow(harness: KgPostgresHarness, stackId: string, slug: string = SLUG): Promise<void> {
-  await createPageWriteSink(harness.db, stackId)({
-    directory: "concepts",
-    slug,
-    body: ROW_PAGE.replace("Stack Only", slug),
-  });
+  await seedConceptPage(harness, slug, ROW_PAGE.replace("Stack Only", slug));
 }
 
 /** Write a foreign OKF bundle with one valid concept doc under `<root>/kb`. */
@@ -275,12 +253,9 @@ describe("S1: the OKF and ingest tools declare stackId required", () => {
 });
 
 describe("S2: a call with no stackId is refused and touches nothing", () => {
-  it.each(MISSING_STACK_CALLS)("$name is refused, naming stackId", async ({ name, args }) => {
-    await withTools(`req-okf-${name}`, async ({ client }) => {
-      const result = await client.callTool({ name, arguments: args });
-
-      expect(result.isError).toBe(true);
-      expect(textOf(result)).toBe(refusalText(name));
+  it.each(MISSING_STACK_CALLS)("$name is refused, naming stackId", async (call) => {
+    await withTools(`req-okf-${call.name}`, async ({ client }) => {
+      await expectRefusedNamingStackId(client, call);
     });
   });
 
@@ -302,10 +277,7 @@ describe("S2: a call with no stackId is refused and touches nothing", () => {
         // the call before the handler ran, so no fallback and no default-Stack
         // provisioning could even start. Pinned per tool above; re-asserted here so
         // this case cannot pass against a handler that half-ran and wrote nothing.
-        for (const { name, args } of MISSING_STACK_CALLS) {
-          const refused = await client.callTool({ name, arguments: args });
-          expect(refused.isError).toBe(true);
-        }
+        await expectNamelessCallsRefused(client, MISSING_STACK_CALLS);
 
         // A call that DOES name the second Stack: it reaches THAT Stack's rows — one
         // page — while the ambient environment names the other one, and it writes to
