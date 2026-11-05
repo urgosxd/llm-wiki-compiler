@@ -47,9 +47,19 @@ export function isIngestJobsPath(pathname: string): boolean {
  * The durable reader, injected rather than imported.
  *
  * The viewer must not depend on the dimensions database: it runs in hosts that have
- * no Stack at all, and pulling `llmwiki-kg` into this module would make every viewer
- * import pay for a pool it may never open. The host supplies these when it has one,
- * and their absence is the "memory only" configuration, not an error.
+ * no Stack at all, and a pool is the one thing such a host can neither open nor
+ * need. The host supplies these when it has one, and their absence is the "memory
+ * only" configuration, not an error.
+ *
+ * Injection is about the pool, not about keeping the KG package out — this module is
+ * already inside its import graph. It imports `stackIdProblem` from
+ * `../utils/stack-id.js`, and that validator reaches the `llmwiki-kg` barrel, whose
+ * closure is core, DB and config modules. Measured, the viewer bundle was unchanged
+ * by that edge: it already carried those modules through other importers.
+ *
+ * The boundary that does matter is the MCP SDK — nothing on the viewer side may link
+ * `@modelcontextprotocol/sdk`. The barrel's closure contains none of it, which is
+ * what makes this import safe, and no test in the suite enforces that today.
  */
 export interface DurableJobReads {
   /** Every retained job for the host's Stack, newest transition first. */

@@ -16,12 +16,25 @@
  * `rootDir: "src"` and `noEmitOnError`, so a file in it reaching into root `src/`
  * would fail TS6059 and break its build.
  *
- * ## Why this file still exists
+ * ## The viewer / MCP-SDK boundary, stated as it actually is
  *
  * Three wiki surfaces import `stackIdProblem` from `../utils/stack-id.js` — the host
- * API, the viewer's ingest-jobs route and the MCP tenant-db helper — and the viewer
- * must stay free of the MCP SDK. Keeping the adapter at this path preserves that
- * boundary while the rule moves to the package that both dimensions can reach.
+ * API, the viewer's ingest-jobs route and the MCP tenant-db helper — so this adapter
+ * still has a job: it is the one path those three share.
+ *
+ * What this path does NOT do is preserve the viewer boundary by where it sits. The
+ * rule is reached through the `llmwiki-kg` barrel (`core-index.ts`), and that
+ * barrel's transitive closure is core, DB and config modules only: it exports
+ * nothing from `mcp/**` and pulls in no `@modelcontextprotocol/sdk`, so reaching the
+ * rule this way cannot hand the MCP SDK to the viewer. That is the invariant, and no
+ * test in the suite enforces it today.
+ *
+ * Two consequences, stated rather than implied. This file is a VALUE edge into the
+ * whole barrel, not a leaf: evaluating it evaluates `db.js`, `config.js` and the
+ * pool-holding modules alongside the rule. And that adds no new weight, because the
+ * viewer's own graph already reached this same barrel through other importers before
+ * this file became an adapter — a measured build of the viewer bundle produced the
+ * same module set with and without this edge, differing by a few hundred bytes.
  *
  * ## Why validate at all
  *
