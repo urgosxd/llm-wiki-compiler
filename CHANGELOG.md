@@ -107,6 +107,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`llmwiki ingest` accepts `.docx`, and refuses `.doc` and `.xlsx` with a named
+  reason.** A Word document saved as Office Open XML (`.docx`) now ingests as
+  plain text with paragraph breaks preserved, extracted with `mammoth`
+  (BSD-2-Clause, pure JavaScript) through the same format-dispatch seam the other
+  adapters use. Chunking, extraction and the single-commit ingest transaction are
+  unchanged, and the Markdown path is byte-identical to before.
+
+  Two Word-family inputs are refused deliberately instead of failing vaguely.
+  `.doc` is legacy binary Word (pre-2007); decoding it requires an external office
+  suite, which llmwiki does not ship — save it as `.docx` and ingest that. `.xlsx`
+  is refused because spreadsheet extraction is not implemented: npm `xlsx` is
+  frozen at 0.18.5 with unpatched high-severity advisories (CVE-2023-30533,
+  CVE-2024-22363) whose threat model is reading specially crafted files, the
+  patched build ships only as a non-registry CDN tarball, and `exceljs` is
+  unmaintained since 2023 — export the sheet as Markdown or plain text meanwhile.
+  Each refusal names the format, the reason and the remedy, and exits nonzero
+  before anything is written to `sources/`. `read-excel-file@9.3.14` (MIT, dual
+  ESM, pure JavaScript) is the tracked follow-up for lifting the `.xlsx` refusal.
+
+  The supported-format list is documented in the
+  [ingest guide](docs/cli/ingest.mdx#supported-formats) and enforced by tests per
+  format, including a differential check that Markdown ingest output did not move.
+
 - Validated answer publication: `query --save --review` and SDK `review: true`
   stage separate validated-answer review candidates with IDs, canonical answer
   documents, body-only audit digests and a closed precondition on the target
@@ -232,6 +255,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without promotion admission, so malformed metadata can still be cleared.
 
 ### Fixed
+
+- **A `.pdf` with no extractable text is now an error instead of a silent empty
+  ingest.** `pdf-parse` emits a `-- N of M --` marker per page, so a scanned or
+  image-only PDF extracted to marker text, cleared the shared minimum-content
+  guard, and was saved as a source that contributes nothing to compilation. The
+  markers are now stripped inside the PDF adapter — where knowledge of the
+  parser's output format belongs, not in the format-agnostic content guard — so a
+  PDF whose only text was markers extracts to an empty string and is refused with
+  `No readable content could be extracted from the source.` A PDF mixing markers
+  with real text keeps that text byte-identical.
+
+- **The refused-format message no longer claims that only `.md` and `.txt` files
+  are supported.** That sentence was false: `.pdf`, images, transcripts and web
+  URLs all ingest. It told an operator the compiler was narrower than it is, and
+  it hid the follow-up path for formats refused on purpose. A refused input now
+  names the format it saw, whether it is refused by design (`.doc`, `.xlsx`) or
+  simply unrecognised, and what to do instead.
 
 - Embedding reconciliation now attempts only work with a persisted retry budget.
   Full retry markers defer new work without discarding prior failed-attempt counts;
