@@ -54,6 +54,11 @@ any work runs and names the value it could not honour. It never falls back to th
 default Stack: a typed id that redirects itself is the failure the flag exists to
 prevent.
 
+That order is the CLI's alone. The MCP tool surface has no default and no fallback:
+every tool takes a required `stackId` and refuses a call that omits it, with
+`list_stacks` as the one exception. MCP resources are not tools and take no
+arguments, so they keep resolving their Stack from the server environment.
+
 ## What enforces isolation today
 
 The explicit predicate. Every tenant-scoped query carries `where stack_id = ...`,

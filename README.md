@@ -269,6 +269,8 @@ llmwiki serve --root /path/to/wiki-project
 
 MCP clients can ingest sources, compile, query, search pages, read pages, lint, run eval, inspect status, request context packs, and exchange OKF bundles. Read-only tools work without provider credentials; LLM-backed tools validate provider credentials at call time. The `run_eval` tool runs its fast suite without a provider; its full suite (which LLM-judges citation support) requires one.
 
+Every tool takes a required `stackId` naming the Stack it reads or writes: there is no default Stack and no fallback, so a call that omits the argument is refused instead of inheriting the Stack the server is bound to. `list_stacks` is the one exemption — its `stackId` stays optional and only marks which Stack is current. MCP resources are not tools and have no input schema, so the `llmwiki://` resource templates keep resolving their Stack from the server environment.
+
 See [`docs/guides/mcp-agent-integration.mdx`](docs/guides/mcp-agent-integration.mdx).
 
 ### SDK

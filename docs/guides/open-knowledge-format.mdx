@@ -153,7 +153,7 @@ const staged = await wiki.importOkf("./partner-bundle");
 const written = await wiki.importOkf("./internal-bundle", { trusted: true });
 ```
 
-Use MCP when an agent needs structured OKF access. The MCP server exposes `export_okf` and `import_okf`; `import_okf` is always staging-only and supports `dryRun`, so imported knowledge still requires review approval before it enters the live wiki.
+Use MCP when an agent needs structured OKF access. The MCP server exposes `export_okf` and `import_okf`; both take a required `stackId`, and `import_okf` is always staging-only and supports `dryRun`, so imported knowledge still requires review approval before it enters the live wiki.
 
 ---
 
