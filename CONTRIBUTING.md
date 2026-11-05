@@ -73,6 +73,63 @@ The build in `test/global-setup.ts` is cached: a content hash of `src/`,
 tsup run when nothing changed, so a single-file run drops from ~48s to under a
 second. Set `LLMWIKI_TEST_FORCE_BUILD=1` to force a rebuild.
 
+The database-backed suites start their own Postgres too. `test/global-setup.ts`
+resolves one `pgvector/pgvector:pg16` container for the run, Docker picks the host
+port, and every parallel worker shares it; repeat local runs reuse it. Isolation
+between workers is unchanged: each test process creates its own database, applies
+the schema files `scripts/apply-schemas.sh` lists, and drops it on exit. On that
+default path nothing has to be started by hand — the container carries the schema, so
+a local run no longer begins with `docker compose up` and `./scripts/apply-schemas.sh`
+— and Docker is required locally.
+
+If no container can start, the run falls back to a server already listening on the
+compose stack's port (`postgresql://aks:aks@localhost:5434/aks`) and warns that this
+run is not isolated from it.
+
+Two variables change that:
+
+- `LLMWIKI_TEST_DATABASE_URL` — use that database and start no container. Workers
+  also receive it as `AKS_DATABASE_URL`, so set only the one and the paths that read
+  production config see the same server. On this path the database belongs to the
+  caller: the harness does not migrate it, so pointing the variable at a bare server
+  means provisioning that schema yourself with `./scripts/apply-schemas.sh`.
+- `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` — the only way to get a green run without a
+  database. It is a debugging escape hatch: the database-backed suites skip, so they
+  verify nothing. CI must never set it.
+
+Without either one, database-backed suites FAIL with a message naming Docker, the
+pinned image and the override variable. They no longer skip quietly, so a green run
+means those assertions actually ran.
+
+**CI and a local run reach the same rule by different routes.** CI supplies pgvector
+through a `services:` block and sets `LLMWIKI_TEST_DATABASE_URL`, which wins under the
+precedence above, so the container is never started there; a local run starts it.
+Same precedence rule, two provisioning paths — which is why a CI-only failure and a
+local-only failure can have different causes. Both workflows also set
+`DATABASE_URL`, because `scripts/apply-schemas.sh` resolves its target from `$1` or
+`DATABASE_URL` and reads neither of the two `*_DATABASE_URL` variables; without it
+the schema steps exit 2 and `npm test` never runs.
+
+**What the harness costs and buys, measured.** The database-gated tier is 81 test
+files: 448 tests executed and 7 skipped on every run (the 7 are three gateway files
+behind `AKS_TEST_GATEWAY` plus three RETIRED cases, not database skips). On the same
+81 files:
+
+| run | wall clock |
+| --- | --- |
+| live server via `LLMWIKI_TEST_DATABASE_URL` (baseline) | 50.37 s |
+| container, cold (`TESTCONTAINERS_REUSE_ENABLE=false`, nothing adoptable) | 55.82 s |
+| container, warm (`withReuse`, adopting a running container) | 48.61 s / 49.80 s |
+
+Warm container against that baseline is −1.76 s, about 0.8% of the full-suite
+reference (231.45 s): no real speed change, well inside load noise. The harness is
+worth what it is worth for self-containment and for the end of silent skips, not for
+wall clock — and the machine was under heavy external load when these were taken
+(build times varied 3–5x), so read the numbers as indicative. The cold-start cost it
+does add is small and one-off: about 1.5 s to create a container, about 120 ms to
+adopt a reused one, so the first run of the day pays a few seconds and later runs do
+not.
+
 **Where each gate lives:**
 
 The full suite runs in **CI**, on every push to main and every pull request

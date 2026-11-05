@@ -445,6 +445,12 @@ npm test
 npm run fallow:ci
 ```
 
+A local run of the database-backed suites needs Docker: it starts its own pinned
+`pgvector/pgvector:pg16` container, where CI instead supplies the same image as a
+service. A run that cannot reach or start a database fails instead of skipping. The
+`LLMWIKI_TEST_DATABASE_URL` override and the `LLMWIKI_TEST_ALLOW_NO_DATABASE` escape
+hatch are documented in the contributing guide.
+
 See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
