@@ -42,6 +42,7 @@ T7 — Independent verification: one verdict per S#, run against isolated state.
 T8 — Gates: root `tsc --noEmit`, `npm run build`, full `npm test`, `fallow`, KG package typecheck. S8. Route: worker (commands) + Lead (acceptance). Commit: pending.
 T9 — Final report: branch and head SHA, per-task commits, verdict per S#, e2e transcript, isolation proof, KG gate wiring and diagnostic baseline, exact test scope and result, blockers/UNAVAILABLE, scratch paths, Risk line. S1-S9. Route: Lead. Commit: none.
 T10 — Remove the stray statement terminator that kept a fresh database from being built, and reword the per-run fixture's statement-splitter warning so it reads as unreachable. S2 (the isolation fixture's reason for the workaround), S7. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
+T6b — Replace the concept-page assertion that the ingest's own stub row already satisfied with one that pins the page the compile writes. S6, S5's honesty requirement. Route: worker. Commit: 2664ac2.
 
 ## Log
 
@@ -392,3 +393,45 @@ L11 (evidence, T2's remaining scope — the KG package's own harnesses; S2, S6, 
   build at load average 19 on 16 cores, which widens the same window.
 - DEBRIS. After all runs: `pg_database` holds zero `llmwiki_suite_%` names and 7 databases in total, with no
   open session on a per-run database.
+
+L14 (evidence, T6b — one false-positive assertion replaced with the effect it claimed; S6, S5's honesty requirement).
+- THE ASSERTION. `it("writes the compiled concept page into wiki/concepts/")` asserted only
+  `expect(await countConceptPages(cwd)).toBeGreaterThanOrEqual(1)`. `countConceptPages`
+  (`test/fixtures/source-corpus.ts:94-106`) reads the Stack's page rows, and the INGEST's own stub row
+  (`commitPageRow`, `src/dimensions/wiki/store-dimension.ts`) already satisfies that count — so a compile that
+  wrote nothing still passed.
+- THE OBSERVATION THAT DECIDED THE OUTCOME (a temporary probe inside the suite, removed afterwards, which dumped the
+  directories and every page row after a printed happy-path run). ON DISK: `wiki`, `wiki/concepts` and `wiki/queries`
+  are ABSENT — `{"wiki":"ERROR ENOENT","wiki/concepts":"ERROR ENOENT","wiki/queries":"ERROR ENOENT"}` — so the compile
+  writes NO file on this backend and the test's file premise is false. IN THE DATABASE, this Stack's `wiki.pages` holds
+  exactly TWO rows: `{"dir":"concepts","slug":"quickstart-concept","title":"Quickstart Concept","summary":"Concept
+  produced by aimock for quickstart tests.","tags":["quickstart-test"],"body":"\nBody produced for the quickstart
+  test.\n"}` (the COMPILE's page: frontmatter rendered, the stubbed prose) and
+  `{"dir":"concepts","slug":"fixture-source","title":"fixture source","summary":"","tags":[],"body":"# Source\n\nA short
+  source for the quickstart test.\n"}` (the INGEST's stub row: empty summary, no tags, the source bytes). A row premise
+  is therefore true even though the file premise is not, which made this OUTCOME 1: assert the real effect.
+- WHAT THE TEST ASSERTS NOW. A local helper `storedConceptPages()` reads the pages one by one through the same page
+  read API (`listStoredPagesUnfiltered`) `countConceptPages` uses, reusing the file's existing `boundStackId()` and
+  `boundDatabaseUrl()` so no second environment resolution appears. The test pins, exactly: the compiled page's
+  title, summary, tags and prose; and a SECOND page — the ingest stub — with an empty summary, no tags, and the
+  source's bytes. The compile's page is thus separated from the ingest's by fields only the compile writes
+  (`summary`/`tags` from the rendered frontmatter, the stubbed page body) and by the fact that both rows exist.
+  The test name no longer claims a `wiki/concepts/` FILE; it claims the Stack's concepts, which is what is stored.
+- RED (probe, removed afterwards; commit `2664ac2` contains no trace of it). The same attribution applied to a run
+  where the compile provably wrote nothing: `bootLockFixture()` plus `holdProjectLockOnNextRelease()`, which refuses
+  the compile. The probe dumped `PROBE_INGEST_ONLY [{"slug":"fixture-source","title":"fixture source","summary":"",
+  "tags":[],"body":"# Src\n\nThe compile-lock source for the quickstart integration test.\n"}]` — ONE row, the ingest
+  stub — and failed with `AssertionError: expected undefined to be 'Concept produced by aimock for quicks...' //
+  Object.is equality`, exit 1. The old `>= 1` passed on that very row, which is the false positive observed.
+- GREEN. `npx vitest run test/quickstart-integration.test.ts -t "writes the compiled concept page" --reporter=verbose`
+  → 1 passed | 18 skipped (19), exit 0. `npx vitest run test/quickstart-integration.test.ts` → 16 passed | 3 skipped
+  (19), exit 0 — identical to the pre-change baseline (16 passed | 3 skipped | 0 failed); the 3 skips are T6's
+  RETIRED viewer-handoff expectations and nothing else is skipped. `npx tsc --noEmit` → exit 0.
+- COMMIT. `2664ac2` `test(quickstart): stop asserting a compile effect the ingest already satisfies`, staged with a
+  pathspec naming ONLY `test/quickstart-integration.test.ts`. The untracked `test/fixtures/ephemeral-postgres.ts` and
+  `test/kg-mcp-e2e/` (T4's, not this task's) were left untouched.
+- WIDER THAN ONE LINE, REPORTED NOT FIXED: (a) T6's own task line still records no SHA although its work is
+  `8244405`; (b) the file already exceeds AGENTS.md's 400-line test limit (555 pre-existing, 620 after this change),
+  so its size is a defect this change did not create; (c) three Log labels are duplicated in this document
+  (`L9`/`L10`/`L11` appear twice, `L11` three times) because concurrent workers numbered independently — this entry
+  uses the next free label, `L14`.
