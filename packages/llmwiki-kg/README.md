@@ -216,19 +216,19 @@ Practical recommendation: start with one Stack. If retrieval quality drops as yo
 ```
 POST   /stacks                            create a Stack
 GET    /stacks                            list all Stacks
-GET    /stacks/{stack_id}                 fetch one
-PATCH  /stacks/{stack_id}                 partial update
-DELETE /stacks/{stack_id}                 delete (cascades to all data)
+GET    /stacks/{stackId}                  fetch one
+PATCH  /stacks/{stackId}                  partial update
+DELETE /stacks/{stackId}                  delete (cascades to all data)
 ```
 
 ### Documents
 
 ```
-POST   /stacks/{stack_id}/documents              upload (multipart/form-data)
-GET    /stacks/{stack_id}/documents              list documents in a Stack
+POST   /stacks/{stackId}/documents               upload (multipart/form-data)
+GET    /stacks/{stackId}/documents               list documents in a Stack
 GET    /documents/{doc_id}                       fetch one
 DELETE /documents/{doc_id}                       delete (and remove file on disk)
-POST   /stacks/{stack_id}/documents/{doc_id}/ingest    run the compilation pipeline
+POST   /stacks/{stackId}/documents/{doc_id}/ingest     run the compilation pipeline
 ```
 
 ### AKS query interface (the spec-conformant surface)
@@ -241,7 +241,13 @@ POST   /aks/v1/context                           natural-language query
 GET    /aks/v1/export                            full Stack as AKS Bundle
 ```
 
-All accept either `?stack_id=<uuid>` or `?domain=<slug>`.
+All accept either `?stackId=<uuid>` or `?domain=<slug>`.
+
+Stack addressing is an inbound field named `stackId`: a path label
+(`/stacks/{stackId}`), a query parameter (`?stackId=<uuid>`) or a request-body
+key, always a UUID. Response bodies still spell that field `stack_id`, and so do
+the database columns — the rename stops at the request boundary, so a client
+sends `stackId` and reads `stack_id` back.
 
 ### Entity pages
 
@@ -253,7 +259,7 @@ GET    /aks/v1/pages                             zip of all pages in a Stack
 ### Description synthesis (backfill)
 
 ```
-POST   /stacks/{stack_id}/synthesize-descriptions             backfill many
+POST   /stacks/{stackId}/synthesize-descriptions              backfill many
 POST   /aks/v1/entities/{name}/synthesize-description         backfill one
 ```
 
@@ -351,6 +357,22 @@ The server includes a separate MCP (Model Context Protocol) server that exposes 
 | `query_stack` | `POST /aks/v1/context` | Natural-language questions |
 | `traverse_stack` | `GET /aks/v1/traverse` | "Show me the neighborhood around X" |
 | `get_entities` | `GET /aks/v1/entities` | Inventory, type filtering |
+
+The three graph tools take a required `stackId` — a Stack UUID, with no default
+Stack and none resolved from the environment — and accept `domain` only as an
+additional filter alongside it, never as a replacement.
+
+`list_stacks` is the exemption, because a discovery tool cannot require the id it
+discovers: both its arguments are optional. `limit` is an integer from 1 to 200,
+defaulting to 50. `stackId` does NOT narrow the listing — it only decides which
+entry is marked `isCurrent`, and this endpoint is bound to no Stack, so omitting
+it marks no entry current. The answer is a JSON document of the form
+`{ stacks, count }`, ordered most recently updated first with the `isCurrent`
+entry ahead of the rest, where each entry carries `id`, `name`, `domain`,
+`description`, `scope`, `compilationStrategy`, `synthesizeDescriptions`,
+`createdAt`, `updatedAt` and `isCurrent`. That is the same contract the wiki
+dimension's `list_stacks` returns, so a client builds one set of arguments and
+parses one shape either way.
 
 ### Configuration (Linux)
 

@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — the Stack argument is named `stackId` on every request, and the
+  legacy `stack_id` request-body key is now refused.** The Knowledge Graph
+  dimension spelled one concept `stack_id` on its inbound surface while the wiki
+  dimension spelled it `stackId`. One concept now has one name, so an external
+  consumer must rename the field wherever it addresses a Stack.
+
+  The Knowledge Graph HTTP API takes `stackId` in path labels — `/stacks/:stackId`,
+  `/stacks/:stackId/documents`, `/stacks/:stackId/documents/:doc_id`,
+  `/stacks/:stackId/documents/:doc_id/ingest`,
+  `/stacks/:stackId/synthesize-descriptions` and
+  `/domain/kg/stacks/:stackId/graph` — and as the query parameter `?stackId=` on
+  `/aks/v1/entities`, `/entities/{name}`, `/traverse`, `/export`, `/pages`,
+  `/pages/{name}`, `/entities/{name}/synthesize-description` and
+  `/backfeed/queue`. `POST /aks/v1/context` and `POST /aks/v1/backfeed/flag` take
+  `stackId` in the request body. The value is unchanged — still a Stack UUID,
+  still resolved by UUID or by `domain` slug — so only the key moves.
+
+  A request body that still carries `stack_id` is refused rather than stripped:
+  it answers 422 with `loc` `["body", "stack_id"]` and the message
+  "Value error, `stack_id` was renamed to `stackId`; send `stackId` instead".
+  Stripping was the worse failure, because the Stack then went unresolved and the
+  request fell through to domain-only resolution. Every other unknown key is
+  still stripped as before.
+
+  422 locations follow the rename: a bad Stack in the path points at
+  `["path", "stackId"]` instead of `["path", "stack_id"]`, a bad one in the
+  query at `["query", "stackId"]`, and the either/or detail reads
+  "Either stackId (UUID) or domain (slug) must be provided". A client that
+  switches on `loc` or compares that string must update.
+
+  The MCP tools move with the HTTP surface. In the Knowledge Graph dimension
+  `query_stack`, `traverse_stack` and `get_entities` take a required `stackId` (a
+  UUID) and keep `domain` as an additional filter that never replaces it, and
+  their refusals name the new key: "Error: 'stackId' must be provided." when it is
+  absent, and the shared malformed-id message prefixed with `Error: ` when it is
+  not a UUID.
+
+  `list_stacks` changes shape in the Knowledge Graph dimension: it answered with
+  prose lines and now returns the same JSON document the wiki dimension returns,
+  `{ stacks, count }`, with each entry carrying `id`, `name`, `domain`,
+  `description`, `scope`, `compilationStrategy`, `synthesizeDescriptions`,
+  `createdAt`, `updatedAt` and `isCurrent`, most recently updated first with the
+  `isCurrent` entry ahead of the rest. Both dimensions declare the same input
+  schema — `limit` (optional integer, 1 to 200, default 50) and `stackId`
+  (optional; it marks the current entry and never narrows the listing) — and both
+  stay exempt from the required-Stack rule, because a discovery tool cannot
+  demand the id it discovers. An MCP client that parsed the prose must parse JSON.
+
+  **Not renamed, deliberately:** every outbound response field keeps `stack_id` —
+  `DocumentResponse`, `AKSBundle`, `BackfeedItemResponse`, `BackfillResult`,
+  `StackGraph` and the document and backfeed row projections among them — and
+  every database column stays `stack_id`. Requests say `stackId`; responses still
+  say `stack_id`.
+
 - **The wiki stores its state in Postgres, per Stack.** Pages, the event chain,
   relation edges, compile state, the review-candidate queue, the embedding corpus,
   and the rule-extraction cursor all live in rows scoped to a Stack, instead of

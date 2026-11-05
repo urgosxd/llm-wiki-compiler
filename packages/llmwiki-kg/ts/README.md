@@ -1,11 +1,8 @@
 # AKS Reference Server — TypeScript
 
-TypeScript port of the AKS Reference Server, preserving the HTTP contract 1:1 with the
-Python/FastAPI implementation in `../app/`.
-
-The Python service is **not replaced yet**. It runs during the port as a live **contract
-oracle** on `localhost:8000`: every TS slice is validated by sending the same requests to
-both servers and diffing the JSON.
+TypeScript port of the AKS Reference Server, derived from the Python/FastAPI
+implementation in `../app/`. That Python service is provenance only: it is not a
+contract oracle, and nothing here is validated by diffing against it.
 
 ## Status
 
@@ -31,20 +28,12 @@ npm run test:watch # vitest in watch mode
 `npm start` serves the compiled output; `npm run dev` runs `src/index.ts` under `tsx watch`.
 Both listen on `process.env.PORT`, defaulting to `8000`.
 
-**Use port 8001 during the port** so the TypeScript server never collides with the Python
-oracle on `8000`:
+Set `PORT` explicitly to avoid a collision on the default `8000`:
 
 ```bash
 PORT=8001 npm run dev
 curl http://localhost:8001/health
 # {"status":"ok","service":"aks-reference-server","version":"0.2.0"}
-```
-
-Then diff against the oracle:
-
-```bash
-curl http://localhost:8000/health   # Python
-curl http://localhost:8001/health   # TypeScript
 ```
 
 ## Layout
@@ -65,8 +54,7 @@ ts/
 
 ## Contract notes
 
-- `GET /health` is unauthenticated and returns the oracle body byte-for-byte, in the same
-  field order.
+- `GET /health` is unauthenticated and returns its body in a fixed field order.
 - Unmatched routes return `404` with a JSON `{"detail": "Not Found"}` body, mirroring
   FastAPI — never Express's default HTML error page.
 - CORS mirrors `app/main.py`: wildcard origin, methods, and headers, with FastAPI's
