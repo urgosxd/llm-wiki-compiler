@@ -109,10 +109,12 @@ function registerCompileTool(server: McpServer, root: string): void {
     async ({ stackId }) => {
       ensureCompileProviderAvailable();
       // Compile WRITES pages, so the Stack it is given decides which tenant the output
-      // lands in. Wrapped rather than threaded because the writer already resolves the
-      // Stack from the environment, and inventing a second argument would let a compile
-      // write to one Stack while its reads came from another.
-      const result = await withRequestEnv(stackId, () => compileAndReport(root));
+      // lands in. The run's environment IS that Stack: the pipeline resolves every
+      // seam, the compile state, the database handle and the journal from it, and every
+      // one of those defaults to `process.env` — the deployment this process serves,
+      // not the Stack the caller named. So the per-request env is handed over
+      // explicitly rather than left implicit.
+      const result = await withRequestEnv(stackId, (env) => compileAndReport(root, { env }));
       if (isRefusal(result)) return refusalResult(result);
       return jsonResult(result);
     },

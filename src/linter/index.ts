@@ -33,7 +33,11 @@ import {
 import { checkEventChain } from "./rules-events.js";
 import { collectAllPages, type PageScope } from "./rules-shared.js";
 import { corpusFromRawPages, withLintCorpus, type LintCorpus } from "./corpus.js";
-import { withRawPageSource, withSourceDocuments } from "../dimensions/wiki/page-source-seam.js";
+import {
+  readStateClassifiedFor,
+  withRawPageSource,
+  withSourceDocuments,
+} from "../dimensions/wiki/page-source-seam.js";
 
 /** Rule-only lint checks that don't depend on the schema layer. */
 /**
@@ -168,17 +172,25 @@ async function collectTieredGroups(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<TieredResultGroupV1[]> {
   const corpus = await resolveLintCorpus(root, scope, env);
-  return await withLintCorpus(corpus, () => collectGroupsInScope(root, scope));
+  return await withLintCorpus(corpus, () => collectGroupsInScope(root, scope, env));
 }
 
 /** The rule fan-out itself, run with a corpus already in scope. */
-async function collectGroupsInScope(root: string, scope: PageScope): Promise<TieredResultGroupV1[]> {
+async function collectGroupsInScope(
+  root: string,
+  scope: PageScope,
+  env: NodeJS.ProcessEnv,
+): Promise<TieredResultGroupV1[]> {
   const schema = await loadSchema(root);
-  // Resolves the corpus itself: on a Stack the documents are rows, and every source
-  // identity is a capability URL that no `sources/` file can match. Omitting that
-  // classified every owned page `orphaned` here while `status` reported them fine --
-  // the same corpus, two answers. See `buildProjectFreshnessSnapshot`.
-  const freshness = await buildProjectFreshnessSnapshot(root);
+  // BOTH halves of the snapshot resolve from `env`, for the reason `status` records at
+  // its own call site: the corpus is the Stack's SOURCE DOCUMENTS (a Stack's source
+  // identity is a capability URL that no `sources/` file can match), and the compile
+  // state it is compared against is Stack-scoped too. Leaving either on `process.env`
+  // made a lint of Stack A run by a process bound to Stack B compare A's pages against
+  // B's sources and report ZERO stale findings, while `wiki_status` — handed the same
+  // request env — reported that page stale. Same rows, two answers.
+  const classified = await readStateClassifiedFor(root, env);
+  const freshness = await buildProjectFreshnessSnapshot(root, classified, undefined, env);
   const [plain, schemaGroups, freshnessGroups] = await Promise.all([
     Promise.all(RULES_WITHOUT_SCHEMA.map(async (entry) => ({
       tier: entry.tier,

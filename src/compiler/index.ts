@@ -178,7 +178,13 @@ export async function compileAndReport(
   // than inside the pipeline keeps its lifetime bounded to this call. Constructing
   // it does not connect, so a compile of a project with no dimension work never
   // opens a socket.
-  const dimensionsDb = createDimensionsDatabase();
+  //
+  // The RUN's environment decides which database, not the ambient one: every seam
+  // below is handed `options.env`, so a handle taken from `process.env` would build
+  // one run out of two deployments — reads and writes through the connection it
+  // opened, and Stack resolution through the environment it was given. Omitted stays
+  // `process.env`, which is exactly what the CLI does today.
+  const dimensionsDb = createDimensionsDatabase(options.env ?? process.env);
 
   const locked = await acquireMutationLock(root, "ordinary");
   if (!locked) {
@@ -868,7 +874,7 @@ async function runCompilePipeline(
       seams,
       stateRows,
     ), () => reportCompileStage(compileReporter, "compile.finalize"));
-    await logCompile(root, buckets, generation, existingIds);
+    await logCompile(root, buckets, generation, existingIds, env);
   }
   verbose(`compile finished in ${Date.now() - startMs} ms`);
   return summarizeCompile(buckets, generation, canonicalExtractions, options, forgetErrors);

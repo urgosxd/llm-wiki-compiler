@@ -25,12 +25,19 @@ import type { ChangeBuckets, PageGenerationResult } from "./types.js";
  * produced pages split into created (new on disk) and updated (overwritten).
  * Compile only ever writes concept-namespace pages (concept and seed pages both
  * land under wiki/concepts/), so existence is checked against that namespace.
+ *
+ * @param env - Environment naming the Stack the journal entry belongs to; defaults to
+ *   `process.env`. The compile's OWN environment must be passed: the journal is
+ *   Stack-scoped (`appendLog` -> `withJournalSource`), so leaving this to the default
+ *   journalled a compile of Stack A into whichever Stack the process served — a
+ *   cross-tenant WRITE, which outlives the call.
  */
 export async function logCompile(
   root: string,
   buckets: ChangeBuckets,
   generation: PageGenerationResult,
   existingIds: Set<string>,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   if (buckets.toCompile.length === 0 && buckets.deleted.length === 0) return;
   const produced = [...new Set([...generation.writtenPages.map((entry) => entry.slug), ...generation.seedSlugs])];
@@ -45,7 +52,7 @@ export async function logCompile(
   if (created.length > 0) details.push(`Created: ${formatWikilinkList(created)}`);
   if (updated.length > 0) details.push(`Updated: ${formatWikilinkList(updated)}`);
   if (buckets.deleted.length > 0) details.push(`Deleted sources: ${buckets.deleted.length}`);
-  await appendLog(root, "compile", heading, { details });
+  await appendLog(root, "compile", heading, { details, env });
 }
 
 /** Build the structured CompileResult and emit the CLI completion banner. */
