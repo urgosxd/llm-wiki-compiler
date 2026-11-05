@@ -323,6 +323,39 @@ function schemaViolationNote(schemaViolations: number): string {
   return schemaViolations === 0 ? "" : `, ${schemaViolations} types outside the declared schema`;
 }
 
+/** Which head a summary renders: the detect-only run, or the persisted one. */
+type SummaryKind = "dry-run" | "commit";
+
+/**
+ * Renders one document's summary: the head counts, then every degraded-run note.
+ *
+ * ## Why the fragments are composed here and nowhere else
+ *
+ * The summary is the only per-document signal a caller sees without querying the
+ * graph, and it has exactly two producers: the detect-only path and the persist
+ * path. Composing it at each call site kept the note ORDER in two template
+ * literals at once, so appending a note to one and not the other made a dry run
+ * describe a run the real commit does not perform — a divergence no assertion
+ * catches, because both strings stay well-formed. One composition point means a
+ * new note is added once and both paths report it.
+ *
+ * The order is load-bearing and is the order of the calls below:
+ * {@link rejectionNote} comes FIRST — its exact wording and its position are
+ * pinned by callers and predate the other three — then the failed-chunk, mangled
+ * envelope and schema-violation notes. Each note carries its own leading comma
+ * and renders nothing when its count is zero, so the head is followed directly by
+ * an empty string on a clean run and the summary is the counts alone.
+ *
+ * @param kind - Which head to render: the detect-only run or the persisted one.
+ * @param handle - Prepared chunks and extraction, for the counts and the notes.
+ * @returns The summary string for this document.
+ */
+function summaryFor(kind: SummaryKind, handle: KgHandle): string {
+  const counts = `${handle.chunks.length} chunks, ${handle.entities.length} entities`;
+  const head = kind === "dry-run" ? `kg:dry-run(${counts})` : `kg:${counts}`;
+  return `${head}${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}${mangledNote(handle.mangledChunks)}${schemaViolationNote(handle.schemaViolations)}`;
+}
+
 /**
  * Write the extracted graph into Postgres inside one transaction.
  *
@@ -660,10 +693,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
     async commit(prepared: PreparedWrite, scope?: CommitScope): Promise<CommittedWrite> {
       const handle = prepared.handle as KgHandle;
       if (options.dryRun === true || handle.chunks.length === 0) {
-        return {
-          idempotencyKey: `kg:${handle.documentId}`,
-          summary: `kg:dry-run(${handle.chunks.length} chunks, ${handle.entities.length} entities)${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}${mangledNote(handle.mangledChunks)}${schemaViolationNote(handle.schemaViolations)}`,
-        };
+        return { idempotencyKey: `kg:${handle.documentId}`, summary: summaryFor("dry-run", handle) };
       }
       // `writeGraph` replaces the placeholder with the id Postgres assigned, and
       // stamps `extracted_by_model` from the same override the extraction used,
@@ -681,7 +711,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
         // Keyed on the real row id, so the outbox replay targets the same document
         // rather than the label it was prepared under.
         idempotencyKey: `kg:${handle.documentId}`,
-        summary: `kg:${handle.chunks.length} chunks, ${handle.entities.length} entities${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}${mangledNote(handle.mangledChunks)}${schemaViolationNote(handle.schemaViolations)}`,
+        summary: summaryFor("commit", handle),
       };
     },
 

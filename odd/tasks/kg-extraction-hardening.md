@@ -146,3 +146,88 @@ commit cannot contain its own SHA):
 
 Both Log L2 gaps are therefore closed. No behaviour changed in T5 beyond the
 duplicate's removal, and no S# requirement moved.
+
+### L8 — the summary composition, and a measurement correction
+
+`createKgDimension`'s two ingest summaries were two hand-duplicated template
+literals: the detect-only head (`kg:dry-run(<n> chunks, <m> entities)…`) and the
+persist head (`kg:<n> chunks, <m> entities…`), each appending the same four
+fragments. They now come from one function, `summaryFor(kind, handle)`
+(`src/dimensions/kg/index.ts`), and both call sites pass through it.
+
+**What it composes, in this fixed order:** `rejectionNote` →
+`extractionNote` → `mangledNote` → `schemaViolationNote`. `rejectionNote` stays
+FIRST — its wording and position are pinned by callers and predate the other
+three — and none of the four note helpers was edited.
+
+**Why the helper exists:** not to shorten the factory. The summary is the only
+per-document signal a caller sees without querying the graph, and it has two
+producers that must agree. While the fragments lived in two template literals,
+appending a note to one and not the other made a dry run describe a run the real
+commit does not perform, and no assertion would catch it, because both strings
+stay well-formed. One composition point means a new note is added once and both
+paths report it. That is the whole justification, and it is a readability and
+drift one.
+
+**Byte-identical, proven by the suites that assert the strings exactly.**
+`npx vitest run test/dimensions/kg-dimension.test.ts
+test/dimensions/kg-core-ontology-flow.test.ts` — 2 files, 17 tests, green BEFORE
+the edit and green AFTER it, unchanged. The assertions that pin the bytes and
+passed both times:
+
+- `expect(committed.summary).toBe("kg:1 chunks, 1 entities")` —
+  `test/dimensions/kg-dimension.test.ts:160`, the exact-equality pin on the
+  persist head with no fragments.
+- `expect(committed.summary).toBe("kg:dry-run(1 chunks, 1 entities)")` —
+  `test/dimensions/kg-dimension.test.ts:252`, the exact-equality pin on the
+  detect-only head, parentheses included.
+- `expect(committed.summary).toContain("1 triplets rejected by ontology")` —
+  `test/dimensions/kg-core-ontology-flow.test.ts:123`, the pin on
+  `rejectionNote`'s wording.
+- `test/dimensions/kg-dimension.test.ts:188` also still contains
+  `2 chunks failed extraction`, so the appended-fragment position is covered too.
+
+No test file was modified. No behaviour changed: this slice moves composition only.
+
+**Measurement correction — AGENTS.md was never violated here.** The earlier
+report of "54 non-comment lines, pushed from 52 by this feature" was a
+measurement error, and it is recorded here rather than papered over as a fixed
+violation, because there was no violation. That figure counts the WHOLE SPAN of
+`createKgDimension`, which is a 5-line factory returning an object literal of four
+async methods: the span attributes each method's body to the factory that declares
+it. The language and every line-counting tool treat each method as its own
+function. Measured per function (non-comment, non-blank, from the TS AST) after
+this slice:
+
+| Function          | Own lines |
+| ----------------- | --------- |
+| `createKgDimension` | 5       |
+| `prepare`           | 22      |
+| `commit`            | 12      |
+| `summaryFor`        | 5       |
+| `writeGraphRows`    | 24      |
+
+Every one is comfortably under 40. The whole-span figure is 52 at the
+pre-feature base `8203862`, 54 at `2c158eb`, and 51 after this slice; it rose by
+two at `2c158eb` because `prepare`'s handle literal gained `mangledChunks` and
+`schemaViolations` (T3/T4), not because of the summary templates, which added no
+lines. `npx fallow health` reports zero complexity findings for this file either
+side of the change.
+
+**`prepare` and `commit` were deliberately NOT extracted.** Dissolving either
+body into a module-level helper would move the artefactual whole-span number and
+nothing else: no behaviour, no readability, no risk reduction — pure
+overengineering bought by touching the two functions this slice had to leave
+alone. Refused, and recorded as refused.
+
+**Checks run for this slice:**
+
+- `npx tsc --noEmit` — exits 0, no diagnostics.
+- `npx vitest run test/dimensions/kg-dimension.test.ts
+  test/dimensions/kg-core-ontology-flow.test.ts` — 2 files / 17 tests passed,
+  before and after the edit.
+- `npm run test:affected` — 626 files / 4599 tests passed, 382.83s, exit 0.
+
+This entry is carried by the commit `refactor(kg): split the kg dimension summary
+composition` on `feat/kg-extraction-hardening`; its SHA is `git log -1
+--format=%h` on that branch, since a commit cannot contain its own SHA.
