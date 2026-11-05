@@ -31,20 +31,30 @@ import { useQuickstartProcessLifecycle } from "./fixtures/run-cli-server.js";
 import { LLMWIKI_DIR, LAST_LINT_FILE } from "../src/utils/constants.js";
 import { countConceptPages, listSourceFilenames } from "./fixtures/source-corpus.js";
 import { useStackEnv } from "./fixtures/stack-env.js";
-import { testDatabaseUrl } from "./fixtures/test-database.js";
 
 // Every suite here drives quickstart end to end, which ingests.
 useStackEnv("quickstart-integration");
 
 /**
- * Whether this run is bound to a Stack.
+ * Why the four expectations below that carry `it.skip` are inert.
  *
- * Read at COLLECTION time, which is the only time `skipIf` consults it -- and by
- * then `useStackEnv`'s `beforeEach` has not run, so `process.env.AKS_STACK_ID` is
- * still undefined. The test database URL is present from process start and is what
- * activates the dimensions, so it is the honest signal.
+ * They have NEVER executed, in no configuration at all. They were gated by an
+ * `it.skipIf(stackAlwaysOn)` predicate defined as `testDatabaseUrl() !== ""`, and
+ * that predicate was a tautology: `testDatabaseUrl()` returns
+ * `DEFAULT_TEST_DATABASE_URL` when the override is empty and never returns `""`
+ * (`test/fixtures/test-database.ts:62-65`), so it evaluated to the constant `true`
+ * everywhere. A predicate that reads like a live guard gated nothing; the honest
+ * form is an explicit `it.skip` carrying the real reason, which is this one.
+ *
+ * The reason these tests were skipped in the first place still holds: the project
+ * lock is a Postgres advisory lock keyed by Stack id, so the shared-fixture
+ * assumptions they were written against -- a `.llmwiki/lock` FILE contending for
+ * the lock, a fixture short enough that no page is produced -- are no longer true
+ * against a Stack. Repairing them means standing up Postgres, the API and
+ * database-level isolation, which is Project 3, branch `feat/reach-test`. Until
+ * that lands these stay non-executing, and the source says so plainly instead of
+ * claiming an always-true predicate activates them.
  */
-const stackAlwaysOn = testDatabaseUrl() !== "";
 
 const aimock = useAimockLifecycle("quickstart");
 
@@ -282,13 +292,14 @@ describe("`llmwiki quickstart <missing>`", () => {
 });
 
 describe("`llmwiki quickstart --json` — compile returns errors (lock contention)", () => {
-  // SKIPPED on a Stack: this suite seeded `.llmwiki/lock` as a FILE to make the
-  // compile's acquire fail. The lock is a Postgres advisory lock keyed by the Stack
-  // id now, so a file contends with nothing. Taking the real lock instead blocks the
-  // INGEST rather than the compile, which is a different scenario than the one under
-  // test. Reproducing "ingest succeeds, compile is locked out" needs a second process
-  // holding the lock between the two phases -- a separate piece of work.
-  it.skipIf(stackAlwaysOn)("preserves CompileResult.errors verbatim and reports compile.ok=false", async () => {
+  // `it.skip`, and this expectation has never run -- see the note near the top of
+  // this file. This suite seeded `.llmwiki/lock` as a FILE to make the compile's
+  // acquire fail. The lock is a Postgres advisory lock keyed by the Stack id now, so
+  // a file contends with nothing. Taking the real lock instead blocks the INGEST
+  // rather than the compile, which is a different scenario than the one under test.
+  // Reproducing "ingest succeeds, compile is locked out" needs a second process
+  // holding the lock between the two phases -- Project 3, `feat/reach-test`.
+  it.skip("preserves CompileResult.errors verbatim and reports compile.ok=false", async () => {
     const { handle, cwd, fixturePath } = await bootQuickstart(
       "# Src\n\nLock-contention test.\n",
     );
@@ -415,13 +426,15 @@ describe("`llmwiki quickstart --lang`", () => {
 describe("`llmwiki quickstart` — viewer handoff (Slice 3)", () => {
   const lifecycle = useQuickstartProcessLifecycle();
 
-  // SKIPPED on a Stack: the fixture below is 33 chars, under the compile minimum, so
-  // no page is produced and the viewer never starts. On a file project the same
-  // fixture still reaches the handoff; on a Stack the compile is what gates it.
-  // Enlarging the fixture would change what the suite measures, so this waits for
-  // the viewer's row-backed handoff path to be exercised deliberately.
+  // The three expectations in this describe are `it.skip`, and none has ever run
+  // (see the note near the top of this file). Their original reason still holds: the
+  // fixture below is 33 chars, under the compile minimum, so no page is produced and
+  // the viewer never starts. On a Stack the compile is what gates the handoff, and
+  // enlarging the fixture would change what the suite measures. Reactivating them is
+  // Project 3, `feat/reach-test`, which stands up Postgres, the API and
+  // database-level isolation, including the viewer's row-backed handoff path.
 
-  it.skipIf(stackAlwaysOn)("prints the lifecycle line and hands off to the foreground viewer when pages exist", async () => {
+  it.skip("prints the lifecycle line and hands off to the foreground viewer when pages exist", async () => {
     const { handle, cwd, fixturePath } = await bootQuickstart(
       "# Src\n\nViewer-handoff happy path.\n",
     );
@@ -435,7 +448,8 @@ describe("`llmwiki quickstart` — viewer handoff (Slice 3)", () => {
     expect(proc.port).toBeGreaterThan(0);
   });
 
-  it.skipIf(stackAlwaysOn)("suppresses the `Next:` line when handing off (viewer is the action)", async () => {
+  // Never executed; see the note at the top of this describe.
+  it.skip("suppresses the `Next:` line when handing off (viewer is the action)", async () => {
     const { handle, cwd, fixturePath } = await bootQuickstart(
       "# Src\n\nNext-line suppression test.\n",
     );
@@ -448,7 +462,8 @@ describe("`llmwiki quickstart` — viewer handoff (Slice 3)", () => {
     expect(proc.stdout).not.toMatch(/^Next:$/m);
   });
 
-  it.skipIf(stackAlwaysOn)("preserves a non-view `Next:` recommendation during handoff (lint errors)", async () => {
+  // Never executed; see the note at the top of this describe.
+  it.skip("preserves a non-view `Next:` recommendation during handoff (lint errors)", async () => {
     // Seed a populated lint cache with errors BEFORE quickstart runs.
     // After compile the project state hits lint-attention (errors > 0
     // outranks wiki-ready), so recommendNextAction returns `llmwiki
