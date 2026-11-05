@@ -40,6 +40,7 @@ T6 — Resolve the four inert quickstart expectations honestly (resurrect under 
 T7 — Independent verification: one verdict per S#, run against isolated state. S1-S6. Route: gentle-ai-verify. Commit: none.
 T8 — Gates: root `tsc --noEmit`, `npm run build`, full `npm test`, `fallow`, KG package typecheck. S8. Route: worker (commands) + Lead (acceptance). Commit: pending.
 T9 — Final report: branch and head SHA, per-task commits, verdict per S#, e2e transcript, isolation proof, KG gate wiring and diagnostic baseline, exact test scope and result, blockers/UNAVAILABLE, scratch paths, Risk line. S1-S9. Route: Lead. Commit: none.
+T10 — Remove the stray statement terminator that kept a fresh database from being built, and reword the per-run fixture's statement-splitter warning so it reads as unreachable. S2 (the isolation fixture's reason for the workaround), S7. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
 
 ## Log
 
@@ -111,3 +112,51 @@ L9 (T2 implemented; mechanism, cost, proof, and the constraint that fixed the co
 - NO CHANGE NEEDED in `test/fixtures/test-database.ts` and `test/fixtures/rls-probe.ts`: the resolver's contract stays exactly as pinned (`test/test-database-fixture.test.ts` green, never `""`, falls back to DEFAULT_TEST_DATABASE_URL) and the RLS probe takes a database handle, not a URL.
 - GATE EVIDENCE (exact scope): `test/fixtures/per-run-database.test.ts` 6/6 (RED first: `Cannot find module './per-run-database.js'`); `test/dimensions` 82 files / 477 tests passed, exit 0; `test/compiler` 5 files / 20 tests passed, exit 0; `npm run typecheck:kg` exit 0 (226 files, 0 diagnostics); `npx tsc -p packages/llmwiki-kg/ts/tsconfig.json --noEmit` exit 0. `test/quickstart-integration.test.ts` + `test/test-database-fixture.test.ts` is CONTAMINATED BY A CONCURRENT WRITER: that file has uncommitted edits outside T2's surfaces that unskip S5's four inert expectations; at the base commit the same command is 15 passed / 4 skipped / 0 failed, and T2 reproduces the same 15 passing. Two T2-caused failures seen mid-work were real and are fixed: the fixture re-resolved its base URL after redirecting the resolver (so it provisioned a SECOND database, and `quickstart`'s ingest and read landed in different ones), and `AKS_DATABASE_URL` initially stayed at the shared value, which failed `rows-only-review-approve` and `rows-only-okf-import` with `review_candidates_stack_id_fkey`.
 L10 (evidence, T2 commit): T2's work unit is `7f78ecf` — `test(isolation): give every Postgres suite its own database per run`. It holds `packages/llmwiki-kg/ts/src/testing/per-run-database.ts` (new), `test/fixtures/per-run-database.ts` (new), `test/fixtures/per-run-database.test.ts` (new), the isolation change in `packages/llmwiki-kg/ts/src/db.test.ts`, `test/fixtures/kg-postgres.ts` and `test/fixtures/source-corpus.ts`, and L9. The SHA itself cannot live inside its own commit, so it is recorded here in the commit that follows it, which touches no code.
+
+
+L12 (T10 — the stray statement terminator in `src/dimensions/wiki/migration_wiki_graph.sql`, fixed; structural proof, fresh-database proof, table-set equality, warning rewording):
+- THE DEFECT, STRUCTURALLY. Line 88 held a bare `);` and it belongs to NO surviving statement: it is the terminator of the
+  `create table if not exists wiki.relation_edges (...)` that commit `289da5f` ("retire the artifact and relation row
+  substrate") deleted line by line. That surgery removed the CREATE's body and its three indexes but not the one line that
+  closed the CREATE. The file's own `create table if not exists wiki.event_log (...)` closes at line 76 with its own `);`,
+  so line 88 DUPLICATES a terminator instead of closing anything still open, and it is not inside a `$tag$` body, so no
+  function or DO block is involved. Context, base file: `75:    primary key (stack_id, seq)` / `76:);` = the event_log
+  CREATE, correctly terminated; `85-87` = the `-- Relations: the typed edges the events record` separator whose statement
+  was deleted; `88:);` = its orphaned terminator. psql reports `LINE 1: );`, i.e. the empty prefix before the `)` parsed as
+  no statement at all, which is what a terminator with no statement looks like.
+- ONE MALFORMATION ONLY, verified rather than assumed: with the token gone all fifteen files parse as one string, so no
+  other file in the list carries the same residue, and no other statement in this file is touched. The author's intent is
+  restored, not approximated: the `);` became a three-line comment recording that the relation statements were removed and
+  that their terminator outlived them. `git diff -U2` is a single hunk at 86-88: one line out, three comment lines in.
+- RED (before the fix; fresh empty database `red_probe` on a throwaway `pgvector/pgvector:pg16` container, `PSQL` wrapper):
+  `./scripts/apply-schemas.sh` applied seven files, then `applying src/dimensions/wiki/migration_wiki_graph.sql` gave
+  `ERROR:  syntax error at or near ")"` / `LINE 1: );` and exit 3. Consequence measured, not asserted: 16 tables and 15
+  policies, meaning the tail of that file (the event_log RLS policy, its grant, the `alter column at type text`
+  convergence) and the last seven files never ran, and `CHECK_ONLY=true` on that database exited 1 with `MISSING RLS:`
+  naming `wiki.embedding_store_meta`, `wiki.project_config`, `wiki.event_log`, `wiki.review_candidates`,
+  `wiki.embedding_refresh_marker`, `wiki.lint_cache`, `wiki.rule_extractor_state`, then `drift detected.`
+- GREEN (same script, fresh empty database `green2_probe`, final bytes): all fifteen files applied, `done.`, exit 0; the ten
+  required tables present (`public.stacks`, `public.stack_documents`, `public.document_chunks`,
+  `public.ontology_entities`, `public.ontology_relationships`, `public.entity_source_documents`, `public.entity_pages`,
+  `public.backfeed_queue`, `wiki.pages`, `wiki.source_documents`); `CHECK_ONLY=true` gave `policies: 25` and
+  `ok: every tenant table enforces row-level security.` exit 0.
+- TABLE-SET EQUALITY (25 tables, schema-qualified, `information_schema.tables` over `public`+`wiki`), three independent
+  databases, `diff` empty on every pair: the real script on the fixed bytes; the fixture's statement-splitter fallback over
+  the BASE file (measured by reverting the token for one run and restoring it in the same command); and the fixture's
+  whole-file path on the fixed bytes. The workaround was therefore masking nothing else: it produced exactly the schema the
+  script produces now, its only other effect being the warning.
+- THE FALLBACK STAYS; ITS WARNING NOW SAYS IT IS DEAD. In `packages/llmwiki-kg/ts/src/testing/per-run-database.ts` only
+  `applyFile`'s doc comment and `applySchema`'s warning string changed: no branch, no statement order, no logic. The new
+  text is `per-run database: UNEXPECTED statement-splitter fallback for <file>. Every file scripts/apply-schemas.sh lists
+  is expected to replay as ONE statement, so this path should be unreachable and the file is malformed: N statement(s)
+  failed: ...`, and the doc comment states that the path should now be unreachable and stays only as a last-resort guard.
+  That is the difference between a diagnostic and a workaround nobody reads.
+- GATES (exact scope): `npm run typecheck:kg` exit 0, 227 files, 0 diagnostics; `npx tsc --noEmit` exit 0;
+  `npx vitest run test/fixtures/per-run-database.test.ts` 9/9 passed exit 0; `npx vitest run
+  test/dimensions/wiki-activation-stack.test.ts test/dimensions/kg-postgres-integrity.test.ts` 2 files / 5 tests passed
+  exit 0, neither skipped. Teardown: container `t5a-schema-probe` stopped and removed, `docker ps -a` shows no such name.
+- REPORTED, NOT FIXED: two inert comment blocks remain where the relation statements were (the `-- Relations:` separator
+  and the `-- Dedup key:` paragraph above the RLS section). They are comments, not SQL, so they are not a malformation;
+  the file header already documents that `wiki.relation_edges` was retired, and deleting them would be unrequested scope.
+  Scratch left in place: `/tmp/t5a-sql-typo-3636522/` (`psql-probe` wrapper, `fixture-tables.mts`, the three table dumps,
+  `fallback-run.log`, `graph-head.sql`).

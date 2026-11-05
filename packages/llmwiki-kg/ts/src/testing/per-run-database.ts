@@ -162,7 +162,7 @@ function openClient(url: string): Sql {
 }
 
 /** Open a client against `url`, run `work`, always close it. */
-async function withClient<T>(url: string, work: (client: Sql) => Promise<T>): Promise<T> {
+export async function withClient<T>(url: string, work: (client: Sql) => Promise<T>): Promise<T> {
   const client = openClient(url);
   try {
     return await work(client);
@@ -330,10 +330,15 @@ async function applyStatements(client: Sql, statements: string[]): Promise<strin
 /**
  * Apply one schema file, falling back to statement granularity when it will not parse.
  *
- * The fallback exists because `migration_wiki_graph.sql` carries a stray `);` that makes
- * the whole file unparseable; every other statement in it is valid and needed. Failures
- * are RETURNED, never swallowed: {@link applySchema} reports them and
- * {@link assertRequiredTables} decides whether the result is usable.
+ * The fallback was added for `migration_wiki_graph.sql`, which carried a stray `);` that
+ * made the whole file unparseable while every other statement in it was valid and needed.
+ * That token is gone, so this path SHOULD now be UNREACHABLE: all fifteen files listed by
+ * `scripts/apply-schemas.sh` parse as one statement and the whole-file attempt below
+ * succeeds. It stays as a last-resort guard against a future file that does not, which is
+ * why {@link applySchema} says so loudly when it fires — a workaround that fires on every
+ * run is a workaround nobody reads. Failures are RETURNED, never swallowed:
+ * {@link applySchema} reports them and {@link assertRequiredTables} decides whether the
+ * result is usable.
  */
 async function applyFile(client: Sql, relative: string): Promise<string[]> {
   const body = await readFile(path.join(REPO_ROOT, relative), "utf-8");
@@ -348,14 +353,21 @@ async function applyFile(client: Sql, relative: string): Promise<string[]> {
 /**
  * Build the schema in a fresh database and verify the result.
  *
+ * Exported, with {@link withClient}, so a caller that provisioned its own server —
+ * `test/fixtures/ephemeral-postgres.ts` and the end-to-end KG MCP probe — replays the
+ * SAME file list and the same statement-granularity fallback instead of keeping a
+ * second, silently diverging copy of `scripts/apply-schemas.sh`'s contract.
+ *
  * @param client - Connection to the new database, as the superuser role.
  */
-async function applySchema(client: Sql): Promise<void> {
+export async function applySchema(client: Sql): Promise<void> {
   for (const relative of await schemaFiles()) {
     const failed = await applyFile(client, relative);
     if (failed.length > 0) {
       console.warn(
-        `per-run database: ${relative} could not be replayed as one statement; ` +
+        `per-run database: UNEXPECTED statement-splitter fallback for ${relative}. ` +
+          `Every file scripts/apply-schemas.sh lists is expected to replay as ONE ` +
+          `statement, so this path should be unreachable and the file is malformed: ` +
           `${failed.length} statement(s) failed:\n  ${failed.join("\n  ")}`,
       );
     }

@@ -85,7 +85,9 @@ create index if not exists idx_event_log_type
 -- ------------------------------------------------------------
 -- Relations: the typed edges the events record
 -- ------------------------------------------------------------
-);
+-- (the `wiki.relation_edges` statements that lived here were removed with the
+-- relation subsystem; its closing `);` outlived them and made this file
+-- unparseable, so a fresh database could not be built at all.)
 
 -- Dedup key: canonical endpoints + type + evidence fingerprint. The evidence is part
 -- of `content_hash`, so an edge that GAINS evidence is a different edge and gets its
