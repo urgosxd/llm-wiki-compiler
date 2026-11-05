@@ -25,6 +25,15 @@ interface QueryPublicationOptions {
   save: boolean;
   review?: boolean;
   document?: string;
+  /**
+   * Environment naming the Stack this publication belongs to; `process.env` when
+   * omitted, which keeps the CLI caller (whose Stack IS the process) unchanged.
+   *
+   * The save below regenerates Stack-scoped indices, so a caller publishing on
+   * behalf of a NAMED Stack must pass its own environment. Left out, the index is
+   * rebuilt from the DEPLOYMENT's corpus while the page was written for the tenant.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 type PublicationResult = Pick<QueryResult, "saved" | "candidateId" | "publicationRefusal">;
@@ -92,7 +101,7 @@ export async function maybeSaveQueryPage(options: QueryPublicationOptions): Prom
     const validation = await checkCitations(root, document, review ? "proposal" : "direct", slugify(question));
     if ("publicationRefusal" in validation) return validation;
     if (review) return { candidateId: await stageQueryProposal({ root, question, document, report: validation.report }) };
-    return { saved: await saveQueryPageLocked(root, question, document) };
+    return { saved: await saveQueryPageLocked(root, question, document, options.env) };
   } finally {
     await releaseLock(root);
   }

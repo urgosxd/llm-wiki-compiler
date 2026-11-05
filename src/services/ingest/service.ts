@@ -90,6 +90,11 @@ async function fetchContent(
  * Shared by both ingest paths so they journal identically: under the project
  * `root` (not cwd) with a root-relative `Saved` path, keeping the entry portable
  * regardless of the caller's working directory.
+ *
+ * @param env - Environment naming the Stack this ingest wrote to; `process.env` when
+ *   omitted. The journal is appended as ROWS for whichever Stack the environment
+ *   names, so an ingest performed for a NAMED Stack must pass that environment or the
+ *   entry lands in the deployment's journal instead of the tenant's.
  */
 async function journalIngest(
   root: string,
@@ -97,6 +102,7 @@ async function journalIngest(
   source: string,
   savedPath: string,
   charCount: number,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   await appendLog(root, "ingest", title, {
     details: [
@@ -104,6 +110,7 @@ async function journalIngest(
       `Saved: ${journalSavedPath(savedPath)}`,
       `Chars: ${charCount.toLocaleString()}`,
     ],
+    env,
   });
 }
 
@@ -225,7 +232,9 @@ export async function ingestSource(
   // Journal only real writes — a no-op re-ingest must not append a log line.
   if (writeStatus !== "unchanged") {
     observer?.ingest.stage("journaling");
-    await journalIngest(root, title, source, savedPath, result.content.length);
+    // The SAME environment the dimensions wrote with, so the entry names the tenant
+    // whose pages were just written rather than the deployment this process runs in.
+    await journalIngest(root, title, source, savedPath, result.content.length, env);
   }
 
   return {

@@ -32,8 +32,18 @@ import { regenerateIndices } from "../dimensions/wiki/page-source-seam.js";
  * @param root - Absolute path to the project root directory.
  * @param question - The original question used as the page title.
  * @param document - The canonical serialized query document.
+ * @param env - Environment naming the Stack this save belongs to; `process.env` when
+ *   omitted, which keeps the CLI caller (whose Stack IS the process) byte-identical.
+ *   The index regeneration below is Stack-scoped, so a caller saving on behalf of a
+ *   NAMED Stack must pass its own environment here or the index is rebuilt for the
+ *   deployment's Stack instead of the tenant's.
  */
-export async function saveQueryPageLocked(root: string, question: string, document: string): Promise<string> {
+export async function saveQueryPageLocked(
+  root: string,
+  question: string,
+  document: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string> {
   const slug = slugify(question);
   const filePath = path.join(root, QUERIES_DIR, `${slug}.md`);
 
@@ -43,7 +53,7 @@ export async function saveQueryPageLocked(root: string, question: string, docume
 
   // Regenerate the index so the saved query is immediately discoverable
   // by the next query's page-selection step.
-  await regenerateIndices(root, process.env, { skipMoc: true });
+  await regenerateIndices(root, env, { skipMoc: true });
 
   // Index the new query so semantic search retrieves it on the next question.
   // maybeSaveQueryPage already holds the project lock, so call the lock-free

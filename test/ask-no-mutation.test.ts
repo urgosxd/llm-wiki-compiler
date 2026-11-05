@@ -16,12 +16,32 @@
  * fingerprint cannot make it pass vacuously.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import path from "node:path";
-import { buildCollidingProject, echoCallClaudeModule, mockQueryVector } from "./fixtures/typed-grounding.js";
+import { buildCollidingProject, CONCEPT_BODY, echoCallClaudeModule, mockQueryVector } from "./fixtures/typed-grounding.js";
 import { changedPaths as changed, fingerprintTree as fingerprint } from "./fixtures/tree-fingerprint.js";
+import { createPageWriteSink } from "../src/dimensions/wiki/page-write-sink.js";
+import { createDimensionsDatabase } from "../src/dimensions/activation.js";
+import { readJournalEntries } from "../src/dimensions/wiki/activity-log-store.js";
+import { createProbeStack } from "./dimensions/harness-lifecycle.js";
+import type { ProbeStack } from "./dimensions/harness-lifecycle.js";
 
-vi.mock("../src/utils/llm.js", () => echoCallClaudeModule());
+// The selector call is answered with a page id and every other call echoes its
+// prompt, which is what `echoCallClaudeModule` does — extended here because a
+// Stack-scoped read has no embedding index of its own, so `generateAnswer` falls
+// back to the LLM selector and would otherwise get the grounding prompt echoed
+// back where it expects JSON. The CLI cases never reach that fallback: their
+// staged workspace carries a real chunk store, so selection needs no LLM.
+vi.mock("../src/utils/llm.js", () => {
+  const echo = echoCallClaudeModule();
+  return {
+    callClaude: vi.fn(async (options: { tools?: unknown[]; messages: Array<{ content: string }> }) =>
+      options.tools === undefined
+        ? echo.callClaude(options)
+        : JSON.stringify({ pages: ["concepts/foo"], reasoning: "the row page" }),
+    ),
+  };
+});
 
 // THE MCP ROUTE GUARDS ON CREDENTIALS AND THE CLI ROUTE DOES NOT, so without
 // this the MCP case measures whether the machine happens to have an API key
@@ -37,6 +57,60 @@ async function project(suffix: string): Promise<string> {
   const root = await buildCollidingProject(suffix, [1, 0], [0, 1]);
   mockQueryVector([1, 1]);
   return root;
+}
+
+/**
+ * The Stack the MCP route is asked about.
+ *
+ * `query_wiki` takes a REQUIRED `stackId`, so the call below names one. Provisioning
+ * it is cheap and keeps the three filesystem-only cases untouched: nothing is bound
+ * in `process.env`, so the CLI route keeps reading the staged `wiki/` tree.
+ */
+let stack: ProbeStack;
+
+beforeEach(async () => {
+  stack = await createProbeStack("ask-no-mutation");
+});
+
+afterEach(async () => {
+  await stack.harness.cleanup();
+});
+
+/**
+ * Store the concept `foo` page as a row on the fixture Stack.
+ *
+ * A Stack-scoped query reads its corpus from Postgres, so the colliding-slug project
+ * on disk is invisible to it. The body is the same one the fixture writes, so the
+ * answer this case produces is the answer it always produced. Only the DEFAULT
+ * concept namespace is seeded: `wiki.pages.page_directory` admits `concepts` and
+ * `queries` only, so the typed `papers/foo` page has no row to live in.
+ *
+ * @param probe - The provisioned Stack to seed.
+ */
+async function seedConceptRow(probe: ProbeStack): Promise<void> {
+  await createPageWriteSink(probe.harness.db, probe.harness.stackId)({
+    directory: "concepts",
+    slug: "foo",
+    body: `---\ntitle: Concept Foo\nsummary: cs\n---\n\n${CONCEPT_BODY}`,
+  });
+}
+
+/**
+ * The journal descriptions `stackId` holds, read straight from the store.
+ *
+ * Read inside its own transaction so the tenant bind is the Stack being inspected,
+ * not the one the process happens to be bound to.
+ *
+ * @param stackId - The Stack whose journal to read.
+ * @returns Entry descriptions, oldest first.
+ */
+async function journalOf(stackId: string): Promise<string[]> {
+  const handle = createDimensionsDatabase(process.env);
+  try {
+    return (await readJournalEntries(handle.db, stackId)).map((entry) => entry.description);
+  } finally {
+    await handle.close();
+  }
 }
 
 /** Capture the MCP `query_wiki` handler by registering tools against a stub. */
@@ -67,15 +141,30 @@ describe("asking a question without saving", () => {
     expect(changed(before, await fingerprint(root))).toEqual(["log.md"]);
   });
 
-  it("changes only the public activity log on the MCP route", async () => {
+  it("journals the MCP route's question to the named Stack, not the deployment's log.md", async () => {
+    if (!stack.harness.reachable) return;
     const root = await project("ask-mcp");
+    await seedConceptRow(stack);
     const handler = await mcpQueryHandler(root);
     const before = await fingerprint(root);
     expect(before.size).toBeGreaterThan(0);
 
-    await handler({ question: "scaling?" });
+    const envelope = await handler({ question: "scaling?", stackId: stack.harness.stackId });
 
-    expect(changed(before, await fingerprint(root))).toEqual(["log.md"]);
+    // A refusal or a degraded empty answer would leave the filesystem untouched and
+    // make the assertion below pass for the wrong reason, so the answer is required
+    // to have really been produced.
+    expect(JSON.parse((envelope as { content: Array<{ text: string }> }).content[0].text)).toMatchObject({
+      pageIds: ["concepts/foo"],
+    });
+
+    // Both sides, because either alone passes for the wrong reason: the entry is in
+    // the Stack the call named...
+    expect(await journalOf(stack.harness.stackId)).toEqual(["scaling?"]);
+    // ...and the deployment's own journal — `log.md`, which is what a project with no
+    // Stack writes — is not touched. Nothing else on disk may change either, so the
+    // allowlist stays empty rather than naming a file that should no longer exist.
+    expect(changed(before, await fingerprint(root))).toEqual([]);
   });
 
   it("keeps an explicitly scoped read byte-identical", async () => {

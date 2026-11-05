@@ -38,6 +38,17 @@ export interface LogEntryOptions {
   details?: string[];
   /** Entry timestamp; rendered as ISO 8601 UTC to second precision. Defaults to now. */
   date?: Date;
+  /**
+   * Environment naming the Stack this entry belongs to; `process.env` when omitted.
+   *
+   * The journal is Stack-scoped: `withJournalSource` writes the entry as ROWS for
+   * whichever Stack the environment names, and falls back to `log.md` only when the
+   * environment names none. A caller serving a NAMED Stack therefore has to pass its
+   * own environment, or it appends to the deployment's journal instead of the
+   * tenant's — a cross-tenant write that outlives the call. Defaulting keeps every
+   * CLI caller (whose Stack IS the process) byte-identical.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -114,7 +125,8 @@ export function formatLogEntry(
  * @param root - Absolute path to the project root directory.
  * @param operation - Short operation tag, e.g. "ingest", "compile", "query".
  * @param description - Human-readable heading detail for the entry.
- * @param opts - Optional bullet body and entry date.
+ * @param opts - Optional bullet body, entry date, and the environment naming the
+ *   Stack to append to (`process.env` when omitted).
  */
 /**
  * Render a whole journal the way `log.md` holds it: entries blank-line separated.
@@ -152,7 +164,7 @@ export async function appendLog(
       details: opts.details ?? [],
       at,
     };
-    const viaRows = await withJournalSource(process.env, async (source) => {
+    const viaRows = await withJournalSource(opts.env ?? process.env, async (source) => {
       if (source === undefined) return false;
       await source.append(sanitized);
       return true;

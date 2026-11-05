@@ -2,6 +2,12 @@
  * SDK and registered MCP query handlers share real publication policy. Only the
  * provider boundary is stubbed; admission, profile, output scopes, and writes are
  * production code. The MCP schema remains save-only with no review option.
+ *
+ * The two surfaces read DIFFERENT backends, on purpose. `createWiki`/`queryCommand`
+ * resolve their corpus from `process.env`, which is left unbound, so the SDK cases
+ * keep exercising the staged `wiki/` tree. `query_wiki` takes a REQUIRED `stackId`,
+ * and a named Stack resolves its pages and its review candidates from Postgres — so
+ * the MCP cases seed those same rows on a provisioned Stack and pass its id.
  */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -10,14 +16,22 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createWiki, ProviderUnavailableError, type QueryResult } from "../src/index.js";
 import queryCommand, { generateAnswer } from "../src/commands/query.js";
+import { createPageWriteSink } from "../src/dimensions/wiki/page-write-sink.js";
+import { saveStoredCandidate } from "../src/dimensions/wiki/candidate-store.js";
+import { createDimensionsDatabase } from "../src/dimensions/activation.js";
+import { readJournalEntries } from "../src/dimensions/wiki/activity-log-store.js";
 import { callClaude } from "../src/utils/llm.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { stageCitationWorkspace, citationWorkspaceBytes } from "./fixtures/query-answer-citations.js";
 import { SAMPLE_PROFILE } from "./fixtures/profile-fixtures.js";
 import { buildServer } from "./fixtures/mcp-test-env.js";
+import { createProbeStack } from "./dimensions/harness-lifecycle.js";
+import type { ProbeStack } from "./dimensions/harness-lifecycle.js";
 
 vi.mock("../src/utils/llm.js", () => ({ callClaude: vi.fn() }));
 const ctx = useTempRoot();
+
+let stack: ProbeStack;
 
 beforeEach(async () => {
   vi.stubEnv("LLMWIKI_PROVIDER", "anthropic");
@@ -28,8 +42,71 @@ beforeEach(async () => {
   vi.stubEnv("LLMWIKI_EMBEDDINGS", "off");
   await stageCitationWorkspace(ctx.dir);
   answerWith("Retained [[alpha]].");
+  stack = await createProbeStack("query-publication-mcp");
 });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+afterEach(async () => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  await stack.harness.cleanup();
+});
+
+/**
+ * Mirror the staged workspace into the fixture Stack's rows.
+ *
+ * A Stack-scoped query reads its corpus and its pending candidates from Postgres, so
+ * the staged `wiki/concepts/alpha.md` file and `.llmwiki/candidates/pending-beta.json`
+ * are invisible to it. Both are seeded through the same stores production uses, which
+ * is what keeps the citation report below (resolved / pending / broken) meaningful.
+ *
+ * @param probe - The provisioned Stack to seed.
+ */
+async function seedStackCorpus(probe: ProbeStack): Promise<void> {
+  await createPageWriteSink(probe.harness.db, probe.harness.stackId)({
+    directory: "concepts",
+    slug: "alpha",
+    body: "---\ntitle: Alpha\nsummary: Retained grounding\nsources: []\n---\nAlpha body.\n",
+  });
+  await saveStoredCandidate(probe.harness.db, probe.harness.stackId, {
+    id: "pending-beta",
+    slug: "beta",
+    title: "Beta",
+    summary: "Pending",
+    sources: [],
+    body: "Beta body.",
+    generatedAt: "2026-09-18T00:00:00Z",
+    reviewMode: "forced",
+    heldReasons: [{ code: "manual-review-requested" }],
+  });
+}
+
+/**
+ * The journal headings `stackId` holds, rendered as `operation | description`.
+ *
+ * Read inside its own transaction so the tenant bind is the Stack being inspected,
+ * not the one the process happens to be bound to.
+ *
+ * @param stackId - The Stack whose journal to read.
+ * @returns Heading lines, oldest first.
+ */
+async function journalOf(stackId: string): Promise<string[]> {
+  const handle = createDimensionsDatabase(process.env);
+  try {
+    return (await readJournalEntries(handle.db, stackId))
+      .map((entry) => `${entry.operation} | ${entry.description}`);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * The deployment's journal: `log.md` at the project root, or empty when absent.
+ *
+ * @param root - Project root directory.
+ * @returns The whole file, or `""` when this deployment wrote no file journal.
+ */
+async function deploymentJournal(root: string): Promise<string> {
+  return readFile(path.join(root, "log.md"), "utf8").catch(() => "");
+}
 
 /** Stub the two provider requests without replacing retrieval or publication. */
 function answerWith(answer: string): void {
@@ -97,6 +174,8 @@ it("propagates an actual SDK save failure", async () => {
 });
 
 it.each([false, true])("real MCP query returns the answer with save=%s and observable refusal only when requested", async (save) => {
+  if (!stack.harness.reachable) return;
+  await seedStackCorpus(stack);
   answerWith("Both [[beta]] [[missing]].");
   const before = await citationWorkspaceBytes(ctx.dir);
   const server = buildServer(ctx.dir);
@@ -107,7 +186,10 @@ it.each([false, true])("real MCP query returns the answer with save=%s and obser
   const query = (await client.listTools()).tools.find((tool) => tool.name === "query_wiki")!;
   expect(query.inputSchema.properties).toHaveProperty("save");
   expect(query.inputSchema.properties).not.toHaveProperty("review");
-  const envelope = await client.callTool({ name: "query_wiki", arguments: { question: "Explain alpha", save } });
+  const envelope = await client.callTool({
+    name: "query_wiki",
+    arguments: { question: "Explain alpha", save, stackId: stack.harness.stackId },
+  });
   const result = (envelope.structuredContent as { result: QueryResult }).result;
   expect(result.answer).toBe("Both [[beta]] [[missing]].");
   expect(result.saved).toBeUndefined();
@@ -119,7 +201,13 @@ it.each([false, true])("real MCP query returns the answer with save=%s and obser
   const content = envelope.content as Array<{ type: string; text: string }>;
   expect(JSON.parse(content[0].text)).toEqual(result);
   expect(await citationWorkspaceBytes(ctx.dir)).toEqual(before);
-  expect(await readFile(path.join(ctx.dir, "log.md"), "utf8")).toContain("query | Explain alpha");
+  // Both sides, because either alone passes for the wrong reason. The entry IS in the
+  // journal of the Stack the call named...
+  expect(await journalOf(stack.harness.stackId)).toEqual(["query | Explain alpha"]);
+  // ...and it is NOT in the deployment's journal. That is `log.md`, which is what a
+  // project whose environment binds no Stack writes; nothing else in the workspace
+  // changed above, so the file must not have gained the entry.
+  expect(await deploymentJournal(ctx.dir)).not.toContain("query | Explain alpha");
   expect(callClaude).toHaveBeenCalledTimes(2);
   await client.close();
   await server.close();

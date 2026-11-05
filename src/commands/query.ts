@@ -232,7 +232,13 @@ export async function generateAnswer(
   // caller, never permission to publish. Its failure preserves the answer.
   const { document, body } = buildQueryDocument(question, answer, new Date().toISOString());
   const citationFields = await reportQueryAnswerCitations(root, body);
-  const publication = await maybeSaveQueryPage({ root, question, answer, save: Boolean(options.save), review: options.review, document });
+  const publication = await maybeSaveQueryPage({
+    root, question, answer, save: Boolean(options.save), review: options.review, document,
+    // The same environment retrieval and hydration above were opened with: the saved
+    // page and the indices regenerated for it belong to the Stack the CALLER named,
+    // not to the deployment this process happens to run in.
+    env: options.env,
+  });
 
   // Preserve the public activity log for ordinary CLI/MCP questions, even when
   // not saved as pages. Explicitly scoped reads and review proposals retain
@@ -242,6 +248,12 @@ export async function generateAnswer(
   if (options.review !== true && (options.save === true || options.pageScope === undefined)) {
     await appendLog(root, "query", question, {
       details: resultFields.pageIds.length > 0 ? [`Pages: ${formatWikilinkList(resultFields.pageIds)}`] : [],
+      // The journal is appended as ROWS for whichever Stack the environment names, so
+      // this entry belongs to the Stack the CALLER asked about -- the same environment
+      // retrieval and hydration above were opened with. Left to its default it would
+      // resolve the deployment's Stack instead, and a single host serving several
+      // tenants would write one tenant's question into another's journal.
+      env: options.env,
     });
   }
 
