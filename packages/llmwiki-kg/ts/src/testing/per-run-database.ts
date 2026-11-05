@@ -49,9 +49,12 @@
  *
  * A killed process cannot run its teardown, so every name carries a run token and
  * {@link createSuiteDatabase} reaps databases older than {@link STALE_AFTER_MS} before
- * creating its own. Reaping is age-based on purpose: dropping every sibling database on
- * sight would delete a LIVE parallel worker's database, which is the same class of bug
- * as the one being fixed.
+ * creating its own. Age is NEVER sufficient on its own: a database whose embedded pid
+ * still names a RUNNING process is not debris, whatever its age, so it is not a
+ * candidate. Dropping it would delete a LIVE parallel worker's database — the same class
+ * of bug as the one being fixed — and a suite that outlives the TTL would lose its
+ * database mid-run. A database whose pid is gone, or whose name the pattern rejects, is
+ * collected exactly as before.
  */
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -194,7 +197,11 @@ export async function listPerRunDatabases(base: string): Promise<string[]> {
 }
 
 /**
- * Drop every per-run database older than {@link STALE_AFTER_MS}.
+ * Drop every per-run database older than {@link STALE_AFTER_MS} whose owner is gone.
+ *
+ * Two gates, both read from the name: the stamp must be past the TTL AND the embedded pid
+ * must not name a running process. A name the pattern rejects, or one whose pid cannot be
+ * parsed, is treated as ownerless and collected — never as an error.
  *
  * @param base - Connection string identifying the server.
  * @param now - Clock override, so the rule is testable without waiting.
@@ -206,10 +213,39 @@ export async function reapStalePerRunDatabases(
 ): Promise<string[]> {
   const stale = (await listPerRunDatabases(base)).filter((name) => {
     const created = createdFromName(name);
-    return created !== undefined && now - created > STALE_AFTER_MS;
+    return created !== undefined && now - created > STALE_AFTER_MS && !ownerIsAlive(name);
   });
   for (const name of stale) await dropDatabase(base, name);
   return stale;
+}
+
+/**
+ * Is a process with this pid running? `kill(pid, 0)` asks without signalling.
+ *
+ * The two failure modes are NOT the same answer: `ESRCH` means no such process, while
+ * `EPERM` means one exists that this user may not signal. Anything unparseable or
+ * outside the kernel's pid range cannot be alive.
+ */
+function pidAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 4_194_304) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Is the process that minted `name` still running?
+ *
+ * A per-run name embeds the pid that created the database, so liveness is readable from
+ * the name alone — the same reason {@link ownedByName} can read ownership from it. A
+ * recycled pid reads as alive, which can only ever leak debris, never destroy a live
+ * database: the guard errs toward keeping.
+ */
+function ownerIsAlive(name: string): boolean {
+  return pidAlive(Number.parseInt(name.split("_")[3] ?? "", 10));
 }
 
 /**

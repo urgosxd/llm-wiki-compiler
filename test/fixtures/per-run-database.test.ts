@@ -136,6 +136,19 @@ async function databaseExists(name: string): Promise<boolean> {
   });
 }
 
+/** A pid no live process owns: a child that has already exited and been reaped. */
+function deadPid(): number {
+  const child = spawnSync(process.execPath, ["-e", ""]);
+  if (child.pid === undefined) throw new Error("could not obtain a child pid");
+  return child.pid;
+}
+
+/** A per-run database name carrying `pid` and a stamp 45 minutes in the past. */
+function staleRunName(pid: number): string {
+  const stamp = (Date.now() - 45 * 60_000).toString(36);
+  return `${PER_RUN_DATABASE_PREFIX}${stamp}_${pid}_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+}
+
 /** Drop a database this file created outside the fixture's mint, if it is still there. */
 async function dropForeign(name: string): Promise<void> {
   // Not `drop database if exists`: the reaper may already have taken a stale one, and
@@ -250,11 +263,11 @@ describe("per-run database isolation", () => {
 
   it("still reaps a stale run token, so the safety above is not a no-op", async () => {
     // Without this, a reaper that never reaps anything would pass both cases above.
-    // The name is minted with an old stamp but no process is behind it, which is exactly
-    // the debris the reaper exists for. Every other per-run database on the server was
-    // created seconds ago, so nothing live is stale at this clock.
-    const oldStamp = (Date.now() - 45 * 60_000).toString(36);
-    const debris = `llmwiki_suite_${oldStamp}_${process.pid}_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+    // The name is minted with an old stamp AND a pid no live process owns, which is
+    // exactly the debris the reaper exists for: a database left by a process that died
+    // without tearing down. Every other per-run database on the server was created
+    // seconds ago, so nothing live is stale at this clock.
+    const debris = staleRunName(deadPid());
     expect(isPerRunDatabaseName(debris)).toBe(true);
     await createForeignDatabase(debris);
 
@@ -262,6 +275,28 @@ describe("per-run database isolation", () => {
 
     expect(reaped).toContain(debris);
     expect(await databaseExists(debris)).toBe(false);
+  }, 120_000);
+
+  it("never reaps a database whose owner is still alive, and still reaps a dead one", async () => {
+    // Age alone must not be the criterion: a database past the TTL whose owning process
+    // is STILL RUNNING cannot be dropped without destroying a live suite's data. Both
+    // halves run in ONE reap over names minted with the same stale stamp, so equal age
+    // and opposite outcomes: a reaper that drops nothing fails the dead half, and a
+    // reaper that only looks at age fails the live half.
+    const liveOwner = staleRunName(process.pid);
+    const deadOwner = staleRunName(deadPid());
+    const bogusPid = staleRunName(Number.MAX_SAFE_INTEGER);
+    await createForeignDatabase(liveOwner);
+    await createForeignDatabase(deadOwner);
+    await createForeignDatabase(bogusPid);
+
+    const reaped = await reapStalePerRunDatabases();
+
+    expect(reaped).not.toContain(liveOwner);
+    expect(await databaseExists(liveOwner)).toBe(true);
+    expect(reaped).toContain(deadOwner);
+    expect(await databaseExists(deadOwner)).toBe(false);
+    expect(reaped).toContain(bogusPid);
   }, 120_000);
 });
 
