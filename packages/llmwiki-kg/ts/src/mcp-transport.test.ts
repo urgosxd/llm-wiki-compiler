@@ -6,17 +6,19 @@
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createMcpServer } from "./mcp.js";
+import { stackIdProblem } from "./stack-id.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   BASE_URL,
+  CONTRACT_STACK_KEYS,
   EXPECTED_CTX,
   EXPECTED_ENTS,
-  EXPECTED_STACKS,
   EXPECTED_TRAV,
   ORACLE_STACKS_BODY,
   SYNTHETIC_CONTEXT_RESPONSE,
   SYNTHETIC_ENTITIES_RESPONSE,
   SYNTHETIC_TRAVERSE_RESPONSE,
+  payloadOf,
   recordingFetch,
   textOf,
 } from "./mcp-harness.js";
@@ -72,15 +74,18 @@ describe("MCP handshake over the in-memory transport", () => {
     }
   });
 
-  it("routes tools/call through to HTTP and returns the formatted text", async () => {
+  it("routes tools/call through to HTTP and answers the JSON contract", async () => {
     const harness = await connect({ status: 200, body: ORACLE_STACKS_BODY });
     try {
       const result = await harness.client.callTool({ name: "list_stacks", arguments: {} });
-      const content = result.content;
-      expect(Array.isArray(content)).toBe(true);
-      const [first] = content as ReadonlyArray<{ type: string; text?: string }>;
-      expect(first?.type).toBe("text");
-      expect(first?.text).toBe(EXPECTED_STACKS);
+      const payload = payloadOf(result) as {
+        stacks: ReadonlyArray<Record<string, unknown>>;
+        count: number;
+      };
+      // Prose is gone: a data-listing tool answers machine-readable data.
+      expect(Object.keys(payload)).toEqual(["stacks", "count"]);
+      expect(payload.count).toBe(payload.stacks.length);
+      expect(Object.keys(payload.stacks[0] ?? {})).toEqual([...CONTRACT_STACK_KEYS]);
       expect(harness.requests[0]?.url).toBe("http://localhost:8000/stacks");
     } finally {
       await harness.close();
@@ -121,8 +126,9 @@ describe("stackId is a required tool argument", () => {
       const { tools } = await harness.client.listTools();
       const list = tools.find((tool) => tool.name === "list_stacks");
       // A discovery tool cannot require the identifier of the thing it
-      // discovers, so the exemption is decided rather than overlooked.
-      expect(list?.inputSchema.properties).toEqual({});
+      // discovers, so the exemption is decided rather than overlooked. The two
+      // arguments it DOES declare only bound the listing and mark one entry.
+      expect(Object.keys(list?.inputSchema.properties ?? {})).toEqual(["limit", "stackId"]);
       expect(list?.inputSchema["required"]).toBeUndefined();
     } finally {
       await harness.close();
@@ -264,7 +270,9 @@ describe("stackId is the one caller-facing Stack argument (S1)", () => {
           arguments: { ...args, stackId: MALFORMED_STACK },
         });
         expect(result.isError, name).toBe(true);
-        expect(textOf(result), name).toContain("stackId");
+        // The shared rule is the ONLY source of the wording: the earlier composed
+        // prefix stated the UUID rule twice from two sources (T2 follow-up).
+        expect(textOf(result), name).toBe(`Error: ${stackIdProblem(MALFORMED_STACK)}`);
       }
       // The rule is a refusal BEFORE the hop: a request issued here would let
       // an unusable id reach the backend, which is the defect (S1).

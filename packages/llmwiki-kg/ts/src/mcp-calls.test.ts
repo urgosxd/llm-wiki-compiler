@@ -5,10 +5,33 @@
 
 import { describe, expect, it } from "vitest";
 import { callTool } from "./mcp.js";
-import { BASE_URL, EXPECTED_CTX, EXPECTED_ENTS, EXPECTED_STACKS, EXPECTED_TRAV, ORACLE_STACKS_BODY, ORACLE_TRAVERSE_404_BODY, SYNTHETIC_CONTEXT_RESPONSE, SYNTHETIC_ENTITIES_RESPONSE, SYNTHETIC_TRAVERSE_RESPONSE, recordingFetch, textOf } from "./mcp-harness.js";
+import { stackIdProblem } from "./stack-id.js";
+import {
+  BASE_URL,
+  CONTRACT_STACK_KEYS,
+  EXPECTED_CTX,
+  EXPECTED_ENTS,
+  EXPECTED_TRAV,
+  ORACLE_STACKS_BODY,
+  ORACLE_TRAVERSE_404_BODY,
+  SYNTHETIC_CONTEXT_RESPONSE,
+  SYNTHETIC_ENTITIES_RESPONSE,
+  SYNTHETIC_TRAVERSE_RESPONSE,
+  payloadOf,
+  recordingFetch,
+  textOf,
+} from "./mcp-harness.js";
 
 /** A Stack id with the canonical lowercase-UUID shape the API accepts. */
 const STACK = "20efd96a-f6e1-4994-8812-65113f8db4db";
+
+/**
+ * The decoded `list_stacks` envelope, as a client parses it.
+ */
+interface StacksPayload {
+  readonly stacks: ReadonlyArray<Record<string, unknown>>;
+  readonly count: number;
+}
 
 /** The refusal every graph tool answers when the Stack argument is absent. */
 const MISSING_STACK_TEXT = "Error: 'stackId' must be provided.";
@@ -215,7 +238,7 @@ describe("callTool routing", () => {
     );
   });
 
-  it("GETs list_stacks to /stacks — no /aks/v1 prefix", async () => {
+  it("GETs list_stacks to /stacks and answers the contract envelope", async () => {
     const { fetchImpl, requests } = recordingFetch({ status: 200, body: ORACLE_STACKS_BODY });
     const result = await callTool("list_stacks", {}, { fetchImpl, baseUrl: BASE_URL });
 
@@ -223,7 +246,82 @@ describe("callTool routing", () => {
     // The one Stack endpoint outside the /aks/v1 prefix. A port that "tidied"
     // this to /aks/v1/stacks would 404 against the real server.
     expect(requests[0]?.url).toBe("http://localhost:8000/stacks");
-    expect(textOf(result)).toBe(EXPECTED_STACKS);
+
+    const payload = payloadOf(result) as StacksPayload;
+    // Exactly two keys, in this order: `stacks`, then `count`.
+    expect(Object.keys(payload)).toEqual(["stacks", "count"]);
+    expect(payload.count).toBe(payload.stacks.length);
+    // Every entry carries exactly the ten contract keys, in contract order.
+    for (const stack of payload.stacks) {
+      expect(Object.keys(stack)).toEqual([...CONTRACT_STACK_KEYS]);
+    }
+  });
+
+  it("marks the Stack it was given current, and sorts it ahead of recency", async () => {
+    const { fetchImpl } = recordingFetch({ status: 200, body: ORACLE_STACKS_BODY });
+    // `STACK` is the OLDEST entry in the recorded body, i.e. last by `updated_at`:
+    // mark-current has to survive recency ordering, not ride along with it.
+    const result = await callTool(
+      "list_stacks",
+      { stackId: STACK },
+      { fetchImpl, baseUrl: BASE_URL },
+    );
+
+    const payload = payloadOf(result) as StacksPayload;
+    // Current first, the rest most-recently-updated first: the named entry is
+    // the oldest, so recency alone would have put it LAST.
+    expect(payload.stacks.map((stack) => stack["id"])).toEqual([
+      STACK,
+      "1146a0e7-dc44-4eac-bd62-606549aa86ce",
+      "b6c9fd8b-205f-4f5e-b482-7b540e616c86",
+    ]);
+    // Exactly one entry is current, and every other entry is false rather than absent.
+    expect(payload.stacks.filter((stack) => stack["isCurrent"] === true)).toHaveLength(1);
+    expect(payload.stacks[0]?.["isCurrent"]).toBe(true);
+  });
+
+  it("marks nothing current when stackId is omitted, and is not refused", async () => {
+    const { fetchImpl, requests } = recordingFetch({ status: 200, body: ORACLE_STACKS_BODY });
+    const result = await callTool("list_stacks", {}, { fetchImpl, baseUrl: BASE_URL });
+
+    // The exemption, pinned: a discovery tool cannot demand the id it discovers.
+    expect(result.isError).toBeUndefined();
+    expect(requests).toHaveLength(1);
+    const payload = payloadOf(result) as StacksPayload;
+    // This dimension is bound to no Stack, so an omission marks none.
+    expect(payload.stacks.filter((stack) => stack["isCurrent"] === true)).toHaveLength(0);
+  });
+
+  it("reaches HTTP with a well-formed stackId and refuses a malformed one first", async () => {
+    const answered = recordingFetch({ status: 200, body: ORACLE_STACKS_BODY });
+    await callTool("list_stacks", { stackId: STACK }, { fetchImpl: answered.fetchImpl, baseUrl: BASE_URL });
+    expect(answered.requests).toHaveLength(1);
+    expect(answered.requests[0]?.url).toBe("http://localhost:8000/stacks");
+
+    const refused = recordingFetch({ status: 200, body: ORACLE_STACKS_BODY });
+    const refusal = await callTool(
+      "list_stacks",
+      { stackId: "not-a-uuid" },
+      { fetchImpl: refused.fetchImpl, baseUrl: BASE_URL },
+    );
+    // A malformed id is refused BEFORE the hop, so nothing unusable reaches the backend.
+    expect(refusal.isError).toBe(true);
+    expect(refused.requests).toHaveLength(0);
+  });
+
+  it("states the Stack-id rule once, from the shared validator", async () => {
+    const { fetchImpl } = recordingFetch({ status: 200, body: ORACLE_STACKS_BODY });
+    const malformed = "not-a-uuid";
+    const result = await callTool(
+      "get_entities",
+      { stackId: malformed },
+      { fetchImpl, baseUrl: BASE_URL },
+    );
+
+    // One source of the wording: the shared rule, prefixed with "Error: ". The
+    // earlier composed prefix stated the UUID rule twice (T2 follow-up).
+    expect(textOf(result)).toBe(`Error: ${stackIdProblem(malformed)}`);
+    expect(textOf(result)).not.toContain("must be a UUID");
   });
 
   it("forwards the X-API-Key header only when configured", async () => {

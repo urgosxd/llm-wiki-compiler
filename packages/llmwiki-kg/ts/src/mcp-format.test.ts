@@ -4,8 +4,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { formatContextResponse, formatEntitiesResponse, formatFixed2, formatStacksResponse, formatTraverseResponse } from "./mcp.js";
-import { EXPECTED_CTX, EXPECTED_CTX_NO_ENTITIES, EXPECTED_ENTS, EXPECTED_ENTS_EMPTY, EXPECTED_STACKS, EXPECTED_STACKS_EMPTY, EXPECTED_TRAV, EXPECTED_TRAV_NO_STEPS, ORACLE_ENTITIES_EMPTY_BODY, ORACLE_STACKS_BODY, SYNTHETIC_CONTEXT_RESPONSE, SYNTHETIC_ENTITIES_RESPONSE, SYNTHETIC_TRAVERSE_RESPONSE } from "./mcp-harness.js";
+import { formatContextResponse, formatEntitiesResponse, formatFixed2, formatTraverseResponse } from "./mcp.js";
+import { EXPECTED_CTX, EXPECTED_CTX_NO_ENTITIES, EXPECTED_ENTS, EXPECTED_ENTS_EMPTY, EXPECTED_TRAV, EXPECTED_TRAV_NO_STEPS, ORACLE_ENTITIES_EMPTY_BODY, SYNTHETIC_CONTEXT_RESPONSE, SYNTHETIC_ENTITIES_RESPONSE, SYNTHETIC_TRAVERSE_RESPONSE } from "./mcp-harness.js";
 
 describe("formatFixed2", () => {
   it("rounds half to even like Python, where toFixed rounds half away from zero", () => {
@@ -61,32 +61,6 @@ describe("formatFixed2", () => {
     expect(formatFixed2(Number.NaN)).toBe("nan");
     expect(formatFixed2(Number.POSITIVE_INFINITY)).toBe("inf");
     expect(formatFixed2(Number.NEGATIVE_INFINITY)).toBe("-inf");
-  });
-});
-
-describe("formatStacksResponse", () => {
-  it("formats the REAL oracle GET /stacks body exactly as Python does", () => {
-    // Live body captured from localhost:8000; expected text from the Python
-    // `_list_stacks` loop. This is a genuine oracle-parity assertion.
-    expect(formatStacksResponse(JSON.parse(ORACLE_STACKS_BODY))).toBe(EXPECTED_STACKS);
-  });
-
-  it("reports the empty case the way Python does", () => {
-    // REAL oracle body `[]` (the DB was reset and had no Stacks at one point).
-    expect(formatStacksResponse(JSON.parse(ORACLE_ENTITIES_EMPTY_BODY))).toBe(
-      EXPECTED_STACKS_EMPTY,
-    );
-  });
-
-  it("indents a Stack description under the bullet when present", () => {
-    const body = [
-      { name: "Alpha", domain: "alpha", description: "First Stack" },
-      { name: "Beta", domain: "beta", description: null },
-    ];
-    // Python: `    {description}` (four spaces) under the bullet.
-    expect(formatStacksResponse(body)).toBe(
-      "Found 2 Stack(s):\n\n• Alpha (domain: alpha)\n    First Stack\n• Beta (domain: beta)",
-    );
   });
 });
 

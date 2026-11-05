@@ -33,6 +33,37 @@ const OPTIONAL_DOMAIN_DESCRIPTION =
   "Optional domain slug of the Stack, forwarded alongside stackId as an additional filter; it never replaces stackId.";
 
 /**
+ * The `limit` description `list_stacks` advertises, worded once.
+ *
+ * Byte-identical to the wiki dimension's, because the two `list_stacks` tools share
+ * one input schema (S3) and a client has to be able to build the same arguments for
+ * either. The default lives here rather than in a `default` keyword: the wiki
+ * dimension declares its `limit` as an optional integer without one, and two schemas
+ * that advertise different keywords are two contracts again.
+ */
+const LIST_LIMIT_DESCRIPTION = "How many Stacks to return (default 50, max 200).";
+
+/**
+ * The `stackId` sentence BOTH dimensions state byte for byte.
+ *
+ * It is the half of the argument's meaning that does not depend on a dimension: the
+ * argument marks an entry, it never filters the listing.
+ */
+const LIST_STACK_ID_SENTENCE =
+  "Stack to treat as the current one. This does NOT narrow the listing — " +
+  "it only decides which entry is marked isCurrent.";
+
+/**
+ * What this dimension adds to that sentence: it is bound to no Stack at all.
+ *
+ * The wiki deployment reads its Stack from the environment and marks that one when
+ * the argument is omitted; this server reads no Stack from anywhere, so an omission
+ * marks nothing. Saying so is the honest half of the shared contract, and stating the
+ * wiki's rule here instead would advertise a binding that does not exist.
+ */
+const LIST_STACK_ID_TAIL = " Omit it to mark no entry current: this endpoint has no bound Stack.";
+
+/**
  * The tool definitions advertised by `list_tools()`.
  *
  * Descriptions and JSON-Schema fragments are part of the client-facing contract:
@@ -42,9 +73,8 @@ const OPTIONAL_DOMAIN_DESCRIPTION =
  * `required` names `stackId` on all three graph tools — the Stack is only ever
  * the argument, never a default and never a fallback, so the schema says so out
  * loud instead of letting a call arrive without one. It stays absent for
- * `list_stacks`, which lists every Stack on the server and has no Stack
- * dimension of its own; an empty `required: []` would be a different schema, and
- * a decorative required argument there would be a lie.
+ * `list_stacks`, which discovers Stacks: its two arguments are optional by
+ * decision, so `required` is not published at all rather than published empty.
  */
 export const MCP_TOOLS: readonly Tool[] = [
   {
@@ -144,10 +174,22 @@ export const MCP_TOOLS: readonly Tool[] = [
   {
     name: "list_stacks",
     description:
-      "List all Knowledge Stacks available on this AKS server. Returns each Stack's name, domain, and description. Use this when the user hasn't specified which Stack to query and you need to figure out what's available.",
+      "List the Knowledge Stacks available on this AKS server, most recently updated first, as a JSON document of the form {stacks, count}. Each entry carries id, name, domain, description, scope, compilationStrategy, synthesizeDescriptions, createdAt, updatedAt and isCurrent. Use this when the user hasn't specified which Stack to query and you need the ids that are available. The optional stackId does NOT narrow the listing: it only decides which entry is marked isCurrent, and this endpoint has no bound Stack, so omitting it marks no entry current.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        limit: {
+          description: LIST_LIMIT_DESCRIPTION,
+          type: "integer",
+          minimum: 1,
+          maximum: 200,
+        },
+        stackId: {
+          description: `${LIST_STACK_ID_SENTENCE}${LIST_STACK_ID_TAIL}`,
+          type: "string",
+        },
+      },
+      $schema: "http://json-schema.org/draft-07/schema#",
     },
   },
 ];

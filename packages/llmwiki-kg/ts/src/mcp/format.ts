@@ -174,22 +174,3 @@ export function formatEntitiesResponse(data: unknown): string {
 
   return lines.join("\n");
 }
-
-/** Format `GET /stacks` output — the inline loop from `_list_stacks`. */
-export function formatStacksResponse(data: unknown): string {
-  const stacks = asArray(data);
-  if (stacks.length === 0) return "No Stacks exist on this AKS server yet.";
-
-  const lines = [`Found ${stacks.length} Stack(s):`, ""];
-  for (const stack of stacks) {
-    const s = asRecord(stack);
-    if (s === null) throw new Error("Stack is not an object");
-    lines.push(`• ${asText(requireField(s, "name"))} (domain: ${asText(requireField(s, "domain"))})`);
-    const description = s["description"];
-    if (typeof description === "string" && description.length > 0) {
-      lines.push(`    ${description}`);
-    }
-  }
-
-  return lines.join("\n");
-}

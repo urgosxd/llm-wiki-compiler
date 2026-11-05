@@ -10,10 +10,10 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { AKS_API_KEY, AKS_BASE_URL, authHeaders } from "./config.js";
-import { formatContextResponse, formatEntitiesResponse, formatStacksResponse, formatTraverseResponse } from "./format.js";
+import { formatContextResponse, formatEntitiesResponse, formatTraverseResponse } from "./format.js";
 import type { QueryValue } from "./query-string.js";
 import { encodeQuery, floatParam, intParam, rawParam } from "./query-string.js";
-import { asText } from "./narrow.js";
+import { asArray, asRecord, asText, requireField } from "./narrow.js";
 import { stackIdProblem } from "../stack-id.js";
 
 // ============================================================
@@ -137,15 +137,18 @@ function stackSelection(
  *
  * The rule is imported, never restated: `stackIdProblem` is the ONE Stack-id
  * explanation both dimensions give (S1), so the only thing added here is the
- * name of the MCP argument the caller has to fix. A malformed id is refused
- * before the request is built, so nothing unusable can reach the backend.
+ * `Error: ` prefix that marks the text as a refusal. An earlier version also
+ * prefixed "'stackId' must be a UUID.", which stated the rule twice from two
+ * sources; the shared explanation is now the only place it is worded. A
+ * malformed id is refused before the request is built, so nothing unusable can
+ * reach the backend.
  *
  * @param value - The value the call carried under `stackId`.
  * @returns The refusal text, or `undefined` when the id is well formed.
  */
 function malformedStackIdRefusal(value: unknown): string | undefined {
   const problem = stackIdProblem(typeof value === "string" ? value : asText(value));
-  return problem === undefined ? undefined : `Error: 'stackId' must be a UUID. ${problem}`;
+  return problem === undefined ? undefined : `Error: ${problem}`;
 }
 
 /**
@@ -334,16 +337,35 @@ export async function getEntities(
 }
 
 /**
- * List all Stacks on the AKS server.
+ * List the Stacks on the AKS server, as the shared JSON contract (S3).
  *
  * Note the path: `GET /stacks`, **not** `/aks/v1/stacks`. The Python calls
  * `f"{AKS_BASE_URL}/stacks"`, and `/stacks` is the one Stack endpoint that sits
  * outside the `/aks/v1` prefix (see the recorded OpenAPI contract).
+ *
+ * The answer is the same document the wiki dimension answers with — `{stacks,
+ * count}` and a ten-field entry — because one tool name should mean one contract
+ * even when two servers implement it. Prose was the previous shape and is gone: a
+ * listing a client has to parse back out of sentences cannot be compared field by
+ * field with anything.
+ *
+ * `stackId` does not filter. This dimension reads no Stack from its environment, so
+ * it marks nothing when the argument is absent and marks the named entry when it is
+ * present; an omission is allowed, because `list_stacks` is exempt from the
+ * required-Stack rule in both dimensions.
  */
 export async function listStacks(
-  _args: Record<string, unknown>,
+  args: Record<string, unknown>,
   deps: ResolvedDependencies,
 ): Promise<CallToolResult> {
+  const named = "stackId" in args ? args["stackId"] : undefined;
+  if ("stackId" in args) {
+    const malformed = malformedStackIdRefusal(named);
+    if (malformed !== undefined) {
+      return errorResult(malformed);
+    }
+  }
+
   const response = await deps.fetchImpl(`${deps.baseUrl}/stacks`, {
     method: "GET",
     headers: authHeaders(deps.apiKey),
@@ -354,5 +376,91 @@ export async function listStacks(
     return textResult(await statusErrorText(response));
   }
 
-  return textResult(formatStacksResponse(await response.json()));
+  const current = typeof named === "string" ? named : undefined;
+  const listed = asArray(await response.json()).map((entry) => contractStack(entry, current));
+  const stacks = orderAndBound(listed, args["limit"]);
+  return textResult(JSON.stringify({ stacks, count: stacks.length }));
+}
+
+/** One entry of the shared `list_stacks` contract, in the contract's key order. */
+interface ContractStack {
+  readonly id: string;
+  readonly name: string;
+  readonly domain: string | null;
+  readonly description: string | null;
+  readonly scope: string;
+  readonly compilationStrategy: string | null;
+  readonly synthesizeDescriptions: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly isCurrent: boolean;
+}
+
+/** What a `list_stacks` call returns when it names no limit. */
+const DEFAULT_LIST_LIMIT = 50;
+
+/** The largest listing a `list_stacks` call may ask for. */
+const MAX_LIST_LIMIT = 200;
+
+/** A string field, or `null` where the contract allows it and the API sent nothing. */
+function textOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * Project one `GET /stacks` entry onto the contract.
+ *
+ * The API answers in the DTO's snake_case; the contract is camelCase, so this is a
+ * rename and not a reshape. `isCurrent` is the ONLY field this dimension decides
+ * for itself: no Stack is bound here, so it is true exactly when the caller named
+ * this entry's id.
+ *
+ * @param entry - One element of the `GET /stacks` array.
+ * @param currentStackId - The Stack the caller named, if it named one.
+ * @returns The contract entry, keys in contract order.
+ */
+function contractStack(entry: unknown, currentStackId: string | undefined): ContractStack {
+  const stack = asRecord(entry);
+  if (stack === null) throw new Error("Stack is not an object");
+  const id = asText(requireField(stack, "id"));
+  return {
+    id,
+    name: asText(requireField(stack, "name")),
+    domain: textOrNull(stack["domain"]),
+    description: textOrNull(stack["description"]),
+    scope: asText(requireField(stack, "scope")),
+    compilationStrategy: textOrNull(stack["compilation_strategy"]),
+    synthesizeDescriptions: stack["synthesize_descriptions"] === true,
+    createdAt: asText(requireField(stack, "created_at")),
+    updatedAt: asText(requireField(stack, "updated_at")),
+    isCurrent: currentStackId !== undefined && id === currentStackId,
+  };
+}
+
+/** Most recently updated first, with the current entry ahead of every other. */
+function byRecencyWithCurrentFirst(left: ContractStack, right: ContractStack): number {
+  if (left.isCurrent !== right.isCurrent) return left.isCurrent ? -1 : 1;
+  // The timestamps are ISO-8601 in UTC, so their lexicographic order IS their
+  // chronological order; no parsing and no locale can change the answer.
+  return right.updatedAt.localeCompare(left.updatedAt);
+}
+
+/**
+ * Order the listing and cut it to the requested size.
+ *
+ * Ordering runs before the cut, for the reason the wiki dimension sorted the current
+ * Stack first: in a deployment with thousands of Stacks a named entry can sit far
+ * past any sane limit, and a limit applied first would hide exactly the Stack the
+ * caller asked about. An absent or non-numeric `limit` falls back to the default
+ * rather than refusing, because the schema declares a bound, not a requirement.
+ *
+ * @param stacks - The contract entries, in the order the API sent them.
+ * @param limit - The caller's requested size, if any.
+ * @returns At most `limit` entries, in contract order.
+ */
+function orderAndBound(stacks: readonly ContractStack[], limit: unknown): ContractStack[] {
+  const requested =
+    typeof limit === "number" && Number.isFinite(limit) ? Math.trunc(limit) : DEFAULT_LIST_LIMIT;
+  const bounded = Math.min(Math.max(1, requested), MAX_LIST_LIMIT);
+  return [...stacks].sort(byRecencyWithCurrentFirst).slice(0, bounded);
 }

@@ -50,6 +50,27 @@ describe("listTools", () => {
     expect(Object.hasOwn(byName.get("list_stacks") ?? {}, "required")).toBe(false);
   });
 
+  it("declares the shared list_stacks input schema: limit and stackId, nothing required", () => {
+    const list = MCP_TOOLS.find((tool) => tool.name === "list_stacks");
+    const properties = (list?.inputSchema.properties ?? {}) as Record<
+      string,
+      { type?: string; description?: string; minimum?: number; maximum?: number }
+    >;
+    // The same two arguments the wiki dimension declares, in the same order (S3).
+    expect(Object.keys(properties)).toEqual(["limit", "stackId"]);
+    expect(properties["limit"]).toEqual({
+      description: "How many Stacks to return (default 50, max 200).",
+      type: "integer",
+      minimum: 1,
+      maximum: 200,
+    });
+    expect(properties["stackId"]?.type).toBe("string");
+    // `stackId` does NOT narrow the listing: it only decides which entry is current.
+    expect(properties["stackId"]?.description ?? "").toContain("does NOT narrow the listing");
+    // The exemption survives the unification: no `required` key at all.
+    expect(Object.hasOwn(list?.inputSchema ?? {}, "required")).toBe(false);
+  });
+
   it("keeps the numeric schema defaults as the Python declares them", () => {
     // The defaults are part of the advertised schema an LLM client reads, so
     // they are pinned by value rather than merely by presence.

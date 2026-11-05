@@ -27,7 +27,6 @@ export type { QueryValue } from "./mcp/query-string.js";
 export {
   formatContextResponse,
   formatEntitiesResponse,
-  formatStacksResponse,
   formatTraverseResponse,
 } from "./mcp/format.js";
 export { createMcpServer } from "./mcp/server.js";

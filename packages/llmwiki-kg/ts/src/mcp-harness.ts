@@ -24,9 +24,6 @@ export const EXPECTED_TRAV = "Traversal from: Payment Service\nMax depth: 2\nEnt
 export const EXPECTED_TRAV_NO_STEPS = "Traversal from: Payment Service\nMax depth: 2\nEntities reached: 4\n\n(No relationships found from this entity)";
 export const EXPECTED_ENTS = "Found 2 entities:\n\n• Payment Service [System, conf 0.87] ✓\n  Handles card payments.\n• Refund Flow [Process, conf 0.50]";
 export const EXPECTED_ENTS_EMPTY = "(No entities matched the filter)";
-export const EXPECTED_STACKS = "Found 3 Stack(s):\n\n• BF probe (domain: w1bf-probe-1792602489)\n• W1 Doc Probe 2 (domain: w1doc-probe-second)\n• W1 Doc Probe (domain: w1doc-probe-main)";
-export const EXPECTED_STACKS_EMPTY = "No Stacks exist on this AKS server yet.";
-
 export interface RecordedRequest {
   readonly url: string;
   readonly method: string;
@@ -77,6 +74,30 @@ export function textOf(result: unknown): string {
     throw new Error("Expected a single text content block");
   }
   return first.text;
+}
+
+/**
+ * The ten keys of one entry in the unified `list_stacks` contract, in contract order.
+ *
+ * Shared with `test/mcp/list-stacks-contract.test.ts`, which drives BOTH dimensions:
+ * one list of keys means the two servers cannot be compared against two opinions.
+ */
+export const CONTRACT_STACK_KEYS = [
+  "id",
+  "name",
+  "domain",
+  "description",
+  "scope",
+  "compilationStrategy",
+  "synthesizeDescriptions",
+  "createdAt",
+  "updatedAt",
+  "isCurrent",
+] as const;
+
+/** Decode a tool result's text block as the JSON document `list_stacks` answers with. */
+export function payloadOf(result: unknown): unknown {
+  return JSON.parse(textOf(result)) as unknown;
 }
 
 export const BASE_URL = "http://localhost:8000";
