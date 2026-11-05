@@ -59,6 +59,21 @@ every tool takes a required `stackId` and refuses a call that omits it, with
 `list_stacks` as the one exception. MCP resources are not tools and take no
 arguments, so they keep resolving their Stack from the server environment.
 
+## What a Stack's vocabulary is
+
+A Stack also carries the ontology the `kg` dimension extracts against: its
+entity types, relationship types, subtype edges, and pair constraints. No
+environment variable, flag, or project file sets them. They are declared per
+Stack as the `ontology` field of the KG REST API's stack endpoints, `POST
+/stacks` and `PATCH /stacks/:stackId`, and ingest then constrains extraction to
+exactly that declaration. A Stack that declares none is enforced against the
+default ontology, applied at ingest time rather than stored on the Stack. The
+payload, the copyable requests, and the refusals are documented in
+[Stack Ontology](/configuration/stack-ontology).
+
+`--stack` and `AKS_STACK_ID` decide which Stack's vocabulary applies; they never
+change it.
+
 ## What enforces isolation today
 
 The explicit predicate. Every tenant-scoped query carries `where stack_id = ...`,

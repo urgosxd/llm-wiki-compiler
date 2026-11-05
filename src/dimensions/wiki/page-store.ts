@@ -343,10 +343,13 @@ export async function getStoredPagesByKey(
  *
  * THE `callerTx` PARAMETER IS WHAT MAKES A BATCH ATOMIC. Without it each page opens
  * its own transaction, so a batch of five pages is five commits and a failure on the
- * fifth leaves the first four durable. `withTenant` already accepts a caller's
- * transaction for exactly this reason (see its docstring: a nested `db.transaction`
- * gets a DIFFERENT pooled connection, so the inner writes commit separately); a batch
- * caller is the case it was written for.
+ * fifth leaves the first four durable. `withTenant` accepts a caller's transaction
+ * for exactly this reason (see its docstring: a nested `db.transaction` gets a
+ * DIFFERENT pooled connection, so the inner writes commit separately). It was
+ * written for the ingest coordinator, which passes the shared `scope.tx` to every
+ * dimension; the row page batch reuses it, with
+ * `activePageBatchTransaction()` supplying the handle
+ * (`src/dimensions/wiki/page-write-sink.ts:60-66`).
  *
  * @param db - Database handle.
  * @param stackId - The tenant that owns the page.

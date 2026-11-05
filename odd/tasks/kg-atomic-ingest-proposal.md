@@ -1,3 +1,26 @@
+> **STATUS (2026-11-05): IMPLEMENTED — this document is a historical record.**
+>
+> What this proposal asks for is in the code and covered by tests.
+>
+> - The wiki side accepts an ambient transaction handle: `withTenant`
+>   (`src/dimensions/wiki/page-store.ts:166-180`) and `saveSourceDocument`
+>   (`src/dimensions/wiki/source-documents-store.ts:81-88`) both take a caller's
+>   transaction and run on it instead of opening their own.
+> - The coordinator opens ONE Postgres transaction and hands it to every dimension
+>   as `scope.tx` in `commitInOneTransaction`
+>   (`src/dimensions/coordinator.ts:176-190`).
+> - Each store opens its own `db.transaction` only on the standalone,
+>   non-coordinated path — `src/dimensions/wiki/page-store.ts:176-179` and
+>   `src/dimensions/wiki/source-documents-store.ts:87` — which is what a caller
+>   outside the coordinator gets.
+> - The regression test that proves the atomicity is
+>   `test/dimensions/ingest-atomicity.test.ts`.
+>
+> **Everything below this banner is preserved verbatim as the record of the problem
+> as it stood when the proposal was written. Do not read it as current state.** The
+> authority for what ingest does now is the code above and its tests.
+>
+
 # Proposal: atomic ingest across both dimensions
 
 **Status:** three `changes` received (`cd-2026-10-26-01`, `-02`) and one

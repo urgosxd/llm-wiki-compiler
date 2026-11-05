@@ -50,10 +50,16 @@
  * ## Why prepare/commit is still two steps even though a transaction is atomic
  *
  * The coordinator's contract is prepare-then-commit across EVERY dimension, and
- * dimensions commit in a fixed order. A postgres transaction cannot stay open while
- * another dimension runs its own work — that would hold locks across an arbitrary
- * delay and, worse, make the commit order depend on lock timing. So `prepare` only
- * computes what would be written and `commit` performs it in one transaction. A
+ * dimensions commit in a fixed order inside ONE shared transaction: `commit`
+ * receives the coordinator's handle as `scope.tx` and joins it
+ * (`src/dimensions/coordinator.ts:176-190`), so this dimension and the KG one
+ * commit or roll back as a unit.
+ *
+ * `prepare` stays OUTSIDE that transaction, and the reason is the provider calls,
+ * not commit ordering: it runs extraction and embeddings, measured in seconds, and
+ * holding a transaction open across them would pin a pooled connection — the rule
+ * `src/dimensions/types.ts:66-69` states for every implementation. So `prepare` only
+ * computes what would be written and `commit` performs it on the shared handle. A
  * prepared-but-uncommitted page has nothing to undo, which is why `discard` here is
  * a no-op, exactly as in the KG dimension.
  */

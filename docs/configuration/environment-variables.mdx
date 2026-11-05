@@ -316,6 +316,15 @@ empty, only `wiki` is enabled. The Stack is resolved exactly as described in
 LLMWIKI_DIMENSIONS=wiki,kg llmwiki ingest sources/report.md
 ```
 
+This variable selects **which** dimensions run. It does not configure what they
+produce, and in particular **no environment variable configures the `kg`
+dimension's entity types or relationship types.** That vocabulary is declared per
+Stack, as the Stack's `ontology`, through the KG REST API (`POST /stacks` and
+`PATCH /stacks/:stackId`); ingest then constrains extraction to exactly that
+list, and a Stack that declares none is enforced against the default ontology.
+The contract, the payload, and copyable examples are in
+[Stack Ontology](/configuration/stack-ontology).
+
 ### Shared embedding credentials
 
 When `kg` is activated alongside `wiki`, the `kg` dimension resolves its embedding

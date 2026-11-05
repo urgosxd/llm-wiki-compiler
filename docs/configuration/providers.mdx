@@ -403,6 +403,10 @@ fall back to the wiki-side values; a KG-side value you set explicitly still wins
 table, the fail-closed messages, and the `vector(768)` width requirement are in
 [Environment Variables](/configuration/environment-variables#shared-embedding-credentials).
 
+Which entity and relationship types the `kg` dimension extracts is not a provider
+setting and not an environment variable. Each Stack declares its own, through the
+KG REST API; see [Stack Ontology](/configuration/stack-ontology).
+
 ## Per-concept prompt budget
 
 When many sources contribute to the same compiled concept, llmwiki enforces a character cap on the combined source content sent to the LLM so no single concept blows past the model's context window. Each contributing source gets a fair share when truncation kicks in.

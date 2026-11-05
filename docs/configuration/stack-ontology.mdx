@@ -1,0 +1,273 @@
+---
+title: "Stack ontology: entity and relationship types"
+sidebarTitle: "Stack Ontology"
+description: "Set the entity types and relationship types the kg dimension extracts, per Stack, through the KG REST API. No environment variable configures them."
+---
+
+The `kg` dimension does not invent a vocabulary. Each Stack carries one ontology
+declaration, stored in the Stack row, and ingest constrains extraction to exactly
+that declaration. This page is the complete configuration path for it.
+
+<Note>
+  **No environment variable configures entity types.** `LLMWIKI_DIMENSIONS`
+  decides which dimensions an ingest writes - `wiki`, `kg`, or both - and says
+  nothing about which entities exist. See [Dimensions](#the-ontology-is-not-an-environment-variable)
+  below and the [environment variable reference](/configuration/environment-variables#dimensions).
+</Note>
+
+## Where the declaration lives
+
+One declaration per Stack. It is read from and written to `stacks.ontology`, and
+it is written **only** through the KG REST API: `POST /stacks` when the Stack is
+created, `PATCH /stacks/:stackId` afterwards. No llmwiki CLI command sets it -
+`--stack` and `AKS_STACK_ID` choose which Stack a command works on, never what
+that Stack's vocabulary is.
+
+## Running the KG REST API
+
+The API ships in this repository as the `aks-reference-server` package:
+
+```bash
+cd packages/llmwiki-kg/ts
+npm run dev
+```
+
+| Item | Value |
+| --- | --- |
+| Routes | `POST /stacks`, `PATCH /stacks/:stackId`, `GET /stacks`, `GET` and `DELETE /stacks/:stackId`. There is no API prefix and no configurable base path |
+| Bind | `PORT`, default `8000`. The host is fixed at `0.0.0.0`; there is no host variable |
+| Database | `DATABASE_URL`, default `postgresql://aks:aks@localhost:5432/aks` |
+| Auth header | `X-API-Key`, compared exactly against `AKS_API_KEY` |
+| Without a key | When `AKS_API_KEY` is unset, empty, or whitespace-only the server runs open and every request is allowed |
+
+Auth is mounted on each router rather than globally, so `/health` stays open. A
+wrong or missing key answers `401` with
+`Invalid or missing API key. Provide it in the X-API-Key header.` No route takes a
+tenant or Stack header: `X-API-Key` is the only credential header, and a Stack is
+identified by its id in the path.
+
+The server validates its provider credentials at startup and exits with status 1
+before binding the port if the selected providers have none. With the shipped
+defaults that means `OPENAI_API_KEY` (embeddings) and `ANTHROPIC_API_KEY`
+(extraction) must both be set, even though creating a Stack itself touches only
+the database.
+
+This server is neither `llmwiki host` - the unified HTTP server for the viewer,
+the graph, and `/api/ingest` plus `/api/compile` - nor `llmwiki serve`, which is
+an MCP server over stdio and serves no HTTP at all. `/stacks` belongs to neither
+of them.
+
+## The payload
+
+`ontology` is a top-level field on the Stack request body, alongside `name` and
+`domain`.
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `entityTypes` | Yes | Non-empty list of entity type names the extractor may produce |
+| `relationshipTypes` | Yes | Non-empty list of relationship type names the extractor may produce |
+| `subtypes` | No | `child IS_A parent` edges between declared entity types |
+| `relationships` | No | Pair constraints: which entity types one relationship may connect |
+
+Type names are normalised before they are stored: spaces become underscores and
+the result is upper-cased, so `organic organization` is stored as
+`ORGANIC_ORGANIZATION`. A name that becomes a duplicate after normalisation is
+refused, and an empty `entityTypes` or `relationshipTypes` list is refused too -
+it would admit nothing, which is a mistake in the declaration rather than a
+working ontology.
+
+A pair constraint is `{ "type", "domains", "ranges" }`, where only `type` is
+required:
+
+```json
+{ "type": "MANAGES", "domains": ["COMPANY"], "ranges": ["PERSON"] }
+```
+
+`domains` bounds the subject side and `ranges` the object side. An empty or
+omitted side means any declared entity type is allowed on that side. A
+relationship left out of `relationships` stays unconstrained as a pair, so
+constraints are additive: they never replace `relationshipTypes`. The `type` of a
+constraint must appear in `relationshipTypes`, every name in `domains` and
+`ranges` must appear in `entityTypes`, and one relationship can carry only one
+constraint.
+
+A subtype edge is `{ "child": "STARTUP", "parent": "COMPANY" }`. Both endpoints
+must be declared in `entityTypes`, and a cycle is refused. The hierarchy relaxes
+upward only: a requirement on `COMPANY` is satisfied by `STARTUP` when the edge is
+declared, never by a bare `ORGANIZATION`.
+
+## Create a Stack with a declaration
+
+```bash
+curl -X POST http://localhost:8000/stacks \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $AKS_API_KEY" \
+  -d '{
+    "name": "Handbook",
+    "domain": "handbook",
+    "ontology": {
+      "entityTypes": ["COMPANY", "PERSON"],
+      "relationshipTypes": ["EMPLOYS"],
+      "relationships": [
+        { "type": "EMPLOYS", "domains": ["COMPANY"], "ranges": ["PERSON"] }
+      ]
+    }
+  }'
+```
+
+`name` is required (1-200 characters) and `domain` is required and must match
+`^[a-z0-9-]+$`. Everything else has a default: `description` is `null`, `scope`
+is `stack` (`stack`, `workspace`, or `domain`), `compilation_strategy` is
+`incremental` (`incremental` or `global`), and `synthesize_descriptions` is
+`false`. The response is `201` with the Stack row, including the stored
+`ontology`.
+
+Omitting `ontology` stores SQL `NULL` - no default ontology is written to the
+Stack. The default applies at ingest time instead, so you can add a declaration
+later with `PATCH` and the next ingest uses it.
+
+## Change it later
+
+```bash
+curl -X PATCH http://localhost:8000/stacks/$STACK_ID \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $AKS_API_KEY" \
+  -d '{
+    "ontology": {
+      "entityTypes": ["COMPANY", "PERSON", "PRODUCT"],
+      "relationshipTypes": ["EMPLOYS", "OWNS"],
+      "relationships": [
+        { "type": "EMPLOYS", "domains": ["COMPANY"], "ranges": ["PERSON"] },
+        { "type": "OWNS", "domains": ["COMPANY", "PERSON"], "ranges": ["PRODUCT"] }
+      ]
+    }
+  }'
+```
+
+`PATCH` is partial. A field you omit keeps its current value, while an explicit
+`null` clears the declaration, which returns the Stack to the default ontology at
+the next ingest. The updatable fields are `name`, `description`, `scope`,
+`compilation_strategy`, `synthesize_descriptions`, and `ontology`. The path
+parameter is the Stack `uuid`; `GET /stacks` lists them.
+
+| Situation | Answer |
+| --- | --- |
+| Body carries none of the updatable fields | `400` `{"detail":"At least one field must be provided"}` |
+| Path param is not a UUID | `422`, the same validation envelope as a bad body |
+| No Stack has that id | `404` `{"detail":"Stack <uuid> not found"}` |
+
+## What ingest does with the declaration
+
+Extraction is constrained to the declaration, not merely hinted at it. The
+`entityTypes` and `relationshipTypes` lists reach the model as enums in the
+extraction tool schema, and each triplet the model returns is then checked
+against them: an entity type outside `entityTypes`, a relationship type outside
+`relationshipTypes`, or a pair that violates a `relationships` constraint is
+rejected rather than stored.
+
+Rejections are counted rather than dropped silently. The `kg` dimension's commit
+summary carries `, N triplets rejected by ontology` whenever anything was turned
+away, so a thin extraction caused by a tight ontology does not read like a thin
+source. The detail of a rejection is not persisted anywhere, and the
+`stack_documents.audit` column is an unused placeholder for a future quality
+audit. When only the relationship was at fault, both endpoints are still kept as
+standalone entities.
+
+## When no declaration is stored
+
+An unconfigured Stack is enforced against the default ontology, not left
+permissive. The default declares 16 entity types - `COMPANY`, `PERSON`,
+`ORGANIZATION`, `TEAM`, `ROLE`, `PRODUCT`, `TECHNOLOGY`, `SYSTEM`, `PROCESS`,
+`DOCUMENT`, `REQUIREMENT`, `DECISION`, `CONCEPT`, `EVENT`, `LOCATION`, `TIME` -
+and 20 relationship types, and constrains `EMPLOYS`, `WORKS_AT`, and `OWNS` as
+pairs while leaving the rest unconstrained. It declares no subtypes.
+
+Declaring your own ontology replaces that default entirely: the two lists are
+admitted as given, so a type the default carries and yours does not is rejected
+from then on.
+
+## Verify it took effect
+
+`GET /stacks/:stackId` returns the stored declaration exactly as it was written:
+type names normalised, `subtypes` and `relationships` always present (empty lists
+when you declared none), and `null` when the Stack has none:
+
+```bash
+curl -sS http://localhost:8000/stacks/$STACK_ID -H "X-API-Key: $AKS_API_KEY"
+```
+
+Ingest reads the same row on every run: the `kg` dimension resolves the Stack's
+declaration from `stacks.ontology`, falls back to the default when the column is
+`null`, and hands the result to extraction. A library caller that passes an
+ontology explicitly overrides the stored one for that run.
+
+## Refused declarations
+
+A declaration that cannot be enforced is refused at the point of writing, with
+`422`, instead of being stored and then failing every later ingest of that Stack.
+The body is the validation envelope, pointing at the field you sent:
+
+```json
+{
+  "detail": [
+    {
+      "type": "value_error",
+      "loc": ["body", "ontology"],
+      "msg": "Value error, ontology \"subtypes\" contains a cycle through \"A\"",
+      "input": {
+        "entityTypes": ["A"],
+        "relationshipTypes": ["R"],
+        "subtypes": [
+          { "child": "A", "parent": "B" },
+          { "child": "B", "parent": "A" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+The message after `Value error, ` is the reason, and it names the offending field
+or type:
+
+| Cause | Message |
+| --- | --- |
+| Missing `entityTypes` or `relationshipTypes` | `ontology is missing required field "entityTypes"` |
+| Empty list | `ontology field "entityTypes" must be a non-empty array of type names` |
+| Non-string or blank name | `ontology field "entityTypes" contains a non-string or empty type name` |
+| Name listed twice after normalisation | `ontology field "entityTypes" declares "COMPANY" more than once` |
+| `subtypes` not a list | `ontology field "subtypes" must be an array` |
+| Subtype edge missing a side | `each entry of "subtypes" must have string "child" and "parent"` |
+| Subtype endpoint undeclared | `ontology "subtypes" references "STARTUP", which is not declared in "entityTypes"` |
+| Subtype cycle | `ontology "subtypes" contains a cycle through "A"` |
+| `relationships` not a list | `ontology field "relationships" must be an array` |
+| Constraint missing `type` | `each entry of "relationships" must have a non-empty string "type"` |
+| Constraint side not a list | `ontology "relationships" field "domains" must be an array` |
+| Same relationship constrained twice | `ontology "relationships" constrains "EMPLOYS" more than once` |
+| Constraint on an undeclared relationship | `ontology "relationships" constrains "MANAGES", which is not declared in "relationshipTypes"` |
+| Constraint naming an undeclared entity type | `ontology "relationships" domains references "TEAM", which is not declared in "entityTypes"` |
+| Declaration is not a JSON object | Refused by the body's shape check before ontology validation runs, so this entry is a `dict_type` rather than a `value_error`: `{"type":"dict_type","msg":"Input should be a valid dictionary","loc":["body","ontology"]}` |
+
+`ontology must be a JSON object` is not reachable over HTTP. The shape check has
+already guaranteed an object by the time the declaration reaches the ontology
+validator, so that message only appears when library code calls
+`validateOntology` directly.
+
+## The ontology is not an environment variable
+
+To state it once, because it is the mistake this page exists to prevent:
+
+- Entity types, relationship types, pair constraints, and subtypes come from the
+  Stack's `ontology` column, written through `POST /stacks` and
+  `PATCH /stacks/:stackId`. There is no variable, flag, or project file that sets
+  them.
+- `LLMWIKI_DIMENSIONS` selects which dimensions an ingest writes. It does not
+  configure what those dimensions extract, and setting it is what activates the
+  `kg` dimension in the first place:
+
+  ```bash
+  LLMWIKI_DIMENSIONS=wiki,kg llmwiki ingest sources/report.md
+  ```
+
+- `AKS_STACK_ID` and `--stack` select *which* Stack a command works on, and
+  therefore whose declaration applies. They do not change the declaration.

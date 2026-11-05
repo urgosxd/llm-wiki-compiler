@@ -1,3 +1,27 @@
+> **STATUS (2026-11-05): IMPLEMENTED — this document is a historical record.**
+>
+> A row-backed page batch now commits as ONE transaction, not one per page.
+>
+> - The batch carries its transaction in an ambient scope:
+>   `src/dimensions/wiki/page-batch-transaction.ts` (`withPageBatchTransaction`,
+>   `activePageBatchTransaction`).
+> - `applyBatch` (`src/trust/executor.ts:176-194`) wraps its per-mutation loop in
+>   that scope when the caller supplies one, and the row sink joins it:
+>   `src/dimensions/wiki/page-write-sink.ts:60-66` passes
+>   `activePageBatchTransaction()` as `callerTx` to `upsertStoredPage`, which is
+>   the parameter that makes the batch atomic
+>   (`src/dimensions/wiki/page-store.ts:337-386`).
+> - A store therefore opens its own `db.transaction` only when no batch scope is
+>   active — `src/dimensions/wiki/page-store.ts:172-179`.
+> - The regression test that proves it is
+>   `test/dimensions/row-page-batch-atomicity.test.ts`.
+>
+> **Everything below this banner is preserved verbatim as the record of the problem
+> as it stood when this document was written. Do not read it as current state.** The
+> "defect, measured in source" citations below point at line numbers that have since
+> moved; the code above is the authority.
+>
+
 # row-page-batch-atomicity — a row batch is N transactions, not one
 
 ## Goal

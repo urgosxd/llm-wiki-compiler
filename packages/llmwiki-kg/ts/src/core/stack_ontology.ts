@@ -1,33 +1,51 @@
 /**
  * @file packages/llmwiki-kg/ts/src/core/stack_ontology.ts
- * @description Reading and storing a Stack's ontology without changing the HTTP contract.
+ * @description Reading, validating and normalising a Stack's stored ontology declaration.
  *
- * ## Why this module exists instead of a DTO field
+ * ## Where the declaration is written
  *
- * The obvious place for a Stack's ontology is `POST /stacks`. It cannot go there.
- * `oracle/contracts/openapi.json` — the frozen record of the Python server this
- * package ports — has no `ontology` on `StackCreate`, `StackUpdate` or
- * `StackResponse`, and `routes/stacks.ts` repeats Python's `_STACK_COLUMNS`
- * verbatim because response key order is contractual. Adding the field would be an
- * extension of the reference contract, not a faithful port, and the oracle is gone:
- * there is no live Python server left to re-diff against, so a divergence recorded
- * now could not be measured later.
+ * A Stack's ontology lives in the `stacks.ontology` jsonb column, and the KG REST
+ * API is its only writer: `POST /stacks` inserts the column and
+ * `PATCH /stacks/:stackId` updates or clears it, both from the `ontology` field of
+ * the request body (`dto.ts` — `StackCreate`, `StackUpdate`, `StackResponse`).
+ * Absence of the field on create and `null` on update both mean "no declaration",
+ * which is stored as SQL NULL. No CLI command writes that column, and nothing seeds
+ * it: a Stack created without a declaration simply keeps the column empty.
  *
- * So the column is populated out of band — by a reviewed declaration written
- * directly to `stacks.ontology` — and the API keeps its exact shape.
+ * ## Where the declaration is read
+ *
+ * Ingest re-reads the column on every run rather than caching it. The `kg`
+ * dimension's `resolveOntology` calls `loadStoredOntology` (a raw
+ * `select ontology from stacks where id = ...`), hands the raw value to
+ * `readStackOntology` below, and applies `defaultOntology()` when this module
+ * answers `undefined`. That split is deliberate: the reader reports what is stored,
+ * and the boundary that knows a Stack exists decides what a missing declaration
+ * means.
+ *
+ * ## What this module does, and what it does not
+ *
+ * The job here is the conversion between the column and an `Ontology`:
+ * `readStackOntology` validates a stored document on read, and `toStoredOntology`
+ * validates and normalises a declaration on the way in. Persistence is emphatically
+ * not part of it — the insert, the update, and the jsonb cast a driver requires all
+ * live in the routes — so this file carries no SQL and no knowledge of the HTTP
+ * surface. Those two exports are the whole of it.
  *
  * ## Null is a behaviour, not an absence
  *
- * This is the rule the whole feature rests on. `readStackOntology(null)` returns
- * `undefined`, and `undefined` is what makes `extractGraphFromChunks` take its
- * original two-argument form: advertise the default type hints and accept whatever
- * the model emits — the oracle's `strict=False` behaviour.
+ * `readStackOntology(null)` returns `undefined`, which is the reader's honest
+ * answer to "what is stored" rather than a decision about extraction. Coercing null
+ * to `{}` would be a silent behaviour change: `validateOntology` rejects an empty
+ * declaration, so `{}` is an error and not "no constraint", and a declaration that
+ * validated while listing nothing would drop every triplet of every document. The
+ * `undefined` -> default decision belongs to the caller, and both shipped ingest
+ * paths make it (`resolveOntology` in the `kg` dimension, `ontologyArgument` in the
+ * ingest pipeline).
  *
- * Coercing null to `{}` would be a silent behaviour change. `validateOntology`
- * rejects an empty declaration, so `{}` is not "no constraint", it is an error; and
- * a Stack that somehow carried an empty-but-valid declaration would drop every
- * triplet of every document. Every existing Stack is null, so this is the difference
- * between a feature and an outage.
+ * `undefined` remains a real branch of `extractGraphFromChunks`, which keeps its
+ * original two-argument form for a caller that asks for no ontology at all: it
+ * advertises the unconstrained type field and accepts whatever the model emits —
+ * the oracle's `strict=False` behaviour.
  */
 
 import { validateOntology, type Ontology } from "./ontology.js";

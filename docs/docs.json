@@ -74,6 +74,7 @@
             "pages": [
               "configuration/providers",
               "configuration/environment-variables",
+              "configuration/stack-ontology",
               "configuration/review-policy",
               "configuration/schema",
               {
