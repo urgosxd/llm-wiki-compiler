@@ -139,13 +139,84 @@ async function withTools(label: string, body: (session: Session) => Promise<void
   });
 }
 
-/** Row counts a refused call must leave untouched. */
-async function rowCounts(harness: KgPostgresHarness): Promise<Record<string, number>> {
-  const count = async (table: string): Promise<number> => {
-    const [row] = await harness.db.execute(`select count(*)::int as n from ${table}`);
-    return Number((row as { n: number }).n);
-  };
-  return { stacks: await count("stacks"), pages: await count("wiki.pages"), sources: await count("wiki.source_documents") };
+/** One Stack's row counts: everything a refused OKF/ingest call could have written. */
+interface StackCounts {
+  pages: number;
+  /** `wiki.derived_artifact` — the index/MOC renders a compile regenerates. */
+  artifacts: number;
+  /** `wiki.review_candidates` — where an OKF import stages. */
+  candidates: number;
+  /** `wiki.source_documents` — where an ingest lands. */
+  sources: number;
+}
+
+/** The Stack-scoped tables a refused call must leave byte-identical, by counter name. */
+const COUNTED_TABLES: ReadonlyArray<[keyof StackCounts, string]> = [
+  ["pages", "wiki.pages"],
+  ["artifacts", "wiki.derived_artifact"],
+  ["candidates", "wiki.review_candidates"],
+  ["sources", "wiki.source_documents"],
+];
+
+/**
+ * Every Stack's row counts, keyed by Stack id, zero-filled where a Stack holds nothing.
+ *
+ * Per Stack rather than one whole-table total: the total it replaced compared
+ * `{ stacks: 4003, pages: 598 }` against `{ stacks: 4004, pages: 596 }` and read a
+ * sibling suite's fixture as a write of ours. Keying the same measurement to the
+ * tenant that owns the rows removes that noise — see {@link expectNoWrites} for how
+ * far the comparison can honestly go.
+ *
+ * @param harness - The suite's database handle.
+ * @returns Stack id → its counts, for every Stack with at least one row.
+ */
+async function stacksWithCounts(harness: KgPostgresHarness): Promise<Map<string, StackCounts>> {
+  const snapshot = new Map<string, StackCounts>();
+  for (const [key, table] of COUNTED_TABLES) {
+    const rows = await harness.db.execute(
+      `select stack_id::text as stack_id, count(*)::int as n from ${table} group by 1`,
+    );
+    for (const row of rows as Array<{ stack_id: string; n: number }>) {
+      const counts = snapshot.get(row.stack_id) ?? { pages: 0, artifacts: 0, candidates: 0, sources: 0 };
+      snapshot.set(row.stack_id, { ...counts, [key]: Number(row.n) });
+    }
+  }
+  return snapshot;
+}
+
+/**
+ * Assert the refused calls moved none of `bound`'s rows.
+ *
+ * ## Why the BOUND Stack is the detector
+ *
+ * These three calls name no Stack, so the env-substituting fallback under test had
+ * exactly ONE reachable tenant: `process.env.AKS_STACK_ID`, the Stack the deployment
+ * serves — `bound` here, owned exclusively by this suite's fixture. Asserting it is
+ * untouched IS the cross-tenant write detector, and it still fails if a fallback
+ * returns.
+ *
+ * ## Why not "every Stack present in both snapshots"
+ *
+ * Tried, and not race-proof in a shared database: a sibling suite writing to ITS OWN
+ * Stack between the two snapshots is indistinguishable from a cross-tenant write by
+ * this call. Measured — three consecutive runs of this suite alongside its siblings,
+ * each failing on a different foreign Stack's own `pages`/`sources`. Counting a Stack
+ * this process can never reach does not strengthen the assertion; it makes the gate
+ * untrustworthy. A global `stacks` count is the 4003-versus-4004 flake itself.
+ *
+ * @param before - Snapshot taken before the refused calls.
+ * @param after - Snapshot taken after them.
+ * @param bound - The Stack the deployment serves, and the only tenant a fallback could reach.
+ */
+function expectNoWrites(
+  before: Map<string, StackCounts>,
+  after: Map<string, StackCounts>,
+  bound: string,
+): void {
+  const empty: StackCounts = { pages: 0, artifacts: 0, candidates: 0, sources: 0 };
+  expect(after.get(bound) ?? empty).toEqual(before.get(bound) ?? empty);
+  // A refused call cannot remove the Stack either: it is still there afterwards.
+  expect(after.has(bound)).toBe(before.has(bound));
 }
 
 /** How many source documents `stackId` holds. */
@@ -211,11 +282,20 @@ describe("S2: a call with no stackId is refused and touches nothing", () => {
   it("leaves rows, bundles and candidates untouched", async () => {
     await withTools("req-okf-s2-writes", async ({ client, root, harness }) => {
       await seedBundle(root);
-      const before = await rowCounts(harness);
+      const before = await stacksWithCounts(harness);
 
       for (const { name, args } of MISSING_STACK_CALLS) await client.callTool({ name, arguments: args });
 
-      expect(await rowCounts(harness)).toEqual(before);
+      // Per Stack, so a sibling suite's fixture cannot look like a write of ours.
+      expectNoWrites(before, await stacksWithCounts(harness), harness.stackId);
+      // The refusal is what makes "nothing was written" credible: the SDK rejected the
+      // call before the handler ran, so no fallback and no default-Stack provisioning
+      // could even start. Pinned per tool above; re-asserted here so this case cannot
+      // pass against a handler that half-ran and wrote nothing.
+      for (const { name, args } of MISSING_STACK_CALLS) {
+        const refused = await client.callTool({ name, arguments: args });
+        expect(refused.isError).toBe(true);
+      }
       expect(existsSync(path.join(root, "dist"))).toBe(false);
       expect(existsSync(path.join(root, ".llmwiki", "candidates"))).toBe(false);
     });
