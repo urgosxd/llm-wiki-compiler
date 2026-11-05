@@ -44,6 +44,48 @@ T9. Run the gates with their exact scope (`npx tsc --noEmit`, `npm run build`, `
 
 INBOUND/OUTBOUND SPLIT. S2 requires the rename to be reported as a split, and the split is a deliverable of this feature, not a note: inbound request fields become `stackId`, outbound response fields are reported and left alone unless the Manager rules otherwise.
 
+### S3 contract — the one `list_stacks` contract both dimensions satisfy
+
+Measured before unification (L11): the two tools shared nothing but a name. The wiki
+dimension returned JSON `{ stacks, count }`; the KG dimension returned prose lines and
+declared no input schema at all. The contract below is fixed here, and both dimensions are
+changed to meet it.
+
+Input schema, identical in both:
+
+- `limit` — optional integer, min 1, max 200, default 50.
+- `stackId` — optional string. This does NOT narrow the listing; it decides only which entry
+  is marked `isCurrent`. Omitting it is allowed: `list_stacks` stays exempt from the
+  required-stack rule in both dimensions, because a discovery tool cannot demand the id of
+  the thing it discovers.
+
+Output envelope, identical in both: a JSON document with exactly two keys, in this order.
+
+- `stacks` — array of stack objects.
+- `count` — integer, equal to `stacks.length`.
+
+Each stack object has exactly these keys, in this order, with these types:
+
+- `id` — string (UUID).
+- `name` — string.
+- `domain` — string or null.
+- `description` — string or null.
+- `scope` — string.
+- `compilationStrategy` — string or null.
+- `synthesizeDescriptions` — boolean.
+- `createdAt` — string.
+- `updatedAt` — string.
+- `isCurrent` — boolean. True for the Stack named by `stackId`, or for the Stack this
+  deployment is bound to when `stackId` is omitted. A dimension with no binding marks none.
+
+Ordering, identical in both: most recently updated first, with the `isCurrent` entry first
+when there is one.
+
+Not part of the contract: the KG response field `ontology`, and the difference between a
+bound Stack and a caller-named one, are implementation detail. Changing KG `list_stacks`
+from prose to this JSON document is a breaking change for any MCP client that parsed the
+prose, and it is recorded in the CHANGELOG under S6.
+
 ## Log
 
 L1 (human request, verbatim, do not translate): "Project 2: feat/align-dimension
@@ -64,3 +106,9 @@ L6 (named gap, not fixed in this project): these four tests execute in NO config
 L7 (documentation staleness follow-up, deliberately not edited): `contract-cordination.json` still describes roles and worktrees that no longer match reality — it names `orchestrator-a`, `orchestrator-b` and a retired `orchestrator-c` — and it is shared coordination surface, so this project records the staleness and does not rewrite the file.
 
 L8 (recon, the two `list_stacks` as found): they are structurally far apart, which is what makes S3 a contract decision rather than a tidy-up. The wiki dimension registers at `src/mcp/stack-tools.ts:29-67` with an input schema of `limit?: number` plus `stackId?: string` whose meaning is mark-current rather than narrow, reads Postgres through `withTenantDatabase`/`listStacks`, and returns JSON `{ stacks, count }` through `jsonResult`. The KG dimension registers at `packages/llmwiki-kg/ts/src/mcp/handlers.ts:445-485` with NO input schema and NO description, proxies a remote `GET {baseUrl}/stacks`, and returns human-readable prose lines through `formatStacksResponse` (`format.ts:213-223`) with no envelope at all. The wiki side has 11 tests in `test/mcp/list-stacks.test.ts`; the KG side has none.
+
+L9 (environment, gate baseline): this worktree shipped with no `node_modules`, so `npx tsc --noEmit`, `npm run build`, `npm test` and `fallow` were all unrunnable and the STEP 0 commit was made with `--no-verify` (harmlessly — `.husky/_` did not exist yet, so no hook could have run). The dependency set never changed: `package-lock.json` and `package.json` are byte-identical between main @ 8203862 and this branch's base (`4fa80533…` / `e64cf98a…`), and `git diff 8203862 2340970 -- package-lock.json` is empty. Dependencies were therefore provisioned from the local npm cache with `npm ci --offline` (exit 0, 463 packages, no network), NOT by borrowing a sibling worktree's tree: npm workspaces link `node_modules/@atomicstrata/llmwiki-core` and `node_modules/aks-reference-server` into the installing checkout, so a borrowed tree would have resolved those to another worktree's source and produced false greens. Both links were verified to resolve inside this worktree. Baseline on the untouched tree: `npx tsc --noEmit` exit 0 clean, `npm run build` exit 0. `npm test` and `fallow` have no baseline yet and are owed by T9. Recorded condition, not a defect: npm emits `EBADENGINE` because `engines.node` is `>=24` and the runtime is v22.23.2; install and both gates succeed anyway and no `engine-strict` is set.
+
+L10 (Lead ruling, S1, "one shared rule"): the Stack-id UUID rule is stated once at `packages/llmwiki-kg/ts/src/stack-id.ts` and re-exported from that package's `core-index.ts`, and `src/utils/stack-id.ts` becomes a thin adapter that delegates to it. The location is forced by reachability, not preference: root `src/**` -> KG package is already a production import edge (`src/utils/lock-postgres.ts:28`, `src/dimensions/activation.ts:45`, `src/host/server.ts:54`, resolved by `tsconfig.json:36-38` and `vitest.config.ts:38`), while the reverse direction is impossible for free because `packages/llmwiki-kg/ts/tsconfig.json` pins `rootDir: "src"` with `noEmitOnError`, making a KG import of `../../../src/utils/stack-id.js` a `TS6059` build failure. `packages/llmwiki-core` is not a candidate: it has no source of its own and compiles root `src/` through `packages/llmwiki-core/tsup.config.ts:10-14`. No new package, no `tsconfig` edit and no build-graph change are made. Crucially the two current validators do NOT accept the same set: `stackIdProblem` accepts only the canonical hyphenated form, while the KG `pydanticUuid` also accepts 32-hex, `{8-4-4-4-12}` and `urn:uuid:8-4-4-4-12`. Unifying on either one would silently narrow the published KG HTTP API or widen the wiki MCP tools, and the human's own words — "esto solo un nombre" — scope this project to a rename. So the shared *predicate* is one constant, both dimensions' MCP surfaces use it, and the KG HTTP DTO keeps `pydanticUuid` on the renamed field with a test pinning that its lax forms stay accepted. One policy, two adapters, no unrequested contract break; the remaining difference is deliberate, tested and reported rather than drift.
+
+L11 (Lead ruling, S3, the unified `list_stacks` contract): the two tools shared only a name. The wiki one returns JSON `{ stacks, count }` built from Postgres (`services/stacks/stack-store.ts:142`, `src/mcp/stack-tools.ts:81`) with a ten-field summary whose `isCurrent` is `row.id === currentStackId` (`stack-store.ts:118`), ordered `(id = bound) desc, updated_at desc`. The KG one returns prose lines from `formatStacksResponse` (`packages/llmwiki-kg/ts/src/mcp/format.ts:73-105`) over a remote `GET /stacks`, and declares no input schema. Its HTTP payload does carry an `id` per stack (`StackResponse.parse`, `dto.ts:278`), which is what makes a common shape possible at all. Decided: the wiki JSON shape is canonical, because a data-listing tool must return machine-readable data and prose cannot be compared field by field; the KG tool conforms to the same input schema, envelope and key order, and stops emitting prose. `isCurrent` is defined so both can satisfy it honestly: the KG dimension has no bound-stack notion whatsoever — no stack key is read from the environment, `AKS_BASE_URL` and `AKS_API_KEY` are connection keys only — so a dimension without a binding marks none, and that fact is written into the contract instead of being papered over. `list_stacks` remains exempt from the required-stack rule in both dimensions and the exemption stays pinned per dimension.
