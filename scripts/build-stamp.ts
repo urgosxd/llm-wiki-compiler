@@ -43,13 +43,26 @@ const INPUT_FILES = ["tsup.config.ts", "tsconfig.json", "package.json"];
 /**
  * Paths the build must have produced. Checked for existence only: a stamp that
  * claims a successful build while `dist/cli.js` is missing is treated as a miss.
+ *
+ * Every entry must name a file THIS repository's build actually writes, or the
+ * check can never pass and the cache never skips — a demanded output nobody
+ * produces is a permanent miss, not a strict check. `test/build-stamp.test.ts`
+ * holds each `packages/**` entry to a directory the root manifest declares as a
+ * workspace.
  */
-const REQUIRED_OUTPUTS = [
+export const REQUIRED_OUTPUTS = [
   "dist/cli.js",
   "dist/index.js",
   "dist/index.d.ts",
   "packages/llmwiki-core/dist/index.js",
-  "packages/llmwiki-local-workflows/dist/index.js",
+  // `packages/llmwiki-local-workflows/dist/index.js` USED to be listed here and
+  // is deliberately absent: commit 0374a5f dropped every subsystem outside the
+  // wiki and KG dimensions, so that package no longer exists, is not in the root
+  // manifest's `workspaces`, and no tsup config emits it. Requiring it made
+  // `isBuildFresh()` false on every run, so each vitest invocation rebuilt `dist/`
+  // (~21s, mostly `packages/llmwiki-core` with `dts: true`) and two concurrent
+  // invocations raced inside tsup's per-entry clean+write until one died before a
+  // single test loaded. Add an entry only for an output the build really writes.
 ];
 
 /** Recorded state of the last successful build. */

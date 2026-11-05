@@ -6,31 +6,58 @@
  * time. These tests therefore pin the fail-safe direction on every uncertain
  * case (absent stamp, corrupt stamp, missing outputs, changed inputs) and prove
  * the happy path still recognises an unchanged tree.
+ *
+ * One case pins the other direction of the same asymmetry: every required output
+ * must be a file this workspace's build really writes. An entry nobody produces
+ * is a permanent miss, which silently disables the cache for every run instead
+ * of merely costing one build.
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { clearStamp, computeInputsHash, isBuildFresh, STAMP_PATH, writeStamp } from "../scripts/build-stamp.js";
+import {
+  clearStamp,
+  computeInputsHash,
+  isBuildFresh,
+  REQUIRED_OUTPUTS,
+  STAMP_PATH,
+  writeStamp,
+} from "../scripts/build-stamp.js";
 
 let root: string;
 
-/** Create the minimum tree the stamp inspects, plus every required output. */
+/**
+ * The files a real `tsup` run at the repository root writes: two root bundles
+ * (the CLI entry and the library entry with its `d.ts`) plus the built
+ * dependency package. Deliberately NOT derived from `REQUIRED_OUTPUTS` — a seed
+ * read out of the module under test would make every case below vacuous.
+ */
+const BUILT_OUTPUTS = [
+  "dist/cli.js",
+  "dist/index.js",
+  "dist/index.d.ts",
+  "packages/llmwiki-core/dist/index.js",
+];
+
+/** Create the minimum tree the stamp inspects, plus every output the build emits. */
 function seedProject(): void {
   mkdirSync(path.join(root, "src"), { recursive: true });
   writeFileSync(path.join(root, "src/index.ts"), "export const a = 1;\n");
   writeFileSync(path.join(root, "tsup.config.ts"), "export default {};\n");
-  for (const output of [
-    "dist/cli.js",
-    "dist/index.js",
-    "dist/index.d.ts",
-    "packages/llmwiki-core/dist/index.js",
-    "packages/llmwiki-local-workflows/dist/index.js",
-  ]) {
+  for (const output of BUILT_OUTPUTS) {
     mkdirSync(path.dirname(path.join(root, output)), { recursive: true });
     writeFileSync(path.join(root, output), "built\n");
   }
+}
+
+/** Workspace directories the root manifest declares, as repository-relative paths. */
+function declaredWorkspaces(): string[] {
+  const manifest = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as {
+    workspaces?: string[];
+  };
+  return manifest.workspaces ?? [];
 }
 
 beforeEach(() => {
@@ -47,9 +74,26 @@ describe("isBuildFresh", () => {
     expect(isBuildFresh(root)).toBe(false);
   });
 
-  it("is true right after a build is recorded", () => {
+  it("is true for a tree holding exactly the outputs the build produces", () => {
     writeStamp(root);
     expect(isBuildFresh(root)).toBe(true);
+  });
+
+  it("is false when a dependency package output is missing", () => {
+    writeStamp(root);
+    rmSync(path.join(root, "packages/llmwiki-core/dist/index.js"));
+    expect(isBuildFresh(root)).toBe(false);
+  });
+
+  it("requires only outputs from packages this workspace declares and builds", () => {
+    const workspaces = declaredWorkspaces();
+    const packageOutputs = REQUIRED_OUTPUTS.filter((output) => output.startsWith("packages/"));
+    expect(packageOutputs.length).toBeGreaterThan(0);
+    for (const output of packageOutputs) {
+      const directory = output.slice(0, output.indexOf("/dist/"));
+      expect(workspaces, `${output} names ${directory}`).toContain(directory);
+      expect(existsSync(directory), `${output} names ${directory}`).toBe(true);
+    }
   });
 
   it("is false when an input changes", () => {

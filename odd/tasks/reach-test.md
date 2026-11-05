@@ -43,6 +43,7 @@ T8 — Gates: root `tsc --noEmit`, `npm run build`, full `npm test`, `fallow`, K
 T9 — Final report: branch and head SHA, per-task commits, verdict per S#, e2e transcript, isolation proof, KG gate wiring and diagnostic baseline, exact test scope and result, blockers/UNAVAILABLE, scratch paths, Risk line. S1-S9. Route: Lead. Commit: none.
 T10 — Remove the stray statement terminator that kept a fresh database from being built, and reword the per-run fixture's statement-splitter warning so it reads as unreachable. S2 (the isolation fixture's reason for the workaround), S7. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
 T6b — Replace the concept-page assertion that the ingest's own stub row already satisfied with one that pins the page the compile writes. S6, S5's honesty requirement. Route: worker. Commit: 2664ac2.
+T11 — Make the build stamp name outputs that exist, so a repeated vitest run skips the ~21 s build and two concurrent runs cannot race inside tsup. S8 (gate integrity), S7. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported to the parent, see L15).
 
 ## Log
 
@@ -438,3 +439,75 @@ L14 (evidence, T6b — one false-positive assertion replaced with the effect it 
   so its size is a defect this change did not create; (c) three Log labels are duplicated in this document
   (`L9`/`L10`/`L11` appear twice, `L11` three times) because concurrent workers numbered independently — this entry
   uses the next free label, `L14`.
+
+L15 (T11 — the build stamp now names only outputs that exist; S8's gate integrity, S7's no-shared-build-race):
+- DETERMINATION: `packages/llmwiki-local-workflows/dist/index.js` was STALE, not a build the repository failed to
+  run. Five independent pieces of evidence: (1) root `package.json` `workspaces` is exactly
+  `["packages/llmwiki-core", "packages/llmwiki-kg/ts"]`; (2) `ls packages/` is `llmwiki-core`,
+  `llmwiki-dev-backend`, `llmwiki-kg`, `llmwiki-limited-isolation-backend` — no `llmwiki-local-workflows`;
+  (3) `git log --diff-filter=D -1 -- packages/llmwiki-local-workflows/package.json` names `0374a5f
+  refactor!: drop every subsystem outside the wiki and KG dimensions`, i.e. that commit DELETED the package;
+  (4) root `tsup.config.ts` builds two entries, `src/cli.ts` and `src/index.ts`, both to `dist/`, and
+  `scripts/tsup-command.ts`'s `buildCompilerDependencies` loops over exactly `["llmwiki-core"]`, so no build
+  anywhere under this tree writes that path; (5) existence probe of the five required outputs — `dist/cli.js`,
+  `dist/index.js`, `dist/index.d.ts`, `packages/llmwiki-core/dist/index.js` all EXISTS after a build, and
+  `packages/llmwiki-local-workflows/dist/index.js` MISSING. So no route "make it real" existed: there is no
+  package, no manifest entry and no tsup entry to point at a different path.
+- ROUTE: drop that ONE stale entry, with the reason recorded in the constant itself. `REQUIRED_OUTPUTS` before:
+  `["dist/cli.js", "dist/index.js", "dist/index.d.ts", "packages/llmwiki-core/dist/index.js",
+  "packages/llmwiki-local-workflows/dist/index.js"]`. After: the same list without the last entry, plus a comment
+  naming commit 0374a5f, the root manifest, and the two symptoms. The list is NOT emptied, `isBuildFresh()` is
+  still conditional on stamp + outputs + inputs hash, and no entry was weakened: each survivor is a file a real
+  build wrote in this session — `dist/cli.js` (root tsup entry `src/cli.ts`, tsup banner + `onSuccess`
+  `scripts/copy-viewer-assets.mjs`), `dist/index.js` and `dist/index.d.ts` (root tsup entry `src/index.ts` with
+  `dts: true`), `packages/llmwiki-core/dist/index.js` (`packages/llmwiki-core/tsup.config.ts` `entry.index:
+  ../../src/core-index.ts` into `dist/`). `REQUIRED_OUTPUTS` is now exported so a test can hold each `packages/**`
+  entry to a workspace the root manifest declares; that export changes no behaviour.
+- TEST-FIRST (S7's rule, applied to the stamp itself). RED, `npx vitest run test/build-stamp.test.ts`:
+  `Tests 2 failed | 11 passed (13)`, `AssertionError: expected false to be true` at `isBuildFresh` on a tree
+  seeded with exactly what a build emits, and `AssertionError: packages/llmwiki-local-workflows/dist/index.js
+  names packages/llmwiki-local-workflows: expected [ 'packages/llmwiki-core', …(1) ] to include
+  'packages/llmwiki-local-workflows'`. GREEN after the one-entry removal: 13/13 passed, exit 0. The seed in that
+  file now lists the four real outputs explicitly and is deliberately NOT read from `REQUIRED_OUTPUTS`, so the
+  cases cannot go vacuous; a new case keeps the existence check honest by deleting
+  `packages/llmwiki-core/dist/index.js` and demanding `false`.
+- FRESHNESS IS REAL, NOT PERMISSIVE (wall clock, `/usr/bin/time`, repo root, real `vitest.config.ts` and real
+  `test/global-setup.ts`): COLD — stamp cleared through the module's own `clearStamp()` (`isBuildFresh` printed
+  `false`), run `22.53s` vitest duration / `23.22s` wall, i.e. the build ran. REPEAT immediately —
+  `412ms` / `1.09s` wall. INVALIDATED — one doc line of `STAMP_VERSION` inside `scripts/build-stamp.ts` (a real
+  hashed build input, `INPUT_DIRS` contains `scripts`) edited, run `22.68s` / `23.35s` wall. RESTORED — same line
+  reverted by edit, run `22.32s` / `23.05s` wall. REPEAT after restore — `409ms` / `1.11s` wall. So the ~21s
+  rebuild now happens only when an input genuinely changed, and the cache still refuses to trust an uncertain
+  stamp. Nothing was deleted to produce these numbers.
+- THE RACE IS GONE for the case that was broken. Three consecutive pairs, each TWO concurrent
+  `npx vitest run test/mcp-stdio.test.ts` processes (backgrounded, `wait`ed, real `vitest.config.ts`, no scratch
+  config): pair 1 `A exit=0 | Tests 1 passed (1)`, `B exit=0 | Tests 1 passed (1)`; pair 2 identical; pair 3
+  identical. Zero `tsup`/`ESM`/`CLI Building` lines and zero `No test files found` in any of the six transcripts
+  (`/tmp/build-stamp-concurrency-0GSPM5/pair{1,2,3}-{a,b}.log`). Before this change every one of those six
+  processes rebuilt `dist/`; now all six skip it, so nothing enters tsup's clean+write.
+- COUNTERFACTUAL, run once and reported as measured: the same pair with `LLMWIKI_TEST_FORCE_BUILD=1` (both
+  processes rebuild) came back `exit=0` twice, `31.28s` and `31.07s`, `Tests 1 passed (1)` each — the tsup race
+  did NOT reproduce in that single observation. So the honest statement is narrower than "two builders can never
+  collide": what is proven is that the COMMON case (a developer or CI running one suite twice, or in parallel)
+  no longer builds at all, and the residual window is the genuinely cold one — two processes starting with no
+  fresh stamp, both building, which is pre-existing behaviour this slice does not change. Named as a risk, not
+  claimed fixed.
+- GATES (exact scope, final state). `npx vitest run test/build-stamp.test.ts` → 13 passed, exit 0, `415ms`
+  (build skipped). `npx vitest run test/mcp-stdio.test.ts` → 1 passed, exit 0, `6.59s` wall — that suite spawns
+  `node dist/cli.js`, so a skipped build is not a broken `dist`. `npx tsc --noEmit` → no output, exit 0.
+  `npm run typecheck:kg` → `227 files checked; 0 diagnostics baselined across 0 entries in
+  packages/llmwiki-kg/ts/tsconfig.json; no regression.` exit 0. `isBuildFresh(<repo>)` after the last build →
+  `true`; `dist/cli.js`, `dist/index.js`, `dist/index.d.ts`, `packages/llmwiki-core/dist/index.js` all present.
+- REPORTED, NOT FIXED (outside this task's surfaces — same deleted package, four more stale references on this
+  branch): `package-lock.json:13` still lists `packages/llmwiki-local-workflows` under `workspaces` and
+  `@atomicstrata/llmwiki-local-workflows` as a root dependency (line 20); `test/sdk/packaging.test.ts:29` still
+  `npm pack`s `packages/llmwiki-local-workflows`; `contract-cordination.json:25` and `.fallowrc.json` still carry
+  `packages/llmwiki-local-workflows/**`; `.github/workflows/publish.yml:70,186,192` still publishes and verifies
+  it. The first is the one that matters operationally (a fresh `npm ci` against this lock names a directory that
+  does not exist); it is a lockfile/CI decision, not a test-cache decision, so it is not this slice's.
+- COMMIT: this slice — `scripts/build-stamp.ts`, `test/build-stamp.test.ts`, this entry and T11's task line,
+  staged by explicit path. The SHA cannot live inside its own commit, so it is reported to the parent beside L15
+  for the doc-only commit that follows, exactly as T2's (`7f78ecf`) and T2b's (`6b0a805`) were.
+- SCRATCH LEFT IN PLACE (per L2): `/tmp/build-stamp-concurrency-0GSPM5/` — the six concurrency-pair transcripts
+  (`pair{1,2,3}-{a,b}.log`), the single forced-build transcript (`forced-a.log`) and the forced-build pair
+  (`coldpair-{a,b}.log`), each with its `.exit` file.
