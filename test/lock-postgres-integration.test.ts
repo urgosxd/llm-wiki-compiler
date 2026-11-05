@@ -16,8 +16,8 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { acquireLock, releaseLock } from "../src/utils/lock.js";
 import { lockRegistry } from "../src/utils/lock-postgres.js";
-import { isPerRunDatabaseName, perRunDatabase } from "./fixtures/per-run-database.js";
-import { DEFAULT_TEST_DATABASE_URL } from "./fixtures/test-database.js";
+import { perRunDatabase } from "./fixtures/per-run-database.js";
+import { expectPerRunDatabase } from "./fixtures/per-run-database-assertions.js";
 
 /** This process's own database; provisioning fails loudly rather than skipping. */
 const DSN = (await perRunDatabase()).url;
@@ -42,8 +42,7 @@ describe("the lock facade with a Stack", () => {
   });
 
   it("takes the lock in a database of its own, not the shared one", () => {
-    expect(isPerRunDatabaseName(new URL(DSN).pathname.slice(1))).toBe(true);
-    expect(DSN).not.toBe(DEFAULT_TEST_DATABASE_URL);
+    expectPerRunDatabase(DSN);
   });
 
   it("takes the lock through Postgres", async () => {

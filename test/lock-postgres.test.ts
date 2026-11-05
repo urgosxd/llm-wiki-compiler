@@ -19,8 +19,8 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { tryAcquirePostgresLock } from "../src/utils/lock-postgres.js";
-import { isPerRunDatabaseName, perRunDatabase } from "./fixtures/per-run-database.js";
-import { DEFAULT_TEST_DATABASE_URL } from "./fixtures/test-database.js";
+import { perRunDatabase } from "./fixtures/per-run-database.js";
+import { expectPerRunDatabase } from "./fixtures/per-run-database-assertions.js";
 
 /**
  * This process's own database, provisioned before collection.
@@ -68,8 +68,7 @@ describe("advisory lock", () => {
   it("runs against a database of its own, not the shared one", () => {
     // Advisory locks are database-scoped, so this suite locking the shared database
     // buys no isolation at all: a private database is the proof's premise.
-    expect(isPerRunDatabaseName(new URL(DSN).pathname.slice(1))).toBe(true);
-    expect(DSN).not.toBe(DEFAULT_TEST_DATABASE_URL);
+    expectPerRunDatabase(DSN);
   });
 
   it("releases twice without throwing", async () => {

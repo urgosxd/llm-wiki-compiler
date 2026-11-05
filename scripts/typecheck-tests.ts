@@ -3,28 +3,19 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import ts from "typescript";
+import { parseRatchetBaseline } from "./ratchet-baseline.ts";
+import type { RatchetBaseline } from "./ratchet-baseline.ts";
 import { collectTestDiagnostics } from "./test-typecheck-program.ts";
 import { compareDiagnosticCounts } from "./test-typecheck-ratchet.ts";
 
 const BASELINE_FILE = "test-typecheck-baseline.json";
 
-interface Baseline {
-  version: 1;
-  typescript: string;
-  configuration: string;
-  counts: Record<string, number>;
-}
+/** This ratchet's name for the shared stored document. */
+type Baseline = RatchetBaseline;
 
 /** Validate the stored format before treating any value as an allowance. */
 function parseBaseline(text: string): Baseline {
-  const value = JSON.parse(text) as Partial<Baseline> | null;
-  if (!value || value.version !== 1 || typeof value.typescript !== "string" ||
-      typeof value.configuration !== "string" || !value.counts ||
-      typeof value.counts !== "object" || Array.isArray(value.counts) ||
-      !Object.values(value.counts).every((count) => Number.isSafeInteger(count) && count > 0)) {
-    throw new Error("Invalid test type-check baseline");
-  }
-  return value as Baseline;
+  return parseRatchetBaseline(text, "Invalid test type-check baseline");
 }
 
 /** Read a baseline at a resolved commit; absence is allowed only for first introduction. */

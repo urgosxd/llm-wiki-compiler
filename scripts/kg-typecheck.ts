@@ -39,6 +39,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import ts from "typescript";
+import { parseRatchetBaseline } from "./ratchet-baseline.ts";
+import type { RatchetBaseline } from "./ratchet-baseline.ts";
 
 /** Baseline file, relative to the repository root the command runs in. */
 const BASELINE_FILE = "kg-typecheck-baseline.json";
@@ -60,13 +62,8 @@ export interface KgDiagnostic {
   message: string;
 }
 
-/** Stored baseline; `counts` is the whole allowance. */
-export interface KgBaseline {
-  version: 1;
-  typescript: string;
-  configuration: string;
-  counts: Record<string, number>;
-}
+/** Stored baseline; `counts` is the whole allowance, in the shared document shape. */
+export type KgBaseline = RatchetBaseline;
 
 /** Stable baseline key: the file plus the diagnostic code. */
 export function diagnosticKey(diagnostic: KgDiagnostic): string {
@@ -210,20 +207,7 @@ export function collectKgDiagnostics(root: string): {
 
 /** Validate the stored format before treating any value as an allowance. */
 function parseBaseline(text: string): KgBaseline {
-  const value = JSON.parse(text) as Partial<KgBaseline> | null;
-  if (
-    !value ||
-    value.version !== 1 ||
-    typeof value.typescript !== "string" ||
-    typeof value.configuration !== "string" ||
-    !value.counts ||
-    typeof value.counts !== "object" ||
-    Array.isArray(value.counts) ||
-    !Object.values(value.counts).every((count) => Number.isSafeInteger(count) && count > 0)
-  ) {
-    throw new Error(`Invalid KG package type-check baseline (${BASELINE_FILE})`);
-  }
-  return value as KgBaseline;
+  return parseRatchetBaseline(text, `Invalid KG package type-check baseline (${BASELINE_FILE})`);
 }
 
 /** A metadata change requires an explicit migration, not an automatic allowance update. */

@@ -113,6 +113,32 @@ function requireProbe(ctx: { skip: (note?: string) => void }): Probe {
   return probe;
 }
 
+/**
+ * Drive every listed call and prove each one was refused HERE, before the network.
+ *
+ * The two refusal cases differ only in the arguments they send, the wording of the
+ * failure and the message that must come back; the shape of the proof — an
+ * `isError` result, the exact text, and no request leaving the process for that
+ * call — is identical, so it is written once.
+ *
+ * @param probe - The connected MCP client and the proxy's request log.
+ * @param calls - Tool name and arguments for each call that must be refused.
+ * @param refusal - `reason` completes "<tool> must …"; `text` is the exact answer.
+ */
+async function expectEveryCallRefused(
+  { mcp, requests }: Pick<Probe, "mcp" | "requests">,
+  calls: ReadonlyArray<[string, Record<string, unknown>]>,
+  refusal: { reason: string; text: string },
+): Promise<void> {
+  for (const [name, args] of calls) {
+    const seenBefore = requests().length;
+    const result = await mcp.call(name, args);
+    expect(result.isError, `${name} must ${refusal.reason}`).toBe(true);
+    expect(textOf(result), name).toBe(refusal.text);
+    expect(requests().slice(seenBefore), `${name} must not reach the API`).toHaveLength(0);
+  }
+}
+
 beforeAll(async () => {
   if (!(await dockerAvailable())) {
     dockerProblem = "docker daemon is not reachable from this process (`docker info` failed)";
@@ -151,13 +177,10 @@ describe("KG MCP probe: real Postgres, real API, real stdio handshake", () => {
       ["traverse_stack", { start: "Alpha Gateway" }],
       ["get_entities", {}],
     ];
-    for (const [name, args] of calls) {
-      const seenBefore = requests().length;
-      const result = await mcp.call(name, args);
-      expect(result.isError, `${name} must refuse a call that names no Stack`).toBe(true);
-      expect(textOf(result), name).toBe(MISSING_STACK_TEXT);
-      expect(requests().slice(seenBefore), `${name} must not reach the API`).toHaveLength(0);
-    }
+    await expectEveryCallRefused({ mcp, requests }, calls, {
+      reason: "refuse a call that names no Stack",
+      text: MISSING_STACK_TEXT,
+    });
     expect(await counts()).toEqual(before);
   }, TEST_TIMEOUT_MS);
 
@@ -220,13 +243,10 @@ describe("KG MCP probe: real Postgres, real API, real stdio handshake", () => {
       ["get_entities", { stackId: MALFORMED_STACK_ID }],
       ["list_stacks", { stackId: MALFORMED_STACK_ID }],
     ];
-    for (const [name, args] of calls) {
-      const seenBefore = requests().length;
-      const result = await mcp.call(name, args);
-      expect(result.isError, `${name} must refuse a malformed Stack id`).toBe(true);
-      expect(textOf(result), name).toBe(MALFORMED_STACK_ID_TEXT);
-      expect(requests().slice(seenBefore), `${name} must not reach the API`).toHaveLength(0);
-    }
+    await expectEveryCallRefused({ mcp, requests }, calls, {
+      reason: "refuse a malformed Stack id",
+      text: MALFORMED_STACK_ID_TEXT,
+    });
     expect(await counts()).toEqual(before);
   }, TEST_TIMEOUT_MS);
 });

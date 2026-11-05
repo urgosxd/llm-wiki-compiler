@@ -18,8 +18,8 @@ import { rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { tryAcquirePostgresLock } from "../src/utils/lock-postgres.js";
-import { isPerRunDatabaseName, perRunDatabase } from "./fixtures/per-run-database.js";
-import { DEFAULT_TEST_DATABASE_URL } from "./fixtures/test-database.js";
+import { perRunDatabase } from "./fixtures/per-run-database.js";
+import { expectPerRunDatabase } from "./fixtures/per-run-database-assertions.js";
 
 /** This process's own database; provisioning fails loudly rather than skipping. */
 const DSN = (await perRunDatabase()).url;
@@ -50,8 +50,7 @@ describe("advisory lock across processes", () => {
     // The child receives THIS DSN, so the cross-process claim is only about this
     // database. It still proves what a same-process pair cannot: the lock is shared
     // state seen by another machine's session.
-    expect(isPerRunDatabaseName(new URL(DSN).pathname.slice(1))).toBe(true);
-    expect(DSN).not.toBe(DEFAULT_TEST_DATABASE_URL);
+    expectPerRunDatabase(DSN);
   });
 
   it("refuses the lock to a different process while this one holds it", async () => {
