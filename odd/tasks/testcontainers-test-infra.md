@@ -79,13 +79,13 @@ including the honest case where a warm database on :5434 makes the delta noise.
 
 ## Tasks
 
-T0 | doc | worker | pending — Open this feature document and mirror it in memory.
-T1 | S1, S2, S5, S6 | worker | pending — Container lifecycle: dependency, shared container in global setup, teardown, dynamic-URL propagation to workers, reuse.
-T2 | S3, S4 | worker | pending — Loud failure at the two chokepoint fixtures plus the single opt-out variable, and a regression test.
-T3 | S7 | worker | pending — Mirror the pgvector service into `publish.yml`.
-T4 | S8 | worker | pending — Developer documentation.
-T5 | S10 | verify | pending — Independent verification: green with Docker, loud failure without a database.
-T6 | S10 | lead | pending — Measurement, gates, report.
+T0 | doc | worker | done (8211338) — Open this feature document and mirror it in memory.
+T1 | S1, S2, S5, S6 | worker | done (a167139, with the dependency in 9e80297) — Container lifecycle: dependency, shared container in global setup, teardown, dynamic-URL propagation to workers, reuse.
+T2 | S3, S4 | worker | done (ce3c0f2) — Loud failure at the two chokepoint fixtures plus the single opt-out variable, and a regression test.
+T3 | S7 | worker | done (177c881) — Mirror the pgvector service into `publish.yml`.
+T4 | S8 | worker | done (9a75e57) — Developer documentation.
+T5 | S10 | verify | done (no commit of its own — evidence in L10) — Independent verification: green with Docker, loud failure without a database.
+T6 | S10 | lead | done (this commit, the eighth) — Measurement, gates, report.
 
 ## Log
 
@@ -174,4 +174,86 @@ The loud-failure regression test spawned a child whose global setup republished 
 inside that ~16 s window threw `missingTestDatabase` (317 poisoned samples observed by polling; 0
 after the fix). The handoff path is now resolved in one place and relocatable via
 `LLMWIKI_TEST_DB_HANDOFF_FILE`, and the child writes its own temp record.
+
+L15 (evidence, gates on the finished tree):
+All four gates ran on the final tree, each with its exact scope: `npx tsc --noEmit` exit 0;
+`npm run build` exit 0; `npm run test:affected` exit 0 on the full unit tier — `Test Files 626
+passed (626)`, `Tests 4599 passed (4599)`; `./node_modules/.bin/fallow` exit 0 (1365 files analyzed,
+0.0% dead files, 0.0% dead exports, no duplication, maintainability 91.1). The full unit tier was
+selected because `package-lock.json` affects the whole suite, so no slice of it went unexercised.
+
+L16 (evidence, the measurement, four legs — S10):
+81 database-gated files under `packages/llmwiki-kg/ts/src/`, accounting for 448 executed tests and 7
+skipped ones; those skips are three `AKS_TEST_GATEWAY` files plus three RETIRED cases, and none of
+them is a database skip. The same file list ran four times, wall clock only: baseline against the
+pre-existing `:5434` Postgres 50.37 s; the Testcontainers path cold (image present, container not)
+55.82 s; warm 48.61 s and again 49.80 s.
+
+L17 (conclusion, the speed claim — NOT delivered):
+Warm container minus baseline is 48.61 − 50.37 = −1.76 s, about 0.8% of the 231.45 s full-suite
+reference. That is noise, not an improvement: there is **no wall-clock improvement**, and the user's
+"faster" was not delivered. What the harness actually buys is self-containment (no external
+Postgres, no operator data), per-run isolation, a pinned engine (`pgvector/pgvector:pg16`) and the
+end of silent skips. That trade was accepted explicitly in L9; this record stays honest about which
+half was bought.
+
+L18 (evidence, full suite remeasured on an idle machine):
+`uptime` before the run, 18:09:45 — load average 1.98, 6.39, 13.55. Then
+`/usr/bin/time -f 'WALL=%e' npm run test:affected 2>&1 | tail -20`: `WALL=173.70`, `Test Files 626
+passed (626)`, `Tests 4599 passed (4599)`, vitest `Duration 172.84s`, exit 0, tier full unit tier
+(`package-lock.json` affects the whole suite — re-resolved, same reason). `uptime` after, 18:12:51 —
+load average 10.96, 9.05, 13.31. Plain verdict: the earlier 440.81 s figure, taken under load
+average 37, was MEASUREMENT NOISE, not a regression. 173.70 s sits below the 231.45 s reference, so
+the branch costs nothing in wall clock on an idle machine.
+
+L19 (evidence, lockfile honesty — nothing to fix):
+The CI job runs `npm ci`, so the leftover record for the deleted workspace
+`packages/llmwiki-local-workflows` (`package-lock.json:9386`, `"extraneous": true`) was tested
+instead of assumed: `npm ci --dry-run 2>&1 | tail -30; echo EXIT=$?` ended with `added 70 packages
+in 729ms` and `EXIT=0`, with no warning that the lockfile is out of sync and no mention of the
+extraneous record. The only warnings are pre-existing `EBADENGINE` ones (Node v22.23.2 against the
+repository's `>=24`). Nothing in `package.json`'s workspace list and no lockfile link claims that
+package, so the record is cosmetic: `package-lock.json` stays untouched and no destructive full
+`npm ci` was run.
+
+L20 (evidence, pre-existing finding (a) — fixed in 177c881):
+`ci.yml`'s two schema steps never resolved a target. `scripts/apply-schemas.sh` reads a positional
+target, `PSQL` or a bare `DATABASE_URL`, and the workflow defined none of them, so both steps exited
+2 and `npm test` never ran in CI at all since that wiring landed in `f42f43c`. The diagnostic that
+would have said so was swallowed by a `2>&1` inside the script. Both halves are fixed in `177c881`:
+the job env gains `DATABASE_URL` and the script prints its own "no target" message.
+
+L21 (evidence, pre-existing finding (b) — fixed in 177c881):
+`publish.yml` ran `npm test` with no database at all, so the release published from a run that
+verified nothing. It now mirrors `ci.yml`: the same pgvector service, the same variables, the same
+two schema steps — fixed in `177c881`, and deliberately WITHOUT the opt-out variable, which would
+have preserved the exact false green being eliminated.
+
+L22 (evidence, pre-existing finding (c) — HIGHLIGHTED, fixed in 2176448):
+**`test/mcp/stack-id-guard.test.ts` was red on every clean runner.** It asserted on operator data —
+a Stack `b8b8e801-b423-4a32-ab0b-e1ea2d82ead8`, domain `wire2` — that existed only in one
+developer's long-lived `:5434` database. A test that only passes against one developer's database is
+a false green in another costume: not coverage, but a private artifact dressed as an assertion, and
+it would have failed on every clean CI runner the moment CI actually reached `npm test`. Fixed in
+`2176448` by creating the Stack the guard asserts on; the assertions themselves were not touched.
+
+L23 (evidence, pre-existing finding (d) — fixed in ce3c0f2 and the handoff follow-up):
+The loud-failure regression test spawned a child whose global setup republished the shared
+`.llmwiki/test-database.json` with the unreachable `127.0.0.1:1` sentinel, and sibling workers
+booting inside that window were poisoned — 317 poisoned samples observed by polling, 0 after the
+fix. The handoff path is now resolved in one place, relocatable via
+`LLMWIKI_TEST_DB_HANDOFF_FILE`, and the child writes its own temporary record instead of the shared
+one.
+
+L24 (decision, recorded scope deviation — S9):
+S9 names exactly one file under `packages/**/src/**`; TEN were changed. The deviation is recorded
+rather than quietly absorbed: `src/testing/no-database.ts`, `src/routes/ingest-harness.ts`,
+`src/routes/stacks-harness.ts`, `src/routes/pages-harness.ts`, `src/routes/aks-harness.ts`,
+`src/routes/backfeed-harness.ts`, `src/routes/documents-harness.ts`,
+`src/core/consolidation-harness.ts`, `src/db.test.ts`, `src/server.test.ts` — all under
+`packages/llmwiki-kg/ts/`, all in `ce3c0f2`. It was allowed because the chokepoint is one module
+imported by the seven harnesses, every importer of those harnesses is a `*.test.ts` in the same
+tree, the package is `"private": true` with no `exports`, and no published entry point
+(`src/cli.ts`, `src/index.ts`, `server.ts`, `core-index.ts`) references any of them — so no shipped
+behavior changed. `src/db.test.ts` and `src/server.test.ts` are test files by name and by role.
 
