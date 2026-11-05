@@ -17,6 +17,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { parseTriplets } from "../graph-parse.js";
 import { buildToolSchema } from "../graph-prompt.js";
 import { validateOntology } from "../ontology.js";
 import { countSchemaViolations } from "./schema-validation.js";
@@ -90,6 +91,17 @@ describe("countSchemaViolations", () => {
     // a wrapped payload is still parsed, so its violations are still real.
     const wrapped = `Here is the graph:\n${payload("PRODUCT", "SUPPLIES", "PERSON")}\nDone.`;
     expect(countSchemaViolations(wrapped, CONSTRAINED)).toBe(1);
+  });
+
+  it("reads a doubly-encoded payload exactly as the parser reads it", () => {
+    // One tolerant parse, two readers. If the counter kept its own copy of the
+    // tolerance and that copy fell behind, the parser would admit a payload the
+    // counter read as unreadable and report `0` for it -- a diagnostic that lies
+    // low. A JSON string holding the JSON payload is the shape that exposes it.
+    const doublyEncoded = JSON.stringify(payload("PRODUCT", "SUPPLIES", "PERSON"));
+
+    expect(parseTriplets(doublyEncoded)).toHaveLength(1);
+    expect(countSchemaViolations(doublyEncoded, CONSTRAINED)).toBe(1);
   });
 });
 

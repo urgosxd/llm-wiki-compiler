@@ -220,12 +220,24 @@ export function isShapeMangled(argumentsJson: string): boolean {
 /**
  * Best-effort JSON parse of a tool-call argument string.
  *
+ * THE single tolerant parse shared by triplet parsing and schema validation.
+ * {@link parseTriplets}, {@link parseStandaloneEntities}, {@link isShapeMangled}
+ * and `countSchemaViolations` in `llm/schema-validation.ts` all read a provider's
+ * answer through this function, so they cannot disagree about what the model
+ * actually said. That agreement is load-bearing rather than tidy: the violation
+ * counter exists to explain a rejection, and a counter whose tolerance drifted
+ * from the parser's would report `0` for a payload the parser accepted — a
+ * diagnostic that lies low instead of one that lies loud.
+ *
  * Handles the three shapes providers actually send: the bare object, an object
  * wrapped in prose, and an object wrapped in a JSON string literal. Returns
  * `undefined` rather than throwing, so one unparseable chunk does not fail the
  * document.
+ *
+ * @param raw - The model's tool-call argument string, untrusted.
+ * @returns The parsed value, or `undefined` when nothing parses.
  */
-function parseJsonLoosely(raw: string): unknown {
+export function parseJsonLoosely(raw: string): unknown {
   const trimmed = raw.trim();
   if (trimmed === "") {
     return undefined;

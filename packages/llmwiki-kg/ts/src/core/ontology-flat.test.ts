@@ -231,6 +231,47 @@ describe("a flat ontology agrees with the model on spelling", () => {
     expect(triplets[0]?.subjectType).toBe("ORGANIC_ORGANIZATION");
   });
 
+  it("normalises a padded subtypes declaration, so the link still forms", () => {
+    // `readSubtypes` was the one declaration path that never trimmed, so an entry
+    // written `" company "` normalised to `_COMPANY` and the declaration was
+    // refused for referencing a type it plainly names. This is the behaviour the
+    // trim actually changed on the declaration side.
+    const padded = validateOntology({
+      entityTypes: ["COMPANY", "ORGANIZATION"],
+      relationshipTypes: ["SUPPLIES"],
+      subtypes: [{ child: " company ", parent: " ORGANIZATION" }],
+    });
+
+    expect(padded.parentsOf.get("COMPANY")).toEqual(["ORGANIZATION"]);
+    const { triplets, rejected } = parseTripletsWithOntology(
+      payload("COMPANY", "SUPPLIES", "ORGANIZATION"),
+      padded,
+    );
+    expect(rejected).toEqual([]);
+    expect(triplets).toHaveLength(1);
+  });
+
+  it("trims padding without collapsing the spaces inside a declaration", () => {
+    // The negative boundary of the trim: a declaration with ONE internal space is
+    // `ORGANIC_ORGANIZATION`, so an emission with TWO stays
+    // `ORGANIC__ORGANIZATION` and remains unknown. Dropping padding must not
+    // become rewriting the spelling the caller declared.
+    const singleSpace = validateOntology({
+      entityTypes: ["ORGANIC ORGANIZATION", "PERSON"],
+      relationshipTypes: ["SUPPLIES"],
+    });
+
+    const { triplets, rejected } = parseTripletsWithOntology(
+      payload("organic  organization", "SUPPLIES", "PERSON"),
+      singleSpace,
+    );
+
+    expect(triplets).toEqual([]);
+    expect(rejected.map((entry) => [entry.reason, entry.offendingType])).toEqual([
+      ["UNKNOWN_ENTITY_TYPE", "ORGANIC__ORGANIZATION"],
+    ]);
+  });
+
   it("normalises the declaration itself, so a create-time value matches ingest", () => {
     const declared = validateOntology({
       entityTypes: ["company"],

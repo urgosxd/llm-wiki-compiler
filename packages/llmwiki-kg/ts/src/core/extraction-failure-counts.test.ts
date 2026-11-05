@@ -93,6 +93,20 @@ describe("shape-mangled chunks", () => {
     expect(result.entities).toEqual([]);
   });
 
+  it("does not call an entities-only answer mangled", async () => {
+    // The `entities` half of the definition. A chunk that answers with real nodes
+    // and no `triplets` key at all arrived intact, so counting it as degraded
+    // would report a mangled chunk for every document whose model reported only
+    // entities -- the opposite of the counter's purpose.
+    setToolResponse([{ entities: [{ type: "REQUIREMENT", name: "Retention" }] }]);
+
+    const result = await extractGraphFromChunks([chunk(0, "first")], "w2ex-stack");
+
+    expect("mangledChunks" in result).toBe(false);
+    expect(result.entities.map((entity) => entity.name)).toEqual(["Retention"]);
+    expect(result.relationships).toEqual([]);
+  });
+
   it("counts only the mangled chunk of a mixed run", async () => {
     setToolResponse([MANGLED, EMPTY_WITH_ENTITY]);
     const result = await extractGraphFromChunks(

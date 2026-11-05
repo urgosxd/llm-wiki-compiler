@@ -20,6 +20,12 @@
  * `parseTripletsWithOntology` → `rejectTriplet` path, so what a Stack's graph may
  * contain stays decided in one place, and this counter is purely additive.
  *
+ * The payload is read through `parseJsonLoosely` from `graph-parse.ts`, imported
+ * rather than copied: this module explains what the parser did, so the two must
+ * never disagree about what the model said. A second, private tolerant parse here
+ * would drift silently and one-directionally — the counter would report `0` for a
+ * payload the parser accepted.
+ *
  * ## Why the generated schema is the source of truth
  *
  * The permitted values are read from `buildToolSchema(ontology)` — the very
@@ -41,6 +47,7 @@
 import { z } from "zod";
 
 import type { ToolSchema } from "../graph-prompt.js";
+import { parseJsonLoosely } from "../graph-parse.js";
 import { asArray, asRecord } from "./json.js";
 
 /** The permitted values of the two `type` fields the generated schema constrains. */
@@ -89,7 +96,7 @@ export function countSchemaViolations(argumentsJson: string, schema: ToolSchema)
   }
   const entityType = z.enum(allowlist.entities);
   const relationType = z.enum(allowlist.relations);
-  const triplets = asArray(asRecord(looseParse(argumentsJson))?.["triplets"]) ?? [];
+  const triplets = asArray(asRecord(parseJsonLoosely(argumentsJson))?.["triplets"]) ?? [];
   return triplets.reduce(
     (total: number, triplet: unknown) => total + tripletViolations(triplet, entityType, relationType),
     0,
@@ -141,52 +148,4 @@ function typeOf(holder: unknown): unknown {
  */
 function isViolation(value: unknown, validator: z.ZodType): boolean {
   return value !== undefined && !validator.safeParse(value).success;
-}
-
-/**
- * Best-effort JSON parse of a tool-call argument string.
- *
- * Tolerates the three shapes providers actually send: the bare object, an object
- * wrapped in prose, and an object wrapped in a JSON string literal. That is the
- * same tolerance `parseJsonLoosely` in `graph-parse.ts` applies, reproduced here
- * rather than imported because that helper is private to its module — and the two
- * MUST agree, or a payload would be counted here while the rejection path never
- * saw it, or the reverse.
- *
- * @param raw - The model's tool-call argument string.
- * @returns The parsed value, or `undefined` when nothing parses.
- */
-function looseParse(raw: string): unknown {
-  const trimmed = raw.trim();
-  if (trimmed === "") {
-    return undefined;
-  }
-  const candidates: string[] = [trimmed];
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
-  }
-  for (const candidate of candidates) {
-    const parsed = parseOne(candidate);
-    if (parsed !== undefined) {
-      return parsed;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Parses one candidate string, unwrapping a doubly-encoded payload.
- *
- * @param text - A candidate substring of the model's answer.
- * @returns The parsed value, or `undefined` when it is not JSON.
- */
-function parseOne(text: string): unknown {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return typeof parsed === "string" ? (JSON.parse(parsed) as unknown) : parsed;
-  } catch {
-    return undefined;
-  }
 }

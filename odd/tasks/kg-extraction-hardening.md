@@ -49,6 +49,9 @@ rather than claiming a slice of its own.
 - A leading-space entity type is untested. `packages/llmwiki-kg/ts/src/core/ontology-flat.test.ts:110` pins only the trailing-space variant.
 - The same-name/different-type absorb collision is untested. `absorbEndpoint` (`packages/llmwiki-kg/ts/src/core/graph-extraction.ts:149-173`) rewrites an entity's type only when confidence strictly increases, which never happens because every extraction carries the same `EXTRACTED_CONFIDENCE`. The first-seen type therefore wins silently, and nothing asserts it.
 
+**Both gaps above are now closed** — padded `subtypes` declarations and the absorb
+collision are pinned by tests added in T5. See L7.
+
 ### L3 — evidence correction, after re-opening the exact lines
 
 - `packages/llmwiki-kg/ts/src/core/graph-prompt.ts:317-320` **does** interpolate `{max_triplets_per_chunk}` via `String(MAX_TRIPLETS_PER_CHUNK)`. The placeholder is not shipped raw and the constant is not unused. The model actually receives `...output 20 extracted paths.s`. The real defects are `Give` (line 280) and `paths.s` (line 281).
@@ -105,3 +108,41 @@ than reporting green from an empty skip. The one exit from actually running is t
 `describe.skipIf` gate at `aks-harness.ts:180-181`, which prints
 `[aks.test] skipping integration tests — <reason>` to stderr; if that line appears,
 the suite did not run and must be reported as skipped, not as passing.
+
+### L7 — T5: independent verification verdict, and the three gaps it raised
+
+Independent verification returned **S1a, S1b, S1c and S1d all MET** at
+`aed35b1`. It raised three findings against the implemented feature:
+
+1. `src/core/llm/schema-validation.ts` re-implemented `parseJsonLoosely`
+   (`looseParse` / `parseOne`) because the original was private to
+   `graph-parse.ts`. The two agreed at that moment, but drift would be silent and
+   one-directional: with a polled tolerance the counter would report `0` for a
+   payload the parser accepted — a visibility counter that lies low.
+2. The padded `subtypes` declaration path had no test. It is the one declaration
+   behaviour T1 genuinely changed (`readSubtypes` was untrimmed at baseline), and
+   Log L2's leading/trailing-space gap covered only the model-facing label.
+3. Log L2's second gap — the same-name/different-type absorb collision — was
+   still untested, and so was the `entities` half of `isShapeMangled`.
+
+Closed in T5, in one commit (`git log -1` on `feat/kg-extraction-hardening`; a
+commit cannot contain its own SHA):
+
+- **`parseJsonLoosely` is now the single tolerant parse.** It is exported from
+  `graph-parse.ts` with the contract stated on it, and `schema-validation.ts`
+  imports and uses it; the duplicate `looseParse`/`parseOne` pair is deleted. The
+  export is module-level only: neither `core/extraction.ts` nor `core-index.ts`
+  re-exports it, so no barrel changed. Behaviour-preserving — the pre-existing
+  tests stayed green unchanged, and a new parity test pins the doubly-encoded
+  payload both readers must agree on.
+- **Coverage pins added (behaviour delivered by T1–T4, no RED available):**
+  padded `subtypes` resolves (`" company "` / `" ORGANIZATION"` → `COMPANY` /
+  `ORGANIZATION`, link formed, triplet admitted); the no-collapsing boundary
+  (declaration `ORGANIC ORGANIZATION`, emission `organic  organization` →
+  `UNKNOWN_ENTITY_TYPE` / `ORGANIC__ORGANIZATION`); the absorb collision (one
+  "acme" entity, type `COMPANY` from the triplet, chunk indices recorded); an
+  entities-only answer is not mangled; validator/parser parity on a doubly-encoded
+  payload.
+
+Both Log L2 gaps are therefore closed. No behaviour changed in T5 beyond the
+duplicate's removal, and no S# requirement moved.

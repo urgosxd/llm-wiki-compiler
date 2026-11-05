@@ -225,6 +225,38 @@ describe("extractGraphFromChunks", () => {
     expect(gateway?.description).toBe("");
   });
 
+  it("keeps one entity when a triplet and a standalone entry name the same node", async () => {
+    // `absorbEndpoint` rewrites a type only on a strict confidence increase, which
+    // never happens here (every extraction carries the same confidence), so the
+    // FIRST type seen wins. Triplet endpoints are folded before standalone
+    // entities, so the type a relationship already constrains is the survivor --
+    // silently, which is exactly why it needs a pin.
+    setToolResponse([
+      {
+        triplets: [
+          {
+            subject: { type: "COMPANY", name: "Acme" },
+            relation: { type: "SUPPLIES" },
+            object: { type: "PERSON", name: "Ada" },
+          },
+        ],
+        entities: [{ type: "ORGANIZATION", name: "acme" }],
+      },
+    ]);
+
+    const result = await extractGraphFromChunks([chunk(0, "first")], "w2ex-stack");
+
+    // Acme and Ada, and no third row for the standalone spelling of Acme.
+    expect(result.entities).toHaveLength(2);
+    const acme = result.entities.filter((entity) => entity.name.toLowerCase() === "acme");
+    expect(acme).toHaveLength(1);
+    expect(acme[0]?.name).toBe("Acme");
+    expect(acme[0]?.type).toBe("COMPANY");
+    // Cumulative, not deduplicated: the endpoint and the standalone entry each
+    // recorded chunk 0.
+    expect(acme[0]?.sourceChunkIndices).toEqual([0, 0]);
+  });
+
   it("deduplicates relationships on (from, type, to), lowercased", async () => {
     setToolResponse([
       {
