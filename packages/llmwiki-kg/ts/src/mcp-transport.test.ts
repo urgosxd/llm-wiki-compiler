@@ -135,6 +135,8 @@ describe("stack_id is a required tool argument", () => {
       for (const { name, args } of GRAPH_TOOLS) {
         const result = await harness.client.callTool({ name, arguments: { ...args } });
         expect(textOf(result), name).toBe(MISSING_STACK_TEXT);
+        // A refusal, not an answer: `isError` is what lets a client branch on it.
+        expect(result.isError, name).toBe(true);
       }
       // Nothing reached the backend, so nothing could have been written.
       expect(harness.requests).toHaveLength(0);
@@ -153,6 +155,7 @@ describe("stack_id is a required tool argument", () => {
         });
         // `domain` no longer substitutes for the Stack (S7).
         expect(textOf(result), name).toBe(MISSING_STACK_TEXT);
+        expect(result.isError, name).toBe(true);
       }
       expect(harness.requests).toHaveLength(0);
     } finally {

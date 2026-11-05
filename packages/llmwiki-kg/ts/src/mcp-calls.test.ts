@@ -87,6 +87,9 @@ describe("callTool routing", () => {
     for (const [tool, args] of required) {
       const result = await callTool(tool, args, { fetchImpl, baseUrl: BASE_URL });
       expect(textOf(result), tool).toBe(MISSING_STACK_TEXT);
+      // The refusal is an error envelope: text alone cannot be told apart from
+      // an answer by a client that only reads `isError`.
+      expect(result.isError, tool).toBe(true);
     }
     expect(requests).toHaveLength(0);
   });
@@ -103,8 +106,32 @@ describe("callTool routing", () => {
     for (const [tool, args] of domainOnly) {
       const result = await callTool(tool, args, { fetchImpl, baseUrl: BASE_URL });
       expect(textOf(result), tool).toBe(MISSING_STACK_TEXT);
+      expect(result.isError, tool).toBe(true);
     }
     expect(requests).toHaveLength(0);
+  });
+
+  it("keeps answers and backend error text as ordinary results, not error envelopes", async () => {
+    // The refusal above is the ONLY path that became an error envelope. An
+    // answer that reached the backend, and the status text a non-200 produces,
+    // both stay plain results, exactly as before.
+    const answered = recordingFetch({ status: 200, body: SYNTHETIC_CONTEXT_RESPONSE });
+    const ok = await callTool(
+      "query_stack",
+      { query: "q", stack_id: STACK },
+      { fetchImpl: answered.fetchImpl, baseUrl: BASE_URL },
+    );
+    expect(textOf(ok)).toBe(EXPECTED_CTX);
+    expect(ok.isError).toBeUndefined();
+
+    const failed = recordingFetch({ status: 500, body: "Internal Server Error" });
+    const status = await callTool(
+      "query_stack",
+      { query: "q", stack_id: STACK },
+      { fetchImpl: failed.fetchImpl, baseUrl: BASE_URL },
+    );
+    expect(textOf(status)).toBe("AKS server returned 500: Internal Server Error");
+    expect(status.isError).toBeUndefined();
   });
 
   it("raises on a missing required argument, like the Python's `args[key]`", async () => {

@@ -19,9 +19,22 @@ import { asText } from "./narrow.js";
 // Tool implementations
 // ============================================================
 
-/** A single text content block, the only result type these tools return. */
+/** A single text content block, the shape of an answer. */
 export function textResult(text: string): CallToolResult {
   return { content: [{ type: "text", text }] };
+}
+
+/**
+ * A refusal: the same text block, flagged `isError` so a client can tell it
+ * apart from an answer.
+ *
+ * The text alone cannot carry that distinction — a client that only branches on
+ * `isError` would otherwise read "Error: 'stack_id' must be provided." as a
+ * successful answer. Nothing else changes: the message still names the
+ * argument, and no request has been issued by the time it is built.
+ */
+export function errorResult(text: string): CallToolResult {
+  return { content: [{ type: "text", text }], isError: true };
 }
 
 /**
@@ -29,7 +42,8 @@ export function textResult(text: string): CallToolResult {
  *
  * The Stack is the tool argument and nothing else: there is no default Stack to
  * fall back to and nothing in the environment to resolve one from, so an absent
- * `stack_id` is a refusal rather than a request for "some" Stack.
+ * `stack_id` is a refusal rather than a request for "some" Stack. It is answered
+ * with {@link errorResult}, so the envelope itself marks the call as failed.
  */
 const MISSING_STACK_ERROR = "Error: 'stack_id' must be provided.";
 
@@ -173,7 +187,7 @@ export async function queryStack(
 
   const stack = stackSelection(args);
   if (stack === undefined) {
-    return textResult(MISSING_STACK_ERROR);
+    return errorResult(MISSING_STACK_ERROR);
   }
   payload["stack_id"] = stack.stackId;
   if (stack.hasDomain) {
@@ -205,7 +219,7 @@ export async function traverseStack(
   const start = rawParam(asText(requiredArg(args, "start")));
   const stack = stackSelection(args);
   if (stack === undefined) {
-    return textResult(MISSING_STACK_ERROR);
+    return errorResult(MISSING_STACK_ERROR);
   }
 
   const params: Record<string, QueryValue> = {
@@ -246,7 +260,7 @@ export async function getEntities(
   const limit = argOr(args, "limit", 100);
   const stack = stackSelection(args);
   if (stack === undefined) {
-    return textResult(MISSING_STACK_ERROR);
+    return errorResult(MISSING_STACK_ERROR);
   }
 
   const params: Record<string, QueryValue> = {
