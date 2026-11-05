@@ -45,6 +45,11 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    // Runs inside EVERY worker before any test module loads, and publishes the database the global
+    // setup resolved into `LLMWIKI_TEST_DATABASE_URL` + `AKS_DATABASE_URL`. It cannot be the `env:`
+    // object below: that one is static and re-applied per worker, which would clobber the
+    // dynamically resolved URL (see test/fixtures/testcontainers-postgres.ts).
+    setupFiles: ["./test/setup/test-database-url.ts"],
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: HOOK_TIMEOUT_MS,
     // Many integration tests spawn a CLI subprocess. With one worker per core

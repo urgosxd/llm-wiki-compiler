@@ -28,11 +28,28 @@
  * `shell: true` would also fix it, but re-opens the argument-quoting hole that
  * hardening closed. Resolving the CLI entry and running it directly needs no
  * shell at all and behaves identically on every platform.
+ *
+ * ## The database, and why its resolution lives in a fixture
+ *
+ * Database-backed suites used to run against whatever Postgres the machine happened to have, and
+ * SKIPPED when there was none — so CI could be green while asserting nothing. This setup now
+ * resolves ONE pgvector container per run and publishes its URL in `.llmwiki/test-database.json`
+ * for every worker to read (`test/setup/test-database-url.ts`).
+ *
+ * Resolution order is owned by `test/fixtures/testcontainers-postgres.ts`: an explicit
+ * `LLMWIKI_TEST_DATABASE_URL` wins and starts nothing, `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` opts out of
+ * a container entirely, otherwise a reusable container is started (or the one an earlier run left
+ * behind is adopted). Resolution NEVER throws here: an unobtainable database is recorded as
+ * `unavailable` with its reason, and the loud failure is raised by the database chokepoint.
+ *
+ * `teardown` gives the container back, but deliberately leaves a reusable one running: stopping it
+ * would delete it (`stop()` implies `remove`) and throw away the ~1.4 s the next run would pay.
  */
 
 import { execFile } from "child_process";
 import { resolveTsupCli } from "../scripts/tsup-command.js";
 import { clearStamp, isBuildFresh, writeStamp } from "../scripts/build-stamp.js";
+import { publishSharedTestDatabase, releaseSharedTestDatabase } from "./fixtures/testcontainers-postgres.js";
 import { promisify } from "util";
 import path from "path";
 
@@ -52,10 +69,28 @@ async function build(root: string): Promise<void> {
   writeStamp(root);
 }
 
-export async function setup(): Promise<void> {
+/** Build dist/ unless the recorded inputs are unchanged. */
+async function prepareBuild(): Promise<void> {
   const root = path.resolve(".");
   if (!forcedBuild() && isBuildFresh(root)) return;
   // Clear first so a failed build cannot leave a stamp that claims success.
   clearStamp(root);
   await build(root);
+}
+
+/**
+ * Resolve this run's database, then build once. Both are needed before any test file loads.
+ *
+ * The database is resolved first so its log line is the first thing a failing run prints, and
+ * because a 120 ms adoption is cheap next to a 40 s rebuild. Resolution logs its own outcome,
+ * including the reason when nothing answered, and never throws.
+ */
+export async function setup(): Promise<void> {
+  await publishSharedTestDatabase();
+  await prepareBuild();
+}
+
+/** Give the database container back when the run ends. Safe when setup started nothing. */
+export async function teardown(): Promise<void> {
+  await releaseSharedTestDatabase();
 }

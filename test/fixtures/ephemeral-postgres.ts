@@ -27,6 +27,14 @@
  * A pull needs the network and can take a minute. The image is expected to be
  * present (it is the repository's own dev image); when it is missing, `docker run`
  * fails and the caller reports that as the reason it could not run.
+ *
+ * ## Why readiness is not decided here
+ *
+ * `container-server-primitives.ts` owns the probe and the poll loop, because
+ * `testcontainers-postgres.ts` needs the same decision for the container a whole run
+ * shares. Two copies of it had already drifted into a duplicate fallow refuses to pass,
+ * and the cost of letting them diverge further is a fixture that accepts a server this
+ * one rejects.
  */
 
 import { execFile } from "node:child_process";
@@ -34,7 +42,7 @@ import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 
-import postgres from "postgres";
+import { waitUntilReady } from "./container-server-primitives.js";
 
 const run = promisify(execFile);
 
@@ -52,6 +60,9 @@ const READY_POLL_MS = 100;
 
 /** How many times `docker port` is re-read: the mapping appears just after `run`. */
 const PORT_READ_ATTEMPTS = 20;
+
+/** Per-probe connect timeout while the fresh container is still coming up. */
+const PROBE_CONNECT_TIMEOUT_SECONDS = 2;
 
 /** A running container, the URL that reaches it, and the way to stop it. */
 export interface EphemeralPostgres {
@@ -96,29 +107,6 @@ async function mappedPort(name: string): Promise<number> {
   throw new Error(`could not read the published port of ${name}: ${String(lastError)}`);
 }
 
-/** True once `url` accepts a trivial query. */
-async function canConnect(url: string): Promise<boolean> {
-  const client = postgres(url, { max: 1, connect_timeout: 2, onnotice: () => undefined });
-  try {
-    await client`select 1`;
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await client.end({ timeout: 5 }).catch(() => undefined);
-  }
-}
-
-/** Wait until the server answers, or fail naming the container that never came up. */
-async function waitUntilReady(url: string, name: string): Promise<void> {
-  const deadline = Date.now() + READY_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (await canConnect(url)) return;
-    await sleep(READY_POLL_MS);
-  }
-  throw new Error(`${name} did not accept connections within ${String(READY_TIMEOUT_MS)} ms`);
-}
-
 /**
  * Start a private Postgres and hand back the URL that reaches it.
  *
@@ -145,7 +133,11 @@ export async function startEphemeralPostgres(label: string): Promise<EphemeralPo
   ]);
   const port = await mappedPort(name);
   const url = `postgresql://postgres:${THROWAWAY_PASSWORD}@127.0.0.1:${String(port)}/postgres`;
-  await waitUntilReady(url, name);
+  await waitUntilReady(url, name, {
+    timeoutMs: READY_TIMEOUT_MS,
+    pollMs: READY_POLL_MS,
+    connectTimeoutSeconds: PROBE_CONNECT_TIMEOUT_SECONDS,
+  });
   return {
     name,
     url,
