@@ -19,10 +19,21 @@ import {
 } from "./fixtures/mcp-test-env.js";
 import { appendHistory } from "../src/eval/stats.js";
 import { makeEvalReport } from "./fixtures/eval-report.js";
-import { useStackEnv } from "./fixtures/stack-env.js";
-
+import { useStatusStackFixture } from "./fixtures/stack-status-fixtures.js";
 
 const rootHandle = useMcpRoot("llmwiki-mcp");
+
+/**
+ * The Stack every tool call below has to name: the argument is REQUIRED and nothing
+ * is inherited from the environment. It is deliberately NOT bound into `process.env`,
+ * because the resource and `readPageRecord` cases read `wiki/` from disk. See
+ * `test/fixtures/stack-status-fixtures.ts` for why the seeding is shared.
+ */
+const fixture = useStatusStackFixture("mcp-server");
+
+/** The Stack id a call passes as its required `stackId` argument. */
+function stackId(): string { return fixture().stackId; }
+
 /**
  * Mirror the shared fixture's temp-root path into a file-local
  * binding so the existing per-test bodies keep their `root` ergonomics.
@@ -86,19 +97,16 @@ describe("MCP server tool registration", () => {
     ]);
   });
 
-  it("exposes job reads that answer without a Stack instead of returning nothing", async () => {
-    // A project with no AKS_STACK_ID has nowhere durable to record a job. The tool
-    // must say so: an empty job list would read as "no ingest ever ran", which is a
-    // different and false claim.
-    const saved = process.env["AKS_STACK_ID"];
-    delete process.env["AKS_STACK_ID"];
-    try {
-      const server = buildServer();
-      const outcome = await callTool(server, "ingest_jobs_list", {});
-      expect(JSON.stringify(outcome)).toContain("AKS_STACK_ID");
-    } finally {
-      if (saved !== undefined) process.env["AKS_STACK_ID"] = saved;
-    }
+  it("answers a job read for the Stack it was given", async () => {
+    if (!fixture().reachable) return;
+    // A fresh Stack has no jobs, and THAT is the answer: the durable job table was
+    // read for the named tenant and came back empty. Reading nothing at all — the
+    // failure this case was written for — would leave `count` undefined instead of
+    // zero. A call with no argument never reaches here; it is refused by the schema,
+    // which `test/mcp/stack-argument-required-refusal.test.ts` pins.
+    const server = buildServer();
+    const outcome = await callTool(server, "ingest_jobs_list", { stackId: stackId() });
+    expect(outcome.structuredContent?.result).toEqual({ jobs: [], count: 0 });
   });
 
   it("registers all 5 expected resources", () => {
@@ -117,12 +125,8 @@ describe("MCP server tool registration", () => {
 });
 
 describe("ingest_source tool", () => {
-  // Scoped HERE: an ingest needs a tenant. Hoisting to file scope changed what the
-  // eval and status suites read back (they assert file-shaped snapshots) and broke four
-  // green tests -- the same trap as activity-log.
-  useStackEnv("mcp-ingest-source");
-
   it("returns IngestResult shape for a local file", async () => {
+    if (!fixture().reachable) return;
     const sourceFile = path.join(root, "input.md");
     await writeFile(
       sourceFile,
@@ -130,7 +134,10 @@ describe("ingest_source tool", () => {
     );
 
     const server = buildServer();
-    const result = await callTool(server, "ingest_source", { source: sourceFile });
+    const result = await callTool(server, "ingest_source", {
+      source: sourceFile,
+      stackId: stackId(),
+    });
     const payload = result.structuredContent?.result as Record<string, unknown>;
 
     expect(payload).toMatchObject({
@@ -144,9 +151,10 @@ describe("ingest_source tool", () => {
 
 describe("compile_wiki tool", () => {
   it("returns CompileResult shape when no sources exist", async () => {
+    if (!fixture().reachable) return;
     process.env.ANTHROPIC_API_KEY = "test-key-not-actually-used";
     const server = buildServer();
-    const result = await callTool(server, "compile_wiki", {});
+    const result = await callTool(server, "compile_wiki", { stackId: stackId() });
     const payload = result.structuredContent?.result as Record<string, unknown>;
 
     expect(payload).toEqual(expect.objectContaining({
@@ -196,23 +204,24 @@ describe("read_page tool and readPageRecord helper", () => {
   });
 
   it("read_page tool throws an error for missing pages", async () => {
+    if (!fixture().reachable) return;
     const server = buildServer();
-    await expect(callTool(server, "read_page", { slug: "missing" })).rejects.toThrow(/not found/);
+    await expect(
+      callTool(server, "read_page", { slug: "missing", stackId: stackId() }),
+    ).rejects.toThrow(/not found/);
   });
 });
 
 describe("wiki_status tool", () => {
   it("returns expected status shape and does not modify the workspace", async () => {
-    await writePage(
-      path.join(root, "wiki/concepts"),
-      "alpha",
-      { title: "Alpha", summary: "First" },
-      "Body content.",
-    );
+    const { reachable, seedConceptRow } = fixture();
+    if (!reachable) return;
+    // The page is stored where the tool now reads it: the named Stack's rows.
+    await seedConceptRow("alpha", "Alpha", "Body content.");
 
     const beforeFiles = await snapshotWorkspace(root);
     const server = buildServer();
-    const result = await callTool(server, "wiki_status", {});
+    const result = await callTool(server, "wiki_status", { stackId: stackId() });
     const afterFiles = await snapshotWorkspace(root);
 
     const status = result.structuredContent?.result as Record<string, unknown>;
@@ -225,45 +234,41 @@ describe("wiki_status tool", () => {
     expect(afterFiles).toEqual(beforeFiles);
   });
 
-  it("reports pendingCandidates equal to the number of valid candidate files", async () => {
-    const candidatesDir = path.join(root, ".llmwiki", "candidates");
-    await mkdir(candidatesDir, { recursive: true });
-    const validCandidates = [
+  it("reports pendingCandidates equal to the number of pending candidate rows", async () => {
+    const { reachable, seedPendingCandidates } = fixture();
+    if (!reachable) return;
+    // The queue is the named Stack's ROWS, so the candidates are stored through the
+    // same store production writes with. Files under `.llmwiki/candidates` belong to a
+    // project that has no Stack and are not this count.
+    const pending = [
       { id: "alpha-aaaaaaaa", slug: "alpha", title: "Alpha" },
       { id: "beta-bbbbbbbb", slug: "beta", title: "Beta" },
     ];
-    for (const seed of validCandidates) {
-      await writeFile(
-        path.join(candidatesDir, `${seed.id}.json`),
-        JSON.stringify({
-          id: seed.id,
-          title: seed.title,
-          slug: seed.slug,
-          summary: "Summary",
-          sources: ["source.md"],
-          body: "body",
-          generatedAt: new Date().toISOString(),
-        }),
-        "utf-8",
-      );
-    }
-    // A malformed JSON file should NOT inflate pendingCandidates.
+    await seedPendingCandidates(pending);
+    // A malformed leftover file in the file-backed queue must NOT inflate the count of
+    // a Stack that does have rows.
+    const candidatesDir = path.join(root, ".llmwiki", "candidates");
+    await mkdir(candidatesDir, { recursive: true });
     await writeFile(path.join(candidatesDir, "broken.json"), "not json", "utf-8");
 
     const server = buildServer();
-    const result = await callTool(server, "wiki_status", {});
+    const result = await callTool(server, "wiki_status", { stackId: stackId() });
     const status = result.structuredContent?.result as { pendingCandidates: number };
-    expect(status.pendingCandidates).toBe(validCandidates.length);
+    expect(status.pendingCandidates).toBe(pending.length);
   });
 });
 
 describe("error handling", () => {
   it("query_wiki throws when the wiki has no compiled pages", async () => {
+    if (!fixture().reachable) return;
     process.env.ANTHROPIC_API_KEY = "test-key";
     const server = buildServer();
     // The precondition is "no compiled pages", not "no index.md": the index is a
-    // projection that may legitimately be absent while pages exist in rows.
-    await expect(callTool(server, "query_wiki", { question: "anything" })).rejects.toThrow(/No compiled pages found/);
+    // projection that may legitimately be absent while pages exist in rows. The Stack
+    // named here really holds no page, so the refusal is about the corpus.
+    await expect(
+      callTool(server, "query_wiki", { question: "anything", stackId: stackId() }),
+    ).rejects.toThrow(/No compiled pages found/);
   });
 
   it("compile_wiki surfaces missing-credential errors", async () => {
@@ -379,8 +384,9 @@ describe("MCP resources", () => {
 
 describe("run_eval tool", () => {
   it("returns EvalReport shape for an empty project (fast suite)", async () => {
+    if (!fixture().reachable) return;
     const server = buildServer();
-    const result = await callTool(server, "run_eval", { suite: "fast" });
+    const result = await callTool(server, "run_eval", { suite: "fast", stackId: stackId() });
     const payload = result.structuredContent?.result as Record<string, unknown>;
     expect(payload).toMatchObject({
       suite: "fast",
@@ -394,9 +400,12 @@ describe("run_eval tool", () => {
   });
 
   it("throws credentials error when suite=full and no provider configured", async () => {
+    if (!fixture().reachable) return;
     await withNoCredentials(root, async () => {
       const server = buildServer();
-      await expect(callTool(server, "run_eval", { suite: "full" })).rejects.toThrow(/Anthropic credentials/);
+      await expect(
+        callTool(server, "run_eval", { suite: "full", stackId: stackId() }),
+      ).rejects.toThrow(/Anthropic credentials/);
     });
   });
 });

@@ -24,11 +24,24 @@
  * the thing it discovers, so an omitted argument there still resolves the bound Stack.
  * It is asserted the opposite way in `tools-list-requires-stack.test.ts`.
  *
- * ## Why the writes are counted
+ * ## Why the writes are counted, and on WHICH Stacks
  *
  * "It refused" is not enough. A refusal that still ran compile, eval-with-record or a
  * saving query leaves rows behind while telling the caller nothing happened. The
- * counter test drives all ten calls and compares row counts on both sides.
+ * counter case drives all ten calls and compares per-Stack row counts on both sides.
+ *
+ * The counts are keyed to Stacks THIS TEST owns, never to a whole-table total. A
+ * global total (`{ stacks: 3995, pages: 598, jobs: 39 }`) is the flake it replaced: a
+ * sibling suite creating its own Stack in parallel moves it, and the difference is
+ * indistinguishable from a cross-tenant write by this call. Two owned Stacks are
+ * measured instead:
+ *
+ * - the AMBIENT-BOUND Stack, because `AKS_STACK_ID` is the one tenant a
+ *   missing-argument fallback could ever reach — the call names no Stack, so the
+ *   deployment's own Stack is the whole of its reach;
+ * - a second Stack the case NAMES explicitly afterwards, because a handler that
+ *   resolves the Stack from the argument must touch that one and leave the bound
+ *   Stack alone.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -39,12 +52,21 @@ import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.j
 import { buildServer } from "../fixtures/mcp-test-env.js";
 import { useQueryStackFixture } from "../fixtures/query-stack-root.js";
 import type { QueryStackFixture } from "../fixtures/query-stack-root.js";
+import { createProbeStack } from "../dimensions/harness-lifecycle.js";
+import type { ProbeStack } from "../dimensions/harness-lifecycle.js";
+import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 /** Slug the ambient Stack holds, so a fallback would find something to serve. */
 const SLUG = "shared";
 
 /** Body that is reachable ONLY through a Stack named in the argument. */
 const ROW_BODY = "ROW_BODY_only_reachable_through_the_stack_argument";
+
+/** Slug the second, case-owned Stack holds, to prove a named call reached it. */
+const NAMED_SLUG = "named-only";
+
+/** Body only the NAMED Stack holds, so the read cannot be answered by the bound one. */
+const NAMED_BODY = "ROW_BODY_only_reachable_through_the_named_stack_argument";
 
 /**
  * What an MCP client prints when the SDK rejects a call missing `stackId`.
@@ -95,17 +117,61 @@ async function seedAmbientPage(fixture: QueryStackFixture): Promise<void> {
   });
 }
 
-/** Row counts a refused call must leave untouched. */
-async function rowCounts(fixture: QueryStackFixture): Promise<Record<string, number>> {
-  const db = fixture.stack.harness.db;
-  const [stacks] = await db.execute("select count(*)::int as n from stacks");
-  const [pages] = await db.execute("select count(*)::int as n from wiki.pages");
-  const [jobs] = await db.execute("select count(*)::int as n from wiki.ingest_job");
-  return {
-    stacks: Number((stacks as { n: number }).n),
-    pages: Number((pages as { n: number }).n),
-    jobs: Number((jobs as { n: number }).n),
-  };
+/** Row counts ONE Stack owns: everything a refused call could have written there. */
+interface StackCounts {
+  pages: number;
+  /** `wiki.review_candidates` — where a saving query or an import would stage. */
+  candidates: number;
+  /** `wiki.ingest_job` — where a compile or an ingest records work. */
+  jobs: number;
+  /** `wiki.derived_artifact` — the index/MOC render a compile regenerates. */
+  artifacts: number;
+  /** `wiki.activity_log` — the history row a successful operation appends. */
+  activity: number;
+}
+
+/** The Stack-scoped tables a refused call must leave byte-identical, by counter name. */
+const COUNTED_TABLES: ReadonlyArray<[keyof StackCounts, string]> = [
+  ["pages", "wiki.pages"],
+  ["candidates", "wiki.review_candidates"],
+  ["jobs", "wiki.ingest_job"],
+  ["artifacts", "wiki.derived_artifact"],
+  ["activity", "wiki.activity_log"],
+];
+
+/**
+ * The row counts `stackId` owns, zero-filled where the Stack holds nothing.
+ *
+ * Scoped to the Stack, never to the whole table: a sibling suite writing to its OWN
+ * Stack must not be able to make this case fail, and a write of OURS must not be able
+ * to hide in someone else's total.
+ *
+ * @param harness - Database handle of the suite.
+ * @param stackId - The one Stack to measure.
+ * @returns Its counts across every table a tool could write.
+ */
+async function countsOf(harness: KgPostgresHarness, stackId: string): Promise<StackCounts> {
+  const counts: StackCounts = { pages: 0, candidates: 0, jobs: 0, artifacts: 0, activity: 0 };
+  for (const [key, table] of COUNTED_TABLES) {
+    const [row] = await harness.db.execute(
+      `select count(*)::int as n from ${table} where stack_id = '${stackId}'`,
+    );
+    counts[key] = Number((row as { n: number }).n);
+  }
+  return counts;
+}
+
+/**
+ * Store one page in the second Stack, so a call naming it has something to return.
+ *
+ * @param probe - The Stack the case names explicitly.
+ */
+async function seedNamedPage(probe: ProbeStack): Promise<void> {
+  await createPageWriteSink(probe.harness.db, probe.harness.stackId)({
+    directory: "concepts",
+    slug: NAMED_SLUG,
+    body: `---\ntitle: Named\nsummary: named\n---\n\n${NAMED_BODY}\n`,
+  });
 }
 
 describe("a tool call that omits the required Stack argument", () => {
@@ -155,15 +221,40 @@ describe("a tool call that omits the required Stack argument", () => {
     expect(textOf(result)).toContain("stackId");
   });
 
-  it("writes nothing and creates no Stack while the argument is missing", async () => {
-    if (!fixture().stack.harness.reachable) return;
-    const before = await rowCounts(fixture());
+  it("writes nothing into the bound Stack or the Stack a later call names", async () => {
+    const { stack: bound } = fixture();
+    if (!bound.harness.reachable) return;
+    const named = await createProbeStack("stack-arg-required-named");
+    try {
+      if (!named.harness.reachable) return;
+      await seedNamedPage(named);
+      const before = {
+        bound: await countsOf(bound.harness, bound.harness.stackId),
+        named: await countsOf(named.harness, named.harness.stackId),
+      };
 
-    for (const { name, args } of MISSING_STACK_CALLS) {
-      await client.callTool({ name, arguments: args });
+      // Every nameless call is refused by the schema before a handler can run.
+      for (const { name, args } of MISSING_STACK_CALLS) {
+        const refused = await client.callTool({ name, arguments: args });
+        expect(refused.isError).toBe(true);
+      }
+
+      // A call that DOES name a Stack this test owns. It reaches THAT Stack's page —
+      // so the seam really resolves the argument — and still writes to neither Stack.
+      const served = await client.callTool({
+        name: "read_page",
+        arguments: { slug: NAMED_SLUG, stackId: named.harness.stackId },
+      });
+      expect(served.isError).toBeFalsy();
+      expect(textOf(served)).toContain(NAMED_BODY);
+
+      expect({
+        bound: await countsOf(bound.harness, bound.harness.stackId),
+        named: await countsOf(named.harness, named.harness.stackId),
+      }).toEqual(before);
+    } finally {
+      await named.harness.cleanup();
     }
-
-    expect(await rowCounts(fixture())).toEqual(before);
   });
 
   it("serves the same read_page call once the Stack is passed explicitly", async () => {

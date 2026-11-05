@@ -6,50 +6,63 @@
  * an SDK Client via StdioClientTransport, and calls `wiki_status` through the
  * full JSON-RPC stack — verifying the pending-review count from a seeded candidate.
  *
- * The candidate is written directly into `.llmwiki/candidates/` so no LLM is
- * needed and the test is fully deterministic. `wiki_status` is read-only and
- * never calls a provider, so no API key is required.
+ * The candidate is stored as a ROW on the probe Stack, through the same store
+ * production writes with, so no LLM is needed and the test is fully deterministic.
+ * A candidate FILE in `.llmwiki/candidates/` would be invisible here: the queue the
+ * tool counts is the named Stack's rows. `wiki_status` is read-only and never calls
+ * a provider, so no API key is required.
+ *
+ * `stackId` is a REQUIRED tool argument, so the call names a real Stack. The
+ * argument is passed per request and is deliberately NOT bound in the subprocess
+ * environment: the candidate queue is resolved from the environment the tool call
+ * builds, and binding a Stack in the subprocess would replace the corpus that keeps
+ * reads in this test's own database — the exact trap `test-dotenv.ts` documents.
+ * The oracle is the pendingCandidates count of the Stack the call names.
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdir, writeFile } from "fs/promises";
-import path from "path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { useMcpRoot, connectMcpClient, parseToolPayload } from "./fixtures/mcp-test-env.js";
+import { useStatusStackFixture } from "./fixtures/stack-status-fixtures.js";
 
 const rootHandle = useMcpRoot("mcp-stdio");
 
-/** Write a minimal valid ReviewCandidate JSON into the candidates directory. */
-async function seedPendingCandidate(root: string): Promise<void> {
-  const now = new Date().toISOString();
-  const candidate = {
+/**
+ * The probe Stack whose pending candidates the subprocess counts. Seeded through the
+ * production candidate store — see `test/fixtures/stack-status-fixtures.ts`.
+ */
+const fixture = useStatusStackFixture("mcp-stdio");
+
+/**
+ * One pending candidate, as the page the reviewer would approve.
+ *
+ * @param now - Timestamp shared by the frontmatter and the stored record.
+ */
+function pendingCandidate(now: string) {
+  return {
     id: "alpha-deadbeef",
     title: "Alpha",
     slug: "alpha",
     summary: "Alpha summary.",
     sources: ["intro.md"],
     body: `---\ntitle: Alpha\nsummary: Alpha summary.\nsources: []\ncreatedAt: '${now}'\nupdatedAt: '${now}'\n---\n\n# Alpha\n\nAlpha summary.`,
-    generatedAt: now,
-    reviewMode: "policy",
-    heldReasons: [{ code: "low-confidence" }],
   };
-  const candidatesDir = path.join(root, ".llmwiki", "candidates");
-  await mkdir(candidatesDir, { recursive: true });
-  await writeFile(
-    path.join(candidatesDir, `${candidate.id}.json`),
-    JSON.stringify(candidate, null, 2),
-    "utf-8",
-  );
 }
 
 describe("MCP stdio: wiki_status pending-review count", () => {
-  it("reports pendingCandidates ≥ 1 after seeding a candidate file", async () => {
+  it("reports pendingCandidates ≥ 1 after seeding a candidate row", async () => {
+    const { stackId, reachable, seedPendingCandidates } = fixture();
+    if (!reachable) return;
     const root = rootHandle.value;
-    await seedPendingCandidate(root);
+    const now = new Date().toISOString();
+    await seedPendingCandidates([pendingCandidate(now)]);
 
     const { client, transport } = await connectMcpClient(root);
     try {
-      const result = await client.callTool({ name: "wiki_status", arguments: {} });
+      const result = await client.callTool({
+        name: "wiki_status",
+        arguments: { stackId },
+      });
       const status = parseToolPayload<{ pendingCandidates: number }>(result as CallToolResult);
       expect(status.pendingCandidates).toBeGreaterThanOrEqual(1);
     } finally {

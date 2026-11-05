@@ -185,15 +185,18 @@ async function stacksWithCounts(harness: KgPostgresHarness): Promise<Map<string,
 }
 
 /**
- * Assert the refused calls moved none of `bound`'s rows.
+ * Assert the refused calls moved none of the OWNED Stacks' rows.
  *
- * ## Why the BOUND Stack is the detector
+ * ## Why BOTH owned Stacks are the detector
  *
  * These three calls name no Stack, so the env-substituting fallback under test had
  * exactly ONE reachable tenant: `process.env.AKS_STACK_ID`, the Stack the deployment
- * serves — `bound` here, owned exclusively by this suite's fixture. Asserting it is
- * untouched IS the cross-tenant write detector, and it still fails if a fallback
- * returns.
+ * serves — the suite's fixture Stack here, owned exclusively by this test. That is the
+ * fallback's real target, and asserting it untouched IS the cross-tenant write
+ * detector. The second id is a Stack this test creates and NAMES later in the case,
+ * so a handler that resolved the Stack from the argument cannot write there unnoticed
+ * either. Every Stack measured is created by this test, so no sibling suite can move
+ * it between the two snapshots.
  *
  * ## Why not "every Stack present in both snapshots"
  *
@@ -206,17 +209,19 @@ async function stacksWithCounts(harness: KgPostgresHarness): Promise<Map<string,
  *
  * @param before - Snapshot taken before the refused calls.
  * @param after - Snapshot taken after them.
- * @param bound - The Stack the deployment serves, and the only tenant a fallback could reach.
+ * @param owned - Stack ids this test created and owns.
  */
 function expectNoWrites(
   before: Map<string, StackCounts>,
   after: Map<string, StackCounts>,
-  bound: string,
+  owned: readonly string[],
 ): void {
   const empty: StackCounts = { pages: 0, artifacts: 0, candidates: 0, sources: 0 };
-  expect(after.get(bound) ?? empty).toEqual(before.get(bound) ?? empty);
-  // A refused call cannot remove the Stack either: it is still there afterwards.
-  expect(after.has(bound)).toBe(before.has(bound));
+  expect(owned.map((id) => after.get(id) ?? empty)).toEqual(
+    owned.map((id) => before.get(id) ?? empty),
+  );
+  // A refused call cannot remove a Stack either: each one is still there afterwards.
+  for (const id of owned) expect(after.has(id)).toBe(before.has(id));
 }
 
 /** How many source documents `stackId` holds. */
@@ -282,22 +287,41 @@ describe("S2: a call with no stackId is refused and touches nothing", () => {
   it("leaves rows, bundles and candidates untouched", async () => {
     await withTools("req-okf-s2-writes", async ({ client, root, harness }) => {
       await seedBundle(root);
-      const before = await stacksWithCounts(harness);
+      // A second Stack this case OWNS and names below. `harness` is the AMBIENT-BOUND
+      // one: `withRowsStack` put its id in `process.env.AKS_STACK_ID`, which is the
+      // only tenant a missing-argument fallback could reach. Both are measured, so a
+      // write to either one fails this case.
+      const named = await createProbeStack("req-okf-s2-named");
+      try {
+        if (!named.harness.reachable) return;
+        await seedRow(named.harness, named.harness.stackId, "named-page");
+        const owned = [harness.stackId, named.harness.stackId];
+        const before = await stacksWithCounts(harness);
 
-      for (const { name, args } of MISSING_STACK_CALLS) await client.callTool({ name, arguments: args });
+        // The refusal is what makes "nothing was written" credible: the SDK rejected
+        // the call before the handler ran, so no fallback and no default-Stack
+        // provisioning could even start. Pinned per tool above; re-asserted here so
+        // this case cannot pass against a handler that half-ran and wrote nothing.
+        for (const { name, args } of MISSING_STACK_CALLS) {
+          const refused = await client.callTool({ name, arguments: args });
+          expect(refused.isError).toBe(true);
+        }
 
-      // Per Stack, so a sibling suite's fixture cannot look like a write of ours.
-      expectNoWrites(before, await stacksWithCounts(harness), harness.stackId);
-      // The refusal is what makes "nothing was written" credible: the SDK rejected the
-      // call before the handler ran, so no fallback and no default-Stack provisioning
-      // could even start. Pinned per tool above; re-asserted here so this case cannot
-      // pass against a handler that half-ran and wrote nothing.
-      for (const { name, args } of MISSING_STACK_CALLS) {
-        const refused = await client.callTool({ name, arguments: args });
-        expect(refused.isError).toBe(true);
+        // A call that DOES name the second Stack: it reaches THAT Stack's rows — one
+        // page — while the ambient environment names the other one, and it writes to
+        // neither.
+        const served = await client.callTool({ name: "wiki_status", arguments: { stackId: named.harness.stackId } });
+        expect(served.isError).toBeFalsy();
+        expect(payloadOf(served)).toMatchObject({ pages: { concepts: 1, queries: 0, total: 1 } });
+
+        // Per Stack, and only Stacks this test owns, so a sibling suite's fixture cannot
+        // look like a write of ours and ours cannot hide in a global total.
+        expectNoWrites(before, await stacksWithCounts(harness), owned);
+        expect(existsSync(path.join(root, "dist"))).toBe(false);
+        expect(existsSync(path.join(root, ".llmwiki", "candidates"))).toBe(false);
+      } finally {
+        await named.harness.cleanup();
       }
-      expect(existsSync(path.join(root, "dist"))).toBe(false);
-      expect(existsSync(path.join(root, ".llmwiki", "candidates"))).toBe(false);
     });
   });
 
