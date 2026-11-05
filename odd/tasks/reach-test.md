@@ -35,7 +35,7 @@ T1 — Provision the worktree's dependencies so any gate can run at all (`node_m
 T2 — Per-run database/schema isolation for every suite that touches Postgres, applied to the four shared fixtures, then to the KG package's own route/core harnesses. S2, S4, S6, S7. Route: worker. Commit: 7f78ecf (shared fixtures), then the seven package harnesses in a53cc22.
 T2b — Close the residual shared-database paths: `test/lock-postgres*.test.ts` on the per-run fixture, a comment-only note on the `vitest.config.ts` seed, and a reaper-safety case proving a live sibling and a foreign name are never candidates. S2, S6, S7. Route: worker. Commit: 6b0a805.
 T3 — Wire a gate that runs the KG package typecheck and pin a ratchet over the 20-diagnostic baseline without widening an ignore list. S3. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
-T4 — The real end-to-end KG MCP probe: real Postgres, real KG API, `runStdio()`, real client handshake, exact payloads. S1, S6, S7. Route: worker. Commit: not made by the worker (terminal git actions are parent-owned); files staged for review: `test/fixtures/ephemeral-postgres.ts`, `test/kg-mcp-e2e/**`.
+T4 — The real end-to-end KG MCP probe: real Postgres, real KG API, `runStdio()`, real client handshake, exact payloads. S1, S6, S7. Route: worker. Commit: 1063fb2 (`test/fixtures/ephemeral-postgres.ts`, `test/kg-mcp-e2e/**`; the `export` edits to `per-run-database.ts` had already landed in `cd4b669`).
 T5 — `db.test.ts:413` under parallel load. S4. Route: worker. Commit: pending.
 T6 — Resolve the four inert quickstart expectations honestly (resurrect under an explicit opt-in with a correct predicate, or retire with a documented reason). S5. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
 T7 — Independent verification: one verdict per S#, run against isolated state. S1-S6. Route: gentle-ai-verify. Commit: none.
@@ -345,6 +345,9 @@ keeping a second copy.
 - SCRATCH LEFT IN PLACE (not deleted, per L2): container `llmwiki-probe-kg-mcp-e2e-ea040fe6` from the pre-fix failed
   run — remove it with `docker rm -f llmwiki-probe-kg-mcp-e2e-ea040fe6`. The package build wrote
   `packages/llmwiki-kg/ts/dist/` (gitignored). No temp directory was created outside the worktree.
+- COMMITTED: `1063fb2` — the parent staged only `test/fixtures/ephemeral-postgres.ts` + `test/kg-mcp-e2e/**` and committed
+  them as `test(kg-mcp): probe the KG dimension end to end over a real handshake`; this Log entry itself had already
+  landed in `8244405` ("test(quickstart): resolve the four inert expectations honestly", a concurrent writer).
 
 L11 (evidence, T2's remaining scope — the KG package's own harnesses; S2, S6, S7):
 - WHAT WAS SHARED. The package's own route/core suites were left out of T2 and still resolved ONE
