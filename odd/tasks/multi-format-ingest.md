@@ -64,26 +64,42 @@ stated as NEW only. `mammoth@1.13.0` is pure JavaScript and complies.
 
 ## Tasks
 
-- T1 — worktree runnable (`npm ci`) + this feature document. Route: worker. Commit: see Log.
+- T1 — worktree runnable (`npm ci`) + this feature document. Route: worker. Linked: all.
+  - commit: cbb7b21
 - T2 — add `mammoth@1.13.0` (BSD-2-Clause, pure JS) and the committed fixture generator
   `test/fixtures/documents/make-fixtures.mjs`. Linked: S2, S5.
+  - commit: 5d49e92 (dependency + externalization)
+  - commit: 8f35863 (fixture generator and generated fixtures)
 - T3 — RED-first tests, one per format rule. Linked: S1, S2, S3, S4, S7.
+  - commit: 360aa40 (docx, refusal, dispatch and preservation tests)
+  - commit: 921f246 (PDF marker/preservation tests; the split follows the behavior
+    each half pins, because the PDF contract changed with pdf-parse's own option)
 - T4 — `.docx` adapter `src/ingest/docx.ts` + dispatch wiring (`SourceType` union,
   `detectSourceType`, `fetchContent`). Linked: S2, S5.
+  - commit: 360aa40
 - T5 — actionable unsupported-format errors in `src/ingest/file.ts` (`.doc`, `.xlsx`,
   unknown) and correct the false "Only .md and .txt files are supported" message, which
   ignores `.pdf`/`.txt`/images/transcripts/web. Linked: S3, S4, S6.
   The `.xlsx` message must name `read-excel-file@9.3.14` as the follow-up path.
+  - commit: 360aa40
 - T6 — PDF empty-extraction fix: content consisting solely of page markers is empty and
   throws `No readable content could be extracted from the source.` Linked: S7.
+  The markers are suppressed by pdf-parse's own `pageJoiner` option rather than stripped
+  from the finished text; see L8.2.
+  - commit: 921f246
 - T7 — differential `.md` check against base commit in a `mktemp -d` scratch tree
   (never committed). Linked: S1.
+  - commit: none (verification evidence only; the check produced no code)
 - T8 — user-facing documentation for the new capability: a `CHANGELOG.md` entry, plus the
   ingest documentation page updated with a supported-formats table and the explicit
   statement that `.doc` (legacy binary Word) and `.xlsx` are refused, with the reason and
   the follow-up path. Also correct any help text or doc page that repeats the false
   "Only .md and .txt files are supported" claim. Linked: S3, S4, S6.
+  - commit: 502bcbd
 - T9 — gates with exact scope + fallow + record each task's commit. Linked: all.
+  - commit: this commit, `docs(odd): record commit evidence for multi-format ingest tasks`.
+    A commit cannot carry its own SHA in its own content, so it is named by subject here;
+    it is the last commit of the feature.
 
 ## Log
 
@@ -114,3 +130,4 @@ stated as NEW only. `mammoth@1.13.0` is pure JavaScript and complies.
   error rather than working around it. "No partial data" is verified at adapter and
   transaction level, not via a live CLI write, because end-to-end ingest requires Postgres;
   this is a reported scope limitation.
+- L8 (hardening, pre-commit): independent verification found three defects in the first implementation, all fixed before the first commit. (1) Bundling CJS mammoth into the ESM core crashed the built CLI with "Dynamic require of url is not supported" and failed 89 escalated tests; mammoth is now externalized and declared in the core manifest. (2) The first marker stripper deleted prose lines that merely resembled a page marker; it was replaced by pdf-parse's own page-joining option so markers are never emitted. (3) Fallow dead-code/duplication and two vacuous "writes nothing" tests were removed.
