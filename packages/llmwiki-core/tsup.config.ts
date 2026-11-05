@@ -28,7 +28,21 @@ export default defineConfig({
   // fine and the CLI died before parsing a single argument; measured with
   // `node dist/cli.js --version`. External so Node resolves the SDK at runtime,
   // which is how it already runs under `llmwiki serve`.
-  external: ["express", "@modelcontextprotocol/sdk", "@modelcontextprotocol/sdk/*", "@hono/node-server"],
+  //
+  // `mammoth` arrives through the `.docx` ingest adapter (`src/ingest/docx.ts`).
+  // It is CommonJS-only (`module.exports = ...`, no ESM entry), and its
+  // `lib/docx/files.js` calls `require("url")`; bundled into an ESM output those
+  // calls become the same dynamic-require shim, so the build succeeded and
+  // `node dist/cli.js --version` exited 1 with
+  // `Dynamic require of "url" is not supported` before parsing an argument.
+  // External so Node resolves mammoth at runtime, exactly like `express` above.
+  external: [
+    "express",
+    "@modelcontextprotocol/sdk",
+    "@modelcontextprotocol/sdk/*",
+    "@hono/node-server",
+    "mammoth",
+  ],
   splitting: true,
   sourcemap: true,
   clean: true,
