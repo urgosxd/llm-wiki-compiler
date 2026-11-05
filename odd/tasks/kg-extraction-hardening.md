@@ -331,3 +331,85 @@ nine-key response pin extended to prove the counters did not leak onto the wire.
 This entry is carried by `feat(kg): report degraded-chunk and schema-violation
 counters in the ingest audit payload` on `feat/kg-extraction-hardening`; its SHA is
 `git log -1 --format=%h` on that branch, since a commit cannot contain its own SHA.
+
+### L10 — T7: the audit write branches are pinned, and the orphaned wrapper is gone
+
+Independent verification of `06e5e9e` (L9) returned every item MET and the contract
+purely additive, and raised two things in the same verdict. Both bear directly on
+that "additive only" promise, so this slice closes them.
+
+**The gap the probes close.** `writeIngestAudit` runs one of two `jsonb`
+statements. The healthy branch replaces `ontology` and DELETES `extraction`
+(`jsonb - 'extraction'`); the degraded branch replaces both, through two NESTED
+`jsonb_set` calls. Both are merge statements over a column several producers write
+to, and neither branch's merge behaviour was observable anywhere: every existing
+ingest suite starts from `audit = null`, so a statement that REPLACED the column
+instead of merging into it would have passed all of them. Two specific silent
+failures were therefore unpinned — a mistyped `- 'extract'` deletes nothing and
+leaves the previous run's counters standing, and unnested `jsonb_set` calls (each
+applied to `coalesce(audit, '{}')`) let the second erase `ontology`.
+
+New file `packages/llmwiki-kg/ts/src/routes/ingest-audit-merge.test.ts`, two
+DB-backed probes, each seeding a section the run does NOT produce:
+
+1. **`deletes only the extraction section when a re-ingest answers cleanly`** —
+   seeds `quality`, a stale `ontology` and
+   `extraction: { mangledChunks: 9, schemaViolations: 9 }`, runs a clean ingest,
+   then asserts the whole blob `toEqual({ quality, ontology })` with `ontology` the
+   FRESH section. `toEqual` fails on an extra key (that is how the deletion is
+   observed) and on a missing one (that is how a column-clearing branch shows up),
+   and the exact `quality` value proves the seed landed rather than being a no-op.
+2. **`keeps a sibling section when it also writes the degradation one`** — seeds
+   `quality` only, runs an ingest whose response is mangled, then asserts
+   `{ quality, ontology, extraction: { mangledChunks: 1 } }`. All three keys, so
+   whichever one the nesting mistake would have dropped fails the assertion.
+
+Both live in a NEW file rather than `ingest-ontology.test.ts`, which is already 562
+raw lines — a pre-existing AGENTS.md overrun that adding two DB tests would widen.
+The harness boilerplate (`vi.hoisted` provider env, app builder, `createStackWith`,
+`documentAudit`) is mirrored from that file, plus one `seedAudit` helper that writes
+the blob directly through `withFixtureTenant`, the way a foreign producer would.
+
+**RED was not available, and this is stated rather than simulated.** Both probes
+passed on their first run: the behaviour they pin was delivered by `06e5e9e`, so
+they are **coverage pins, not test-first**. Manufacturing a RED by editing the
+branch they guard would have required changing source no part of this task asked
+to change. Their sensitivity is structural, not claimed: probe 1 cannot pass if the
+removal is mistyped (extra key) or if the write replaces the column (missing
+`quality`), and probe 2 cannot pass if the two sets are unnested (missing `quality`
+or `ontology`).
+
+**The orphaned wrapper is deleted.** `writeOntologyAudit`
+(`routes/ingest/audit.ts`) was an exported wrapper with zero production callers
+after T6 routed storage through `writeIngestAudit`, and it deletes the `extraction`
+section — a latent foot-gun for any future caller. Confirmed before acting:
+
+```
+$ grep -rn "writeOntologyAudit" . --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist
+0 matches
+```
+
+Zero callers anywhere, tests included, so the delete path was taken rather than the
+`@internal` marking path. No other exported symbol's behaviour changed: the two
+schemas, both readers, both builders and `writeIngestAudit` are untouched, and the
+sibling suite proves the stored payload did not move.
+
+**Gates (serial, one command at a time):**
+
+- `npx vitest run packages/llmwiki-kg/ts/src/routes/ingest-audit-merge.test.ts` —
+  1 file / 2 tests passed, 126ms test time, 108.39s total, exit 0. It RAN: the
+  per-run-database probe succeeded, so no `[ingest.test] skipping integration tests`
+  line was printed.
+- `npx vitest run packages/llmwiki-kg/ts/src/routes/ingest-ontology.test.ts` — 1
+  file / 16 tests passed, 541ms, exit 0. The suites that assert the stored blob's
+  exact bytes are green with the wrapper removed.
+- `npx tsc --noEmit` — exit 0, no diagnostics.
+- `npm run test:affected` — 626 files / 4599 tests passed, 402.30s, exit 0
+  (`PIPESTATUS[0]`, captured with `pipefail`), zero failures in the log.
+- `fallow` — run by the pre-commit hook.
+
+No gate reported SKIPPED. No skip line appeared in any of the four commands.
+
+This entry is carried by `test(kg): pin the audit section merge and delete branches`
+on `feat/kg-extraction-hardening`; its SHA is `git log -1 --format=%h` on that
+branch, since a commit cannot contain its own SHA.

@@ -299,26 +299,6 @@ export async function writeIngestAudit(
 }
 
 /**
- * Writes the ontology section alone, clearing any degradation section.
- *
- * The narrow form of {@link writeIngestAudit}, kept so a caller that knows only
- * the ontology report cannot leave a previous run's counters behind: a report
- * with no extraction section deletes the stored one rather than implying the
- * degradation still describes this run.
- *
- * @param tx - The ingest transaction.
- * @param docId - Document the audit describes.
- * @param audit - The validated ontology section.
- */
-export async function writeOntologyAudit(
-  tx: Database,
-  docId: string,
-  audit: OntologyAudit,
-): Promise<void> {
-  await writeIngestAudit(tx, docId, { ontology: audit });
-}
-
-/**
  * Reads the section back out of a stored `audit` value.
  *
  * @param audit - The raw `stack_documents.audit` value: `null` and `undefined`
