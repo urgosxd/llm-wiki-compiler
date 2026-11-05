@@ -175,6 +175,22 @@ export interface CollectStatusOptions {
    * `detectChanges` already had.
    */
   sourceDocuments?: SourceDocumentListing;
+  /**
+   * Environment naming the Stack this status is about; `process.env` when omitted.
+   *
+   * The compile state is Stack-scoped: `readStateClassifiedFor` reads
+   * `wiki.source_compile_state` for whichever Stack the environment names, and with
+   * no environment it names whichever Stack the PROCESS is bound to. Omitting it here
+   * was the leak that put one object together from two deployments — a named Stack's
+   * page and source corpora beside ANOTHER Stack's `sources`, `lastCompiledAt` and
+   * `pendingChanges`. Measured on a call naming a Stack with 0 pages while the ambient
+   * deployment had compiled 2 sources: `pages: { total: 0 }` and `sources: 2` in the
+   * same payload.
+   *
+   * Optional so every on-disk caller (the CLI among them) keeps resolving exactly as
+   * it does today; the MCP tool path passes the per-request environment explicitly.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** The Stack's own documents, as the status needs them. */
@@ -195,7 +211,7 @@ export async function collectStatus(
   root: string,
   options: CollectStatusOptions = {},
 ): Promise<WikiStatus> {
-  const classified = await readStateClassifiedFor(root);
+  const classified = await readStateClassifiedFor(root, options.env);
   // The corpus comes from the Stack when one is configured, for the snapshot as well as
   // for the pending list: a snapshot that judges `exists` against `sources/` reported
   // every Stack source as deleted, because its keys are capability URLs and no such
@@ -207,7 +223,12 @@ export async function collectStatus(
   // make the snapshot and the pending list read two different sources: an injected
   // listing (how the status tests, and the MCP tool, drive this) reached the pending
   // list while the snapshot ignored it and judged a live owner `orphaned`.
-  const snapshot = await buildProjectFreshnessSnapshot(root, classified, stackDocuments);
+  const snapshot = await buildProjectFreshnessSnapshot(
+    root,
+    classified,
+    stackDocuments,
+    options.env,
+  );
 
   const scan = options.pageScan;
   // Rows are authoritative when a Stack is configured, exactly as in `detectChanges`.
@@ -226,7 +247,7 @@ export async function collectStatus(
     scan === undefined
       ? scanWikiPages(path.join(root, CONCEPTS_DIR))
       : scan.scan("concepts"),
-    countCandidates(root),
+    countCandidates(root, options.env),
     sourceFilesOnDisk === undefined
       ? listSelectedSourceFiles(root)
       : Promise.resolve(sourceFilesOnDisk),

@@ -295,7 +295,10 @@ function registerStatusTool(server: McpServer, root: string): void {
       const status = await withRequestEnv(stackId, (env) =>
         withPageScan(env, (pageScan) =>
           withSourceDocuments(env, (sourceDocuments) =>
-            collectStatus(root, { pageScan, sourceDocuments }),
+            // `env`, explicitly: the compile state is Stack-scoped, and every
+            // default in `collectStatus` resolves to `process.env` — the deployment
+            // this process serves, not the Stack the caller named.
+            collectStatus(root, { pageScan, sourceDocuments, env }),
           ),
         ),
       );
