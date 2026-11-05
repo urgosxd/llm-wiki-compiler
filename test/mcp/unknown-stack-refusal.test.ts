@@ -27,7 +27,9 @@
  * ## What must NOT change
  *
  * A project with no database is a supported deployment where pages are files and there
- * are no Stacks to look up. Omitting `stackId` must keep working unchanged.
+ * are no Stacks to look up, so the lookup is skipped there. What no longer exists is the
+ * OTHER omission: an empty argument used to mean "the bound Stack". It is now refused
+ * like any other id that is not a Stack id, before the work runs.
  */
 import { describe, it, expect } from "vitest";
 import { isRefusal, withRequestEnv } from "../../src/mcp/tenant-db.js";
@@ -57,9 +59,17 @@ describe("a named Stack that does not exist", () => {
     expect(ran).toBe(false);
   });
 
-  it("still runs the work when no Stack is named", async () => {
-    const outcome = await withRequestEnv(undefined, async () => "the tool ran");
-    expect(outcome).toBe("the tool ran");
-    expect(isRefusal(outcome)).toBe(false);
+  it("refuses an empty Stack argument without running the work", async () => {
+    let ran = false;
+
+    const outcome = await withRequestEnv("", async () => {
+      ran = true;
+      return "the tool ran";
+    });
+
+    // An empty argument is not a Stack, and it is no longer a way to ask for the bound
+    // one. The refusal names what was passed instead of querying for it.
+    expect(isRefusal(outcome)).toBe(true);
+    expect(ran).toBe(false);
   });
 });

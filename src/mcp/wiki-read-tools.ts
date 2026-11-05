@@ -19,8 +19,9 @@
  * only to the readers that happen to hit a database today would bake this
  * deployment's storage shape into the tool surface.
  *
- * Absent, every tool keeps the previous behaviour exactly: the Stack the process was
- * started with. A single-Stack deployment therefore needs no changes.
+ * The argument is REQUIRED and nothing is inherited from the process environment on
+ * the tool path: a single-Stack deployment must name its Stack explicitly too. S6 keeps
+ * that inheritance for resources only, which have no input schema to carry an argument.
  */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -46,7 +47,7 @@ import { createPageListingSource } from "../dimensions/wiki/page-write-sink.js";
 import { jsonResult } from "./result.js";
 import { isRefusal, refusalResult, withRequestEnv } from "./tenant-db.js";
 import type { Refusal } from "./tenant-db.js";
-import { STACK_ID_SCHEMA } from "./stack-arg.js";
+import { STACK_ARG_REQUIRED_NOTE, STACK_ID_SCHEMA } from "./stack-arg.js";
 
 /** The namespaces `read_page` searches, in the order it has always documented. */
 const READ_DIRECTORIES = ["concepts", "queries"] as const;
@@ -76,7 +77,8 @@ function registerQueryTool(server: McpServer, root: string): void {
         "loads them, and returns a grounded answer with citations. Set save=true " +
         "to request publication as a wiki page; citation or profile refusals " +
         "return the answer with publicationRefusal and no saved slug. Set debug=true to include the " +
-        "selected chunks and their scores. Requires an LLM provider.",
+        "selected chunks and their scores. Requires an LLM provider. " +
+        STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         question: z.string().describe("The natural-language question to answer."),
         save: z
@@ -124,7 +126,8 @@ function registerSearchTool(server: McpServer, root: string): void {
       description:
         "Select pages relevant to a question and return their full content. " +
         "Uses semantic embeddings when available, falling back to LLM-based " +
-        "selection over the wiki index. Requires an LLM provider.",
+        "selection over the wiki index. Requires an LLM provider. " +
+        STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         question: z.string().describe("The query used to rank pages."),
         stackId: STACK_ID_SCHEMA,
@@ -221,7 +224,8 @@ function registerReadTool(server: McpServer, root: string): void {
       title: "Read Page",
       description:
         "Read one compiled wiki page by slug, including its frontmatter and full " +
-        "body. Searches concepts/ then queries/. Read-only.",
+        "body. Searches concepts/ then queries/. Read-only. " +
+        STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         slug: z.string().describe("Page slug, without the .md extension."),
         stackId: STACK_ID_SCHEMA,
@@ -251,7 +255,8 @@ function registerLintTool(server: McpServer, root: string): void {
       title: "Lint Wiki",
       description:
         "Run rule-based quality checks (broken wikilinks, orphans, duplicates, " +
-        "empty pages, broken citations). Returns structured diagnostics. No LLM call.",
+        "empty pages, broken citations). Returns structured diagnostics. No LLM call. " +
+        STACK_ARG_REQUIRED_NOTE,
       inputSchema: { stackId: STACK_ID_SCHEMA },
     },
     async ({ stackId }) => {
@@ -282,7 +287,8 @@ function registerStatusTool(server: McpServer, root: string): void {
         "(ok | missing | corrupt) so corrupt state is never silent. Each list (stalePages, " +
         "orphanedPages, pendingChanges) is capped at 100 entries for response size; the " +
         "corresponding *Count fields (staleCount, orphanedCount, pendingChangesCount) give " +
-        "the true totals. Read-only — never modifies the workspace.",
+        "the true totals. Read-only — never modifies the workspace. " +
+        STACK_ARG_REQUIRED_NOTE,
       inputSchema: { stackId: STACK_ID_SCHEMA },
     },
     async ({ stackId }) => {
@@ -345,7 +351,7 @@ interface ContextPackToolArgs {
   topChunks?: number;
   omitRoot?: boolean;
   includeSources?: boolean;
-  stackId?: string;
+  stackId: string;
 }
 
 /**
@@ -391,7 +397,8 @@ function registerContextPackTool(server: McpServer, root: string): void {
         "warnings, and suggested next actions. Returns the same v1 JSON " +
         "envelope as `llmwiki context --json`. Read-only; no provider " +
         "credentials required. Use this to PREPARE evidence; use " +
-        "`query_wiki` to GENERATE a grounded natural-language answer.",
+        "`query_wiki` to GENERATE a grounded natural-language answer. " +
+        STACK_ARG_REQUIRED_NOTE,
       inputSchema: contextPackInputSchema(),
     },
     async (args) => {

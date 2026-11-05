@@ -40,6 +40,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // without widening the core's surface.
 import { listIngestJobs, readIngestJob } from "../services/ingest/jobs/job-store.js";
 import { jsonResult, errorResult } from "./result.js";
+import { STACK_ARG_REQUIRED_NOTE, STACK_ID_SCHEMA } from "./stack-arg.js";
 import { isRefusal, refusalResult, withTenantDatabase } from "./tenant-db.js";
 
 /** Register the durable job read tools. */
@@ -52,16 +53,11 @@ export function registerJobTools(server: McpServer): void {
         "Read one async ingest job by id, including both dimensions (ingest and " +
         "compile), their stages, and the transaction attempts so far. Reads the " +
         "durable record the host writes, so it works even when the host is in " +
-        "another process. Read-only.",
+        "another process. Read-only. " +
+        STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         jobId: z.string().describe("Job id, of the form ing_<ULID>."),
-        stackId: z
-          .string()
-          .optional()
-          .describe(
-            "Stack to read from, when it is not the one this endpoint is bound to. " +
-              "Omit for the bound Stack.",
-          ),
+        stackId: STACK_ID_SCHEMA,
       },
     },
     async ({ jobId, stackId }) => {
@@ -82,7 +78,8 @@ export function registerJobTools(server: McpServer): void {
       description:
         "List this Stack's recent async ingest jobs, newest transition first, with " +
         "each job's ingest and compile status. Use it to find a job id or to see " +
-        "what is still running. Read-only.",
+        "what is still running. Read-only. " +
+        STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         limit: z
           .number()
@@ -91,13 +88,7 @@ export function registerJobTools(server: McpServer): void {
           .max(200)
           .optional()
           .describe("How many jobs to return (default 50, max 200)."),
-        stackId: z
-          .string()
-          .optional()
-          .describe(
-            "Stack to read from, when it is not the one this endpoint is bound to. " +
-              "Omit for the bound Stack.",
-          ),
+        stackId: STACK_ID_SCHEMA,
       },
     },
     async ({ limit, stackId }) => {

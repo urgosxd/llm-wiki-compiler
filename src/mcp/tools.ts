@@ -50,7 +50,7 @@ import { jsonResult, errorResult } from "./result.js";
 import { registerJobTools } from "./job-tools.js";
 import { registerStackTools } from "./stack-tools.js";
 import { registerWikiReadTools } from "./wiki-read-tools.js";
-import { STACK_ID_SCHEMA } from "./stack-arg.js";
+import { STACK_ARG_REQUIRED_NOTE, STACK_ID_SCHEMA } from "./stack-arg.js";
 import { isRefusal, refusalResult, withRequestEnv } from "./tenant-db.js";
 
 /** Register all 10 wiki tools on the given MCP server instance. */
@@ -69,18 +69,26 @@ function registerIngestTool(server: McpServer, root: string): void {
     {
       title: "Ingest Source",
       description:
-        "Fetch a URL or copy a local file into sources/. Returns the saved filename, " +
-        "character count, and whether content was truncated to fit the size limit. " +
-        "Sources are project files, not Stack rows, so this tool takes no stackId. " +
-        "Call compile_wiki with a stackId to land the derived pages in a Stack.",
+        "Ingest a URL or a local .md/.txt file into the Stack named by `stackId`: the " +
+        "source is fetched and extracted, its document is recorded for that Stack, and " +
+        "the call returns the saved filename, character count, and whether content was " +
+        "truncated to fit the size limit. " +
+        STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         source: z
           .string()
           .describe("URL (http/https) or absolute path to a .md/.txt file"),
+        stackId: STACK_ID_SCHEMA,
       },
     },
-    async ({ source }) => {
-      const result = await ingestSource(root, source);
+    async ({ source, stackId }) => {
+      // The tool's argument is the ONLY source of the Stack here: `withRequestEnv`
+      // refuses an id this deployment cannot serve, and the service is handed the id
+      // directly so it never resolves a default Stack of its own.
+      const result = await withRequestEnv(stackId, (env) =>
+        ingestSource(root, source, undefined, env, { stackId }),
+      );
+      if (isRefusal(result)) return refusalResult(result);
       return jsonResult(result);
     },
   );
@@ -94,7 +102,8 @@ function registerCompileTool(server: McpServer, root: string): void {
       description:
         "Run the incremental compile pipeline: extract concepts from new/changed " +
         "sources, generate wiki pages, resolve interlinks, and rebuild the index. " +
-        "Requires an LLM provider with credentials.",
+        "Requires an LLM provider with credentials. " +
+        STACK_ARG_REQUIRED_NOTE,
       inputSchema: { stackId: STACK_ID_SCHEMA },
     },
     async ({ stackId }) => {
@@ -119,7 +128,8 @@ function registerEvalTool(server: McpServer, root: string): void {
         "Run the wiki quality eval harness. fast suite checks health and citation " +
         "coverage without LLM calls. full suite also LLM-judges a sample of citations " +
         "(requires an LLM provider). " +
-        "Set record: true to append results to eval history (default false — read-only).",
+        "Set record: true to append results to eval history (default false — read-only). " +
+        STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         suite: z
           .enum(["fast", "full"])

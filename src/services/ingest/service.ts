@@ -50,6 +50,17 @@ import type { IngestResult, SourceType } from "../../utils/types.js";
 /** Input shape for raw-text ingestion. */
 export interface IngestTextInput { title: string; text: string; source?: string }
 
+/**
+ * A Stack a caller ALREADY named, for a surface where no default may be resolved.
+ *
+ * The MCP tools carry the Stack as their own argument, so they must not reach
+ * `resolveStackForCommand` — that helper provisions a default Stack when the
+ * environment names none, which is exactly the fallback the tool path no longer has.
+ * Callers that pass nothing here (the CLI, the HTTP host, the SDK) keep the
+ * resolution they have always had.
+ */
+export interface IngestStackArgument { readonly stackId?: string }
+
 /** Format the root-relative source reference recorded in the Markdown journal. */
 export function journalSavedPath(savedPath: string, pathApi = path): string {
   return `${SOURCES_DIR}/${pathApi.basename(savedPath)}`;
@@ -107,6 +118,10 @@ async function journalIngest(
  *
  * @param root - Project root.
  * @param input - Source identity, title, frontmatter document, and body.
+ * @param observer - Optional job observer.
+ * @param env - Environment the dimensions write with; defaults to `process.env`.
+ * @param explicitStackId - A Stack the CALLER named. When absent the Stack is resolved
+ *   from `env` exactly as before, default Stack included.
  * @returns The written path and its write status.
  * @throws {LockBusyError} When another mutation holds the project lock.
  */
@@ -115,6 +130,7 @@ async function writeToDimensions(
   input: { title: string; source: string; document: string; body: string },
   observer?: IngestJobObserver,
   env: NodeJS.ProcessEnv = process.env,
+  explicitStackId?: string,
 ): Promise<{ savedPath: string; writeStatus: NonNullable<IngestResult["writeStatus"]> }> {
   // Pages are rows in Postgres now, so the dimensions need a handle. It is built
   // for this operation and released right after, because an unclosed pool keeps
@@ -134,7 +150,11 @@ async function writeToDimensions(
       // configured no Stack is no longer a refusal here, it is the default Stack. The
       // strict helper stays as it is, because the surfaces that must refuse -- the MCP
       // deployment binding -- still need it.
-      const stackId = await resolveStackForCommand(dimensionsDb.db, env);
+      //
+      // A caller that already knows the Stack (the MCP tool, whose argument is
+      // required) skips the resolution entirely: there is no default to fall back to
+      // there, and asking for one would provision a Stack nobody named.
+      const stackId = explicitStackId ?? await resolveStackForCommand(dimensionsDb.db, env);
       observer?.ingest.stage("committing");
       return await ingestDimensions(
         dimensionsDb.db,
@@ -167,6 +187,10 @@ async function writeToDimensions(
  *
  * @param root - Project root.
  * @param source - A URL (http/https), YouTube URL, local file, PDF, or image path.
+ * @param observer - Optional job observer.
+ * @param env - Environment the dimensions write with; defaults to `process.env`.
+ * @param stack - A Stack the caller named. Absent for every existing caller, which
+ *   keeps the environment's selection (default Stack included) unchanged.
  * @returns Saved filename, character count, truncation flag, source URI, and source type.
  * @throws {LockBusyError} When another mutation holds the project lock.
  */
@@ -175,6 +199,7 @@ export async function ingestSource(
   source: string,
   observer?: IngestJobObserver,
   env: NodeJS.ProcessEnv = process.env,
+  stack: IngestStackArgument = {},
 ): Promise<IngestResult> {
   observer?.ingest.stage("detecting");
   const sourceType = await detectSourceType(source);
@@ -194,7 +219,7 @@ export async function ingestSource(
     source,
     document,
     body: result.content,
-  }, observer, env);
+  }, observer, env, stack.stackId);
   verbose(`saved: ${savedPath} (${result.content.length} chars extracted)`);
 
   // Journal only real writes — a no-op re-ingest must not append a log line.

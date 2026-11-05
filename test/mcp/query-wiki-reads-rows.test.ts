@@ -20,11 +20,12 @@
  * argument, so it would pass while the wiring under test was broken. Calling the
  * registered tool is the only way to exercise what a caller actually hits.
  *
- * ## Why both the default and the explicit StackId are covered
+ * ## Why every case here passes the Stack explicitly
  *
- * A deployed endpoint has a Stack bound in its environment; a caller may also name
- * one per request. Both paths reach the same seam by different arguments, and a
- * regression in either is invisible to the other.
+ * `stackId` is a required argument now: a tool call inherits no Stack from the
+ * environment, so a call that omitted it would be refused by the schema before
+ * reaching the row path this file measures. The omission itself is pinned in
+ * `stack-argument-required-refusal.test.ts` rather than here.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -113,19 +114,7 @@ describe("query_wiki reads pages from rows", () => {
     vi.clearAllMocks();
   });
 
-  it("answers from the DEFAULT StackId when the argument is omitted", async () => {
-    if (!fixture().stack.harness.reachable) return;
-    const server = await prepareRowBackedServer(fixture());
-
-    const result = await askViaTool(server, { question: "what is row only?" });
-
-    // The answer and the citation both come from the row. A disk fallback would
-    // report "No eligible pages" and never reach the provider.
-    expect(result.answer).toContain("ANSWER_FROM_ROWS");
-    expect(result.pageIds).toContain(SELECTED_PAGE_ID);
-  }, 60_000);
-
-  it("answers from an EXPLICIT stackId naming the bound Stack", async () => {
+  it("answers from rows for the Stack named in the argument", async () => {
     const { stack } = fixture();
     if (!stack.harness.reachable) return;
     const server = await prepareRowBackedServer(fixture());
@@ -135,6 +124,9 @@ describe("query_wiki reads pages from rows", () => {
       stackId: stack.harness.stackId,
     });
 
+    // The answer and the citation both come from the row. A disk fallback would
+    // report "No eligible pages" and never reach the provider.
+    expect(result.answer).toContain("ANSWER_FROM_ROWS");
     expect(result.pageIds).toContain(SELECTED_PAGE_ID);
   }, 60_000);
 
@@ -146,8 +138,8 @@ describe("query_wiki reads pages from rows", () => {
     await seedDiskPage(root);
     const server = buildServer(root);
 
-    await expect(askViaTool(server, { question: "what is on disk?" })).rejects.toThrow(
-      /No compiled pages found/,
-    );
+    await expect(
+      askViaTool(server, { question: "what is on disk?", stackId: stack.harness.stackId }),
+    ).rejects.toThrow(/No compiled pages found/);
   }, 60_000);
 });

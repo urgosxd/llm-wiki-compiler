@@ -26,7 +26,13 @@ export interface OkfImportReport extends BundleReportSections {
   warnings: string[];
   nextAction?: string;
 }
-export interface OkfImportOptions { trusted?: boolean; dryRun?: boolean; maxNewCandidates?: number; }
+export interface OkfImportOptions {
+  trusted?: boolean;
+  dryRun?: boolean;
+  maxNewCandidates?: number;
+  /** Environment deciding which Stack the page seams write to; defaults to the ambient one. */
+  env?: NodeJS.ProcessEnv;
+}
 
 const toImported = (p: MappedOkfPage): OkfImportedPage => ({ slug: p.slug, okfPath: p.okfPath, targetDirectory: p.targetDirectory });
 
@@ -56,7 +62,7 @@ async function stageAll(root: string, valid: MappedOkfPage[]): Promise<void> {
   }
 }
 
-async function writeAll(root: string, valid: MappedOkfPage[]): Promise<void> {
+async function writeAll(root: string, valid: MappedOkfPage[], env: NodeJS.ProcessEnv): Promise<void> {
   // The namespace IS the targetDirectory basename ("concepts" / "queries"), so a
   // concept `foo` and a query `foo` imported together invalidate independently.
   const written: PageId[] = [];
@@ -64,8 +70,9 @@ async function writeAll(root: string, valid: MappedOkfPage[]): Promise<void> {
   // namespaces `wiki.pages.page_directory` admits, so there IS a row to write here —
   // unlike the entity paths, which have to refuse. `withPageSeams` resolves the sink
   // for a Stack and yields all-undefined for a file project, whose branch is
-  // unchanged.
-  await withPageSeams(process.env, async (seams) => {
+  // unchanged. It is handed `env` rather than `process.env` so a caller that named a
+  // Stack (the MCP tool) writes to THAT Stack instead of the bound one.
+  await withPageSeams(env, async (seams) => {
     try {
       for (const page of valid) {
         await writeOneImportedPage(root, page, seams);
@@ -125,8 +132,9 @@ async function assertQueueCapacity(root: string, validCount: number, opts: OkfIm
   if (pending + validCount > opts.maxNewCandidates) throw new QueueFullError();
 }
 
-/** Read→map→collision→validate→stage/write/preview an OKF bundle; output-free; returns a report. */
+/** Read→map→collision→validate→stage/write/preview an OKF bundle; output-free; returns a report. `opts.env` selects the Stack the page seams write to; it defaults to the ambient environment, so the CLI's behaviour is unchanged. */
 export async function runOkfImport(root: string, dir: string, opts: OkfImportOptions = {}): Promise<OkfImportReport> {
+  const env = opts.env ?? process.env;
   const warnings: string[] = [];
   const onWarn = (m: string): number => warnings.push(m);
   if (opts.dryRun) {
@@ -143,7 +151,7 @@ export async function runOkfImport(root: string, dir: string, opts: OkfImportOpt
     const imported = await importOkfBundle(dir, root, {}, onWarn);
     const { valid, skipped: allSkipped } = partition(imported.pages, imported.skipped as OkfImportSkip[]);
     await assertQueueCapacity(root, valid.length, opts);
-    if (opts.trusted) await writeAll(root, valid);
+    if (opts.trusted) await writeAll(root, valid, env);
     else await stageAll(root, valid);
     const bundle = await bundleSectionsFor(root, imported.bundleBlock);
     return {

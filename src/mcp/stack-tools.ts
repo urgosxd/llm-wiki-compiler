@@ -26,7 +26,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { listStacks } from "../services/stacks/stack-store.js";
 // Relative, not through `compiler-cli`, for the reason recorded in `job-tools.ts`.
 import { jsonResult } from "./result.js";
-import { isRefusal, refusalResult, withTenantDatabase } from "./tenant-db.js";
+import {
+  boundStackOrProblem,
+  isRefusal,
+  refusalResult,
+  withTenantDatabase,
+} from "./tenant-db.js";
 
 /** Register the Stack discovery tool. */
 export function registerStackTools(server: McpServer): void {
@@ -56,9 +61,16 @@ export function registerStackTools(server: McpServer): void {
       },
     },
     async ({ limit, stackId }) => {
+      // `list_stacks` is the ONE tool exempt from the required-argument rule: a
+      // discovery tool cannot demand the identifier of the thing it discovers. An
+      // omitted argument therefore still means "the Stack this deployment is bound
+      // to" — resolved here, at the only call site allowed to do it, and never inside
+      // the shared helper the other tools use.
+      const effectiveStackId = stackId ?? boundStackOrProblem(process.env);
+      if (isRefusal(effectiveStackId)) return refusalResult(effectiveStackId);
       const result = await withTenantDatabase(
         (db, resolved) => listStacks(db, resolved, limit ?? 50),
-        stackId,
+        effectiveStackId,
       );
       if (isRefusal(result)) return refusalResult(result);
       return jsonResult({ stacks: result, count: result.length });

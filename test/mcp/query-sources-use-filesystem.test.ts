@@ -67,10 +67,14 @@ async function seedSourceFile(root: string): Promise<void> {
 }
 
 /** Ask the registered tool for a pack that materializes source windows. */
-async function requestPack(server: ReturnType<typeof buildServer>): Promise<ContextPack> {
+async function requestPack(
+  server: ReturnType<typeof buildServer>,
+  stackId: string,
+): Promise<ContextPack> {
   const envelope = await callTool(server, "get_context_pack", {
     prompt: "graph traversal",
     includeSources: true,
+    stackId,
   });
   return JSON.parse(envelope.content[0]?.text ?? "{}") as ContextPack;
 }
@@ -96,7 +100,7 @@ describe("query sources: rows for pages, filesystem for source text", () => {
     if (!stack.harness.reachable) return;
     const server = buildServer(root);
 
-    const pack = await requestPack(server);
+    const pack = await requestPack(server, stack.harness.stackId);
     const windows = pack.primary.flatMap((page) => page.sourceWindows ?? []);
 
     // The text exists nowhere but `sources/article.md`. A row-backed source store
@@ -114,7 +118,7 @@ describe("query sources: rows for pages, filesystem for source text", () => {
     await rm(path.join(root, "sources", SOURCE_FILE), { force: true });
     const server = buildServer(root);
 
-    const pack = await requestPack(server);
+    const pack = await requestPack(server, stack.harness.stackId);
     const windows = pack.primary.flatMap((page) => page.sourceWindows ?? []);
 
     expect(windows).toHaveLength(0);

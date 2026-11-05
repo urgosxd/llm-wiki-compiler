@@ -12,10 +12,19 @@
  *
  * ## Answering without a Stack
  *
- * A project with no `AKS_STACK_ID` has nowhere durable to read from, so tools
- * report that plainly. The distinction matters: an empty list IS an answer, and
- * this is an inability to answer — a client that showed them the same way would
- * hide a misconfiguration as "nothing here".
+ * A project with no `AKS_STACK_ID` has nowhere durable to read from, so tools report
+ * that plainly. The distinction matters: an empty list IS an answer, and this is an
+ * inability to answer — a client that showed them the same way would hide a
+ * misconfiguration as "nothing here".
+ *
+ * ## Why nothing here reads the ambient environment for a Stack
+ *
+ * The Stack now arrives only as the tool argument. Substituting `AKS_STACK_ID` when a
+ * caller left the argument out meant a call with no tenant in mind was answered from
+ * whichever Stack the process happened to serve — silently, and indistinguishably
+ * from a deliberate request. The environment is still read for the DATABASE and, in
+ * {@link withRequestEnv}, still carries the Stack id into the seams for the duration
+ * of one call; it is never used to fill a missing argument.
  */
 
 import { sql } from "drizzle-orm";
@@ -28,10 +37,40 @@ import {
 import { stackIdProblem } from "../utils/stack-id.js";
 import { stackExists } from "../services/stacks/stack-store.js";
 
-/** Every tool that needs a Stack says this when the project has none. */
-const NO_STACK_MESSAGE =
+/**
+ * What this module says when a deployment has no Stack bound at all.
+ *
+ * Only {@link boundStackOrProblem} produces it now. Kept exported because the wording
+ * is part of what a client has already seen, and the one tool that can still be called
+ * without a Stack — `list_stacks` — must not invent a second vocabulary for it.
+ */
+export const NO_STACK_MESSAGE =
   "This project has no AKS_STACK_ID, so no Stack-scoped data can be read. " +
   "Set AKS_STACK_ID to the Stack this deployment serves.";
+
+/**
+ * The Stack a DISCOVERY tool marks as current when the caller named none.
+ *
+ * `list_stacks` is the one Stack-scoped tool exempt from the required-argument rule:
+ * a discovery tool cannot require the identifier of the thing it discovers, and a
+ * caller that has no id yet is exactly its audience. So it — and only it — still
+ * resolves the Stack this deployment is bound to, which is what its own `stackId`
+ * schema documents as "Omit for the bound Stack".
+ *
+ * Kept HERE, beside the helpers that no longer do any such thing, so the single
+ * surviving ambient resolution is visible in one place instead of being re-implemented
+ * by a tool. Every other tool takes its Stack from the argument and nothing else.
+ *
+ * @param env - Environment to resolve the deployment binding from.
+ * @returns The bound Stack id, or the refusal an unbound deployment reports.
+ */
+export function boundStackOrProblem(env: NodeJS.ProcessEnv = process.env): string | Refusal {
+  try {
+    return resolveStackId(env);
+  } catch {
+    return { unavailable: NO_STACK_MESSAGE };
+  }
+}
 
 /**
  * Shape a Stack id must have before it is allowed near the database.
@@ -53,29 +92,22 @@ export type TenantDatabase = ReturnType<typeof createDimensionsDatabase>["db"];
  * one question.
  *
  * @param work - Receives the handle and the Stack id this call is about.
- * @param requestedStackId - A Stack the caller named, or absent to use the bound one.
- *   Omitted MUST behave exactly as before: an existing caller sees no change.
- * @returns Whatever `work` returned, or the "cannot answer" marker.
+ * @param stackId - The Stack the caller passed as the tool argument. Required: there
+ *   is no bound Stack to fall back to, so an absent id is a caller error, not a mode.
+ * @returns Whatever `work` returned, or a refusal.
  */
 export async function withTenantDatabase<T>(
   work: (db: TenantDatabase, stackId: string) => Promise<T>,
-  requestedStackId?: string,
-): Promise<T | { readonly unavailable: string } | { readonly unknownStack: string }> {
-  if (requestedStackId !== undefined) {
-    const problem = stackIdProblem(requestedStackId);
-    if (problem !== undefined) return { unavailable: problem };
-  }
-  let stackId: string;
-  try {
-    stackId = requestedStackId ?? resolveStackId(process.env);
-  } catch {
-    return { unavailable: NO_STACK_MESSAGE };
-  }
+  stackId: string,
+): Promise<T | Refusal> {
+  const problem = stackIdProblem(stackId);
+  if (problem !== undefined) return { unavailable: problem };
   const dimensionsDb = createDimensionsDatabase(process.env);
   try {
-    // Only a CALLER-NAMED Stack is verified: the bound one already exists by
-    // construction, and checking it would add a round trip to every existing call.
-    if (requestedStackId !== undefined && !(await stackExists(dimensionsDb.db, stackId))) {
+    // EVERY id is caller-supplied now, so every id is verified. Skipping the check for
+    // "the bound one" was only meaningful while the environment could supply one; an
+    // unverified id here would answer a nonexistent Stack with an empty list.
+    if (!(await stackExists(dimensionsDb.db, stackId))) {
       return { unknownStack: stackId };
     }
     return await work(dimensionsDb.db, stackId);
@@ -85,7 +117,7 @@ export async function withTenantDatabase<T>(
 }
 
 /**
- * Run `work` with an environment that points every seam at `requestedStackId`.
+ * Run `work` with an environment that points every seam at `stackId`.
  *
  * ## Why an env override rather than new seam signatures
  *
@@ -103,18 +135,24 @@ export async function withTenantDatabase<T>(
  * precise cross-tenant failure this surface exists to prevent. A copy is handed to
  * the seams instead, so the ambient environment is never written.
  *
- * @param requestedStackId - A Stack the caller named, or absent to use the bound one.
+ * ## Why the id is required and no longer defaulted
+ *
+ * The absent case used to mean "use whatever this process is bound to", which made a
+ * call that named no Stack indistinguishable from one that named the bound Stack. It
+ * is now the tool argument and nothing else, so there is no branch here that reads
+ * `AKS_STACK_ID` to decide which tenant to answer about.
+ *
+ * @param stackId - The Stack the caller passed as the tool argument.
  * @param work - Receives the environment to pass to the seams.
- * @returns Whatever `work` returned.
+ * @returns Whatever `work` returned, or a refusal.
  */
 export async function withRequestEnv<T>(
-  requestedStackId: string | undefined,
+  stackId: string,
   work: (env: NodeJS.ProcessEnv) => Promise<T>,
 ): Promise<T | Refusal> {
-  if (requestedStackId === undefined) return work(process.env);
-  const problem = await namedStackProblem(requestedStackId, process.env);
+  const problem = await namedStackProblem(stackId, process.env);
   if (problem !== undefined) return problem;
-  return work({ ...process.env, [AKS_STACK_ID_ENV_VAR]: requestedStackId });
+  return work({ ...process.env, [AKS_STACK_ID_ENV_VAR]: stackId });
 }
 
 /**
@@ -132,6 +170,12 @@ export async function withRequestEnv<T>(
  * tools already did this through `withTenantDatabase`; this is the same check for the
  * tools that read pages.
  *
+ * ## Why the id's SHAPE is checked before any lookup
+ *
+ * Every call carries an id now, so a malformed one is no longer a rare state to let
+ * Postgres reject with a `uuid` cast error that surfaces as an internal failure. It is
+ * refused with the message that names the argument, and without opening a connection.
+ *
  * ## Why a missing database is not a refusal
  *
  * A project with no database is a supported deployment: pages live on disk and there
@@ -147,6 +191,8 @@ async function namedStackProblem(
   stackId: string,
   env: NodeJS.ProcessEnv,
 ): Promise<Refusal | undefined> {
+  const malformed = stackIdProblem(stackId);
+  if (malformed !== undefined) return { unavailable: malformed };
   const configured = (env[AKS_DATABASE_URL_ENV_VAR] ?? "").trim();
   if (configured === "") return undefined;
   const dimensionsDb = createDimensionsDatabase(env);
