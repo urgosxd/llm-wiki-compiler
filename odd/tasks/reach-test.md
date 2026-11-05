@@ -33,10 +33,11 @@ S9. Out of scope, still open, not to be fixed on this branch: the two Project-1 
 T0 — Open this feature document and mirror it in memory. S1-S9. Route: worker. Commit: 7bcacad.
 T1 — Provision the worktree's dependencies so any gate can run at all (`node_modules` is absent). S1-S8 prerequisite. Route: worker. Commit: none (install output only).
 T2 — Per-run database/schema isolation for every suite that touches Postgres, applied to the four shared fixtures. S2, S4, S6, S7. Route: worker. Commit: 7f78ecf.
+T2b — Close the residual shared-database paths: `test/lock-postgres*.test.ts` on the per-run fixture, a comment-only note on the `vitest.config.ts` seed, and a reaper-safety case proving a live sibling and a foreign name are never candidates. S2, S6, S7. Route: worker. Commit: this slice (its SHA is named in the doc-only commit that follows it, as T2's is).
 T3 — Wire a gate that runs the KG package typecheck and pin a ratchet over the 20-diagnostic baseline without widening an ignore list. S3. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
 T4 — The real end-to-end KG MCP probe: real Postgres, real KG API, `runStdio()`, real client handshake, exact payloads. S1, S6, S7. Route: worker. Commit: pending.
 T5 — `db.test.ts:413` under parallel load. S4. Route: worker. Commit: pending.
-T6 — Resolve the four inert quickstart expectations honestly (resurrect under an explicit opt-in with a correct predicate, or retire with a documented reason). S5. Route: worker. Commit: pending.
+T6 — Resolve the four inert quickstart expectations honestly (resurrect under an explicit opt-in with a correct predicate, or retire with a documented reason). S5. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
 T7 — Independent verification: one verdict per S#, run against isolated state. S1-S6. Route: gentle-ai-verify. Commit: none.
 T8 — Gates: root `tsc --noEmit`, `npm run build`, full `npm test`, `fallow`, KG package typecheck. S8. Route: worker (commands) + Lead (acceptance). Commit: pending.
 T9 — Final report: branch and head SHA, per-task commits, verdict per S#, e2e transcript, isolation proof, KG gate wiring and diagnostic baseline, exact test scope and result, blockers/UNAVAILABLE, scratch paths, Risk line. S1-S9. Route: Lead. Commit: none.
@@ -112,6 +113,112 @@ L9 (T2 implemented; mechanism, cost, proof, and the constraint that fixed the co
 - NO CHANGE NEEDED in `test/fixtures/test-database.ts` and `test/fixtures/rls-probe.ts`: the resolver's contract stays exactly as pinned (`test/test-database-fixture.test.ts` green, never `""`, falls back to DEFAULT_TEST_DATABASE_URL) and the RLS probe takes a database handle, not a URL.
 - GATE EVIDENCE (exact scope): `test/fixtures/per-run-database.test.ts` 6/6 (RED first: `Cannot find module './per-run-database.js'`); `test/dimensions` 82 files / 477 tests passed, exit 0; `test/compiler` 5 files / 20 tests passed, exit 0; `npm run typecheck:kg` exit 0 (226 files, 0 diagnostics); `npx tsc -p packages/llmwiki-kg/ts/tsconfig.json --noEmit` exit 0. `test/quickstart-integration.test.ts` + `test/test-database-fixture.test.ts` is CONTAMINATED BY A CONCURRENT WRITER: that file has uncommitted edits outside T2's surfaces that unskip S5's four inert expectations; at the base commit the same command is 15 passed / 4 skipped / 0 failed, and T2 reproduces the same 15 passing. Two T2-caused failures seen mid-work were real and are fixed: the fixture re-resolved its base URL after redirecting the resolver (so it provisioned a SECOND database, and `quickstart`'s ingest and read landed in different ones), and `AKS_DATABASE_URL` initially stayed at the shared value, which failed `rows-only-review-approve` and `rows-only-okf-import` with `review_candidates_stack_id_fkey`.
 L10 (evidence, T2 commit): T2's work unit is `7f78ecf` — `test(isolation): give every Postgres suite its own database per run`. It holds `packages/llmwiki-kg/ts/src/testing/per-run-database.ts` (new), `test/fixtures/per-run-database.ts` (new), `test/fixtures/per-run-database.test.ts` (new), the isolation change in `packages/llmwiki-kg/ts/src/db.test.ts`, `test/fixtures/kg-postgres.ts` and `test/fixtures/source-corpus.ts`, and L9. The SHA itself cannot live inside its own commit, so it is recorded here in the commit that follows it, which touches no code.
+
+L11 (evidence, T2b — the residual shared-database paths are closed; measured advisory-lock scope):
+- JOB 1 — `test/lock-postgres*.test.ts` off `testDatabaseUrl()`. All three suites (`test/lock-postgres.test.ts`,
+  `test/lock-postgres-integration.test.ts`, `test/lock-postgres-crossprocess.test.ts`) now take their DSN from
+  `(await perRunDatabase()).url`, and each carries one wiring test that fails if the suite resolves back to the shared
+  database: `isPerRunDatabaseName(new URL(DSN).pathname.slice(1))` is true and `DSN !== DEFAULT_TEST_DATABASE_URL`. The
+  old `const reachable = DSN !== ""` skip predicate is gone — it was a tautology (`testDatabaseUrl()` never returns
+  `""`; its contract is pinned by `test/test-database-fixture.test.ts`), the same class S5 names, and a suite that
+  skips proves nothing. Provisioning now either succeeds or throws with the reason.
+- ADVISORY-LOCK REASONING — does a private database weaken what these suites prove? An advisory lock is
+  DATABASE-scoped, measured on this server with the driver the suites use: two sessions in two freshly created
+  databases each acquired `pg_try_advisory_lock(19543, hashtext('/scope/probe'))`
+  (`{"dbA_got_lock":true,"dbB_got_lock":true}`) and `pg_locks` held one `advisory` row per database. So a private
+  database makes the lock SPACE private, and it weakens nothing the suites assert: every case passes the SAME DSN to
+  both parties, so what is proven is that two sessions against ONE database contend for one key — exactly the
+  production shape (two hosts sharing one Stack's database) and exactly what `tryAcquirePostgresLock`/`acquireLock`
+  promise. What it removes is shared mutable lock state: no parallel suite can hold, leak or release a key in this
+  suite's lock space, and `lockRegistry.size` cannot be moved by another file. Cross-process — and therefore
+  cross-host — visibility stays covered, by `lock-postgres-crossprocess.test.ts` handing ITS DSN to a real `npx tsx`
+  child and asserting the child is refused while this process holds the lock, then gets it after release.
+- JOB 2 — `vitest.config.ts`. The `AKS_DATABASE_URL: testDatabaseUrl()` seed is unchanged and one comment line was
+  added above it. Comment-only is proven twice: `git diff vitest.config.ts` shows one `+` line and no `-` line, and the
+  same suite gives the identical result before and after the edit (`npx vitest run
+  test/test-database-fixture.test.ts` — 1 file, 4 tests passed, exit 0, both times).
+- JOB 3 — the reaper made provably safe, as three cases in `test/fixtures/per-run-database.test.ts` asserting through
+  the fixture's own API (`reapStalePerRunDatabases`, `listPerRunDatabases`, `isPerRunDatabaseName`) plus catalog and row
+  reads: (a) a LIVE sibling — a `spawn`ed `tsx` process that provisions its own database and keeps running — is not
+  reaped, is still listed, still exists in `pg_database`, and still returns the row this process inserted into it;
+  (b) a lookalike carrying the prefix AND a 45-minute-old stamp is not a candidate, because the NAME PATTERN is the
+  gate (`isPerRunDatabaseName` false), and a name with an unrelated prefix is never even listed; (c) a stale-looking
+  run token that DOES match the pattern is reaped, so (a) and (b) cannot pass against a no-op reaper. The exact
+  assertion that makes a live sibling untouchable: `reapStalePerRunDatabases` drops only names matching
+  `llmwiki_suite_<base36-stamp>_<pid>_<hex>` whose embedded stamp is more than 30 minutes old, so a database created
+  seconds earlier by a running process is never a candidate and no prefix match alone can reach it.
+- RED THEN GREEN. The fixture was ALREADY safe, so the cases were written asserting the UNSAFE outcome and then
+  flipped. RED, same 4-file invocation: 5 failed / 15 passed — `expected [] to include 'llmwiki_suite_mw32ox1c_3657581_7b6a2e…'`
+  (live sibling not reaped), `expected [] to include 'llmwiki_suite_mw31325x_not-a-run-token'` (lookalike not a
+  candidate), and three `expected false to be true` from the lock suites' wiring tests (DSN still shared). GREEN after
+  the change: 4 files / 21 tests passed, exit 0.
+- GATES — `npx vitest run test/fixtures/per-run-database.test.ts`: 1 file / 9 tests passed, exit 0. `npx vitest run
+  test/lock-postgres.test.ts test/lock-postgres-integration.test.ts`: 2 files / 10 tests passed, 0 skipped, exit 0.
+  `npx vitest run test/lock-postgres-crossprocess.test.ts`: 1 file / 2 tests passed, exit 0. `npx vitest run
+  test/test-database-fixture.test.ts`: 1 file / 4 tests passed, exit 0. `npm run typecheck:kg`: exit 0, 227 files
+  checked, 0 diagnostics baselined, no regression. `npx tsc --noEmit`: exit 0.
+- DEBRIS — queried after the gates, once the other worker sharing this worktree had finished: 0 databases matching
+  `llmwiki_suite_%` on the server, 7 databases total (`aks`, `art_scratch`, `mig_scratch`, `postgres`, `template0`,
+  `template1`, `tl_scratch`). The single per-run database seen mid-session belonged to that other worker's LIVE
+  `test/quickstart-integration.test.ts` worker (`node (vitest 1)`, pid 3695905) and disappeared when its process
+  ended — which is the live-sibling case of job 3 observed in the wild.
+- STILL SHARED, named and NOT fixed (outside this task's edit surfaces): the KG package's own runner
+  `packages/llmwiki-kg/ts/vitest.config.ts` still defaults `src/routes/**` suites to
+  `AKS_TEST_DATABASE_URL ?? postgresql://aks:aks@localhost:5434/aks`, i.e. the one shared database, because those
+  harnesses resolve their own DSN and the package config is not in this task's surface.
+- COMMIT — this work unit is one slice. Its SHA cannot live inside itself, so it is named in the doc-only commit that
+  follows, exactly as T2's is.
+
+L11 (evidence + decision, T6 — the four inert quickstart expectations, S5/S6/S7). All four `it.skip`
+sites in `test/quickstart-integration.test.ts` (L302/437/452/466 before this task) were proven inert
+first: `npx vitest run test/quickstart-integration.test.ts --reporter=verbose` printed
+`Tests 2 failed | 13 passed | 4 skipped (19)` and four `↓` lines -- none executed.
+1. `preserves CompileResult.errors verbatim and reports compile.ok=false` — OUTCOME A, live in the
+   default run. Old predicate: `it.skipIf(stackAlwaysOn)` where `stackAlwaysOn = testDatabaseUrl() !==
+   ""`, a tautology (`testDatabaseUrl()` never returns `""`, `test/fixtures/test-database.ts:62-65`);
+   Project 2 replaced it with `it.skip`. New predicate: NONE -- it runs unconditionally, because the
+   only prerequisite (a reachable database carrying the suite's Stack) is what `useStackEnv` already
+   provides. Contention is now real: `test/fixtures/quickstart-lock-holder.ts` queues a BLOCKING
+   `pg_advisory_lock` behind the child's ingest, deriving the lock's `classid` from the production
+   helper (`tryAcquirePostgresLock`) instead of copying the private namespace constant. Holding it up
+   front is not an option: the ingest takes the same fail-fast lock (`tryWithOrdinaryMutationLock`), so
+   an up-front holder fails the INGEST, not the compile. RED, captured by restoring the old body live:
+   `expected true to be false` at `expect(compile.ok).toBe(false)` -- the seeded `.llmwiki/lock` FILE
+   contends with nothing, so the compile succeeded. GREEN: 4 consecutive passes, 3 of them isolated
+   (`-t "lock contention"`), the whole-file run at 16 passed | 3 skipped. S6: the test asserts the
+   exact exit code (0), the exact returned string (`Could not acquire .llmwiki/lock — another compile
+   is in progress.`), all four zeroed counters plus `pendingCandidates: 0`, the untouched viewer
+   envelope, the exact `next` action, and the stored state (one source document, one concept row --
+   the ingest's own stub, per `src/dimensions/wiki/store-dimension.ts`, with no compiled page added).
+2-4. `prints the lifecycle line and hands off...`, `suppresses the Next: line...`, `preserves a
+   non-view Next: recommendation...` — OUTCOME C, retired in place (`describe "... — RETIRED"`), not
+   executed here. Predicate: NONE, because no predicate can make them true: `quickstart` gates the
+   handoff on `hasRenderablePages(collectProjectState(root))`, and `collectProjectState`
+   (`src/project/state.ts:170-181`) counts pages as MARKDOWN FILES under `wiki/concepts`/`wiki/queries`
+   while a compiled page is a Postgres ROW (`src/dimensions/activation.ts:16` -- the file-backed wiki
+   dimension is gone). Measured: a run that reports `1 compiled` and `Index updated with 2 pages` still
+   collects 0 pages and ends with `next: llmwiki compile`, so the handoff never starts and the `Next:`
+   suppression it exercises is never reached. The old comment's reason (a 33-char fixture under the
+   compile minimum) is a red herring: the fixture DOES compile a page, and the collector still reports
+   zero. Diagnostic proof that the blocker is the page source of truth and nothing else: seeding one
+   `wiki/concepts/*.md` file (reverted, never committed) makes the first of the three pass -- the
+   lifecycle line, the readiness URL and the handoff all work. Reviving them is a product fix in
+   `collectProjectState`/`quickstart` (out of this branch's scope), after which un-skipping suffices.
+   Deletion command for the human, NOT executed: `sed -i '489,555d' test/quickstart-integration.test.ts`
+   (removes the whole RETIRED describe), then drop the now-unused `useQuickstartProcessLifecycle`,
+   `LLMWIKI_DIR` and `LAST_LINT_FILE` imports.
+Tautology sweep (repo-wide, `testDatabaseUrl() !== ""` and `DSN !== ""` forms): three sites existed
+OUTSIDE this task's surfaces and were REPORTED rather than edited -- `test/lock-postgres.test.ts:15`,
+`test/lock-postgres-crossprocess.test.ts:19`, `test/lock-postgres-integration.test.ts:17`, each reading
+`const reachable = DSN !== ""` over `DSN = testDatabaseUrl()`, i.e. the constant `true`. While T6 ran,
+the concurrent T2 work replaced all three with `const DSN = (await perRunDatabase()).url` and no skip
+gate at all; a post-sweep re-scan finds no live `skipIf`/`skip` predicate anywhere in the repository
+built on `testDatabaseUrl()`, only comments that name the old tautology. No edit from T6 was needed.
+Measured collateral: the same file carried two failures before this task
+(`writes the compiled concept page into wiki/concepts/`, `preserves the ingested source and emits
+compile.error.code=provider_unavailable`, both `expected 0 to be greater than or equal to 1`) while T2's
+fixtures were mid-flight (stderr: `per-run database: src/dimensions/wiki/migration_wiki_graph.sql could
+not be replayed as one statement`); once that work settled, both pass with no change from T6.
 
 
 L12 (T10 — the stray statement terminator in `src/dimensions/wiki/migration_wiki_graph.sql`, fixed; structural proof, fresh-database proof, table-set equality, warning rewording):

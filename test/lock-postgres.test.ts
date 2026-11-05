@@ -4,18 +4,35 @@
  * The properties here are the ones the file lock provided and a session-scoped
  * advisory lock can silently lose: mutual exclusion between independent
  * connections, reacquisition after release, and independence between keys.
+ *
+ * The database is this process's OWN (see `test/fixtures/per-run-database.ts`).
+ * Advisory locks are database-scoped — measured: two sessions in two databases both
+ * acquire `pg_try_advisory_lock` on the same key — so a private database makes the
+ * lock space private too. That strengthens nothing about the key and weakens nothing
+ * about the claim: both holders below pass the same DSN, so what is proven is that two
+ * sessions against ONE database contend, which is the production shape (two hosts
+ * sharing one Stack's database). What it removes is shared mutable state: no other
+ * suite can hold, leak, or release a key in here. Cross-process visibility is proven
+ * separately by `lock-postgres-crossprocess.test.ts`, which hands its DSN to a child.
  */
 
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { tryAcquirePostgresLock } from "../src/utils/lock-postgres.js";
-import { testDatabaseUrl } from "./fixtures/test-database.js";
+import { isPerRunDatabaseName, perRunDatabase } from "./fixtures/per-run-database.js";
+import { DEFAULT_TEST_DATABASE_URL } from "./fixtures/test-database.js";
 
-const DSN = testDatabaseUrl();
-const reachable = DSN !== "";
-const suite = reachable ? describe : describe.skip;
+/**
+ * This process's own database, provisioned before collection.
+ *
+ * No skip predicate. The old `DSN !== ""` check was a tautology — `testDatabaseUrl()`
+ * never returns `""` (its contract is pinned by `test/test-database-fixture.test.ts`) —
+ * so it could only ever have skipped by accident, and a suite that silently skips
+ * proves nothing. Provisioning either succeeds or throws with the reason.
+ */
+const DSN = (await perRunDatabase()).url;
 
-suite("advisory lock", () => {
+describe("advisory lock", () => {
   it("excludes a second holder of the same key", async () => {
     const key = `/probe/${randomUUID()}`;
     const first = await tryAcquirePostgresLock(DSN, key);
@@ -46,6 +63,13 @@ suite("advisory lock", () => {
     expect(b).not.toBeNull();
     await a?.release();
     await b?.release();
+  });
+
+  it("runs against a database of its own, not the shared one", () => {
+    // Advisory locks are database-scoped, so this suite locking the shared database
+    // buys no isolation at all: a private database is the proof's premise.
+    expect(isPerRunDatabaseName(new URL(DSN).pathname.slice(1))).toBe(true);
+    expect(DSN).not.toBe(DEFAULT_TEST_DATABASE_URL);
   });
 
   it("releases twice without throwing", async () => {

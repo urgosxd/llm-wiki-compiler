@@ -3,6 +3,10 @@
  *
  * These assert the seam, not the advisory lock itself: with a Stack configured the
  * database decides, and `releaseLock(root)` still takes only the root.
+ *
+ * The DSN is this process's OWN database (see `test/fixtures/per-run-database.ts`), so
+ * the facade's registry assertions below cannot be disturbed by a parallel suite
+ * holding or releasing a key in the database everyone used to share.
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -12,17 +16,18 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { acquireLock, releaseLock } from "../src/utils/lock.js";
 import { lockRegistry } from "../src/utils/lock-postgres.js";
-import { testDatabaseUrl } from "./fixtures/test-database.js";
+import { isPerRunDatabaseName, perRunDatabase } from "./fixtures/per-run-database.js";
+import { DEFAULT_TEST_DATABASE_URL } from "./fixtures/test-database.js";
 
-const DSN = testDatabaseUrl();
-const suite = DSN === "" ? describe.skip : describe;
+/** This process's own database; provisioning fails loudly rather than skipping. */
+const DSN = (await perRunDatabase()).url;
 
 /** Environment naming a Stack, so the facade consults the database. */
 function stackEnv(): NodeJS.ProcessEnv {
   return { AKS_STACK_ID: randomUUID(), AKS_DATABASE_URL: DSN } as NodeJS.ProcessEnv;
 }
 
-suite("the lock facade with a Stack", () => {
+describe("the lock facade with a Stack", () => {
   let root: string;
 
   beforeEach(() => {
@@ -34,6 +39,11 @@ suite("the lock facade with a Stack", () => {
     // assertion lie, which is a test bug that looks exactly like a product bug.
     lockRegistry.clear();
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it("takes the lock in a database of its own, not the shared one", () => {
+    expect(isPerRunDatabaseName(new URL(DSN).pathname.slice(1))).toBe(true);
+    expect(DSN).not.toBe(DEFAULT_TEST_DATABASE_URL);
   });
 
   it("takes the lock through Postgres", async () => {

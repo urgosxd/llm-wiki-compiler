@@ -16,7 +16,8 @@
  * every observation is a connection string, a row count, or a catalog query against
  * the real server.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,6 +33,7 @@ import {
   isPerRunDatabaseName,
   listPerRunDatabases,
   perRunDatabase,
+  reapStalePerRunDatabases,
 } from "./per-run-database.js";
 import type { SuiteDatabase } from "./per-run-database.js";
 
@@ -54,6 +56,7 @@ const created: SuiteDatabase[] = [];
 
 afterAll(async () => {
   await Promise.all(created.splice(0).map((suite) => suite.drop()));
+  for (const name of external.splice(0)) await dropForeign(name);
 });
 
 /** The `Sql` handle `createClient` returns, named without reaching into the driver. */
@@ -103,6 +106,42 @@ async function scratchDatabase(label: string): Promise<SuiteDatabase> {
   const suite = await createSuiteDatabase(label);
   created.push(suite);
   return suite;
+}
+
+/** Databases this file creates under names the fixture did not mint; dropped in teardown. */
+const external: string[] = [];
+
+/** Run `work` against the server's always-present `postgres` database. */
+async function withAdminClient<T>(work: (client: Client) => Promise<T>): Promise<T> {
+  const url = new URL(own.url);
+  url.pathname = "/postgres";
+  return withClient(url.toString(), work);
+}
+
+/** Create a database under a name the fixture did not mint, and remember it for teardown. */
+async function createForeignDatabase(name: string): Promise<string> {
+  await withAdminClient((client) => client.unsafe(`create database "${name}"`));
+  external.push(name);
+  return name;
+}
+
+/** Does a database with exactly this name exist on the server? */
+async function databaseExists(name: string): Promise<boolean> {
+  return withAdminClient(async (client) => {
+    const rows = await client<{ total: number }[]>`
+      select count(*)::int as total from pg_database where datname = ${name}
+    `;
+    return (rows[0]?.total ?? 0) === 1;
+  });
+}
+
+/** Drop a database this file created outside the fixture's mint, if it is still there. */
+async function dropForeign(name: string): Promise<void> {
+  // Not `drop database if exists`: the reaper may already have taken a stale one, and
+  // the driver prints that NOTICE as an object into the transcript, where it buries
+  // whatever a genuinely failing test had to say.
+  if (!(await databaseExists(name))) return;
+  await withAdminClient((client) => client.unsafe(`drop database if exists "${name}" with (force)`));
 }
 
 describe("per-run database isolation", () => {
@@ -171,6 +210,58 @@ describe("per-run database isolation", () => {
 
     expect(await listPerRunDatabases()).not.toContain(child.name);
   });
+
+  it("leaves a live sibling created by another process intact through a reap", async () => {
+    // The reaper is age-based for exactly this reason: dropping every sibling on sight
+    // would delete a LIVE parallel worker's database. This sibling belongs to a different
+    // process, was created seconds ago, and is still running when the reap happens.
+    const sibling = await startLiveSibling();
+    const domain = `per-run-live-${randomUUID().slice(0, 8)}`;
+    try {
+      await insertStack(sibling.url, domain);
+      const reaped = await reapStalePerRunDatabases();
+
+      expect(reaped).not.toContain(sibling.name);
+      expect(await listPerRunDatabases()).toContain(sibling.name);
+      expect(await databaseExists(sibling.name)).toBe(true);
+      expect(await countDomain(sibling.url, domain)).toBe(1);
+    } finally {
+      await sibling.stop();
+    }
+  }, 180_000);
+
+  it("never treats a database outside its naming pattern as a reaper candidate", async () => {
+    // The lookalike carries the prefix AND a 45-minute-old stamp in its name, so a reaper
+    // that classified by prefix and age alone would drop it. It survives because the name
+    // pattern is the gate: a name the fixture did not mint is never a candidate.
+    const oldStamp = (Date.now() - 45 * 60_000).toString(36);
+    const lookalike = await createForeignDatabase(`llmwiki_suite_${oldStamp}_not-a-run-token`);
+    const foreign = await createForeignDatabase(`llmwiki_probe_shared_${randomUUID().slice(0, 8)}`);
+    expect(isPerRunDatabaseName(lookalike)).toBe(false);
+
+    const reaped = await reapStalePerRunDatabases();
+
+    expect(reaped).not.toContain(lookalike);
+    expect(reaped).not.toContain(foreign);
+    expect(await databaseExists(lookalike)).toBe(true);
+    expect(await databaseExists(foreign)).toBe(true);
+  }, 120_000);
+
+  it("still reaps a stale run token, so the safety above is not a no-op", async () => {
+    // Without this, a reaper that never reaps anything would pass both cases above.
+    // The name is minted with an old stamp but no process is behind it, which is exactly
+    // the debris the reaper exists for. Every other per-run database on the server was
+    // created seconds ago, so nothing live is stale at this clock.
+    const oldStamp = (Date.now() - 45 * 60_000).toString(36);
+    const debris = `llmwiki_suite_${oldStamp}_${process.pid}_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+    expect(isPerRunDatabaseName(debris)).toBe(true);
+    await createForeignDatabase(debris);
+
+    const reaped = await reapStalePerRunDatabases();
+
+    expect(reaped).toContain(debris);
+    expect(await databaseExists(debris)).toBe(false);
+  }, 120_000);
 });
 
 /** What the spawned process reports about the database it provisioned for itself. */
@@ -187,6 +278,79 @@ const CHILD_SOURCE = [
   "console.log(JSON.stringify({ name: suite.name, url: suite.url, pid: process.pid }));",
 ].join("\n");
 
+/** A live sibling: a separate process holding its own database open while we reap. */
+interface LiveSibling {
+  readonly name: string;
+  readonly url: string;
+  readonly pid: number;
+  /** Signal the sibling; its own exit hook drops its database. */
+  stop(): Promise<void>;
+}
+
+/** The program a live sibling runs: provision a database, report it, then hold it open. */
+const LIVE_SIBLING_SOURCE = [
+  'import { perRunDatabase } from "__FIXTURE__";',
+  "const suite = await perRunDatabase();",
+  'console.log(JSON.stringify({ name: suite.name, url: suite.url, pid: process.pid }));',
+  "setInterval(() => undefined, 1_000);",
+].join("\n");
+
+/** Interpreter and fixture path every spawned suite database runs with. */
+function childPaths(): { tsx: string; fixture: string } {
+  return {
+    tsx: fileURLToPath(new URL("../../node_modules/.bin/tsx", import.meta.url)),
+    fixture: fileURLToPath(new URL("./per-run-database.ts", import.meta.url)),
+  };
+}
+
+/**
+ * Start a real `node` process that provisions a suite database and KEEPS RUNNING.
+ *
+ * `spawn`, not `spawnSync`: the sibling must still be alive at the moment this
+ * process reaps, which is the entire point of the case.
+ */
+async function startLiveSibling(): Promise<LiveSibling> {
+  const { tsx, fixture } = childPaths();
+  const directory = mkdtempSync(path.join(tmpdir(), "per-run-live-"));
+  const script = path.join(directory, "live.mts");
+  writeFileSync(script, LIVE_SIBLING_SOURCE.replace("__FIXTURE__", fixture));
+  const child = spawn(tsx, [script], { stdio: ["ignore", "pipe", "pipe"] });
+  const report = await firstReport(child);
+  return { ...report, stop: () => stopChild(child, directory) };
+}
+
+/** Resolve with the first JSON line the child prints; reject if it exits first. */
+function firstReport(child: ChildProcess): Promise<ChildReport> {
+  return new Promise((resolve, reject) => {
+    let buffered = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      buffered += chunk.toString();
+      const line = buffered.split("\n").find((entry) => entry.trim() !== "");
+      if (line === undefined) return;
+      try {
+        resolve(JSON.parse(line) as ChildReport);
+      } catch (error) {
+        reject(error as Error);
+      }
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.once("exit", (code) => {
+      reject(new Error(`sibling exited before reporting (status ${String(code)}): ${stderr}`));
+    });
+  });
+}
+
+/** Signal the sibling, wait for it to go, and remove its script directory. */
+async function stopChild(child: ChildProcess, directory: string): Promise<void> {
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  child.kill("SIGTERM");
+  await exited;
+  rmSync(directory, { recursive: true, force: true });
+}
+
 /**
  * Spawn a real `node` process that provisions its own suite database and prints it.
  *
@@ -196,8 +360,7 @@ const CHILD_SOURCE = [
  * observes.
  */
 function runChildSuiteDatabase(): ChildReport {
-  const fixture = fileURLToPath(new URL("./per-run-database.ts", import.meta.url));
-  const tsx = fileURLToPath(new URL("../../node_modules/.bin/tsx", import.meta.url));
+  const { tsx, fixture } = childPaths();
   const directory = mkdtempSync(path.join(tmpdir(), "per-run-child-"));
   try {
     const script = path.join(directory, "child.mts");

@@ -56,6 +56,7 @@ export default defineConfig({
     maxWorkers: "50%",
     minWorkers: 1,
     // Seed, do not default: see TEST_DATABASE_ENV for why omission is the bug.
+    // The per-run fixture overrides this per process; without the seed an un-provisioned suite would reach production's 5432.
     env: { ...TEST_DATABASE_ENV },
     // Don't pick up tests from sibling worktrees living under local worktree dirs.
     // Worktrees share the parent's working directory tree, so without this
