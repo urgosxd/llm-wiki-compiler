@@ -787,9 +787,9 @@ and any non-safe-integer or out-of-range value read as not alive), and the filte
 - RED reproduced the real destruction before the fix: the reaped name embedded the LIVE test process's pid —
   `expected [ …(2) ] to not include 'llmwiki_suite_mw36xods_440283_c6ca2093'`, 1 failed | 9 passed.
 - GREEN: 10 passed (10). The new case proves BOTH halves in one run — a stale-stamped database with a live owner
-  survives (a no-op reaper fails this half is not possible: see next) while a stale-stamped database with a dead
-  owner is still collected (an age-only reaper fails the first half, a no-op reaper fails this one). A third
-  assertion shows an impossible pid is collected and the reap does not throw.
+  survives, which an age-only reaper cannot satisfy — while a stale-stamped database with a dead owner is still
+  collected, which a no-op reaper cannot satisfy, because both share one stale stamp and get opposite outcomes.
+  A third assertion shows an impossible pid is collected and the reap does not throw.
 - How the age is exceeded without a shortcut: `freshName()` mints `llmwiki_suite_<base36(now)>_<pid>_<hex>` and the
   reaper reads age from the name, so the test writes the same format with a stamp 45 minutes in the past — exactly
   what the production path writes for a real killed run. No sleep, no injected clock, no internal state read;
