@@ -10,8 +10,9 @@
  *   - `useMcpRoot(prefix)` registers beforeEach/afterEach and
  *     returns a `{ value: string }` so each test reads the current
  *     temp root via `root.value`.
- *   - `buildServer(root)` returns a fresh `McpServer` with every
- *     wiki tool + resource registered.
+ *   - `buildServer(root)` returns a fresh `McpServer` with the wiki tools,
+ *     the resources, and both OKF tools — the same inventory the
+ *     production factory serves.
  *   - `callTool(server, name, args)` invokes a registered tool's
  *     handler directly (no stdio transport) and returns its raw
  *     `{ content, structuredContent }` envelope.
@@ -30,6 +31,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { testDotenvEnv } from "./test-dotenv.js";
 import { registerWikiTools } from "../../src/mcp/tools.js";
+import { registerOkfTools } from "../../src/mcp/okf-tools.js";
 import { registerWikiResources } from "../../src/mcp/resources.js";
 import { CLI } from "./run-cli.js";
 
@@ -102,17 +104,24 @@ export function parseToolPayload<T>(result: CallToolResult): T {
 }
 
 /**
- * Build a fresh McpServer with the wiki tools and resources registered.
+ * Build a fresh McpServer with the wiki tools, the resources and the OKF tools.
  *
- * Intentionally registers ONLY the wiki tools/resources, NOT the OKF tools
- * (export_okf/import_okf): in-process OKF coverage drives `registerOkfTools`
- * directly with a fake server, and OKF stdio coverage uses the real `serve`
- * binary via `connectMcpClient`. A future reader reaching for `buildServer`
- * to call an OKF tool would get "tool not found" — by design.
+ * The OKF tools (`export_okf`, `import_okf`) are registered here rather than left
+ * out: a `tools/list` walk over this fixture is what most suites assert the tool
+ * contract against, and omitting two tools made every such walk blind to exactly
+ * the pair a lost required Stack would break first. The inventory therefore
+ * matches `createWikiMcpServer`, and `test/mcp/tools-list-requires-stack.test.ts`
+ * pins that parity so the two cannot drift apart again.
+ *
+ * Registration only: the OKF handlers still reach their seams when CALLED, so a
+ * suite that drives an OKF tool through here needs the Stack rows those seams
+ * read — which is why the OKF call coverage lives in
+ * `test/mcp/tools-required-stack-okf-ingest.test.ts`.
  */
 export function buildServer(root: string): McpServer {
   const server = new McpServer({ name: "llmwiki-test", version: "0.0.0" });
   registerWikiTools(server, root);
+  registerOkfTools(server, root);
   registerWikiResources(server, root);
   return server;
 }

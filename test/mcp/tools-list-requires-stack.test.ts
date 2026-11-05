@@ -19,10 +19,12 @@
  * All three now declare a required `stackId`, verified through the same real handshake:
  * the exemption that once covered them is gone, so the ONE tool allowed to omit the
  * required Stack is `list_stacks`, by S8. The full-inventory case below walks every
- * tool the production factory registers — it builds through `createWikiMcpServer`
- * rather than the shared fixture, because the fixture leaves the two OKF tools out —
- * which is what makes a silent loss of a required Stack fail here instead of surfacing
- * later at a client that built its arguments from `tools/list`.
+ * tool the shared fixture registers, and a separate case proves that walk sees the same
+ * inventory as the production factory (`createWikiMcpServer`) — the fixture used to
+ * leave the two OKF tools out, which made every fixture-based `tools/list` walk blind
+ * to exactly the tools a lost required Stack would break first. A silent loss of a
+ * required Stack now fails here instead of surfacing later at a client that built its
+ * arguments from `tools/list`.
  *
  * ## Why `list_stacks` is asserted the OTHER way
  *
@@ -93,9 +95,9 @@ afterEach(async () => {
  *
  * @param read - Receives every registered tool, keyed by name.
  * @param build - Server factory. Defaults to the shared test fixture, which registers
- *   the wiki tools + resources but NOT the two OKF tools; the full-inventory case
- *   passes the production factory (`createWikiMcpServer`) so `export_okf` and
- *   `import_okf` are inside the walk as well.
+ *   the same inventory as the production factory: the wiki tools, the resources and
+ *   both OKF tools. The full-inventory case leaves this default in place, and the
+ *   parity case walks both builders to prove the fixtures cannot drift apart.
  * @returns Whatever `read` returned.
  */
 async function withListedTools<T>(
@@ -139,15 +141,13 @@ describe("tools/list declares the Stack argument required", () => {
     expect(unclassified).toEqual([]);
   });
 
-  it("requires stackId on EVERY tool the server registers, except list_stacks", async () => {
-    const inventory = await withListedTools(
-      (tools) =>
-        [...tools.entries()].map(([name, tool]) => ({
-          name,
-          required: tool.inputSchema.required ?? [],
-          stackId: tool.inputSchema.properties?.stackId,
-        })),
-      (dir) => createWikiMcpServer({ root: dir, version: "0" }),
+  it("requires stackId on EVERY tool the shared fixture registers, except list_stacks", async () => {
+    const inventory = await withListedTools((tools) =>
+      [...tools.entries()].map(([name, tool]) => ({
+        name,
+        required: tool.inputSchema.required ?? [],
+        stackId: tool.inputSchema.properties?.stackId,
+      })),
     );
 
     // Coverage guard first: a walk that saw only a handful of tools would satisfy the
@@ -166,6 +166,24 @@ describe("tools/list declares the Stack argument required", () => {
     expect(wrong.map((tool) => tool.name)).toEqual([]);
     // `list_stacks` declares the argument, optionally: it marks the current entry.
     expect(inventory.filter((tool) => tool.name === "list_stacks")[0]?.stackId).toBeDefined();
+  });
+
+  it("walks the same inventory the production factory registers", async () => {
+    // The guard that keeps THIS file from going blind: every case above walks the
+    // shared fixture, so if that fixture ever stops registering a tool the production
+    // factory serves, the coverage they assert quietly shrinks. Both builders are
+    // walked here and compared, with the two OKF tools named explicitly because they
+    // are the ones a required-Stack regression would break first.
+    const fixtureTools = await withListedTools((tools) => [...tools.keys()].sort());
+    const productionTools = await withListedTools(
+      (tools) => [...tools.keys()].sort(),
+      (dir) => createWikiMcpServer({ root: dir, version: "0" }),
+    );
+
+    expect(fixtureTools).toEqual(productionTools);
+    for (const name of ["export_okf", "import_okf"]) {
+      expect(fixtureTools, `${name} must be in the fixture walk`).toContain(name);
+    }
   });
 
   it("keeps list_stacks exempt: stackId present, optional and still documented", async () => {

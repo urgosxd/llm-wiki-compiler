@@ -40,11 +40,9 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { registerOkfTools } from "../../src/mcp/okf-tools.js";
-import { registerWikiTools } from "../../src/mcp/tools.js";
+import { buildServer } from "../fixtures/mcp-test-env.js";
 import { STACK_ARG_REQUIRED_NOTE } from "../../src/mcp/stack-arg.js";
 import {
   expectNamelessCallsRefused,
@@ -95,17 +93,15 @@ function payloadOf(result: CallToolResult): Record<string, unknown> {
 /**
  * Run `body` against a server that registers the wiki AND the OKF tools.
  *
- * `buildServer` deliberately omits the OKF tools, so this suite builds its own
- * instance: the whole point is one handshake that covers all three tools at once.
+ * The shared fixture registers both sets now, so this suite connects the same
+ * inventory a production client sees: one handshake covers all three tools.
  *
  * @param label - Short suite label recorded on the provisioned Stack.
  * @param body - Work to run with the server connected over the in-memory transport.
  */
 async function withTools(label: string, body: (session: Session) => Promise<void>): Promise<void> {
   await withRowsStack(label, async ({ root, harness }) => {
-    const server = new McpServer({ name: "required-stack", version: "0" });
-    registerWikiTools(server, root);
-    registerOkfTools(server, root);
+    const server = buildServer(root);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     const client = new Client({ name: "required-stack", version: "0" });

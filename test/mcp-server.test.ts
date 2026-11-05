@@ -78,12 +78,16 @@ function getRegisteredResourceTemplates(server: McpServer): Record<string, unkno
 }
 
 describe("MCP server tool registration", () => {
-  it("registers all 12 expected tools", () => {
+  it("registers all 14 expected tools", () => {
     const server = buildServer();
     const names = Object.keys(getRegisteredTools(server)).sort();
+    // The shared fixture now registers the OKF tools too, so this is the whole
+    // surface a client sees — `export_okf` and `import_okf` included.
     expect(names).toEqual([
       "compile_wiki",
+      "export_okf",
       "get_context_pack",
+      "import_okf",
       "ingest_job_status",
       "ingest_jobs_list",
       "ingest_source",
