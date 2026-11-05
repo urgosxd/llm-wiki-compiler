@@ -21,13 +21,32 @@ import {
   createRequestTransactionWrapper,
 } from "../db.js";
 import type { Database } from "../db.js";
+import { perRunDatabase } from "../testing/per-run-database.js";
 import { FixtureStacks, withFixtureTenant } from "./fixture-tenant.js";
 
 import { createDocumentsRouter } from "./documents.js";
 import type { DocumentsRouterDependencies } from "./documents.js";
 
-export const TEST_DATABASE_URL =
-  process.env["AKS_TEST_DATABASE_URL"] ?? "postgresql://aks:aks@localhost:5434/aks";
+/**
+ * The SERVER this process's own database is provisioned on.
+ *
+ * `AKS_TEST_DATABASE_URL` (or the resolver's `LLMWIKI_TEST_DATABASE_URL`, which CI
+ * sets) names only the server now; the database itself is created per test process by
+ * `../testing/per-run-database.js`, so two concurrent suites cannot see or delete each
+ * other's rows.
+ */
+export const TEST_SERVER_URL =
+  process.env["AKS_TEST_DATABASE_URL"] ??
+  process.env["LLMWIKI_TEST_DATABASE_URL"] ??
+  "postgresql://aks:aks@localhost:5434/aks";
+
+/** This process's own database, or the error that stopped it from being created. */
+const SUITE = await perRunDatabase(TEST_SERVER_URL).catch((error: unknown) =>
+  error instanceof Error ? error : new Error(String(error)),
+);
+
+/** The connection string this suite uses: this process's own database. */
+export const TEST_DATABASE_URL = SUITE instanceof Error ? TEST_SERVER_URL : SUITE.url;
 
 export const CONNECT_TIMEOUT_SECONDS = 3;
 
@@ -81,17 +100,22 @@ export const state: {
 } = { skipReason: "database probe did not run" };
 
 {
-  const candidate = createClient(TEST_DATABASE_URL, CONNECT_TIMEOUT_SECONDS);
-  try {
-    await candidate`select 1`;
-    state.client = candidate;
-    state.database = createDatabase(candidate);
-    state.skipReason = false;
-  } catch (error) {
-    state.skipReason = `database unreachable at ${TEST_DATABASE_URL}: ${
-      error instanceof Error ? error.message : String(error)
-    }`;
-    await candidate.end({ timeout: 1 }).catch(() => undefined);
+  if (SUITE instanceof Error) {
+    // Loud, never a silent pass and never a shared-database fallback.
+    state.skipReason = `database unreachable at ${TEST_SERVER_URL}: could not create a per-run database (${SUITE.message})`;
+  } else {
+    const candidate = createClient(SUITE.url, CONNECT_TIMEOUT_SECONDS);
+    try {
+      await candidate`select 1`;
+      state.client = candidate;
+      state.database = createDatabase(candidate);
+      state.skipReason = false;
+    } catch (error) {
+      state.skipReason = `database unreachable at ${SUITE.url}: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      await candidate.end({ timeout: 1 }).catch(() => undefined);
+    }
   }
 }
 

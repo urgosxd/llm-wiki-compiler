@@ -32,7 +32,7 @@ S9. Out of scope, still open, not to be fixed on this branch: the two Project-1 
 
 T0 — Open this feature document and mirror it in memory. S1-S9. Route: worker. Commit: 7bcacad.
 T1 — Provision the worktree's dependencies so any gate can run at all (`node_modules` is absent). S1-S8 prerequisite. Route: worker. Commit: none (install output only).
-T2 — Per-run database/schema isolation for every suite that touches Postgres, applied to the four shared fixtures. S2, S4, S6, S7. Route: worker. Commit: 7f78ecf.
+T2 — Per-run database/schema isolation for every suite that touches Postgres, applied to the four shared fixtures, then to the KG package's own route/core harnesses. S2, S4, S6, S7. Route: worker. Commit: 7f78ecf (shared fixtures), then the seven package harnesses in the commit L11 records.
 T2b — Close the residual shared-database paths: `test/lock-postgres*.test.ts` on the per-run fixture, a comment-only note on the `vitest.config.ts` seed, and a reaper-safety case proving a live sibling and a foreign name are never candidates. S2, S6, S7. Route: worker. Commit: 6b0a805.
 T3 — Wire a gate that runs the KG package typecheck and pin a ratchet over the 20-diagnostic baseline without widening an ignore list. S3. Route: worker. Commit: this slice (a commit cannot name its own SHA; the SHA is reported in T9's table).
 T4 — The real end-to-end KG MCP probe: real Postgres, real KG API, `runStdio()`, real client handshake, exact payloads. S1, S6, S7. Route: worker. Commit: not made by the worker (terminal git actions are parent-owned); files staged for review: `test/fixtures/ephemeral-postgres.ts`, `test/kg-mcp-e2e/**`.
@@ -344,3 +344,51 @@ keeping a second copy.
 - SCRATCH LEFT IN PLACE (not deleted, per L2): container `llmwiki-probe-kg-mcp-e2e-ea040fe6` from the pre-fix failed
   run — remove it with `docker rm -f llmwiki-probe-kg-mcp-e2e-ea040fe6`. The package build wrote
   `packages/llmwiki-kg/ts/dist/` (gitignored). No temp directory was created outside the worktree.
+
+L11 (evidence, T2's remaining scope — the KG package's own harnesses; S2, S6, S7):
+- WHAT WAS SHARED. The package's own route/core suites were left out of T2 and still resolved ONE
+  database: `routes/{aks,pages,ingest,documents,backfeed,stacks}-harness.ts` and
+  `core/consolidation-harness.ts` each opened `AKS_TEST_DATABASE_URL ?? postgresql://aks:aks@localhost:5434/aks`
+  directly. (Correction to the task brief: all seven already read the variable; `backfeed-harness.ts` and
+  `stacks-harness.ts` only split the expression across lines, so a line-26 grep reads them as hard-coded.)
+- WHAT THEY DO NOW. Each of the seven provisions this PROCESS's database through the one implementation T2
+  built (`src/testing/per-run-database.ts`, reused, not reimplemented) at module load, replacing the bare
+  reachability probe. Exported names and shapes are unchanged, so none of the 42 consuming suites needed an
+  edit. New export per harness: `TEST_SERVER_URL` (the server). `TEST_DATABASE_URL` keeps its name and now
+  holds the per-run URL — that is how a suite reaches its database, and how it can build an environment
+  pointing at the right one (`state.client` / `database()` are unchanged).
+- TEARDOWN. No suite calls anything new. The database is dropped by the mechanism T2 already owns
+  (`perRunDatabase`'s `dropOnExit`: process exit plus SIGTERM/SIGINT); each harness still ends its own pool
+  in the `afterAll` it already had.
+- `AKS_TEST_DATABASE_URL`. It stops meaning "the database the suites share" and keeps meaning "the server to
+  provision on"; it is not obsolete, and it is not sufficient either. MEASURED: `.github/workflows/ci.yml:57`
+  sets only `LLMWIKI_TEST_DATABASE_URL` (and `AKS_DATABASE_URL`) at 5432, so before this change every one of
+  these suites resolved the absent `AKS_TEST_DATABASE_URL` to the 5434 default, found nothing there in CI,
+  and skipped. The harnesses therefore resolve `AKS_TEST_DATABASE_URL`, then the repository resolver's
+  `LLMWIKI_TEST_DATABASE_URL`, then the documented 5434 container — the DB is never named by any of them.
+- CONCURRENCY EVIDENCE (S7's RED, then GREEN). Two processes running `src/routes/stacks-read.test.ts` at the
+  same time, before the change: exit 1, `AssertionError: expected [ 'B', 'C', 'A', 'B', 'C', 'A' ] to deeply
+  equal [ 'B', 'C', 'A' ]` at `stacks-read.test.ts:74` — one process read the other's stacks, because both
+  harnesses used the one shared database and each `beforeEach(deleteFixtureRows)` deletes by domain prefix.
+  Same two processes, after the change: both 2/2 passed, exit 0, transcript
+  `/tmp/kg-s2-green.F3iVB3/a.log` and `/tmp/kg-s2-green-b.log` (RED transcript `/tmp/kg-s2-red.B.log`).
+- THE DURABLE ASSERTION (new `src/routes/harness-database-isolation.test.ts`, 2 tests). What the suites could
+  not express before: (a) `isPerRunDatabaseName(TEST_DATABASE_URL's database)` is true and the name is on the
+  server's `pg_database` list — RED was `expected false to be true`; (b) a Stack written through the public
+  `POST /stacks` survives a sibling per-run database being created and dropped, and is invisible inside that
+  sibling. Both pass after the change.
+- SUITE COUNTS, exact scope `cd packages/llmwiki-kg/ts && npx vitest run src/routes src/core`:
+  61 files, 488 tests. Clean runs: 58 files passed, 3 skipped, 484 passed, 4 skipped, exit 0 (runs 2, 5, 8, 10).
+  The 3 skipped files are the live-gateway suites (`ingest-gateway`, `aks-gateway`, `pages-gateway`), whose
+  reason is their own `AKS_TEST_GATEWAY !== "1"` opt-in and is unaffected by this change.
+- PRE-EXISTING RACE, FOUND AND NOT FIXED (outside these surfaces). Four of the ten gate runs were red with one
+  to three assertion failures, all in the same family: a write's row not yet visible to the next statement.
+  Cause: `createRequestTransactionWrapper` (`src/db.ts:341-358`) runs `database.transaction(handler)`, and the
+  HANDLER sends the HTTP response, so the commit lands AFTER the client already has its answer — a follow-up
+  statement sees pre-commit state. Observed shapes: `stack_documents_stack_id_fkey` (23503) at
+  `ingest-harness.ts:250`, `audit = null`, `entities_absorbed: 1` on an "idempotent" second approve, and a 500
+  on a repeat upload. It is not database identity: it reproduces with six fully isolated databases (5 of 6
+  concurrent single-file runs failed), and two of the red runs overlapped another worker's root vitest + tsup
+  build at load average 19 on 16 cores, which widens the same window.
+- DEBRIS. After all runs: `pg_database` holds zero `llmwiki_suite_%` names and 7 databases in total, with no
+  open session on a per-run database.
