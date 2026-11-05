@@ -36,6 +36,16 @@ export default defineConfig({
   // `node dist/cli.js --version` exited 1 with
   // `Dynamic require of "url" is not supported` before parsing an argument.
   // External so Node resolves mammoth at runtime, exactly like `express` above.
+  //
+  // `@hono/node-server` is different: our own source never imports it, and it
+  // appears in no `dist/*.js` chunk, so listing it changes nothing about the
+  // bundle we ship today. It is externalized because the dependency is a runtime
+  // one that is already live — the MCP SDK declares it as a hard dependency and
+  // `server/streamableHttp.js` imports `getRequestListener` from it — so the
+  // boundary is resolved from `node_modules` after the bundle loads. Naming it
+  // here keeps that boundary explicit and keeps a future direct import (a Node
+  // adapter mounted beside the streamable-HTTP transport) a bare specifier
+  // instead of source silently inlined into the ESM output.
   external: [
     "express",
     "@modelcontextprotocol/sdk",
