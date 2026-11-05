@@ -66,8 +66,15 @@ describe("classifyTests", () => {
     const known = [
       "test/context-integration.test.ts",
       "test/activity-log-integration.test.ts",
+      // Spawns the built `node dist/cli.js` through `runCLI`, so it must never fall
+      // into the fast unit loop; if the classifier stops matching `runCLI(`, this
+      // fails by name instead of the parity signal being skipped without a trace.
+      "test/parity-default.test.ts",
     ];
-    for (const file of known) expect(integration).toContain(file);
+    // Filtered instead of asserted per entry: `toContain` reports only the first
+    // file that fell out of the tier, which hides the rest of the regression.
+    const lost = known.filter((file) => !integration.includes(file));
+    expect(lost).toEqual([]);
   });
 
   it("puts pure unit suites in the fast tier", () => {
