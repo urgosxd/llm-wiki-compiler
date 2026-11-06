@@ -5,8 +5,9 @@ description: "Set the entity types and relationship types the kg dimension extra
 ---
 
 The `kg` dimension does not invent a vocabulary. Each Stack carries one ontology
-declaration, stored in the Stack row, and ingest constrains extraction to exactly
-that declaration. This page is the complete configuration path for it.
+declaration, stored in the Stack row, and ingest gives it to the extraction model as
+orientation: it shapes what the model is asked for without discarding what the source
+really says. This page is the complete configuration path for it.
 
 <Note>
   **No environment variable configures entity types.** `LLMWIKI_DIMENSIONS`
@@ -158,33 +159,59 @@ parameter is the Stack `uuid`; `GET /stacks` lists them.
 
 ## What ingest does with the declaration
 
-Extraction is constrained to the declaration, not merely hinted at it. The
-`entityTypes` and `relationshipTypes` lists reach the model as enums in the
-extraction tool schema, and each triplet the model returns is then checked
-against them: an entity type outside `entityTypes`, a relationship type outside
-`relationshipTypes`, or a pair that violates a `relationships` constraint is
-rejected rather than stored.
+Extraction is **oriented** by the declaration, not filtered by it. The `entityTypes`
+and `relationshipTypes` lists reach the model inside the extraction tool schema, and
+the prompt presents them as the vocabulary this Stack already uses. What comes back is
+not then checked against them for admission:
 
-Rejections are counted rather than dropped silently. The `kg` dimension's commit
-summary carries `, N triplets rejected by ontology` whenever anything was turned
-away, so a thin extraction caused by a tight ontology does not read like a thin
-source. The detail of a rejection is not persisted anywhere, and the
-`stack_documents.audit` column is an unused placeholder for a future quality
-audit. When only the relationship was at fault, both endpoints are still kept as
-standalone entities.
+- An entity type or relationship type outside the declaration is **kept**, with the
+  type or predicate the model proposed. Nothing is dropped for being out of catalog.
+- A relationship whose endpoints violate a declared pair constraint is **kept** too.
+  Endpoint compatibility is recorded separately by the classification stage —
+  `compatible`, `conflict` or `indeterminate` — from the types the classifier
+  assigned, so a conflict is a recorded verdict rather than a deletion.
+- An entity with no relation is kept.
+
+Every candidate the source supports is therefore admitted, and the declaration's job
+moves one stage later: it is the *classification* vocabulary. Which vocabulary
+the classifier is asked against is decided in this order — the Stack's
+`type_catalog`, then a catalog derived from this `ontology` column, then the
+documented default. See [KG type catalog](/configuration/kg-type-catalog).
+
+The run reports what it saw outside the vocabulary rather than hiding it. The
+document's `audit` blob carries an `open` section with `outside_catalog` (how many
+candidates fell outside), `kinds` of mismatch, up to five `samples`, a `structural`
+count and any `truncations` that bounded the answer:
+
+```json
+{ "open": { "outside_catalog": 2, "kinds": ["entity_type", "predicate"], "samples": [], "structural": 0, "truncations": [] } }
+```
+
+That section is the reading of a thin extraction: it tells you the model produced
+candidates the declaration does not name, and it no longer means the graph lost them.
+
+<Note>
+  **A narrow declaration no longer produces a closed graph.** The strict admission
+  contract still exists in code and is the default of `extractGraphFromChunks`, but
+  the HTTP ingest endpoint runs the open contract and exposes no option to switch.
+  If you need a closed graph, enforce it downstream — a canonical `?type=` filter
+  returns classified matches only.
+</Note>
 
 ## When no declaration is stored
 
-An unconfigured Stack is enforced against the default ontology, not left
-permissive. The default declares 16 entity types - `COMPANY`, `PERSON`,
-`ORGANIZATION`, `TEAM`, `ROLE`, `PRODUCT`, `TECHNOLOGY`, `SYSTEM`, `PROCESS`,
-`DOCUMENT`, `REQUIREMENT`, `DECISION`, `CONCEPT`, `EVENT`, `LOCATION`, `TIME` -
-and 20 relationship types, and constrains `EMPLOYS`, `WORKS_AT`, and `OWNS` as
-pairs while leaving the rest unconstrained. It declares no subtypes.
+An unconfigured Stack extracts against the default ontology: 16 entity types
+(`COMPANY`, `PERSON`, `ORGANIZATION`, `TEAM`, `ROLE`, `PRODUCT`, `TECHNOLOGY`,
+`SYSTEM`, `PROCESS`, `DOCUMENT`, `REQUIREMENT`, `DECISION`, `CONCEPT`, `EVENT`,
+`LOCATION`, `TIME`), 20 relationship types, three constrained pairs (`EMPLOYS`,
+`WORKS_AT`, `OWNS`) and no subtypes. That default is orientation only, and it also
+holds for classification when neither `type_catalog` nor `ontology` is set.
 
-Declaring your own ontology replaces that default entirely: the two lists are
-admitted as given, so a type the default carries and yours does not is rejected
-from then on.
+Declaring your own ontology replaces that orientation entirely. Because a Stack that
+has an ontology and no `type_catalog` is classified against a catalog **derived from
+that declaration**, the types you declare become the canonical types the classifier
+chooses between — and types only the default carries become free candidates instead
+of rejected ones.
 
 ## Verify it took effect
 

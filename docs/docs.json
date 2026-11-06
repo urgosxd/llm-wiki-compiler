@@ -38,7 +38,8 @@
               "concepts/configurable-lifecycle-profiles",
               "concepts/page-types",
               "concepts/citations",
-              "concepts/tenant-isolation"
+              "concepts/tenant-isolation",
+              "concepts/kg-open-classification"
             ]
           },
           {
@@ -75,6 +76,8 @@
               "configuration/providers",
               "configuration/environment-variables",
               "configuration/stack-ontology",
+              "configuration/kg-type-catalog",
+              "configuration/kg-classification",
               "configuration/review-policy",
               "configuration/schema",
               {
@@ -99,6 +102,7 @@
               "guides/sdk-upgrade",
               "guides/atomic-memory-bridge",
               "guides/ci-quality-gates",
+              "guides/kg-classification-migration",
               {
                 "group": "Configurable Lifecycle Profiles",
                 "expanded": false,

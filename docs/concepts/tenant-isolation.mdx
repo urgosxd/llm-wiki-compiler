@@ -65,11 +65,15 @@ A Stack also carries the ontology the `kg` dimension extracts against: its
 entity types, relationship types, subtype edges, and pair constraints. No
 environment variable, flag, or project file sets them. They are declared per
 Stack as the `ontology` field of the KG REST API's stack endpoints, `POST
-/stacks` and `PATCH /stacks/:stackId`, and ingest then constrains extraction to
-exactly that declaration. A Stack that declares none is enforced against the
-default ontology, applied at ingest time rather than stored on the Stack. The
-payload, the copyable requests, and the refusals are documented in
-[Stack Ontology](/configuration/stack-ontology).
+/stacks` and `PATCH /stacks/:stackId`. Ingest gives that declaration to the
+extraction model as orientation and keeps candidates that fall outside it; it is
+the Stack's `type_catalog` (or a catalog derived from the ontology, or the
+documented default) that supplies the types candidates are then classified
+against. A Stack that declares none extracts against the default ontology,
+applied at ingest time rather than stored on the Stack. The payload, the
+copyable requests, and the refusals are documented in
+[Stack Ontology](/configuration/stack-ontology), and the classification
+vocabulary in [KG type catalog](/configuration/kg-type-catalog).
 
 `--stack` and `AKS_STACK_ID` decide which Stack's vocabulary applies; they never
 change it.

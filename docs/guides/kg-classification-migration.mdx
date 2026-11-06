@@ -1,0 +1,225 @@
+---
+title: "Upgrade a KG database for open classification"
+sidebarTitle: "KG Classification Migration"
+description: "Apply packages/llmwiki-kg/db/migration_open_kg_classification.sql to an existing database: exact commands, what it backfills, why it is safe to re-run, and how to verify it applied."
+---
+
+Open classification needs new columns on `ontology_entities` and
+`ontology_relationships`, a `stacks.type_catalog`, and two new tables
+(`kg_evidence`, `kg_classification_log`). The change ships as one SQL file:
+
+```text
+packages/llmwiki-kg/db/migration_open_kg_classification.sql
+```
+
+## What it changes
+
+| Object | Change |
+| --- | --- |
+| `stacks` | `add column type_catalog jsonb`, `add column catalog_version text`, plus a shape check |
+| `ontology_entities` | `classification_state`, `canonical_type`, `proposed_type`, `support_state`, `jev_choice`, `jev_confidence`, `jev_top_probability`, `jev_model`, `jev_classified_at`, `catalog_version`, `classifier_version`, `classification_updated_at`, `identity_key` |
+| `ontology_relationships` | `predicate`, `canonical_type`, `classification_state`, `support_state`, `compatibility`, the same `jev_*` group, the same version columns, `identity_key` |
+| `ontology_entities` constraints | `unique_name_per_stack` replaced by `unique_identity_per_stack (stack_id, identity_key)`; new checks on state, support, and the state/canonical-type pairing |
+| `ontology_relationships` constraints | `unique_edge_per_stack` **kept**; `unique_edge_identity_per_stack` added; new checks on state, support and compatibility |
+| Triggers | `fill_identity_key` on both tables derives `identity_key` (and `proposed_type` / `predicate`) for writers that predate this pipeline |
+| New tables | `kg_evidence` (one row per candidate × source span) and `kg_classification_log` (append-only decision history), both with row-level security |
+
+## Why it is safe to re-run
+
+The file is non-destructive by construction: no `drop table`, no `drop column`, no
+`truncate`, no rebuild, and no volume reset. Every column arrives through
+`add column if not exists`, every constraint is dropped with `drop constraint if
+exists` before it is recreated, and every backfill is guarded by `where … is null`, so
+applying it to an up-to-date database changes nothing.
+
+That is checked, not asserted: `packages/llmwiki-kg/ts/src/schema-open-classification.test.ts`
+mints a database in the pre-migration shape, fills it with rows carrying `verified`,
+`confidence`, `properties`, `source_kind` and `pipeline`, applies this exact file, and
+then applies it a second time — *"can be applied twice without changing a single
+row"*.
+
+`verified`, `confidence`, `properties`, `source_kind` and `pipeline` are **read but
+never written** by the migration. Losing a human review decision while upgrading is
+the one outcome this file must not cause.
+
+## Apply it
+
+Apply the migration **before** running this build against the database: the ingest
+pipeline writes the new columns.
+
+### In-container (the recommended form here)
+
+`psql` runs inside the database container and the file is piped from the host, so no
+path has to exist inside the container:
+
+```bash
+# From the repository root.
+docker exec -i llmwiki-kg-db-1 psql -U aks -d aks \
+  < packages/llmwiki-kg/db/migration_open_kg_classification.sql
+```
+
+```bash
+# Same thing through compose, if you prefer the service name to the container name.
+docker compose -f packages/llmwiki-kg/docker-compose.yml exec -T db psql -U aks -d aks \
+  < packages/llmwiki-kg/db/migration_open_kg_classification.sql
+```
+
+`docker compose -f packages/llmwiki-kg/docker-compose.yml ps` prints the container
+name if yours differs from `llmwiki-kg-db-1`.
+
+### From a host with `psql`
+
+```bash
+psql "postgresql://aks:aks@localhost:5432/aks" \
+  -f packages/llmwiki-kg/db/migration_open_kg_classification.sql
+```
+
+Use the port your database is actually published on. This repository's
+`packages/llmwiki-kg/docker-compose.override.yml` moves the **host** side to `5434`
+(`postgresql://aks:aks@localhost:5434/aks`); the container still reaches Postgres on
+`db:5432` internally.
+
+### Through the schema runner
+
+`./scripts/apply-schemas.sh` applies `packages/llmwiki-kg/db/schema.sql` and every
+migration in its dependency list, and it is idempotent:
+
+```bash
+DATABASE_URL=postgresql://aks:aks@localhost:5434/aks ./scripts/apply-schemas.sh
+```
+
+`migration_open_kg_classification.sql` is mirrored inside `db/schema.sql` (this
+package's existing convention: there is no migration runner, so `schema.sql` must be
+self-sufficient for a clean install while a live database also needs the migration
+applied by hand). A database upgraded by `apply-schemas.sh` therefore reaches the same
+shape, because `schema.sql` itself uses `add column if not exists` on the existing
+tables.
+
+## A fresh install needs nothing
+
+A new volume builds from `packages/llmwiki-kg/db/schema.sql`, which the database
+service mounts at `/docker-entrypoint-initdb.d/schema.sql`, so a clean install reaches
+the same shape from the start. A migrated database and a fresh one agree.
+
+## What the backfill decides about existing rows
+
+Nothing is invented: the backfill states what is already true.
+
+- **Every existing entity becomes `classified`**, with `canonical_type = type` (the
+  label it was accepted with), `proposed_type = type`, and
+  `classification_updated_at = now()`.
+- **`support_state` becomes `uncertain`**, because no evidence judgement was ever
+  made about those rows. `supported` would fabricate a judgement nobody made.
+- **`identity_key` becomes `lower(name)`**, mirroring the lookup the existing code
+  already performed. Case variants that collapse onto one key are kept **apart**:
+  the loser of the deterministic order (`order by created_at, id`) gets a stable
+  `#<uuid>` suffix, so re-running the backfill produces the same keys.
+- **Every existing relationship keeps its original predicate**: `predicate = type`,
+  and `identity_key = lower(predicate)`. Two different predicates between the same
+  endpoints stay two rows.
+
+`classification_state` stays `NULL` only for rows created later by a writer that does
+not classify — and `NULL` means "no decision was ever recorded", which is a different
+fact from `pending`.
+
+### The cost of keeping homonyms apart
+
+A row that lost an identity-key collision at migration time keeps its content,
+provenance and edges, and is still addressable by its suffixed key — but future
+mentions of that name resolve to the winner only, so that row stops receiving new
+evidence. Any later reconciliation of the two rows is a manual act, never an
+automatic merge.
+
+That is the deliberate trade, not a defect. The alternative — fusing two rows that
+happen to share a spelling — is the homonym hazard the identity key exists to remove:
+`Gateway` the reviewed system and `gateway` the raw extraction are not known to be
+one thing, and merging them would silently attribute one row's evidence, properties
+and edges to the other. Preserving the separation means the loser is frozen at
+migration time instead, which is visible, reversible by hand, and never a silent
+assertion that two entities were the same.
+
+Two things make the frozen row workable:
+
+- **Reads by name still see both.** `GET /aks/v1/entities/{name}` matches
+  `lower(name)` and returns one row through the stated order (classified first, then
+  most confident, then id), publishing `name_matches` when several share the name, so
+  an ambiguous name is visible instead of silently resolved.
+- **Ingest mentions resolve through the identity key**, which is why new evidence
+  lands on the winner: the suffixed key is never produced by a name lookup.
+
+<Warning>
+  **The collision handling was verified against a small case-variant fixture, not at
+  scale.** The migration suite's *"keeps case-variant names apart instead of merging
+  them"* seeds two rows that share one spelling (`Gateway` and `gateway`), applies
+  the migration, and asserts both identity keys — `gateway` for the winner and
+  `gateway#<uuid>` for the loser — beside a row snapshot proving nothing was lost. It
+  does not exercise thousands of rows, very long names, or several colliding groups
+  in one Stack, so the backfill's timing and index behaviour on a large graph are
+  untested.
+</Warning>
+
+## Verify it applied
+
+```bash
+docker exec -i llmwiki-kg-db-1 psql -U aks -d aks -c "
+  select table_name, count(*) as classification_columns
+  from information_schema.columns
+  where table_schema = 'public'
+    and table_name in ('ontology_entities', 'ontology_relationships')
+    and column_name in ('classification_state', 'canonical_type', 'proposed_type',
+                        'support_state', 'identity_key')
+  group by table_name
+  order by table_name"
+```
+
+Expect `5` for each of the two tables. Then check the two new tables exist and are
+tenant-secured:
+
+```bash
+docker exec -i llmwiki-kg-db-1 psql -U aks -d aks -c "
+  select to_regclass('public.kg_evidence')          as kg_evidence,
+         to_regclass('public.kg_classification_log') as kg_classification_log"
+```
+
+```bash
+docker exec -i llmwiki-kg-db-1 psql -U aks -d aks -c "
+  select c.relname, c.relrowsecurity
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public'
+    and c.relname in ('kg_evidence', 'kg_classification_log')"
+```
+
+Both rows must report `relrowsecurity = true`. Finally, confirm the backfill left no
+row undecided:
+
+```bash
+docker exec -i llmwiki-kg-db-1 psql -U aks -d aks -c "
+  select count(*) from ontology_entities where classification_state is null"
+```
+
+Expect `0` immediately after the migration. Before it, that query fails with
+`column "classification_state" does not exist`, which is the plainest signal that
+the migration has not been applied to this database.
+
+The file itself pins the same expectations from the other side:
+`npx vitest run src/schema-open-classification.test.ts src/schema-identity-evidence.test.ts`
+in `packages/llmwiki-kg/ts` builds a pre-migration database, applies the migration and
+asserts the resulting columns, constraints, indexes and row values.
+
+## After migrating
+
+- **Rows the backfill marked `classified` are not re-decided automatically.** They
+  carry the version the migration left them with; a
+  [`POST /stacks/:stackId/reclassify`](/configuration/kg-classification#reclassify-stored-rows)
+  sweep re-decides them against the current catalog when you want that.
+- **Only rows with located evidence are re-decided.** Pre-migration rows whose quotes
+  cannot be located are counted as `skipped_no_evidence` and keep their stored decision.
+- **Rows written by a classifying pipeline after the migration carry a real state**,
+  including `pending` when no classifier is configured.
+
+## There is no down migration
+
+The change is additive and nullable, and `source.verified` semantics are untouched, so
+reverting means deploying the previous build — the extra columns and tables are simply
+not read. Dropping them is a destructive operation this repository does not ship and
+this runbook does not recommend.

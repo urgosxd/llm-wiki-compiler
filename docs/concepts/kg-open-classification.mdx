@@ -1,0 +1,329 @@
+---
+title: "Open knowledge classification in the kg dimension"
+sidebarTitle: "Open KG Classification"
+description: "How the kg dimension keeps source-backed entities and relations that match no catalog type, and what classified, free, pending and failed mean."
+---
+
+The `kg` dimension extracts candidates openly and then classifies each one against
+its Stack's type catalog. Knowledge the catalog cannot place is still stored, still
+source-backed, and still traversable: it is **free**, and free is a classification
+outcome rather than a defect.
+
+This page is the model: the states, the four confidence magnitudes that must never
+be confused, and the eight ingestion stages. The vocabulary is
+[the Stack type catalog](/configuration/kg-type-catalog) and the classifier
+configuration is [JEV classification](/configuration/kg-classification).
+
+## Free means "no catalog type could be assigned"
+
+A free entity or relation is one the classifier decided the catalog does not
+describe. It does **not** mean:
+
+- not false or invalid — the source still backs it, and its evidence is stored;
+- not pending human review — ingestion adds no approval step, and an entity does not
+  leave the free state by being read;
+- not a placeholder type — `Concept` is only ever assigned when the catalog declares
+  it and its definition fits the candidate.
+
+Free items keep their properties, their sources, their edges, and their place in
+searches and walks, and a later reclassification can update the same row. See
+[Reclassification](/configuration/kg-classification#reclassify-stored-rows).
+
+## The five classification states
+
+`classification_state` holds one of five values on both `ontology_entities` and
+`ontology_relationships`. It is nullable, and `NULL` is a sixth, different fact.
+
+| State | Meaning | `canonical_type` | Reason published to callers |
+| --- | --- | --- | --- |
+| `classified` | A catalog type was assigned. | The canonical type | `null` |
+| `free_no_match` | The classifier abstained: nothing in the catalog describes the candidate. | `NULL` | `no_canonical_type_matched` |
+| `free_uncertain` | The classifier could not decide: the evidence is ambiguous or insufficient. | `NULL` | `classification_uncertain` |
+| `pending` | The classifier has not answered yet. | `NULL` | `classification_pending` |
+| `failed` | The classifier failed or exhausted its retries. | `NULL` | `classification_failed` |
+| `NULL` | No decision was ever recorded for this row. | `NULL` | No block is published |
+
+The last row is the compatibility case, not a sixth state. Rows written by surfaces
+that do not classify — human-reviewed backfeed entities, and rows that predate the
+open-classification migration — carry no recorded decision at all, and keeping them
+distinct is what lets a canonical type filter keep answering those rows through
+their label (see [Reading a graph that holds free items](#reading-a-graph-that-holds-free-items)).
+
+<Note>
+  **`free` is a filter value, not a column value.** `?classification_state=free`
+  selects `free_no_match` and `free_uncertain` together. `pending` and `failed` are
+  deliberately outside it: those are operational states where no decision exists
+  yet, and reporting an unanswered question as an answer about the catalog would be
+  the confusion this page exists to prevent.
+</Note>
+
+A database check constraint enforces the pairing: a non-null `canonical_type`
+requires `classification_state = 'classified'`. A canonical type beside a free
+state is therefore not representable, so no read path has to guess what a
+half-written decision means.
+
+## The four confidence magnitudes are never interchangeable
+
+Four different things get called "confidence" around a knowledge graph. They answer
+different questions, come from different places, and no one of them substitutes for
+another.
+
+| Magnitude | Where it lives | What it measures |
+| --- | --- | --- |
+| **Extraction confidence** | `ontology_entities.confidence`, `ontology_relationships.confidence` | How strongly the extractor asserted the fact. Document extraction writes the constant `0.7` (`EXTRACTED_CONFIDENCE`); the extraction model is never asked for a number |
+| **Source support** | `support_state` — `supported`, `unsupported`, `uncertain`, or `NULL` | Whether the quoted evidence backs the claim the extractor made. `NULL` means nobody judged it, which is not `unsupported` |
+| **Classification confidence** | `jev_confidence`, `jev_top_probability` and the raw probabilities in `kg_classification_log` | The vendor's own numbers for the label decision. `confidence` is a **dispersion measure**, not the probability that the label is correct |
+| **Human verification** | `source.verified` (the `verified` column) | Whether a human reviewed this item. Only human review and approved backfeed set it |
+
+Two rules follow, and the code enforces both:
+
+- **No automatic decision sets `verified`.** Ingestion writes `false`; the backfeed
+  approve path keeps writing `true`, `source_kind = 'backfeed'`,
+  `pipeline = 'human-review'`.
+- **The AKS `confidence` field is not a JEV number.** The export computes
+  `clamp01(extraction_confidence × support_factor)` with `supported: 1`,
+  `uncertain: 0.75`, `unsupported: 0.25`, and an absent judgement keeping factor `1`.
+  That value measures how strongly the source corroborates the fact. It never reads
+  `jev_confidence` or `jev_top_probability`, and it does not discount an item for
+  being free — free is not false.
+
+## The eight ingestion stages
+
+`POST /stacks/:stackId/documents/:docId/ingest` runs these stages in this order
+(`packages/llmwiki-kg/ts/src/routes/ingest/pipeline.ts`):
+
+1. **Extract candidates.** Chunk, embed, and extract under the open contract:
+   names, proposed types and predicates are discovered whether or not the catalog
+   declares them. Entities with no relations are admitted.
+2. **Verify evidence.** Each quoted span is located in the stored chunk with
+   character offsets, and an unlocatable quote is recorded with null offsets rather
+   than dropped.
+3. **Resolve identities.** Known identity keys come in, and one key per mention goes
+   out. Homonyms are kept apart rather than merged; the
+   [migration runbook](/guides/kg-classification-migration#the-cost-of-keeping-homonyms-apart)
+   records what a row that lost a migration-time collision keeps, and what it stops
+   receiving.
+4. **Classify entities.** One decision per entity.
+5. **Classify relations.** One decision per relation. Entities and relations are
+   classified independently and never gate each other.
+6. **Validate structure and semantic compatibility.** A decision whose state and
+   canonical type disagree is refused before anything is written, and each relation
+   carries its endpoint-compatibility verdict: `compatible`, `conflict`,
+   `indeterminate`, or `NULL` when it was not evaluated.
+7. **Consolidate and persist.** Evidence rows, decision columns, and the append-only
+   `kg_classification_log`.
+8. **Update projections and exports.** The document audit blob and the Stack totals.
+   The AKS export and the pages read the same rows, so there is no second copy to
+   invalidate.
+
+### What runs outside a transaction
+
+The handler takes a transaction *runner* rather than one connection, and opens three
+short transactions. **The extraction model call and every JEV call happen with no
+transaction open:**
+
+| Between | Work |
+| --- | --- |
+| Transaction 1 | Read the document, its text and the resolved catalog. No provider call. |
+| *no transaction* | Chunk, embed, extract, optionally synthesize descriptions |
+| Transaction 2 | Write chunks, resolve identities, build spans, write `pending` candidate rows — committed **before** any classifier call |
+| *no transaction* | Semantic-support questions, then classification questions |
+| Transaction 3 | Write evidence, decisions, `kg_classification_log`, the audit blob and the response |
+
+The `pending` rows from transaction 2 are what make an interrupted run recoverable
+instead of invisible. A failed extraction now stops before transaction 2, so the run
+writes nothing at all rather than rolling back a transaction that holds nothing.
+
+## What one ingestion produces
+
+The example below is the fixture the ingest suite drives
+(`packages/llmwiki-kg/ts/src/routes/ingest/classification.test.ts`). The extraction
+model and the classifier are both doubles there, so the numbers are deterministic
+and the stored values are asserted exactly.
+
+### The document and the extractor's answer
+
+Source text:
+
+```text
+El Comité de Cambios ejecuta la gestión de cambios. El runbook deja sin efecto la política anterior.
+```
+
+Extractor answer (one triplet in-vocabulary, one out-of-vocabulary triplet, one
+standalone entity with no relation):
+
+```json
+{
+  "triplets": [
+    {
+      "subject": { "type": "role", "name": "Comité de Cambios" },
+      "relation": { "type": "ejecuta" },
+      "object": { "type": "process", "name": "Gestión de cambios" }
+    },
+    {
+      "subject": { "type": "policy", "name": "Política anterior" },
+      "relation": { "type": "deja sin efecto" },
+      "object": { "type": "document", "name": "runbook" }
+    }
+  ],
+  "entities": [{ "type": "unicornio", "name": "Vex" }]
+}
+```
+
+### What the graph holds afterwards
+
+The Stack has no `type_catalog` of its own, so the documented default catalog is in
+force. The suite asserts the Comité de Cambios row, the Vex row and both relation
+rows exactly; the other three entity rows follow the same scripted answers and are
+shown for completeness.
+
+| Item | `type` | `proposed_type` / `predicate` | `classification_state` | `canonical_type` | `compatibility` |
+| --- | --- | --- | --- | --- | --- |
+| Comité de Cambios (entity) | `ROLE` | `ROLE` | `classified` | `Role` | — |
+| Gestión de cambios (entity) | `PROCESS` | `PROCESS` | `classified` | `Process` | — |
+| Política anterior (entity) | `POLICY` | `POLICY` | `free_no_match` | `NULL` | — |
+| runbook (entity) | `DOCUMENT` | `DOCUMENT` | `classified` | `Document` | — |
+| Vex (entity) | `UNICORNIO` | `UNICORNIO` | `free_no_match` | `NULL` | — |
+| `ejecuta` (relation) | `EJECUTA` | `predicate = "ejecuta"` | `classified` | `executes` | `compatible` |
+| `deja sin efecto` (relation) | `DEJA_SIN_EFECTO` | `predicate = "deja sin efecto"` | `free_no_match` | `NULL` | `indeterminate` |
+
+Two columns carry the detail that matters:
+
+- **`type` is the projection label**, the folded form the AKS export and the pages
+  display: spaces become underscores and the result is upper-cased.
+- **`predicate` is the verb the extractor read, byte for byte**, written once and
+  never rewritten by normalization. `deja sin efecto` survives a round trip through
+  the graph; it is never collapsed into `related_to`.
+
+The compatibility verdict sits beside the classification rather than replacing it: a
+free relation between typed endpoints can be compatible, and both facts are kept. A
+fact the source supports but the catalog forbids keeps its conflict recorded instead
+of being forced into a type.
+
+`Vex` is the case worth reading twice. Its proposal (`unicornio`) is in no
+vocabulary, the source never contains the word, and the row is kept anyway: a
+free entity with no located evidence. No support question was asked about it (there
+was no quote to ask about), so `support_state` is `NULL`.
+
+### What the AKS export emits
+
+`GET /aks/v1/export` projects the same rows. The two blocks below were produced by the
+export serializers in `packages/llmwiki-kg/ts/src/core/aks_serializers.ts` over the
+row values above; the `id` and endpoint values are placeholders, because the suite
+asserts row contents rather than generated UUIDs.
+
+A free entity with a proposal:
+
+```json
+{
+  "id": "b7e4d2a1-9c3f-4d58-8e21-3a5b7c9d1e02",
+  "name": "Vex",
+  "type": "UNICORNIO",
+  "description": null,
+  "properties": {
+    "kg_classification": {
+      "state": "free_no_match",
+      "classified": false,
+      "is_free": true,
+      "reason": "no_canonical_type_matched",
+      "canonical_type": null,
+      "proposed_type": "UNICORNIO",
+      "support_state": null,
+      "catalog_version": "1.0.0",
+      "classifier_version": "jev-classification/1",
+      "jev_choice": "Role",
+      "jev_confidence": 0.8,
+      "jev_top_probability": 0.3,
+      "jev_model": "jev-latest",
+      "jev_classified_at": null
+    }
+  },
+  "confidence": 0.7,
+  "contributing_documents": ["8d2b1f30-1c4a-4a51-9c1e-6f2d5a7b9c01"],
+  "last_seen_at": null,
+  "source": {
+    "document_id": null,
+    "connector_id": null,
+    "source_kind": "document",
+    "extracted_at": null,
+    "model": "hf:deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    "verified": false,
+    "pipeline": "llamaindex-schema-extraction"
+  }
+}
+```
+
+A free relation:
+
+```json
+{
+  "id": "c4f8e1b3-7d2a-4b96-9f13-5e8a2c4d6f03",
+  "from_entity_id": "a1c9f7e2-5b3d-4f60-8a71-2d4e6f8a0b12",
+  "to_entity_id": "d9a3c5e7-2b1f-4c84-a6d0-7e9b1f3a5c04",
+  "type": "deja sin efecto",
+  "description": null,
+  "confidence": 0.7,
+  "source": {
+    "document_id": null,
+    "connector_id": null,
+    "source_kind": "document",
+    "extracted_at": null,
+    "model": "hf:deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    "verified": false,
+    "pipeline": "llamaindex-schema-extraction"
+  }
+}
+```
+
+Read three details out of those blocks:
+
+- **`type` is what the extractor proposed, not a stand-in.** A free entity exports
+  its proposal; the reserved label `Unclassified` appears only when a decided row has
+  no proposal at all. A free relation exports its original predicate verbatim, so
+  `deja sin efecto` reaches the client as written.
+- **`confidence` follows the documented formula**, so `0.7 × 1` for a supported
+  judgement or an unjudged row. It is not the `jev_confidence` in the block.
+- **`source.document_id` is `null` in a bundle**, and provenance travels in
+  `contributing_documents` plus our own `kg_evidence` table.
+
+Entity classification metadata has exactly one wire home:
+`properties.kg_classification`, the reserved keyspace this application owns. Every
+other stored property survives untouched, and a row with no recorded decision
+publishes no block at all — a hollow block would be a claim nobody made.
+
+<Warning>
+  **Relationship classification metadata is not on the AKS wire.** The AKS
+  relationship model forbids extra fields (`additionalProperties: false`) and has no
+  `properties` object, so a relation's `canonical_type`, `classification_state`,
+  `support_state`, `compatibility` and `jev_*` values live only in our own columns.
+  Read them through our own query surface, not from an export bundle.
+</Warning>
+
+## Reading a graph that holds free items
+
+The read path treats a free item as an ordinary graph member:
+
+- **No filter returns both kinds.** `GET /aks/v1/entities`, `GET /aks/v1/context`
+  and the traversal endpoint carry no classification predicate, so free nodes and
+  free edges are returned and walked like any other.
+- **`?type=` names a canonical type**, so it returns only items the catalog
+  classified that way — plus rows with no recorded decision, whose label always
+  answered that filter. A free entity whose proposal happens to read `Role` is not a
+  `Role` and is not returned.
+- **`?classification_state=` lists what is free, pending or failed**, and each
+  returned entity carries `properties.kg_classification` with its `reason`.
+- **No inference rule fires on a free relation.** There is no rule engine over
+  relationship rows, and a free `SUBTYPE_OF` edge promotes nobody.
+
+```bash
+# Every free entity of one Stack, with its reason.
+curl -sS -G http://localhost:8000/aks/v1/entities \
+  -H "X-API-Key: $AKS_API_KEY" \
+  --data-urlencode "domain=handbook" \
+  --data-urlencode "classification_state=free"
+```
+
+A generated page and a synthesized description state the same thing to their reader:
+for an entity that is not confirmed classified, the synthesis prompt gains a
+`CLASSIFICATION:` line naming the real state, and classified pages are byte-identical
+to before.

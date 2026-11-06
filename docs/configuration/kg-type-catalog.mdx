@@ -1,0 +1,286 @@
+---
+title: "KG type catalog: the vocabulary a Stack classifies against"
+sidebarTitle: "KG Type Catalog"
+description: "Configure the versioned entity types, relation types, permitted combinations and aliases that the kg dimension's classifier uses, in stacks.type_catalog."
+---
+
+Each Stack classifies the knowledge it ingests against a **type catalog**: entity
+types and relation types with definitions, examples, permitted combinations and
+aliases. The catalog is this application's own configuration. It is not a new AKS
+standard, and the vendored AKS schema declares no global type enum for an entity's
+`type`.
+
+<Note>
+  **A catalog orients classification; it does not filter ingestion.** Nothing is
+  discarded for failing to fit the catalog. A candidate the catalog does not
+  describe is stored as [free](/concepts/kg-open-classification), with the type or
+  predicate the extractor proposed.
+</Note>
+
+## Where the catalog lives
+
+| Item | Value |
+| --- | --- |
+| Column | `stacks.type_catalog`, `jsonb`, nullable |
+| Meaning of `NULL` | The Stack has no catalog of its own; resolution falls through (see below) |
+| Constraint | `valid_type_catalog_is_object` requires a JSON object |
+| Written by | You, with SQL. There is no REST field for it yet |
+
+There is currently **no HTTP surface for the catalog**: `POST /stacks` and
+`PATCH /stacks/:stackId` accept `ontology` and do not accept `type_catalog`. Writing
+the column is a direct database change:
+
+```bash
+docker exec -i llmwiki-kg-db-1 psql -U aks -d aks <<'SQL'
+update stacks
+set type_catalog = $catalog$
+{
+  "version": "2.0.0",
+  "entityTypes": [
+    { "name": "Role", "definition": "Who acts, approves or is accountable.", "examples": ["Incident Commander"] },
+    { "name": "Process", "definition": "An ordered set of activities producing an outcome.", "examples": ["Change management"] }
+  ],
+  "relationTypes": [
+    { "name": "executes", "definition": "The subject role carries out the object process.", "direction": "forward", "examples": ["Incident Commander executes Change management"] }
+  ],
+  "constraints": [{ "from": "Role", "relation": "executes", "to": "Process" }],
+  "entityAliases": [{ "alias": "position", "canonical": "Role" }],
+  "relationAliases": [{ "alias": "performs", "canonical": "executes" }]
+}
+$catalog$::jsonb
+where domain = 'handbook';
+SQL
+```
+
+`stacks.catalog_version` also exists as a text column, and **nothing currently reads
+it**. The version that matters is the catalog document's own `version` field: that is
+the value recorded on every row and log entry a classification writes.
+
+## The resolution order
+
+`loadStackCatalog` (`packages/llmwiki-kg/ts/src/core/catalog/stack-catalog.ts`)
+resolves one Stack's vocabulary in a fixed order, and each step is a decision rather
+than a fallback heuristic:
+
+| Order | Source | Result |
+| --- | --- | --- |
+| 1 | `stacks.type_catalog` | Parsed and validated. When present it is the answer, in full |
+| 2 | `stacks.ontology` (legacy) | **Derived** into a catalog: each declared type becomes a catalog type, each `domains` × `ranges` pair becomes a constraint. Every generated definition is prefixed with `Declared by the Stack ontology with no definition`, so a generated definition is never mistaken for a declared one. The version is content-derived: `ontology-derived:<12 hex>` |
+| 3 | Neither column | The documented default catalog, version `1.0.0` |
+
+A declared catalog is never merged with a derived one, and a derivation is never
+merged with the default: a stored `catalog_version` must name a vocabulary that
+actually existed.
+
+A stored catalog or ontology that does not parse **raises** instead of falling
+through. Substituting the default would attribute a Stack's decisions to a
+vocabulary nobody configured, and the ingest answers `500` naming the offending
+field.
+
+## The format
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `version` | Yes | Non-empty string. SemVer is the recommended shape, not enforced |
+| `entityTypes` | Yes | Non-empty array of `{ name, definition, examples }` |
+| `relationTypes` | Yes | Non-empty array of `{ name, definition, direction, examples }` |
+| `constraints` | No | Permitted `(from, relation, to)` combinations |
+| `entityAliases` | No | `{ alias, canonical }` pairs resolving to a declared entity type |
+| `relationAliases` | No | `{ alias, canonical }` pairs resolving to a declared relation type |
+
+`definition` is required for every type, because a type nobody can describe cannot
+orient a classifier. `examples` may be empty. `direction` is `forward` (the default)
+or `inverse`; constraints are always declared in canonical reading order, so
+`inverse` is metadata for a consumer and never a licence to restate a triple.
+
+Names are compared after one normalization — trim, collapse whitespace and hyphen
+runs to `_`, lower-case — so `Role`, `role` and `Role ` are one name. Nothing else
+folds: no stemming, no plural folding, no accent stripping, no synonyms.
+`Processes` does not resolve to `Process` unless the catalog declares that alias.
+
+## A complete worked example
+
+This is the default catalog the repository ships
+(`packages/llmwiki-kg/ts/src/core/catalog/default_catalog.ts`, version `1.0.0`). Copy
+it as the starting point for your own.
+
+```json
+{
+  "version": "1.0.0",
+  "entityTypes": [
+    {
+      "name": "Role",
+      "definition": "A responsibility, position or function held by a person or a team inside a process: who acts, who approves, who is accountable.",
+      "examples": ["Incident Commander", "Data Protection Officer", "Change approver"]
+    },
+    {
+      "name": "Process",
+      "definition": "An ordered set of activities that produces an outcome, including procedures, workflows, routines and review cycles.",
+      "examples": ["Change management", "Quarterly access review", "Incident response"]
+    },
+    {
+      "name": "Document",
+      "definition": "A written artifact that records information, decisions, instructions or evidence, whether authored by a person or generated by a system.",
+      "examples": ["Runbook", "Meeting minutes", "Architecture decision record"]
+    },
+    {
+      "name": "Policy",
+      "definition": "A binding rule, obligation or constraint that mandates or forbids behaviour, including standards, regulations and internal rules.",
+      "examples": ["Retention policy", "Password standard", "GDPR Article 32"]
+    },
+    {
+      "name": "System",
+      "definition": "A software, infrastructure or tooling component that performs work or provides a capability another element depends on.",
+      "examples": ["Billing service", "PostgreSQL cluster", "Identity provider"]
+    }
+  ],
+  "relationTypes": [
+    {
+      "name": "executes",
+      "definition": "The subject role carries out, owns or performs the object process, and is accountable for its outcome.",
+      "direction": "forward",
+      "examples": ["Incident Commander executes Incident response"]
+    },
+    {
+      "name": "reviews",
+      "definition": "The subject role examines the object document and produces a judgement about it, such as approval or rejection.",
+      "direction": "forward",
+      "examples": ["Change approver reviews Architecture decision record"]
+    },
+    {
+      "name": "requires",
+      "definition": "The subject process depends on the object document as an input or a precondition for running or completing.",
+      "direction": "forward",
+      "examples": ["Change management requires Runbook"]
+    },
+    {
+      "name": "governs",
+      "definition": "The subject policy constrains how the object process may be performed, including which approvals it needs.",
+      "direction": "forward",
+      "examples": ["Retention policy governs Quarterly access review"]
+    },
+    {
+      "name": "supports",
+      "definition": "The subject system provides a capability the object process depends on to run, or runs part of it directly.",
+      "direction": "forward",
+      "examples": ["Identity provider supports Incident response"]
+    }
+  ],
+  "constraints": [
+    { "from": "Role", "relation": "executes", "to": "Process" },
+    { "from": "Role", "relation": "reviews", "to": "Document" },
+    { "from": "Process", "relation": "requires", "to": "Document" },
+    { "from": "Policy", "relation": "governs", "to": "Process" },
+    { "from": "System", "relation": "supports", "to": "Process" }
+  ],
+  "entityAliases": [
+    { "alias": "position", "canonical": "Role" },
+    { "alias": "function", "canonical": "Role" },
+    { "alias": "procedure", "canonical": "Process" },
+    { "alias": "workflow", "canonical": "Process" },
+    { "alias": "artifact", "canonical": "Document" },
+    { "alias": "record", "canonical": "Document" },
+    { "alias": "standard", "canonical": "Policy" },
+    { "alias": "regulation", "canonical": "Policy" },
+    { "alias": "service", "canonical": "System" },
+    { "alias": "application", "canonical": "System" }
+  ],
+  "relationAliases": [
+    { "alias": "performs", "canonical": "executes" },
+    { "alias": "carries out", "canonical": "executes" },
+    { "alias": "is executed by", "canonical": "executes" },
+    { "alias": "checks", "canonical": "reviews" },
+    { "alias": "needs", "canonical": "requires" },
+    { "alias": "depends on", "canonical": "requires" },
+    { "alias": "regulates", "canonical": "governs" },
+    { "alias": "enables", "canonical": "supports" }
+  ]
+}
+```
+
+The five permitted combinations are the whole claim the example catalog makes about
+its relations:
+
+```text
+Role    —executes→ Process
+Role    —reviews→  Document
+Process —requires→ Document
+Policy  —governs→  Process
+System  —supports→ Process
+```
+
+A relation with no declared constraint is unconstrained rather than forbidden. That
+is why an empty constraint list cannot distinguish "declared, unconstrained" from
+"not declared at all"; ask whether the relation is declared before reading an empty
+list as "any endpoints are acceptable".
+
+## What aliases do, and what they do not
+
+An alias is orientation, not coercion:
+
+- It only resolves when the catalog declares both the alias and the canonical type
+  it names.
+- Resolution checks an exact canonical name first and an alias second.
+- The label a classifier returns is resolved through the alias list before it becomes
+  a `canonical_type`, and relation constraints are looked up the same way.
+- **The type an extractor proposed is never rewritten through an alias.** It stays in
+  `proposed_type` as proposed, which is what a later reclassification compares against.
+
+## Ingestion never widens the catalog
+
+Every catalog the parser returns is deeply frozen, and there is no `addType`, no
+`autoExtend`, and no learning helper in the codebase. A candidate that fits nothing
+stays free. A Stack's stored `type_catalog` and `ontology` columns are read-only
+throughout ingestion.
+
+## The reserved `Unclassified` label
+
+`Unclassified` is **this application's convention**, not an AKS type: AKS permits any
+domain-defined string for an entity's `type`, and reserves none. The label appears in
+one place — the AKS export's `type` for a decided row that has no canonical type and
+no extractor proposal — and it means "no canonical type was assigned". It says
+nothing about the entity's evidence, and it is not a statement that the entity is
+false, invalid or awaiting review.
+
+Because a real user type must never collide with that marker, a catalog cannot
+declare it: `parseTypeCatalog` refuses a declaration and any alias that would resolve
+to it.
+
+## Refused declarations
+
+A catalog is untrusted input that becomes the vocabulary of every later stage, so a
+declaration that cannot be honoured is refused with a message naming the field:
+
+| Cause | Message |
+| --- | --- |
+| Declaration is not a JSON object | `type catalog must be a JSON object` |
+| `version` missing or blank | `type catalog "version" must be a non-empty string` |
+| `entityTypes` missing, not an array, or empty | `type catalog "entityTypes" must be a non-empty array` |
+| `relationTypes` missing, not an array, or empty | `type catalog "relationTypes" must be a non-empty array` |
+| `constraints` or an alias list present but not an array | `type catalog "constraints" must be an array` |
+| A type entry is not an object | `type catalog entity type #2 must be a JSON object` |
+| A type has no `name` or no `definition` | `type catalog entity type #1 must have a non-empty string "definition"` |
+| `examples` is not an array of non-empty strings | `type catalog entity type #1 field "examples" contains a non-string or empty example` |
+| `direction` is neither `forward` nor `inverse` | `type catalog relation type #1 "direction" must be "forward" or "inverse"` |
+| Two types differ only in spelling | `type catalog field "entityTypes" declares "role" more than once` |
+| The reserved label is declared | `type catalog declares the reserved entity type "Unclassified"` |
+| An alias collides with a declared type | `type catalog alias "role" collides with the entity type "Role" it would shadow` |
+| An alias names an undeclared type | `type catalog alias "position" names "Position", which is not declared in "entityTypes"` |
+| An alias resolves to the reserved label | `type catalog alias "free" resolves to the reserved entity type "Unclassified"` |
+| A constraint names an undeclared participant | `type catalog constraint #1 names entity type "Team", which is not declared in "entityTypes"` |
+| The same triple is permitted twice | `type catalog field "constraints" declares the triple "role->executes->process" more than once` |
+
+## Changing the catalog
+
+Bump `version` whenever you change anything in the document, including an alias you
+only add. Stored decisions record the version they were produced under, which is how a
+later sweep finds the rows a vocabulary change invalidated:
+
+1. Write the new `stacks.type_catalog`.
+2. Run [`POST /stacks/:stackId/reclassify`](/configuration/kg-classification#reclassify-stored-rows)
+   to re-decide the stored rows against it. No chunking, no embedding, and no
+   extraction is repeated.
+
+The classifier's thresholds are the other half of a vocabulary change: a wider or
+narrower catalog moves the abstention rate, so re-tune them as described in
+[JEV classification](/configuration/kg-classification#tune-the-thresholds).

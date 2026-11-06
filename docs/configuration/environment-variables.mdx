@@ -320,10 +320,34 @@ This variable selects **which** dimensions run. It does not configure what they
 produce, and in particular **no environment variable configures the `kg`
 dimension's entity types or relationship types.** That vocabulary is declared per
 Stack, as the Stack's `ontology`, through the KG REST API (`POST /stacks` and
-`PATCH /stacks/:stackId`); ingest then constrains extraction to exactly that
-list, and a Stack that declares none is enforced against the default ontology.
-The contract, the payload, and copyable examples are in
-[Stack Ontology](/configuration/stack-ontology).
+`PATCH /stacks/:stackId`). Ingest gives the declaration to the extraction model as
+orientation, keeps candidates that fall outside it, and classifies each candidate
+against the Stack's type catalog — its `type_catalog`, otherwise a catalog derived
+from that `ontology`, otherwise the documented default. The contract, the payload,
+and copyable examples are in [Stack Ontology](/configuration/stack-ontology); the
+classification vocabulary is in [KG type catalog](/configuration/kg-type-catalog).
+
+### KG classification (JEV)
+
+Classification is optional. These variables configure the System One classifier
+the `kg` dimension asks about each extracted candidate. With no `TYPESAFE_API_KEY`,
+ingest still succeeds and every new candidate stays `pending`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `TYPESAFE_API_KEY` | unset | Bearer credential for System One. Unset or blank means classification is not configured |
+| `LLMWIKI_JEV_MODEL` | `jev-latest` | Model id sent in every request body |
+| `LLMWIKI_JEV_BASE_URL` | `https://api.typesafe.ai` | Base URL; `/v1/systemone` is appended |
+| `LLMWIKI_JEV_TIMEOUT_MS` | `30000` | Per-request timeout in milliseconds |
+| `LLMWIKI_JEV_CLASSIFICATION_NO_MATCH_BELOW` | `0.35` | P(some catalog type fits) below which the answer is `NO_MATCH` |
+| `LLMWIKI_JEV_CLASSIFICATION_UNCERTAIN_BELOW` | `0.65` | P(some catalog type fits) below which the fit is still ambiguous |
+| `LLMWIKI_JEV_CLASSIFICATION_MIN_TOP_PROBABILITY` | `0.45` | P(the top catalog type) below which no type dominates |
+| `LLMWIKI_JEV_SUPPORT_UNCERTAIN_BELOW` | `0.6` | P(the top support answer) below which support is undecided |
+
+The four thresholds are **corpus-dependent starting points, not calibrated values**:
+tune them with the evaluation harness before trusting an abstention rate. The rules,
+the endpoint contract and the tuning commands are in
+[KG classification](/configuration/kg-classification).
 
 ### Shared embedding credentials
 
