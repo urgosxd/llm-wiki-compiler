@@ -233,7 +233,15 @@ function sendEmptyContext(
   );
 }
 
-/** The entity catalog shown to the model: whole stack, most confident first. */
+/**
+ * The entity catalog shown to the model: whole stack, most confident first.
+ *
+ * The `name, id` tie-break is not cosmetic. Without it two entities of equal
+ * confidence were ordered (and, because of the `limit`, even SELECTED) by whatever
+ * plan Postgres chose, so the prompt depended on the indexes present. The
+ * open-classification migration added stack-leading indexes and changed that plan;
+ * the order is now stated instead of inherited.
+ */
 async function loadCatalog(tx: Database, stackId: string): Promise<CatalogRow[]> {
   // The model can only select names it is shown, so this cap is part of what
   // bounds the prompt.
@@ -241,12 +249,17 @@ async function loadCatalog(tx: Database, stackId: string): Promise<CatalogRow[]>
     select name, type
     from ontology_entities
     where stack_id = ${stackId}
-    order by confidence desc
+    order by confidence desc, name, id
     limit ${CONTEXT_CATALOG_LIMIT}
   `);
 }
 
-/** Load the entities the model selected, matched case-insensitively by name. */
+/**
+ * Load the entities the model selected, matched case-insensitively by name.
+ *
+ * Ordered by `name, id` for the reason the export query states: homonyms are legal
+ * now, and an unstated order here made the response depend on the plan.
+ */
 async function loadSelectedEntities(
   tx: Database,
   stackId: string,
@@ -259,10 +272,17 @@ async function loadSelectedEntities(
       and lower(name) = any(${toPostgresArrayLiteral(
         entityNames.map((name) => name.toLowerCase()),
       )}::text[])
+    order by name, id
   `);
 }
 
-/** Load the edges whose BOTH endpoints are in the selected set. */
+/**
+ * Load the edges whose BOTH endpoints are in the selected set.
+ *
+ * `(type, from, to)` is a total order inside a Stack, since `unique_edge_per_stack`
+ * already forbids a repeated triple, and it keeps the answer's edge list independent
+ * of the plan the migration's new indexes produce.
+ */
 async function loadInternalRelationships(
   tx: Database,
   stackId: string,
@@ -274,6 +294,7 @@ async function loadInternalRelationships(
     where stack_id = ${stackId}
       and from_entity_id = any(${toPostgresArrayLiteral(entityIds)}::uuid[])
       and to_entity_id = any(${toPostgresArrayLiteral(entityIds)}::uuid[])
+    order by type, from_entity_id, to_entity_id
   `);
   return rows.map(rowToRelationship);
 }

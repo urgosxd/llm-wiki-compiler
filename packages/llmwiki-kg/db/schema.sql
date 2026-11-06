@@ -342,3 +342,453 @@ create index if not exists idx_backfeed_created on backfeed_queue(created_at des
 -- stored a full copy of every document and body. A database created before the
 -- drop is converted by `migration_drop_ingest_outbox.sql`, which is destructive and
 -- is applied by an operator, never by this file.
+
+-- ============================================================
+-- GROUP 7: Open classification (entities, relationships, evidence)
+-- ============================================================
+-- MIRRORED VERBATIM FROM `migration_open_kg_classification.sql`. The two must stay
+-- identical in effect: there is no migration runner, so this file is the clean-install
+-- path and the migration is the upgrade path for a live database, and a fresh
+-- database that disagreed with a migrated one would be a defect nobody notices until
+-- a restore. The statements are therefore idempotent ALTERs appended AFTER the
+-- CREATE TABLE bodies above, exactly like `synthesize_descriptions` and `ontology`:
+-- on a fresh database they upgrade the tables this file just created, and on a
+-- migrated one they are already applied and do nothing.
+--
+-- WHAT THE COLUMNS MEAN, in one line each:
+--   classification_state  classified | free_no_match | free_uncertain | pending | failed; NULL = never decided
+--   canonical_type        the catalog type, set only when classification_state = 'classified'
+--   proposed_type         what the extractor proposed, kept so a later catalog can be compared to it
+--   support_state         whether the quoted evidence backs the claim: supported | unsupported | uncertain
+--   predicate             the immutable original relation predicate (never normalized away)
+--   compatibility         compatible | conflict | indeterminate; NULL = not evaluated
+--   jev_*                 raw classifier output, kept with its original meaning; never folded into `confidence`
+--   identity_key          what makes two rows the same thing, as opposed to the same spelling
+
+-- The per-Stack catalog. NULL means "no catalog of its own": fall back to the legacy
+-- `ontology` column and the documented default catalog.
+alter table stacks
+    add column if not exists type_catalog jsonb;
+
+alter table stacks
+    add column if not exists catalog_version text;
+
+alter table stacks
+    drop constraint if exists valid_type_catalog_is_object;
+
+alter table stacks
+    add constraint valid_type_catalog_is_object
+    check (type_catalog is null or jsonb_typeof(type_catalog) = 'object');
+
+-- Entity classification, provenance and identity.
+alter table ontology_entities
+    add column if not exists classification_state text;
+
+alter table ontology_entities
+    add column if not exists canonical_type text;
+
+alter table ontology_entities
+    add column if not exists proposed_type text;
+
+alter table ontology_entities
+    add column if not exists support_state text;
+
+alter table ontology_entities
+    add column if not exists jev_choice text;
+
+alter table ontology_entities
+    add column if not exists jev_confidence real;
+
+alter table ontology_entities
+    add column if not exists jev_top_probability real;
+
+alter table ontology_entities
+    add column if not exists jev_model text;
+
+alter table ontology_entities
+    add column if not exists jev_classified_at timestamptz;
+
+alter table ontology_entities
+    add column if not exists catalog_version text;
+
+alter table ontology_entities
+    add column if not exists classifier_version text;
+
+alter table ontology_entities
+    add column if not exists classification_updated_at timestamptz;
+
+alter table ontology_entities
+    add column if not exists identity_key text;
+
+-- Relationship classification, provenance and identity.
+alter table ontology_relationships
+    add column if not exists predicate text;
+
+alter table ontology_relationships
+    add column if not exists canonical_type text;
+
+alter table ontology_relationships
+    add column if not exists classification_state text;
+
+alter table ontology_relationships
+    add column if not exists support_state text;
+
+alter table ontology_relationships
+    add column if not exists compatibility text;
+
+alter table ontology_relationships
+    add column if not exists jev_choice text;
+
+alter table ontology_relationships
+    add column if not exists jev_confidence real;
+
+alter table ontology_relationships
+    add column if not exists jev_top_probability real;
+
+alter table ontology_relationships
+    add column if not exists jev_model text;
+
+alter table ontology_relationships
+    add column if not exists jev_classified_at timestamptz;
+
+alter table ontology_relationships
+    add column if not exists catalog_version text;
+
+alter table ontology_relationships
+    add column if not exists classifier_version text;
+
+alter table ontology_relationships
+    add column if not exists classification_updated_at timestamptz;
+
+alter table ontology_relationships
+    add column if not exists identity_key text;
+
+-- Backfill: state what is already true, invent nothing. Existing rows were accepted
+-- with a type label and no evidence judgement was ever made about them, so they are
+-- `classified` with `support_state = 'uncertain'` -- never `supported`, which would
+-- fabricate a judgement. `verified`, `confidence`, `properties`, `source_kind` and
+-- `pipeline` are not written.
+update ontology_entities
+set identity_key = lower(name)
+where identity_key is null;
+
+-- Case variants are distinct rows under `unique (stack_id, name)` but collapse onto
+-- one identity key. They are kept APART: the later row of a deterministic order gets
+-- a suffix from its own UUID, stable across re-runs. Never merged, never deleted.
+update ontology_entities as e
+set identity_key = e.identity_key || '#' || e.id::text
+from (
+    select id
+    from (
+        select
+            id,
+            row_number() over (
+                partition by stack_id, identity_key
+                order by created_at, id
+            ) as position
+        from ontology_entities
+    ) ranked
+    where ranked.position > 1
+) collided
+where e.id = collided.id;
+
+update ontology_entities
+set classification_state = 'classified',
+    canonical_type = type,
+    proposed_type = type,
+    support_state = 'uncertain',
+    classification_updated_at = now()
+where classification_state is null;
+
+update ontology_relationships
+set predicate = type
+where predicate is null;
+
+update ontology_relationships
+set identity_key = lower(predicate)
+where identity_key is null;
+
+update ontology_relationships as r
+set identity_key = r.identity_key || '#' || r.id::text
+from (
+    select id
+    from (
+        select
+            id,
+            row_number() over (
+                partition by stack_id, from_entity_id, to_entity_id, identity_key
+                order by created_at, id
+            ) as position
+        from ontology_relationships
+    ) ranked
+    where ranked.position > 1
+) collided
+where r.id = collided.id;
+
+update ontology_relationships
+set classification_state = 'classified',
+    canonical_type = type,
+    support_state = 'uncertain',
+    classification_updated_at = now()
+where classification_state is null;
+
+-- State constraints. `drop ... if exists` then `add` is the idempotent pair this
+-- file already uses for `valid_ontology_is_object`.
+alter table ontology_entities
+    drop constraint if exists valid_entity_classification_state;
+
+alter table ontology_entities
+    add constraint valid_entity_classification_state
+    check (
+        classification_state is null
+        or classification_state in (
+            'classified', 'free_no_match', 'free_uncertain', 'pending', 'failed'
+        )
+    );
+
+alter table ontology_entities
+    drop constraint if exists valid_entity_support_state;
+
+alter table ontology_entities
+    add constraint valid_entity_support_state
+    check (
+        support_state is null
+        or support_state in ('supported', 'unsupported', 'uncertain')
+    );
+
+alter table ontology_entities
+    drop constraint if exists canonical_type_requires_classified;
+
+alter table ontology_entities
+    add constraint canonical_type_requires_classified
+    check (canonical_type is null or classification_state = 'classified');
+
+alter table ontology_relationships
+    drop constraint if exists valid_relationship_classification_state;
+
+alter table ontology_relationships
+    add constraint valid_relationship_classification_state
+    check (
+        classification_state is null
+        or classification_state in (
+            'classified', 'free_no_match', 'free_uncertain', 'pending', 'failed'
+        )
+    );
+
+alter table ontology_relationships
+    drop constraint if exists valid_relationship_support_state;
+
+alter table ontology_relationships
+    add constraint valid_relationship_support_state
+    check (
+        support_state is null
+        or support_state in ('supported', 'unsupported', 'uncertain')
+    );
+
+alter table ontology_relationships
+    drop constraint if exists valid_relationship_compatibility;
+
+alter table ontology_relationships
+    add constraint valid_relationship_compatibility
+    check (
+        compatibility is null
+        or compatibility in ('compatible', 'conflict', 'indeterminate')
+    );
+
+alter table ontology_relationships
+    drop constraint if exists canonical_type_requires_classified;
+
+alter table ontology_relationships
+    add constraint canonical_type_requires_classified
+    check (canonical_type is null or classification_state = 'classified');
+
+-- Identity instead of spelling: `unique (stack_id, name)` merged homonyms, so it is
+-- replaced by the identity key. The plain `(stack_id, name)` index keeps the
+-- `lower(name)` lookups the read paths perform fast.
+alter table ontology_entities
+    drop constraint if exists unique_name_per_stack;
+
+alter table ontology_entities
+    drop constraint if exists unique_identity_per_stack;
+
+alter table ontology_entities
+    add constraint unique_identity_per_stack
+    unique (stack_id, identity_key);
+
+create index if not exists idx_entities_stack_name
+    on ontology_entities (stack_id, name);
+
+-- `unique_edge_per_stack` is KEPT as well as the identity-key constraint: two
+-- consolidators infer their upsert target from
+-- `on conflict (stack_id, from_entity_id, to_entity_id, type)`, and dropping the
+-- constraint backing those columns breaks every re-ingest. Identity-key uniqueness
+-- implies type uniqueness for every writer that derives the key from the predicate.
+alter table ontology_relationships
+    drop constraint if exists unique_edge_identity_per_stack;
+
+alter table ontology_relationships
+    add constraint unique_edge_identity_per_stack
+    unique (stack_id, from_entity_id, to_entity_id, identity_key);
+
+-- `identity_key` is NOT NULL so no row can exist without an identity, but every
+-- INSERT in this repository lists its columns and does not name it. These triggers
+-- derive the key the backfill used, and only when the caller supplied none: a
+-- pipeline that computes an identity (alias, mention, canonical entity) always wins.
+-- They also fill `proposed_type` / `predicate` when absent, because for a writer that
+-- predates the classifier the stored `type` IS the proposal and the original
+-- predicate, and `predicate` is declared immutable so a later normalization pass that
+-- rewrites `type` must not be able to erase what was actually asserted.
+create or replace function kg_entity_identity_key() returns trigger
+language plpgsql as $$
+begin
+    if new.proposed_type is null then
+        new.proposed_type := new.type;
+    end if;
+    if new.identity_key is null or btrim(new.identity_key) = '' then
+        new.identity_key := lower(btrim(new.name));
+    end if;
+    return new;
+end
+$$;
+
+create or replace function kg_relationship_identity_key() returns trigger
+language plpgsql as $$
+begin
+    if new.predicate is null then
+        new.predicate := new.type;
+    end if;
+    if new.identity_key is null or btrim(new.identity_key) = '' then
+        new.identity_key := lower(btrim(new.predicate));
+    end if;
+    return new;
+end
+$$;
+
+drop trigger if exists fill_identity_key on ontology_entities;
+create trigger fill_identity_key
+    before insert or update of name, identity_key on ontology_entities
+    for each row execute function kg_entity_identity_key();
+
+drop trigger if exists fill_identity_key on ontology_relationships;
+create trigger fill_identity_key
+    before insert or update of type, predicate, identity_key on ontology_relationships
+    for each row execute function kg_relationship_identity_key();
+
+alter table ontology_entities
+    alter column identity_key set not null;
+
+alter table ontology_relationships
+    alter column identity_key set not null;
+
+-- Per-candidate provenance. One row per (candidate, source span): the same claim is
+-- usually stated in several places and corroboration must survive a re-ingest. A
+-- candidate is judged BEFORE it has a UUID, so `candidate_ref` is the run-scoped
+-- identifier the pipeline assigned, not a foreign key. `evidence_kind` keeps two
+-- different facts apart: a quote that exists in the source is not an evaluation that
+-- the quote supports the claim.
+create table if not exists kg_evidence (
+    id uuid primary key default gen_random_uuid(),
+    stack_id uuid not null references stacks(id) on delete cascade,
+
+    candidate_kind text not null,
+    candidate_ref text not null,
+
+    document_id uuid not null references stack_documents(id) on delete cascade,
+    chunk_id uuid references document_chunks(id) on delete cascade,
+
+    chunk_index integer,
+
+    evidence_text text not null,
+    char_start integer,
+    char_end integer,
+
+    normalized_match boolean not null default false,
+    evidence_kind text not null default 'textual',
+
+    model text,
+    pipeline_version text,
+    catalog_version text,
+    created_at timestamptz not null default now(),
+
+    constraint valid_evidence_candidate_kind
+        check (candidate_kind in ('entity', 'relationship')),
+    constraint valid_evidence_kind
+        check (evidence_kind in ('textual', 'semantic')),
+    constraint valid_evidence_offsets check (
+        (char_start is null and char_end is null)
+        or (
+            char_start is not null
+            and char_end is not null
+            and char_start >= 0
+            and char_end > char_start
+        )
+    )
+);
+
+create index if not exists idx_evidence_candidate
+    on kg_evidence (stack_id, candidate_kind, candidate_ref);
+
+create index if not exists idx_evidence_document on kg_evidence (document_id);
+
+create index if not exists idx_evidence_chunk on kg_evidence (chunk_id);
+
+-- Append-only classification history: what the row was, what it became, which
+-- catalog and classifier version decided it, and why. The JEV columns repeat here on
+-- purpose; reading the current row would only ever show the LATEST answer.
+create table if not exists kg_classification_log (
+    id uuid primary key default gen_random_uuid(),
+    stack_id uuid not null references stacks(id) on delete cascade,
+
+    candidate_kind text not null,
+    candidate_ref text not null,
+
+    previous_state text,
+    new_state text not null,
+    previous_canonical_type text,
+    new_canonical_type text,
+
+    jev_choice text,
+    jev_confidence real,
+    jev_top_probability real,
+    jev_model text,
+
+    catalog_version text,
+    classifier_version text,
+    reason text,
+    created_at timestamptz not null default now(),
+
+    constraint valid_log_candidate_kind
+        check (candidate_kind in ('entity', 'relationship')),
+    constraint valid_log_new_state
+        check (
+            new_state in (
+                'classified', 'free_no_match', 'free_uncertain', 'pending', 'failed'
+            )
+        ),
+    constraint valid_log_previous_state
+        check (
+            previous_state is null
+            or previous_state in (
+                'classified', 'free_no_match', 'free_uncertain', 'pending', 'failed'
+            )
+        )
+);
+
+create index if not exists idx_classification_log_candidate
+    on kg_classification_log (stack_id, candidate_kind, candidate_ref, created_at desc);
+
+-- Tenancy for the two tables created above: `migration_rls_tenancy.sql` lists the
+-- tables that existed when it was written, so their DDL and their policy travel
+-- together here, with the same uniform `stack_id` predicate that file uses.
+alter table kg_evidence enable row level security;
+alter table kg_evidence force row level security;
+alter table kg_classification_log enable row level security;
+alter table kg_classification_log force row level security;
+
+drop policy if exists tenant_isolation on kg_evidence;
+create policy tenant_isolation on kg_evidence
+    using (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);
+
+drop policy if exists tenant_isolation on kg_classification_log;
+create policy tenant_isolation on kg_classification_log
+    using (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);

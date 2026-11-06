@@ -68,6 +68,57 @@ export interface BackfeedProposalRelationship {
 /** Free-form JSONB payloads. Structure is validated by the DTO layer. */
 export type JsonObject = Record<string, unknown>;
 
+/**
+ * The classification state of an entity or a relationship.
+ *
+ * `null` in the database means "no decision was ever recorded", which is a different
+ * fact from every value here and must not be collapsed into one of them:
+ *
+ * - `classified`     a catalog type was assigned, so `canonical_type` is set.
+ * - `free_no_match`  the classifier abstained: nothing in the catalog fits.
+ * - `free_uncertain` the classifier could not decide: ambiguous or insufficient.
+ * - `pending`        the classifier has not answered yet.
+ * - `failed`         the classifier failed or exhausted its retries.
+ *
+ * "Free" means no catalog type could be assigned. It never means false, invalid, or
+ * awaiting human review, and it is not a reason to hide the row from reads.
+ */
+export type ClassificationState =
+  | "classified"
+  | "free_no_match"
+  | "free_uncertain"
+  | "pending"
+  | "failed";
+
+/**
+ * Whether the quoted source evidence supports the claim (S20's closed set).
+ *
+ * Deliberately separate from every confidence measure: "the source backs this" and
+ * "the classifier is sure of the label" are different facts.
+ */
+export type SupportState = "supported" | "unsupported" | "uncertain";
+
+/**
+ * Whether a relationship's endpoint types are permitted by the catalog (S34).
+ *
+ * `null` in the database means "not evaluated", which is NOT the same answer as
+ * `indeterminate` (evaluated, but an endpoint's type is unknown).
+ */
+export type CompatibilityState = "compatible" | "conflict" | "indeterminate";
+
+/** What an evidence row or a classification log row is about. */
+export type CandidateKind = "entity" | "relationship";
+
+/**
+ * Which fact an evidence row records.
+ *
+ * - `textual`  the quote was located in the source (before any support judgement).
+ * - `semantic` an evaluation that the located text supports the candidate.
+ *
+ * A quote that exists never guarantees that it supports the extractor's reading.
+ */
+export type EvidenceKind = "textual" | "semantic";
+
 // ---------------------------------------------------------------------------
 // GROUP 1: Stacks
 // ---------------------------------------------------------------------------
@@ -92,6 +143,15 @@ export const stacks = pgTable(
     synthesizeDescriptions: boolean("synthesize_descriptions")
       .notNull()
       .default(false),
+    // Added by a later ALTER TABLE in db/schema.sql, not the CREATE TABLE. Nullable
+    // and load-bearing: `null` is the ORACLE's behaviour (advertise the default type
+    // hints and accept whatever the model emits), which is what every Stack does.
+    ontology: jsonb("ontology").$type<JsonObject>(),
+    // The versioned per-Stack type catalog, added by the open-classification upgrade.
+    // NULL means "no catalog of its own": fall back to the legacy `ontology` column
+    // and the documented default catalog.
+    typeCatalog: jsonb("type_catalog").$type<JsonObject>(),
+    catalogVersion: text("catalog_version"),
   },
   (t) => [
     unique("stacks_domain_key").on(t.domain),
@@ -101,6 +161,10 @@ export const stacks = pgTable(
       sql`${t.compilationStrategy} in ('incremental', 'global')`,
     ),
     check("valid_domain_slug", sql`${t.domain} ~ '^[a-z0-9-]+$'`),
+    check(
+      "valid_type_catalog_is_object",
+      sql`${t.typeCatalog} is null or jsonb_typeof(${t.typeCatalog}) = 'object'`,
+    ),
     index("idx_stacks_domain").on(t.domain),
   ],
 );
@@ -205,11 +269,49 @@ export const ontologyEntities = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
       .notNull()
       .defaultNow(),
+    // Open-classification columns. `type` above stays the projection/display value;
+    // the catalog decision lives in `canonicalType` and is set only while the state is
+    // `classified` (see the `canonical_type_requires_classified` check).
+    classificationState: text("classification_state").$type<ClassificationState>(),
+    canonicalType: text("canonical_type"),
+    proposedType: text("proposed_type"),
+    supportState: text("support_state").$type<SupportState>(),
+    // Raw classifier output with its original meaning. Never folded into `confidence`.
+    jevChoice: text("jev_choice"),
+    jevConfidence: real("jev_confidence"),
+    jevTopProbability: real("jev_top_probability"),
+    jevModel: text("jev_model"),
+    jevClassifiedAt: timestamp("jev_classified_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    catalogVersion: text("catalog_version"),
+    classifierVersion: text("classifier_version"),
+    classificationUpdatedAt: timestamp("classification_updated_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    // NOT NULL in SQL. Writers that do not supply one get it derived from `name` by
+    // the `fill_identity_key` trigger, exactly as the backfill derived it.
+    identityKey: text("identity_key").notNull(),
   },
   (t) => [
-    unique("unique_name_per_stack").on(t.stackId, t.name),
+    unique("unique_identity_per_stack").on(t.stackId, t.identityKey),
+    check(
+      "valid_entity_classification_state",
+      sql`${t.classificationState} is null or ${t.classificationState} in ('classified', 'free_no_match', 'free_uncertain', 'pending', 'failed')`,
+    ),
+    check(
+      "valid_entity_support_state",
+      sql`${t.supportState} is null or ${t.supportState} in ('supported', 'unsupported', 'uncertain')`,
+    ),
+    check(
+      "canonical_type_requires_classified",
+      sql`${t.canonicalType} is null or ${t.classificationState} = 'classified'`,
+    ),
     index("idx_entities_stack").on(t.stackId),
     index("idx_entities_type").on(t.type),
+    index("idx_entities_stack_name").on(t.stackId, t.name),
   ],
 );
 
@@ -242,13 +344,60 @@ export const ontologyRelationships = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .notNull()
       .defaultNow(),
+    // The immutable original predicate. `type` above keeps its projection meaning, so a
+    // predicate nobody could map ("deja sin efecto") survives instead of collapsing.
+    predicate: text("predicate"),
+    canonicalType: text("canonical_type"),
+    classificationState: text("classification_state").$type<ClassificationState>(),
+    supportState: text("support_state").$type<SupportState>(),
+    compatibility: text("compatibility").$type<CompatibilityState>(),
+    jevChoice: text("jev_choice"),
+    jevConfidence: real("jev_confidence"),
+    jevTopProbability: real("jev_top_probability"),
+    jevModel: text("jev_model"),
+    jevClassifiedAt: timestamp("jev_classified_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    catalogVersion: text("catalog_version"),
+    classifierVersion: text("classifier_version"),
+    classificationUpdatedAt: timestamp("classification_updated_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    identityKey: text("identity_key").notNull(),
   },
   (t) => [
+    // KEPT as well as the identity-key constraint: two consolidators infer their upsert
+    // target from `on conflict (stack_id, from_entity_id, to_entity_id, type)`, and
+    // dropping the constraint that backs those columns breaks every re-ingest.
     unique("unique_edge_per_stack").on(
       t.stackId,
       t.fromEntityId,
       t.toEntityId,
       t.type,
+    ),
+    unique("unique_edge_identity_per_stack").on(
+      t.stackId,
+      t.fromEntityId,
+      t.toEntityId,
+      t.identityKey,
+    ),
+    check(
+      "valid_relationship_classification_state",
+      sql`${t.classificationState} is null or ${t.classificationState} in ('classified', 'free_no_match', 'free_uncertain', 'pending', 'failed')`,
+    ),
+    check(
+      "valid_relationship_support_state",
+      sql`${t.supportState} is null or ${t.supportState} in ('supported', 'unsupported', 'uncertain')`,
+    ),
+    check(
+      "valid_relationship_compatibility",
+      sql`${t.compatibility} is null or ${t.compatibility} in ('compatible', 'conflict', 'indeterminate')`,
+    ),
+    check(
+      "canonical_type_requires_classified",
+      sql`${t.canonicalType} is null or ${t.classificationState} = 'classified'`,
     ),
     index("idx_rels_stack").on(t.stackId),
     index("idx_rels_from").on(t.fromEntityId),
@@ -350,6 +499,119 @@ export const backfeedQueue = pgTable(
     index("idx_backfeed_stack").on(t.stackId),
     index("idx_backfeed_status").on(t.status),
     index("idx_backfeed_created").on(t.createdAt.desc()),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// GROUP 7: Open classification (evidence and history)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-candidate provenance: one row per (candidate, source span).
+ *
+ * A candidate is judged BEFORE it has a UUID, so `candidateRef` is the run-scoped
+ * identifier the pipeline assigned and not a foreign key; `identity_key` on the
+ * entity/relationship is what reconnects it after consolidation.
+ */
+export const kgEvidence = pgTable(
+  "kg_evidence",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    stackId: uuid("stack_id")
+      .notNull()
+      .references(() => stacks.id, { onDelete: "cascade" }),
+    candidateKind: text("candidate_kind").$type<CandidateKind>().notNull(),
+    candidateRef: text("candidate_ref").notNull(),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => stackDocuments.id, { onDelete: "cascade" }),
+    chunkId: uuid("chunk_id").references(() => documentChunks.id, {
+      onDelete: "cascade",
+    }),
+    chunkIndex: integer("chunk_index"),
+    evidenceText: text("evidence_text").notNull(),
+    // Character offsets into `document_chunks.content`, never into the original file.
+    charStart: integer("char_start"),
+    charEnd: integer("char_end"),
+    normalizedMatch: boolean("normalized_match").notNull().default(false),
+    evidenceKind: text("evidence_kind").$type<EvidenceKind>().notNull().default("textual"),
+    model: text("model"),
+    pipelineVersion: text("pipeline_version"),
+    catalogVersion: text("catalog_version"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check(
+      "valid_evidence_candidate_kind",
+      sql`${t.candidateKind} in ('entity', 'relationship')`,
+    ),
+    check(
+      "valid_evidence_kind",
+      sql`${t.evidenceKind} in ('textual', 'semantic')`,
+    ),
+    check(
+      "valid_evidence_offsets",
+      sql`(${t.charStart} is null and ${t.charEnd} is null)
+        or (${t.charStart} is not null and ${t.charEnd} is not null
+            and ${t.charStart} >= 0 and ${t.charEnd} > ${t.charStart})`,
+    ),
+    index("idx_evidence_candidate").on(t.stackId, t.candidateKind, t.candidateRef),
+    index("idx_evidence_document").on(t.documentId),
+    index("idx_evidence_chunk").on(t.chunkId),
+  ],
+);
+
+/**
+ * Append-only classification history: what the row was, what it became, and why.
+ *
+ * The JEV columns repeat here on purpose; reading the current row would only ever
+ * show the LATEST answer, which cannot audit a reclassification.
+ */
+export const kgClassificationLog = pgTable(
+  "kg_classification_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    stackId: uuid("stack_id")
+      .notNull()
+      .references(() => stacks.id, { onDelete: "cascade" }),
+    candidateKind: text("candidate_kind").$type<CandidateKind>().notNull(),
+    candidateRef: text("candidate_ref").notNull(),
+    previousState: text("previous_state").$type<ClassificationState>(),
+    newState: text("new_state").$type<ClassificationState>().notNull(),
+    previousCanonicalType: text("previous_canonical_type"),
+    newCanonicalType: text("new_canonical_type"),
+    jevChoice: text("jev_choice"),
+    jevConfidence: real("jev_confidence"),
+    jevTopProbability: real("jev_top_probability"),
+    jevModel: text("jev_model"),
+    catalogVersion: text("catalog_version"),
+    classifierVersion: text("classifier_version"),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check(
+      "valid_log_candidate_kind",
+      sql`${t.candidateKind} in ('entity', 'relationship')`,
+    ),
+    check(
+      "valid_log_new_state",
+      sql`${t.newState} in ('classified', 'free_no_match', 'free_uncertain', 'pending', 'failed')`,
+    ),
+    check(
+      "valid_log_previous_state",
+      sql`${t.previousState} is null or ${t.previousState} in ('classified', 'free_no_match', 'free_uncertain', 'pending', 'failed')`,
+    ),
+    index("idx_classification_log_candidate").on(
+      t.stackId,
+      t.candidateKind,
+      t.candidateRef,
+      t.createdAt.desc(),
+    ),
   ],
 );
 

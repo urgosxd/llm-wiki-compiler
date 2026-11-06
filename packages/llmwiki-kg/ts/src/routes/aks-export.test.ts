@@ -82,7 +82,11 @@ describe.skipIf(state.skipReason !== false)("aks export (no gateway)", () => {
       relationships: Array<{ type: string }>;
       document_count: number;
     };
-    expect(body.entities.map((entity) => entity.name)).toEqual(["Gateway", "Embedding Model"]);
+    // The export states its order (`order by name, id`) instead of inheriting the
+    // plan's: the open-classification migration added stack-leading indexes and the
+    // undocumented order flipped with them. Alphabetical, not confidence order, is
+    // what that query says.
+    expect(body.entities.map((entity) => entity.name)).toEqual(["Embedding Model", "Gateway"]);
     // `HAS` has `Rate Limit` as its target, which the filter removed, so it is
     // dropped. Both endpoints must survive for an edge to be exported.
     expect(body.relationships.map((relationship) => relationship.type)).toEqual(["USED_BY"]);

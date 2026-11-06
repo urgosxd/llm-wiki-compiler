@@ -172,8 +172,11 @@ async function countNodes(
  * `order by confidence desc, name` is the same deterministic order
  * `/aks/v1/entities` uses, and it matters more here than there: which nodes
  * survive truncation decides which edges survive with them, so an unstable order
- * would make two identical requests return two different graphs. `name` is the
- * tie-break that makes the truncation boundary reproducible.
+ * would make two identical requests return two different graphs. `id` is the final
+ * tie-break because `name` alone stopped being unique once the open-classification
+ * schema replaced `unique (stack_id, name)` with the identity key: two homonyms may
+ * now share a name, and without `id` the truncation boundary would silently depend
+ * on the plan for exactly those rows.
  */
 async function loadNodes(
   tx: Database,
@@ -186,7 +189,7 @@ async function loadNodes(
     from ontology_entities
     where stack_id = ${stackId}
       and confidence >= ${minConfidence}
-    order by confidence desc, name
+    order by confidence desc, name, id
     limit ${limit}
   `);
 }
@@ -199,6 +202,17 @@ async function loadNodes(
  * which is the intended reading: an edge to a node the caller cannot draw is not
  * drawable data. `nodeIds` empty short-circuits so the statement never builds an
  * `any({})` literal.
+ *
+ * The ORDER BY is the same determinism argument as {@link loadNodes}, applied to
+ * edges: this statement had none, so the edge list (and therefore `edges[0]`, which
+ * the graph suite reads) was whatever plan Postgres picked. The open-classification
+ * migration added `unique_edge_identity_per_stack`, changed that plan, and silently
+ * reordered the graph response.
+ *
+ * `confidence desc` leads for the same reason it leads on nodes: this is a rendered
+ * graph, and the most confident edge is the one a reader should see first. The
+ * remaining keys make it a TOTAL order — `(type, from, to)` is unique inside a Stack
+ * because `unique_edge_per_stack` already forbids a repeated triple.
  */
 async function loadEdges(
   tx: Database,
@@ -212,6 +226,7 @@ async function loadEdges(
     where stack_id = ${stackId}
       and from_entity_id = any(${toPostgresArrayLiteral(nodeIds)}::uuid[])
       and to_entity_id = any(${toPostgresArrayLiteral(nodeIds)}::uuid[])
+    order by confidence desc, type, from_entity_id, to_entity_id
   `);
 }
 

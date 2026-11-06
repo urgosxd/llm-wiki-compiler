@@ -95,7 +95,19 @@ async function loadBundleContents(
  * `compiled_at` is the request time, never a stored value: a bundle describes the
  * graph as it was when it was produced.
  */
-/** Load the entities the export filter selects. */
+/**
+ * Load the entities the export filter selects.
+ *
+ * ## The ORDER BY is the contract, not decoration
+ *
+ * This query had none, so the bundle's entity order was whatever plan Postgres
+ * happened to pick. It was heap order for as long as `idx_entities_stack` was the
+ * only stack-leading index, and the open-classification migration added
+ * `(stack_id, name)` and `(stack_id, identity_key)`, which changed the plan and
+ * therefore the response order of an endpoint nobody asked to change. The order is
+ * now stated: `name`, then `id`, so two homonyms sharing a name still resolve to one
+ * total order instead of swapping between plans.
+ */
 async function loadExportEntities(
   tx: Database,
   stackId: string,
@@ -113,10 +125,17 @@ async function loadExportEntities(
       and confidence >= ${minConfidence}
       ${verifiedClause}
       ${typeClause}
+    order by name, id
   `);
 }
 
-/** Load the edges whose BOTH endpoints are being exported. */
+/**
+ * Load the edges whose BOTH endpoints are being exported.
+ *
+ * Ordered for the same reason as the entity query above: `(type, from, to)` is a
+ * total order inside a Stack because `unique_edge_per_stack` already forbids a
+ * repeated triple, and it keeps the bundle's edge list independent of the plan.
+ */
 async function loadExportRelationships(
   tx: Database,
   stackId: string,
@@ -129,6 +148,7 @@ async function loadExportRelationships(
     where stack_id = ${stackId}
       and from_entity_id = any(${toPostgresArrayLiteral(entityIds)}::uuid[])
       and to_entity_id = any(${toPostgresArrayLiteral(entityIds)}::uuid[])
+    order by type, from_entity_id, to_entity_id
   `);
 }
 
