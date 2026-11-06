@@ -27,6 +27,14 @@ export interface MergedConcept {
   combinedContent: string;
   /** Rebuild from live sources without feeding the prior page back to the model. */
   rebuild?: boolean;
+  /**
+   * Names that folded into this concept page, from the identity stage's decision.
+   *
+   * Carried on the merged entry so page generation records them in the surviving
+   * page's frontmatter: the aliases are the reason a future ingest can fold the same
+   * names deterministically instead of re-deciding them by similarity.
+   */
+  aliases?: readonly string[];
 }
 
 /** Buckets of source changes used by the compile pipeline. */

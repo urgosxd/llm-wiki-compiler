@@ -69,7 +69,7 @@ import {
 import { resolveCompileConcurrency } from "./concurrency.js";
 import pLimit from "p-limit";
 import { mergeExtractions } from "./extraction-merge.js";
-import { applyConceptIdentity, type ConceptIdentityOutcome } from "./identity-stage.js";
+import { applyConceptIdentity, snapshotIncumbentConcepts, type ConceptIdentityOutcome } from "./identity-stage.js";
 import { runExtractionPhases } from "./extraction-phase.js";
 import { reusableSourceFiles, withExtractionSnapshot } from "./extraction-snapshot.js";
 import { generateMergedPage } from "./review-pipeline.js";
@@ -300,6 +300,28 @@ async function generatePagesPhase(
     root, outcomes, pageSink, pageRemover, transaction);
   errors.push(...batchErrors);
   return { pages, writtenPages, errors, candidates, review, seedSlugs: [] };
+}
+
+/**
+ * Attach the names that folded into each page, so generation can record them.
+ *
+ * Done here, on the merged set, because the folded names are keyed by the slug the
+ * identity stage decided and `mergeExtractions` is what produces that slug: the two
+ * are only joinable after the merge. The entry is copied rather than mutated so the
+ * merge module stays the only writer of its own records.
+ *
+ * @param merged - The merged concept pages, in write order.
+ * @param aliasesBySlug - Folded-away names per surviving page slug.
+ * @returns The same pages, carrying their folded names when they have any.
+ */
+function withFoldedAliases(
+  merged: MergedConcept[],
+  aliasesBySlug: ReadonlyMap<string, readonly string[]>,
+): MergedConcept[] {
+  return merged.map((entry) => {
+    const aliases = aliasesBySlug.get(entry.slug);
+    return aliases === undefined || aliases.length === 0 ? entry : { ...entry, aliases };
+  });
 }
 
 /** One generated-page outcome paired with its source-order merged entry. */
@@ -665,7 +687,11 @@ async function runGenerationStage(
   // produced pages are new (created) versus overwritten (updated). The same
   // snapshot supplies the incumbent slugs identity resolution must preserve.
   const existingIds = await listExistingPageIds(root);
-  const identity = await applyConceptIdentity(extractions, existingIds);
+  // Identity needs more than the slug list: the alias tier compares a candidate
+  // against the names each existing page already answers to, so the snapshot
+  // carries titles and declared aliases as well.
+  const incumbents = await snapshotIncumbentConcepts(root, input.seams.content);
+  const identity = await applyConceptIdentity(extractions, incumbents);
   const canonicalExtractions = identity.extractions;
   // The ONLY stage with a real denominator the pipeline computes before the work:
   // one merged concept becomes one generated page, so the number of MERGED entries
@@ -673,7 +699,10 @@ async function runGenerationStage(
   // the work by orders of magnitude: one document yielding 92 concepts reported
   // "1", so the job sat at "0 of 1" for the entire run. The SAME list is handed to
   // the phase below, so the denominator and the work cannot diverge.
-  const merged = mergeExtractions(canonicalExtractions, frozenSlugs, reconciliationSlugs);
+  const merged = withFoldedAliases(
+    mergeExtractions(canonicalExtractions, frozenSlugs, reconciliationSlugs),
+    identity.aliasesBySlug,
+  );
   const generation = await timeStage("compile.page-generation", () => generatePagesPhase(
     root,
     merged,

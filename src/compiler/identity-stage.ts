@@ -12,19 +12,31 @@
  * writes — then reads one consistent set of names, because they all slugify the
  * extractions this stage already rewrote.
  *
- * ## Why the incumbents come from the page snapshot
+ * ## Why the incumbents are a snapshot, not a slug set
  *
- * The canonical-name rule is "the incumbent survives". That needs the slugs already
- * in the wiki, and the pipeline takes exactly that snapshot a few lines earlier for
- * the journal. Reusing it keeps this stage free of I/O, so it cannot disagree with
- * the snapshot the rest of the run is using.
+ * The canonical-name rule is "the incumbent survives", and the alias rule is "a name
+ * this page already answers to resolves to it". A bare `ReadonlySet<string>` can
+ * express neither the canonical title nor the aliases, so the orchestrator hands over
+ * {@link ConceptIncumbentSnapshot} instead: one value carrying both, loaded once by
+ * {@link snapshotIncumbentConcepts}. The decision itself stays pure — it reads no
+ * files — so it cannot disagree with the snapshot the rest of the run is using.
  */
 
+import { readdir } from "fs/promises";
+import path from "path";
 import { CONCEPTS_DIR } from "../utils/constants.js";
+import { parseFrontmatter } from "../utils/markdown.js";
 import { conceptEmbeddingPortOrUndefined } from "../dimensions/wiki/concept-embeddings.js";
+import type {
+  ConceptIncumbentPage,
+  ConceptIncumbentSnapshot,
+} from "../dimensions/wiki/concept-resolution.js";
+import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
+import { readWikiPageFrom } from "./confined-wiki-read.js";
 import {
   bindConceptsToCanonicalNames,
   conceptIdentityDecisions,
+  foldedNamesByGroupSlug,
   reportConceptIdentity,
   resolveExtractionIdentity,
   supersededPageSlugs,
@@ -47,21 +59,72 @@ export interface ConceptIdentityOutcome {
    * across two files — the defect this feature exists to remove.
    */
   readonly superseded: ReadonlyMap<string, string>;
+  /**
+   * Folded-away names per surviving page slug.
+   *
+   * Persisted into that page's frontmatter `aliases`, which is what makes the
+   * decision stick: the next ingest folds these names by rule instead of by score.
+   */
+  readonly aliasesBySlug: ReadonlyMap<string, readonly string[]>;
+}
+
+/** Coerce a frontmatter `aliases` value into plain strings, dropping anything else. */
+function readDeclaredAliases(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .filter((alias): alias is string => typeof alias === "string" && alias.trim() !== "")
+    .map((alias) => alias.trim());
+}
+
+/** The concept page slugs to snapshot, from rows when they are the corpus. */
+async function incumbentSlugs(
+  root: string,
+  source: PageContentSource | undefined,
+): Promise<string[]> {
+  if (source !== undefined) {
+    return [...(await source.listSlugs("concepts"))].sort();
+  }
+  const files = await readdir(path.join(root, CONCEPTS_DIR)).catch(() => [] as string[]);
+  return files
+    .filter((file) => file.endsWith(".md"))
+    .map((file) => file.slice(0, -".md".length))
+    .sort();
 }
 
 /**
- * Read the concept slugs already present from the pipeline's page snapshot.
+ * Load every existing concept page's slug, canonical name and declared aliases.
  *
- * @param pageIds - Namespaced ids such as `wiki/concepts/vector-db`.
- * @returns Just the concept slugs.
+ * The page's title is the canonical name identity must respect; it is only trusted
+ * when it is a non-empty string, and the slug stands in otherwise. A page that cannot
+ * be read contributes nothing at all rather than aborting the compile, matching the
+ * confined read's drop-and-warn policy.
+ *
+ * @param root - Project root the concept pages live under.
+ * @param source - Row-backed page source, or undefined to read `wiki/concepts`.
+ * @returns The snapshot identity resolution reads.
  */
-function incumbentSlugs(pageIds: ReadonlySet<string>): Set<string> {
-  const prefix = `${CONCEPTS_DIR}/`;
-  const slugs = new Set<string>();
-  for (const id of pageIds) {
-    if (id.startsWith(prefix)) slugs.add(id.slice(prefix.length));
+export async function snapshotIncumbentConcepts(
+  root: string,
+  source?: PageContentSource,
+): Promise<ConceptIncumbentSnapshot> {
+  const snapshot = new Map<string, ConceptIncumbentPage>();
+  for (const slug of await incumbentSlugs(root, source)) {
+    // warnAlways=false: a page listed by the backend but unreadable is dropped
+    // quietly; an ESCAPING entry still warns, because it physically exists.
+    const content = await readWikiPageFrom(root, CONCEPTS_DIR, slug, source, false);
+    if (content === "") {
+      continue;
+    }
+    const { meta } = parseFrontmatter(content);
+    const title = typeof meta.title === "string" ? meta.title.trim() : "";
+    snapshot.set(slug, {
+      canonicalName: title === "" ? slug : title,
+      aliases: readDeclaredAliases(meta.aliases),
+    });
   }
-  return slugs;
+  return snapshot;
 }
 
 /**
@@ -69,23 +132,23 @@ function incumbentSlugs(pageIds: ReadonlySet<string>): Set<string> {
  *
  * Degrades to "every concept keeps its own name" when nothing was extracted: a run
  * with no concepts has no identity to decide, and must not fail for the absence.
- * Why semantic grouping did not run is reported by the resolver rather than
+ * Why similarity proposals did not run is reported by the resolver rather than
  * swallowed here.
  *
  * @param extractions - This run's extraction results, as extracted.
- * @param pageIds - The pipeline's page-id snapshot, used for incumbency.
+ * @param incumbents - Existing concept pages: their names and declared aliases.
  * @returns Canonical-named extractions plus the decisions taken.
  */
 export async function applyConceptIdentity(
   extractions: ExtractionResult[],
-  pageIds: ReadonlySet<string>,
+  incumbents: ConceptIncumbentSnapshot,
 ): Promise<ConceptIdentityOutcome> {
   const plan = await resolveExtractionIdentity(extractions, {
-    incumbents: incumbentSlugs(pageIds),
+    incumbents,
     embed: conceptEmbeddingPortOrUndefined(),
   });
   if (plan === undefined) {
-    return { extractions, decisions: [], superseded: new Map() };
+    return { extractions, decisions: [], superseded: new Map(), aliasesBySlug: new Map() };
   }
   reportConceptIdentity(plan);
   const decisions = conceptIdentityDecisions(extractions, plan);
@@ -97,5 +160,6 @@ export async function applyConceptIdentity(
     extractions: bindConceptsToCanonicalNames(extractions, plan),
     decisions,
     superseded: supersededPageSlugs(groupSlugs, decisions),
+    aliasesBySlug: foldedNamesByGroupSlug(decisions),
   };
 }

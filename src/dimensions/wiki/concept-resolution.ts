@@ -1,51 +1,47 @@
 /**
  * @file src/dimensions/wiki/concept-resolution.ts
- * @description Tier 2 of wiki concept identity: grouping candidates by cosine
- * similarity, with two thresholds.
+ * @description Concept identity for the wiki compile: EQUIVALENCE decides,
+ * SIMILARITY only proposes (S6, S14).
  *
- * Why two thresholds instead of one: the two mistakes do not cost the same. A
- * false split produces two pages that a reader can see and a later compile can
- * fix. A false merge is irreversible and silent — the distinction between two
- * concepts is gone, the page slug points at a title nobody chose, and nothing in
- * the output says it happened.
+ * ## The rule this module enforces
  *
- * So a score at or above {@link DEFAULT_AUTO_THRESHOLD} merges outright, while a
- * score in the band down to {@link DEFAULT_REVIEW_THRESHOLD} merges AND is
- * reported as a pending alias, which keeps the uncertain decision visible and
- * reversible. Below the review threshold the concepts stay separate.
+ * Two differently-named candidates become one page only when a deterministic rule
+ * proves they are the same referent. Those rules run in one precedence order:
  *
- * Two invariants this module guarantees:
+ *   1. `slug` — `slugify(a) === slugify(b)`, the compiler's pre-existing notion of
+ *      identity and therefore the cheapest tier.
+ *   2. `normalized` — `canonicalConceptKey(a) === canonicalConceptKey(b)`, i.e. the
+ *      reviewed plural/acronym rule in `concept-identity.ts`.
+ *   3. `alias` — the candidate's name matches one of an incumbent page's declared
+ *      `aliases`, or one of the candidate's own aliases matches that incumbent's
+ *      canonical name. Compared on canonical keys, never on raw strings.
  *
- *   - **Order independence.** The same candidates produce the same groups
- *     regardless of input order. `mergeExtractions` iterates sources in a fixed
- *     order (`src/compiler/extraction-phase.ts:41`), so order-dependent resolution
- *     would make two identical compiles produce different pages.
- *   - **Deterministic tie-breaking.** The canonical name is chosen by incumbency,
- *     then confidence, then name — never by arrival.
+ * An embedding score is NOT on that list, and no code path here lets one reach group
+ * construction: the union-find is only ever fed a name-rule tier, and those tiers are
+ * the only ranks it can report. The retrieval port survives as a PROPOSAL channel —
+ * pairs no rule folded are scored and returned as {@link ConceptSimilarity} data,
+ * which the compile reports as possible duplicates and never acts on. A score of 1.0
+ * therefore changes nothing about what a page IS; it only gives a human a lead.
  *
- * ## Tier order: slug, then similarity, then rules
+ * ## Why the alias tier is what makes progress possible
  *
- * The semantic tier runs ABOVE the deterministic one. Exact-slug equality still
- * decides first because it is free and already the compiler's notion of identity,
- * but everything the slug leaves open is offered to the cosine score before the
- * normalization rules see it. The rules then settle only what the score could not
- * decide — or everything, when no embedding port is usable at all.
+ * The rules can only fold spellings somebody enumerated; an alias is the wiki's own
+ * record that a name already resolved to a page. Reading it back turns one decided
+ * merge into a permanent deterministic rule for every later ingest, instead of
+ * re-deciding the same synonym with a cosine score on every compile.
  *
- * This is deliberately NOT "rules first, similarity for the leftovers". A rule can
- * only fold spellings someone thought to enumerate, so rules-first makes the
- * synonym set the ceiling of what the wiki can ever merge. Similarity-first makes
- * the rules a safety net instead of the authority.
+ * ## Determinism
  *
- * The cost of that ordering is why {@link MAX_SEMANTIC_PAIRS} exists: see
- * {@link applySemanticTier}.
- *
- * The set bookkeeping lives in `concept-forest.ts`; this module is the policy.
+ * The same candidates and incumbents produce the same groups regardless of input
+ * order, and the canonical name is chosen by incumbency, then confidence, then
+ * code-unit name order — never by arrival and never by locale.
  */
 
 import { cosineSimilarity } from "../../utils/embeddings-search.js";
 import { slugify } from "../../utils/markdown.js";
 import {
   canonicalConceptKey,
+  canonicalSlugKey,
   sharesBlockingSignal,
   tagsConflict,
 } from "./concept-identity.js";
@@ -59,22 +55,17 @@ import {
 } from "./concept-forest.js";
 
 /**
- * A score at or above this merges without review.
+ * The evidence vocabulary the shared union-find still declares.
  *
- * Conservative on purpose: names and short summaries embed into a narrow cone
- * where unrelated concepts routinely clear 0.85, and a false merge is
- * irreversible. Calibrate against a hand-labelled hold-out, never by intuition.
+ * `auto` and `review` are RETIRED identity ranks: no path in this module can join
+ * two nodes at them, and {@link identityTierOf} refuses them loudly instead of
+ * mapping them onto a deterministic tier. They stay in the type only because
+ * `concept-forest.ts` owns the rank table.
  */
-export const DEFAULT_AUTO_THRESHOLD = 0.92;
-
-/**
- * A score at or above this merges, but the merge is recorded as pending so the
- * uncertain band stays reversible.
- */
-export const DEFAULT_REVIEW_THRESHOLD = 0.86;
+export type MergeTier = "slug" | "normalized" | "auto" | "review";
 
 /** How a group's members were decided to be the same concept. */
-export type MergeTier = "slug" | "normalized" | "auto" | "review";
+export type IdentityTier = "slug" | "normalized" | "alias";
 
 /** One extracted concept, reduced to what identity resolution needs. */
 export interface ConceptCandidate {
@@ -82,6 +73,11 @@ export interface ConceptCandidate {
   readonly summary?: string;
   readonly tags?: readonly string[];
   readonly confidence?: number;
+  /**
+   * Other names this concept is already known by. Matching one of them against an
+   * incumbent page folds the candidate into that page at the `alias` tier.
+   */
+  readonly aliases?: readonly string[];
 }
 
 /** Candidates resolved to one concept. */
@@ -90,25 +86,33 @@ export interface ConceptGroup {
   readonly canonicalName: string;
   /** Every candidate in this group, including the canonical one. */
   readonly members: readonly ConceptCandidate[];
-  /** Strongest evidence that joined this group. */
-  readonly tier: MergeTier;
+  /** Strongest deterministic evidence that joined this group. */
+  readonly tier: IdentityTier;
 }
 
-/** One merged-away name and the canonical name it resolved to. */
+/** One merged-away name and the canonical page it resolved to. */
 export interface ConceptAlias {
   readonly aliasSlug: string;
   readonly canonicalSlug: string;
-  /**
-   * Evidence tier of the edge that absorbed THIS alias — not the group's strongest
-   * tier. Routing an alias to the confident or the pending band by the group's best
-   * evidence would promote a review-band merge to an irreversible one.
-   */
-  readonly tier: MergeTier;
-  /** Cosine score, or `undefined` for a deterministic tier. */
-  readonly score?: number;
+  /** Deterministic evidence of the fold that absorbed THIS name. */
+  readonly tier: IdentityTier;
 }
 
-/** Why semantic grouping did not run. */
+/**
+ * One scored candidate pair that NO rule folded together.
+ *
+ * Data, not a verdict: nothing downstream may group by it, rename by it, or write a
+ * page because of it. It exists so the compile can tell a user "these look close —
+ * you may want to reconcile them yourself".
+ */
+export interface ConceptSimilarity {
+  readonly leftName: string;
+  readonly rightName: string;
+  /** Cosine similarity in `[-1, 1]`, as the provider's vectors produced it. */
+  readonly score: number;
+}
+
+/** Why similarity proposals did not run. */
 export interface ConceptDegradation {
   readonly reason: "embeddings-disabled" | "embeddings-unconfigured" | "embeddings-failed";
   readonly detail: string;
@@ -117,9 +121,8 @@ export interface ConceptDegradation {
 /**
  * A scoring attempt's outcome.
  *
- * Failure is a value, not an exception: semantic grouping is an enhancement, so a
- * dead provider must leave the deterministic tiers intact and be REPORTED. Modeling
- * it in the type is what stops a caller from catching it and forgetting to say so.
+ * Failure is a value, not an exception: proposals are an enhancement, so a dead
+ * provider must leave the deterministic tiers intact and be REPORTED (S12).
  */
 export type ConceptEmbedOutcome =
   | { readonly ok: true; readonly vectors: readonly (readonly number[])[] }
@@ -127,29 +130,75 @@ export type ConceptEmbedOutcome =
 
 /** Port the resolver needs for scoring; keeps provider concerns out of it. */
 export interface ConceptEmbeddingPort {
-  /** Identity of the embedding configuration — see the alias record's use. */
+  /** Identity of the embedding configuration, for logging and cache keys. */
   readonly fingerprint: string;
   /** One vector per input text, in input order. */
   embed(texts: readonly string[]): Promise<ConceptEmbedOutcome>;
 }
 
-/** Two thresholds, plus the names already present in the wiki. */
+/** One concept page already in the wiki, reduced to what identity must respect. */
+export interface ConceptIncumbentPage {
+  /**
+   * Frontmatter title the page currently claims. It must slugify to the page's own
+   * slug, which is what makes a fold land on the existing page instead of creating a
+   * renamed second copy; a hand-edited mismatch degrades to exactly that rename.
+   */
+  readonly canonicalName: string;
+  /** Declared frontmatter aliases, already reduced to plain strings. */
+  readonly aliases: readonly string[];
+}
+
+/**
+ * The existing concept pages, keyed by slug.
+ *
+ * A snapshot rather than two parallel collections so a caller cannot pair a slug set
+ * with the wrong alias map, and so the identity stage has one value to hand around.
+ */
+export type ConceptIncumbentSnapshot = ReadonlyMap<string, ConceptIncumbentPage>;
+
+/** What resolution needs to know: proposals when available, incumbents always. */
 export interface ConceptResolutionOptions {
   readonly embed?: ConceptEmbeddingPort;
-  readonly thresholds?: { readonly auto: number; readonly review: number };
-  /** Slugs already present in the wiki; these names win the canonical slot. */
-  readonly incumbents?: ReadonlySet<string>;
+  /** Concept pages already in the wiki; their names keep the canonical slot. */
+  readonly incumbents?: ConceptIncumbentSnapshot;
 }
 
 /** The full result of one resolution run. */
 export interface ConceptResolution {
   readonly groups: readonly ConceptGroup[];
-  /** Aliases merged with confident evidence or deterministically. */
+  /** Names folded away deterministically; each is now an alias of its page. */
   readonly aliases: readonly ConceptAlias[];
-  /** Aliases merged inside the review band; reversible by construction. */
-  readonly pending: readonly ConceptAlias[];
+  /** Scored pairs kept as proposals ONLY. Empty when nothing was scored. */
+  readonly similarities: readonly ConceptSimilarity[];
   readonly degradation?: ConceptDegradation;
 }
+
+/**
+ * A cosmetic floor for REPORTING a proposal, never an identity threshold.
+ *
+ * Pairs below it are still scored and still returned in
+ * {@link ConceptResolution.similarities}; they are simply not worth printing, since
+ * unrelated concepts routinely clear 0.8 once their summaries are embedded. Nothing
+ * in this module reads it to group, rename or merge anything.
+ */
+export const DEFAULT_PROPOSAL_THRESHOLD = 0.86;
+
+/**
+ * Pair budget for the proposal channel.
+ *
+ * Every pair the name rules left open is a scoring candidate, which is quadratic in
+ * the candidate count. Past this budget only pairs sharing a blocking token are
+ * compared, which keeps the common case exact and the pathological case bounded
+ * without silently doing nothing.
+ */
+const MAX_SIMILARITY_PAIRS = 20_000;
+
+/** Rank order of the identity tiers; a LOWER rank is stronger evidence. */
+const TIER_STRENGTH: Readonly<Record<IdentityTier, number>> = {
+  slug: 0,
+  normalized: 1,
+  alias: 2,
+};
 
 /**
  * Total order over names, independent of the host locale.
@@ -157,28 +206,38 @@ export interface ConceptResolution {
  * `localeCompare` is deliberately NOT used: its result depends on the ICU data and
  * default locale of the machine, so two compiles of the same sources on different
  * hosts could pick a different canonical name and therefore a different page slug.
- * Reproducibility of the wiki is worth more than locale-correct collation here.
  */
 function compareNames(left: string, right: string): number {
-  if (left === right) {
-    return 0;
-  }
-  return left < right ? -1 : 1;
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
+/** The strongest of several evidence tiers, or `undefined` when there is none. */
+function strongestTier(tiers: readonly IdentityTier[]): IdentityTier | undefined {
+  return tiers.reduce<IdentityTier | undefined>(
+    (best, tier) => (best === undefined || TIER_STRENGTH[tier] < TIER_STRENGTH[best] ? tier : best),
+    undefined,
+  );
 }
 
 /**
- * The deterministic tier for one pair, or `undefined` when only embeddings can
- * decide.
+ * Narrows the union-find's rank vocabulary to the deterministic tiers.
  *
- * The `slug` tier compares SLUGS, not raw names: `slugify` is the compiler's
- * existing identity, so two names that share a slug were already one concept to
- * every other part of the pipeline. The `normalized` tier then covers what the slug
- * cannot fold — acronyms and plurals.
- *
- * Order matters: a pair resolved here needs no similarity call at all, which is
- * what keeps the common case free.
+ * Reaching a retired rank means a similarity score found its way back into group
+ * construction — the exact regression S6 and S14 forbid — so this throws instead of
+ * silently reporting a deterministic rule that decided nothing.
  */
-function deterministicTier(left: string, right: string): MergeTier | undefined {
+function identityTierOf(tier: MergeTier): IdentityTier {
+  if (tier === "slug" || tier === "normalized") {
+    return tier;
+  }
+  throw new Error(`retired similarity tier "${tier}" cannot decide concept identity`);
+}
+
+/** The name-rule tiers: the only ranks the union-find is ever fed. */
+type NameRuleTier = "slug" | "normalized";
+
+/** The deterministic tier for one pair, or `undefined` when no rule relates them. */
+function deterministicTier(left: string, right: string): NameRuleTier | undefined {
   if (slugify(left) === slugify(right)) {
     return "slug";
   }
@@ -188,106 +247,228 @@ function deterministicTier(left: string, right: string): MergeTier | undefined {
   return undefined;
 }
 
-/** The text actually embedded for one candidate. */
-function identityText(candidate: ConceptCandidate): string {
-  return [
-    candidate.name,
-    candidate.summary ?? "",
-    (candidate.tags ?? []).join(", "),
-  ].join("\n");
-}
-
 /**
- * Pair budget for the semantic tier: beyond this, the blocking gate is re-armed.
+ * Applies the name rules to every pair and returns the pairs they left undecided.
  *
- * Cosine-first means every pair the slug left open is a candidate, which is
- * quadratic in the candidate count. At 768 dimensions a full sweep is cheap for
- * hundreds of concepts and untenable for thousands, so past this budget the
- * resolver falls back to comparing only pairs that share a blocking token. That
- * keeps the common case exact and the pathological case bounded without ever
- * silently doing nothing.
+ * Those pairs are the ONLY input the scoring channel ever receives, so a pair a rule
+ * already folded is never even measured — and a pair it did not fold can only ever
+ * become a proposal.
  */
-const MAX_SEMANTIC_PAIRS = 20_000;
-
-/**
- * Whether a pair is eligible for a cosine comparison at all.
- *
- * `tagsConflict` is a HARD exclusion: a disjoint tag set is positive evidence that
- * two concepts differ, so it outranks any score.
- *
- * The blocking token is a SOFT gate and is off by default, because requiring a
- * shared token excludes exactly the pairs the semantic tier exists to find: a
- * synonym that shares no word — "PostgreSQL" against "Postgres", "k8s" against
- * "Kubernetes" — has no blocking signal by construction. Requiring one made the
- * tier unable to earn its position above the rules.
- */
-function isComparable(
-  left: ConceptCandidate,
-  right: ConceptCandidate,
-  requireBlockingSignal: boolean,
-): boolean {
-  if (tagsConflict(left.tags, right.tags)) {
-    return false;
-  }
-  if (!requireBlockingSignal) {
-    return true;
-  }
-  return sharesBlockingSignal(left.name, left.tags, right.name, right.tags);
-}
-
-/** Applies the exact-slug tier and returns the pairs it left undecided. */
-function applySlugTier(
+function applyNameRules(
   ordered: readonly ConceptCandidate[],
   forest: ConceptForest,
 ): Array<readonly [number, number]> {
   const undecided: Array<readonly [number, number]> = [];
   for (let left = 0; left < ordered.length; left += 1) {
     for (let right = left + 1; right < ordered.length; right += 1) {
-      if (slugify(ordered[left].name) === slugify(ordered[right].name)) {
-        unionCandidates(forest, left, right, "slug");
+      const tier = deterministicTier(ordered[left].name, ordered[right].name);
+      if (tier === undefined) {
+        undecided.push([left, right]);
         continue;
       }
-      undecided.push([left, right]);
+      unionCandidates(forest, left, right, tier);
     }
   }
   return undecided;
 }
 
-/**
- * Applies the normalization rules to whichever pairs are still undecided.
- *
- * This is the LAST tier: it only runs where the score could not decide, and it runs
- * on every remaining pair when the semantic tier never ran at all.
- */
-function applyRuleTier(
-  ordered: readonly ConceptCandidate[],
-  forest: ConceptForest,
-  pairs: ReadonlyArray<readonly [number, number]>,
-  decided: ReadonlySet<string>,
-): void {
-  for (const [left, right] of pairs) {
-    if (decided.has(pairKey(left, right))) {
+/** One existing page a candidate folds into, with the rule that matched it. */
+interface IncumbentMatch {
+  readonly slug: string;
+  readonly tier: IdentityTier;
+}
+
+/** The existing wiki, indexed by the two canonical keys alias matching uses. */
+interface IncumbentIndex {
+  /** Incumbent canonical names and slugs: what the NAME rule and a candidate alias match. */
+  readonly byName: ReadonlyMap<string, string>;
+  /** Incumbent DECLARED aliases: what a candidate NAME matches at the alias tier. */
+  readonly byAlias: ReadonlyMap<string, string>;
+}
+
+/** Indexes the incumbent snapshot in a deterministic order. */
+function buildIncumbentIndex(
+  snapshot: ConceptIncumbentSnapshot | undefined,
+): IncumbentIndex {
+  const byName = new Map<string, string>();
+  const byAlias = new Map<string, string>();
+  const remember = (map: Map<string, string>, key: string, slug: string): void => {
+    if (key !== "" && !map.has(key)) {
+      map.set(key, slug);
+    }
+  };
+  for (const slug of [...(snapshot?.keys() ?? [])].sort(compareNames)) {
+    const page = snapshot?.get(slug);
+    if (page === undefined) {
       continue;
     }
-    const tier = deterministicTier(ordered[left].name, ordered[right].name);
-    if (tier !== undefined) {
-      unionCandidates(forest, left, right, tier);
+    for (const key of [canonicalConceptKey(page.canonicalName), canonicalSlugKey(slug)]) {
+      remember(byName, key, slug);
+    }
+    for (const alias of page.aliases) {
+      remember(byAlias, canonicalConceptKey(alias), slug);
     }
   }
+  return { byName, byAlias };
 }
 
-/** One scoring attempt: the vectors per candidate index, or why there are none. */
-interface EmbeddedCandidates {
-  readonly vectors: Map<number, readonly number[]>;
-  readonly degradation?: ConceptDegradation;
+/**
+ * The incumbent page one candidate is equivalent to, if any.
+ *
+ * Three deterministic comparisons, in the order that keeps reporting honest:
+ *
+ *   1. the candidate's NAME against the page's canonical name or slug — a name rule,
+ *      reported at the tier that rule earns;
+ *   2. the candidate's NAME against one of the page's DECLARED aliases — the wiki's own
+ *      record that this spelling already meant this page;
+ *   3. one of the candidate's own aliases against the page's canonical name or slug.
+ *
+ * The `alias` tier is reserved for folds only an alias could explain, so a
+ * morphological match is never reported as an alias one.
+ */
+function matchIncumbent(
+  candidate: ConceptCandidate,
+  index: IncumbentIndex,
+): IncumbentMatch | undefined {
+  const nameKey = canonicalConceptKey(candidate.name);
+  const nameHit = index.byName.get(nameKey);
+  if (nameHit !== undefined) {
+    return { slug: nameHit, tier: slugify(candidate.name) === nameHit ? "slug" : "normalized" };
+  }
+  const declaredHit = index.byAlias.get(nameKey);
+  if (declaredHit !== undefined) {
+    return { slug: declaredHit, tier: "alias" };
+  }
+  for (const alias of [...(candidate.aliases ?? [])].sort(compareNames)) {
+    const hit = index.byName.get(canonicalConceptKey(alias));
+    if (hit !== undefined) {
+      return { slug: hit, tier: "alias" };
+    }
+  }
+  return undefined;
 }
 
-/** Embeds every distinct candidate text once and returns the vector per index. */
+/** One resolved group: every candidate that lands on a single concept page. */
+interface GroupView {
+  readonly members: readonly number[];
+  /** Name-rule tiers of the clusters a rule folded. */
+  readonly nameTiers: readonly IdentityTier[];
+  readonly incumbent?: IncumbentMatch;
+}
+
+/**
+ * Groups the name-rule clusters, merging every cluster that resolves to one existing
+ * page.
+ *
+ * Two candidates can each reach the same incumbent through different aliases;
+ * without this merge they would become two groups claiming one page, which is the
+ * split the alias tier exists to prevent.
+ */
+function groupViews(
+  ordered: readonly ConceptCandidate[],
+  forest: ConceptForest,
+  matches: ReadonlyMap<number, IncumbentMatch>,
+): GroupView[] {
+  const byKey = new Map<string, { members: number[]; nameTiers: IdentityTier[]; incumbent?: IncumbentMatch }>();
+  for (const [root, indices] of groupsByRoot(forest, ordered.length)) {
+    const incumbent = indices.map((index) => matches.get(index)).find((match) => match !== undefined);
+    const key = incumbent === undefined
+      ? `name:${slugify(ordered[indices[0]].name)}`
+      : `incumbent:${incumbent.slug}`;
+    const entry = byKey.get(key) ?? { members: [], nameTiers: [] };
+    entry.members.push(...indices);
+    if (indices.length > 1) {
+      entry.nameTiers.push(identityTierOf(tierOfRoot(forest, root)));
+    }
+    entry.incumbent = entry.incumbent ?? incumbent;
+    byKey.set(key, entry);
+  }
+  return [...byKey.values()].map((entry) => ({
+    members: entry.members,
+    nameTiers: entry.nameTiers,
+    ...(entry.incumbent === undefined ? {} : { incumbent: entry.incumbent }),
+  }));
+}
+
+/** The claim a group makes about how its members became one concept. */
+function groupTier(view: GroupView): IdentityTier {
+  const incumbentTier = view.incumbent === undefined ? [] : [view.incumbent.tier];
+  return strongestTier([...view.nameTiers, ...incumbentTier]) ?? "slug";
+}
+
+/**
+ * The member that keeps its name: an incumbent first, then the most confident,
+ * then the lexicographically smallest.
+ *
+ * A newcomer never displaces an incumbent because the canonical name becomes the
+ * page slug; renaming it would break inbound links and orphan the provenance of a
+ * page nobody asked to move.
+ */
+function pickCanonical(
+  members: readonly ConceptCandidate[],
+  incumbents: ConceptIncumbentSnapshot | undefined,
+): ConceptCandidate {
+  const incumbent = members.find((member) => incumbents?.has(slugify(member.name)) === true);
+  if (incumbent !== undefined) {
+    return incumbent;
+  }
+  return [...members].sort((left, right) => {
+    const byConfidence = (right.confidence ?? 0) - (left.confidence ?? 0);
+    return byConfidence !== 0 ? byConfidence : compareNames(left.name, right.name);
+  })[0];
+}
+
+/** The name the group's page will carry: the existing page wins when there is one. */
+function canonicalNameOf(
+  view: GroupView,
+  ordered: readonly ConceptCandidate[],
+  snapshot: ConceptIncumbentSnapshot | undefined,
+): string {
+  if (view.incumbent !== undefined) {
+    return snapshot?.get(view.incumbent.slug)?.canonicalName ?? view.incumbent.slug;
+  }
+  return pickCanonical(view.members.map((index) => ordered[index]), snapshot).name;
+}
+
+/** One alias per folded-away candidate, each routed by the fold that absorbed it. */
+function aliasesOf(
+  view: GroupView,
+  canonicalName: string,
+  ordered: readonly ConceptCandidate[],
+  forest: ConceptForest,
+  matches: ReadonlyMap<number, IncumbentMatch>,
+): ConceptAlias[] {
+  const canonicalSlug = slugify(canonicalName);
+  const aliases: ConceptAlias[] = [];
+  for (const index of view.members) {
+    const name = ordered[index].name;
+    if (name === canonicalName) {
+      continue;
+    }
+    const evidence: IdentityTier[] = [];
+    if (view.nameTiers.length > 0) {
+      evidence.push(identityTierOf(tierThatJoined(forest, index)));
+    }
+    const match = matches.get(index);
+    if (match !== undefined) {
+      evidence.push(match.tier);
+    }
+    aliases.push({ aliasSlug: slugify(name), canonicalSlug, tier: strongestTier(evidence) ?? "slug" });
+  }
+  return aliases;
+}
+
+/** The text actually embedded for one candidate. */
+function identityText(candidate: ConceptCandidate): string {
+  return [candidate.name, candidate.summary ?? "", (candidate.tags ?? []).join(", ")].join("\n");
+}
+
+/** Embeds every needed candidate text once and returns the vector per index. */
 async function embedCandidates(
   ordered: readonly ConceptCandidate[],
   needed: ReadonlySet<number>,
   port: ConceptEmbeddingPort,
-): Promise<EmbeddedCandidates> {
+): Promise<{ vectors: Map<number, readonly number[]>; degradation?: ConceptDegradation }> {
   const indices = [...needed].sort((left, right) => left - right);
   if (indices.length === 0) {
     return { vectors: new Map() };
@@ -306,66 +487,47 @@ async function embedCandidates(
   return { vectors };
 }
 
-/** Merges one scored pair when the score clears a threshold. */
-function applyScore(
-  forest: ConceptForest,
-  pair: readonly [number, number],
-  score: number,
-  thresholds: { readonly auto: number; readonly review: number },
-): void {
-  if (score >= thresholds.auto) {
-    unionCandidates(forest, pair[0], pair[1], "auto");
-    return;
-  }
-  if (score >= thresholds.review) {
-    unionCandidates(forest, pair[0], pair[1], "review");
-  }
-}
-
-/** What the semantic tier concluded, and which pairs it is therefore responsible for. */
-interface SemanticOutcome {
-  readonly degradation?: ConceptDegradation;
-  /**
-   * Pairs this tier actually scored.
-   *
-   * Load-bearing: the rule tier must NOT revisit them. A rule re-joining a pair the
-   * score already merged only overwrites that group's evidence with a lower rank,
-   * which reports the merge as `normalized` and hands the authority back to the
-   * rules — the exact inversion this tier order exists to prevent.
-   */
-  readonly decided: ReadonlySet<string>;
-}
-
-/** Stable key for one unordered pair of candidate indices. */
-function pairKey(left: number, right: number): string {
-  return `${left}-${right}`;
-}
-
 /**
- * Runs the semantic tier over the pairs the exact-slug tier left undecided.
+ * Whether a pair is worth scoring at all.
  *
- * @returns The degradation to report, plus the pairs this tier decided.
+ * `tagsConflict` is a HARD exclusion: a disjoint tag set is positive evidence that
+ * two concepts differ, so no score can make their comparison informative.
  */
-async function applySemanticTier(
+function isComparable(
+  left: ConceptCandidate,
+  right: ConceptCandidate,
+  requireBlockingSignal: boolean,
+): boolean {
+  if (tagsConflict(left.tags, right.tags)) {
+    return false;
+  }
+  return !requireBlockingSignal || sharesBlockingSignal(left.name, left.tags, right.name, right.tags);
+}
+
+/** What the proposal channel produced, and why it produced nothing when it did not. */
+interface ProposalOutcome {
+  readonly similarities: ConceptSimilarity[];
+  readonly degradation?: ConceptDegradation;
+}
+
+/** Scores the pairs no rule folded and that landed in different groups. */
+async function similarityProposals(
   ordered: readonly ConceptCandidate[],
   undecided: ReadonlyArray<readonly [number, number]>,
-  forest: ConceptForest,
+  groupOf: readonly number[],
   options: ConceptResolutionOptions,
-  thresholds: { readonly auto: number; readonly review: number },
-): Promise<SemanticOutcome> {
-  if (undecided.length === 0) {
-    return { decided: new Set() };
+): Promise<ProposalOutcome> {
+  const requireBlockingSignal = undecided.length > MAX_SIMILARITY_PAIRS;
+  const pairs = undecided.filter(([left, right]) =>
+    groupOf[left] !== groupOf[right] && isComparable(ordered[left], ordered[right], requireBlockingSignal));
+  if (pairs.length === 0) {
+    return { similarities: [] };
   }
   if (options.embed === undefined) {
     return {
-      decided: new Set(),
+      similarities: [],
       degradation: { reason: "embeddings-unconfigured", detail: "no embedding port supplied" },
     };
-  }
-
-  const pairs = semanticPairs(ordered, undecided);
-  if (pairs.length === 0) {
-    return { decided: new Set() };
   }
   const needed = new Set<number>();
   for (const [left, right] of pairs) {
@@ -373,125 +535,33 @@ async function applySemanticTier(
     needed.add(right);
   }
   const embedded = await embedCandidates(ordered, needed, options.embed);
-  const decided = new Set<string>();
-  for (const pair of pairs) {
-    const leftVector = embedded.vectors.get(pair[0]);
-    const rightVector = embedded.vectors.get(pair[1]);
+  const similarities: ConceptSimilarity[] = [];
+  for (const [left, right] of pairs) {
+    const leftVector = embedded.vectors.get(left);
+    const rightVector = embedded.vectors.get(right);
     if (leftVector === undefined || rightVector === undefined) {
       continue;
     }
-    // Scored, therefore this tier owns the verdict: even a score BELOW the review
-    // band is a decision ("different"), and the rules are not allowed to override it.
-    decided.add(pairKey(pair[0], pair[1]));
-    applyScore(forest, pair, cosineSimilarity([...leftVector], [...rightVector]), thresholds);
+    similarities.push({
+      leftName: ordered[left].name,
+      rightName: ordered[right].name,
+      score: cosineSimilarity([...leftVector], [...rightVector]),
+    });
   }
-  return { decided, degradation: embedded.degradation } as SemanticOutcome;
+  return embedded.degradation === undefined
+    ? { similarities }
+    : { similarities, degradation: embedded.degradation };
 }
 
 /**
- * The pairs the semantic tier will actually score, after the tag gate and the
- * budget.
+ * Resolves a batch of concepts into groups of equivalent names.
  *
- * Under the budget every pair is a candidate, so a synonym that shares no word is
- * still compared. Over it, the blocking gate is re-armed to keep the sweep affine
- * instead of quadratic — a bounded answer rather than an unbounded bill.
- *
- * @param ordered - Candidates in deterministic order.
- * @param undecided - Pairs the exact-slug tier left open.
- * @returns The pairs to score.
- */
-function semanticPairs(
-  ordered: readonly ConceptCandidate[],
-  undecided: ReadonlyArray<readonly [number, number]>,
-): Array<readonly [number, number]> {
-  const requireBlockingSignal = undecided.length > MAX_SEMANTIC_PAIRS;
-  return undecided.filter(([left, right]) =>
-    isComparable(ordered[left], ordered[right], requireBlockingSignal),
-  );
-}
-
-/**
- * The member that keeps its name: an incumbent first, then the most confident,
- * then the lexicographically smallest.
- *
- * A newcomer never displaces an incumbent because the canonical name becomes the
- * page slug; renaming it would break inbound links and orphan the provenance of a
- * page nobody asked to move.
- */
-function pickCanonical(
-  members: readonly ConceptCandidate[],
-  incumbents: ReadonlySet<string> | undefined,
-): ConceptCandidate {
-  const incumbent = members.find(
-    (member) => incumbents?.has(slugify(member.name)) === true,
-  );
-  if (incumbent !== undefined) {
-    return incumbent;
-  }
-  return [...members].sort((left, right) => {
-    const leftConfidence = left.confidence ?? 0;
-    const rightConfidence = right.confidence ?? 0;
-    if (leftConfidence !== rightConfidence) {
-      return rightConfidence - leftConfidence;
-    }
-    return compareNames(left.name, right.name);
-  })[0];
-}
-
-/**
- * Emits one alias per merged-away member, each routed by the evidence that joined
- * THAT member.
- *
- * The tier is read per member rather than taken once for the group. In a group where
- * A-B merged at `auto` and B-C only at `review`, C is held in the pending band while
- * B stays confident; using the group's strongest tier would emit C as a confident,
- * irreversible alias and silently collapse the review band for every member that
- * joined through a weak edge.
- *
- * The canonical member is skipped: it absorbed nothing, so it owes no alias.
- *
- * @param members - One entry per group member, pairing the candidate with its GLOBAL
- *   forest index. The two index spaces differ: `members` is local to the group while
- *   the forest is addressed globally, and conflating them reads the wrong node's
- *   evidence.
- * @param canonicalName - Name of the member that keeps the group's identity.
- */
-function collectAliases(
-  members: ReadonlyArray<{ readonly index: number; readonly candidate: ConceptCandidate }>,
-  canonicalName: string,
-  forest: ConceptForest,
-  aliases: ConceptAlias[],
-  pending: ConceptAlias[],
-): void {
-  const canonicalSlug = slugify(canonicalName);
-  for (const { index, candidate } of members) {
-    if (candidate.name === canonicalName) {
-      continue;
-    }
-    const tier = tierThatJoined(forest, index);
-    const alias: ConceptAlias = {
-      aliasSlug: slugify(candidate.name),
-      canonicalSlug,
-      tier,
-    };
-    if (tier === "review") {
-      pending.push(alias);
-      continue;
-    }
-    aliases.push(alias);
-  }
-}
-
-/**
- * Resolves a batch of concepts into groups of synonyms.
- *
- * Runs the deterministic tiers first, then compares only the pairs they leave
- * undecided, embedding each distinct candidate text exactly once so the cost is one
- * batch request per compile rather than one request per pair.
+ * Runs the deterministic tiers, then offers the pairs they left open to the
+ * embedding port purely as proposals. Never folds on a score.
  *
  * @param candidates - Every concept extracted in this compile.
- * @param options - Embedding port, thresholds and known incumbents.
- * @returns Groups, confident aliases, review-band aliases, and any degradation.
+ * @param options - Proposal port and the existing concept pages.
+ * @returns Groups, deterministic aliases, similarity proposals, and any degradation.
  */
 export async function resolveConceptIdentity(
   candidates: readonly ConceptCandidate[],
@@ -499,37 +569,40 @@ export async function resolveConceptIdentity(
 ): Promise<ConceptResolution> {
   const ordered = [...candidates].sort((left, right) => compareNames(left.name, right.name));
   const forest = createConceptForest(ordered.length);
-  const thresholds = options.thresholds ?? {
-    auto: DEFAULT_AUTO_THRESHOLD,
-    review: DEFAULT_REVIEW_THRESHOLD,
-  };
-
-  // Tier order is load-bearing: exact slug, then similarity, then rules. The score
-  // must see every pair the slug left open, and the rules must see whatever the
-  // score left open — including the case where the score never ran.
-  const bySlug = applySlugTier(ordered, forest);
-  const semantic = await applySemanticTier(ordered, bySlug, forest, options, thresholds);
-  applyRuleTier(ordered, forest, bySlug, semantic.decided);
-  const degradation = semantic.degradation;
-
+  const undecided = applyNameRules(ordered, forest);
+  const index = buildIncumbentIndex(options.incumbents);
+  const matches = new Map<number, IncumbentMatch>();
+  ordered.forEach((candidate, position) => {
+    // A candidate that already HAS its own page is never folded into a different
+    // one by an alias match: it is the incumbent, and the name rules decide which
+    // of its synonyms joins it. Overriding that would move a live page whenever a
+    // key happened to be shared by two pages the alias split left behind.
+    if (options.incumbents?.has(slugify(candidate.name)) === true) {
+      return;
+    }
+    const match = matchIncumbent(candidate, index);
+    if (match !== undefined) {
+      matches.set(position, match);
+    }
+  });
   const groups: ConceptGroup[] = [];
   const aliases: ConceptAlias[] = [];
-  const pending: ConceptAlias[] = [];
-
-  for (const [root, indices] of groupsByRoot(forest, ordered.length)) {
-    const entries = indices.map((index) => ({ index, candidate: ordered[index] }));
-    const canonical = pickCanonical(
-      entries.map((entry) => entry.candidate),
-      options.incumbents,
-    );
+  const groupOf: number[] = [];
+  groupViews(ordered, forest, matches).forEach((view, ordinal) => {
+    const canonicalName = canonicalNameOf(view, ordered, options.incumbents);
     groups.push({
-      canonicalName: canonical.name,
-      members: entries.map((entry) => entry.candidate),
-      tier: tierOfRoot(forest, root),
+      canonicalName,
+      members: view.members.map((position) => ordered[position]),
+      tier: groupTier(view),
     });
-    collectAliases(entries, canonical.name, forest, aliases, pending);
-  }
-
-  const resolution: ConceptResolution = { groups, aliases, pending };
-  return degradation === undefined ? resolution : { ...resolution, degradation };
+    aliases.push(...aliasesOf(view, canonicalName, ordered, forest, matches));
+    for (const position of view.members) {
+      groupOf[position] = ordinal;
+    }
+  });
+  const proposals = await similarityProposals(ordered, undecided, groupOf, options);
+  const resolution: ConceptResolution = { groups, aliases, similarities: proposals.similarities };
+  return proposals.degradation === undefined
+    ? resolution
+    : { ...resolution, degradation: proposals.degradation };
 }

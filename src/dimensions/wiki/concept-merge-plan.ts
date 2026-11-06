@@ -29,9 +29,9 @@
 import { slugify } from "../../utils/markdown.js";
 import {
   resolveConceptIdentity,
-  type ConceptCandidate,
   type ConceptResolution,
   type ConceptResolutionOptions,
+  type IdentityTier,
 } from "./concept-resolution.js";
 
 /** The minimum a candidate must carry to be resolved; the compiler's shape satisfies it. */
@@ -44,6 +44,8 @@ export interface MergePlanCandidate {
   readonly tags?: readonly string[];
   /** Optional extraction confidence; it breaks canonical-name ties. */
   readonly confidence?: number;
+  /** Other names this concept is already known by; they drive the `alias` tier. */
+  readonly aliases?: readonly string[];
 }
 
 /** Where one candidate landed, and what the group it joined is called. */
@@ -54,6 +56,8 @@ export interface MergePlanEntry {
   readonly canonicalName: string;
   /** True for the one candidate whose own name became `canonicalName`. */
   readonly isCanonical: boolean;
+  /** Deterministic evidence the group rests on: `slug`, `normalized` or `alias`. */
+  readonly tier: IdentityTier;
 }
 
 /** The full answer: one entry per input candidate, in input order. */
@@ -77,21 +81,18 @@ function groupSlugFor(canonicalName: string): string {
  * NOT the caller's input order, and conflating the two would hand a caller the
  * wrong group for its concept.
  *
- * @param canonicalName - The name that survived the merge.
- * @param members - The group's members, as the resolver ordered them.
+ * @param group - The resolved group, as the resolver ordered it.
  * @returns One plan entry per member.
  */
-function planForGroup(
-  canonicalName: string,
-  members: readonly ConceptCandidate[],
-): Map<string, MergePlanEntry> {
-  const groupSlug = groupSlugFor(canonicalName);
+function planForGroup(group: ConceptResolution["groups"][number]): Map<string, MergePlanEntry> {
+  const groupSlug = groupSlugFor(group.canonicalName);
   const plan = new Map<string, MergePlanEntry>();
-  for (const member of members) {
+  for (const member of group.members) {
     plan.set(member.name, {
       groupSlug,
-      canonicalName,
-      isCanonical: member.name === canonicalName,
+      canonicalName: group.canonicalName,
+      isCanonical: member.name === group.canonicalName,
+      tier: group.tier,
     });
   }
   return plan;
@@ -106,7 +107,7 @@ function planForGroup(
 function byCandidateName(resolution: ConceptResolution): Map<string, MergePlanEntry> {
   const lookup = new Map<string, MergePlanEntry>();
   for (const group of resolution.groups) {
-    for (const [name, entry] of planForGroup(group.canonicalName, group.members)) {
+    for (const [name, entry] of planForGroup(group)) {
       lookup.set(name, entry);
     }
   }
@@ -121,7 +122,7 @@ function byCandidateName(resolution: ConceptResolution): Map<string, MergePlanEn
  * alone" instead of throwing inside the page-generation stage.
  */
 function soloEntry(name: string): MergePlanEntry {
-  return { groupSlug: groupSlugFor(name), canonicalName: name, isCanonical: true };
+  return { groupSlug: groupSlugFor(name), canonicalName: name, isCanonical: true, tier: "slug" };
 }
 
 /**

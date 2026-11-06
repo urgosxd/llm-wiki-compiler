@@ -40,7 +40,12 @@ import {
   type MergePlanCandidate,
   type MergePlanEntry,
 } from "../dimensions/wiki/concept-merge-plan.js";
-import type { ConceptEmbeddingPort } from "../dimensions/wiki/concept-resolution.js";
+import {
+  DEFAULT_PROPOSAL_THRESHOLD,
+  type ConceptEmbeddingPort,
+  type ConceptIncumbentSnapshot,
+  type ConceptSimilarity,
+} from "../dimensions/wiki/concept-resolution.js";
 import type { ExtractedConcept } from "../utils/types.js";
 import type { ExtractionResult } from "./deps.js";
 
@@ -55,13 +60,13 @@ export interface ConceptIdentityDecision {
 /**
  * Everything the resolver needs and knows about this run.
  *
- * Grouped into one object instead of two positional arguments because the two
- * are unrelated facts that a caller can easily swap.
+ * Grouped into one object instead of positional arguments because the two are
+ * unrelated facts that a caller can easily swap.
  */
 export interface ConceptIdentityOptions {
-  /** Slugs already in the wiki; their names keep the canonical slot. */
-  readonly incumbents?: ReadonlySet<string>;
-  /** Embedding port for the cosine tiers, when one is available. */
+  /** Existing concept pages, with the names and aliases they already answer to. */
+  readonly incumbents?: ConceptIncumbentSnapshot;
+  /** Embedding port for similarity proposals, when one is available. */
   readonly embed?: ConceptEmbeddingPort;
 }
 
@@ -204,12 +209,53 @@ export function supersededPageSlugs(
 }
 
 /**
+ * The names that folded into each concept page, keyed by that page's slug.
+ *
+ * This is what makes a merge STICK: the surviving page records every name that
+ * resolved to it, so the next ingest folds those names deterministically instead of
+ * re-deciding them from a similarity score. Derived here, once, from the decisions
+ * the run actually took — the page renderer only formats it.
+ *
+ * @param decisions - The plan's per-concept decisions, in flatten order.
+ * @returns Group slug → the folded-away names, in flatten order, deduplicated.
+ */
+export function foldedNamesByGroupSlug(
+  decisions: readonly ConceptIdentityDecision[],
+): Map<string, string[]> {
+  const folded = new Map<string, string[]>();
+  for (const { extractedName, entry } of decisions) {
+    if (entry.isCanonical) continue;
+    const names = folded.get(entry.groupSlug) ?? [];
+    if (!names.includes(extractedName)) {
+      names.push(extractedName);
+    }
+    folded.set(entry.groupSlug, names);
+  }
+  return folded;
+}
+
+/**
+ * The line that reports one similarity proposal to the user.
+ *
+ * Named and exported so the wording is testable without capturing stdout. It has to
+ * say three things: which two concepts look close, HOW close, and that they were NOT
+ * merged — otherwise a reader would take the number as a decision somebody took.
+ *
+ * @param similarity - One scored pair no deterministic rule folded.
+ * @returns The user-facing warning text, without colour codes.
+ */
+export function possibleDuplicateWarning(similarity: ConceptSimilarity): string {
+  return `Possible duplicate (similarity ${similarity.score.toFixed(2)}): "${similarity.leftName}" and "${similarity.rightName}" look related but were NOT merged — equivalence needs a name or alias match.`;
+}
+
+/**
  * Report what identity resolution decided, once per run.
  *
- * Silence is not an option for the degradation: semantic grouping is an
- * enhancement, and a user who expects "Vector DB" to fold into "Vector Database"
- * needs to know why it did not. The group count is verbose-only, because a normal
- * compile does not need to narrate unchanged behaviour.
+ * Silence is not an option for either half of this report. The degradation explains
+ * why no proposals were produced at all; each proposal is printed as a warning so a
+ * possible duplicate reaches a human instead of staying inside the result object
+ * (S12). The group count is verbose-only, because a normal compile does not need to
+ * narrate unchanged behaviour.
  *
  * @param plan - The plan for this run.
  */
@@ -220,12 +266,32 @@ export function reportConceptIdentity(plan: ConceptMergePlan): void {
     output.status("=", output.dim(
       `Concept identity: ${folded} name(s) folded into ${groups} concept page(s).`,
     ));
-    verbose(`review-band (pending) aliases: ${plan.resolution.pending.length}`);
   }
   const degradation = plan.resolution.degradation;
   if (degradation !== undefined) {
     output.status("!", output.warn(
       `Semantic concept grouping unavailable (${degradation.reason}): ${degradation.detail}`,
     ));
+  }
+  reportPossibleDuplicates(plan.resolution.similarities);
+}
+
+/**
+ * Prints one warning per proposal that clears the reporting floor.
+ *
+ * The floor is cosmetic: pairs below it stay in the resolution data for callers that
+ * want them, they are merely not worth a line each in a compile log.
+ *
+ * @param similarities - Every scored pair the resolver returned.
+ */
+function reportPossibleDuplicates(similarities: readonly ConceptSimilarity[]): void {
+  const reportable = similarities.filter(
+    (similarity) => similarity.score >= DEFAULT_PROPOSAL_THRESHOLD,
+  );
+  for (const similarity of reportable) {
+    output.status("!", output.warn(possibleDuplicateWarning(similarity)));
+  }
+  if (similarities.length > 0) {
+    verbose(`similarity proposals: ${reportable.length} of ${similarities.length} pair(s) reported`);
   }
 }

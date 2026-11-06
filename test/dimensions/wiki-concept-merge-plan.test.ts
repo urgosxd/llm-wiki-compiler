@@ -1,7 +1,7 @@
 /**
  * @file test/dimensions/wiki-concept-merge-plan.test.ts
  * @description The compile-facing seam: positional alignment, group slugs, and
- * the guarantee that a plan is built even when no embedding port exists.
+ * the proof that a similarity score never reaches group construction (S6, S14).
  */
 
 import { describe, it, expect } from "vitest";
@@ -13,7 +13,7 @@ import {
 } from "../../src/dimensions/wiki/concept-merge-plan.js";
 import type { ConceptEmbeddingPort } from "../../src/dimensions/wiki/concept-resolution.js";
 
-/** A port that scores every pair as identical, so the cosine tier always merges. */
+/** A port that scores every pair as identical, so every pair becomes a proposal. */
 const identicalPort: ConceptEmbeddingPort = {
   fingerprint: "fp-test",
   async embed(texts) {
@@ -59,12 +59,31 @@ describe("planConceptMerge", () => {
     expect(plan.entries).toHaveLength(candidates.length);
   });
 
-  it("merges names that share no token once a port can score them", async () => {
+  it("keeps names that share no token apart even when a port scores them 1.0", async () => {
+    // Inverted defect-pin: this pair used to merge at tier "auto" on the strength
+    // of the cosine score alone. A score is a proposal now, never a verdict.
     const plan = await planConceptMerge(
       [{ name: "PostgreSQL" }, { name: "Postgres" }],
-      { embed: identicalPort, thresholds: { auto: 0.9, review: 0.8 } },
+      { embed: identicalPort },
     );
-    expect(groupSlugs(plan)).toHaveLength(1);
-    expect(plan.resolution.groups[0].tier).toBe("auto");
+    expect(groupSlugs(plan)).toEqual(["postgres", "postgresql"]);
+    expect(plan.resolution.aliases).toHaveLength(0);
+    expect(plan.resolution.similarities).toEqual([
+      { leftName: "PostgreSQL", rightName: "Postgres", score: 1 },
+    ]);
+  });
+
+  it("folds a candidate into an incumbent through the incumbent's declared alias", async () => {
+    const plan = await planConceptMerge(
+      [{ name: "pgvector store" }],
+      {
+        incumbents: new Map([
+          ["vector-db", { canonicalName: "Vector DB", aliases: ["pgvector store"] }],
+        ]),
+      },
+    );
+    expect(groupSlugs(plan)).toEqual(["vector-db"]);
+    expect(plan.entries[0].tier).toBe("alias");
+    expect(plan.entries[0].isCanonical).toBe(false);
   });
 });

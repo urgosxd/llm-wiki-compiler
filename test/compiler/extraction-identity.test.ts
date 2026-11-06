@@ -8,14 +8,18 @@
  * document can both yield "Vector DB", and a name-keyed lookup would hand the
  * second one the first one's group while looking perfectly correct.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   bindConceptsToCanonicalNames,
   conceptIdentityDecisions,
+  foldedNamesByGroupSlug,
   mergePlanCandidates,
+  possibleDuplicateWarning,
+  reportConceptIdentity,
   resolveExtractionIdentity,
   supersededPageSlugs,
 } from "../../src/compiler/extraction-identity.js";
+import type { ConceptEmbeddingPort } from "../../src/dimensions/wiki/concept-resolution.js";
 import type { ExtractedConcept } from "../../src/utils/types.js";
 import type { ExtractionResult } from "../../src/compiler/deps.js";
 
@@ -119,5 +123,81 @@ describe("supersededPageSlugs", () => {
     const plan = await resolveExtractionIdentity([source("a.md", [concept("Alpha")])]);
     const decisions = conceptIdentityDecisions([source("a.md", [concept("Alpha")])], plan!);
     expect(supersededPageSlugs(new Set(["alpha"]), decisions).size).toBe(0);
+  });
+});
+
+/** A port that scores every pair identically, so every pair becomes a proposal. */
+const identicalPort: ConceptEmbeddingPort = {
+  fingerprint: "fp-test",
+  async embed(texts) {
+    return { ok: true, vectors: texts.map(() => [1, 0]) };
+  },
+};
+
+/** Two concepts no deterministic rule relates, so only similarity can notice them. */
+const unrelatedPair = [
+  source("a.md", [concept("Vector Search")]),
+  source("b.md", [concept("Vector Indexing")]),
+];
+
+/** Everything the reporting function wrote to stdout during one call. */
+function printedLines(logSpy: { mock: { calls: unknown[][] } }): string {
+  return logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("possibleDuplicateWarning", () => {
+  it("names both concepts, the score, and states they were NOT merged", () => {
+    const message = possibleDuplicateWarning({
+      leftName: "Vector Search",
+      rightName: "Vector Indexing",
+      score: 0.9734,
+    });
+    expect(message).toContain('"Vector Search"');
+    expect(message).toContain('"Vector Indexing"');
+    expect(message).toContain("0.97");
+    expect(message).toContain("NOT merged");
+  });
+
+  it("reaches the user through the compile reporting function", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const plan = await resolveExtractionIdentity(unrelatedPair, { embed: identicalPort });
+    reportConceptIdentity(plan!);
+    const printed = printedLines(logSpy);
+    expect(printed).toContain("Vector Search");
+    expect(printed).toContain("Vector Indexing");
+    expect(printed).toContain("1.00");
+    expect(printed).toContain("NOT merged");
+  });
+
+  it("still reports why semantic proposals were unavailable", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const plan = await resolveExtractionIdentity(unrelatedPair);
+    reportConceptIdentity(plan!);
+    expect(printedLines(logSpy)).toContain("embeddings-unconfigured");
+  });
+});
+
+describe("foldedNamesByGroupSlug", () => {
+  const incumbentPage = new Map([
+    ["vector-db", { canonicalName: "Vector DB", aliases: ["pgvector store"] }],
+  ]);
+
+  it("lists the folded name under the page slug that absorbed it", async () => {
+    const page = source("a.md", [concept("pgvector store")]);
+    const plan = await resolveExtractionIdentity([page], { incumbents: incumbentPage });
+    const folded = foldedNamesByGroupSlug(conceptIdentityDecisions([page], plan!));
+    expect(folded.get("vector-db")).toEqual(["pgvector store"]);
+  });
+
+  it("omits the canonical member, which needs no alias of its own", async () => {
+    const plan = await resolveExtractionIdentity([vectorDb, vectorDatabase]);
+    const folded = foldedNamesByGroupSlug(
+      conceptIdentityDecisions([vectorDb, vectorDatabase], plan!),
+    );
+    expect(folded.get("vector-database")).toEqual(["Vector DB"]);
   });
 });

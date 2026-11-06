@@ -13,6 +13,7 @@ import path from "path";
 import {
   buildFrontmatter,
   parseFrontmatter,
+  slugify,
 } from "../utils/markdown.js";
 import { readWikiPageFrom } from "./confined-wiki-read.js";
 import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
@@ -35,6 +36,13 @@ interface RenderableConcept {
   sourceFiles: string[];
   combinedContent: string;
   rebuild?: boolean;
+  /**
+   * Names that folded INTO this page, as decided by the identity stage.
+   *
+   * Passed in rather than recomputed here: the fold is an identity decision, and a
+   * renderer that re-derived it would be a second source of truth for what a page is.
+   */
+  aliases?: readonly string[];
 }
 
 /**
@@ -108,7 +116,54 @@ function buildMergedFrontmatter(
   addObsidianMeta(frontmatterFields, entry.concept.concept, entry.concept.tags ?? []);
   addProvenanceMeta(frontmatterFields, entry.concept);
   addModelProvenanceMeta(frontmatterFields);
+  applyDeclaredAliases(frontmatterFields, entry, existing?.meta.aliases);
   return buildFrontmatter(frontmatterFields);
+}
+
+/**
+ * Merge the page's own aliases, the ones it already declared, and every name that
+ * folded into it into one deduplicated list.
+ *
+ * Three rules, all observable in the written page: an alias the page already
+ * declared survives (dropping it would forget a resolved synonym and split the
+ * concept again next ingest); duplicates collapse on their slug, so the same name
+ * spelled twice is listed once; and the canonical title is never listed as its own
+ * alias, because a self-alias would make every page its own synonym.
+ *
+ * @param fields - Frontmatter fields to mutate, after the generated aliases exist.
+ * @param entry - The concept being rendered, carrying the folded names.
+ * @param declared - Aliases the existing page already declared, if it had any.
+ */
+function applyDeclaredAliases(
+  fields: Record<string, unknown>,
+  entry: RenderableConcept,
+  declared: unknown,
+): void {
+  const title = entry.concept.concept.trim();
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of [...stringList(fields.aliases), ...stringList(declared), ...(entry.aliases ?? [])]) {
+    const alias = raw.trim();
+    const key = slugify(alias);
+    if (alias === "" || alias.toLowerCase() === title.toLowerCase() || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(alias);
+  }
+  if (merged.length === 0) {
+    delete fields.aliases;
+    return;
+  }
+  fields.aliases = merged;
+}
+
+/** Reduce a frontmatter value to the plain strings it may contain. */
+function stringList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((value): value is string => typeof value === "string");
 }
 
 /**
