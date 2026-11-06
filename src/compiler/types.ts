@@ -10,6 +10,8 @@
 
 import type { CompilePageWrite } from "./compile-write.js";
 import type { ContextualLinkCounts } from "./link-anchoring.js";
+import type { LinkReviewCounts } from "./link-review.js";
+import type { RelatedPageIndex } from "./page-renderer.js";
 import type {
   ExtractedConcept,
   ReviewedCandidateRef,
@@ -36,6 +38,12 @@ export interface MergedConcept {
    * names deterministically instead of re-deciding them by similarity.
    */
   aliases?: readonly string[];
+  /**
+   * The run's shared sibling-page index, so every page of the run ranks its
+   * cross-reference context against the SAME snapshot instead of re-reading the
+   * wiki per page. Built once by the pipeline; absent for a single-page caller.
+   */
+  relatedPages?: RelatedPageIndex;
 }
 
 /** Buckets of source changes used by the compile pipeline. */
@@ -78,6 +86,31 @@ export interface PageGenerationResult {
    * without reading every page's warning.
    */
   linkCounts?: ContextualLinkCounts;
+  /**
+   * What the incremental reference review of EARLIER pages decided this run: pages
+   * reviewed, links added, and candidates dropped by each named bound.
+   *
+   * Optional for the same reason as {@link linkCounts}: it is filled by a stage that
+   * runs after this result is built. `compile-report` prints it as ONE line, and
+   * stays silent when the stage found nothing, reviewed nothing and dropped nothing.
+   */
+  linkReview?: LinkReviewCounts;
+}
+
+/**
+ * The run's mutable report totals, collected by the stages that run after
+ * generation.
+ *
+ * Grouped into one object because they are written in place by stages deeper than
+ * the pipeline that builds the result, and because a caller that threaded one and
+ * forgot the other would publish a compile whose limits are silently absent -- the
+ * defect `S12` forbids.
+ */
+export interface RunReportTotals {
+  /** Links kept and demoted by the ONE final link gate. */
+  linkCounts: ContextualLinkCounts;
+  /** Pages reviewed and links added by the incremental reference review. */
+  linkReview: LinkReviewCounts;
 }
 
 /** Outcome of generating a single merged concept page. */

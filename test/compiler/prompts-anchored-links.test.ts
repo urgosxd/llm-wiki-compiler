@@ -49,6 +49,9 @@ describe("buildPagePrompt — anchored links", () => {
   });
 
   it("bumps PROMPT_VERSION for the new page-prompt wording", () => {
-    expect(PROMPT_VERSION).toBe("v7");
+    // v7 introduced the anchoring rule above; v8 added the reference-review prompt,
+    // whose answers are part of what a run judged. The stamp tracks the CURRENT
+    // generation, so this pin moves with it.
+    expect(PROMPT_VERSION).toBe("v8");
   });
 });

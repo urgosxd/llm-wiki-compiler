@@ -68,6 +68,57 @@ export const MAX_CONCEPTS_PER_SOURCE = 50;
 export const MAX_CONTEXTUAL_LINKS_PER_PAGE = 12;
 
 /**
+ * Ceiling on how many EARLIER pages ONE article's reference review may judge.
+ *
+ * S9 asks the compiler to "recupera páginas anteriores que podrían necesitar una
+ * referencia hacia él" when an article is created or updated. Retrieval by mention
+ * is cheap, but the JUDGEMENT is one model call per candidate, so a common word in
+ * an article's title could otherwise put every page of the wiki in front of the
+ * model on every ingest. This cap is the per-article half of that bound; candidates
+ * past it are DROPPED AND COUNTED under the reason `article-cap`, never silently.
+ *
+ * 4 is deliberately smaller than {@link MAX_CONTEXTUAL_LINKS_PER_PAGE}: an earlier
+ * page that genuinely needs a NEW reference to an article written today is the
+ * exception, not the rule. A fresh concept is normally mentioned by a handful of
+ * pages at most, and each review costs a request. Raising it is a product decision,
+ * which is why the number lives here beside its reason.
+ */
+export const MAX_LINK_REVIEW_CANDIDATES_PER_ARTICLE = 4;
+
+/**
+ * Ceiling on how many reference reviews ONE RUN may make, across every article.
+ *
+ * The per-article cap bounds one article; this bounds the ingest. A first compile
+ * of a large corpus can create hundreds of articles, and without a run budget the
+ * review stage would cost (articles x candidates) model calls on exactly the run
+ * that is already the most expensive one. It is a REVIEW budget, so a candidate past
+ * it is dropped and counted under `run-cap`.
+ *
+ * 20 is the size at which the stage stays a rounding error next to extraction and
+ * page generation for an ordinary ingest (which reviews a handful of pages), while
+ * still covering a run that creates five or six articles that earlier pages really
+ * mention. Raising it is a product decision, not a tuning detail.
+ */
+export const MAX_LINK_REVIEW_PAGES_PER_RUN = 20;
+
+/**
+ * Ceiling on how many EARLIER pages one run may actually MODIFY.
+ *
+ * This is the bound S9 needs most: "No reescribas toda la wiki durante cada
+ * ingestión." The other two caps bound what the model is ASKED about; this one
+ * bounds what is WRITTEN, which is the part a reader of the wiki sees. It is a
+ * write budget, so an accepted verdict past it is refused and counted under
+ * `modify-cap`. Each modification rewrites an existing, already-authored page to
+ * add one link, which is the most delicate write this pipeline performs.
+ *
+ * 3 keeps the blast radius of a single ingest visible in a diff: an ingest that
+ * wanted to touch more than three earlier pages is doing a re-linking sweep over the
+ * whole wiki, and that is a different operation with its own command, not something
+ * an ingestion performs implicitly. Raising it is a product decision.
+ */
+export const MAX_LINK_REVIEW_PAGES_MODIFIED_PER_RUN = 3;
+
+/**
  * Default character budget for the combined source content sent to the LLM
  * during page generation for a single concept (issue #39).
  *

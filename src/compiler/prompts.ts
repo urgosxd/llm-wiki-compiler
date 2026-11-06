@@ -54,8 +54,12 @@ function sourcesSectionLines(): string[] {
  * text already names the target, only where it helps the reader, never for
  * connectivity, never to itself, at most once per target per section). The link
  * validator in `link-anchoring.ts` enforces the same rule on the result.
+ * v8: adds the reference-review prompt, which asks a yes/no question about ONE
+ * mention that already exists on an EARLIER page. It writes no prose and takes no
+ * part in page generation, so no compiled page changes shape under it; it is
+ * versioned because the answers it produces are part of what a run judged.
  */
-export const PROMPT_VERSION = "v7";
+export const PROMPT_VERSION = "v8";
 
 /**
  * The caller's system policy as prompt lines, or nothing when none is set.
@@ -296,6 +300,109 @@ export function buildPagePrompt(
     relatedSection,
     `\n\nConcept to write about: "${concept}".`,
   ].join("\n");
+}
+
+/**
+ * Anthropic tool definition for the REFERENCE REVIEW of an earlier page (S9).
+ *
+ * The question is deliberately narrow: one mention that already exists in a page's
+ * own text, one article written today, one yes/no answer. The schema forces the
+ * model to quote the words it judged, so a verdict can be tied back to a real span
+ * of the page and a claim nobody can locate is rejected instead of applied.
+ */
+export const LINK_REVIEW_TOOL = {
+  name: "judge_reference",
+  description:
+    "Decide whether one existing mention on a wiki page should become a link to another article",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      should_link: {
+        type: "boolean",
+        description:
+          "True only when linking this mention helps a reader of this passage understand it.",
+      },
+      mention: {
+        type: "string",
+        description:
+          "The exact words of the mention being judged, copied verbatim from the passage.",
+      },
+    },
+    required: ["should_link", "mention"],
+  },
+};
+
+/** What one reference review decided. */
+export interface LinkVerdict {
+  /** True when the mention should become a link. */
+  shouldLink: boolean;
+  /** The words the model judged, as it quoted them (may be empty). */
+  mention: string;
+}
+
+/**
+ * Build the system prompt for ONE reference review of an earlier page.
+ *
+ * It hands the model the page's own title, the passage containing the mention and
+ * the target article's title and summary -- never a similarity score, never a list
+ * of "related" pages. The decision belongs to the content: whether this page's
+ * reader, at this sentence, is helped by being able to follow the link. Asking for
+ * anything else is how the connectivity-for-its-own-sake defect reappears.
+ *
+ * @param input - The page and passage being judged, plus the article it could link to.
+ * @returns System prompt string for the review call.
+ */
+export function buildLinkReviewPrompt(input: {
+  pageTitle: string;
+  passage: string;
+  articleTitle: string;
+  articleSummary: string;
+}): string {
+  const summaryLine = input.articleSummary.trim() === ""
+    ? ""
+    : `Summary of that article: ${input.articleSummary}`;
+  return [
+    ...withLangLine(
+      "You are reviewing an existing wiki page for ONE possible link.",
+      `The page is titled "${input.pageTitle}". Its passage below already names "${input.articleTitle}".`,
+      "Say whether turning that mention into a link helps THIS page's reader understand the passage.",
+      "Link only when the target article explains something this passage raises.",
+      "Do not link because the two pages are related, similar, or both important.",
+      "Do not link to increase connectivity, and never invent a mention: quote words that are already there.",
+      "Use the judge_reference tool to answer.",
+    ),
+    "",
+    `Article the mention could link to: "${input.articleTitle}".`,
+    summaryLine,
+    "\n\n--- PASSAGE FROM THE PAGE ---\n\n",
+    input.passage,
+    "\n\n--- END PASSAGE ---",
+  ].filter((line) => line !== "").join("\n");
+}
+
+/**
+ * Read a reference-review tool response.
+ *
+ * Returns `null` when the payload cannot be understood at all, which a caller must
+ * count separately from a refusal: "the model said no" and "we could not read the
+ * answer" are different facts about a run, and only one of them is a silence.
+ *
+ * @param toolOutput - Raw JSON string returned from the judge_reference tool.
+ * @returns The verdict, or null when the payload is unreadable.
+ */
+export function parseLinkVerdict(toolOutput: string): LinkVerdict | null {
+  try {
+    const parsed: unknown = JSON.parse(toolOutput);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const payload = parsed as { should_link?: unknown; mention?: unknown };
+    if (typeof payload.should_link !== "boolean") return null;
+    return {
+      shouldLink: payload.should_link,
+      mention: typeof payload.mention === "string" ? payload.mention : "",
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Raw concept shape as it arrives from the tool JSON. */

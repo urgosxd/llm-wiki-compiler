@@ -36,6 +36,28 @@ import type { ExtractedConcept } from "../utils/types.js";
 /** Maximum number of existing concept pages to include as cross-reference context. */
 const RELATED_PAGE_CONTEXT_LIMIT = 5;
 
+/** A sibling page a generation prompt may be shown, with the bytes that rank it. */
+export interface RelatedPageCandidate {
+  /** The page's slug, used as the deterministic tie-break. */
+  slug: string;
+  /** Full markdown, frontmatter included: the text a mention is looked for in. */
+  content: string;
+}
+
+/**
+ * The sibling pages of one wiki, read ONCE for a whole compile run.
+ *
+ * WHY AN INDEX AND NOT A LIVE LISTING. Ranking pages by relevance needs every
+ * sibling's text, so a renderer that listed and read the directory per page would
+ * turn one compile into O(pages x pages) confined reads. The pipeline builds this
+ * index once and hands the same object to every page, which also means two pages of
+ * the same run cannot rank against different snapshots of the wiki.
+ */
+export interface RelatedPageIndex {
+  /** Every readable, non-orphaned concept page of the wiki. */
+  readonly candidates: readonly RelatedPageCandidate[];
+}
+
 /** A merged-concept input from the orchestrator (multiple sources merged into one). */
 interface RenderableConcept {
   slug: string;
@@ -50,6 +72,14 @@ interface RenderableConcept {
    * renderer that re-derived it would be a second source of truth for what a page is.
    */
   aliases?: readonly string[];
+  /**
+   * The run's shared sibling-page index, when the caller built one.
+   *
+   * Optional so a single-page caller (a test, the review path) still works: without
+   * it the renderer reads the siblings itself, which is correct and merely pays the
+   * read per page.
+   */
+  relatedPages?: RelatedPageIndex;
 }
 
 /**
@@ -70,7 +100,7 @@ export async function renderMergedPageContent(
   const existingPage = await readWikiPageFrom(
     root, CONCEPTS_DIR, entry.slug, source, false /* new page — absence is normal */,
   );
-  const relatedPages = await loadRelatedPages(root, entry.slug, source);
+  const relatedPages = await loadRelatedPages(root, entry, source);
 
   const system = buildPagePrompt(
     entry.concept.concept,
@@ -174,59 +204,136 @@ function stringList(raw: unknown): string[] {
 }
 
 /**
- * Load related wiki pages to provide cross-referencing context.
- * Returns concatenated content of up to RELATED_PAGE_CONTEXT_LIMIT pages.
- * Each per-file read is confined to `wiki/concepts`: a symlinked entry whose
- * target escapes that dir is dropped (warned, skipped) so its bytes never enter
- * the generation prompt.
+ * Read this wiki's sibling pages into the one index a run shares.
+ *
+ * Orphaned pages are dropped here rather than at read time: the wiki no longer
+ * serves them, so offering one as cross-reference context would point the model at
+ * a page the reader cannot reach. Each read stays confined to `wiki/concepts`: a
+ * symlinked entry whose target escapes that dir is dropped (warned, skipped) so its
+ * bytes never enter the generation prompt.
+ *
  * @param root - Project root directory.
- * @param excludeSlug - Slug of the current page to exclude.
+ * @param source - Row-backed page reader, or undefined to read `wiki/concepts`.
+ * @returns The sibling pages, in slug order.
+ */
+export async function buildRelatedPageIndex(
+  root: string,
+  source?: PageContentSource,
+): Promise<RelatedPageIndex> {
+  const slugs = source === undefined
+    ? (await readdir(path.join(root, CONCEPTS_DIR)).catch(() => [] as string[]))
+      .filter((file) => file.endsWith(".md"))
+      .map((file) => file.slice(0, -".md".length))
+      .sort()
+    : [...await source.listSlugs("concepts")].sort();
+  const candidates: RelatedPageCandidate[] = [];
+  for (const slug of slugs) {
+    const content = await readWikiPageFrom(root, CONCEPTS_DIR, slug, source);
+    if (content === "") continue;
+    if (parseFrontmatter(content).meta.orphaned) continue;
+    candidates.push({ slug, content });
+  }
+  return { candidates };
+}
+
+/**
+ * Rank the sibling pages a generation prompt may be shown, most relevant first.
+ *
+ * THE DEFECT THIS REPLACES. The context used to be the first N slugs of the
+ * directory, so the ``related'' pages a model saw were whichever ones sorted first
+ * alphabetically -- retrieval without relevance, which is the same class of mistake
+ * as linking on a similarity score. The ranking here is deterministic and textual:
+ * pages that MENTION the concept's canonical name come first (most mentions first),
+ * then pages that mention one of its aliases, and the remaining ties break on slug
+ * so the same wiki always produces the same context.
+ *
+ * It ranks RETRIEVAL ONLY. Nothing here creates, proposes or scores a link: the
+ * ranked list becomes prompt context, and every link a page ends up with is
+ * decided later by the link gate. No embedding and no vector store is consulted,
+ * so no score can decide anything (S14).
+ *
+ * @param candidates - The wiki's sibling pages.
+ * @param names - The concept's canonical name followed by its aliases.
+ * @param excludeSlug - Slug of the page being generated.
+ * @param limit - How many pages the prompt may see.
+ * @returns Slugs, most relevant first, capped at `limit`.
+ */
+export function rankRelatedSlugs(
+  candidates: readonly RelatedPageCandidate[],
+  names: readonly string[],
+  excludeSlug: string,
+  limit: number,
+): string[] {
+  const [title, ...aliases] = names.filter((name) => name.trim() !== "");
+  if (title === undefined) return [];
+  return candidates
+    .filter((candidate) => candidate.slug !== excludeSlug)
+    .map((candidate) => ({
+      slug: candidate.slug,
+      titleHits: countMentions(candidate.content, title),
+      aliasHits: aliases.reduce((sum, alias) => sum + countMentions(candidate.content, alias), 0),
+    }))
+    .sort((left, right) => compareRanked(left, right))
+    .slice(0, limit)
+    .map((scored) => scored.slug);
+}
+
+/** One page's relevance counters, as {@link rankRelatedSlugs} compares them. */
+interface RankedSlug {
+  slug: string;
+  titleHits: number;
+  aliasHits: number;
+}
+
+/** Most title mentions, then most alias mentions, then slug: a total order. */
+function compareRanked(left: RankedSlug, right: RankedSlug): number {
+  if (left.titleHits !== right.titleHits) return right.titleHits - left.titleHits;
+  if (left.aliasHits !== right.aliasHits) return right.aliasHits - left.aliasHits;
+  return left.slug < right.slug ? -1 : left.slug > right.slug ? 1 : 0;
+}
+
+/**
+ * How many times `needle` occurs in `haystack`, case-insensitively.
+ *
+ * A plain substring count on purpose: this ranks context, so near-misses are a
+ * ranking signal rather than a link, and reporting an exact count keeps the order
+ * reproducible without a tokenizer or a locale-sensitive collator.
+ *
+ * @param haystack - The page markdown.
+ * @param needle - The name to count.
+ * @returns The number of occurrences (0 for an empty needle).
+ */
+function countMentions(haystack: string, needle: string): number {
+  if (needle.trim() === "") return 0;
+  const hay = haystack.toLowerCase();
+  const target = needle.toLowerCase();
+  let count = 0;
+  let offset = hay.indexOf(target);
+  while (offset !== -1) {
+    count += 1;
+    offset = hay.indexOf(target, offset + target.length);
+  }
+  return count;
+}
+
+/**
+ * Load the cross-referencing context for one page, most relevant pages first.
+ * @param root - Project root directory.
+ * @param entry - The concept being rendered, carrying its own names.
  * @param source - Row-backed page reader, or undefined to read `wiki/concepts`.
  * @returns Concatenated related page contents (empty when no related page exists).
  */
 async function loadRelatedPages(
   root: string,
-  excludeSlug: string,
+  entry: RenderableConcept,
   source?: PageContentSource,
 ): Promise<string> {
-  const slugs = await listRelatedSlugs(root, excludeSlug, source);
-  const contents: string[] = [];
-  for (const slug of slugs) {
-    // warnAlways=true: the list proved this page exists, so a drop is a real escape.
-    const content = await readWikiPageFrom(root, CONCEPTS_DIR, slug, source);
-    if (!content) continue;
-    const { meta } = parseFrontmatter(content);
-    if (meta.orphaned) continue;
-    contents.push(content);
-  }
-
-  return contents.join("\n\n---\n\n");
-}
-
-/**
- * The sibling concept slugs a page may cross-reference, capped at the limit.
- *
- * Listing is separated from reading because the two backends list differently: the
- * file branch walks a directory, the row branch is handed every page and filters.
- *
- * @param root - Project root directory.
- * @param excludeSlug - Slug of the current page to exclude.
- * @param source - Row-backed page reader, or undefined to list `wiki/concepts`.
- * @returns Slugs to read, in a stable order.
- */
-async function listRelatedSlugs(
-  root: string,
-  excludeSlug: string,
-  source: PageContentSource | undefined,
-): Promise<string[]> {
-  if (source === undefined) {
-    const files = await readdir(path.join(root, CONCEPTS_DIR)).catch(() => [] as string[]);
-    return files
-      .filter((f) => f.endsWith(".md") && f !== `${excludeSlug}.md`)
-      .slice(0, RELATED_PAGE_CONTEXT_LIMIT)
-      .map((f) => f.replace(/\.md$/, ""));
-  }
-  return (await source.listSlugs("concepts"))
-    .filter((slug) => slug !== excludeSlug)
-    .slice(0, RELATED_PAGE_CONTEXT_LIMIT);
+  const index = entry.relatedPages ?? await buildRelatedPageIndex(root, source);
+  const names = [entry.concept.concept, ...(entry.aliases ?? [])];
+  const slugs = rankRelatedSlugs(index.candidates, names, entry.slug, RELATED_PAGE_CONTEXT_LIMIT);
+  const bySlug = new Map(index.candidates.map((candidate) => [candidate.slug, candidate.content]));
+  return slugs
+    .map((slug) => bySlug.get(slug) ?? "")
+    .filter((content) => content !== "")
+    .join("\n\n---\n\n");
 }

@@ -54,6 +54,13 @@ import {
   addContextualLinkCounts,
   emptyContextualLinkCounts,
 } from "./link-anchoring.js";
+import {
+  addLinkReviewCounts,
+  emptyLinkReviewCounts,
+  reviewEarlierPages,
+  type LinkReviewArticle,
+} from "./link-review.js";
+import { buildRelatedPageIndex, type RelatedPageIndex } from "./page-renderer.js";
 import type { ContextualLinkCounts } from "./link-anchoring.js";
 import { repairAndApplyLinks } from "./link-repair.js";
 import { qualifiedPageId } from "../utils/page-id.js";
@@ -92,6 +99,7 @@ import type {
   MergedConcept,
   MergedPageOutcome,
   PageGenerationResult,
+  RunReportTotals,
 } from "./types.js";
 import type {
   CompileOptions,
@@ -330,6 +338,26 @@ function withFoldedAliases(
   });
 }
 
+/**
+ * Attach the run's shared sibling-page index, so page generation ranks its
+ * cross-reference context instead of taking an alphabetical slice of the wiki.
+ *
+ * The index is read from `wiki/concepts`, which is where page generation reads its
+ * context from today: the renderer is handed no page source, so handing it an index
+ * built from any other backend would show the prompt pages from a corpus the render
+ * does not otherwise see.
+ *
+ * @param merged - The merged concept pages, in write order.
+ * @param index - The sibling pages, read once for the run.
+ * @returns The same pages, carrying the index.
+ */
+function withRelatedPageIndex(
+  merged: MergedConcept[],
+  index: RelatedPageIndex,
+): MergedConcept[] {
+  return merged.map((entry) => ({ ...entry, relatedPages: index }));
+}
+
 /** One generated-page outcome paired with its source-order merged entry. */
 interface GeneratedOutcome {
   entry: MergedConcept;
@@ -555,7 +583,7 @@ async function seedThenFinalize(
   embeddingPageSource?: EmbeddingPageSource,
   seams: PageSeams = {},
   stateRows?: WikiStateRowsBackend,
-  linkCounts?: ContextualLinkCounts,
+  totals?: RunReportTotals,
 ): Promise<void> {
   await maybeSeedPages(root, schema, generation, options, seams);
   await finalizeWiki(root, draft, generation.writtenPages, generation.seedSlugs, {
@@ -566,7 +594,7 @@ async function seedThenFinalize(
     embeddingPageSource,
     seams,
     stateRows,
-    linkCounts,
+    totals,
     jobObserver: options.jobObserver,
   });
 }
@@ -707,10 +735,17 @@ async function runGenerationStage(
   // the work by orders of magnitude: one document yielding 92 concepts reported
   // "1", so the job sat at "0 of 1" for the entire run. The SAME list is handed to
   // the phase below, so the denominator and the work cannot diverge.
-  const merged = withFoldedAliases(
+  const mergedWithAliases = withFoldedAliases(
     mergeExtractions(canonicalExtractions, frozenSlugs, reconciliationSlugs),
     identity.aliasesBySlug,
   );
+  // Read the sibling pages ONCE for the whole run: ranking cross-reference context
+  // needs every sibling's text, and reading it per page would make one compile pay
+  // pages x pages confined reads for context no reader ever sees. A run with nothing
+  // to render reads nothing.
+  const merged = mergedWithAliases.length === 0
+    ? mergedWithAliases
+    : withRelatedPageIndex(mergedWithAliases, await buildRelatedPageIndex(root));
   const generation = await timeStage("compile.page-generation", () => generatePagesPhase(
     root,
     merged,
@@ -791,7 +826,7 @@ async function finalizeNothingToCompile(
     stateRows,
     // Seed pages are regenerated on this path too, so their links are gated and
     // reported per page; the run total has no compile result to ride on here.
-    emptyContextualLinkCounts(),
+    { linkCounts: emptyContextualLinkCounts(), linkReview: emptyLinkReviewCounts() },
   ));
   return {
     ...emptyCompileResult(),
@@ -906,7 +941,10 @@ async function runCompilePipeline(
     // The run's link totals are collected in place by the link gate, which runs in
     // the resolution seam below — after every page of the run exists, which is the
     // only point where a link into a page this run created can be judged fairly.
-    const linkCounts = emptyContextualLinkCounts();
+    const totals: RunReportTotals = {
+      linkCounts: emptyContextualLinkCounts(),
+      linkReview: emptyLinkReviewCounts(),
+    };
     // Seed + resolution route through the SAME executor batches as the
     // no-source-changes branch (see seedThenFinalize). The draft flush is the
     // single durable state write, done inside finalizeWiki after resolution
@@ -917,9 +955,13 @@ async function runCompilePipeline(
       embeddingPageReading(db, env),
       seams,
       stateRows,
-      linkCounts,
+      totals,
     ), () => reportCompileStage(compileReporter, "compile.finalize"));
-    const reportGeneration: PageGenerationResult = { ...generation, linkCounts };
+    const reportGeneration: PageGenerationResult = {
+      ...generation,
+      linkCounts: totals.linkCounts,
+      linkReview: totals.linkReview,
+    };
     await logCompile(root, buckets, reportGeneration, existingIds, env);
     verbose(`compile finished in ${Date.now() - startMs} ms`);
     return summarizeCompile(buckets, reportGeneration, canonicalExtractions, options, forgetErrors);
@@ -1168,14 +1210,15 @@ interface FinalizeFlags {
    */
   stateRows?: WikiStateRowsBackend;
   /**
-   * Collector for the link gate's counts across this run.
+   * Collector for what the post-generation stages decided across this run.
    *
-   * Mutable and filled in place by the resolution seam, because the run total is
-   * only known once every page has been judged — which happens below the level that
-   * builds the compile result. The pipeline hands the same object to the result
-   * afterwards, so it reports what the gate actually decided.
+   * Mutable and filled in place by the resolution seam and the reference review,
+   * because the run totals are only known once every page has been judged — which
+   * happens below the level that builds the compile result. The pipeline hands the
+   * same object to the result afterwards, so it reports what those stages actually
+   * decided instead of what they were asked to do.
    */
-  linkCounts?: ContextualLinkCounts;
+  totals?: RunReportTotals;
   /**
    * Job observer for the stages finalize itself runs.
    *
@@ -1212,6 +1255,38 @@ function linkGateFor(
 }
 
 /**
+ * Review the wiki's EARLIER pages for a reference to the articles this run wrote (S9).
+ *
+ * Runs in the link phase, after the gate and after `link-repair`, and it is the only
+ * stage that edits a page this run did NOT generate. It is deliberately last: by now
+ * every article of the run exists, so a page reviewed here links to a real target,
+ * and every other link channel has already settled the mentions it owns, so this
+ * stage only sees mentions nothing else claimed.
+ *
+ * @param root - Project root the reads and writes are confined under.
+ * @param pages - Pages this run wrote, i.e. the articles an earlier page could reference.
+ * @param flags - The run's seams and its mutable totals.
+ */
+async function reviewEarlierPagesForRun(
+  root: string,
+  pages: readonly MergedConcept[],
+  flags: FinalizeFlags,
+): Promise<void> {
+  if (pages.length === 0 || flags.totals === undefined) return;
+  const counts = await reviewEarlierPages(root, reviewArticlesOf(pages), { seams: flags.seams });
+  addLinkReviewCounts(flags.totals.linkReview, counts);
+}
+
+/** This run's articles, as the review stage names them. */
+function reviewArticlesOf(pages: readonly MergedConcept[]): LinkReviewArticle[] {
+  return pages.map((entry) => ({
+    slug: entry.slug,
+    title: entry.concept.concept,
+    aliases: entry.aliases ?? [],
+  }));
+}
+
+/**
  * Resolve interlinks, regenerate index/MOC, refresh embeddings
  * post-write. Seed-page slugs are folded into both the changed-slug
  * set (so embeddings refresh covers them) and the new-slug set (so
@@ -1233,7 +1308,7 @@ async function finalizeWiki(
 ): Promise<void> {
   const {
     scoped = false, embeddings = true, embeddingStore, resolverSource,
-    embeddingPageSource, seams = {}, stateRows, jobObserver, linkCounts,
+    embeddingPageSource, seams = {}, stateRows, jobObserver, totals,
   } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
   const conceptNewSlugs = pages
@@ -1248,7 +1323,7 @@ async function finalizeWiki(
     // holds the project lock for its whole pipeline → the lock-free seam.
     await resolveAndApplyLinks(
       root, allChangedSlugs, allNewSlugs, resolverSource, seams.sink, seams.remover,
-      seams.transaction, linkGateFor(seams, linkCounts),
+      seams.transaction, linkGateFor(seams, totals?.linkCounts),
     );
     // Resolution adds links for titles it recognises; repair fixes links the
     // model already wrote against a page whose slug is longer than the name it

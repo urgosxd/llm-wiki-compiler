@@ -12,6 +12,7 @@ import { appendLog, formatList, formatWikilinkList } from "../utils/activity-log
 import * as output from "../utils/output.js";
 import { CONCEPTS_DIR } from "../utils/constants.js";
 import { describeLinkCounts } from "./link-anchoring.js";
+import { describeLinkReview, hasLinkReviewTruncation } from "./link-review.js";
 import type { SchemaConfig } from "../schema/index.js";
 import type { ExtractionResult } from "./deps.js";
 import type {
@@ -69,6 +70,7 @@ export function summarizeCompile(
     `${buckets.toCompile.length} compiled, ${buckets.unchanged.length} skipped, ${buckets.deleted.length} deleted`,
   ));
   reportLinkTotals(generation);
+  reportLinkReview(generation);
   if (generation.candidates.length > 0) {
     output.status("?", output.info(
       reviewSummaryLine(generation),
@@ -125,8 +127,31 @@ function reportLinkTotals(generation: PageGenerationResult): void {
   output.status("🔗", output.warn(`Contextual links in this run: ${summary}.`));
 }
 
-/** Human completion line for candidates created this run. */
-function reviewSummaryLine(generation: PageGenerationResult): string {
+/**
+ * Print ONE line for the incremental review of earlier pages, and nothing at all
+ * when it had nothing to do.
+ *
+ * Two different claims need two different lines. The gate line above reports links
+ * it REFUSED; this one reports what the review of EARLIER pages did, and whether a
+ * bound cut its work short. A truncated run is printed as a warning and a clean one
+ * as information, so a bound that fired is never mistaken for a quiet run -- the
+ * silent limit S12 forbids. Silence here means the stage found no candidate, made no
+ * review call and dropped nothing.
+ *
+ * @param generation - The compile-stage result, carrying the review totals when the
+ *   link phase ran.
+ */
+function reportLinkReview(generation: PageGenerationResult): void {
+  if (generation.linkReview === undefined) return;
+  const summary = describeLinkReview(generation.linkReview);
+  if (summary === null) return;
+  const line = `Link review of earlier pages: ${summary}.`;
+  output.status("🔗", hasLinkReviewTruncation(generation.linkReview)
+    ? output.warn(line)
+    : output.info(line));
+}
+
+/** Human completion line for candidates created this run. */function reviewSummaryLine(generation: PageGenerationResult): string {
   const held = generation.review.held.length;
   const forced = generation.review.forced.length;
   if (held > 0 && forced === 0) {
