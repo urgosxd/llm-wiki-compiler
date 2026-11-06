@@ -89,6 +89,7 @@ Interpretation (non-negotiable): embedding retrieval is legitimate for FINDING c
 | T4b | Review retrieval unions the names an article answers to: the title, the aliases folded this run, and the `aliases` its STORED frontmatter already declares, deduped by canonical key with the title never repeated | S6, S9, S14 | worker | ae765f4bc1ff5f678aee3ea3989ba1c4eca94bc7 |
 | T13 | Gate parity for `review approve`: the approve path passes the resolver's ONE gate construction, so an approved body is judged against the run's full page set instead of the concept-only resolver index | S8, S12 | worker | 070436a645e5f516de3120990838918cd40e7c9c |
 | T14 | Restore the line-limit convention and remove the duplicated gate-options construction: split `link-review.ts` into candidate retrieval (`link-review-candidates.ts`) and stage orchestration, and make `index.ts`'s `linkGateFor` delegate to the resolver's `linkGateOptions`. Behaviour-preserving; no test assertion changed | S9, S14 (preserved, no behaviour change) | worker | c8de1242a6da0cd150f7c0a2d5540f77e0cb3fdd |
+| T15 | Stability probe (MEASUREMENT only, no `src/` change): measure what a re-ingest does to a curated link, whether a no-op compile is byte-stable, what an anchor loss does, and whether a `PROMPT_VERSION` bump is observable. Pins THREE defects with `test.fails` and records the durable-curated-link design input with `path:line` evidence | S9, S12, S13 | worker | pending — parent-owned commit (test SHA recorded by the parent when it commits `test(compiler): pin the wiki stability defects the overlay must fix`) |
 
 ## Log
 
@@ -316,3 +317,99 @@ GATES (Node v24.21.0, quiescent tree, on the committed tree; scope stated per co
 NOTHING EXISTING CHANGED: `git diff --stat` shows only `src/compiler-cli.ts`, `src/utils/constants.ts` and the new `src/categories/`, `test/categories/`, `test/fixtures/category-{root,record}.ts`; `git diff --stat -- src/compiler src/cli src/dimensions src/export src/pages` is EMPTY. No `PageDirectory` edit, no SQL edit, no schema migration, no derived-artifact `kind` added.
 
 RISK: item 3 is not claimed. The only shared code touched is `src/utils/constants.ts` (three NEW constants) and `src/compiler-cli.ts` (NEW re-exports); no existing option, parser, helper, validation rule or closed set changed, and the existing suites above pass unmodified. Out of T5a's surfaces and left to T5b: compile-time category assignment, the page-to-category projection (from a page, see its categories) and the reader/writer seam for row-backed Stacks — a category is a FILE, so on a Stack-backed project the file exists while `wiki.pages` knows nothing about it, which is deliberate (a category is not a page) but means navigating categories from the page side is T5b's job.
+
+L11 (T15 delivered as a MEASUREMENT task: `test/compiler/wiki-stability.test.ts`, new, 8 cases; no `src/` change. Commit pending — this worker's tool contract forbids staging/committing, so the parent commits `test(compiler): pin the wiki stability defects the overlay must fix`, records that SHA in the T15 row, then commits `docs(odd): record T15`):
+
+THE TASK WAS TO MEASURE, NOT TO FIX, AND THE MEASUREMENT REFUTED TWO OF THE FOUR ASSUMPTIONS. The premise — "stage 5 adds a link to page A, and page bodies are regenerated wholesale, so the link is destroyed" — is right about the mechanism and wrong about the current reachability: today that link cannot be created by any compile at all, and cannot even be proposed for the alias form the design needs. Three independent defects, each pinned by an inverted test.
+
+DEFECT A — THE REFERENCE REVIEW IS NOT WIRED INTO THE PIPELINE (S9). `reviewEarlierPagesForRun` is defined at `src/compiler/index.ts:1272` and called by NOTHING. `git grep -n reviewEarlierPages` over `src/` at tip `7a5f548` returns exactly: the import (`index.ts:60`), the definition (`index.ts:1272`), its single call to the stage (`index.ts:1278`), the stage itself (`src/compiler/link-review.ts:214`), and two `{@link}` doc references. `finalizeWiki` (`index.ts:1304-1372`) runs `resolveAndApplyLinks` and `repairAndApplyLinks` and stops. The same single-occurrence shape holds at every commit from T4's own `fe48024` to the tip, so this is not a regression introduced later: the stage has never run inside a compile. Consequence, and it is a false-green worth knowing: `test/compiler/link-review-compile.test.ts` V8 ("prints no `Link review` line") passes VACUOUSLY, because the stage that would print it is never entered. Fix shape is one call site; it is a `src/` change and out of T15's surfaces.
+
+DEFECT B — READ-TIME RETRIEVAL THROWS AWAY THE ALIAS IT EXISTS TO MATCH (S6, S9). `withDeclaredAliases` unions the article's title, this run's folded names and the page's stored `aliases`, then `extraNames` (`src/compiler/link-review-candidates.ts:222-235`) dedupes that union by `canonicalConceptKey` — the tiered key that folds case, plurals and a reviewed acronym list (`db` -> `database`, `api`, `llm`, `rag`, ...: `src/dimensions/wiki/concept-identity.ts:39-48`). The MENTION SCAN it feeds matches the names LITERALLY by regex (`firstPlainMention`, same file, line 282). So every alias a NAME RULE folds in the same run is dropped before the scan sees it, because those folds REQUIRE the two spellings to share the canonical key (`applyNameRules` over `createConceptForest`, `src/dimensions/wiki/concept-resolution.ts:571-577`). An alias that reaches a page through a previously DECLARED alias (`matchIncumbent`'s `alias` tier, `concept-resolution.ts:321-345`) has a different key and does survive, which is why the fixture declares one by hand for the curation cases. Observed: beta's extraction yields `Vector DB` and `Vector Database`; the page is written as `vector-db` titled `Vector DB` with `aliases: [vector-db, Vector Database]`; calling `withDeclaredAliases` on it returns `aliases: []`. The narrower consequence: any title containing an expandable acronym (`Vector DB`, `RAG Pipeline`, `LLM Wiki`) loses its expanded spelling, and any plural-differing alias is lost the same way. Fix shape: dedupe on the literal spelling.
+
+DEFECT C — A CURATED LINK LIVES ONLY IN GENERATED BYTES, AND THE PASSIVE CHANNEL COVERS TITLES ONLY. The stage writes the page as `edit.page.content.replace(edit.page.body, () => validated.body)` (`src/compiler/link-review.ts:382`) through `applyCompilePageWritesLocked` (`link-review.ts:409`); nothing else records the curation. The next render replaces the whole body: `renderMergedPageContent` (`src/compiler/review-pipeline.ts:69`) returns `${frontmatter}\n\n${pageBody}\n` built from one model call (`src/compiler/page-renderer.ts:94-133`), and the write lands via `index.ts:291` -> `commitLivePageWrites` -> `applyCompilePageWritesLocked` (`index.ts:386`). What can put a link back: `addWikilinks` (`src/compiler/resolver.ts:303-309`) wraps plain mentions of page TITLES only — its index is built from `meta.title` (`buildTitleIndex`), and declared `aliases` are carried on the entry for the GATE, not for wrapping. So a TITLE-anchored curated link is re-created by the resolver on every re-render (no defect observable through that form), while an ALIAS-anchored link has no channel at all. That asymmetry is the reason every curation case in the new test file anchors on an alias, and it is the single most important constraint on the fix: a durable record plus a render-time overlay would be the FIRST mechanism to preserve alias-anchored links, and must not double-link what the resolver already restores.
+
+S-A1 — RAW RED, VERBATIM (captured with the three S-A1 cases as plain `it(...)` before converting them to `test.fails`; `/tmp/t15-red-raw.log`):
+
+```
+ FAIL  test/compiler/wiki-stability.test.ts > wiki stability across ingests > S-A1 the compile adds the curated link when it ingests the target article
+AssertionError: expected '---\ntitle: Alpha Topic\nsummary: Sum…' to contain '[[vector-db|pgvector store]]'
+
+- Expected
++ Received
+
+- [[vector-db|pgvector store]]
++ ---
++ title: Alpha Topic
++ summary: Summary of Alpha Topic.
++ sources:
++   - alpha.md
++ kind: concept
++ createdAt: "2026-11-06T20:59:31.410Z"
++ updatedAt: "2026-11-06T20:59:31.410Z"
++ tags: []
++ aliases:
++   - alpha-topic
++ modelId: claude-sonnet-4-6
++ promptVersion: v8
++ ---
++
++ Alpha Topic stores vectors in a pgvector store. ^[alpha.md]
++
+ FAIL  test/compiler/wiki-stability.test.ts > wiki stability across ingests > S-A1 reviews a page that names the article by its folded alias
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+ FAIL  test/compiler/wiki-stability.test.ts > wiki stability across ingests > S-A1 a curated link survives a re-ingest of the page that carries it
+AssertionError: expected '---\ntitle: Alpha Topic\nsummary: Sum…' to contain '[[vector-db|pgvector store]]'
+
+- Expected
++ Received
+
+- [[vector-db|pgvector store]]
++ ---
++ title: Alpha Topic
++ summary: Summary of Alpha Topic.
++ sources:
++   - alpha.md
++ kind: concept
++ createdAt: "2026-11-06T20:59:31.659Z"
++ updatedAt: "2026-11-06T20:59:31.760Z"
++ tags: []
++ aliases:
++   - alpha-topic
++ modelId: claude-sonnet-4-6
++ promptVersion: v8
++ ---
++
++ Alpha Topic stores vectors in a pgvector store. ^[alpha.md]
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 5 passed (8)
+```
+
+S-A1 VERDICT — CONFIRMED, WITH ITS SCOPE NAMED. The third block is the measurement the task asked for and it is unambiguous: the page was regenerated (`updatedAt` moved from `…659Z` to `…760Z`), the very mention the curated link was anchored on is STILL in the text (`pgvector store`), and the link is gone. Depends on no model whim: the fixture's rendered body is byte-identical across renders, so the only variable is that the body was replaced wholesale. The curated link's presence is a function of which article was reviewed last, not of either source's content — the ping-pong case now pins that as observed behaviour: link present after the review, absent after re-ingesting the page's own source, present again after re-reviewing the target article, with NO source change in between (the mention never moved). Two scopes stated so nobody overclaims: (1) it was measured by invoking the stage directly (`reviewEarlierPages`, the function `finalizeWiki` would call) because defect A means no compile reaches it; (2) the TITLE-anchored form does NOT reproduce the loss, because the resolver re-wraps title mentions — defect C's asymmetry.
+
+S-A2 — IDEMPOTENT WHERE IT MATTERS, WITH ONE NAMED NON-DETERMINISM. A compile of unchanged sources prints "Nothing to compile — all sources up to date.", changes NO byte under `wiki/concepts` (fingerprint over the whole project, filtered to that directory: empty), and rewrites `wiki/index.md` with an identical page list in identical order — the file's only difference is its own generation stamp, `_<n> pages | Generated <ISO>_` (`src/compiler/indexgen.ts:179`), which is stamped on every regeneration because `regenerateIndices` has no unchanged-skip. Measured: the ONLY path under `wiki/` that changes on a no-op compile is `wiki/index.md`, and the two consecutive `index.md` bodies are byte-identical once that stamp is blanked. Not a defect (the stamp is a build marker, not wiki content), but it does mean "zero diffs" is false at the file level and must be stated as "zero diffs in page content and ordering". Second named churn, environment-specific: `.llmwiki/pending-embeddings.json` changes each run only because this stub run has no embedding key (`VOYAGE_API_KEY is not set`), so the write-ahead marker keeps a pending id; the test excludes `.llmwiki/` and says so in a comment. Category churn is NOT MEASURABLE: no compile writes `wiki/categories/` yet (T5a is the object model and store only; compile integration is T5b), so there is nothing to be non-idempotent about.
+
+S-A3 — OBSERVED BEHAVIOUR WHEN THE JUSTIFYING MENTION DISAPPEARS. The link is gone (defect C), and it is also UNRECOVERABLE: retrieval requires a real mention (`firstPlainMention`), so with the words gone there is no candidate to re-review — `reviewEarlierPages` returns `reviewed: 0`, `linksAdded: 0` — and the compile that destroyed it printed no `Link review` line and no other warning. So today an anchor loss is a SILENT PERMANENT LINK LOSS, not something reported and not something the model can re-add. Pinned as a passing test, because this is what the code does; the pending overlay must decide what a durable record does when its anchor no longer exists (drop with a counted reason is the shape the rest of the pipeline uses) and that decision is the Manager's.
+
+S-A4 — VERSION DETERMINISM IS A FUNCTION OF INPUT ONLY, NOT OF VERSION.
+- WHERE IT IS RECORDED: `PROMPT_VERSION` (`src/compiler/prompts.ts:62`, currently `v8`) is stamped into PAGE FRONTMATTER by `addModelProvenanceMeta`, `fields.promptVersion = PROMPT_VERSION` at `src/compiler/provenance.ts:33`, called for every regenerated page (`src/compiler/page-renderer.ts:155`) and every seed page (`src/compiler/seed-pages.ts:177`). It is a PER-PAGE field, never a run field.
+- WHERE IT SURFACES: read only by the exporter, `src/export/collect.ts:196` (`...(typeof meta.promptVersion === "string" ? { promptVersion: meta.promptVersion } : {})`) into `ExportPage.promptVersion` (`src/export/types.ts:169`). Those two are the ONLY non-comment occurrences in `src/` besides the constant and the writer.
+- WHAT A BUMP DOES TO EXISTING PAGES: NOTHING. Nothing anywhere compares a stored version to the current one — the exhaustive `grep -rn promptVersion src/` result is the writer, the export reader, and comments. No page is invalidated, no page is regenerated, no state records a generation. A page keeps `promptVersion: v1` forever until its OWN source changes for an unrelated reason, at which point the whole body is regenerated and re-stamped (full regeneration, not drift). Measured: a page seeded with `promptVersion: v1` is byte-identical after a compile that regenerates another page, while that other page comes out at `v8` — so the wiki silently holds two prompt generations at once.
+- IS IT OBSERVABLE TO A USER: NO. No compile-report line mentions it (`src/compiler/compile-report.ts` has none), no state field, no migration, no warning. Silence here is the defect the task predicted: `promptVersion` in an export cannot be used to tell whether the wiki is uniform, and a bump is a no-op the operator cannot see. Contrast, same repo, opposite design: prompt MODIFIERS do invalidate — `promoteForPromptModifiers` (`src/compiler/prompt-modifiers.ts:176-181`) promotes every unchanged source to `changed` when the recorded digest differs, and the digest is persisted in state (`src/utils/state.ts:291`) — so the machinery for version-driven invalidation exists and is simply not applied to `PROMPT_VERSION`. NOT a decision this task can take: invalidate-on-bump is a full regeneration (cost) versus report-only (a new surface), and both are product choices. Recorded as a finding with no inverted test, deliberately: a `test.fails` would have had to encode an invented remedy.
+
+DESIGN INPUT — WHAT THE DURABLE CURATED-LINK RECORD MUST CARRY, AND EVERY WRITER THAT NEEDS THE OVERLAY (all `path:line` on tip `7a5f548`).
+- The record must store, per link: the SOURCE page id (`concepts/<slug>`) and the TARGET page id (the resolved identity, not the written spelling, because `link-repair` canonicalises spellings later — `src/compiler/link-repair.ts:238-257,380`); THE ANCHOR — the exact mention text plus enough context to re-find it (the current stage already computes the anchored span: `firstPlainMention` -> `{text,start,end}`, `link-review.ts:266-278`); the PROVENANCE of the link (which run, which rule accepted it: model verdict via `judge_reference` versus resolver wrap versus repair), because only the curated channels need the overlay; and a stable key (source+target+anchor) so re-reviewing the same mention cannot append the link twice.
+- It must live OUTSIDE the page body, i.e. its own file or row keyed by source page, because every mechanism below rebuilds bodies from scratch. A category-style `wiki/links/<id>.md` file through the trust planner is the precedent this branch already established (T5a), and a row would need the `page_directory` closed set untouched.
+- The overlay must be applied at EVERY site that (re)writes a concept page body: (1) GENERATION — `renderMergedPageContent` (`src/compiler/page-renderer.ts:94`) called from `src/compiler/review-pipeline.ts:69`, written via `src/compiler/index.ts:291` -> `index.ts:386`. This is the destructive one. (2) OUTBOUND/INBOUND LINK PHASE — `resolveLinks`/`collectFinalBodies`/`linkBody`/`addWikilinks` (`src/compiler/resolver.ts:303,441-470`), written via `resolveAndApplyLinks` (`resolver.ts:585`), reached from `finalizeWiki` (`index.ts:1321`). Must run AFTER the overlay, or it will duplicate title links the overlay also wants. (3) THE CURATION ITSELF — `src/compiler/link-review.ts:382` -> `link-review.ts:409`. (4) REPAIR — `repairAndApplyLinks` (`src/compiler/link-repair.ts:415`), which rewrites link targets and could orphan a curated record's spelling. (5) SEED PAGES — `src/compiler/seed-pages.ts:81` with the body from `seed-pages.ts:156`. (6) ORPHAN MARKING — `src/compiler/orphan.ts:70,110,145` (frontmatter-only rewrites; must NOT re-add links to a page the wiki stopped serving). (7) OUTSIDE `src/compiler/`: `src/commands/review-approve.ts:396` (`resolveAndApplyLinks` on the approve path) and `src/import/okf-refresh.ts:34` also regenerate link-bearing bodies through the same shared functions, so an overlay bound only to the compile path would leave those two inconsistent.
+
+TESTS (`test/compiler/wiki-stability.test.ts`, new, 322 lines / 222 non-comment, 8 cases, each 11-20 lines; every case drives `compileAndReport`, or `reviewEarlierPages` where defect A makes the compile path unreachable, and asserts page BYTES; provider stubbed, project in a throwaway OS temp dir removed by the fixture). THREE INVERTED (`test.fails`), each with the defect and the pending fix named above it: A1-wiring, A1-alias-dedupe, A1-regeneration. FIVE PASSING, each pinning observed behaviour: the ping-pong measurement, S-A2 idempotency, S-A2 the one rewritten artifact, S-A3 silent anchor loss, S-A4 mixed prompt generations. RED observed for the three inverted cases first (`/tmp/t15-red-raw.log`, quoted verbatim above), GREEN after conversion: `Tests 8 passed (8)`, `Test Files 1 passed (1)`.
+
+GATES (Node v24.21.0, quiescent tree, scope stated per command, no failing test to name): `npx tsc --noEmit` exit 0. `npm run typecheck:tests` exit 0, "1700 files checked; 260 baseline diagnostics in 94 files; no regression". `npm run build` exit 0 (ESM + DTS, viewer assets copied). `npm run test:affected` exit 0, 794 files / 6079 tests passed, 3 files / 4 tests skipped (797 / 6083), full output in `/tmp/t15-test-affected.log`, zero `×` lines, and the new file WAS in scope (it ran there). `./node_modules/.bin/fallow` exit 0, "0 above threshold · 16553 analyzed · maintainability 91.1 (good)". Focused: `npx vitest run test/compiler/wiki-stability.test.ts` exit 0, 1 file / 8 tests (3 expected-fail). NOT run: the full `npm test` suite (CI is its gate of record). Coverage caveat unchanged: `.fallowrc.json` ignores `packages/llmwiki-kg/**`, so a clean `fallow` result is never coverage of that package.
+
+NOTHING IN `src/` CHANGED: `git status --short` shows only `?? test/compiler/wiki-stability.test.ts` before the doc edit. RISK: none — a new test file and this record change no product code; the three defects it pins are pre-existing and were measured, not introduced.
