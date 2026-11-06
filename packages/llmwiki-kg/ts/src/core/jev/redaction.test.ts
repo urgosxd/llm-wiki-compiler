@@ -15,20 +15,37 @@
  * The sentinel below is deliberately unmistakable. A leak cannot pass by
  * coincidence, and a test that redacted the wrong string would still fail.
  *
- * NO NETWORK, NO CREDENTIAL. Every client is built with an injected `fetchImpl`.
+ * The second leak this file pins is the one a helper that only knew about headers
+ * could not close: credentials INSIDE the configured base URL — `user:pass@` and
+ * `?token=` — which travelled with the endpoint into the audit blob and the eval
+ * report. Those are redacted by shape, so the caller needs no secret to compare.
+ *
+ * NO NETWORK, NO CREDENTIAL. Every client is built with an injected `fetchImpl`;
+ * the eval command, which builds its own client, runs against a stubbed `fetch`.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { runEvalCli } from "../eval/main.js";
+import type { EvalSet } from "../eval/types.js";
 import { TRANSIENT_ATTEMPTS } from "../llm/retry.js";
+import { buildClassificationAudit } from "../../routes/ingest/audit.js";
+import type { ClassificationRuntime } from "../../routes/ingest/classify-stage.js";
 import { createJevHttpClient, createJevHttpClientFromEnv, requestDecision } from "./client.js";
 import type { JevFetch } from "./client.js";
-import { JevConfigError } from "./config.js";
-import { REDACTED, redactRequestDescriptor, redactSecrets } from "./redact.js";
+import { JevConfigError, parseJevConfig } from "./config.js";
+import { REDACTED, redactRequestDescriptor, redactSecrets, reportedBaseUrl } from "./redact.js";
 import type { JevDecisionRequest } from "./types.js";
 
 /** A value that cannot appear in a message unless it leaked from the credential. */
 const SENTINEL = "sk-THE-SECRET-SENTINEL";
+
+/** An inline password and token that are NOT the API key, so only their SHAPE can scrub them. */
+const URL_PASSWORD = "url-pass-9F3";
+const URL_TOKEN = "url-token-7A1";
+
+/** A base URL carrying both credential forms an operator produces by pasting a proxy DSN. */
+const CREDENTIALED_URL = `https://operator:${URL_PASSWORD}@jev.proxy/v1?token=${URL_TOKEN}`;
 
 const REQUEST: JevDecisionRequest = {
   model: "jev-test",
@@ -103,6 +120,103 @@ describe("redactRequestDescriptor", () => {
     }
     expect(descriptor.headers["authorization"]).toBe(REDACTED);
     expect(descriptor.headers["content-type"]).toBe("application/json");
+  });
+});
+
+describe("a credential carried inside the base URL never reaches a stored reason", () => {
+  it("strips the userinfo and the query value, keeping the host and the path", () => {
+    const descriptor = redactRequestDescriptor({ method: "POST", url: CREDENTIALED_URL, headers: {} });
+
+    for (const secret of [URL_PASSWORD, URL_TOKEN, "operator"]) {
+      expect(descriptor.url).not.toContain(secret);
+    }
+    expect(descriptor.url).toContain(REDACTED);
+    // Diagnosis needs the endpoint, so redaction must not hide which host was called.
+    expect(descriptor.url).toContain("jev.proxy");
+    expect(descriptor.url).toContain("/v1");
+  });
+
+  it("keeps JevFailed.reason clean, because the pipeline persists it", async () => {
+    const outcome = await requestDecision(
+      clientWith(answering(401, { error: { message: "unauthorized" } }), CREDENTIALED_URL),
+      REQUEST,
+    );
+
+    expect(outcome.status).toBe("provider_failure");
+    for (const surface of [JSON.stringify(outcome), String(outcome)]) {
+      expect(surface).not.toContain(URL_PASSWORD);
+      expect(surface).not.toContain(URL_TOKEN);
+    }
+    expect(JSON.stringify(outcome)).toContain("jev.proxy");
+  });
+});
+
+/** One extracted example, so the real evaluation has a candidate to decide on. */
+const ONE_EXAMPLE: EvalSet = {
+  version: "redaction-test/1",
+  examples: [
+    {
+      id: "e1",
+      kind: "entity",
+      language: "en",
+      source: "Acme employs Ada Lovelace.",
+      quote: "Acme employs Ada Lovelace.",
+      claim: "Acme employs Ada Lovelace.",
+      extracted: true,
+      candidate: { name: "Acme", proposedType: "Role" },
+      labels: { canonical: "Role", support: "supported" },
+    },
+  ],
+};
+
+describe("the eval report never publishes a base-URL credential", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("prints the redacted endpoint in the text and in the JSON", async () => {
+    // The evaluator builds its own client, so the transport is stubbed at the global.
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve(new Response(JSON.stringify({ error: { message: "unauthorized" } }), { status: 401 })),
+    );
+    const out: string[] = [];
+    const err: string[] = [];
+
+    const code = await runEvalCli(["--real"], {
+      env: { TYPESAFE_API_KEY: SENTINEL, LLMWIKI_JEV_BASE_URL: CREDENTIALED_URL },
+      loadSet: () => ONE_EXAMPLE,
+      write: (text) => out.push(text),
+      writeError: (text) => err.push(text),
+    });
+
+    expect(err.join("")).toBe("");
+    expect(code).toBe(0);
+    for (const secret of [URL_PASSWORD, URL_TOKEN]) {
+      expect(out.join("")).not.toContain(secret);
+    }
+    expect(out.join("")).toContain("jev.proxy");
+  });
+});
+
+describe("the audit base URL is redacted in the fallback path too", () => {
+  it("redacts a configured URL when the injected runtime supplies no redacted form", () => {
+    const runtime: ClassificationRuntime = {
+      client: { decide: () => Promise.reject(new Error("the audit never calls the vendor")) },
+      config: parseJevConfig({ LLMWIKI_JEV_BASE_URL: CREDENTIALED_URL }),
+    };
+
+    const audit = buildClassificationAudit({
+      states: { classified: 0 },
+      model: "jev-test",
+      baseUrl: reportedBaseUrl(runtime.redactedBaseUrl, runtime.config.baseUrl),
+      catalogVersion: "c1",
+      classifierVersion: "v1",
+    });
+
+    for (const secret of [URL_PASSWORD, URL_TOKEN]) {
+      expect(audit.base_url).not.toContain(secret);
+    }
+    expect(audit.base_url).toContain("jev.proxy");
   });
 });
 

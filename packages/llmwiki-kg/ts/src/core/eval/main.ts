@@ -16,7 +16,8 @@
  *
  * A real report prints its mode, model id and base URL. Without that, two reports with
  * different numbers cannot be told apart, and a model or endpoint change would look
- * like a scorer change.
+ * like a scorer change. The endpoint is printed through the redaction helper, never
+ * raw: it is a configured value an operator can paste a credential into.
  *
  * ## Exit codes
  *
@@ -30,6 +31,7 @@ import { defaultTypeCatalog } from "../catalog/default_catalog.js";
 import { createJevHttpClientFromEnv } from "../jev/client.js";
 import { JevConfigError, parseJevConfig } from "../jev/config.js";
 import type { JevEnv } from "../jev/config.js";
+import { redactSecrets } from "../jev/redact.js";
 import { loadEvalSet, EvalSetError } from "./load.js";
 import { runOfflineEval } from "./offline.js";
 import { renderJson, renderText } from "./report.js";
@@ -125,7 +127,10 @@ async function realReport(
         catalog,
         client: createJevHttpClientFromEnv(env),
         config,
-        run: { mode: "real", model: config.model, baseUrl: config.baseUrl },
+        // The report prints this endpoint, so it is redacted through the same helper
+        // the ingest audit uses: an operator who put a credential inside the base URL
+        // must not have it published by the report of their own evaluation.
+        run: { mode: "real", model: config.model, baseUrl: redactSecrets(config.baseUrl, [apiKey]) },
       })
     ).report,
   };

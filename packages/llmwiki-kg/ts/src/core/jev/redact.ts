@@ -18,13 +18,21 @@
  * So redaction is a function here and every message goes through it, including the
  * messages that already look safe. Defence in depth is cheaper than an audit.
  *
- * ## Two layers, because either alone is insufficient
+ * ## Three layers, because no single one is sufficient
  *
  * - **By value**: every configured secret is replaced wherever it appears, in its raw
  *   form and its URL-encoded form.
  * - **By shape**: any `Bearer <token>` or `authorization: <value>` sequence is
  *   replaced even when the caller has no secret to compare against. A header value
  *   that leaked out of a transport error is still a credential.
+ * - **By URL position**: the userinfo (`user:pass@`) and the value of a
+ *   credential-shaped query parameter (`?token=`, `?api_key=`, `?key=`, ...) are
+ *   replaced in any URL. This is the layer that closes the base-URL leak: an operator
+ *   who configures `https://user:secret@host/v1?token=secret` puts a credential in a
+ *   place that is neither a header nor a value the caller holds, and the URL travels
+ *   into `JevFailed.reason`, into the persisted `kg_classification_log.reason`, into
+ *   the audit blob and into the evaluation report. The host and path survive on
+ *   purpose: the point is to redact the secret, not to hide which endpoint ran.
  *
  * The merged result is deliberately lossy: an over-redacted message is readable, an
  * under-redacted one is a disclosure.
@@ -49,6 +57,13 @@ const CREDENTIAL_HEADER_NAME = /^(?:authorization|api[-_]?key|x-api[-_]?key)$/i;
 /** The `Bearer ` prefix, so the token itself can be extracted. */
 const BEARER_PREFIX = /^bearer\s+/i;
 
+/** A URL's userinfo, the `user:pass@` segment that precedes the host. */
+const URL_USERINFO = /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/?#@"']*@/gi;
+
+/** A query parameter whose value is a credential, matched by name. */
+const CREDENTIAL_QUERY_PARAM =
+  /([?&](?:token|access_token|api[-_]?key|key|secret)=)[^&\s"'#]*/gi;
+
 /**
  * Replaces credential-shaped sequences and every supplied secret value.
  *
@@ -60,7 +75,9 @@ const BEARER_PREFIX = /^bearer\s+/i;
  * @returns The sanitized text.
  */
 export function redactSecrets(text: string, secrets: readonly string[]): string {
-  let sanitized = text.replace(BEARER_TOKEN, `$1${REDACTED}`);
+  let sanitized = text.replace(URL_USERINFO, `$1${REDACTED}@`);
+  sanitized = sanitized.replace(CREDENTIAL_QUERY_PARAM, `$1${REDACTED}`);
+  sanitized = sanitized.replace(BEARER_TOKEN, `$1${REDACTED}`);
   sanitized = sanitized.replace(CREDENTIAL_HEADER, `$1${REDACTED}`);
   for (const secret of secrets) {
     const trimmed = secret.trim();
@@ -121,6 +138,22 @@ export interface RequestDescriptor {
   readonly headers: Readonly<Record<string, string>>;
 }
 
+/**
+ * The reportable form of a configured endpoint.
+ *
+ * An audit blob and an evaluation report both name the endpoint they used, and both
+ * are returned to a caller. A runtime that already redacted the URL passes that value
+ * in; one that only carries the configuration goes through this helper, so the
+ * fallback is not the one path that publishes a credential living inside the URL.
+ *
+ * @param redacted - The already-redacted form, when the caller has one.
+ * @param configured - The configured base URL.
+ * @returns The endpoint as it may be published.
+ */
+export function reportedBaseUrl(redacted: string | undefined, configured: string): string {
+  return redacted ?? redactSecrets(configured, []);
+}
+
 /** True when this header carries a credential rather than ordinary metadata. */
 function isCredentialHeader(name: string): boolean {
   return CREDENTIAL_HEADER_NAME.test(name);
@@ -137,8 +170,10 @@ function credentialValue(value: string): string {
  *
  * A descriptor is the most useful thing to report when a request fails, and the most
  * dangerous: it carries the `authorization` header verbatim. Credential headers are
- * replaced outright, their values are stripped from the URL as well, and the result
- * is a plain object, so `JSON.stringify` on it cannot disclose anything.
+ * replaced outright, their values are stripped from the URL as well, and the URL
+ * itself is redacted positionally — userinfo and credential query values — so a
+ * credential that arrived inside the configured base URL does not survive either. The
+ * result is a plain object, so `JSON.stringify` on it cannot disclose anything.
  *
  * @param descriptor - The request as it would be sent.
  * @returns The same descriptor with every credential replaced.

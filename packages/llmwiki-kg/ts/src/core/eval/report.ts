@@ -16,9 +16,17 @@
  * one mistake this format is built to prevent is reading extractor coverage and
  * classifier accuracy as parts of a single grade, when a candidate the extractor
  * never produced was never seen by the classifier at all.
+ *
+ * ## The endpoint is redacted here as well
+ *
+ * The run description carries the configured base URL, which an operator can paste a
+ * credential into. Both renderers pass it through the redaction helper instead of
+ * trusting whoever built the report, so a text report, a JSON report and a caller
+ * that assembled its own {@link RunInfo} all publish the same safe form.
  */
 
-import type { EvalReport } from "./types.js";
+import { redactSecrets } from "../jev/redact.js";
+import type { EvalReport, RunInfo } from "./types.js";
 
 /** The note printed with every report, stating why no total exists. */
 export const NO_AGGREGATE_NOTE =
@@ -46,6 +54,16 @@ function metric(name: string, value: number | string): string {
  */
 function decimal(value: number): string {
   return value.toFixed(3);
+}
+
+/**
+ * The run description as it may be published, with the endpoint credential redacted.
+ *
+ * @param run - The run description the caller supplied.
+ * @returns The same description with a safe base URL.
+ */
+function reportedRun(run: RunInfo): RunInfo {
+  return run.baseUrl === null ? run : { ...run, baseUrl: redactSecrets(run.baseUrl, []) };
 }
 
 /**
@@ -136,10 +154,11 @@ function coverageLines(report: EvalReport): string[] {
  * @returns The text, without a trailing newline.
  */
 export function renderText(report: EvalReport): string {
+  const run = reportedRun(report.run);
   const header = [
     "KG ingestion evaluation",
     `set: ${report.setVersion}   catalog: ${report.catalogVersion}`,
-    `run: mode=${report.run.mode}  model=${report.run.model}  baseUrl=${report.run.baseUrl ?? "(none)"}`,
+    `run: mode=${run.mode}  model=${run.model}  baseUrl=${run.baseUrl ?? "(none)"}`,
   ];
   return [
     ...header,
@@ -163,5 +182,5 @@ export function renderText(report: EvalReport): string {
  * @returns Indented JSON, without a trailing newline.
  */
 export function renderJson(report: EvalReport): string {
-  return JSON.stringify(report, null, 2);
+  return JSON.stringify({ ...report, run: reportedRun(report.run) }, null, 2);
 }

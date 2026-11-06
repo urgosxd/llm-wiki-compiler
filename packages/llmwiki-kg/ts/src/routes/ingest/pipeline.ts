@@ -102,6 +102,7 @@ import { persistClassification } from "./persist-classification.js";
 import type { ChunkResult, ExtractionResult } from "../../core/extraction-types.js";
 import type { ExtractionOptions } from "../../core/graph-extraction.js";
 import { deriveIdentityKey } from "../../core/identity/key.js";
+import { reportedBaseUrl } from "../../core/jev/redact.js";
 import { resolveIdentities } from "../../core/identity/resolve.js";
 import type { KnownIdentity } from "../../core/identity/types.js";
 import { validateOntology } from "../../core/ontology.js";
@@ -599,7 +600,7 @@ function classificationReport(
   return buildClassificationAudit({
     states: stateCounts(outcome),
     model: classification.config.model,
-    baseUrl: classification.redactedBaseUrl ?? classification.config.baseUrl,
+    baseUrl: reportedBaseUrl(classification.redactedBaseUrl, classification.config.baseUrl),
     catalogVersion: outcome.catalogVersion,
     classifierVersion: CLASSIFIER_VERSION,
   });
