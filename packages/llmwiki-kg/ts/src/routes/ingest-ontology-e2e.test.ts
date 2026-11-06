@@ -34,7 +34,7 @@ import type { Express } from "express";
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../core/extraction-harness.js";
 import { createRequireApiKey } from "../auth.js";
 import { parseConfig } from "../config.js";
-import { createRequestTransactionWrapper } from "../db.js";
+import { createRequestTransactionWrapper, createTransactionRunner } from "../db.js";
 import { createAksRouter } from "./aks.js";
 import { createDocumentsRouter } from "./documents.js";
 import { createIngestRouter } from "./ingest.js";
@@ -122,7 +122,9 @@ function buildApp(): Express {
   const app = express();
   app.use(express.json({ strict: false }));
   app.use("/stacks", createStacksRouter({ wrap, apiKey }));
-  app.use(createIngestRouter({ wrap, apiKey }));
+  // The production transaction shape: the pipeline opens its own bounded
+  // transactions, so classification never runs inside one.
+  app.use(createIngestRouter({ wrap, apiKey, run: createTransactionRunner(database()) }));
   // The documents router declares absolute paths on two prefixes, so it is
   // mounted at the root — see the note in `documents/router.ts`.
   app.use(createDocumentsRouter({ wrap, apiKey }));

@@ -5,6 +5,7 @@ import type { Database } from "../db.js";
 import { bindCallerStack } from "./stack_resolver.js";
 import { extractionModel } from "./llm/endpoints.js";
 import type { ExtractedEntity, ExtractedRelationship } from "./extraction.js";
+import type { ClassificationState } from "../schema-open-classification.js";
 
 /**
  * @file packages/llmwiki-kg/ts/src/core/document-consolidation.ts
@@ -27,6 +28,44 @@ type EntityLookupRow = {
   description: string | null;
 };
 
+/**
+ * An extracted entity plus the metadata a CLASSIFYING caller supplies.
+ *
+ * Every field is optional, so a caller that does not classify (the compiler's
+ * in-process path) keeps exactly the behaviour it had: no identity key means the
+ * lookup stays the `lower(name)` match and the DB trigger derives the stored key,
+ * and no classification state means the column stays NULL — which the migration
+ * defines as "no decision was ever recorded", not as `pending`.
+ *
+ * `identityKey` is what makes two mentions ONE row (S28, S43): the caller resolves
+ * identity first (T5) and this function honours it instead of re-deriving a name.
+ */
+export interface ConsolidationEntity extends ExtractedEntity {
+  /** The identity this mention resolved to; absent leaves the trigger to derive it. */
+  readonly identityKey?: string;
+  /** What the extractor proposed, kept beside the projection label. */
+  readonly proposedType?: string;
+  /** Operational classification state; absent when the caller never classifies. */
+  readonly classificationState?: ClassificationState;
+}
+
+/**
+ * An extracted relationship plus the metadata a classifying caller supplies.
+ *
+ * `predicate` is the verb the document used, written once and never rewritten, so
+ * a relation nobody could map keeps its meaning instead of collapsing into a
+ * generic one (S31). `identityKey` is what keeps two distinct free predicates
+ * between the same endpoints apart (S33).
+ */
+export interface ConsolidationRelationship extends ExtractedRelationship {
+  /** The original predicate; absent leaves the trigger to copy `type`. */
+  readonly predicate?: string;
+  /** The predicate-derived identity key; absent leaves the trigger to derive it. */
+  readonly identityKey?: string;
+  /** Operational classification state; absent when the caller never classifies. */
+  readonly classificationState?: ClassificationState;
+}
+
 /** Confidence bump applied when a re-extraction corroborates an existing entity. */
 const ENTITY_CONFIDENCE_BUMP = 0.05;
 
@@ -36,16 +75,35 @@ const DOCUMENT_SOURCE_KIND = "document";
 /** `pipeline` written for every document-derived row. */
 const DOCUMENT_PIPELINE = "llamaindex-schema-extraction";
 
-/** The Stack's existing entity with this name, case-insensitively. */
+/**
+ * The Stack's existing entity for this mention, by identity when one was resolved.
+ *
+ * Two lookup modes, chosen by the caller rather than by a heuristic:
+ *
+ * - with an `identityKey`, the row whose stored key is EQUAL is the identity, and
+ *   a re-ingest of the same mention therefore updates that row instead of opening a
+ *   sibling (S28, S43). A disambiguated key (`jordan#ctx:…`) can never match a bare
+ *   one, which is how homonyms stay apart (S29).
+ * - without one, the oracle's `lower(name)` match, unchanged, so a caller that does
+ *   not resolve identities behaves exactly as before.
+ */
 async function findExistingEntity(
   tx: Database,
   stackId: string,
-  name: string,
+  entity: ConsolidationEntity,
 ): Promise<EntityLookupRow | undefined> {
+  if (entity.identityKey !== undefined) {
+    const byKey = await tx.execute<EntityLookupRow>(sql`
+      select id, confidence, description
+      from ontology_entities
+      where stack_id = ${stackId} and identity_key = ${entity.identityKey}
+    `);
+    return byKey[0];
+  }
   const rows = await tx.execute<EntityLookupRow>(sql`
     select id, confidence, description
     from ontology_entities
-    where stack_id = ${stackId} and lower(name) = lower(${name})
+    where stack_id = ${stackId} and lower(name) = lower(${entity.name})
   `);
   return rows[0];
 }
@@ -89,21 +147,29 @@ async function updateEntity(
 /**
  * Inserts a new entity, populating `extracted_by_model` with the model the
  * extraction actually asked for.
+ *
+ * The three identity/classification columns are bound as NULL when the caller
+ * supplied nothing, which is not a placeholder: the landed triggers fill
+ * `proposed_type` from `type` and `identity_key` from `lower(btrim(name))`, and
+ * NULL `classification_state` means "no decision was recorded".
  */
 async function insertEntity(
   tx: Database,
   stackId: string,
-  entity: ExtractedEntity,
+  entity: ConsolidationEntity,
 ): Promise<string> {
   const inserted = await tx.execute<{ id: string }>(sql`
     insert into ontology_entities (
       stack_id, name, type, description, confidence,
-      extracted_by_model, source_kind, pipeline
+      extracted_by_model, source_kind, pipeline,
+      identity_key, proposed_type, classification_state
     )
     values (
       ${stackId}, ${entity.name}, ${entity.type}, ${entity.description},
       ${entity.confidence}, ${extractionModel()},
-      ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE}
+      ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE},
+      ${entity.identityKey ?? null}, ${entity.proposedType ?? null},
+      ${entity.classificationState ?? null}
     )
     returning id
   `);
@@ -175,7 +241,7 @@ export async function consolidateEntityRows(
   tx: Database,
   stackId: string,
   documentId: string,
-  extracted: readonly ExtractedEntity[],
+  extracted: readonly ConsolidationEntity[],
 ): Promise<Map<string, string>> {
   // Bind the tenant before any write: every statement below is tenant-scoped, so under
   // RLS an unbound insert is refused. `stackId` is already this call's own filter.
@@ -184,7 +250,7 @@ export async function consolidateEntityRows(
   const nameToId = new Map<string, string>();
 
   for (const entity of extracted) {
-    const existing = await findExistingEntity(tx, stackId, entity.name);
+    const existing = await findExistingEntity(tx, stackId, entity);
     const entityId =
       existing === undefined
         ? await insertEntity(tx, stackId, entity)
@@ -228,7 +294,7 @@ export async function consolidateEntityRows(
 export async function consolidateRelationshipRows(
   tx: Database,
   stackId: string,
-  extracted: readonly ExtractedRelationship[],
+  extracted: readonly ConsolidationRelationship[],
   nameToId: ReadonlyMap<string, string>,
 ): Promise<number> {
   await bindCallerStack(tx, stackId, null);
@@ -241,15 +307,23 @@ export async function consolidateRelationshipRows(
       continue;
     }
 
+    // `type` keeps its projection meaning and is NOT rewritten by a
+    // classification, so no later update can collide with `unique_edge_per_stack`.
+    // The original verb travels in `predicate`, which the trigger copies from `type`
+    // when the caller supplied none, and `identity_key` is what keeps two distinct
+    // free predicates between the same endpoints apart (S33).
     await tx.execute(sql`
       insert into ontology_relationships (
         stack_id, from_entity_id, to_entity_id, type,
-        description, confidence, extracted_by_model, source_kind, pipeline
+        description, confidence, extracted_by_model, source_kind, pipeline,
+        predicate, identity_key, classification_state
       )
       values (
         ${stackId}, ${fromId}, ${toId}, ${relationship.type},
         ${relationship.description}, ${relationship.confidence},
-        ${extractionModel()}, ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE}
+        ${extractionModel()}, ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE},
+        ${relationship.predicate ?? null}, ${relationship.identityKey ?? null},
+        ${relationship.classificationState ?? null}
       )
       on conflict (stack_id, from_entity_id, to_entity_id, type)
       do update set

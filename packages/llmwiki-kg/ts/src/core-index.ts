@@ -159,6 +159,69 @@ export type { RetrievedChunk } from "./core/retrieval.js";
 export { embedQuery } from "./core/extraction.js";
 export type { AKSEntityDto, AKSRelationshipDto } from "./dto.js";
 
+// The open-classification surface (T1-T10b).
+//
+// One block, because these modules are one API: the versioned catalog the
+// classifier is asked against, the open candidate model, the classification stage,
+// the evidence and identity stages it consumes, the JEV adapter it calls, and the
+// extraction contract that admits a candidate outside the catalog. They are
+// re-exported together so a consumer of this barrel and the ingest pipeline
+// describe the same surface, instead of the pipeline reaching for modules the
+// barrel never mentions.
+export { defaultTypeCatalog } from "./core/catalog/default_catalog.js";
+export { parseTypeCatalog } from "./core/catalog/parse.js";
+export {
+  hasEntityType,
+  hasRelationType,
+  relationConstraintsFor,
+  resolveEntityType,
+  resolveRelationType,
+} from "./core/catalog/lookup.js";
+export { normalizeCatalogName } from "./core/catalog/names.js";
+export { UNCLASSIFIED_ENTITY_TYPE } from "./core/catalog/types.js";
+export type {
+  EntityTypeDef,
+  RelationConstraint,
+  RelationTypeDef,
+  TypeAlias,
+  TypeCatalog,
+} from "./core/catalog/types.js";
+
+export { admitOpenTriplets, OpenAdmissionError } from "./core/open-admission.js";
+export type { CatalogMismatch, OpenAdmissionResult, OpenRejection } from "./core/open-admission.js";
+export { capTripletsPerChunk, DEFAULT_MAX_TRIPLETS_PER_CHUNK } from "./core/graph-prompt.js";
+export type { TripletTruncation } from "./core/graph-prompt.js";
+export type { ExtractionContract, ExtractionOptions, ExtractionOutcome } from "./core/graph-extraction.js";
+
+export { buildCandidateSpans, candidateEvidence } from "./routes/ingest/candidates.js";
+export type { CandidateSpan } from "./routes/ingest/candidates.js";
+export { classifyCandidates } from "./core/classify/index.js";
+export type {
+  CandidateEvidence,
+  CandidateDecision,
+  ClassificationBatch,
+  ClassificationState,
+  ClassifyCandidatesInput,
+  CompatibilityState,
+  EntityClassificationDecision,
+  RelationClassificationDecision,
+  SupportState,
+} from "./core/classify/index.js";
+
+export { locateQuote, locateQuoteInChunks } from "./core/evidence/locate.js";
+export { assessQuote, withSupport } from "./core/evidence/assessment.js";
+export { evidenceProvenance } from "./core/evidence/provenance.js";
+export type { EvidenceAssessment, EvidenceProvenance } from "./core/evidence/index.js";
+
+export { deriveIdentityKey, isDisambiguatedIdentityKey } from "./core/identity/key.js";
+export { resolveIdentities } from "./core/identity/resolve.js";
+export type { IdentityResolution, KnownIdentity } from "./core/identity/types.js";
+
+export { createJevHttpClient, createJevHttpClientFromEnv } from "./core/jev/client.js";
+export { DEFAULT_JEV_MODEL, jevConfig, parseJevConfig } from "./core/jev/config.js";
+export { interpretClassification } from "./core/jev/interpret.js";
+export type { JevConfig, JevDecisionClient, JevThresholds } from "./core/jev/index.js";
+
 // The Stack-id rule both dimensions validate against (spec S1).
 //
 // Exported through this barrel because the compiler is the other consumer that has

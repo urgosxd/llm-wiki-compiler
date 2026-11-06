@@ -81,6 +81,17 @@ export const EXTRACTION_AUDIT_KEY = "extraction";
 export const OPEN_AUDIT_KEY = "open";
 
 /**
+ * The `jsonb` key the classification section lives under.
+ *
+ * Present only when a classifier actually ran, because that is the only case in
+ * which it has anything true to say. A run with no credential writes no section at
+ * all: its candidates keep the state `pending` on their own rows, which is the
+ * observable fact, and a section of zeros would claim an evaluation nobody
+ * performed.
+ */
+export const CLASSIFICATION_AUDIT_KEY = "classification";
+
+/**
  * How many dropped triplets are reported by name.
  *
  * Five is enough to show the shape of a failure — usually one or two distinct
@@ -203,6 +214,68 @@ export const OpenAuditSchema = z.object({
 /** A validated open-contract report. */
 export type OpenAudit = z.infer<typeof OpenAuditSchema>;
 
+/**
+ * How many decisions landed in each state.
+ *
+ * The five states are a CLOSED set, spelled out rather than left as a free-form
+ * record, so a sixth state cannot appear in a stored blob before the schema's CHECK
+ * constraint and this schema agree on it. Every key is optional and absent keys are
+ * simply not written, matching the module's absent-when-empty rule.
+ */
+export const ClassificationStateCountsSchema = z.object({
+  classified: z.number().int().nonnegative().optional(),
+  free_no_match: z.number().int().nonnegative().optional(),
+  free_uncertain: z.number().int().nonnegative().optional(),
+  pending: z.number().int().nonnegative().optional(),
+  failed: z.number().int().nonnegative().optional(),
+});
+
+/**
+ * The classification section, as stored.
+ *
+ * It records the four magnitudes S23 keeps apart, each where it belongs: the STATE
+ * counts here, the raw vendor probabilities on the rows and in the classification
+ * log, the catalog and classifier versions beside them, and nothing about human
+ * verification at all.
+ */
+export const ClassificationAuditSchema = z.object({
+  states: ClassificationStateCountsSchema,
+  /** The vendor model id the requests asked for. */
+  model: z.string(),
+  catalog_version: z.string(),
+  classifier_version: z.string(),
+});
+
+/** A validated classification report. */
+export type ClassificationAudit = z.infer<typeof ClassificationAuditSchema>;
+
+/** The state counts of one run, as the schema declares them. */
+export type ClassificationStateCounts = z.infer<typeof ClassificationStateCountsSchema>;
+
+/** What a classification report is built from. */
+export interface ClassificationAuditInput {
+  readonly states: ClassificationStateCounts;
+  /** The vendor model id the requests asked for. */
+  readonly model: string;
+  readonly catalogVersion: string;
+  readonly classifierVersion: string;
+}
+
+/**
+ * Builds the classification section for a run where a classifier actually ran.
+ *
+ * @param input - State counts and the versions that produced them.
+ * @returns The validated section.
+ */
+export function buildClassificationAudit(input: ClassificationAuditInput): ClassificationAudit {
+  return ClassificationAuditSchema.parse({
+    states: input.states,
+    model: input.model,
+    catalog_version: input.catalogVersion,
+    classifier_version: input.classifierVersion,
+  });
+}
+
 /** What one open extraction run kept outside the catalog, and what it capped. */
 export interface OpenExtractionFacts {
   readonly outsideCatalog?: readonly CatalogMismatch[] | undefined;
@@ -299,6 +372,8 @@ export interface IngestAuditReport {
   readonly extraction?: ExtractionAudit;
   /** Absent when the run kept nothing outside the catalog and capped nothing. */
   readonly open?: OpenAudit;
+  /** Absent when no classifier ran, in which case every candidate stays `pending`. */
+  readonly classification?: ClassificationAudit;
 }
 
 /**
@@ -361,11 +436,14 @@ export async function writeIngestAudit(
   // `{}` placeholder would instead store an empty object as a present section.
   const extractionJson = report.extraction === undefined ? null : JSON.stringify(report.extraction);
   const openJson = report.open === undefined ? null : JSON.stringify(report.open);
+  const classificationJson =
+    report.classification === undefined ? null : JSON.stringify(report.classification);
   await tx.execute(sql`
     update stack_documents
     set audit = (coalesce(audit, '{}'::jsonb)
           - ${EXTRACTION_AUDIT_KEY}::text
-          - ${OPEN_AUDIT_KEY}::text)
+          - ${OPEN_AUDIT_KEY}::text
+          - ${CLASSIFICATION_AUDIT_KEY}::text)
       || jsonb_build_object(${ONTOLOGY_AUDIT_KEY}::text, ${JSON.stringify(report.ontology)}::text::jsonb)
       || case
            when ${extractionJson}::text is null then '{}'::jsonb
@@ -374,6 +452,10 @@ export async function writeIngestAudit(
       || case
            when ${openJson}::text is null then '{}'::jsonb
            else jsonb_build_object(${OPEN_AUDIT_KEY}::text, ${openJson}::text::jsonb)
+         end
+      || case
+           when ${classificationJson}::text is null then '{}'::jsonb
+           else jsonb_build_object(${CLASSIFICATION_AUDIT_KEY}::text, ${classificationJson}::text::jsonb)
          end
     where id = ${docId}
   `);

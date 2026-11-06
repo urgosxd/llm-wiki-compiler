@@ -15,6 +15,7 @@ import type { Request, Response } from "express";
 
 import { MAX_EXTRACTION_CHARS } from "../../core/files.js";
 import { bindCallerStack } from "../../core/stack_resolver.js";
+import type { KnownIdentity } from "../../core/identity/types.js";
 import type { Database } from "../../db.js";
 import { apiError, toFastApiValidationError } from "../../errors.js";
 import type { ApiError, ValidationFailure } from "../../errors.js";
@@ -80,11 +81,18 @@ export type DocumentRow = {
   /**
    * The Stack's declared ontology, or null.
    *
-   * Null is the oracle's behaviour — advertise the default type hints and accept
-   * whatever the model emits — so it must reach extraction as *absent*, never as
-   * an empty ontology that would reject every triplet.
+   * Null resolves to the documented default for ORIENTATION purposes: the type
+   * lists the model is shown. It no longer decides what may be stored.
    */
   stack_ontology: unknown;
+  /**
+   * The Stack's versioned type catalog, or null.
+   *
+   * This is the vocabulary the CLASSIFIER is asked against and the version stored
+   * with every decision. Null means "no catalog of its own", so the documented
+   * default catalog applies — the same fallback the catalogue migration declares.
+   */
+  stack_type_catalog: unknown;
 };
 
 /** A stored `ontology_entities` row this module reads back. */
@@ -198,12 +206,40 @@ export async function findDocument(
     select sd.id, sd.stack_id, sd.storage_path,
            s.name as stack_name,
            s.synthesize_descriptions as stack_synthesize_default,
-           s.ontology as stack_ontology
+           s.ontology as stack_ontology,
+           s.type_catalog as stack_type_catalog
     from stack_documents sd
     join stacks s on s.id = sd.stack_id
     where sd.id = ${docId} and sd.stack_id = ${stackId}
   `);
   return rows[0];
+}
+
+/**
+ * Every identity the Stack already holds, for resolution before any write.
+ *
+ * Read before the candidate rows are written, in the same short transaction, so
+ * identity resolution sees the graph as it was when this ingest started. The order
+ * is explicit (`name, id`) rather than plan-dependent: `resolveIdentities` treats
+ * two same-named rows as unresolvable, and a differently ordered list would make
+ * that decision depend on the planner.
+ *
+ * @param tx - Transaction carrying the read.
+ * @param stackId - Stack whose identities are read.
+ * @returns One entry per entity row: its id, its stored key and its display name.
+ */
+export async function loadKnownIdentities(
+  tx: Database,
+  stackId: string,
+): Promise<readonly KnownIdentity[]> {
+  await bindCallerStack(tx, stackId, null);
+  const rows = await tx.execute<{ id: string; identity_key: string; name: string }>(sql`
+    select id, identity_key, name
+    from ontology_entities
+    where stack_id = ${stackId}
+    order by name, id
+  `);
+  return rows.map((row) => ({ id: row.id, identityKey: row.identity_key, name: row.name }));
 }
 
 /** The text read from disk, already truncated for extraction. */

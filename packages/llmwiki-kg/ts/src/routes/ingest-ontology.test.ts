@@ -57,7 +57,7 @@ import { withFixtureTenant } from "./fixture-tenant.js";
 
 import { createRequireApiKey } from "../auth.js";
 import { parseConfig } from "../config.js";
-import { createRequestTransactionWrapper } from "../db.js";
+import { createRequestTransactionWrapper, createTransactionRunner } from "../db.js";
 import { createStacksRouter } from "./stacks.js";
 import { createIngestRouter } from "./ingest.js";
 import {
@@ -135,7 +135,9 @@ function buildApp(): Express {
   const app = express();
   app.use(express.json({ strict: false }));
   app.use("/stacks", createStacksRouter({ wrap, apiKey }));
-  app.use(createIngestRouter({ wrap, apiKey }));
+  // The production transaction shape: the pipeline opens its own bounded
+  // transactions, so classification never runs inside one.
+  app.use(createIngestRouter({ wrap, apiKey, run: createTransactionRunner(database()) }));
   app.use((_req, res) => {
     res.status(404).json({ detail: "Not Found" });
   });

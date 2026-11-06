@@ -1,13 +1,54 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/ingest/pipeline.ts
- * @description The ingest pipeline: chunks, extraction, consolidation, response.
+ * @description The ingest pipeline: the eight stages, in the order the algorithm
+ * requires, with the transaction boundaries written down.
  *
- * Split out of `routes/ingest.ts` as its own unit because it is the only place
- * that writes chunks and the ontology, and the order of its steps is the contract
- * (chunks before extraction, extraction before consolidation, totals after).
+ * ## The stages, and where the transaction boundaries fall
  *
- * `ingestDocument` is a literal transcription of the Python handler, step for
- * step. Each step is a named helper below it so the sequence stays readable.
+ * 1. extract candidates          — `chunkAndExtract`: chunk, embed, persist chunks,
+ *                                  extract under the OPEN contract
+ * 2. verify evidence             — `buildCandidateSpans`: the quote is located in the
+ *                                  stored chunk and recorded with verifiable offsets
+ * 3. resolve identities          — `resolveIdentityKeys`: known keys in, one key per
+ *                                  mention out
+ * 4. classify entities           — stages 4-6 run together in `classifySpans`
+ * 5. classify relations
+ * 6. validate structure and      — `validateDecisions`: state and canonical type must
+ *    semantic compatibility        agree before anything is written
+ * 7. consolidate and persist     — `persistClassification`: evidence rows, the
+ *                                  decision columns, the classification log
+ * 8. update projections          — the audit blob and the Stack totals; the AKS
+ *                                  export and the pages read the same rows, so there
+ *                                  is no second copy to invalidate
+ *
+ * ## Nothing long runs inside a transaction (S44)
+ *
+ * The order above is not cosmetic: it is the reason the handler takes a
+ * {@link TransactionRunner} instead of a connection. Stages 1-3 and the candidate
+ * rows they write run in ONE short transaction, which COMMITS before any classifier
+ * call. Stages 4-6 then run with no transaction open at all — no connection is
+ * held while an external decision service is being asked. Stage 7-8 open a SECOND
+ * short transaction for the writes and the response.
+ *
+ * The extraction call (an LLM request) still runs inside the first transaction, and
+ * that is a deliberate, reported limitation rather than an oversight: the chunk rows
+ * it produced are written in the same transaction, so an extraction outage still
+ * rolls them back exactly as it did before this split. Moving that boundary belongs
+ * to the bounded-transaction work in T13, not to this wiring.
+ *
+ * ## Unconfigured classification is a supported outcome
+ *
+ * When no classifier is configured, stages 4-6 are skipped, every candidate keeps
+ * the operational state `pending` that stage 1 wrote, no classification log row is
+ * written, and the request still answers 200. A provider failure is not converted
+ * into an abstention either: the decision layer turns it into `pending`/`failed`
+ * and the candidate survives (S25).
+ *
+ * ## No mandatory human step was added (S4)
+ *
+ * `source.verified` is never written here. Backfeed keeps setting
+ * `verified = true`, `source_kind = 'backfeed'` and `pipeline = 'human-review'`
+ * exactly as before, because that path is untouched by this pipeline.
  */
 
 import { sql } from "drizzle-orm";
@@ -19,40 +60,75 @@ import {
   synthesizeEntityDescriptions,
 } from "../../core/extraction.js";
 import { defaultOntology } from "../../core/default_ontology.js";
-import { buildExtractionAudit, buildOntologyAudit, buildOpenAudit, writeIngestAudit } from "./audit.js";
-import type { ExtractionAudit, OntologyAudit, OpenAudit } from "./audit.js";
+import { normalizeCatalogName } from "../../core/catalog/names.js";
+import type { TypeCatalog } from "../../core/catalog/types.js";
+import {
+  buildClassificationAudit,
+  buildExtractionAudit,
+  buildOntologyAudit,
+  buildOpenAudit,
+  writeIngestAudit,
+} from "./audit.js";
+import type { ClassificationAudit, ExtractionAudit, OntologyAudit, OpenAudit } from "./audit.js";
+import { buildCandidateSpans } from "./candidates.js";
+import type { CandidateSpan } from "./candidates.js";
+import {
+  CLASSIFIER_VERSION,
+  classificationCatalog,
+  classifySpans,
+  stateCounts,
+} from "./classify-stage.js";
+import type { ClassificationOutcome, ClassificationRuntime } from "./classify-stage.js";
+import { persistClassification } from "./persist-classification.js";
 import type { ChunkResult, ExtractionResult } from "../../core/extraction-types.js";
 import type { ExtractionOptions } from "../../core/graph-extraction.js";
+import { deriveIdentityKey } from "../../core/identity/key.js";
+import { resolveIdentities } from "../../core/identity/resolve.js";
+import type { KnownIdentity } from "../../core/identity/types.js";
 import { validateOntology } from "../../core/ontology.js";
 import type { Ontology } from "../../core/ontology.js";
 import {
   consolidateEntityRows,
   consolidateRelationshipRows,
 } from "../../core/document-consolidation.js";
+import type { ConsolidationEntity, ConsolidationRelationship } from "../../core/document-consolidation.js";
+import { bindCallerStack } from "../../core/stack_resolver.js";
 import type { Database } from "../../db.js";
 import { IngestionResult } from "./models.js";
 import type { IngestionResultDto } from "./models.js";
 import {
   findDocument,
+  loadKnownIdentities,
   parseIngestRequest,
   readDocumentText,
   sendDocumentNotFound,
   toVectorLiteral,
 } from "./request.js";
-import type { IngestParams } from "./request.js";
+import type { DocumentRow, IngestParams, LoadedText } from "./request.js";
 import { sendValidationFailure } from "./response.js";
 
+/**
+ * Runs one unit of work inside one short transaction.
+ *
+ * Injected instead of a connection on purpose: the pipeline decides WHERE the
+ * boundaries are, and the router decides how a transaction is opened. That is what
+ * lets the same handler run under the pool's runner (three bounded transactions)
+ * and under a request-scoped wrapper (one), with no second copy of the stage order.
+ */
+export type TransactionRunner = <T>(work: (tx: Database) => Promise<T>) => Promise<T>;
+
+/** The admission contract every ingest run uses; see {@link INGEST_EXTRACTION}. */
+const INGEST_EXTRACTION: ExtractionOptions = Object.freeze({ contract: "open" });
+
+/** The state stage 1 records, before any classifier has been asked anything. */
+const PENDING_STATE = "pending";
 
 /**
- * Trailing arguments for the extraction call, given a Stack's stored ontology.
+ * The Stack's ontology, used as ORIENTATION for the extraction prompt.
  *
- * A null column resolves to {@link defaultOntology} rather than to "no
- * enforcement". `null` used to mean the oracle's permissive behaviour, and that
- * was reversed deliberately: the vocabulary was never absent, it was only
- * unenforced, so the type column accepted `COMPANY` and `FIRM` as different
- * things forever. An unconfigured Stack is now oriented by a documented default,
- * and every proposal the catalog does not name is reported in the document's
- * `audit` blob — visible, not silent.
+ * A null column resolves to the documented default rather than to "no vocabulary",
+ * and the difference is now only what the model is told: a proposal outside it is
+ * kept and reported in the document's `audit`, never dropped.
  *
  * @param stored - The Stack's `ontology` column, or null/undefined when unset.
  * @returns Exactly one validated ontology: the declared one, or the default.
@@ -63,61 +139,15 @@ function ontologyArgument(stored: unknown): Ontology {
   return validateOntology(stored);
 }
 
-/**
- * The admission contract every ingest run uses.
- *
- * Named here, at the one call site, rather than made the default of
- * `extractGraphFromChunks`: the function's default stays `strict` so every
- * oracle-parity caller keeps its behaviour, and the pipeline says out loud that it
- * asks for the OPEN contract — where the catalog orients the model and a candidate
- * it does not name is kept with its own type and predicate (S1, S3, S7).
- *
- * `maxTripletsPerChunk` is left at its documented default: the open path reports
- * every cap it applies, so a bounded answer is legible as bounded (S9).
- */
-const INGEST_EXTRACTION: ExtractionOptions = Object.freeze({ contract: "open" });
-
-/**
- * What the ontology did to this document, in the shape stored in `audit`.
- *
- * ## Why this is recorded at all
- *
- * `IngestionResult` is nine fixed keys, byte-identical to the oracle, so the
- * rejection report cannot travel on the wire. Without a record, a document that
- * yielded three entities because the model drifted out of the declared types is
- * indistinguishable from one that only had three entities in it — which makes a
- * tight ontology look like a thin extraction, and vice versa.
- *
- * ## What `enforced` means now that every run is enforced
- *
- * It used to distinguish "no declaration, so nothing could be rejected" from "a
- * declaration rejected nothing" — two facts with the same count. With a default
- * ontology in force, `enforced` is always `true`, and the field that carries
- * meaning is `declared`: whether the caller wrote this Stack's vocabulary or
- * inherited the default. A document whose types were dropped by a default the
- * caller never chose must be distinguishable from one dropped by a declaration
- * they did choose, because only the second is a bug in their own config.
- */
 /** What steps 5 and 6 produced, plus the synthesis decision. */
 export interface ProcessedIngest {
   readonly chunks: readonly ChunkResult[];
   readonly extraction: ExtractionResult;
   readonly shouldSynthesize: boolean;
   readonly ontologyAudit: OntologyAudit;
-  /**
-   * What the extraction degraded, or absent when it degraded nothing.
-   *
-   * Optional on purpose: the report is built by `buildExtractionAudit`, which
-   * returns nothing unless a counter fired, so a healthy ingest writes neither
-   * this field nor a `0` where it would have gone.
-   */
+  /** Absent when the extraction degraded nothing. */
   readonly extractionAudit?: ExtractionAudit;
-  /**
-   * What the open contract kept outside the catalog, refused, or capped.
-   *
-   * Absent when the run stayed entirely inside the catalog and no budget fired, so
-   * a clean ingest writes neither this section nor a zero where it would go.
-   */
+  /** Absent when the run kept nothing outside the catalog and capped nothing. */
   readonly openAudit?: OpenAudit;
 }
 
@@ -149,88 +179,296 @@ export async function chunkAndExtract(
   if (shouldSynthesize) {
     await synthesizeEntityDescriptions(extraction, chunks);
   }
-  // The default ontology means extraction always has one, so `rejected` is always
-  // populated and the remaining distinction is whether the caller declared it.
   const declared = document.stack_ontology !== null && document.stack_ontology !== undefined;
-  const audit = buildOntologyAudit(declared, extraction.rejected ?? []);
   const extractionAudit = buildExtractionAudit(extraction);
   const openAudit = buildOpenAudit(extraction);
   return {
     chunks,
     extraction,
     shouldSynthesize,
-    ontologyAudit: audit,
+    ontologyAudit: buildOntologyAudit(declared, extraction.rejected ?? []),
     ...(extractionAudit === undefined ? {} : { extractionAudit }),
     ...(openAudit === undefined ? {} : { openAudit }),
   };
 }
 
+/** Everything stages 1-3 hand to the classifier, and what stage 7 needs. */
+export interface PreparedIngest {
+  readonly params: IngestParams;
+  readonly processed: ProcessedIngest;
+  /** One span per candidate: stage 2's output. */
+  readonly spans: readonly CandidateSpan[];
+  /** The catalog version the decisions will be made under. */
+  readonly catalogVersion: string;
+  /** The catalog itself, so stages 4-6 are asked against what stage 1 read. */
+  readonly catalog: TypeCatalog;
+  /** Folded entity name → entity row id, from stage 1's consolidation. */
+  readonly entityIds: ReadonlyMap<string, string>;
+  /** How many relationship rows stage 1 attempted to write. */
+  readonly writtenRelationships: number;
+  readonly truncated: boolean;
+}
+
+/**
+ * Stage 3: one identity key per extracted mention.
+ *
+ * A `matched` resolution echoes the EXISTING row's key, so a re-ingest updates that
+ * row instead of opening a sibling (S28, S43). An `undecided` mention — a name the
+ * Stack holds under more than one key — falls back to its own bare name key rather
+ * than to a guess: the pipeline has no mention-context evidence to disambiguate
+ * with, and inventing an anchor would fork an identity out of nothing.
+ *
+ * @param extraction - The folded extraction result.
+ * @param known - Every identity the Stack already holds.
+ * @returns Folded entity name → the key its row must carry.
+ */
+function resolveIdentityKeys(
+  extraction: ExtractionResult,
+  known: readonly KnownIdentity[],
+): Map<string, string> {
+  const mentions = extraction.entities.map((entity, index) => ({
+    ref: `mention:${String(index)}`,
+    name: entity.name,
+  }));
+  const resolutions = resolveIdentities(mentions, { known });
+  const keys = new Map<string, string>();
+  extraction.entities.forEach((entity, index) => {
+    const resolution = resolutions[index];
+    keys.set(
+      normalizeCatalogName(entity.name),
+      resolution === undefined || resolution.status === "undecided"
+        ? deriveIdentityKey({ name: entity.name })
+        : resolution.identityKey,
+    );
+  });
+  return keys;
+}
+
+/**
+ * Writes the candidate rows stage 1 produces, BEFORE anything classifies them.
+ *
+ * They are written as `pending`, which is the schema's "the classifier has not
+ * answered yet". That order is what makes the transaction boundary honest — the
+ * rows are committed before the classifier is called — and what makes an
+ * interrupted run recoverable instead of invisible.
+ *
+ * @param tx - The transaction stages 1-3 run in.
+ * @param params - The ingest request.
+ * @param extraction - The folded extraction result.
+ * @param identityKeys - Stage 3's output, keyed by folded entity name.
+ * @returns Folded entity name → entity row id, and the relationship count.
+ */
+async function persistCandidates(
+  tx: Database,
+  params: IngestParams,
+  extraction: ExtractionResult,
+  identityKeys: ReadonlyMap<string, string>,
+): Promise<{ entityIds: Map<string, string>; writtenRelationships: number }> {
+  const entities: ConsolidationEntity[] = extraction.entities.map((entity) => {
+    const identityKey = identityKeys.get(normalizeCatalogName(entity.name));
+    return {
+      ...entity,
+      ...(identityKey === undefined ? {} : { identityKey }),
+      proposedType: entity.type,
+      classificationState: PENDING_STATE,
+    };
+  });
+  const entityIds = await consolidateEntityRows(tx, params.stackId, params.docId, entities);
+  const relationships: ConsolidationRelationship[] = extraction.relationships.map((relationship) => ({
+    ...relationship,
+    predicate: relationship.type,
+    classificationState: PENDING_STATE,
+  }));
+  const writtenRelationships = await consolidateRelationshipRows(
+    tx,
+    params.stackId,
+    relationships,
+    entityIds,
+  );
+  return { entityIds, writtenRelationships };
+}
+
+/**
+ * Reads what the run needs and, when the request cannot be served, answers it.
+ *
+ * @param tx - The transaction stages 1-3 run in.
+ * @param params - The validated ingest request.
+ * @param res - Response, used for the 404 and 415 answers.
+ * @returns The document and its text, or `undefined` when a response was sent.
+ */
+async function loadIngestInput(
+  tx: Database,
+  params: IngestParams,
+  res: Response,
+): Promise<{ document: DocumentRow; loaded: LoadedText } | undefined> {
+  const document = await findDocument(tx, params.stackId, params.docId);
+  if (document === undefined) {
+    sendDocumentNotFound(res, params);
+    return undefined;
+  }
+  const loaded = await readDocumentText(res, document);
+  return loaded === undefined ? undefined : { document, loaded };
+}
+
+/**
+ * Stages 1-3 in one short transaction: read, chunk, extract, verify, resolve.
+ *
+ * @param tx - The transaction the runner opened.
+ * @param params - The validated ingest request.
+ * @param res - Response, for the paths that answer instead of proceeding.
+ * @returns Everything the classification stages need, or `undefined` after a response.
+ */
+async function prepareIngest(
+  tx: Database,
+  params: IngestParams,
+  res: Response,
+): Promise<PreparedIngest | undefined> {
+  const input = await loadIngestInput(tx, params, res);
+  if (input === undefined) return undefined;
+  const processed = await chunkAndExtract(tx, params, input.loaded.text, input.document);
+  const catalog = classificationCatalog(input.document.stack_type_catalog);
+  const identityKeys = resolveIdentityKeys(
+    processed.extraction,
+    await loadKnownIdentities(tx, params.stackId),
+  );
+  // Evidence is verified against the chunks this transaction just wrote, so the
+  // offsets are into the stored text rather than into a pre-trim split.
+  const spans = buildCandidateSpans({
+    documentId: params.docId,
+    extraction: processed.extraction,
+    chunks: processed.chunks,
+    identityKeys,
+    catalogVersion: catalog.version,
+  });
+  const { entityIds, writtenRelationships } = await persistCandidates(
+    tx,
+    params,
+    processed.extraction,
+    identityKeys,
+  );
+  return {
+    params,
+    processed,
+    spans,
+    catalogVersion: catalog.version,
+    catalog,
+    entityIds,
+    writtenRelationships,
+    truncated: input.loaded.truncated,
+  };
+}
+
+/**
+ * Stage 8: writes the audit blob and answers with the nine-key payload.
+ *
+ * @param tx - The second short transaction.
+ * @param prepared - What stages 1-3 produced.
+ * @param classification - The section for this run, or `undefined` when none ran.
+ * @param res - Response the 200 payload is written to.
+ */
+async function finishIngest(
+  tx: Database,
+  prepared: PreparedIngest,
+  classification: ClassificationAudit | undefined,
+  res: Response,
+): Promise<void> {
+  const { params, processed } = prepared;
+  // A fresh transaction, so the tenant binding has to be made again.
+  await bindCallerStack(tx, params.stackId, null);
+  await writeIngestAudit(tx, params.docId, {
+    ontology: processed.ontologyAudit,
+    ...(processed.extractionAudit === undefined ? {} : { extraction: processed.extractionAudit }),
+    ...(processed.openAudit === undefined ? {} : { open: processed.openAudit }),
+    ...(classification === undefined ? {} : { classification }),
+  });
+  const payload = await buildIngestionResult(tx, {
+    params,
+    chunks: processed.chunks,
+    extraction: processed.extraction,
+    written: prepared.writtenRelationships,
+    truncated: prepared.truncated,
+    descriptionsSynthesized: processed.shouldSynthesize,
+  });
+  res.status(200).json(IngestionResult.parse(payload));
+}
+
 /**
  * `POST /stacks/:stackId/documents/:doc_id/ingest`.
  *
- * Pipeline order mirrors the Python handler exactly; see the module comment for
- * the measured request order and the status codes.
+ * The eight stages run in the order documented at the top of this module, split
+ * across two short transactions by the injected runner so that no transaction is
+ * open while the classifier is asked anything.
+ *
+ * @param req - The request.
+ * @param res - The response.
+ * @param run - How this deployment opens a short transaction.
+ * @param classification - The decision runtime, or `undefined` when unconfigured.
  */
 export async function ingestDocument(
   req: Request,
   res: Response,
-  tx: Database,
+  run: TransactionRunner,
+  classification?: ClassificationRuntime,
 ): Promise<void> {
-  // Step 1: both path parameters and the query flag, reported together.
   const params = parseIngestRequest(req);
   if (!params.ok) {
     sendValidationFailure(res, params.detail);
     return;
   }
-
-  // Step 2: the document must exist AND belong to this Stack.
-  const document = await findDocument(tx, params.stackId, params.docId);
-  if (document === undefined) {
-    sendDocumentNotFound(res, params);
-    return;
-  }
-
-  // Step 3 and 4: read, decode, and truncate for extraction only.
-  const loaded = await readDocumentText(res, document);
-  if (loaded === undefined) {
-    return;
-  }
-
-  // Steps 5 and 6: chunk, embed, persist, extract, optionally synthesize.
-  const processed = await chunkAndExtract(tx, params, loaded.text, document);
-  const {
-    chunks,
-    extraction,
-    shouldSynthesize,
-    ontologyAudit: audit,
-    extractionAudit,
-    openAudit,
-  } = processed;
-
-  // Step 7: consolidate. Entities first — the relationship pass needs the map.
-  const written = await consolidateExtraction(tx, params, extraction);
-
-  // Step 7b: record what the ontology did and what the extraction degraded, in
-  // the same transaction as the write they describe. A separate transaction could
-  // land the graph rows and lose the audit, leaving an ingested document nobody
-  // can explain. Both facts land in the `audit` blob because `IngestionResult` is
-  // nine fixed oracle keys and cannot carry either one.
-  await writeIngestAudit(tx, params.docId, {
-    ontology: audit,
-    ...(extractionAudit === undefined ? {} : { extraction: extractionAudit }),
-    ...(openAudit === undefined ? {} : { open: openAudit }),
+  // Stages 1-3 and the `pending` candidate rows: ONE short transaction, which
+  // commits here, before any classifier call.
+  const prepared = await run((tx) => prepareIngest(tx, params, res));
+  if (prepared === undefined) return;
+  // Stages 4-6: no transaction is open and no connection is held.
+  const outcome = classification === undefined ? undefined : await classifyDocument(prepared, classification);
+  // Stages 7-8 and the response: a second short transaction.
+  await run(async (tx) => {
+    await persistClassification(
+      tx,
+      {
+        stackId: params.stackId,
+        catalogVersion: prepared.catalogVersion,
+        classifierVersion: CLASSIFIER_VERSION,
+        jevModel: classification?.config.model ?? "",
+      },
+      prepared.entityIds,
+      prepared.spans,
+      outcome,
+    );
+    await finishIngest(tx, prepared, classificationReport(outcome, classification), res);
   });
+}
 
-  // Step 8: totals for the Stack, after consolidation so they include this run.
-  const payload = await buildIngestionResult(tx, {
-    params,
-    chunks,
-    extraction,
-    written,
-    truncated: loaded.truncated,
-    descriptionsSynthesized: shouldSynthesize,
+/**
+ * Stages 4-6 over one prepared document, outside any transaction.
+ *
+ * @param prepared - What stages 1-3 produced.
+ * @param runtime - The decision client and its configuration.
+ * @returns The validated decisions.
+ */
+async function classifyDocument(
+  prepared: PreparedIngest,
+  runtime: ClassificationRuntime,
+): Promise<ClassificationOutcome> {
+  return classifySpans({
+    spans: prepared.spans,
+    catalog: prepared.catalog,
+    runtime,
   });
-  res.status(200).json(IngestionResult.parse(payload));
+}
+
+/** The audit section for a run that classified, or `undefined` when none did. */
+function classificationReport(
+  outcome: ClassificationOutcome | undefined,
+  classification: ClassificationRuntime | undefined,
+): ClassificationAudit | undefined {
+  if (outcome === undefined || classification === undefined) return undefined;
+  return buildClassificationAudit({
+    states: stateCounts(outcome),
+    model: classification.config.model,
+    catalogVersion: outcome.catalogVersion,
+    classifierVersion: CLASSIFIER_VERSION,
+  });
 }
 
 /**
@@ -255,9 +493,9 @@ export async function persistChunks(
  * Writes one chunk.
  *
  * pgvector's accepted text form is `[1,2,3]`. It must be passed as a string and
- * cast explicitly: handing postgres-js the JavaScript array makes it expand into
- * a 768-placeholder row constructor, which Postgres rejects as a type error
- * rather than coercing to `vector`.
+ * cast explicitly: handing postgres-js the JavaScript array makes it expand into a
+ * 768-placeholder row constructor, which Postgres rejects as a type error rather
+ * than coercing to `vector`.
  */
 export async function upsertChunk(tx: Database, chunk: ChunkResult): Promise<void> {
   await tx.execute(sql`
@@ -277,28 +515,6 @@ export async function upsertChunk(tx: Database, chunk: ChunkResult): Promise<voi
       embedding = excluded.embedding
   `);
 }
-
-/** Consolidates the extraction into the ontology, returning rows written. */
-export async function consolidateExtraction(
-  tx: Database,
-  params: IngestParams,
-  extraction: ExtractionResult,
-): Promise<number> {
-  // Entities first — the relationship pass needs the map.
-  const nameToId = await consolidateEntityRows(
-    tx,
-    params.stackId,
-    params.docId,
-    extraction.entities,
-  );
-  return consolidateRelationshipRows(
-    tx,
-    params.stackId,
-    extraction.relationships,
-    nameToId,
-  );
-}
-
 
 /** Everything the response payload is assembled from. */
 export interface IngestionFacts {
