@@ -11,12 +11,12 @@
  * ```bash
  * # Re-decide up to 100 stale entities and 100 stale relations of one Stack.
  * curl -sS -X POST \
- *   -H "Authorization: Bearer $AKS_API_KEY" \
+ *   -H "X-API-Key: $AKS_API_KEY" \
  *   "http://localhost:8000/stacks/3f1a6c2e-8a1b-4c5d-9e7f-0a1b2c3d4e5f/reclassify"
  *
  * # Bounded: take at most 25 of each, because a sweep touches many provider calls.
  * curl -sS -X POST \
- *   -H "Authorization: Bearer $AKS_API_KEY" \
+ *   -H "X-API-Key: $AKS_API_KEY" \
  *   "http://localhost:8000/stacks/3f1a6c2e-8a1b-4c5d-9e7f-0a1b2c3d4e5f/reclassify?limit=25"
  * ```
  *
