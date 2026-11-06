@@ -11,7 +11,7 @@ Concretely: the unit and integration tiers of `scripts/test-partition.ts`, and t
 
 ### S2 — the alias bridge
 "It must bridge the `llmwiki-kg` alias in the import graph, so a change in `packages/llmwiki-kg/ts/src/x.ts` selects (a) the kg package tests that import it and (b) any root test that reaches it transitively through `src/dimensions/**` or `src/**`."
-"(a)" and "(b)" are already satisfied by vitest's own resolver through the alias at `vitest.config.ts:38`; the requirement is therefore to PIN that behaviour with a test, not to rebuild an import graph. Acceptance: a committed test observes that a kg source change selects at least one `packages/**` test AND at least one root `test/dimensions/**` test.
+"(a)" and "(b)" are already satisfied by vitest's own resolver through the alias at `vitest.config.ts:38`; the requirement is therefore to PIN that behaviour with a test, not to rebuild an import graph. Acceptance (rewritten by ruling `L3.4`, which cancelled the committed `related` crawl): the `llmwiki-kg` alias mapping in `vitest.config.ts` resolves to `packages/llmwiki-kg/ts/src/core-index.ts`, the target file exists, and a real root consumer imports the bare specifier — pinned by a cheap unit-tier test (`test/affected-escalation-wiring.test.ts`); the end-to-end `related` selection is measured and recorded in `L2`/`L6` rather than committed, because it can only fail once the cheap pin already fails.
 
 ### S3 — escalation stays intact and becomes complete
 "Keep the existing escalation rule intact: `package.json`, `package-lock.json`, `vitest.config.ts`, `tsconfig*.json`, and `scripts/**` still escalate to the full unit tier. Something that touches both trees must escalate rather than guess."
@@ -19,7 +19,7 @@ Acceptance: `GLOBAL_SCOPE_PATHS` and `GLOBAL_SCOPE_DIRS` in `scripts/test-affect
 
 ### S4 — no assertion weakened
 "Do not change any test file's content, do not weaken any assertion, and do not touch `package.json` test scripts beyond what is strictly required."
-Acceptance: the only files whose content changes are `scripts/test-partition.ts` plus new test files plus documentation; no existing test body is modified, and no `package.json` script string changes.
+Acceptance (rewritten in the closing slice, because the original wording is now false): no `package.json` script string changes, and no assertion is weakened. The original sentence — "the only files whose content changes are `scripts/test-partition.ts` plus new test files plus documentation; no existing test body is modified" — does not hold: exactly ONE existing test file's content changed, `test/test-partition.test.ts`, under the Manager's explicit authorization with veto denied (`L3.5`), and only for two assertions that were replaced by strictly stronger ones. The full before/after, with both old and both new assertions quoted, is `L4`.
 
 ### S5 — proof discipline
 "Demonstrate the blind spot before the fix and its absence after, with actual runs" covering: (a) a no-op touch of `packages/llmwiki-kg/ts/src/core/ontology.ts` selecting zero or the wrong files BEFORE the fix; (b) after the fix, the kg tests that import it plus the root tests that reach it through the alias, with the selected file names in each case; (c) the root->kg direction; (d) `package-lock.json` still escalating to the full unit tier. "Revert every probe edit afterwards; the tree must end clean."
@@ -27,6 +27,7 @@ Honest limit, recorded as a finding rather than faked: no kg test imports root c
 
 ### S6 — tests for the selector itself
 Add tests that pin the selection rules: "a kg source change selects the importing kg test, the alias bridge is exercised, and the escalation paths still escalate." "The selector is currently trusted without tests, which is how it silently covered half the repo."
+Acceptance (restating the middle clause per `L3.4`): "the alias bridge is exercised" means exercised by the cheap alias pin in `test/affected-escalation-wiring.test.ts` — the mapping resolves to the kg entry point, that target exists, and a real root consumer imports the bare specifier — PLUS the escalated-tier wiring pin in the same file, where a global scope's argv names files from both trees. It does not mean a committed `related` crawl. The other two clauses stand as written: the kg-importing suite and the escalation inputs stay pinned, and the closing slice adds a third pin on the printed tier list `package.json` consumes.
 
 ### S7 — delivery
 Commit in reviewable slices (~400 authored changed lines) with conventional messages on `fix/affected-tests-two-dimensions`, tests alongside. Gates with exact scope run: `npx tsc --noEmit`, `npm run build`, `npm run test:affected`, `npx fallow 2.82.0`. "Do not push."
@@ -35,14 +36,15 @@ Commit in reviewable slices (~400 authored changed lines) with conventional mess
 Code and test files stay under 400 lines excluding comments; functions and tests under 40 lines excluding comments and try/catch catch/finally blocks. Every file gets a substantial top-of-file JSDoc comment. Comments say why, not what. `.md` files are exempt from the line limits, so this document may grow.
 
 ## Tasks
-- T1 env readiness: pinned dependency install in this worktree; no tracked writes. S7. worker. no commit: gitignored dependency install only
-- [x] T2 feature document (this file). S1-S8. worker. this commit
-- T3 RED: selector tests that fail before the fix — unit tier enumerates the kg tree; unit + integration cover every collected test file; escalation inputs still escalate; kg source is not global scope. S1, S3, S6. worker. bf12016 (RED observation is that slice's evidence; not re-observed here)
-- T4 GREEN: widen enumeration roots in `scripts/test-partition.ts` to every tree `vitest run` collects, skipping `node_modules`, `dist`, `.worktrees`, `.claude`, keeping the existing unit/integration classification rule unchanged. S1, S3, S4. worker. bf12016 (re-observed here: unit tier 723 files, 86 of them under `packages/`)
-- [x] T5 alias-bridge pin: one test proving a kg source change selects kg tests and root dimension tests. S2, S6. worker. 18da507 (`test/affected-escalation-wiring.test.ts`)
-- [x] T6 docs: update any prose that describes what the unit tier covers, if such prose exists. S7. worker. this commit
-- T7 gates: tsc, build, test:affected, fallow 2.82.0 with exact scope run. S7. worker. bf12016 recorded the gates for the enumeration slice; this slice's own gates are reported in L5 below
-- T8 independent verification: verdict per `S#`, fresh eyes, never the implementer. S1-S6. gentle-ai-verify. pending — not started, and an implementer cannot satisfy it
+- [x] T1 env readiness: pinned dependency install in this worktree; no tracked writes. S7. worker. no commit: gitignored dependency install only — checked in the closing slice: `./node_modules/.bin/vitest --version` → `vitest/3.2.7 linux-x64 node-v22.23.2`
+- [x] T2 feature document (this file). S1-S8. worker. aed8e2b
+- [x] T3 RED: selector tests that fail before the fix — unit tier enumerates the kg tree; unit + integration cover every collected test file; escalation inputs still escalate; kg source is not global scope. S1, S3, S6. worker. bf12016 (`test/test-partition-coverage.test.ts` and `test/test-partition-collected-set.test.ts`; `git show --stat` confirmed in the closing slice)
+- [x] T4 GREEN: widen enumeration roots in `scripts/test-partition.ts` to every tree `vitest run` collects, skipping `node_modules`, `dist`, `.worktrees`, `.claude`, keeping the existing unit/integration classification rule unchanged. S1, S3, S4. worker. bf12016 (re-measured in the closing slice: unit tier 723 = 633 `test/` + 86 `packages/` + 3 `src/` + 1 `scripts/`)
+- [x] T5 alias-bridge pin: one test proving a kg source change selects kg tests and root dimension tests. S2, S6. worker. 18da507 (`test/affected-escalation-wiring.test.ts`; `git show --stat` confirmed in the closing slice)
+- [x] T6 docs: update any prose that describes what the unit tier covers, if such prose exists. S7. worker. aed8e2b (`CONTRIBUTING.md` plus this file)
+- [x] T7 gates: tsc, build, test:affected, fallow 2.82.0 with exact scope run. S7. worker. bf12016 recorded the enumeration slice's gates, aed8e2b the docs slice's (L5), and the closing slice re-ran every one of them (L7)
+- [x] T8 independent verification: verdict per `S#`, fresh eyes, never the implementer. S1-S6. gentle-ai-verify. Verdict: **S1 PASS, S2 PARTIAL (reconciled by the S2 rewrite above), S3 PASS, S4 PASS-with-stale-text (reconciled by the S4 rewrite above), S5 PARTIAL (direction (c) is correctness, not a gap), S6 PARTIAL (reconciled by the S6 rewrite above), S7 PASS, S8 PASS; no blockers.** Advisory findings recorded in L7.
+- [x] T9 closing slice: pin the tier CLI `package.json` consumes (`test/test-partition-cli.test.ts`), correct the `CONTRIBUTING.md` over-attribution, and reconcile `S2`/`S4`/`S6`, L2's split (`L6`) and L4's counts. S2, S4, S6, S7, S8. this commit
 
 ## Log
 
@@ -160,8 +162,12 @@ expect(entry.file.startsWith("/")).toBe(false);
 | before the fix (1ca9dc0) | 631 | 82 | 713 | 0 |
 | after the fix (bf12016) | 722 = 632 `test/` + 86 `packages/` + 3 `src/` + 1 `scripts/` | 83 | 805 | 86 |
 | at HEAD 18da507 (re-measured for this record) | 723 = 633 `test/` + 86 `packages/` + 3 `src/` + 1 `scripts/` | 83 | 806 | 86 |
+| at HEAD aed8e2b (docs slice; tree unchanged since 18da507) | 723 = 633 `test/` + 86 `packages/` + 3 `src/` + 1 `scripts/` | 83 | 806 | 86 |
+| final tree, closing slice (`test/test-partition-cli.test.ts` added) | 723 = 633 `test/` + 86 `packages/` + 3 `src/` + 1 `scripts/` | 84 | 807 | 86 |
 
-At bf12016, 805 is every `*.test.ts` on disk; `vitest list --filesOnly` collects 804, and the difference is exactly `test/sdk/packaging.test.ts`. The bottom row is the same measurement one commit later, and it is the invariant still holding rather than a second claim: `test/affected-escalation-wiring.test.ts` (added by 18da507) is the single added file, the difference is still exactly `test/sdk/packaging.test.ts`, and 86 `packages/` files are in the unit tier in both rows.
+EACH ROW DESCRIBES THE TREE AT THAT COMMIT, not a mixture, and the collected counts differ per row too: 805 walked / 804 collected at bf12016; 806 walked / 805 collected at 18da507 and aed8e2b; 807 walked / 806 collected on the final tree. Every row holds the same invariant — the walked total is every `*.test.ts` on disk, `vitest list --filesOnly` collects one fewer, and the difference is exactly `test/sdk/packaging.test.ts`. The bf12016 row is the enumeration commit; the 18da507 row is the same invariant one commit later, with `test/affected-escalation-wiring.test.ts` the single added file.
+
+**Final tree, measured in `L7`** (vitest 3.2.7): unit 723, integration 84, walked 807, collected 806, and `comm` returns exactly `test/sdk/packaging.test.ts` on `walked − collected` and nothing on `collected − walked`. `test/test-partition-cli.test.ts` spawns (`execFileSync`), so it lands in `integration` and the unit tier stays at 723.
 
 ### L5 — docs slice: audit result, `CONTRIBUTING.md`, gates
 **Loud-failure audit (report-only).** The unavailable-database message is produced in two places, one per compilation boundary, and BOTH already name the escape hatch by name:
@@ -172,3 +178,45 @@ At bf12016, 805 is every `*.test.ts` on disk; `vitest list --filesOnly` collects
 So ruling 3's message requirement was already satisfied, and **nothing under `test/setup/**` was touched**. `test/setup/test-database-url.ts` is not the failure path at all: it publishes the run's URL into every worker and deliberately never throws (its own header says the loud message belongs to the chokepoint).
 
 **`CONTRIBUTING.md`.** Two true-after-bf12016 additions, nothing else: the `test:unit` line no longer describes one directory, and one paragraph after the command block states that the tier covers `test/`, `packages/`, `src/` and `scripts/` minus the files that spawn a CLI subprocess, that the `packages/llmwiki-kg` suites make Docker or `LLMWIKI_TEST_DATABASE_URL` a prerequisite, and that `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` skips the database-backed suites so the run verifies nothing about them. The `~5 min` durations were left alone: the measured widened-tier runs on this branch were 242.41 s and 189.27 s (vitest 3.2.7), which does not falsify a conservative `~5 min` upper bound.
+
+### L6 — CORRECTION of L2's `related` split, with the verifier's own measurement
+**L2 is wrong and this is MY error, recorded plainly rather than quietly edited.** L2 states that the pre-fix `vitest related` selection for `packages/llmwiki-kg/ts/src/core/ontology.ts` was "490 files selected: 402 under `test/**` ... and 88 under `packages/**`". **That split is arithmetically impossible.** This repository has 86 `*.test.ts` files under `packages/llmwiki-kg` in total — `find packages/llmwiki-kg -name '*.test.ts' -not -path '*/node_modules/*' | wc -l` → 86, re-measured in the closing slice — so 88 cannot be a kg count, and `402 + 88 = 490` is the only number in that sentence that reproduces. The 490 total was measured; the split was not, and it was written down as though it had been.
+
+**L2's split is SUPERSEDED by this entry.** L2's text stays exactly where it is, because this log is append-only; read that one sentence as "490 selected, split as recorded is invalid".
+
+**The verifier's independent measurement, which is the record now:** **490 selected = 426 under `test/` + 63 under `packages/llmwiki-kg/` + 1 under `src/dimensions/kg/`.** Those add to 490, and 63 < 86 is consistent with the size of the kg tree — precisely what L2's 88 violated.
+
+Concrete files on each side, statically confirmed in the closing slice:
+
+- **kg side:** `packages/llmwiki-kg/ts/src/core/ontology.test.ts` imports the changed file directly (`from "./ontology.js"`), as do `ontology-hierarchy.test.ts`, `ontology-domain-range.test.ts` and `ontology-flat.test.ts`. Nine kg test files under `packages/llmwiki-kg/ts/src` import `core/ontology` at all.
+- **root side:** `test/dimensions/activation.test.ts` reaches it only through the alias — `src/dimensions/activation.ts:45` imports the bare specifier `llmwiki-kg`, which `vitest.config.ts:38` maps to `packages/llmwiki-kg/ts/src/core-index.ts`. That crossing is the whole point of this feature, and it is why 426 root files can depend on one kg source file.
+- **the single `src/dimensions/kg/` file** is one of the three suites in that tree; the verifier's split names the bucket, not which of the three, and the closing slice did not re-run the 490-file crawl to identify it because ruling `L3.4` cancelled that crawl for the reasons recorded there.
+
+### L7 — closing slice: the CLI contract pin, the doc fix, and every gate
+**ITEM 1 — the untested public interface.** `package.json` builds both tiers from the CLI's stdout: `test:unit` is `vitest run $(node scripts/test-partition.ts unit | tr '\n' ' ')` and `test:integration` likewise. Nothing pinned that printed list, so a CLI that drifted from the library would run the wrong files while every library-level test stayed green. `test/test-partition-cli.test.ts` now spawns `node scripts/test-partition.ts unit|integration` with `execFileSync(process.execPath, …)` and the repository root as cwd, and compares each printed list to `partition(classifyTests(ROOT))` as an exact array, naming both directions of divergence separately (printed-but-not-computed, computed-but-not-printed). It also requires the printed unit list to carry at least one `test/` path AND at least one `packages/llmwiki-kg/` path — the two dimensions through the interface `package.json` actually consumes — and requires one repo-relative path per line with nothing else on stdout, because `tr '\n' ' '` turns a header, a blank line or a trailing space into a vitest argument. The file spawns, so content classification puts it in `integration`: `npm test` / `npm run test:integration` are its home, not the fast tier.
+
+**RED, observed honestly and without touching `scripts/**`.** The production code is already correct, so a passing run is not evidence that the assertion bites. Two throwaway variants of this file — the expected side mutated inside the test only — were run:
+
+- expected = `TIERS[tier].slice(1)` (simulates a printed path the library does not compute) → FAIL: `printed but absent from the library unit tier: test/…` and the same for integration; 2 failed | 4 passed.
+- expected = `[...TIERS[tier], "test/fabricated-by-this-test.test.ts"]` (simulates a computed path the CLI never prints) → FAIL: `in the library unit tier but never printed: test/fabricated-by-this-test.test.ts`; 2 failed | 4 passed.
+
+The committed file additionally proves the comparison is not tautological as a permanent test, driving the same `divergence` predicate with a surplus list and a narrowed list.
+
+**ITEM 2 — `CONTRIBUTING.md`.** The database paragraph no longer implies the kg suites introduced the Docker/Postgres prerequisite. Re-measured here over the unit tier's 633 `test/` entries: 60 import a database fixture (`fixtures/test-database`, `kg-postgres`, `rls-probe`, `testcontainers-postgres`, `pg-pool`) and 70 touch a database fixture, client or `*_DATABASE_URL` — the ~65 the verifier reported, depending on the pattern. The prerequisite predates the widening; what the widening did was extend it to 86 more files and make the pre-push escalation pay it where a narrow `related` run previously might not have. The `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` sentence is unchanged, and its effect is the one verified at `test/fixtures/test-database-handoff.ts:265`.
+
+**ITEM 3 — this document.** `L6` corrects the split, `S2`/`S4`/`S6` now carry acceptance wording matching the rulings that changed them, the task rows carry their evidence, and `L4` states the final tree's numbers explicitly.
+
+**Gates, all run in this worktree** (node v22.23.2, vitest 3.2.7):
+
+| gate | scope | result |
+| --- | --- | --- |
+| `npx tsc --noEmit` | whole repository | exit 0 |
+| `npm run build` | tsup build of every workspace | exit 0 |
+| `npm run test:affected` | merge-base diff → **escalated**: `full unit tier — package-lock.json affects the whole suite`, 723 unit files + 1 output-contract file = 724 | exit 0, 721 passed \| 3 skipped, 5587 tests passed \| 4 skipped, 184.34 s; all 86 kg suites ran inside it |
+| `./node_modules/.bin/fallow --root .` | whole repository | exit 0, `fallow 2.82.0` (`verified: yes`, cache hit), 15957 analyzed, maintainability 91.1, 0 above threshold |
+| `./node_modules/.bin/vitest run test/test-partition-cli.test.ts` | the new file | 6 passed (6), 1.00 s |
+
+**The verifier's two advisory findings, kept as advice and not as gaps:**
+
+- The `toBeGreaterThan(0)` count at `test/test-partition-coverage.test.ts:87` is acceptable as it stands, because the exact-set assertion in the same file is what covers the real property; the count only fails loudly first.
+- The root→kg direction has no import edge at all (no kg test imports root code), so a zero selection in that direction is correct rather than a missed crossing — the same honest limit `S5` already records.
