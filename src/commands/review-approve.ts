@@ -37,7 +37,7 @@ import {
 import { UnsafeCandidateDirError } from "../compiler/candidate-store-paths.js";
 import { sha256Text } from "../connectors/hash.js";
 import { isConnectorCandidate } from "../connectors/origin.js";
-import { resolveAndApplyLinks } from "../compiler/resolver.js";
+import { resolveAndApplyLinks, linkGateOptions } from "../compiler/resolver.js";
 import { repairAndApplyLinks } from "../compiler/link-repair.js";
 import { qualifiedPageId, type PageId } from "../utils/page-id.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
@@ -386,7 +386,17 @@ async function refreshWikiAfterApproval(root: string, candidate: ReviewCandidate
     // them lists `wiki/<ns>` from disk (finding nothing) and writes repaired links
     // to files nothing reads. Both halves must address the SAME backend.
     await withPageSeams(process.env, async (seams) => {
-      await resolveAndApplyLinks(root, [slug], [slug], seams.resolver, seams.sink, seams.remover);
+      // The GATE OPTIONS are part of that same answer. Without them the link gate
+      // judged this body against the pages the resolver had enumerated -- the
+      // concept namespace -- so an approved link to a `queries` page was demoted on
+      // this verb and kept when a compile wrote the identical body. The options are
+      // built by the resolver's ONE construction, `linkGateOptions`, exactly as the
+      // compile path asks for them; a second construction here would let the two
+      // verbs drift apart again. No run totals exist on this path, so no sink.
+      await resolveAndApplyLinks(
+        root, [slug], [slug], seams.resolver, seams.sink, seams.remover, undefined,
+        linkGateOptions(seams.content),
+      );
       await repairAndApplyLinks(root, seams.content, seams.scan, seams.sink, seams.remover);
     });
   }

@@ -117,6 +117,34 @@ export interface LinkGateSink {
   record: (counts: ContextualLinkCounts) => void;
 }
 
+/**
+ * The final link gate's options, built in ONE place.
+ *
+ * WHY A SHARED CONSTRUCTION. Two callers assembling their own options is two
+ * answers for the same link: `review approve` used to pass NO options, so its links
+ * were judged against the pages the resolver had already enumerated -- the CONCEPT
+ * namespace -- while a compile judged the same link against the run's whole corpus.
+ * A page in `queries` was therefore a real target when a compile wrote the body and a
+ * missing one when the approve verb wrote it. The wider page set is not a preference;
+ * it is what "the target exists" means for this wiki, so every caller asks for it the
+ * same way.
+ *
+ * `pageContent` is the seam the caller's pages were written through, so the page set
+ * the gate reads cannot disagree with the corpus the caller just wrote. A caller with
+ * no seam (a file-backed project) omits it and gets the gate's own fallback, which
+ * lists `wiki/` in both namespaces -- see `linkPageSetFor`.
+ *
+ * @param pageContent - The caller's page-content seam, when its corpus lives in rows.
+ * @param sink - Collector for the caller's aggregate counts, when it keeps totals.
+ * @returns The options for {@link resolveLinks} / {@link resolveAndApplyLinks}.
+ */
+export function linkGateOptions(
+  pageContent: PageContentSource | undefined,
+  sink?: LinkGateSink,
+): LinkGateOptions {
+  return sink === undefined ? { pageContent } : { pageContent, sink };
+}
+
 interface PageInfo {
   /** Project root, carried so per-page writes stay confined to `wiki/concepts`. */
   root: string;
