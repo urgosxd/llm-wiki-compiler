@@ -382,7 +382,7 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
 
   it("caps the samples while still reporting the true rejection count", async () => {
     // `audit` is a jsonb column read on every GET /documents/:id, and
-    // MAX_TRIPLETS_PER_CHUNK is 20, so a many-chunk document can reject hundreds.
+    // DEFAULT_MAX_TRIPLETS_PER_CHUNK is 20, so a many-chunk document can reject hundreds.
     // Eight rejected triplets must yield five samples and `rejected: 8`, so a
     // truncated report reads as truncated rather than as complete.
     const many = Array.from({ length: 8 }, (_, index) => ({

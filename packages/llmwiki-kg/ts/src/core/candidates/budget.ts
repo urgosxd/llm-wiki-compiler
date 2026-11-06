@@ -63,7 +63,7 @@ export interface CandidateBudgetConfig {
  * The default budget, and why these two numbers.
  *
  * `perChunkLimit` is 50 because the legacy prompt asks a model for at most 20
- * triplets per chunk (`MAX_TRIPLETS_PER_CHUNK` in `graph-prompt.ts`), and an open
+ * triplets per chunk (`DEFAULT_MAX_TRIPLETS_PER_CHUNK` in `graph-prompt.ts`), and an open
  * answer to the same request needs up to two entity candidates and one relation
  * candidate per triplet — about 40 slots — plus headroom for entities that take
  * part in no relation. Smaller would truncate answers the previous contract

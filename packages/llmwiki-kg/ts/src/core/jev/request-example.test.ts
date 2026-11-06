@@ -11,21 +11,25 @@
  * so the documented example can be copied from observed output rather than
  * retyped.
  *
- * It asserts the three facts the example is meant to teach, so the printed JSON
+ * It asserts the four facts the example is meant to teach, so the printed JSON
  * cannot silently stop being a valid example: the `choice` criteria are keyed by
  * the catalog's canonical type names, the companion `noul` question is present,
- * and the evidence quote survives verbatim.
+ * the evidence quote survives verbatim, and the request carries the vendor's real
+ * model id rather than an invented one.
  */
 
 import { describe, expect, it } from "vitest";
 
 import { defaultTypeCatalog } from "../catalog/default_catalog.js";
+import { DEFAULT_JEV_MODEL } from "./config.js";
 import { ENTITY_CLASSIFICATION_QUESTIONS, buildEntityClassificationRequest } from "./questions.js";
 import type { JevChoiceQuestion, JevDecisionRequest } from "./types.js";
 
 const QUOTE = "El Responsable de Seguridad revisa el runbook de cambios antes de cada despliegue.";
 const CONTEXT = `Procedimiento de gestión de cambios. ${QUOTE} Después, el Comité de Cambios aprueba la ventana.`;
 const CANDIDATE_NAME = "Responsable de Seguridad";
+/** The vendor's real alias, asserted literally so the example cannot drift. */
+const VENDOR_MODEL_ALIAS = "jev-latest";
 
 function buildExample(): JevDecisionRequest {
   return buildEntityClassificationRequest({
@@ -34,7 +38,7 @@ function buildExample(): JevDecisionRequest {
     evidenceQuote: QUOTE,
     context: CONTEXT,
     catalog: defaultTypeCatalog(),
-    model: "systemone-latest",
+    model: DEFAULT_JEV_MODEL,
   });
 }
 
@@ -47,6 +51,7 @@ describe("the documented entity-classification request", () => {
     expect(Object.keys(choice.criteria)).toEqual(defaultTypeCatalog().entityTypes.map((def) => def.name));
     expect(fits?.type).toBe("noul");
     expect(request.state).toContain(QUOTE);
+    expect(request.model).toBe(VENDOR_MODEL_ALIAS);
 
     console.log(JSON.stringify(request, null, 2));
   });
