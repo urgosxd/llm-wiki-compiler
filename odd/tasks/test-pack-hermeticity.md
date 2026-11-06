@@ -45,3 +45,24 @@ Whichever shape you choose, prove the property: create a throwaway directory tha
 
 ### L3 — keep the behaviour the gate exists for (verbatim)
 Keep the behaviour the gate exists for: all four assertions must still execute — `npm pack`, install from tarballs, the `createWiki` import probe, and `.d.ts` under `tsc --noEmit --strict`.
+
+### L4 — lesson added after the fix commit
+After the fix landed as commit `9e3902ff573621a7274d44b31964623e2e914a7f`, the manager instructed that the probe-placement mistake be written down as a lesson for future maintainers. That lesson lives in `## Lessons` below and is attributed to the manager there. This documentation change is committed after the fix commit it describes; its own SHA is reported in the implementation handoff rather than self-referenced here, because a commit cannot contain its own hash.
+
+## Lessons
+
+### Never create a discovery probe inside the checkout
+
+This is the manager's lesson, and it is recorded as theirs. In their own words:
+
+> "THE FAULT FOR THE PROBE LOCATION IS MINE, and record it as a lesson… A probe whose whole purpose is to look like repo content must never be created inside the checkout… Every such probe belongs in `/tmp` from the first line."
+
+**What happened.** The hermeticity mimic was created at `.hermeticity-probe/test/sdk/packaging.test.ts`, inside the repository root. The main `vitest.config.ts` excludes exactly one packaging path, `test/sdk/packaging.test.ts`, at line 73 — and that exclusion does not match a mimic nested under `.hermeticity-probe/`. So `npm test` would have collected the mimic and failed on its intentional `throw`. That is a fake red: the failure would have come from the probe rather than from the code under test, and every gate reported after it would have been unreadable, so the entire gate run would have been invalidated.
+
+**The worse failure came at cleanup.** `rm -rf .hermeticity-probe` raised a data-loss consent prompt, and the run stranded there. No automated recovery was possible — only a human could clear it — so a routine cleanup step took the whole run hostage.
+
+**The rule, stated precisely.** A `.test.ts` anywhere inside the checkout is indistinguishable from real test content to every tree-walking tool. Vitest, `tsc`, the linters, `fallow`, and whatever walks the tree next will treat it as repository content, because that is exactly what it is. Scratch probes belong OUTSIDE the repo by default — `/tmp` or another directory made with `mktemp -d` — and are removed in the same chain that created them.
+
+**The one exception, stated honestly.** There is a case where `/tmp` proves nothing, and it is the case this feature cared about. When the probe's entire purpose is to prove what vitest's *discovery* collects, a probe in `/tmp` is invisible: a config rooted at the repository cannot discover a file outside its root, so the experiment becomes a no-op that "passes" for the wrong reason. In that case the probe must (a) live under a gitignored path — confirm the ignore rule covers it before creating the file, not afterwards; (b) be created and removed inside the SAME command chain, so no gate run can start in the window between them; and (c) never coexist with a gate run. Prefer a non-destructive move (`mv` the probe into `/tmp` and back) over a delete where possible, so a consent guard cannot strand the work the way it did here.
+
+**The observable symptom to recognise.** A gate that reports "1 test passed" while actually running files from unrelated sibling checkouts. The cause is the one recorded in L1: a positional vitest argument is a substring filter, not an exact path. When a gate's count looks right but the files it ran are wrong, the gate is not pinning selection — it is matching text.
