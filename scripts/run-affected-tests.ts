@@ -29,7 +29,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { readRoot } from "./cli-root.ts";
 import { OUTPUT_CONTRACT_TESTS, planAffectedInvocations, type VitestInvocation } from "./output-contracts.ts";
-import { classifyTests, partition, TEST_DIR } from "./test-partition.ts";
+import { classifyTests, partition } from "./test-partition.ts";
 import { resolveAffectedScope, type AffectedScope } from "./test-affected.ts";
 
 /**
@@ -92,7 +92,9 @@ function ensureBuiltCli(root: string): number {
  */
 function announceTier(root: string, scope: AffectedScope): string[] {
   if (scope.kind === "global") {
-    const unitFiles = partition(classifyTests(root, TEST_DIR)).unit;
+    // No root argument: the classification default enumerates every test tree,
+    // so the escalation tier cannot silently narrow to `test/` again.
+    const unitFiles = partition(classifyTests(root)).unit;
     process.stderr.write(`test-affected: full unit tier — ${scope.reason}\n`);
     process.stderr.write(`test-affected: ${unitFiles.length} unit file(s)\n`);
     return unitFiles;

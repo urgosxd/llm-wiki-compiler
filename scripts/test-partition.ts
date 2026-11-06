@@ -20,17 +20,53 @@
  * call site of its own — the helper exists precisely to spawn the built CLI, and
  * three files (`cli.test.ts`, `claim-provenance-integration`, `rm-cli`) call
  * `exec(...)` through it rather than naming a child-process API.
+ *
+ * WHICH DIRECTORIES ARE ENUMERATED IS A CORRECTNESS PROPERTY, NOT A CONVENIENCE.
+ * The tiers are not only a developer convenience: `scripts/run-affected-tests.ts`
+ * runs the unit tier verbatim when a change has suite-wide reach, so the unit
+ * tier IS the escalation answer. While this walk covered `test/` alone, that
+ * answer silently omitted the whole `packages/llmwiki-kg` dimension (86 files),
+ * the three `src/dimensions/kg` suites and `scripts/output-contracts.test.ts` —
+ * files the escalation reported as covered because it never looked at them. So
+ * {@link TEST_ROOTS} is an explicit, named list of every directory `vitest run`
+ * collects from, and the default enumeration is exhaustive over it. Widening is
+ * safe precisely because classification stays by content: a new root brings
+ * files in as `unit` unless they actually spawn. A tree that appears without
+ * being added to this list fails `test/test-partition-coverage.test.ts`, which
+ * walks the repository independently instead of trusting this file.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { isEntryPoint, readRoot } from "./cli-root.ts";
 
-/** Default directory holding the suite, relative to the repository root. */
-export const TEST_DIR = "test";
-
 /** Marker appended to a vitest `--exclude` so shell quoting stays predictable. */
 const TEST_SUFFIX = ".test.ts";
+
+/**
+ * Every directory that can hold suite files, relative to the repository root.
+ *
+ * Must stay a superset of what `vitest run` collects, because a file missing
+ * from here is missing from the escalation tier too. `packages` carries the
+ * `llmwiki-kg` dimension, `src` carries the root dimension's own suites, and
+ * `scripts` carries `output-contracts.test.ts`.
+ */
+export const TEST_ROOTS: readonly string[] = ["test", "packages", "src", "scripts"];
+
+/**
+ * Directory names the walk never descends into. `node_modules` is mandatory:
+ * `packages/llmwiki-kg` has its own installed tree, and descending into it would
+ * fabricate thousands of paths from dependencies. `dist` would pick up emitted
+ * copies of sources, and the dotted entries are linked worktrees and tool state.
+ */
+const SKIPPED_DIRS: ReadonlySet<string> = new Set([
+  "node_modules",
+  "dist",
+  ".worktrees",
+  ".claude",
+  ".git",
+  ".llmwiki",
+]);
 
 /**
  * Every construct in this repo that starts a child process, or that goes
@@ -57,22 +93,33 @@ export interface ClassifiedTest {
   spawns: boolean;
 }
 
-/** Recursively collect every `*.test.ts` under `dir`, as repo-relative POSIX paths. */
-function collectTestFiles(root: string, dir: string): string[] {
-  const found: string[] = [];
+/**
+ * Recursively collect every `*.test.ts` under {@link TEST_ROOTS}.
+ *
+ * Deliberately NOT exported and deliberately root-less: an internal walk that a
+ * caller could aim at one subtree is the same footgun as a `dir` parameter, just
+ * one indirection further away.
+ *
+ * @param root - Repository root.
+ * @returns Sorted, de-duplicated repo-relative POSIX paths.
+ */
+function collectTestFiles(root: string): string[] {
+  const found = new Set<string>();
   const walk = (absolute: string): void => {
     for (const entry of readdirSync(absolute, { withFileTypes: true })) {
       const child = path.join(absolute, entry.name);
       if (entry.isDirectory()) {
-        // `node_modules` never holds suite files; skipping it keeps the walk bounded.
-        if (entry.name !== "node_modules") walk(child);
+        if (!SKIPPED_DIRS.has(entry.name)) walk(child);
       } else if (entry.name.endsWith(TEST_SUFFIX)) {
-        found.push(path.relative(root, child).split(path.sep).join("/"));
+        found.add(path.relative(root, child).split(path.sep).join("/"));
       }
     }
   };
-  walk(path.join(root, dir));
-  return found.sort();
+  for (const dir of TEST_ROOTS) {
+    const absolute = path.join(root, dir);
+    if (existsSync(absolute)) walk(absolute);
+  }
+  return [...found].sort();
 }
 
 /** True when the file's source contains any child-process construct. */
@@ -83,12 +130,17 @@ export function spawnsChildProcess(source: string): boolean {
 /**
  * Classify every test file in the suite.
  *
+ * THIS IS THE ONLY WAY IN, and it takes no root selector on purpose. The
+ * escalation tier is built from exactly this call, so a parameter — even an
+ * optional one defaulting to the full {@link TEST_ROOTS} — would let a caller
+ * narrow the enumeration by omission and reintroduce the blind spot with a
+ * passing suite. Classification stays by content; only the reach is fixed.
+ *
  * @param root - Repository root.
- * @param dir - Suite directory relative to `root` (default {@link TEST_DIR}).
  * @returns One entry per test file, sorted by path.
  */
-export function classifyTests(root: string, dir: string = TEST_DIR): ClassifiedTest[] {
-  return collectTestFiles(root, dir).map((file) => ({
+export function classifyTests(root: string): ClassifiedTest[] {
+  return collectTestFiles(root).map((file) => ({
     file,
     spawns: spawnsChildProcess(readFileSync(path.join(root, file), "utf8")),
   }));
