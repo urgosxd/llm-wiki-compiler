@@ -1,7 +1,7 @@
 # test-pack-hermeticity
 
 Feature: pin `npm run test:pack` file selection by construction so a sibling checkout cannot change what runs.
-Branch: main. Status: open — S1-S7 delegated to the implementation worker, no commit yet.
+Branch: main. Status: complete — S1-S7 implemented and committed in `9e3902ff`, the probe lesson documented in `ec11f3e`, independently verified green.
 
 ## Specs
 
@@ -28,17 +28,21 @@ Concretely: the gate's file selection must be pinned by construction (a dedicate
 "One conventional commit carrying the proof in its message; no push; vulnerabilities untouched."
 
 ## Tasks
-- [x] T1 preflight + feature document (this file). S1-S7. worker. base `c78586fc605a5554144955b45ea902b7341fdffc`; document carried by the closing slice
-- [x] T2 dedicated packaging config + `test:pack` script wiring. S1, S3. worker. this commit
-- [x] T3 RED/GREEN probe: old command shape collects the mimic, new config selects one file, probe removed. S1. worker. this commit
-- [x] T4 S2 preservation on the fixed command: four assertions execute (duration class + no stray `.tgz`). S2. worker. this commit
-- [x] T5 `npm ci` under Node 24 + the seven gates in order. S4, S5. worker. this commit
-- [x] T6 conventional commit with the proof in the message. S7. worker. this commit
+- [x] T1 preflight + feature document (this file). S1-S7. worker. base `c78586fc605a5554144955b45ea902b7341fdffc`; the document was committed together with the fix, in `9e3902ff`
+- [x] T2 dedicated packaging config + `test:pack` script wiring. S1, S3. worker. `9e3902ff`
+- [x] T3 RED/GREEN probe: old command shape collects the mimic, new config selects one file, probe removed. S1. worker. `9e3902ff`
+- [x] T4 S2 preservation on the fixed command: four assertions execute (duration class + no stray `.tgz`). S2. worker. `9e3902ff`
+- [x] T5 `npm ci` under Node 24 + the seven gates in order. S4, S5. worker. `9e3902ff`
+- [x] T6 conventional commit with the proof in the message. S7. worker. `9e3902ff`
+- [x] T7 lesson documentation: the in-checkout probe lesson in `## Lessons`, attributed to the manager. L4. worker. `ec11f3e`
+- [x] T8 final document update: the task commit evidence above plus L5 (independent verification). This row's own commit SHA is reported in the implementation handoff instead of being self-referenced here, because a commit cannot contain its own hash. L5. worker. SHA reported in the implementation handoff
 
 ## Log
 
 ### L1 — original request (verbatim)
 THE ROOT CAUSE, not just the symptom: `package.json:56` runs `vitest run --config /dev/null test/sdk/packaging.test.ts`. With `/dev/null` as the config, vitest falls back to its defaults, and the positional argument is a **substring filter**, not an exact path — so any sibling checkout containing that path string gets collected. Adding `--exclude '**/.worktrees/**'` treats one instance; it does not fix the class. Prefer the structural fix: give this gate its own tiny config that pins `include` to exactly `test/sdk/packaging.test.ts` and excludes `.worktrees/`, so the command selects one file by construction and adding a sibling checkout cannot change what runs.
+
+*Note on the line number quoted in L1:* the `test:pack` script was at `package.json:41`, not `package.json:56` — that is where it sits at base `c78586fc` and still at HEAD. The quote above is preserved verbatim because a log entry records what was said, not what is true; this note is the correction, and L1 itself is not rewritten.
 
 ### L2 — prove the property (verbatim)
 Whichever shape you choose, prove the property: create a throwaway directory that mimics a second copy (a path containing `test/sdk/packaging.test.ts` with an intentionally failing body) and show `npm run test:pack` still selects exactly one file and stays green. Remove the probe afterwards.
@@ -48,6 +52,15 @@ Keep the behaviour the gate exists for: all four assertions must still execute �
 
 ### L4 — lesson added after the fix commit
 After the fix landed as commit `9e3902ff573621a7274d44b31964623e2e914a7f`, the manager instructed that the probe-placement mistake be written down as a lesson for future maintainers. That lesson lives in `## Lessons` below and is attributed to the manager there. This documentation change is committed after the fix commit it describes; its own SHA is reported in the implementation handoff rather than self-referenced here, because a commit cannot contain its own hash.
+
+### L5 — independent verification (recorded)
+
+The change was verified by a read-only verifier that did not implement it: `gentle-ai-verify`, session-scoped, with no write access. Its method and results, recorded here as evidence:
+
+- **Inspection, not re-implementation.** Both commits were read by SHA — `9e3902ff573621a7274d44b31964623e2e914a7f` (the fix) and `ec11f3e3fe0e27aec908d0b836562776fc7ac1e8` (this documentation) — and the selection property was re-proved independently of the implementer's run.
+- **Re-proof of the selection property, with no probe file created.** The pre-existing `.worktrees/orchestrator-a` and `.worktrees/orchestrator-b` checkouts were used as adversarial input, standing in for the throwaway mimic: the old command shape (`vitest list`) enumerated 3 files, while the pinned config enumerated exactly 1. The property therefore holds against real sibling checkouts, not only against a synthetic probe, and no new file had to be created inside the checkout to demonstrate it.
+- **Gate results, independent of the implementer's run.** `npm run test:pack` EXIT=0 with `1 passed (1)` in 26.88s (the full body ran, not an early death); `npx tsc --noEmit` EXIT=0; `npm run typecheck:kg` EXIT=0 (232 files, 0 diagnostics); `./node_modules/.bin/fallow` EXIT=0 (`0 above threshold · 15957 analyzed · maintainability 91.1`).
+- **What was NOT re-measured, stated plainly.** The full `npm test` was not re-run by the verifier. The 294.12s / `803 passed | 3 skipped (806)` / `6096 passed | 7 skipped` figure therefore stands as the implementer's own measurement, corroborated only on the changed gate (`test:pack`) and on the static gates above — not on the full suite.
 
 ## Lessons
 
