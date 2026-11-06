@@ -40,6 +40,7 @@ import type { Database, TransactionalHandler, TransactionRunner } from "../../db
 import { classificationRuntime } from "./classify-stage.js";
 import type { ClassificationRuntime } from "./classify-stage.js";
 import { ingestDocument } from "./pipeline.js";
+import { createClassificationLogRouter } from "../classification-log/router.js";
 import { createReclassifyRouter } from "../reclassify/router.js";
 import { IngestWiringError } from "./wiring.js";
 
@@ -122,8 +123,15 @@ function createIngestHandler(deps: IngestRouterDependencies): RequestHandler {
  * without a second mount point, a second auth surface or a new service — and it is why
  * an unconfigured classifier is refused the same way on both endpoints.
  *
+ * ## Classification-log retention rides here too, for the same reason
+ *
+ * `POST /stacks/:stackId/classification-log/prune` bounds the failure history this
+ * pipeline appends. It needs the same auth and the same bounded runner, but it is an
+ * ADMINISTRATIVE operation rather than part of ingest: nothing in this pipeline calls
+ * it, and mounting it beside its sibling is what keeps one auth surface instead of two.
+ *
  * @param deps - Injected collaborators; defaults to the process-wide ones.
- * @returns The router carrying the ingest and reclassification routes.
+ * @returns The router carrying the ingest, reclassification and retention routes.
  */
 export function createIngestRouter(
   deps: IngestRouterDependencies = DEFAULT_DEPENDENCIES,
@@ -141,6 +149,14 @@ export function createIngestRouter(
       // silently running inside the request transaction.
       ...(deps.run === undefined ? {} : { run: deps.run }),
       ...(deps.decisions === undefined ? {} : { decisions: deps.decisions }),
+    }),
+  );
+  router.use(
+    createClassificationLogRouter({
+      apiKey: deps.apiKey,
+      // Same `exactOptionalPropertyTypes` treatment as above: an absent runner is
+      // passed as absent, so the retention handler can refuse it explicitly.
+      ...(deps.run === undefined ? {} : { run: deps.run }),
     }),
   );
 
