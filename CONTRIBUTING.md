@@ -230,6 +230,33 @@ that comparison locally, run `npm run typecheck:tests -- --base-ref origin/main`
 an explicit baseline migration and review; routine updates do not accept them.
 `--init` is only for initial baseline creation, not for clearing failures.
 
+An intentional compiler-version or configuration change, or a document that has
+drifted from the live tree, is re-anchored with the explicit migration mode:
+
+```bash
+node scripts/typecheck-tests.ts --rebaseline            # dry run: prints the delta, writes nothing
+node scripts/typecheck-tests.ts --rebaseline --confirm  # writes test-typecheck-baseline.json only
+```
+
+The dry run prints the old and the new configuration digest, one labelled group
+per direction — `ADDED`, `REMOVED`, `INCREASED`, `DECREASED` — with the
+diagnostic count of every file it lists, and the total error count before and
+after. It exits 0 and writes nothing, so the delta is reviewed before it is
+accepted. `--confirm` writes only the baseline file and accepts exactly the live
+measurement, which also drops entries for files that no longer exist. When no
+baseline file is present, the dry run reports an empty starting point (every
+live file appears under `ADDED`, total `0 -> N`) and `--confirm` writes that
+first document. When the stored document already matches the live measurement,
+`--confirm` reports `Baseline is already current; nothing written.` and leaves
+the file untouched. `--rebaseline` is mutually exclusive with `--init` and
+`--update`, needs `--confirm` to write anything, and ignores `--base-ref`,
+because recording the reviewed live state is the point and the PR-base ratchet
+keeps guarding the committed document afterwards.
+
+`--update` and `--init` keep their narrower meanings: `--update` accepts
+reductions only and refuses an upward count, and `--init` refuses while a
+baseline exists. The default run is unchanged and still fails on any increase.
+
 `test-typecheck` is required by main's branch protection, alongside
 `codebase-health` and `build-and-test (24)`. Branches must be up to date before
 merging. Workflow changes must preserve the required check name or update
