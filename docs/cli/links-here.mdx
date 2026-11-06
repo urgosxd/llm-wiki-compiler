@@ -95,7 +95,9 @@ Follow any of these page ids with `llmwiki links-here` to keep walking.
 That is deliberate, and it is the one place this command differs from
 `llmwiki race`, which treats a ghost as no page at all: a race runs between
 articles, while "who mentions this broken name?" is how you find the page that
-needs fixing.
+needs fixing. The ghost is never itself listed as a linking page — one rule
+decides what is an article (`isGhostNode` in `src/context/graph.ts`), and both
+commands ask it, so a node cannot be an article here and a ghost there.
 
 ## How it relates to the other reading commands
 

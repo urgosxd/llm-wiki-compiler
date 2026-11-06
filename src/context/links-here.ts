@@ -13,12 +13,14 @@
  * version that can be asked the question directly.
  *
  * Three rules are inherited deliberately, not invented here:
- *   - Ghost (dangling) targets are excluded, matching `collectGhostIds`.
+ *   - Ghost (dangling) sources are excluded by the ONE not-an-article predicate,
+ *     `isGhostNode` / `collectGhostIds` in `graph.ts`, which `race` also uses.
  *   - A bidirectional pair (A→B and B→A) collapses to ONE entry, matching the
  *     canonical unordered-pair rule documented in `graph.ts`.
  *   - Output is deterministic: sorted by node id, so a diff of two runs is empty.
  */
 
+import { collectGhostIds } from "./graph.js";
 import type { GraphData, GraphNodeId } from "../viewer/types.js";
 
 /** One page that links to the requested target. */
@@ -48,7 +50,7 @@ export function findInboundLinks(
   graph: GraphData,
   targetId: GraphNodeId,
 ): InboundLink[] {
-  const ghostIds = collectGhostIds(graph);
+  const ghostIds = collectGhostIds(graph.nodes);
   const targetsOf = buildOutgoingIndex(graph);
   const inbound = new Map<GraphNodeId, true>();
 
@@ -79,22 +81,4 @@ function buildOutgoingIndex(graph: GraphData): Map<GraphNodeId, Set<GraphNodeId>
     else outgoing.set(edge.source, new Set([edge.target]));
   }
   return outgoing;
-}
-
-/**
- * Collect node ids that exist only as an unresolved link target.
- *
- * An id counts as a ghost only when it is flagged `isDangling` AND no real node
- * claims it, so a page created after the graph was built is never hidden from
- * the inbound list.
- */
-function collectGhostIds(graph: GraphData): Set<GraphNodeId> {
-  const real = new Set<GraphNodeId>();
-  const dangling = new Set<GraphNodeId>();
-  for (const node of graph.nodes) {
-    if (node.isDangling === true) dangling.add(node.id);
-    else real.add(node.id);
-  }
-  for (const id of real) dangling.delete(id);
-  return dangling;
 }
