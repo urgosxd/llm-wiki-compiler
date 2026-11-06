@@ -38,6 +38,47 @@ export interface TempRootCtx {
 }
 
 /**
+ * A file-scoped set of throwaway project roots, cleaned up after every test.
+ *
+ * WHY. A test that needs a realistic wiki per case has to create the root, keep
+ * it somewhere, and remove it afterwards. Written out per file that is three
+ * details of harness bookkeeping repeated in every case — and `fallow` counts the
+ * repetitions as duplication. One composable owns them: create through
+ * {@link makeTempRoot}, remember, remove in `afterEach`.
+ */
+export interface ManagedTempRoots {
+  /**
+   * Create a throwaway project root for the current test.
+   *
+   * @param prefix - Short label for the temp directory name.
+   * @returns Absolute path to the new root, removed automatically after the test.
+   */
+  tempRoot: (prefix: string) => Promise<string>;
+}
+
+/**
+ * Register a managed set of throwaway project roots for the calling test file.
+ *
+ * Call once at the top level of a file. Cleanup runs in an `afterEach` this
+ * composable registers itself, so a failing case still leaves nothing behind.
+ *
+ * @returns The `tempRoot` factory bound to this file's roots.
+ */
+export function useManagedTempRoots(): ManagedTempRoots {
+  const roots: string[] = [];
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+  return {
+    tempRoot: async (prefix: string) => {
+      const root = await makeTempRoot(prefix);
+      roots.push(root);
+      return root;
+    },
+  };
+}
+
+/**
  * Composable that registers beforeEach/afterEach hooks managing a temporary
  * project root. The current process directory is changed into the temp root
  * for each test and restored afterwards.

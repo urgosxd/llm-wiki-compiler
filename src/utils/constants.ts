@@ -45,6 +45,29 @@ export const MIN_SOURCE_CHARS = 50;
 export const MAX_CONCEPTS_PER_SOURCE = 50;
 
 /**
+ * Ceiling on how many contextual links ONE generated page may KEEP.
+ *
+ * "No crees conexiones ... para aumentar artificialmente la conectividad" is the
+ * requirement this bound enforces. A page-generation model is handed a list of
+ * related pages and will happily scatter them through the prose: every anchor it
+ * writes looks locally plausible, while the aggregate turns the article into a
+ * link farm whose graph says more about the model's enthusiasm than about the
+ * subject. The ceiling is a per-page BUDGET, not a target: links past it are
+ * demoted to plain text (the mention survives) and COUNTED per page with the
+ * reason `over-budget`, so a model that over-links is reported, never obeyed.
+ *
+ * 12 comes from the shape of the pages this compiler writes. A merged concept
+ * page is a few screens of prose; an article of that length that genuinely needs
+ * more than a dozen distinct outbound references is describing a taxonomy rather
+ * than one concept, and the taxonomy belongs in a category or a seed page. It is
+ * deliberately larger than the handful of links a well-anchored page actually
+ * uses, so the cap never fires on good output and only ever truncates padding.
+ * Raising it is a product decision, which is why the number lives here next to
+ * its reason instead of inside the validator.
+ */
+export const MAX_CONTEXTUAL_LINKS_PER_PAGE = 12;
+
+/**
  * Default character budget for the combined source content sent to the LLM
  * during page generation for a single concept (issue #39).
  *

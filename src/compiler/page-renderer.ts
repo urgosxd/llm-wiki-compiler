@@ -22,6 +22,11 @@ import { buildPagePrompt } from "./prompts.js";
 import { addObsidianMeta } from "./obsidian.js";
 import { addModelProvenanceMeta, addProvenanceMeta, reportContradictionWarnings } from "./provenance.js";
 import { normalizeCitationsInBody } from "./citation-normalize.js";
+import {
+  buildPageLinkIndex,
+  reportContextualLinkCounts,
+  validateContextualLinks,
+} from "./link-anchoring.js";
 import { CONCEPTS_DIR } from "../utils/constants.js";
 import type { SchemaConfig } from "../schema/index.js";
 import type { ExtractedConcept } from "../utils/types.js";
@@ -79,16 +84,55 @@ export async function renderMergedPageContent(
     ],
   });
 
-  const pageBody = normalizeCitationsInBody(
-    rawPageBody,
-    entry.sourceFiles,
-    entry.combinedContent,
-    entry.rebuild === true,
+  const pageBody = await applyContextualLinkRules(
+    root,
+    entry,
+    normalizeCitationsInBody(
+      rawPageBody,
+      entry.sourceFiles,
+      entry.combinedContent,
+      entry.rebuild === true,
+    ),
+    source,
   );
 
   const frontmatter = buildMergedFrontmatter(entry, existingPage, schema);
   reportContradictionWarnings(entry.concept.concept, entry.concept);
   return `${frontmatter}\n\n${pageBody}\n`;
+}
+
+/**
+ * Demote the contextual links this body may not keep, and report the counts.
+ *
+ * Runs on the FINAL body — after citation normalisation — because that is the
+ * text a reader gets, and validation is about what the page will say. It is
+ * additive to generation: every kept link is left byte-identical, and a demoted
+ * link keeps its mention as plain text.
+ *
+ * @param root - Project root the wiki reads are confined under.
+ * @param entry - The merged concept this page is written for.
+ * @param body - The generated body, citations already normalised.
+ * @param source - Row-backed page reader, or undefined to read `wiki/`.
+ * @returns The validated body.
+ */
+async function applyContextualLinkRules(
+  root: string,
+  entry: RenderableConcept,
+  body: string,
+  source: PageContentSource | undefined,
+): Promise<string> {
+  const index = await buildPageLinkIndex(
+    root,
+    {
+      id: `${path.posix.basename(CONCEPTS_DIR)}/${entry.slug}`,
+      title: entry.concept.concept,
+      aliases: entry.aliases ?? [],
+    },
+    source,
+  );
+  const validated = await validateContextualLinks(body, index);
+  reportContextualLinkCounts(entry.concept.concept, validated.counts);
+  return validated.body;
 }
 
 /**

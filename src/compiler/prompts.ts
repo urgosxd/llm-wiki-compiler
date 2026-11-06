@@ -50,8 +50,12 @@ function sourcesSectionLines(): string[] {
  * v5: extraction asks for exhaustive concept recall capped at
  * {@link MAX_CONCEPTS_PER_SOURCE} instead of a brief 3-8 selection.
  * v6: the extraction concept ceiling moved from 100 to 50 per source.
+ * v7: the page prompt asks for ANCHORED contextual links (a link only where the
+ * text already names the target, only where it helps the reader, never for
+ * connectivity, never to itself, at most once per target per section). The link
+ * validator in `link-anchoring.ts` enforces the same rule on the result.
  */
-export const PROMPT_VERSION = "v6";
+export const PROMPT_VERSION = "v7";
 
 /**
  * The caller's system policy as prompt lines, or nothing when none is set.
@@ -226,6 +230,25 @@ const PAGE_ATTRIBUTION_LINES: readonly string[] = [
 ];
 
 /**
+ * The page prompt's contextual-link instruction.
+ *
+ * Static text, so it belongs to the prefix every page prompt shares. It states
+ * the same rule `link-anchoring.ts` enforces downstream, because a validator can
+ * only refuse a bad link while the prompt is the only place that can ask for a
+ * good one. Naming the ANCHOR (not "related concepts") is the point: the reader
+ * must be able to see why the two pages are connected, and a link written for
+ * connectivity or from a similarity score is exactly the link with no anchor.
+ */
+const PAGE_LINK_LINES: readonly string[] = [
+  "Link a concept only where the page text already names it.",
+  "Write each link as [[target|the words that name it]] so the anchor stays visible.",
+  "Add a link only when it helps the reader understand the passage.",
+  "Never add a link to increase connectivity or to match a related list.",
+  "Never link the page to itself.",
+  "Link a target at most once per section.",
+];
+
+/**
  * Build the system prompt for wiki page generation.
  * Instructs the LLM to write a complete wiki page for a single concept.
  *
@@ -260,7 +283,7 @@ export function buildPagePrompt(
       'You are a wiki author. Write a clear, well-structured markdown page about the concept named in the "Concept to write about" line after the source material.',
       "Draw facts only from the provided source material.",
       ...sourcesSectionLines(),
-      "Suggest [[wikilinks]] to related concepts where appropriate.",
+      ...PAGE_LINK_LINES,
       "Write in a neutral, informative tone. Be concise but thorough.",
     ),
     "",
