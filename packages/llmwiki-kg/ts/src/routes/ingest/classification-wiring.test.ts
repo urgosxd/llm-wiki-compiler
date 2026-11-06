@@ -66,6 +66,7 @@ import type { IngestRouterDependencies } from "../ingest.js";
 import { createStacksRouter } from "../stacks.js";
 import { withFixtureTenant } from "../fixture-tenant.js";
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../../core/extraction-harness.js";
+import { embeddingCalls, toolCalls } from "../../core/extraction-harness.js";
 import {
   createDocument,
   database,
@@ -185,6 +186,27 @@ async function observe(stackId: string): Promise<Probe> {
     pendingEntities: row?.pending_entities ?? -1,
     pendingRelationships: row?.pending_relationships ?? -1,
   };
+}
+
+/**
+ * Observes the database at the moment of every PROVIDER call, not just the classifier.
+ *
+ * The chunk embeddings and the extraction completion are external calls too, so the
+ * bounded-transaction claim has to cover them: this wraps the fetch stub the suite
+ * already installed, records the `idle in transaction` count right before each
+ * request is delegated, and leaves the stub itself untouched.
+ *
+ * @param stackId - Stack whose rows the probe watches.
+ * @returns The recorded moments, oldest first, one entry per provider call.
+ */
+function installProviderProbe(stackId: string): { readonly moments: string[] } {
+  const state = { moments: [] as string[] };
+  const stubbed = globalThis.fetch;
+  vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    state.moments.push(String((await observe(stackId)).idleInTransaction));
+    return stubbed(input, init);
+  });
+  return state;
 }
 
 /** Builds an app from explicit dependencies, so each wiring can be exercised. */
@@ -339,6 +361,7 @@ describe.skipIf(skipReason !== false)("ingest classification wiring", () => {
     });
     const documentId = await createDocument(stackId, BODY);
     setToolResponse([ANSWER]);
+    const providerProbe = installProviderProbe(stackId);
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
@@ -346,6 +369,12 @@ describe.skipIf(skipReason !== false)("ingest classification wiring", () => {
     // relation. Every one of them is an external call, so every one of them is a
     // moment at which no transaction may be open.
     expect(probe.probes).toHaveLength(7);
+    // And the EXTRACTION calls are covered too: the chunk embeddings and the
+    // completion request are provider calls like any other, so a transaction held
+    // across them is the same violation (S44).
+    expect(toolCalls()).toBe(1);
+    expect(providerProbe.moments).toHaveLength(toolCalls() + embeddingCalls());
+    expect(providerProbe.moments).toEqual(providerProbe.moments.map(() => "0"));
     // At EVERY one of those moments no connection of this database was sitting
     // `idle in transaction` — the state a request-scoped transaction would be in
     // while awaiting the classifier.

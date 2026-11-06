@@ -5,13 +5,13 @@
  *
  * ## The stages, and where the transaction boundaries fall
  *
- * 1. extract candidates          — `chunkAndExtract`: chunk, embed, persist chunks,
- *                                  extract under the OPEN contract
+ * 1. extract candidates          — `chunkAndExtract`: chunk, embed and extract under
+ *                                  the OPEN contract, with NO transaction open
  * 2. verify evidence             — `buildCandidateSpans`: the quote is located in the
  *                                  stored chunk and recorded with verifiable offsets
  * 3. resolve identities          — `resolveIdentityKeys`: known keys in, one key per
  *                                  mention out
- * 4. classify entities           — stages 4-6 run together in `classifySpans`
+ * 4. classify entities           — stages 2b and 4-6 run together in `classifySpans`
  * 5. classify relations
  * 6. validate structure and      — `validateDecisions`: state and canonical type must
  *    semantic compatibility        agree before anything is written
@@ -24,17 +24,32 @@
  * ## Nothing long runs inside a transaction (S44)
  *
  * The order above is not cosmetic: it is the reason the handler takes a
- * {@link TransactionRunner} instead of a connection. Stages 1-3 and the candidate
- * rows they write run in ONE short transaction, which COMMITS before any classifier
- * call. Stages 4-6 then run with no transaction open at all — no connection is
- * held while an external decision service is being asked. Stage 7-8 open a SECOND
- * short transaction for the writes and the response.
+ * {@link TransactionRunner} instead of a connection. The handler now opens THREE
+ * short transactions, and every external call happens between them:
  *
- * The extraction call (an LLM request) still runs inside the first transaction, and
- * that is a deliberate, reported limitation rather than an oversight: the chunk rows
- * it produced are written in the same transaction, so an extraction outage still
- * rolls them back exactly as it did before this split. Moving that boundary belongs
- * to the bounded-transaction work in T13, not to this wiring.
+ * 1. READ — the document row, its text and the Stack's catalog. No provider call.
+ * 2. provider stage — chunk and embed, extract, optionally synthesize descriptions.
+ *    NO transaction is open and no connection is held.
+ * 3. WRITE — the chunk rows, identity resolution, the spans and the `pending`
+ *    candidate rows, committed BEFORE the first classifier call.
+ * 4. an external decision stage — the support questions and then the classification
+ *    questions, again with nothing open.
+ * 5. WRITE — evidence, decisions, history, the audit blob and the response.
+ *
+ * An extraction outage therefore no longer rolls the chunk rows back, because they
+ * are not written until it succeeded: the run stops before stage 3 and the document
+ * keeps whatever the previous ingest wrote. That is a deliberate change — a failed
+ * extraction is more honestly "this run produced nothing" than "the transaction
+ * aborted" — and it is what S44 asks for: no database transaction open across a long
+ * external call.
+ *
+ * ## The one shape that still nests, and why it is allowed to
+ *
+ * A caller that injects only a request-scoped `wrap` (never with classification
+ * enabled — that combination is refused by the router) sees all three runner calls
+ * execute inside its single transaction. That is the legacy non-classifying suite
+ * shape and its behaviour is unchanged; the stages still run in order, and the only
+ * difference is where the COMMIT lands.
  *
  * ## Unconfigured classification is a supported outcome
  *
@@ -61,6 +76,7 @@ import {
 } from "../../core/extraction.js";
 import { defaultOntology } from "../../core/default_ontology.js";
 import { loadStackCatalog } from "../../core/catalog/stack-catalog.js";
+import type { StackCatalogResolution } from "../../core/catalog/stack-catalog.js";
 import { normalizeCatalogName } from "../../core/catalog/names.js";
 import type { TypeCatalog } from "../../core/catalog/types.js";
 import {
@@ -157,7 +173,6 @@ export interface ProcessedIngest {
  * A per-call `synthesize_descriptions` override wins over the Stack's own column.
  */
 export async function chunkAndExtract(
-  tx: Database,
   params: IngestParams,
   text: string,
   document: {
@@ -166,7 +181,11 @@ export async function chunkAndExtract(
     readonly stack_ontology?: unknown;
   },
 ): Promise<ProcessedIngest> {
-  const chunks = await persistChunks(tx, params, text);
+  // Every call in this function is external — embeddings, the extraction
+  // completion, and the description synthesis. It therefore takes NO database
+  // handle at all, which is what makes it impossible to run inside a transaction by
+  // accident (S44).
+  const chunks = await chunkAndEmbed(text, params.stackId, params.docId);
   const ontology = ontologyArgument(document.stack_ontology);
   const extraction = await extractGraphFromChunks(
     chunks,
@@ -200,13 +219,21 @@ export interface PreparedIngest {
   readonly spans: readonly CandidateSpan[];
   /** The catalog version the decisions will be made under. */
   readonly catalogVersion: string;
-  /** The catalog itself, so stages 4-6 are asked against what stage 1 read. */
+  /** The catalog itself, so stages 4-6 are asked against what the Stack declares. */
   readonly catalog: TypeCatalog;
   /** Folded entity name → entity row id, from stage 1's consolidation. */
   readonly entityIds: ReadonlyMap<string, string>;
   /** How many relationship rows stage 1 attempted to write. */
   readonly writtenRelationships: number;
   readonly truncated: boolean;
+}
+
+/** What the read stage loads before a single provider call is made. */
+export interface IngestInput {
+  readonly document: DocumentRow;
+  readonly loaded: LoadedText;
+  /** The Stack's resolved vocabulary: catalog, version and which column it came from. */
+  readonly catalog: StackCatalogResolution;
 }
 
 /**
@@ -292,48 +319,55 @@ async function persistCandidates(
 }
 
 /**
- * Reads what the run needs and, when the request cannot be served, answers it.
+ * The read stage: the document, its text, and the Stack's vocabulary.
  *
- * @param tx - The transaction stages 1-3 run in.
+ * Makes no provider call and writes nothing, so it can live in its own short
+ * transaction without holding anything across an external request (S44).
+ *
+ * @param tx - The transaction the runner opened.
  * @param params - The validated ingest request.
  * @param res - Response, used for the 404 and 415 answers.
- * @returns The document and its text, or `undefined` when a response was sent.
+ * @returns What the provider stage needs, or `undefined` when a response was sent.
  */
 async function loadIngestInput(
   tx: Database,
   params: IngestParams,
   res: Response,
-): Promise<{ document: DocumentRow; loaded: LoadedText } | undefined> {
+): Promise<IngestInput | undefined> {
   const document = await findDocument(tx, params.stackId, params.docId);
   if (document === undefined) {
     sendDocumentNotFound(res, params);
     return undefined;
   }
   const loaded = await readDocumentText(res, document);
-  return loaded === undefined ? undefined : { document, loaded };
+  if (loaded === undefined) return undefined;
+  // Resolved BEFORE the extraction call, so a broken catalog costs no provider
+  // request at all instead of paying for one and then failing.
+  const catalog = await loadStackCatalog(tx, params.stackId);
+  return { document, loaded, catalog };
 }
 
 /**
- * Stages 1-3 in one short transaction: read, chunk, extract, verify, resolve.
+ * Stages 2 and 3 plus the `pending` rows, in one short write transaction.
+ *
+ * The chunks are written HERE rather than beside the extraction that produced them,
+ * because that extraction ran with no transaction open: writing them afterwards is
+ * what keeps the provider call out of the transaction (S44). The candidate rows are
+ * written as `pending`, committed, and only then is a classifier asked anything.
  *
  * @param tx - The transaction the runner opened.
  * @param params - The validated ingest request.
- * @param res - Response, for the paths that answer instead of proceeding.
- * @returns Everything the classification stages need, or `undefined` after a response.
+ * @param input - What the read stage loaded.
+ * @param processed - What the provider stage produced.
+ * @returns Everything the classification stages need.
  */
 async function prepareIngest(
   tx: Database,
   params: IngestParams,
-  res: Response,
-): Promise<PreparedIngest | undefined> {
-  const input = await loadIngestInput(tx, params, res);
-  if (input === undefined) return undefined;
-  const processed = await chunkAndExtract(tx, params, input.loaded.text, input.document);
-  // The Stack's OWN vocabulary, resolved in the documented order (S14): a declared
-  // `type_catalog`, else a catalog derived from the legacy `ontology`, else the
-  // shipped default. Reading it here — never writing it — is what keeps ingestion
-  // from extending anybody's catalog (S16).
-  const catalog = (await loadStackCatalog(tx, params.stackId)).catalog;
+  input: IngestInput,
+  processed: ProcessedIngest,
+): Promise<PreparedIngest> {
+  await persistChunks(tx, processed.chunks);
   const identityKeys = resolveIdentityKeys(
     processed.extraction,
     await loadKnownIdentities(tx, params.stackId),
@@ -345,7 +379,7 @@ async function prepareIngest(
     extraction: processed.extraction,
     chunks: processed.chunks,
     identityKeys,
-    catalogVersion: catalog.version,
+    catalogVersion: input.catalog.version,
   });
   const { entityIds, writtenRelationships } = await persistCandidates(
     tx,
@@ -357,8 +391,8 @@ async function prepareIngest(
     params,
     processed,
     spans,
-    catalogVersion: catalog.version,
-    catalog,
+    catalogVersion: input.catalog.version,
+    catalog: input.catalog.catalog,
     entityIds,
     writtenRelationships,
     truncated: input.loaded.truncated,
@@ -403,8 +437,9 @@ async function finishIngest(
  * `POST /stacks/:stackId/documents/:doc_id/ingest`.
  *
  * The eight stages run in the order documented at the top of this module, split
- * across two short transactions by the injected runner so that no transaction is
- * open while the classifier is asked anything.
+ * across three short transactions by the injected runner so that NO transaction is
+ * open while a provider is being called — neither the extraction model nor the
+ * classifier (S44).
  *
  * @param req - The request.
  * @param res - The response.
@@ -422,13 +457,17 @@ export async function ingestDocument(
     sendValidationFailure(res, params.detail);
     return;
   }
-  // Stages 1-3 and the `pending` candidate rows: ONE short transaction, which
-  // commits here, before any classifier call.
-  const prepared = await run((tx) => prepareIngest(tx, params, res));
-  if (prepared === undefined) return;
-  // Stages 4-6: no transaction is open and no connection is held.
+  // 1. READ: the document, its text and the Stack's catalog. No provider call.
+  const input = await run((tx) => loadIngestInput(tx, params, res));
+  if (input === undefined) return;
+  // 2. PROVIDER STAGE: chunk, embed and extract. No transaction is open here.
+  const processed = await chunkAndExtract(params, input.loaded.text, input.document);
+  // 3. WRITE: the chunks and the `pending` candidate rows, committed BEFORE any
+  //    classifier call so an interrupted run is recoverable instead of invisible.
+  const prepared = await run((tx) => prepareIngest(tx, params, input, processed));
+  // 4. DECISION STAGE: the support questions, then classification. Nothing is open.
   const outcome = classification === undefined ? undefined : await classifyDocument(prepared, classification);
-  // Stages 7-8 and the response: a second short transaction.
+  // 5. WRITE: evidence, decisions, history, audit and the response.
   await run(async (tx) => {
     await persistClassification(
       tx,
@@ -479,21 +518,22 @@ function classificationReport(
 }
 
 /**
- * Chunks and embeds the text, then upserts every chunk.
+ * Writes every chunk of one document.
+ *
+ * Split from the chunking itself on purpose: a chunk's text and its embedding come
+ * from provider calls, so producing them may not happen inside the transaction that
+ * writes them (S44).
  *
  * `on conflict (document_id, chunk_index) do update` makes a re-ingest rewrite a
  * chunk in place instead of failing the unique index.
  */
 export async function persistChunks(
   tx: Database,
-  params: IngestParams,
-  text: string,
-): Promise<readonly ChunkResult[]> {
-  const chunks = await chunkAndEmbed(text, params.stackId, params.docId);
+  chunks: readonly ChunkResult[],
+): Promise<void> {
   for (const chunk of chunks) {
     await upsertChunk(tx, chunk);
   }
-  return chunks;
 }
 
 /**
