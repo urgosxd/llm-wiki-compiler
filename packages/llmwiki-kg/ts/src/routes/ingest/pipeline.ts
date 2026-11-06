@@ -87,8 +87,10 @@ import {
   writeIngestAudit,
 } from "./audit.js";
 import type { ClassificationAudit, ExtractionAudit, OntologyAudit, OpenAudit } from "./audit.js";
-import { buildCandidateSpans, originalPredicate } from "./candidates.js";
+import { buildCandidateSpans, originalPredicate, relationRef } from "./candidates.js";
 import type { CandidateSpan } from "./candidates.js";
+import { appendClassificationLog } from "./classification-log.js";
+import type { ClassificationLogEntry } from "./classification-log.js";
 import {
   CLASSIFIER_VERSION,
   classifySpans,
@@ -105,9 +107,13 @@ import { validateOntology } from "../../core/ontology.js";
 import type { Ontology } from "../../core/ontology.js";
 import {
   consolidateEntityRows,
-  consolidateRelationshipRows,
+  consolidateRelationshipRowsDetailed,
 } from "../../core/document-consolidation.js";
-import type { ConsolidationEntity, ConsolidationRelationship } from "../../core/document-consolidation.js";
+import type {
+  ConsolidationEntity,
+  ConsolidationRelationship,
+  RelationCollision,
+} from "../../core/document-consolidation.js";
 import { bindCallerStack } from "../../core/stack_resolver.js";
 import type { Database } from "../../db.js";
 import { IngestionResult } from "./models.js";
@@ -272,6 +278,39 @@ function resolveIdentityKeys(
 }
 
 /**
+ * The history entries for the assertions one document could not keep apart.
+ *
+ * A collision is a decision about which fact the graph keeps — the first predicate,
+ * never the last writer's — so it belongs in the same append-only table as every
+ * other classification decision instead of disappearing into a count that did not
+ * change (S43). `new_state` is `pending` because that is the honest state of the
+ * absorbed assertion: the classifier was never asked about it, and no row holds its
+ * answer. The `reason` names the predicate that survived, so the two assertions stay
+ * distinguishable to a reader.
+ *
+ * @param documentId - The document that carried the absorbed assertion.
+ * @param collisions - What consolidation reported.
+ * @returns One entry per absorbed assertion.
+ */
+function collisionEntries(
+  documentId: string,
+  collisions: readonly RelationCollision[],
+): readonly ClassificationLogEntry[] {
+  return collisions.map((collision) => ({
+    candidateKind: "relationship" as const,
+    candidateRef: relationRef(documentId, collision.fromName, collision.predicate, collision.toName),
+    previousState: null,
+    newState: PENDING_STATE,
+    previousCanonicalType: null,
+    newCanonicalType: null,
+    readout: null,
+    catalogVersion: null,
+    classifierVersion: null,
+    reason: `relation_collision:${collision.storedPredicate}`,
+  }));
+}
+
+/**
  * Writes the candidate rows stage 1 produces, BEFORE anything classifies them.
  *
  * They are written as `pending`, which is the schema's "the classifier has not
@@ -283,6 +322,7 @@ function resolveIdentityKeys(
  * @param params - The ingest request.
  * @param extraction - The folded extraction result.
  * @param identityKeys - Stage 3's output, keyed by folded entity name.
+ * @param catalogVersion - The vocabulary this run extracts and will classify under.
  * @returns Folded entity name → entity row id, and the relationship count.
  */
 async function persistCandidates(
@@ -290,6 +330,7 @@ async function persistCandidates(
   params: IngestParams,
   extraction: ExtractionResult,
   identityKeys: ReadonlyMap<string, string>,
+  catalogVersion: string,
 ): Promise<{ entityIds: Map<string, string>; writtenRelationships: number }> {
   const entities: ConsolidationEntity[] = extraction.entities.map((entity) => {
     const identityKey = identityKeys.get(normalizeCatalogName(entity.name));
@@ -309,13 +350,27 @@ async function persistCandidates(
     predicate: originalPredicate(relationship),
     classificationState: PENDING_STATE,
   }));
-  const writtenRelationships = await consolidateRelationshipRows(
+  const outcome = await consolidateRelationshipRowsDetailed(
     tx,
     params.stackId,
     relationships,
     entityIds,
   );
-  return { entityIds, writtenRelationships };
+  // A folded `type` can absorb a second assertion; the survivor keeps the FIRST
+  // predicate, and the loss is recorded instead of being left to a count that did
+  // not change. Written in the same transaction as the rows, so the record cannot
+  // outlive what it describes.
+  await appendClassificationLog(
+    tx,
+    {
+      stackId: params.stackId,
+      catalogVersion,
+      classifierVersion: CLASSIFIER_VERSION,
+      jevModel: "",
+    },
+    collisionEntries(params.docId, outcome.collisions),
+  );
+  return { entityIds, writtenRelationships: outcome.written };
 }
 
 /**
@@ -386,6 +441,7 @@ async function prepareIngest(
     params,
     processed.extraction,
     identityKeys,
+    input.catalog.version,
   );
   return {
     params,

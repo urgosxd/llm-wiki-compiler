@@ -196,3 +196,38 @@ describe("classifyCandidates — batch boundaries", () => {
     expect(client.requests).toHaveLength(0);
   });
 });
+
+describe("classifyCandidates — endpoint types the caller already knows", () => {
+  it("checks compatibility against stored endpoint types a version sweep did not re-classify", async () => {
+    // A reclassification run classifies the STALE rows, so a relation's endpoints are
+    // usually not entity candidates of its batch. Without the seed their types would
+    // read as unknown and storage's `compatible` verdict would be recomputed as
+    // `indeterminate` — a silent downgrade of an established fact.
+    const edge = relation("relationship:doc-1:0:0", "Comité de Cambios", "carries out", "Gestión de cambios");
+    const seeded = await runBatch({
+      candidates: [edge],
+      client: scriptedJevClient([relationAnswer("executes", { executes: 0.9 }, 0.95)]),
+      evidence: evidenceFor(edge.ref),
+      // Keyed with the same fold every candidate name uses (accents preserved).
+      endpointTypes: new Map([
+        ["comité_de_cambios", "Role"],
+        ["gestión_de_cambios", "Process"],
+      ]),
+    });
+    expect(seeded.relationDecisions[0]!.compatibility).toBe("compatible");
+
+    // A fresh answer beats a stored one: when the batch itself decides that an endpoint
+    // is free, the seed for that name is dropped and the verdict becomes indeterminate.
+    const overridden = await runBatch({
+      candidates: [entity(edge.ref, "Comité de Cambios"), edge],
+      client: scriptedJevClient([
+        entityAnswer("Role", { Role: 0.3 }, 0.05),
+        relationAnswer("executes", { executes: 0.9 }, 0.95),
+      ]),
+      evidence: evidenceFor(edge.ref),
+      endpointTypes: new Map([["comité_de_cambios", "Role"]]),
+    });
+    expect(overridden.entityDecisions[0]!.classificationState).toBe("free_no_match");
+    expect(overridden.relationDecisions[0]!.compatibility).toBe("indeterminate");
+  });
+});

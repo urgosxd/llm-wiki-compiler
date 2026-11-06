@@ -9,7 +9,8 @@
  *    unevaluated fact wearing a decision (S19, S25), and failing fast means a
  *    misconfigured run costs no JEV requests at all.
  * 2. Classify entities in candidate order.
- * 3. Derive the endpoint types the batch actually resolved.
+ * 3. Derive the endpoint types the batch actually resolved, seeded with what the
+ *    caller already knew from storage (a version sweep classifies a subset).
  * 4. Classify relations in candidate order, and check each one's compatibility.
  *
  * Entity decisions never gate relation decisions, and relation decisions never feed
@@ -35,6 +36,7 @@
  */
 
 import type { EntityCandidate, RelationCandidate } from "../candidates/types.js";
+import { normalizeCatalogName } from "../catalog/names.js";
 import { ENTITY_CLASSIFICATION_QUESTIONS, RELATION_CLASSIFICATION_QUESTIONS } from "../jev/questions.js";
 import { requestDecision } from "../jev/client.js";
 import { interpretClassification } from "../jev/interpret.js";
@@ -118,6 +120,34 @@ function supportStateFor(input: ClassifyCandidatesInput, ref: string): SupportSt
 }
 
 /**
+ * The endpoint types of this batch: what the caller already knew, then what the batch
+ * itself decided.
+ *
+ * Seeding matters only for relations whose endpoints were not re-classified in this
+ * run, which is the ordinary case for a version sweep. A name the batch DID decide is
+ * removed from the seed first, so a batch answer — including "this entity is free" —
+ * always replaces the stored one instead of being merged with it.
+ *
+ * @param seed - Stored canonical types by folded name, or `undefined` when the caller
+ *   has none (the ingest path).
+ * @param decisions - This batch's entity decisions.
+ * @returns Folded name to canonical type.
+ */
+function mergeEndpointTypes(
+  seed: ReadonlyMap<string, string> | undefined,
+  decisions: readonly EntityClassificationDecision[],
+): ReadonlyMap<string, string> {
+  const merged = new Map<string, string>(seed ?? []);
+  for (const decision of decisions) {
+    merged.delete(normalizeCatalogName(decision.name));
+  }
+  for (const [name, canonical] of endpointCanonicalTypes(decisions)) {
+    merged.set(name, canonical);
+  }
+  return merged;
+}
+
+/**
  * Classifies every prepared entity candidate, in order.
  *
  * @param entities - The entity candidates with their evidence.
@@ -191,7 +221,7 @@ async function classifyRelations(
 export async function classifyCandidates(input: ClassifyCandidatesInput): Promise<ClassificationBatch> {
   const prepared = prepareCandidates(input.candidates, input.evidence);
   const entityDecisions = await classifyEntities(prepared.entities, input);
-  const endpointTypes = endpointCanonicalTypes(entityDecisions);
+  const endpointTypes = mergeEndpointTypes(input.endpointTypes, entityDecisions);
   const relationDecisions = await classifyRelations(prepared.relations, input, endpointTypes);
   return {
     catalogVersion: input.catalog.version,

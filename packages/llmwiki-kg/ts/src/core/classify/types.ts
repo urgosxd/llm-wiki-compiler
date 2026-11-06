@@ -149,4 +149,17 @@ export interface ClassifyCandidatesInput {
   readonly evidence: Readonly<Record<string, CandidateEvidence>>;
   /** Semantic-support judgements by candidate ref, computed by the evidence stage. */
   readonly supportStates?: Readonly<Record<string, SupportState>>;
+  /**
+   * Endpoint canonical types the caller already knows from storage, folded name to
+   * canonical type.
+   *
+   * A reclassification pass classifies the rows whose versions are stale, not the
+   * whole graph, so a relation's endpoints are usually NOT entity candidates of this
+   * batch. Without this seed the relation's endpoints would read as unknown and its
+   * compatibility would be recomputed as `indeterminate`, silently degrading a
+   * verdict storage already held. The batch's own entity decisions win over the seed,
+   * including when one of them decided an entity is free: a fresh answer beats a
+   * stored one, and "no canonical type" is an answer.
+   */
+  readonly endpointTypes?: ReadonlyMap<string, string>;
 }

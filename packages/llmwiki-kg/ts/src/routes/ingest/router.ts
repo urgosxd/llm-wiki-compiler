@@ -40,6 +40,8 @@ import type { Database, TransactionalHandler, TransactionRunner } from "../../db
 import { classificationRuntime } from "./classify-stage.js";
 import type { ClassificationRuntime } from "./classify-stage.js";
 import { ingestDocument } from "./pipeline.js";
+import { createReclassifyRouter } from "../reclassify/router.js";
+import { IngestWiringError } from "./wiring.js";
 
 /** Injectable collaborators, so integration tests can bind their own pool. */
 export interface IngestRouterDependencies {
@@ -69,19 +71,7 @@ export const DEFAULT_DEPENDENCIES: IngestRouterDependencies = {
   run: withTransaction,
 };
 
-/** Message of the refusal a misconfigured wiring gets, spelled once. */
-export const MISSING_RUNNER_MESSAGE =
-  "ingest classification requires a bounded transaction runner: pass `run: " +
-  "createTransactionRunner(database)` over your pool, or disable classification. " +
-  "Refusing to keep a database transaction open across classifier calls (S44).";
-
-/** Raised when a wiring would violate the bounded-transaction contract. */
-export class IngestWiringError extends Error {
-  constructor(message: string = MISSING_RUNNER_MESSAGE) {
-    super(message);
-    this.name = "IngestWiringError";
-  }
-}
+export { IngestWiringError, MISSING_RUNNER_MESSAGE } from "./wiring.js";
 
 /** A runner that runs every stage in the transaction the caller already opened. */
 function inlineRunner(tx: Database): TransactionRunner {
@@ -124,8 +114,16 @@ function createIngestHandler(deps: IngestRouterDependencies): RequestHandler {
  * no prefix). Auth is mounted here, as `dependencies=[Depends(require_api_key)]`
  * is in Python.
  *
+ * ## Reclassification rides on the same router, on purpose
+ *
+ * `POST /stacks/:stackId/reclassify` re-decides rows this pipeline already wrote, so it
+ * needs exactly the same two collaborators: the Stack's auth and a bounded transaction
+ * runner. Mounting it here is what makes it reachable from the running application
+ * without a second mount point, a second auth surface or a new service — and it is why
+ * an unconfigured classifier is refused the same way on both endpoints.
+ *
  * @param deps - Injected collaborators; defaults to the process-wide ones.
- * @returns The router carrying the ingest route.
+ * @returns The router carrying the ingest and reclassification routes.
  */
 export function createIngestRouter(
   deps: IngestRouterDependencies = DEFAULT_DEPENDENCIES,
@@ -135,6 +133,16 @@ export function createIngestRouter(
   router.use(deps.apiKey);
 
   router.post("/stacks/:stackId/documents/:doc_id/ingest", createIngestHandler(deps));
+  router.use(
+    createReclassifyRouter({
+      apiKey: deps.apiKey,
+      // `exactOptionalPropertyTypes` distinguishes an absent runner from an undefined
+      // one, and the reclassification handler refuses the absent case rather than
+      // silently running inside the request transaction.
+      ...(deps.run === undefined ? {} : { run: deps.run }),
+      ...(deps.decisions === undefined ? {} : { decisions: deps.decisions }),
+    }),
+  );
 
   return router;
 }

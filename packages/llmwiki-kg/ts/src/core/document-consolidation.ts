@@ -297,14 +297,125 @@ export async function consolidateRelationshipRows(
   extracted: readonly ConsolidationRelationship[],
   nameToId: ReadonlyMap<string, string>,
 ): Promise<number> {
+  const outcome = await consolidateRelationshipRowsDetailed(tx, stackId, extracted, nameToId);
+  return outcome.written;
+}
+
+/**
+ * One assertion absorbed by another because both folded onto one stored edge.
+ *
+ * `unique_edge_per_stack` is `(stack_id, from_entity_id, to_entity_id, type)` and
+ * `type` carries the LABEL the extraction folded (`deja sin efecto` and
+ * `deja_sin_efecto` both become `DEJA_SIN_EFECTO`), while the identity key keeps the
+ * original predicate (`core/classify/identity.ts`). Two spellings of one verb between
+ * the same nodes therefore reach the database as one edge whose identity key differs
+ * — and the upsert can only keep one of them.
+ *
+ * What survives and what is reported:
+ *
+ * - **The first predicate survives, never the last writer's.** The `do update` clause
+ *   does not list `predicate`, and the migration declares it immutable, so the stored
+ *   verb is the one the first document used. Silently replacing it would rewrite a
+ *   source's wording with another source's.
+ * - **The collision is reported.** The incoming assertion has no row of its own, so a
+ *   caller that logs nothing is claiming a fact it does not hold, which is the
+ *   silence S43 forbids.
+ */
+export interface RelationCollision {
+  /** Folded subject name, as the extraction reported it. */
+  readonly fromName: string;
+  /** Folded object name. */
+  readonly toName: string;
+  /** The predicate of the assertion that was absorbed. */
+  readonly predicate: string;
+  /** The folded `type` label both assertions share. */
+  readonly type: string;
+  /** The original predicate of the row that survived. */
+  readonly storedPredicate: string;
+}
+
+/** What one relationship pass wrote, and what it could not keep apart. */
+export interface RelationshipWriteOutcome {
+  /** How many upserts ran, attempts included, exactly as the oracle counts them. */
+  readonly written: number;
+  readonly collisions: readonly RelationCollision[];
+}
+
+/**
+ * The identity key the trigger would derive for an incoming relationship.
+ *
+ * Mirrors `kg_relationship_identity_key`: `lower(btrim(predicate))`, and `type` when
+ * the caller supplied no predicate. Derived only to COMPARE against the stored key, so
+ * a collision is detected here instead of being inferred afterwards from a count that
+ * did not change.
+ *
+ * @param relationship - One extracted relationship, with its optional key.
+ * @returns The key the row will carry.
+ */
+function incomingIdentityKey(relationship: ConsolidationRelationship): string {
+  if (relationship.identityKey !== undefined) return relationship.identityKey;
+  const predicate = (relationship.predicate ?? relationship.type).trim();
+  return (predicate === "" ? relationship.type : predicate).toLowerCase();
+}
+
+/**
+ * The stored row already occupying this edge's `(stack, from, to, type)` slot.
+ *
+ * @param tx - Transaction carrying the read.
+ * @param edge - The endpoint ids and the folded label.
+ * @returns The stored identity key and predicate, or `undefined` when the slot is free.
+ */
+async function existingEdge(
+  tx: Database,
+  stackId: string,
+  edge: { readonly fromId: string; readonly toId: string; readonly type: string },
+): Promise<{ identity_key: string; predicate: string | null } | undefined> {
+  const rows = await tx.execute<{ identity_key: string; predicate: string | null }>(sql`
+    select identity_key, predicate from ontology_relationships
+    where stack_id = ${stackId}
+      and from_entity_id = ${edge.fromId}
+      and to_entity_id = ${edge.toId}
+      and type = ${edge.type}
+  `);
+  return rows[0];
+}
+
+/**
+ * `consolidate_relationships` with the collisions it caused, for a caller that must
+ * record them.
+ *
+ * @param tx - Transaction carrying the writes.
+ * @param stackId - Stack the edges belong to.
+ * @param extracted - The folded relationships, in extraction order.
+ * @param nameToId - Folded entity name → entity row id.
+ * @returns The attempt count and one record per absorbed assertion.
+ */
+export async function consolidateRelationshipRowsDetailed(
+  tx: Database,
+  stackId: string,
+  extracted: readonly ConsolidationRelationship[],
+  nameToId: ReadonlyMap<string, string>,
+): Promise<RelationshipWriteOutcome> {
   await bindCallerStack(tx, stackId, null);
   let written = 0;
+  const collisions: RelationCollision[] = [];
 
   for (const relationship of extracted) {
     const fromId = nameToId.get(relationship.fromEntityName.toLowerCase());
     const toId = nameToId.get(relationship.toEntityName.toLowerCase());
     if (fromId === undefined || toId === undefined) {
       continue;
+    }
+
+    const stored = await existingEdge(tx, stackId, { fromId, toId, type: relationship.type });
+    if (stored !== undefined && stored.identity_key !== incomingIdentityKey(relationship)) {
+      collisions.push({
+        fromName: relationship.fromEntityName,
+        toName: relationship.toEntityName,
+        predicate: relationship.predicate ?? relationship.type,
+        type: relationship.type,
+        storedPredicate: stored.predicate ?? relationship.type,
+      });
     }
 
     // `type` keeps its projection meaning and is NOT rewritten by a
@@ -340,7 +451,7 @@ export async function consolidateRelationshipRows(
     written += 1;
   }
 
-  return written;
+  return { written, collisions };
 }
 
 /** What the compiler knows about a source it wants to register as a document. */
