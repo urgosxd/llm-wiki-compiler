@@ -19,9 +19,10 @@ import {
   synthesizeEntityDescriptions,
 } from "../../core/extraction.js";
 import { defaultOntology } from "../../core/default_ontology.js";
-import { buildExtractionAudit, buildOntologyAudit, writeIngestAudit } from "./audit.js";
-import type { ExtractionAudit, OntologyAudit } from "./audit.js";
+import { buildExtractionAudit, buildOntologyAudit, buildOpenAudit, writeIngestAudit } from "./audit.js";
+import type { ExtractionAudit, OntologyAudit, OpenAudit } from "./audit.js";
 import type { ChunkResult, ExtractionResult } from "../../core/extraction-types.js";
+import type { ExtractionOptions } from "../../core/graph-extraction.js";
 import { validateOntology } from "../../core/ontology.js";
 import type { Ontology } from "../../core/ontology.js";
 import {
@@ -45,32 +46,36 @@ import { sendValidationFailure } from "./response.js";
 /**
  * Trailing arguments for the extraction call, given a Stack's stored ontology.
  *
- * Spreading an empty array keeps the call at its original arity, which is the
- * point: with no ontology the parser must behave exactly as the oracle does.
- * Passing `undefined` explicitly would work for the current signature but a
- * future defaulted or overloaded parameter would silently pick up a value that a
- * two-argument call never passed.
- *
  * A null column resolves to {@link defaultOntology} rather than to "no
  * enforcement". `null` used to mean the oracle's permissive behaviour, and that
  * was reversed deliberately: the vocabulary was never absent, it was only
  * unenforced, so the type column accepted `COMPANY` and `FIRM` as different
- * things forever. An unconfigured Stack is now enforced against a documented
- * default, and a rejection it did not ask for is reported in the document's
+ * things forever. An unconfigured Stack is now oriented by a documented default,
+ * and every proposal the catalog does not name is reported in the document's
  * `audit` blob — visible, not silent.
- *
- * A Stack that wants no constraint cannot express that by omitting the field.
- * It declares a wide ontology instead, which is a decision the caller makes
- * explicitly rather than one the schema makes by default.
  *
  * @param stored - The Stack's `ontology` column, or null/undefined when unset.
  * @returns Exactly one validated ontology: the declared one, or the default.
  * @throws {OntologyError} When the stored value is present but not a valid declaration.
  */
-function ontologyArgument(stored: unknown): [Ontology] {
-  if (stored === null || stored === undefined) return [defaultOntology()];
-  return [validateOntology(stored)];
+function ontologyArgument(stored: unknown): Ontology {
+  if (stored === null || stored === undefined) return defaultOntology();
+  return validateOntology(stored);
 }
+
+/**
+ * The admission contract every ingest run uses.
+ *
+ * Named here, at the one call site, rather than made the default of
+ * `extractGraphFromChunks`: the function's default stays `strict` so every
+ * oracle-parity caller keeps its behaviour, and the pipeline says out loud that it
+ * asks for the OPEN contract — where the catalog orients the model and a candidate
+ * it does not name is kept with its own type and predicate (S1, S3, S7).
+ *
+ * `maxTripletsPerChunk` is left at its documented default: the open path reports
+ * every cap it applies, so a bounded answer is legible as bounded (S9).
+ */
+const INGEST_EXTRACTION: ExtractionOptions = Object.freeze({ contract: "open" });
 
 /**
  * What the ontology did to this document, in the shape stored in `audit`.
@@ -107,6 +112,13 @@ export interface ProcessedIngest {
    * this field nor a `0` where it would have gone.
    */
   readonly extractionAudit?: ExtractionAudit;
+  /**
+   * What the open contract kept outside the catalog, refused, or capped.
+   *
+   * Absent when the run stayed entirely inside the catalog and no budget fired, so
+   * a clean ingest writes neither this section nor a zero where it would go.
+   */
+  readonly openAudit?: OpenAudit;
 }
 
 /**
@@ -125,11 +137,12 @@ export async function chunkAndExtract(
   },
 ): Promise<ProcessedIngest> {
   const chunks = await persistChunks(tx, params, text);
-  const ontologyArgs = ontologyArgument(document.stack_ontology);
+  const ontology = ontologyArgument(document.stack_ontology);
   const extraction = await extractGraphFromChunks(
     chunks,
     document.stack_name,
-    ...ontologyArgs,
+    ontology,
+    INGEST_EXTRACTION,
   );
   const shouldSynthesize =
     params.synthesizeDescriptions ?? document.stack_synthesize_default;
@@ -141,12 +154,14 @@ export async function chunkAndExtract(
   const declared = document.stack_ontology !== null && document.stack_ontology !== undefined;
   const audit = buildOntologyAudit(declared, extraction.rejected ?? []);
   const extractionAudit = buildExtractionAudit(extraction);
+  const openAudit = buildOpenAudit(extraction);
   return {
     chunks,
     extraction,
     shouldSynthesize,
     ontologyAudit: audit,
     ...(extractionAudit === undefined ? {} : { extractionAudit }),
+    ...(openAudit === undefined ? {} : { openAudit }),
   };
 }
 
@@ -189,6 +204,7 @@ export async function ingestDocument(
     shouldSynthesize,
     ontologyAudit: audit,
     extractionAudit,
+    openAudit,
   } = processed;
 
   // Step 7: consolidate. Entities first — the relationship pass needs the map.
@@ -202,6 +218,7 @@ export async function ingestDocument(
   await writeIngestAudit(tx, params.docId, {
     ontology: audit,
     ...(extractionAudit === undefined ? {} : { extraction: extractionAudit }),
+    ...(openAudit === undefined ? {} : { open: openAudit }),
   });
 
   // Step 8: totals for the Stack, after consolidation so they include this run.

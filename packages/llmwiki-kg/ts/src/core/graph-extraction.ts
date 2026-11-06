@@ -42,7 +42,15 @@ import { extractionModel } from "./llm/endpoints.js";
 import { ProviderUnavailableError, withProviderRetry } from "./llm/retry.js";
 import { countSchemaViolations } from "./llm/schema-validation.js";
 import { strictSchemaEnabled } from "./llm/strict-policy.js";
-import { buildExtractionPrompt, buildToolSchema, type ToolSchema } from "./graph-prompt.js";
+import {
+  buildExtractionPrompt,
+  buildOpenExtractionPrompt,
+  buildOpenToolSchema,
+  buildToolSchema,
+  type ToolSchema,
+  type TripletBudgetOptions,
+  type TripletTruncation,
+} from "./graph-prompt.js";
 import {
   isShapeMangled,
   parseStandaloneEntities,
@@ -56,6 +64,12 @@ import {
   type Ontology,
   type RejectedTriplet,
 } from "./ontology.js";
+import {
+  OpenAdmissionError,
+  admitOpenTriplets,
+  type CatalogMismatch,
+  type OpenRejection,
+} from "./open-admission.js";
 import {
   EXTRACTED_CONFIDENCE,
   EXTRACTION_PIPELINE,
@@ -76,6 +90,49 @@ function emptyResult(): ExtractionResult {
     model: extractionModel(),
     pipeline: EXTRACTION_PIPELINE,
   };
+}
+
+/**
+ * Which admission contract the extractor asks the model with.
+ *
+ * - `strict`  the legacy contract: the caller's declaration is enforced, so a
+ *   triplet outside it is dropped and reported. This is the DEFAULT, because it is
+ *   the oracle-parity behaviour every existing caller and suite depends on.
+ * - `open`    the open contract: the declaration is orientation, so a candidate
+ *   the catalog does not name is ADMITTED with the type and predicate the model
+ *   proposed. The ingest pipeline selects this one explicitly.
+ *
+ * The default stays `strict` on purpose. A function whose default silently changed
+ * would move the behaviour of every caller nobody audited, and a default the
+ * production path does not use is a trap in the other direction — so the pipeline
+ * names `open` at its call site, which is where the choice belongs.
+ */
+export type ExtractionContract = "strict" | "open";
+
+/** Everything only an open run can report about what it answered. */
+export interface OpenExtractionReport {
+  /** Proposals the catalog does not name, KEPT with the model's own wording (S7). */
+  readonly outsideCatalog?: readonly CatalogMismatch[];
+  /** Triplets refused because they were not facts at all, never for the catalog. */
+  readonly structuralRejections?: readonly OpenRejection[];
+  /** Per-chunk caps that dropped something, so a bounded answer reads as bounded (S9). */
+  readonly truncations?: readonly TripletTruncation[];
+}
+
+/** What {@link extractGraphFromChunks} returns: the oracle's result plus an open run's report. */
+export type ExtractionOutcome = ExtractionResult & OpenExtractionReport;
+
+/** How one extraction run is asked: which contract, and how much one chunk may cost. */
+export interface ExtractionOptions extends TripletBudgetOptions {
+  /** The admission contract; defaults to `strict`, the oracle-parity behaviour. */
+  readonly contract?: ExtractionContract;
+}
+
+/** What one open chunk contributed beyond the legacy triplets and entities. */
+interface OpenChunkExtras {
+  readonly outsideCatalog: readonly CatalogMismatch[];
+  readonly rejections: readonly OpenRejection[];
+  readonly truncation: TripletTruncation | undefined;
 }
 
 /** What one chunk contributed: admitted triplets, what was dropped, and nodes. */
@@ -123,6 +180,8 @@ interface ChunkOutput {
    * because the caller that decides an outage is fatal has to report WHY.
    */
   readonly failure?: unknown;
+  /** What only an open run reports; absent on a strict run, whose shape is unchanged. */
+  readonly open?: OpenChunkExtras;
 }
 
 /** An answer carrying either a result or the reason there is none. */
@@ -155,7 +214,11 @@ async function chunkTriplets(
   chunk: ChunkResult,
   stackName: string,
   ontology: Ontology | undefined,
+  options: ExtractionOptions,
 ): Promise<ChunkOutput> {
+  if (options.contract === "open" && ontology !== undefined) {
+    return openChunkTriplets(chunk, stackName, ontology, options);
+  }
   const prompt = buildExtractionPrompt(chunk.content, chunk.chunkIndex, stackName);
   // Built once, outside the retry: every attempt advertises the same schema, and
   // the client-side validator reads its `enum`s from this very object, so the
@@ -186,6 +249,64 @@ async function chunkTriplets(
     // The retries are spent. Report WHY the chunk produced nothing; whether that
     // is fatal is decided by the caller, the only place that knows how many
     // chunks succeeded.
+    return emptyOutput(error);
+  }
+}
+
+/**
+ * Asks the model for one chunk's answer under the OPEN contract.
+ *
+ * Three differences from the strict path above, and nothing else:
+ *
+ * 1. the prompt and the tool schema offer the catalog as orientation
+ *    ({@link buildOpenExtractionPrompt}, {@link buildOpenToolSchema}), so the model
+ *    is never told a type it proposes is illegal;
+ * 2. admission keeps every structurally valid candidate and reports what the
+ *    catalog does not name instead of dropping it ({@link admitOpenTriplets});
+ * 3. the per-chunk budget's truncation record travels with the answer instead of
+ *    being discarded, because a capped answer must be legible as capped (S9).
+ *
+ * `schemaViolations` is 0 by construction: the open schema declares no `enum` for
+ * a type position to fall outside of. That is not a missing counter — it is the
+ * same reason `advisoryViolations` returns 0 when no ontology is supplied.
+ *
+ * `OpenAdmissionError` is rethrown rather than absorbed: it means this module and
+ * the oracle-parity parser disagreed about an answer, which is a bug here and must
+ * not be laundered into "the provider failed for this chunk".
+ */
+async function openChunkTriplets(
+  chunk: ChunkResult,
+  stackName: string,
+  ontology: Ontology,
+  options: ExtractionOptions,
+): Promise<ChunkOutput> {
+  const prompt = buildOpenExtractionPrompt(chunk.content, chunk.chunkIndex, stackName, ontology, options);
+  const schema = buildOpenToolSchema(ontology);
+  try {
+    const argumentsJson = await withProviderRetry(() => callTool(prompt, schema));
+    const admitted = admitOpenTriplets(argumentsJson, ontology, {
+      chunkIndex: chunk.chunkIndex,
+      ...(options.maxTripletsPerChunk === undefined
+        ? {}
+        : { maxTripletsPerChunk: options.maxTripletsPerChunk }),
+    });
+    return {
+      triplets: admitted.triplets,
+      // The declaration turned nothing away: what it does not name is reported in
+      // `open.outsideCatalog` as KEPT.
+      rejected: [],
+      standalone: admitted.entities,
+      rescued: admitted.rescued,
+      shapeMangled: isShapeMangled(argumentsJson),
+      schemaViolations: 0,
+      open: {
+        outsideCatalog: admitted.outsideCatalog,
+        rejections: admitted.rejected,
+        truncation: admitted.truncation,
+      },
+    };
+  } catch (error) {
+    if (error instanceof OpenAdmissionError) throw error;
     return emptyOutput(error);
   }
 }
@@ -335,6 +456,12 @@ interface ExtractionTally {
   mangledChunks: number;
   /** Type positions the model put outside the schema's `enum`s, on any chunk. */
   schemaViolations: number;
+  /** Open runs only: proposals kept although the catalog does not name them. */
+  outsideCatalog: CatalogMismatch[];
+  /** Open runs only: triplets refused for being structurally incomplete. */
+  structuralRejections: OpenRejection[];
+  /** Open runs only: every per-chunk cap that dropped something. */
+  truncations: TripletTruncation[];
 }
 
 /** The tally every run starts from: nothing counted, nothing merged. */
@@ -346,6 +473,9 @@ function emptyTally(): ExtractionTally {
     failures: [],
     mangledChunks: 0,
     schemaViolations: 0,
+    outsideCatalog: [],
+    structuralRejections: [],
+    truncations: [],
   };
 }
 
@@ -367,6 +497,11 @@ function foldBatch(tally: ExtractionTally, batch: ChunkOutput, chunkIndex: numbe
   // remedy is the prompt or the parser, not the endpoint.
   if (batch.shapeMangled) tally.mangledChunks += 1;
   tally.schemaViolations += batch.schemaViolations;
+  if (batch.open !== undefined) {
+    tally.outsideCatalog.push(...batch.open.outsideCatalog);
+    tally.structuralRejections.push(...batch.open.rejections);
+    if (batch.open.truncation !== undefined) tally.truncations.push(batch.open.truncation);
+  }
   tally.rejected.push(...batch.rejected);
   for (const triplet of batch.triplets) {
     absorbEndpoints(tally.entities, triplet, chunkIndex);
@@ -392,14 +527,15 @@ export async function extractGraphFromChunks(
   chunks: readonly ChunkResult[],
   stackName: string,
   ontology?: Ontology,
-): Promise<ExtractionResult> {
+  options: ExtractionOptions = {},
+): Promise<ExtractionOutcome> {
   if (chunks.length === 0) {
     return emptyResult();
   }
 
   const tally = emptyTally();
   for (const chunk of chunks) {
-    foldBatch(tally, await chunkTriplets(chunk, stackName, ontology), chunk.chunkIndex);
+    foldBatch(tally, await chunkTriplets(chunk, stackName, ontology, options), chunk.chunkIndex);
   }
 
   // EVERY chunk failed: there is no partial result to protect, so this is an
@@ -429,5 +565,16 @@ export async function extractGraphFromChunks(
     // Absent when the model never left the declared schema -- which is every
     // strict-provider run, so that path's result shape does not move either.
     ...(tally.schemaViolations === 0 ? {} : { schemaViolations: tally.schemaViolations }),
+    // Absent when the catalog named every proposal, so a run that stayed inside
+    // its vocabulary keeps the strict path's exact shape. Present only on an open
+    // run that kept something the catalog does not name (S7).
+    ...(tally.outsideCatalog.length === 0 ? {} : { outsideCatalog: tally.outsideCatalog }),
+    // Absent when nothing was refused for structure -- the common case, and the
+    // only refusal an open run makes.
+    ...(tally.structuralRejections.length === 0
+      ? {}
+      : { structuralRejections: tally.structuralRejections }),
+    // Absent when no per-chunk cap dropped anything (S9).
+    ...(tally.truncations.length === 0 ? {} : { truncations: tally.truncations }),
   };
 }

@@ -200,33 +200,37 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
     await deleteFixtureRows();
   });
 
-  it("drops triplets outside the declaration and keeps the ones inside it", async () => {
+  it("keeps triplets outside the declaration and preserves what the model proposed", async () => {
     setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION, BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("mixed"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    // Only declared types reached the graph; the two out-of-ontology triplets
-    // were dropped rather than stored under a free-text type.
-    expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
-    expect(await writtenRelationTypes(stackId)).toEqual(["EMPLOYS"]);
+    // Every candidate the sources support is KEPT, carrying the type and the
+    // predicate the model proposed. `ALIEN_CONSTRUCT` and `ACQUIRED` are outside
+    // this Stack's declaration, so they are stored as the projection label
+    // rather than replaced by `Concept`, rewritten as `related_to`, or dropped.
+    expect(await writtenEntityTypes(stackId)).toEqual(["ALIEN_CONSTRUCT", "COMPANY", "PERSON"]);
+    expect(await writtenRelationTypes(stackId)).toEqual(["ACQUIRED", "EMPLOYS"]);
   });
 
-  it("enforces the default vocabulary when the Stack has no declaration", async () => {
-    // The reversal this feature exists for. `strict=False` used to carry through
-    // to storage: no declaration meant the type hints were a suggestion and
-    // whatever the model emitted was written. An undeclared Stack is now
-    // enforced against `default_ontology.ts`, so `COMPANY`/`PERSON`/`EMPLOYS`
-    // survive and the two out-of-vocabulary triplets do not.
+  it("keeps candidates outside the default vocabulary and records the mismatch", async () => {
+    // The declaration orients, it does not filter. An undeclared Stack is judged
+    // against `default_ontology.ts` for orientation only, so the same document
+    // yields every candidate it names — `COMPANY`/`PERSON`/`EMPLOYS` as well as
+    // `ALIEN_CONSTRUCT` and `ACQUIRED` — and the mismatch is reported in the
+    // document's audit instead of being silently discarded.
     setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION, BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("plain"));
     const documentId = await createDocument(stackId, BODY);
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
-    expect(await writtenRelationTypes(stackId)).toEqual(["EMPLOYS"]);
+    expect(await writtenEntityTypes(stackId)).toEqual(["ALIEN_CONSTRUCT", "COMPANY", "PERSON"]);
+    expect(await writtenRelationTypes(stackId)).toEqual(["ACQUIRED", "EMPLOYS"]);
+    const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
+    expect(audit["open"]).toMatchObject({ outside_catalog: 2, kinds: ["entity_type", "predicate"] });
   });
 
   it("admits the default vocabulary even though it is not llama_index's", async () => {
@@ -262,9 +266,12 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
     expect(serialized).toContain("'EMPLOYS'");
   });
 
-  it("enforces an ontology edited by PATCH, not only the one set at creation", async () => {
+  it("follows an ontology edited by PATCH, not only the one set at creation", async () => {
     // The declaration is read per ingest, so narrowing it must take effect on the
-    // next run rather than requiring a new Stack.
+    // next run rather than requiring a new Stack. What changes is the ORIENTATION
+    // the model is given and the mismatch report, never what may be stored:
+    // `EMPLOYS` and `ACQUIRED` are both no longer declared and both are kept with
+    // their own predicate.
     setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION] }]);
     const stackId = await createStackWith(app, domain("patch"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
@@ -276,11 +283,10 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    // `EMPLOYS` is no longer declared, so the edge is dropped. The endpoints keep
-    // their rows: `COMPANY` and `PERSON` are still declared, so only the verb is
-    // what the narrowed ontology refuses.
     expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
-    expect(await writtenRelationTypes(stackId)).toEqual([]);
+    expect(await writtenRelationTypes(stackId)).toEqual(["ACQUIRED", "EMPLOYS"]);
+    const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
+    expect(audit["open"]).toMatchObject({ outside_catalog: 2, kinds: ["predicate"] });
   });
 });
 
@@ -314,7 +320,7 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     await deleteFixtureRows();
   });
 
-  it("records the rejection count and reason codes in the document's audit", async () => {
+  it("records every catalog mismatch in the document's audit", async () => {
     setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION, BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("mixed"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
@@ -323,68 +329,61 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
 
     // The response cannot carry this — IngestionResult is nine fixed oracle keys —
     // so the audit column is where it lands, readable via GET /documents/:id.
-    // `samples` names the triplets, in the order the model emitted them, because
-    // `rejected: 2` cannot tell an operator whether they forgot a type or the
-    // model invented a relationship. `BAD_RELATION` comes first: it is the
-    // fixture order, and the sample list preserves it rather than sorting.
+    //
+    // `ontology` reports what the declaration TURNED AWAY, which is now nothing:
+    // the declaration orients the model and nothing else. `open` reports what the
+    // run KEPT although the catalog does not name it, naming each proposal in the
+    // order the model emitted it — the predicate of `BAD_RELATION` first, then the
+    // entity type of `BAD_ENTITY`.
     expect(await documentAudit(stackId, documentId)).toEqual({
       ontology: {
         enforced: true,
         declared: true,
-        rejected: 2,
-        reason_codes: ["UNKNOWN_ENTITY_TYPE", "UNKNOWN_RELATIONSHIP_TYPE"],
-        samples: [
-          {
-            subject: "Globex",
-            relation: "ACQUIRED",
-            object: "Nobody",
-            reason: "UNKNOWN_RELATIONSHIP_TYPE",
-            offending_type: "ACQUIRED",
-          },
-          {
-            subject: "Vex",
-            relation: "EMPLOYS",
-            object: "Nobody",
-            reason: "UNKNOWN_ENTITY_TYPE",
-            offending_type: "ALIEN_CONSTRUCT",
-          },
-        ],
+        rejected: 0,
+        reason_codes: [],
+        samples: [],
       },
-      // Extended, not replaced: the ontology keys above are unchanged and this is
-      // the sibling section the payload gained. Both triplets above carry one bad
-      // type position each -- `ACQUIRED` and `ALIEN_CONSTRUCT` -- and the gateway
-      // provider treats the schema's `enum` as a hint, so both are counted.
-      extraction: { schemaViolations: 2 },
+      open: {
+        outside_catalog: 2,
+        kinds: ["entity_type", "predicate"],
+        samples: [
+          { kind: "predicate", of: "Globex -> Nobody", proposed: "ACQUIRED" },
+          { kind: "entity_type", of: "Vex", proposed: "ALIEN_CONSTRUCT" },
+        ],
+        structural: 0,
+        truncations: [],
+      },
     });
   });
 
-  it("reports which triplets a rejected relation cost, entities included", async () => {
-    // The measured cost of dropping a triplet: its endpoints never become rows
-    // either, because an entity exists only as a triplet endpoint. Naming them
-    // here is what makes that loss diagnosable instead of merely countable.
+  it("keeps the edge an out-of-catalog predicate used to cost, with its predicate", async () => {
+    // The cost this replacement removes: `ACQUIRED` is not declared, and the old
+    // pipeline dropped the whole triplet for it. The edge now exists under the
+    // predicate the document used, and both endpoints keep their rows.
     setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION] }]);
     const stackId = await createStackWith(app, domain("cost"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
+    expect(await writtenRelationTypes(stackId)).toEqual(["ACQUIRED", "EMPLOYS"]);
+    expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
     // The helper's declared `unknown` is honest for a jsonb column but useless
     // to index, so the shape is narrowed here, where the assertion lives.
     const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
-    const samples = (audit["ontology"] as { samples: Array<{ subject: string; object: string }> })
+    const samples = (audit["open"] as { samples: Array<{ of: string; proposed: string }> })
       .samples;
-    expect(samples.map((sample) => [sample.subject, sample.object])).toEqual([
-      ["Globex", "Nobody"],
+    expect(samples.map((sample) => [sample.of, sample.proposed])).toEqual([
+      ["Globex -> Nobody", "ACQUIRED"],
     ]);
-    // And they really are absent from the graph, not merely reported.
-    expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
   });
 
-  it("caps the samples while still reporting the true rejection count", async () => {
+  it("caps the samples while still reporting the true mismatch count", async () => {
     // `audit` is a jsonb column read on every GET /documents/:id, and
-    // DEFAULT_MAX_TRIPLETS_PER_CHUNK is 20, so a many-chunk document can reject hundreds.
-    // Eight rejected triplets must yield five samples and `rejected: 8`, so a
-    // truncated report reads as truncated rather than as complete.
+    // DEFAULT_MAX_TRIPLETS_PER_CHUNK is 20, so a many-chunk document can keep hundreds
+    // of out-of-catalog proposals. Eight mismatches must yield five samples and
+    // `outside_catalog: 8`, so a truncated report reads as truncated rather than
+    // as complete.
     const many = Array.from({ length: 8 }, (_, index) => ({
       subject: { type: "ALIEN_CONSTRUCT", name: `Vex ${String(index)}` },
       relation: { type: "EMPLOYS" },
@@ -397,18 +396,22 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
     const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
-    const ontology = audit["ontology"] as {
-      rejected: number;
+    const open = audit["open"] as {
+      outside_catalog: number;
+      kinds: string[];
       samples: unknown[];
     };
-    expect(ontology.rejected).toBe(8);
-    expect(ontology.samples).toHaveLength(5);
+    expect(open.outside_catalog).toBe(8);
+    expect(open.kinds).toEqual(["entity_type"]);
+    expect(open.samples).toHaveLength(5);
+    // And every one of the eight entities is really a row, not merely reported.
+    expect(await writtenEntityTypes(stackId)).toEqual(["ALIEN_CONSTRUCT", "PERSON"]);
   });
 
-  it("records that the default was in force when the Stack declares none", async () => {
+  it("records that the default was the orientation when the Stack declares none", async () => {
     // `declared: false` rather than an absent key, and `enforced: true` rather
-    // than false. The pair distinguishes "dropped by a default the caller never
-    // chose" from "dropped by a declaration they wrote", which is the difference
+    // than false. The pair distinguishes "oriented by a default the caller never
+    // chose" from "oriented by a declaration they wrote", which is the difference
     // between our policy being wrong and their config being wrong.
     setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION] }]);
     const stackId = await createStackWith(app, domain("plain"), undefined);
@@ -420,22 +423,22 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
       ontology: {
         enforced: true,
         declared: false,
-        rejected: 1,
-        reason_codes: ["UNKNOWN_RELATIONSHIP_TYPE"],
-        samples: [
-          {
-            subject: "Globex",
-            relation: "ACQUIRED",
-            object: "Nobody",
-            reason: "UNKNOWN_RELATIONSHIP_TYPE",
-            offending_type: "ACQUIRED",
-          },
-        ],
+        rejected: 0,
+        reason_codes: [],
+        samples: [],
       },
-      // Extended, not replaced. The default ontology declares `COMPANY`, `PERSON`
-      // and `EMPLOYS` and not `ACQUIRED`, so exactly one type position is outside
-      // the schema the model was shown.
-      extraction: { schemaViolations: 1 },
+      // The default ontology declares `COMPANY`, `PERSON` and `EMPLOYS` and not
+      // `ACQUIRED`, so exactly one proposal is outside the orientation. It is
+      // recorded here and stored in the graph either way.
+      open: {
+        outside_catalog: 1,
+        kinds: ["predicate"],
+        samples: [
+          { kind: "predicate", of: "Globex -> Nobody", proposed: "ACQUIRED" },
+        ],
+        structural: 0,
+        truncations: [],
+      },
     });
   });
 
@@ -481,10 +484,12 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     expect(audit["extraction"]).toEqual({ mangledChunks: 1 });
   });
 
-  it("reports advisory schema violations without changing what is rejected", async () => {
-    // The gateway treats the schema's `enum` as a hint, so `ALIEN_CONSTRUCT`
-    // arrives untouched. It is counted here AND still travels the normal rejection
-    // path: the counter is a diagnosis, never a filter.
+  it("records an out-of-catalog type as a kept mismatch, not as a schema violation", async () => {
+    // The open contract's schema declares no `enum`, so a provider cannot leave
+    // one and the degradation section stays absent. That is the point: the model
+    // was never told `ALIEN_CONSTRUCT` was illegal, so a proposal outside the
+    // catalog is orientation feedback, not non-compliance — and the entity is
+    // stored under the proposal.
     setToolResponse([{ triplets: [BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("advisory"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
@@ -492,10 +497,15 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
     const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
-    const ontology = audit["ontology"] as { rejected: number; reason_codes: string[] };
-    expect(audit["extraction"]).toEqual({ schemaViolations: 1 });
-    expect(ontology.rejected).toBe(1);
-    expect(ontology.reason_codes).toEqual(["UNKNOWN_ENTITY_TYPE"]);
+    expect(audit).not.toHaveProperty("extraction");
+    expect(audit["open"]).toEqual({
+      outside_catalog: 1,
+      kinds: ["entity_type"],
+      samples: [{ kind: "entity_type", of: "Vex", proposed: "ALIEN_CONSTRUCT" }],
+      structural: 0,
+      truncations: [],
+    });
+    expect(await writtenEntityTypes(stackId)).toEqual(["ALIEN_CONSTRUCT", "PERSON"]);
   });
 
   it("counts every mangled chunk, not only the first", async () => {
@@ -513,8 +523,8 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
   });
 
   it("keeps the two counters apart when both fire in one document", async () => {
-    // One mangled chunk, then one chunk whose two out-of-ontology triplets carry
-    // two bad type positions between them. Chunks and positions share no
+    // One mangled chunk, then one chunk whose two out-of-catalog triplets carry
+    // two mismatched positions between them. Chunks and proposals share no
     // denominator, so one coalesced number would be wrong for both.
     setToolResponse([MANGLED, { triplets: [BAD_RELATION, BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("both"), DECLARATION);
@@ -524,7 +534,11 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
 
     expect(response.body.chunks_created).toBeGreaterThan(1);
     const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
-    expect(audit["extraction"]).toEqual({ mangledChunks: 1, schemaViolations: 2 });
+    expect(audit["extraction"]).toEqual({ mangledChunks: 1 });
+    expect(audit["open"]).toMatchObject({
+      outside_catalog: 2,
+      kinds: ["entity_type", "predicate"],
+    });
   });
 
   it("clears a previous run's counters when a re-ingest answers cleanly", async () => {

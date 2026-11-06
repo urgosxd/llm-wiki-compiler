@@ -46,6 +46,8 @@ import { z } from "zod";
 
 import type { Database } from "../../db.js";
 import type { RejectedTriplet } from "../../core/ontology.js";
+import type { CatalogMismatch } from "../../core/open-admission.js";
+import type { TripletTruncation } from "../../core/graph-prompt.js";
 
 /**
  * The `jsonb` key this section lives under, and the ONLY place it is spelled.
@@ -65,6 +67,18 @@ export const ONTOLOGY_AUDIT_KEY = "ontology";
  * key each — the same rule that keeps a `jsonb` field from becoming soup.
  */
 export const EXTRACTION_AUDIT_KEY = "extraction";
+
+/**
+ * The `jsonb` key the open-contract section lives under.
+ *
+ * A third sibling, because it answers a third question: `ontology` answers "what
+ * did the declaration turn away" (nothing, now that it orients instead of
+ * filtering), `extraction` answers "did the extraction answer at all", and this
+ * one answers "what did the run KEEP although the catalog does not name it, what
+ * did it refuse for being structurally incomplete, and what did a per-chunk budget
+ * cap" (S7, S9).
+ */
+export const OPEN_AUDIT_KEY = "open";
 
 /**
  * How many dropped triplets are reported by name.
@@ -143,6 +157,57 @@ export type ExtractionAudit = z.infer<typeof ExtractionAuditSchema>;
 export interface ExtractionDegradation {
   readonly mangledChunks?: number;
   readonly schemaViolations?: number;
+}
+
+/** One kept proposal the catalog does not name, as it appears in the blob. */
+export const CatalogMismatchSampleSchema = z.object({
+  /** `entity_type` or `predicate`. */
+  kind: z.string(),
+  /** The entity name, or `subject -> object` for a predicate. */
+  of: z.string(),
+  /** What the extractor proposed, verbatim. */
+  proposed: z.string(),
+});
+
+/** One per-chunk budget that dropped something. */
+export const TruncationSampleSchema = z.object({
+  chunk_index: z.number().int().nullable(),
+  limit: z.number().int().nonnegative(),
+  considered: z.number().int().nonnegative(),
+  dropped: z.number().int().positive(),
+});
+
+/**
+ * The open-contract section, as stored.
+ *
+ * `outside_catalog` counts KEPT proposals, not losses: every one of them is a row
+ * in the graph. It is written so an operator can see that a document was read
+ * under a catalog that does not describe it — the fact a silent drop used to hide.
+ * `structural` counts the only refusals an open run makes (a triplet with no
+ * endpoint or no predicate), and `truncations` names each cap that dropped a
+ * candidate rather than letting a bounded answer look complete (S9).
+ *
+ * The section is absent when all three are empty, exactly like the extraction one,
+ * so a run that stayed inside its vocabulary writes the byte-identical blob it
+ * wrote before this section existed.
+ */
+export const OpenAuditSchema = z.object({
+  outside_catalog: z.number().int().nonnegative(),
+  /** Distinct kinds of mismatch, sorted, so two identical runs produce one blob. */
+  kinds: z.array(z.string()),
+  samples: z.array(CatalogMismatchSampleSchema),
+  structural: z.number().int().nonnegative(),
+  truncations: z.array(TruncationSampleSchema),
+});
+
+/** A validated open-contract report. */
+export type OpenAudit = z.infer<typeof OpenAuditSchema>;
+
+/** What one open extraction run kept outside the catalog, and what it capped. */
+export interface OpenExtractionFacts {
+  readonly outsideCatalog?: readonly CatalogMismatch[] | undefined;
+  readonly structuralRejections?: readonly unknown[] | undefined;
+  readonly truncations?: readonly TripletTruncation[] | undefined;
 }
 
 /** Shortens a model-supplied name to the audit's budget, marking the cut. */
@@ -232,23 +297,56 @@ export interface IngestAuditReport {
   readonly ontology: OntologyAudit;
   /** Absent on a healthy extraction, which leaves the stored blob unchanged. */
   readonly extraction?: ExtractionAudit;
+  /** Absent when the run kept nothing outside the catalog and capped nothing. */
+  readonly open?: OpenAudit;
+}
+
+/**
+ * Builds the open-contract section, or nothing when there is nothing to report.
+ *
+ * Returning `undefined` rather than an object of zeros keeps a healthy ingest's
+ * stored blob byte-identical to the one written before this section existed.
+ *
+ * @param facts - What the open run kept, refused and capped.
+ * @returns The validated section, or `undefined` when all three are empty.
+ */
+export function buildOpenAudit(facts: OpenExtractionFacts): OpenAudit | undefined {
+  const outsideCatalog = facts.outsideCatalog ?? [];
+  const structural = facts.structuralRejections?.length ?? 0;
+  const truncations = facts.truncations ?? [];
+  if (outsideCatalog.length === 0 && structural === 0 && truncations.length === 0) {
+    return undefined;
+  }
+  return OpenAuditSchema.parse({
+    outside_catalog: outsideCatalog.length,
+    kinds: [...new Set(outsideCatalog.map((mismatch) => mismatch.kind))].sort(),
+    samples: outsideCatalog.slice(0, MAX_AUDIT_SAMPLES).map((mismatch) => ({
+      kind: mismatch.kind,
+      of: truncateName(mismatch.of),
+      proposed: truncateName(mismatch.proposed),
+    })),
+    structural,
+    truncations: truncations.map((truncation) => ({
+      chunk_index: truncation.chunkIndex,
+      limit: truncation.limit,
+      considered: truncation.considered,
+      dropped: truncation.dropped,
+    })),
+  });
 }
 
 /**
  * Writes the ingest's sections onto the document row, preserving other keys.
  *
- * `jsonb_set` with `create_missing = true` merges into whatever is already there
- * rather than replacing the column, because a later audit producer must not be
- * able to erase this one by writing its own section. Each section REPLACES its
- * key on a re-ingest, which is deliberate: the report describes the run that
- * produced the current graph, and a stale report from a previous run would
- * describe a graph that no longer exists.
+ * The stored column is merged rather than replaced, because a later audit producer
+ * must not be able to erase this one by writing its own section: every section this
+ * writer owns is removed from the existing blob and then re-added from this run, so
+ * an ABSENT section disappears (`- key`) instead of surviving as a stale report,
+ * and a sibling key it does not own (`quality`, today) is untouched.
  *
- * For the same reason an ABSENT extraction section DELETES the stored one
- * (`jsonb - key`) instead of preserving it. Without that, a document that
- * degraded once and later ingested cleanly would keep reporting the first run's
- * counters forever, and the degradation section would describe a graph it no
- * longer matches — the exact staleness the replace rule exists to prevent.
+ * Each section REPLACES its key on a re-ingest, which is deliberate: the report
+ * describes the run that produced the current graph, and a stale report from a
+ * previous run would describe a graph that no longer exists.
  *
  * @param tx - The ingest transaction.
  * @param docId - Document the audit describes.
@@ -259,41 +357,24 @@ export async function writeIngestAudit(
   docId: string,
   report: IngestAuditReport,
 ): Promise<void> {
-  const ontologyJson = JSON.stringify(report.ontology);
-  const extraction = report.extraction;
-  // The CASE evaluates one branch, but both must still PARSE: a bound
-  // `undefined` is dropped from the statement, which leaves the other branch
-  // with a dangling `::jsonb` cast and fails the whole update. So the absent
-  // case still binds a valid placeholder, and the flag below is what decides
-  // whether it is ever written.
-  const extractionJson = extraction === undefined ? "{}" : JSON.stringify(extraction);
-  // Spelled here, once, so a typo cannot create a sibling key that the reader
-  // never finds — the hazard this module exists to close.
-  const ontologyPath = `{${ONTOLOGY_AUDIT_KEY}}`;
-  const extractionPath = `{${EXTRACTION_AUDIT_KEY}}`;
+  // A null binds SQL NULL, which is what makes the CASE below drop the key. A
+  // `{}` placeholder would instead store an empty object as a present section.
+  const extractionJson = report.extraction === undefined ? null : JSON.stringify(report.extraction);
+  const openJson = report.open === undefined ? null : JSON.stringify(report.open);
   await tx.execute(sql`
     update stack_documents
-    set audit = case
-      when ${extraction === undefined} then
-        jsonb_set(
-          coalesce(audit, '{}'::jsonb),
-          ${ontologyPath},
-          ${ontologyJson}::jsonb,
-          true
-        ) - ${EXTRACTION_AUDIT_KEY}::text
-      else
-        jsonb_set(
-          jsonb_set(
-            coalesce(audit, '{}'::jsonb),
-            ${ontologyPath},
-            ${ontologyJson}::jsonb,
-            true
-          ),
-          ${extractionPath},
-          ${extractionJson}::jsonb,
-          true
-        )
-    end
+    set audit = (coalesce(audit, '{}'::jsonb)
+          - ${EXTRACTION_AUDIT_KEY}::text
+          - ${OPEN_AUDIT_KEY}::text)
+      || jsonb_build_object(${ONTOLOGY_AUDIT_KEY}::text, ${JSON.stringify(report.ontology)}::text::jsonb)
+      || case
+           when ${extractionJson}::text is null then '{}'::jsonb
+           else jsonb_build_object(${EXTRACTION_AUDIT_KEY}::text, ${extractionJson}::text::jsonb)
+         end
+      || case
+           when ${openJson}::text is null then '{}'::jsonb
+           else jsonb_build_object(${OPEN_AUDIT_KEY}::text, ${openJson}::text::jsonb)
+         end
     where id = ${docId}
   `);
 }
@@ -327,6 +408,18 @@ export function readOntologyAudit(audit: unknown): OntologyAudit | undefined {
 export function readExtractionAudit(audit: unknown): ExtractionAudit | undefined {
   const section = sectionOf(audit, EXTRACTION_AUDIT_KEY);
   return section === undefined ? undefined : ExtractionAuditSchema.parse(section);
+}
+
+/**
+ * Reads the open-contract section back out of a stored `audit` value.
+ *
+ * @param audit - The raw `stack_documents.audit` value.
+ * @returns The parsed section, or `undefined` when the run stayed inside its catalog.
+ * @throws {z.ZodError} When the stored section exists but does not match the schema.
+ */
+export function readOpenAudit(audit: unknown): OpenAudit | undefined {
+  const section = sectionOf(audit, OPEN_AUDIT_KEY);
+  return section === undefined ? undefined : OpenAuditSchema.parse(section);
 }
 
 /**

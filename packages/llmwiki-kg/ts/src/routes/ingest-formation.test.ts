@@ -249,14 +249,14 @@ describe.skipIf(skipReason !== false)("entities and relationships are formed", (
     }
   });
 
-  it("keeps both nodes but drops the edge when a relationship is undeclared", async () => {
-    // This test used to assert the opposite — that Globex and Initech had no row
-    // at all — which documented the cost rather than a requirement: one
-    // unrecognised verb deleted two entities the document really named. The edge
-    // is what the ontology refused, so the edge is what is lost.
+  it("keeps both nodes and the edge when a relationship is undeclared", async () => {
+    // This test used to assert the opposite — that the edge was deleted because
+    // its verb was not declared, which documented the cost rather than a
+    // requirement: one unrecognised verb dropped an assertion the document really
+    // made. Every candidate now forms a row, under the predicate the model read.
     //
     // `ACQUIRES` IS in the default vocabulary; it is not in this Stack's
-    // declaration, which is the rejection being exercised.
+    // declaration, which is the mismatch being exercised.
     const { stackId } = await ingestOnce("partial", [
       TRIPLET,
       {
@@ -272,8 +272,9 @@ describe.skipIf(skipReason !== false)("entities and relationships are formed", (
       "Globex",
       "Initech",
     ].sort());
-    // One edge: the declared one. The rejected pair contributes nodes only.
-    expect(await relationshipRows(stackId)).toHaveLength(1);
+    // Two edges: the declared one and the one the declaration does not name. The
+    // count moved from 1 to 2 because the second edge is now a row.
+    expect(await relationshipRows(stackId)).toHaveLength(2);
   });
 
   it("reuses an entity row across documents instead of forming a duplicate", async () => {
@@ -311,7 +312,7 @@ describe.skipIf(skipReason !== false)("entities and relationships are formed", (
   });
 });
 
-describe("endpoints recovered from a rejected relationship", () => {
+describe("endpoints of a triplet with an out-of-catalog verb", () => {
   let app: Express;
   let sequence = 0;
 
@@ -332,8 +333,10 @@ describe("endpoints recovered from a rejected relationship", () => {
   });
 
   it("keeps both entities when only the relationship is undeclared", async () => {
-    // The cost this fixes. Before: `Globex PARTNERS_WITH Initech` left neither
-    // name as a row. Now the edge is lost and the nodes remain.
+    // The endpoints of an out-of-catalog triplet are rows, and so is the edge:
+    // `PARTNERS_WITH` is not declared and is stored as the predicate the model
+    // read. The document's assertion is preserved rather than reduced to two
+    // isolated nodes.
     const stackId = await createStack(app, domain("relation"));
     const documentId = await createDocument(stackId, "Globex partners with Initech.");
     setToolResponse([
@@ -354,9 +357,10 @@ describe("endpoints recovered from a rejected relationship", () => {
     expect(rows.map((row) => row.name).sort()).toEqual(["Globex", "Initech"]);
   });
 
-  it("forms no relationship row for a rescued pair", async () => {
-    // A recovered node carries no evidence that the two are related, so the graph
-    // must gain nodes and no edge.
+  it("forms a relationship row for an out-of-catalog predicate", async () => {
+    // The opposite of what this used to assert. A predicate no catalog names is
+    // still an assertion the source makes, so the edge exists and carries its own
+    // verb — never a generic stand-in — for a later classification or review.
     const stackId = await createStack(app, domain("no-edge"));
     const documentId = await createDocument(stackId, "Globex partners with Initech.");
     setToolResponse([
@@ -372,16 +376,19 @@ describe("endpoints recovered from a rejected relationship", () => {
     ]);
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    const edges = await database().execute<{ n: number }>(sql`
-      select count(*)::int as n from ontology_relationships where stack_id = ${stackId}
+    const edges = await database().execute<{ n: number; type: string }>(sql`
+      select count(*)::int as n, min(type) as type
+      from ontology_relationships where stack_id = ${stackId}
     `);
 
-    expect(edges[0]?.n).toBe(0);
+    expect(edges[0]?.n).toBe(1);
+    expect(edges[0]?.type).toBe("PARTNERS_WITH");
   });
 
-  it("does not rescue the endpoints of a triplet with an undeclared entity type", async () => {
-    // The allowlist still wins: an undeclared entity type means there is nothing
-    // to keep, and keeping it would make the ontology optional.
+  it("keeps the endpoints of a triplet with an undeclared entity type", async () => {
+    // The declaration no longer decides what may exist, so an entity type from
+    // outside every vocabulary is stored under the type the model proposed. It
+    // used to be dropped here, which made the ontology a filter.
     const stackId = await createStack(app, domain("alien"));
     const documentId = await createDocument(stackId, BODY);
     setToolResponse([
@@ -397,12 +404,15 @@ describe("endpoints recovered from a rejected relationship", () => {
     ]);
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    expect(await entityRows(stackId)).toEqual([]);
+    expect((await entityRows(stackId)).map((row) => ({ name: row.name, type: row.type }))).toEqual([
+      { name: "Nobody", type: "PERSON" },
+      { name: "Vex", type: "ALIEN_CONSTRUCT" },
+    ]);
   });
 
-  it("keeps an admitted triplet as an edge while rescuing a sibling's endpoints", async () => {
-    // Both in one chunk: the declared sentence keeps its edge, the undeclared one
-    // keeps its nodes.
+  it("keeps an admitted triplet and a sibling's out-of-catalog edge", async () => {
+    // Both in one chunk: the declared sentence keeps its edge, and the one the
+    // declaration does not name keeps its edge too, with its own predicate.
     const stackId = await createStack(app, domain("mixed"));
     const documentId = await createDocument(stackId, BODY);
     setToolResponse([
@@ -425,7 +435,8 @@ describe("endpoints recovered from a rejected relationship", () => {
     `);
 
     expect(names).toEqual(["Acme", "Ada Lovelace", "Globex", "Initech"].sort());
-    expect(edges[0]?.n).toBe(1);
+    // Two edges, not one: the count moved because the sibling's edge is a row.
+    expect(edges[0]?.n).toBe(2);
   });
 });
 
@@ -501,12 +512,18 @@ describe("standalone entities", () => {
     expect(edges[0]?.n).toBe(0);
   });
 
-  it("drops a standalone entity whose type is undeclared", async () => {
+  it("keeps a standalone entity whose type is undeclared", async () => {
+    // A standalone entity never had an edge to constrain it, so the declaration
+    // used to be the only thing standing between it and a row. It is now kept with
+    // the type the model proposed, which is what makes entity-only knowledge
+    // (a decision, a requirement, an unknown artefact) representable at all.
     const { stackId } = await ingestEntities("undeclared", [
       { type: "ALIEN_CONSTRUCT", name: "Vex" },
     ]);
 
-    expect(await entityRows(stackId)).toEqual([]);
+    expect((await entityRows(stackId)).map((row) => ({ name: row.name, type: row.type }))).toEqual([
+      { name: "Vex", type: "ALIEN_CONSTRUCT" },
+    ]);
   });
 
   it("keeps a standalone entity beside triplet endpoints from the same chunk", async () => {

@@ -1,7 +1,8 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/ingest-ontology-e2e.test.ts
  * @description End to end: a document ingested into a declared Stack is
- * QUERYABLE through the AKS endpoints, and contains only declared types.
+ * QUERYABLE through the AKS endpoints, and every candidate its sources support is
+ * preserved.
  *
  * ## The gap this closes
  *
@@ -12,10 +13,17 @@
  * test in this package mounted the ingest router and the AKS router together.
  *
  * So the property that actually matters to a caller — *I ingested my document
- * into a Stack with a declared ontology, and the graph I can query reflects
- * exactly that declaration* — had no test across the middle. This file is that
+ * into a Stack with a declared ontology, and the graph I can query reflects the
+ * knowledge the document states* — had no test across the middle. This file is that
  * test: it never writes graph rows directly. Every row it asserts on was produced
  * by the ingest pipeline, and every assertion reads through HTTP.
+ *
+ * ## What the declaration does and does not do
+ *
+ * It orients the model and it is what the audit's mismatch report is measured
+ * against. It is NOT an admission filter: a candidate whose type or predicate the
+ * declaration does not name is stored under the model's own wording, which the
+ * `ALIEN_CONSTRUCT` and `ACQUIRED` fixtures below pin end to end.
  */
 
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
@@ -184,21 +192,24 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     await deleteFixtureRows();
   });
 
-  it("ingests a document and exposes only declared entity types through AKS", async () => {
+  it("exposes every entity the document contributes, declared types and free ones alike", async () => {
     const stackId = await createStack(DECLARATION);
 
-    const ingested = await ingest(stackId, [ACME_ADA, ACME_GRACE, GLOBEX_INITECH]);
+    const ingested = await ingest(stackId, [ACME_ADA, ACME_GRACE, GLOBEX_INITECH, OUT_OF_DEFAULT]);
     expect(ingested.status).toBe(200);
 
-    // Globex and Initech keep their nodes even though `ACQUIRED` was rejected:
-    // their types are declared, so only the edge is refused. Their absence used to
-    // be asserted here, which documented the cost rather than a requirement.
+    // Nothing the sources support is filtered out on the way to the query
+    // surface. `Globex` and `Initech` keep their nodes even though `ACQUIRED` is
+    // not declared, and `Vex` keeps the type the model proposed —
+    // `ALIEN_CONSTRUCT` is no catalog's vocabulary and is still a row.
     expect(await queriedEntities()).toEqual([
       { name: "Acme", type: "COMPANY" },
       { name: "Ada Lovelace", type: "PERSON" },
       { name: "Globex", type: "COMPANY" },
       { name: "Grace Hopper", type: "PERSON" },
       { name: "Initech", type: "COMPANY" },
+      { name: "Nobody", type: "PERSON" },
+      { name: "Vex", type: "ALIEN_CONSTRUCT" },
     ]);
   });
 
@@ -231,11 +242,16 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
       ]),
     );
     expect(edges).toHaveLength(2);
-    // The undeclared `ACQUIRED` edge never entered the graph, so nothing from
-    // that triplet is reachable from Acme.
-    const names = JSON.stringify(walked.body);
-    expect(names).not.toContain("Globex");
-    expect(names).not.toContain("ACQUIRED");
+    // The undeclared `ACQUIRED` edge is a real edge too, so it is walkable from
+    // its own endpoint — under the predicate the document used, not a generic
+    // verb. Acme is simply not connected to it, which is why the walk above sees
+    // only its two edges.
+    expect(JSON.stringify(walked.body)).not.toContain("Globex");
+    const free = await request(app)
+      .get("/aks/v1/traverse")
+      .query({ start: "Globex", domain: stackDomain, max_depth: 1 })
+      .expect(200);
+    expect(JSON.stringify(free.body)).toContain("ACQUIRED");
   });
 
   it("reports the same entity through a single-entity read", async () => {
@@ -250,11 +266,11 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     expect(single.body).toMatchObject({ name: "Acme", type: "COMPANY" });
   });
 
-  it("enforces the default when the Stack declares no ontology", async () => {
-    // The control. This used to store everything the model emitted, because no
-    // declaration meant no constraint. An undeclared Stack is now enforced
-    // against `default_ontology.ts`, so the same document yields the in-vocabulary
-    // entities and the out-of-vocabulary pair does not enter the graph.
+  it("keeps out-of-default-vocabulary candidates when the Stack declares no ontology", async () => {
+    // The declaration orients, it does not filter. An undeclared Stack is judged
+    // against `default_ontology.ts` for orientation only, so the same document
+    // yields every candidate it names: `ALIEN_CONSTRUCT` is in no vocabulary at
+    // all and still enters the graph under the type the model proposed.
     //
     // `ACQUIRED` is deliberately IN the default and `ALIEN_CONSTRUCT` is not, so
     // this control cannot pass merely because the gate went back to being total.
@@ -263,8 +279,12 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
       expect(r.status).toBe(200),
     );
 
-    const names = (await queriedEntities()).map((entity) => entity.name).sort();
-    expect(names).toEqual(["Acme", "Ada Lovelace"].sort());
+    expect(await queriedEntities()).toEqual([
+      { name: "Acme", type: "COMPANY" },
+      { name: "Ada Lovelace", type: "PERSON" },
+      { name: "Nobody", type: "PERSON" },
+      { name: "Vex", type: "ALIEN_CONSTRUCT" },
+    ]);
   });
 
   it("admits a relationship the default declares even when unconfigured", async () => {
@@ -281,13 +301,12 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     expect(names).toEqual(["Globex", "Initech"].sort());
   });
 
-  it("counts the rescued nodes but not the rejected edge", async () => {
+  it("counts the edge whose predicate the catalog does not name", async () => {
     // `entities_in_stack` is what a caller reads to decide whether a document
-    // contributed. It must count what actually became a row — which now includes
-    // the endpoints of a relationship-only rejection, because those DO become
-    // rows. The edge is the only thing the declaration refuses, so
-    // `relationships_in_stack` stays at 2 while the entity count grows from 3 to
-    // 5: Globex and Initech exist, and nothing joins them.
+    // contributed, and both counters must now count everything that became a row:
+    // five entities and three edges, `ACQUIRED` included. The counters used to
+    // stop at 2 because the undeclared edge was refused; reporting it here instead
+    // of losing it is the behaviour this feature delivers.
     const stackId = await createStack(DECLARATION);
 
     const response = await ingest(stackId, [ACME_ADA, ACME_GRACE, GLOBEX_INITECH]);
@@ -295,14 +314,12 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     expect(response.body).toMatchObject({
       entities_extracted: 5,
       entities_in_stack: 5,
-      // Both relationship counters stay at 2: they count admitted edges, and the
-      // rejected one never became an edge. Only the entity counters move.
-      relationships_extracted: 2,
-      relationships_in_stack: 2,
+      relationships_extracted: 3,
+      relationships_in_stack: 3,
     });
   });
 
-  it("keeps the rejection visible in the document audit after the request ends", async () => {
+  it("keeps the catalog mismatch visible in the document audit after the request ends", async () => {
     const stackId = await createStack(DECLARATION);
     const documentId = await createDocument(stackId, BODY);
     setToolResponse([{ triplets: [ACME_ADA, GLOBEX_INITECH] }]);
@@ -315,11 +332,14 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
       .get(`/stacks/${stackId}/documents/${documentId}`)
       .expect(200);
 
+    // The declaration turned nothing away: the mismatch is reported as what was
+    // KEPT although the catalog does not name it.
     expect(stored.body.audit).toMatchObject({
-      ontology: {
-        enforced: true,
-        rejected: 1,
-        reason_codes: ["UNKNOWN_RELATIONSHIP_TYPE"],
+      ontology: { enforced: true, rejected: 0, reason_codes: [] },
+      open: {
+        outside_catalog: 1,
+        kinds: ["predicate"],
+        samples: [{ kind: "predicate", of: "Globex -> Initech", proposed: "ACQUIRED" }],
       },
     });
   });
@@ -340,10 +360,10 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     expect(before).toHaveLength(2);
   });
 
-  it("writes nodes but no edges when every triplet fails on its relationship", async () => {
-    // The case that isolates the change. Every triplet here is rejected, so no
-    // edge exists — but both entity types are declared, so the nodes are real and
-    // are kept. Before this, the document contributed nothing at all.
+  it("writes a node and an edge when every triplet's predicate is out-of-catalog", async () => {
+    // The case that isolates the change. `ACQUIRED` is in no declared vocabulary,
+    // so this document used to contribute nodes and no edge. It now contributes
+    // the edge too, under the predicate the document used.
     const stackId = await createStack(DECLARATION);
 
     const response = await ingest(stackId, [GLOBEX_INITECH]);
@@ -353,6 +373,13 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
       { name: "Globex", type: "COMPANY" },
       { name: "Initech", type: "COMPANY" },
     ]);
-    expect(response.body).toMatchObject({ entities_extracted: 2, relationships_in_stack: 0 });
+    expect(response.body).toMatchObject({ entities_extracted: 2, relationships_in_stack: 1 });
+    const walked = await request(app)
+      .get("/aks/v1/traverse")
+      .query({ start: "Globex", domain: stackDomain, max_depth: 1 })
+      .expect(200);
+    expect(walked.body.steps).toEqual([
+      expect.objectContaining({ relationship: "ACQUIRED", to_entity: "Initech" }),
+    ]);
   });
 });
