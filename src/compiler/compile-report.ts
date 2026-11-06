@@ -13,6 +13,7 @@ import * as output from "../utils/output.js";
 import { CONCEPTS_DIR } from "../utils/constants.js";
 import { describeLinkCounts } from "./link-anchoring.js";
 import { describeLinkReview, hasLinkReviewTruncation } from "./link-review.js";
+import { describeCuratedLinks } from "./curated-links.js";
 import type { SchemaConfig } from "../schema/index.js";
 import type { ExtractionResult } from "./deps.js";
 import type {
@@ -71,6 +72,7 @@ export function summarizeCompile(
   ));
   reportLinkTotals(generation);
   reportLinkReview(generation);
+  reportCuratedLinks(generation);
   if (generation.candidates.length > 0) {
     output.status("?", output.info(
       reviewSummaryLine(generation),
@@ -149,6 +151,28 @@ function reportLinkReview(generation: PageGenerationResult): void {
   output.status("🔗", hasLinkReviewTruncation(generation.linkReview)
     ? output.warn(line)
     : output.info(line));
+}
+
+/**
+ * Print ONE line for the DURABLE curated links this run restored, stored or refused.
+ *
+ * Why a separate line from the two above: those report what the run DECIDED about links
+ * (kept, demoted, added), while this reports what the wiki will still have AFTER this
+ * run -- a curated link put back into a regenerated page, a record stored for one, and
+ * a record dropped because the prose no longer supports it. A restored link and a lost
+ * link are equally invisible without it, which is what S12 is about.
+ *
+ * @param generation - The compile-stage result, carrying the curated totals when any
+ *   body-rewriting stage ran.
+ */
+function reportCuratedLinks(generation: PageGenerationResult): void {
+  const counts = generation.curatedLinks;
+  if (counts === undefined) return;
+  const summary = describeCuratedLinks(counts);
+  if (summary === null) return;
+  const line = `Curated links: ${summary}.`;
+  // A DROPPED record is a link the wiki just lost; a restored one is expected work.
+  output.status("🔗", counts.dropped["anchor-missing"] > 0 ? output.warn(line) : output.info(line));
 }
 
 /** Human completion line for candidates created this run. */function reviewSummaryLine(generation: PageGenerationResult): string {

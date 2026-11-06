@@ -45,6 +45,7 @@ import { applyCompilePageWritesLocked } from "./compile-write.js";
 import type { CompilePageNamespace, CompilePageWrite } from "./compile-write.js";
 import { createRepairResolver } from "./link-repair.js";
 import { listLinkResolvablePendingSlugs } from "./candidate-read.js";
+import { applyCuratedOverlay } from "./curated-links-apply.js";
 import type { ContextualLinkCounts, KnownPageIdentity, LinkPageSet } from "./link-anchoring.js";
 import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
 import * as output from "../utils/output.js";
@@ -159,6 +160,16 @@ interface PageInfo {
    */
   aliases: readonly string[];
   filePath: string;
+  /**
+   * The body this page had BEFORE the curated-link overlay, when the overlay changed it.
+   *
+   * Only set on that path, and only for one reason: `collectFinalBodies` and
+   * `rewritePage` decide whether to write by comparing their result with the body the
+   * pass started from. After the overlay, `body` is the restored text, so without this
+   * baseline a restored link would look like "nothing changed" and never be written on
+   * the paths where the overlay is the only channel that restored it.
+   */
+  originalBody?: string;
   /**
    * The page's markdown as the index saw it.
    *
@@ -329,6 +340,12 @@ function addWikilinks(body: string, titles: readonly PageInfo[], selfTitle: stri
  * 2. Inbound: ALL pages get scanned for mentions of newly created titles.
  *    This ensures existing pages link to new concepts without a full recompile.
  *
+ * THE DURABLE CURATED LINKS ARE RESTORED FIRST (see {@link restoreCuratedLinks}), so a
+ * curated link is already in the body these two passes read. That ordering is a
+ * correctness condition, not a preference: the overlay and the outbound pass both want
+ * to claim a mention, and whichever runs second would otherwise wrap a link the first
+ * one had just written.
+ *
  * Every body either pass produces — and the body of every changed page the gate
  * must still judge for the links the MODEL wrote — goes through
  * {@link validateContextualLinks} before it becomes a write. A refused link is
@@ -351,12 +368,76 @@ export async function resolveLinks(
 ): Promise<CompilePageWrite[]> {
   const titleIndex = await buildTitleIndex(root, source);
   if (titleIndex.length === 0) return [];
+  await restoreCuratedLinks(root, scopedPages(titleIndex, changedSlugs, newSlugs));
   const bodies = collectFinalBodies(titleIndex, changedSlugs, newSlugs);
   const writes = await gateFinalBodies(root, titleIndex, bodies, gate, source !== undefined);
   if (writes.length > 0) {
     output.status("🔗", output.dim(`Resolved links in ${writes.length} page(s)`));
   }
   return writes;
+}
+
+/**
+ * Re-anchor this wiki's durable curated links onto the bodies about to be re-linked.
+ *
+ * WHY IT LIVES HERE, IN THE SHARED LINK PHASE. Not every caller of this module replaces
+ * a body: `review approve` writes the body it stored when the candidate was generated,
+ * and an OKF import writes the bodies it was given, so both can drop a curated link that
+ * a compile restored. This phase is the one seam all three go through, and it composes
+ * bodies before judging them, so applying the overlay here is what makes the rule hold
+ * for every entry point instead of for the compile alone.
+ *
+ * It is IDEMPOTENT and therefore free on the ordinary compile path: a body generation
+ * already restored carries the link, so the overlay finds it present and changes nothing.
+ *
+ * `page.originalBody` is what keeps the restored link from being a NO-OP WRITE. The
+ * passes below decide whether to write by comparing their result against the body they
+ * started from, so once `page.body` holds the restored link that comparison would say
+ * "nothing changed" and the link would never reach disk on the paths where this overlay
+ * is the only one that restored it. The pre-overlay body is carried as the baseline for
+ * exactly that comparison.
+ *
+ * @param root - Absolute project root the store is confined under.
+ * @param pages - The pages this phase must judge, mutated in place with their bodies.
+ */
+async function restoreCuratedLinks(root: string, pages: readonly PageInfo[]): Promise<void> {
+  if (pages.length === 0) return;
+  const batch = await applyCuratedOverlay(
+    root, pages.map((page) => ({ pageId: pageIdOf(page), body: page.body })),
+  );
+  for (const page of pages) {
+    const restored = batch.bodies.get(pageIdOf(page));
+    if (restored === undefined || restored.body === page.body) continue;
+    // The baseline the write decision and the substitution are both made against,
+    // captured before the overlay. `content` is deliberately NOT rewritten: it is the
+    // bytes read from disk, and a write substitutes the final prose into THEM, so the
+    // gate's verdict on the restored link cannot be bypassed by an already-edited copy.
+    page.originalBody = page.body;
+    page.body = restored.body;
+  }
+}
+
+/**
+ * The pages this link phase must judge: the ones it wrote, plus the ones a new title
+ * reaches. A page the run neither wrote nor changed is not here — see
+ * {@link collectFinalBodies} for why re-judging the whole wiki per ingest is wrong.
+ *
+ * @param titleIndex - Every page the resolver can see.
+ * @param changedSlugs - Slugs this run wrote.
+ * @param newSlugs - Slugs this run created.
+ * @returns The pages in scope, in index order.
+ */
+function scopedPages(
+  titleIndex: readonly PageInfo[],
+  changedSlugs: readonly string[],
+  newSlugs: readonly string[],
+): PageInfo[] {
+  const changed = new Set(changedSlugs);
+  const added = new Set(newSlugs);
+  const hasNewTitles = titleIndex.some((page) => added.has(page.slug));
+  return titleIndex.filter(
+    (page) => changed.has(page.slug) || (hasNewTitles && !added.has(page.slug)),
+  );
 }
 
 /** A page and the final body the link gate will judge. */
@@ -399,10 +480,25 @@ function collectFinalBodies(
     const inbound = newTitles.length > 0 && !added.has(page.slug) ? newTitles : [];
     if (outbound.length === 0 && inbound.length === 0) continue;
     const body = linkBody(page, outbound, inbound);
-    if (!written && body === page.body) continue;
+    if (!written && !differsFromDisk(page, body)) continue;
     bodies.set(page.slug, { page, body });
   }
   return bodies;
+}
+
+/**
+ * Whether a page this run did not write now has a body worth writing anyway.
+ *
+ * Two ways that happens: a resolver pass inserted a link, or the curated-link overlay
+ * restored one (`originalBody` is set exactly when the overlay changed the body). A page
+ * the run touched for neither reason is left alone -- see {@link collectFinalBodies}.
+ *
+ * @param page - The page being composed.
+ * @param body - The composed body.
+ * @returns True when the composed body differs from the bytes the wiki holds.
+ */
+function differsFromDisk(page: PageInfo, body: string): boolean {
+  return page.originalBody !== undefined || body !== page.body;
 }
 
 /**
@@ -455,7 +551,7 @@ async function gateFinalBodies(
     const validated = await validateContextualLinks(body, linkIndexFor(pages, anchorFor(page)));
     reportContextualLinkCounts(page.title, validated.counts);
     gate?.sink?.record(validated.counts);
-    const write = rewritePage(page, page.content, validated.body, page.body);
+    const write = rewritePage(page, validated.body);
     if (write) writes.push(write);
   }
   return writes;
@@ -599,6 +695,10 @@ function namespaceForPath(filePath: string): CompilePageNamespace {
 /**
  * Build the rewritten-page write for a PageInfo, or null when its body is unchanged.
  *
+ * THE BASELINE IS THE PRE-OVERLAY BODY when the curated-link overlay changed this page.
+ * `body` holds the restored text by then, and comparing against it would report "nothing
+ * changed" for a link the overlay just put back.
+ *
  * The replacement is a FUNCTION, not the string itself. `String.replace`
  * interprets `$&`, `` $` ``, `$'` and `$$` in a string replacement even when the
  * search argument is a plain string, and `linked` is page prose: a page reading
@@ -607,11 +707,12 @@ function namespaceForPath(filePath: string): CompilePageNamespace {
  * function suppresses that substitution entirely, so the rewritten body is
  * inserted verbatim.
  */
-function rewritePage(page: PageInfo, content: string, linked: string, body: string): CompilePageWrite | null {
-  if (linked === body) return null;
+function rewritePage(page: PageInfo, linked: string): CompilePageWrite | null {
+  const baseline = page.originalBody ?? page.body;
+  if (linked === baseline) return null;
   return {
     namespace: namespaceForPath(page.filePath),
     slug: page.slug,
-    body: content.replace(body, () => linked),
+    body: page.content.replace(baseline, () => linked),
   };
 }

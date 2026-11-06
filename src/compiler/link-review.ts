@@ -75,6 +75,7 @@ import {
   type EarlierPage,
   type LinkReviewArticle,
   type LinkReviewTruncationReason,
+  type PlainMention,
 } from "./link-review-candidates.js";
 import {
   pageStoreOptions,
@@ -83,6 +84,15 @@ import {
   type PageSink,
 } from "../trust/page-apply.js";
 import { MAX_LINK_REVIEW_PAGES_MODIFIED_PER_RUN } from "../utils/constants.js";
+import {
+  addCuratedLinkCounts,
+  anchorAround,
+  createCuratedLink,
+  emptyCuratedLinkCounts,
+  type CuratedLinkCounts,
+  type CuratedLinkRecord,
+} from "./curated-links.js";
+import { recordCuratedLinks } from "./curated-links-store.js";
 import * as output from "../utils/output.js";
 import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
 
@@ -104,6 +114,16 @@ export interface LinkReviewCounts {
   verdicts: { accepted: number; refused: number; unusable: number };
   /** Candidates dropped by a bound, per reason. */
   truncated: Record<LinkReviewTruncationReason, number>;
+  /**
+   * The DURABLE side of this stage: records kept for the links it curated, and the
+   * records its own anchor rule or a named bound refused to keep.
+   *
+   * A curated link is written into a page body that the next render replaces, so the
+   * link itself is not durable -- this record is. Reporting it here means the review's
+   * run line covers both halves of the same decision: what it added now, and what it
+   * promised the wiki for later.
+   */
+  curated: CuratedLinkCounts;
 }
 
 /**
@@ -130,10 +150,12 @@ export interface LinkReviewSeams {
   readonly transaction?: PageBatchTransaction;
 }
 
-/** One page being edited, with its accumulating body. */
+/** One page being edited, with its accumulating body and the records it earned. */
 interface EditInProgress {
   page: EarlierPage;
   body: string;
+  /** One durable record per curated link this page gained in this run. */
+  records: CuratedLinkRecord[];
 }
 
 /** Counts with nothing reviewed yet. */
@@ -146,6 +168,7 @@ export function emptyLinkReviewCounts(): LinkReviewCounts {
     linksAdded: 0,
     verdicts: { accepted: 0, refused: 0, unusable: 0 },
     truncated: { "article-cap": 0, "run-cap": 0, "modify-cap": 0 },
+    curated: emptyCuratedLinkCounts(),
   };
 }
 
@@ -165,6 +188,7 @@ export function addLinkReviewCounts(total: LinkReviewCounts, counts: LinkReviewC
   total.verdicts.refused += counts.verdicts.refused;
   total.verdicts.unusable += counts.verdicts.unusable;
   for (const reason of TRUNCATION_REASONS) total.truncated[reason] += counts.truncated[reason];
+  addCuratedLinkCounts(total.curated, counts.curated);
 }
 
 /** Whether a bound dropped anything, which makes the report line a warning. */
@@ -251,9 +275,9 @@ async function decideEdits(
     const mention = await reviewCandidate(candidate, counts);
     if (mention === null) continue;
     const state = edited.get(candidate.page.slug)
-      ?? { page: candidate.page, body: candidate.page.body };
-    const body = wrapMention(state.body, mention, candidate.article.slug);
-    if (body === null) {
+      ?? { page: candidate.page, body: candidate.page.body, records: [] };
+    const linked = wrapMention(state.body, mention, candidate.article.slug);
+    if (linked === null) {
       counts.verdicts.unusable += 1;
       continue;
     }
@@ -261,9 +285,38 @@ async function decideEdits(
       counts.truncated["modify-cap"] += 1;
       continue;
     }
-    edited.set(state.page.slug, { page: state.page, body });
+    edited.set(state.page.slug, {
+      page: state.page,
+      body: linked.body,
+      records: [...state.records, curatedRecordFor(candidate, linked.mention)],
+    });
   }
   return await gateEdits([...edited.values()], pageSet);
+}
+
+/**
+ * The durable record one accepted verdict earns.
+ *
+ * Both identities are RESOLVED page ids, never the spelling the model wrote: the link
+ * target is the article's canonical slug, which is what the record has to re-create even
+ * after `link-repair` has canonicalised every written target in the wiki. The anchor is
+ * the mention the page really contains, with the prose around it, so a later render can
+ * re-find it and a human can see what justified the link.
+ *
+ * @param candidate - The earlier page and the article it mentions.
+ * @param mention - The span the accepted wording occupies in the page's body.
+ * @returns The record to store once the page write commits.
+ */
+function curatedRecordFor(
+  candidate: Candidate,
+  mention: PlainMention,
+): CuratedLinkRecord {
+  return createCuratedLink({
+    sourcePageId: `concepts/${candidate.page.slug}`,
+    targetPageId: `concepts/${candidate.article.slug}`,
+    anchor: anchorAround(candidate.page.body, mention),
+    provenance: "model-verdict",
+  });
 }
 
 /**
@@ -337,18 +390,27 @@ function passageAround(body: string, text: string): string {
  * @param body - The body as it stands (possibly already edited by an earlier verdict).
  * @param mention - The words to link, as the verdict quoted them.
  * @param slug - The article's slug, which is the link target.
- * @returns The edited body, or null when the page no longer holds a plain mention.
+ * @returns The edited body with the span it linked, or null when the page no longer
+ *   holds a plain mention.
  */
-function wrapMention(body: string, mention: string, slug: string): string | null {
+function wrapMention(
+  body: string,
+  mention: string,
+  slug: string,
+): { body: string; mention: PlainMention } | null {
   const found = firstPlainMention(body, [mention]);
   if (found === null) return null;
-  return `${body.slice(0, found.start)}[[${slug}|${found.text}]]${body.slice(found.end)}`;
+  return {
+    body: `${body.slice(0, found.start)}[[${slug}|${found.text}]]${body.slice(found.end)}`,
+    mention: found,
+  };
 }
 
-/** A page changed by the review, and how many links it gained. */
+/** A page changed by the review, and the durable records its links earn. */
 interface ReviewEdit {
   write: CompilePageWrite;
   linksAdded: number;
+  records: readonly CuratedLinkRecord[];
 }
 
 /**
@@ -382,6 +444,7 @@ async function gateEdits(
         body: edit.page.content.replace(edit.page.body, () => validated.body),
       },
       linksAdded,
+      records: edit.records,
     });
   }
   return kept;
@@ -392,7 +455,8 @@ async function gateEdits(
  * count only what committed.
  *
  * A page the trust floor skipped is reported rather than counted: the run must not
- * claim a link it did not write.
+ * claim a link it did not write. Only the COMMITTED pages' records are stored, so the
+ * store can never promise a link the wiki does not have.
  *
  * @param root - Project root the writes are confined under.
  * @param edits - The pages to write.
@@ -412,11 +476,14 @@ async function applyEdits(
     pageStoreOptions(options.seams?.sink, options.seams?.remover, options.seams?.transaction),
   );
   const skippedSlugs = new Set(skipped.map((item) => item.item.slug));
+  const records: CuratedLinkRecord[] = [];
   for (const edit of edits) {
     if (skippedSlugs.has(edit.write.slug)) continue;
     counts.modified += 1;
     counts.linksAdded += edit.linksAdded;
+    records.push(...edit.records);
   }
+  await recordCuratedLinks(root, records, counts.curated);
   for (const item of skipped) {
     output.status("!", output.warn(`Link review write skipped for "${item.item.slug}" — ${item.reason}`));
   }

@@ -62,6 +62,12 @@ import {
 } from "./link-review.js";
 import { buildRelatedPageIndex, type RelatedPageIndex } from "./page-renderer.js";
 import type { ContextualLinkCounts } from "./link-anchoring.js";
+import {
+  addCuratedLinkCounts,
+  emptyCuratedLinkCounts,
+  type CuratedLinkCounts,
+} from "./curated-links.js";
+import { overlayCuratedPageWrites } from "./curated-links-apply.js";
 import { repairAndApplyLinks } from "./link-repair.js";
 import { qualifiedPageId } from "../utils/page-id.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
@@ -310,10 +316,10 @@ async function generatePagesPhase(
   // Apply every live page as ONE journalled executor batch under the held lock,
   // then derive writtenPages from what ACTUALLY committed (skipped pages folded
   // into errors), so finalizeWiki never resolves/embeds an uncommitted page.
-  const { writtenPages, batchErrors } = await commitLivePageWrites(
+  const { writtenPages, batchErrors, curated } = await commitLivePageWrites(
     root, outcomes, pageSink, pageRemover, transaction);
   errors.push(...batchErrors);
-  return { pages, writtenPages, errors, candidates, review, seedSlugs: [] };
+  return { pages, writtenPages, errors, candidates, review, seedSlugs: [], curatedLinks: curated };
 }
 
 /**
@@ -371,9 +377,18 @@ interface GeneratedOutcome {
  * `batchErrors` (its `floor:` reason). Runs under compile's already-held lock,
  * so it uses the lock-free adapter core. An empty live set opens no batch.
  *
+ * THIS IS WHERE CURATED LINKS ARE PUT BACK. Generation REPLACES a page's body with
+ * fresh prose, which is the one operation that can destroy a link a reference review
+ * curated into it -- and the only channel that would otherwise restore it re-wraps page
+ * TITLES, so an alias-anchored curated link would simply be gone. The overlay therefore
+ * runs on the fresh bodies immediately before they are planned, re-anchoring each record
+ * against the body that is about to be written and forgetting the records whose mention
+ * the new prose no longer contains. See `curated-links.ts` for the rule and
+ * `curated-links-store.ts` for the store.
+ *
  * @param root - Project root the writes are confined under.
  * @param outcomes - Source-ordered generation outcomes.
- * @returns The committed entries plus any floor-skip errors.
+ * @returns The committed entries, any floor-skip errors, and the overlay's counts.
  */
 async function commitLivePageWrites(
   root: string,
@@ -381,11 +396,18 @@ async function commitLivePageWrites(
   pageSink: PageSink | undefined,
   pageRemover: PageRemover | undefined,
   transaction: PageBatchTransaction | undefined,
-): Promise<{ writtenPages: MergedConcept[]; batchErrors: string[] }> {
+): Promise<{
+  writtenPages: MergedConcept[];
+  batchErrors: string[];
+  curated: CuratedLinkCounts;
+}> {
   const live = outcomes.filter((o) => o.result.liveWrite);
+  const overlaid = live.length === 0
+    ? { writes: [], counts: emptyCuratedLinkCounts() }
+    : await overlayCuratedPageWrites(root, live.map((o) => o.result.liveWrite!));
   const { skipped } = await applyCompilePageWritesLocked(
     root,
-    live.map((o) => o.result.liveWrite!),
+    overlaid.writes,
     pageStoreOptions(pageSink, pageRemover, transaction),
   );
   const skippedKeys = new Set(skipped.map((s) => `${s.item.namespace}/${s.item.slug}`));
@@ -395,7 +417,7 @@ async function commitLivePageWrites(
   const batchErrors = skipped.map(
     (s) => `Page "${s.item.slug}" skipped — ${s.reason}`,
   );
-  return { writtenPages, batchErrors };
+  return { writtenPages, batchErrors, curated: overlaid.counts };
 }
 
 /** Persist source state for every extraction that produced concepts.
@@ -810,6 +832,9 @@ async function finalizeNothingToCompile(
   const emptyGeneration: PageGenerationResult = {
     pages: [], writtenPages: [], errors: [], candidates: [],
     review: { held: [], forced: [] }, seedSlugs: [],
+    // Created here rather than left undefined: seed pages are regenerated on this
+    // path too, and the overlay they run folds its counts into this SAME object.
+    curatedLinks: emptyCuratedLinkCounts(),
   };
   // Ownerless frozen reconciliation mutates the draft; otherwise null keeps the
   // no-change path from rewriting state unnecessarily.
@@ -826,7 +851,11 @@ async function finalizeNothingToCompile(
     stateRows,
     // Seed pages are regenerated on this path too, so their links are gated and
     // reported per page; the run total has no compile result to ride on here.
-    { linkCounts: emptyContextualLinkCounts(), linkReview: emptyLinkReviewCounts() },
+    {
+      linkCounts: emptyContextualLinkCounts(),
+      linkReview: emptyLinkReviewCounts(),
+      curatedLinks: emptyGeneration.curatedLinks as CuratedLinkCounts,
+    },
   ));
   return {
     ...emptyCompileResult(),
@@ -944,6 +973,9 @@ async function runCompilePipeline(
     const totals: RunReportTotals = {
       linkCounts: emptyContextualLinkCounts(),
       linkReview: emptyLinkReviewCounts(),
+      // The generation overlay already counted what it restored while writing pages;
+      // the review stage below folds its own recording into the SAME object.
+      curatedLinks: generation.curatedLinks ?? emptyCuratedLinkCounts(),
     };
     // Seed + resolution route through the SAME executor batches as the
     // no-source-changes branch (see seedThenFinalize). The draft flush is the
@@ -961,6 +993,7 @@ async function runCompilePipeline(
       ...generation,
       linkCounts: totals.linkCounts,
       linkReview: totals.linkReview,
+      curatedLinks: totals.curatedLinks,
     };
     await logCompile(root, buckets, reportGeneration, existingIds, env);
     verbose(`compile finished in ${Date.now() - startMs} ms`);
@@ -1288,6 +1321,10 @@ async function reviewEarlierPagesForRun(
   if (pages.length === 0 || flags.totals === undefined) return;
   const counts = await reviewEarlierPages(root, reviewArticlesOf(pages), { seams: flags.seams });
   addLinkReviewCounts(flags.totals.linkReview, counts);
+  // The review's DURABLE half -- records kept for the links it curated -- rides on the
+  // run's curated-link totals, so the operator sees one line covering every restored,
+  // stored and refused curated link of the run, whichever stage touched it.
+  addCuratedLinkCounts(flags.totals.curatedLinks, counts.curated);
 }
 
 /** This run's articles, as the review stage names them. */

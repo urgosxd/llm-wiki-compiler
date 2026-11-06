@@ -616,6 +616,73 @@ export const CANDIDATES_ARCHIVE_DIR = ".llmwiki/candidates/archive";
  */
 export const RULE_STATE_FILE = ".llmwiki/rule-state.json";
 
+/**
+ * Durable records of the contextual links a reference review CURATED (S9, S12).
+ *
+ * A curated link is written by editing a page's generated body, and bodies are
+ * regenerated wholesale, so a link that lives only in those bytes is destroyed by
+ * the next render of its page. This file is the record that survives: one entry per
+ * link, holding the resolved source and target page ids, the mention it is anchored
+ * to and which channel accepted it, so a render can put the link back.
+ *
+ * It lives in `.llmwiki/` because that directory is this project's convention for
+ * durable compiler state: it is never emitted into `wiki/`, it is resolved through
+ * the trust-boundary helpers rather than a raw path join, and it is written with the
+ * shared hardened atomic write.
+ */
+export const CURATED_LINKS_FILE = ".llmwiki/curated-links.json";
+
+/**
+ * Ceiling on how many curated links ONE source page may carry.
+ *
+ * A curated link is the most expensive kind of edge this wiki has: a model call
+ * argued that linking one mention helps that page's reader. The bound is not about
+ * cost, though -- it is about what a page IS. An article that has accumulated dozens
+ * of curated references has become a directory of other articles, and the honest
+ * shape for that is a category or a seed page, not more links in the prose.
+ *
+ * 8 sits just under {@link MAX_CONTEXTUAL_LINKS_PER_PAGE}: the whole page budget is
+ * 12 links from every channel combined, so a page whose curated links alone reached
+ * this cap could not also keep the links its own prose earns. Raising it is a
+ * product decision, which is why the number lives here beside its reason.
+ */
+export const MAX_CURATED_LINKS_PER_PAGE = 8;
+
+/**
+ * Ceiling on how many curated links ONE review run may ADD to the store.
+ *
+ * The per-page bound protects a page; this one protects the store and the review that
+ * feeds it. A review run already bounds how many earlier pages it may MODIFY
+ * ({@link MAX_LINK_REVIEW_PAGES_MODIFIED_PER_RUN}) and how many candidates it may
+ * judge; this is the durable side of the same budget, so a run cannot quietly write
+ * more records than the number of pages it was allowed to touch times the per-page
+ * cap. Records past it are refused and COUNTED under `run-cap`, never dropped
+ * silently (S12).
+ */
+export const MAX_CURATED_LINKS_PER_RUN = 20;
+
+/**
+ * Characters of surrounding prose stored on each side of a curated anchor.
+ *
+ * A curated record must be re-findable after its page is regenerated, and the words a
+ * reviewer quoted are not always unique in a page: "the database" can appear five
+ * times. The window is what lets an operator see WHICH sentence the link was justified
+ * by, in the store and in a drop report. It is deliberately short: the anchor rule
+ * re-validates the MENTION against the new body, never the paragraph, because pinning a
+ * link to prose no render will reproduce would drop every link on the first rewording.
+ */
+export const CURATED_LINK_ANCHOR_CONTEXT_CHARS = 60;
+
+/**
+ * Resource cap on the curated-link store, enforced BEFORE the file is read.
+ *
+ * `.llmwiki` is host-controlled, but the overlay reads this file on every compile
+ * that regenerates a page, so an oversized or hostile leaf must be refused at the
+ * `fstat` rather than parsed into memory. At roughly 300 bytes per record this holds
+ * thousands of curated links, far past {@link MAX_CURATED_LINKS_PER_RUN} per run.
+ */
+export const MAX_CURATED_LINKS_BYTES = 256 * 1024; // 256 KiB
+
 /** Pending rule candidates (rule pipeline) awaiting approve/reject. */
 export const RULE_CANDIDATES_DIR = ".llmwiki/rule-candidates";
 

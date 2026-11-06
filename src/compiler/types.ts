@@ -10,6 +10,7 @@
 
 import type { CompilePageWrite } from "./compile-write.js";
 import type { ContextualLinkCounts } from "./link-anchoring.js";
+import type { CuratedLinkCounts } from "./curated-links.js";
 import type { LinkReviewCounts } from "./link-review.js";
 import type { RelatedPageIndex } from "./page-renderer.js";
 import type {
@@ -95,6 +96,17 @@ export interface PageGenerationResult {
    * stays silent when the stage found nothing, reviewed nothing and dropped nothing.
    */
   linkReview?: LinkReviewCounts;
+  /**
+   * What the DURABLE curated-link overlay did this run: links restored into a
+   * regenerated body, records the review stored, and records its own anchor rule or a
+   * named bound refused.
+   *
+   * A curated link lives outside its page on purpose (see `curated-links.ts`): the body
+   * is regenerated wholesale, so the record is what makes an alias-anchored link outlive
+   * a re-ingest. Its restorations and its drops are equally worth reporting -- a link
+   * put back silently is as opaque as a link lost silently (S12).
+   */
+  curatedLinks?: CuratedLinkCounts;
 }
 
 /**
@@ -111,6 +123,8 @@ export interface RunReportTotals {
   linkCounts: ContextualLinkCounts;
   /** Pages reviewed and links added by the incremental reference review. */
   linkReview: LinkReviewCounts;
+  /** Curated links restored, stored and refused while this run wrote page bodies. */
+  curatedLinks: CuratedLinkCounts;
 }
 
 /** Outcome of generating a single merged concept page. */

@@ -33,6 +33,8 @@ import {
   type CompilePageWrite,
   type SkippedWrite,
 } from "./compile-write.js";
+import { overlayCuratedPageWrites } from "./curated-links-apply.js";
+import { addCuratedLinkCounts, emptyCuratedLinkCounts } from "./curated-links.js";
 import * as output from "../utils/output.js";
 import { CONCEPTS_DIR } from "../utils/constants.js";
 import type { WikiFrontmatter } from "../utils/types.js";
@@ -78,8 +80,15 @@ export async function generateSeedPages(
     }
     if (result.write) writes.push(result.write);
   }
-  const { skipped } = await applyCompilePageWritesLocked(root, writes, pageStoreOptions(sink, remover, transaction));
-  reportSeedOutcome(generation, writes, skipped);
+  // A seed page is a concept page like any other: the reference review can have curated
+  // a link into it, and this stage REPLACES its body. The overlay runs on the fresh
+  // bodies before they are planned, for the same reason generation does.
+  const overlaid = await overlayCuratedPageWrites(root, writes);
+  generation.curatedLinks = generation.curatedLinks ?? emptyCuratedLinkCounts();
+  addCuratedLinkCounts(generation.curatedLinks, overlaid.counts);
+  const { skipped } = await applyCompilePageWritesLocked(
+    root, overlaid.writes, pageStoreOptions(sink, remover, transaction));
+  reportSeedOutcome(generation, overlaid.writes, skipped);
 }
 
 /**
