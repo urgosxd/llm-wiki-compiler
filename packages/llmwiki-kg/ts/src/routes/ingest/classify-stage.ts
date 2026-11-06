@@ -46,6 +46,7 @@ import type {
 } from "../../core/classify/types.js";
 import { createJevHttpClientFromEnv } from "../../core/jev/client.js";
 import { parseJevConfig, type JevConfig, type JevEnv } from "../../core/jev/config.js";
+import { redactSecrets } from "../../core/jev/redact.js";
 import type { JevDecisionClient } from "../../core/jev/types.js";
 import type { ClassificationStateCounts } from "./audit.js";
 import { candidateEvidence, type CandidateSpan } from "./candidates.js";
@@ -69,6 +70,18 @@ export interface ClassificationRuntime {
   readonly client: JevDecisionClient;
   /** Endpoint, model id and the four confidence bands. */
   readonly config: JevConfig;
+  /**
+   * The base URL with the credential replaced, for anything that publishes it.
+   *
+   * The audit blob is RETURNED by the document endpoint, so an operator who pasted
+   * the key into `LLMWIKI_JEV_BASE_URL` would otherwise publish it on every read.
+   * The real endpoint is untouched: this is the reporting form only.
+   *
+   * {@link classificationRuntime} always supplies it. It is optional so a caller that
+   * injects its own runtime keeps working without one — such a runtime has no
+   * credential in it to leak, and the audit falls back to the configured base URL.
+   */
+  readonly redactedBaseUrl?: string | undefined;
 }
 
 /**
@@ -81,11 +94,13 @@ export interface ClassificationRuntime {
 export function classificationRuntime(env: JevEnv = process.env): ClassificationRuntime | undefined {
   const apiKey = env["TYPESAFE_API_KEY"]?.trim() ?? "";
   if (apiKey === "") return undefined;
+  // Parsed through the same function the client used, so the thresholds the
+  // decisions were made with are the thresholds the caller can read back.
+  const config = parseJevConfig(env);
   return {
     client: createJevHttpClientFromEnv(env),
-    // Parsed through the same function the client used, so the thresholds the
-    // decisions were made with are the thresholds the caller can read back.
-    config: parseJevConfig(env),
+    config,
+    redactedBaseUrl: redactSecrets(config.baseUrl, [apiKey]),
   };
 }
 

@@ -54,6 +54,11 @@ import express from "express";
 import type { Express } from "express";
 import { sql } from "drizzle-orm";
 import { withFixtureTenant } from "./fixture-tenant.js";
+import {
+  CLASSIFICATION_DISABLED_CONSEQUENCE,
+  UNCLASSIFIED_WARNING_CODE,
+  unclassifiedWarningMessage,
+} from "./ingest/audit.js";
 
 import { createRequireApiKey } from "../auth.js";
 import { parseConfig } from "../config.js";
@@ -162,6 +167,30 @@ async function createStackWith(
     })
     .expect(201);
   return String(created.body.id);
+}
+
+/**
+ * The classification section an UNCONFIGURED run writes.
+ *
+ * No classifier is injected in this file, so every ingest reports `configured: false`
+ * with the `?type=` consequence, and a warning naming the candidates it left
+ * undecided whenever it kept any.
+ *
+ * @param candidateCount - How many candidates the run left unclassified.
+ * @returns The section as the audit blob stores it.
+ */
+function unconfiguredClassification(candidateCount: number): unknown {
+  return {
+    configured: false,
+    consequence: CLASSIFICATION_DISABLED_CONSEQUENCE,
+    ...(candidateCount === 0
+      ? {}
+      : {
+          warnings: [
+            { code: UNCLASSIFIED_WARNING_CODE, message: unclassifiedWarningMessage(candidateCount) },
+          ],
+        }),
+  };
 }
 
 /** Every entity type actually written to the Stack's graph, sorted. */
@@ -383,6 +412,9 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
         structural: 0,
         truncations: [],
       },
+      // No classifier is configured in this file, so the run states that and names
+      // the candidates it left undecided.
+      classification: unconfiguredClassification(8),
     });
   });
 
@@ -469,6 +501,7 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
         structural: 0,
         truncations: [],
       },
+      classification: unconfiguredClassification(6),
     });
   });
 
@@ -484,6 +517,10 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     // existed, and neither counter is present as a zero. Absence is the healthy
     // signal, so a consumer never has to tell a written zero from an unwritten
     // one.
+    //
+    // `classification` is present even here, and that is the truthful state rather
+    // than a defect: an in-vocabulary candidate is still UNCLASSIFIED without a
+    // classifier, so it is still invisible to a canonical `?type=` filter.
     expect(audit).toEqual({
       ontology: {
         enforced: true,
@@ -492,6 +529,7 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
         reason_codes: [],
         samples: [],
       },
+      classification: unconfiguredClassification(3),
     });
     expect(audit).not.toHaveProperty("extraction");
     expect(audit).not.toHaveProperty("mangledChunks");

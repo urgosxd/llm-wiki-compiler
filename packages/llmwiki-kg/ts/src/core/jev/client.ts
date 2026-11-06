@@ -36,6 +36,7 @@ import type { ProviderRetryOptions } from "../llm/retry.js";
 import { DEFAULT_JEV_TIMEOUT_MS, JevConfigError, parseJevConfig } from "./config.js";
 import type { JevEnv } from "./config.js";
 import { parseDecisionResponse } from "./payload.js";
+import { redactEnvSecrets, redactRequestDescriptor, redactSecrets } from "./redact.js";
 import { JEV_SYSTEM_ONE_PATH, JevProviderError, operationalStateFor } from "./types.js";
 import type {
   JevAnswered,
@@ -65,10 +66,30 @@ export interface JevHttpClientOptions {
 
 /** Everything one HTTP attempt needs. */
 interface Transport {
+  /** The real URL to call, credential included when a base URL carries one. */
   readonly endpoint: string;
+  /**
+   * The same URL with the credential replaced.
+   *
+   * This is the ONLY form that may reach a message, an error's `endpoint`, or a
+   * stored failure reason: an operator who pasted a key into the base URL would
+   * otherwise publish it on every refused request (see `redact.ts`).
+   */
+  readonly reported: string;
   readonly apiKey: string;
   readonly timeoutMs: number;
   readonly fetchImpl: JevFetch;
+}
+
+/**
+ * Strips this transport's credential out of any text it is about to report.
+ *
+ * @param transport - How to reach the vendor.
+ * @param text - The message being built.
+ * @returns The message with the credential and any bearer sequence replaced.
+ */
+function scrub(transport: Transport, text: string): string {
+  return redactSecrets(text, [transport.apiKey]);
 }
 
 /** The longest error body quoted into a message. */
@@ -115,18 +136,20 @@ function describeVendorError(body: unknown, text: string): string {
  * Validates a response body, throwing a typed provider error when unusable.
  *
  * @param response - The HTTP response.
- * @param endpoint - The URL that was called, for the error.
+ * @param transport - How the vendor was reached, for the endpoint and the credential.
  * @returns The validated response.
  * @throws {JevProviderError} On a non-2xx status or an undocumented body.
  */
-async function readDecisionBody(response: Response, endpoint: string): Promise<JevDecisionResponse> {
+async function readDecisionBody(response: Response, transport: Transport): Promise<JevDecisionResponse> {
   const text = await response.text();
   const body = parseJsonBody(text);
   if (!response.ok) {
+    // The vendor's own body is quoted into this message, so it goes through the
+    // scrubber: a refused request is exactly when a vendor echoes the header back.
     throw new JevProviderError(
       "provider_answered",
-      `${endpoint} answered ${String(response.status)}: ${describeVendorError(body, text)}`,
-      endpoint,
+      scrub(transport, `${transport.reported} answered ${String(response.status)}: ${describeVendorError(body, text)}`),
+      transport.reported,
       response.status,
     );
   }
@@ -134,8 +157,8 @@ async function readDecisionBody(response: Response, endpoint: string): Promise<J
   if (parsed === undefined) {
     throw new JevProviderError(
       "invalid_response",
-      `${endpoint} answered a body outside the documented System One shape`,
-      endpoint,
+      `${transport.reported} answered a body outside the documented System One shape`,
+      transport.reported,
       response.status,
     );
   }
@@ -162,9 +185,14 @@ async function postOnce(transport: Transport, request: JevDecisionRequest): Prom
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     // No status: the request never completed, which is the most retryable case.
-    throw new JevProviderError("provider_failed", `${transport.endpoint} request failed: ${reason}`, transport.endpoint);
+    // A transport error can quote the request it failed to send, headers included.
+    throw new JevProviderError(
+      "provider_failed",
+      scrub(transport, `${transport.reported} request failed: ${reason}`),
+      transport.reported,
+    );
   }
-  return readDecisionBody(response, transport.endpoint);
+  return readDecisionBody(response, transport);
 }
 
 /**
@@ -174,8 +202,15 @@ async function postOnce(transport: Transport, request: JevDecisionRequest): Prom
  * @returns A client whose failures are {@link JevProviderError}s.
  */
 export function createJevHttpClient(options: JevHttpClientOptions): JevDecisionClient {
+  const endpoint = `${trimTrailingSlash(options.baseUrl)}${JEV_SYSTEM_ONE_PATH}`;
+  const descriptor = redactRequestDescriptor({
+    method: "POST",
+    url: endpoint,
+    headers: { authorization: `Bearer ${options.apiKey}` },
+  });
   const transport: Transport = {
-    endpoint: `${trimTrailingSlash(options.baseUrl)}${JEV_SYSTEM_ONE_PATH}`,
+    endpoint,
+    reported: descriptor.url,
     apiKey: options.apiKey,
     timeoutMs: options.timeoutMs ?? DEFAULT_JEV_TIMEOUT_MS,
     fetchImpl: options.fetchImpl ?? ((url, init) => fetch(url, init)),
@@ -202,7 +237,14 @@ export function createJevHttpClient(options: JevHttpClientOptions): JevDecisionC
 export function createJevHttpClientFromEnv(env: JevEnv = process.env, fetchImpl?: JevFetch): JevDecisionClient {
   const apiKey = env["TYPESAFE_API_KEY"]?.trim();
   if (apiKey === undefined || apiKey === "") {
-    throw new JevConfigError("TYPESAFE_API_KEY is required to call Jev; set it or inject a decision client");
+    // Sanitized even though it carries no value: the variable an operator 
+    // misconfigured is not the credential, but their shell may hold one.
+    throw new JevConfigError(
+      redactEnvSecrets(
+        "TYPESAFE_API_KEY is required to call Jev; set it or inject a decision client",
+        env,
+      ),
+    );
   }
   const config = parseJevConfig(env);
   const options: JevHttpClientOptions =

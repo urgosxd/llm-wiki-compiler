@@ -84,6 +84,7 @@ import {
   buildExtractionAudit,
   buildOntologyAudit,
   buildOpenAudit,
+  buildUnconfiguredClassificationAudit,
   writeIngestAudit,
 } from "./audit.js";
 import type { ClassificationAudit, ExtractionAudit, OntologyAudit, OpenAudit } from "./audit.js";
@@ -139,11 +140,26 @@ import { sendValidationFailure } from "./response.js";
  */
 export type TransactionRunner = <T>(work: (tx: Database) => Promise<T>) => Promise<T>;
 
-/** The admission contract every ingest run uses; see {@link INGEST_EXTRACTION}. */
-const INGEST_EXTRACTION: ExtractionOptions = Object.freeze({ contract: "open" });
-
 /** The state stage 1 records, before any classifier has been asked anything. */
 const PENDING_STATE = "pending";
+
+/**
+ * The admission contract one run asks the extractor for.
+ *
+ * The DEFAULT is `open`, which is what S1 and S7 require: a candidate the catalog
+ * does not name is kept with the type and predicate the model proposed. The `strict`
+ * contract — the previous pipeline's behaviour, where the declaration was an
+ * admission filter — is still available and is selected explicitly per request
+ * through the ingest endpoint's `ontology_contract` query parameter. The choice is
+ * made here, at admission time, which is the only place it can change what enters
+ * the graph.
+ *
+ * @param params - The validated ingest request.
+ * @returns The extraction options for this run.
+ */
+function extractionOptions(params: IngestParams): ExtractionOptions {
+  return Object.freeze({ contract: params.ontologyContract });
+}
 
 /**
  * The Stack's ontology, used as ORIENTATION for the extraction prompt.
@@ -197,7 +213,7 @@ export async function chunkAndExtract(
     chunks,
     document.stack_name,
     ontology,
-    INGEST_EXTRACTION,
+    extractionOptions(params),
   );
   const shouldSynthesize =
     params.synthesizeDescriptions ?? document.stack_synthesize_default;
@@ -466,7 +482,7 @@ async function prepareIngest(
 async function finishIngest(
   tx: Database,
   prepared: PreparedIngest,
-  classification: ClassificationAudit | undefined,
+  classification: ClassificationAudit,
   res: Response,
 ): Promise<void> {
   const { params, processed } = prepared;
@@ -476,7 +492,7 @@ async function finishIngest(
     ontology: processed.ontologyAudit,
     ...(processed.extractionAudit === undefined ? {} : { extraction: processed.extractionAudit }),
     ...(processed.openAudit === undefined ? {} : { open: processed.openAudit }),
-    ...(classification === undefined ? {} : { classification }),
+    classification,
   });
   const payload = await buildIngestionResult(tx, {
     params,
@@ -537,7 +553,7 @@ export async function ingestDocument(
       prepared.spans,
       outcome,
     );
-    await finishIngest(tx, prepared, classificationReport(outcome, classification), res);
+    await finishIngest(tx, prepared, classificationReport(outcome, classification, prepared), res);
   });
 }
 
@@ -559,15 +575,31 @@ async function classifyDocument(
   });
 }
 
-/** The audit section for a run that classified, or `undefined` when none did. */
+/**
+ * The audit section for this run, in whichever of its two shapes applies.
+ *
+ * It is never absent: a deployment with no credential must be able to learn, from the
+ * document it just ingested, that nothing was classified and what that costs a
+ * `?type=` filter. The unconfigured shape carries that consequence, plus a structured
+ * warning whenever the run actually left candidates undecided.
+ *
+ * @param outcome - What the decision stage produced, or `undefined` when skipped.
+ * @param classification - The runtime, or `undefined` when unconfigured.
+ * @param prepared - The run, for the candidate count the warning names.
+ * @returns The validated section.
+ */
 function classificationReport(
   outcome: ClassificationOutcome | undefined,
   classification: ClassificationRuntime | undefined,
-): ClassificationAudit | undefined {
-  if (outcome === undefined || classification === undefined) return undefined;
+  prepared: PreparedIngest,
+): ClassificationAudit {
+  if (outcome === undefined || classification === undefined) {
+    return buildUnconfiguredClassificationAudit({ candidateCount: prepared.spans.length });
+  }
   return buildClassificationAudit({
     states: stateCounts(outcome),
     model: classification.config.model,
+    baseUrl: classification.redactedBaseUrl ?? classification.config.baseUrl,
     catalogVersion: outcome.catalogVersion,
     classifierVersion: CLASSIFIER_VERSION,
   });

@@ -5,8 +5,9 @@
  * The directory is one substitutable unit: the wire types and verdicts
  * (`types.ts`), the parsed configuration (`config.ts`), the payload validator
  * (`payload.ts`), the request builders (`questions.ts`), the HTTP adapter and the
- * outcome boundary (`client.ts`), the interpretation rules (`interpret.ts`), and
- * the scripted double (`doubles.ts`).
+ * outcome boundary (`client.ts`), the credential redaction every reported message
+ * passes through (`redact.ts`), the interpretation rules (`interpret.ts`), and the
+ * scripted double (`doubles.ts`).
  *
  * The double travels with the surface because S46 makes "automated tests use a
  * double" part of the contract rather than a private test helper: a consumer that
@@ -22,6 +23,7 @@ export * from "./types.js";
 export * from "./config.js";
 export * from "./payload.js";
 export * from "./questions.js";
+export * from "./redact.js";
 export * from "./client.js";
 export * from "./interpret.js";
 export * from "./doubles.js";

@@ -237,17 +237,94 @@ export const ClassificationStateCountsSchema = z.object({
  * counts here, the raw vendor probabilities on the rows and in the classification
  * log, the catalog and classifier versions beside them, and nothing about human
  * verification at all.
+ *
+ * ## The section is ALWAYS written, in two shapes
+ *
+ * An absent section used to mean "no classifier ran", which is indistinguishable
+ * from a document written by a build that never wrote one — and the consequence of
+ * running without a credential is not nothing. So `configured` is an explicit
+ * boolean in both directions, and the unconfigured shape carries what an operator
+ * has to know: why it matters, and, when candidates were actually left undecided, a
+ * structured warning naming the filter they disappear from.
+ *
+ * The nine-key ingest response stays untouched: it is oracle-parity pinned, so this
+ * `jsonb` column is the only place this can travel.
  */
-export const ClassificationAuditSchema = z.object({
+export const ConfiguredClassificationAuditSchema = z.object({
+  configured: z.literal(true),
   states: ClassificationStateCountsSchema,
   /** The vendor model id the requests asked for. */
   model: z.string(),
+  /** The endpoint the requests were sent to, credential redacted. */
+  base_url: z.string(),
   catalog_version: z.string(),
   classifier_version: z.string(),
 });
 
-/** A validated classification report. */
+/** One structured warning: a stable code a consumer can branch on, and its text. */
+export const ClassificationWarningSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+});
+
+/** The section written when NO classifier is configured. */
+export const UnconfiguredClassificationAuditSchema = z.object({
+  configured: z.literal(false),
+  /** Why the unconfigured state matters, naming the query parameter it costs. */
+  consequence: z.string(),
+  /** Present only when this run actually left candidates undecided. */
+  warnings: z.array(ClassificationWarningSchema).optional(),
+});
+
+/** The classification section, discriminated by whether a classifier was available. */
+export const ClassificationAuditSchema = z.discriminatedUnion("configured", [
+  ConfiguredClassificationAuditSchema,
+  UnconfiguredClassificationAuditSchema,
+]);
+
+/** A validated classification report, in either shape. */
 export type ClassificationAudit = z.infer<typeof ClassificationAuditSchema>;
+
+/** The configured shape, which is what a run that classified writes. */
+export type ConfiguredClassificationAudit = z.infer<typeof ConfiguredClassificationAuditSchema>;
+
+/** The unconfigured shape, which is what a run with no credential writes. */
+export type UnconfiguredClassificationAudit = z.infer<typeof UnconfiguredClassificationAuditSchema>;
+
+/**
+ * What an unconfigured classifier costs, spelled once.
+ *
+ * This is the `consequence` the audit publishes, and it is a runtime-observable
+ * fact rather than a documentation claim: a deployment with no credential answers a
+ * canonical `?type=` filter with nothing for everything it ingests, because a filter
+ * returns only CLASSIFIED matches and every candidate stays `pending`.
+ */
+export const CLASSIFICATION_DISABLED_CONSEQUENCE =
+  "No classifier is configured (TYPESAFE_API_KEY is unset or blank), so this run made " +
+  "no outbound decision call and classified nothing. Every candidate it kept remains " +
+  "in the operational state 'pending', and a canonical ?type= filter returns only " +
+  "classified matches, so none of them is reachable through ?type= until a credential " +
+  "is configured and the Stack is reclassified.";
+
+/** The stable code of the warning an unconfigured run with undecided candidates emits. */
+export const UNCLASSIFIED_WARNING_CODE = "classification_unconfigured_candidates_unclassified";
+
+/**
+ * The warning text for `count` candidates left undecided by an unconfigured run.
+ *
+ * The count is in the message because a warning without one reads like a caveat
+ * rather than like a measurement of this run.
+ *
+ * @param count - How many candidates this run left unclassified.
+ * @returns The warning message, naming the query parameter they disappear from.
+ */
+export function unclassifiedWarningMessage(count: number): string {
+  return (
+    `${String(count)} candidate(s) from this run were left unclassified because no classifier ` +
+    "is configured; only classified rows match a canonical ?type= filter, so these facts " +
+    "stay out of every ?type= query until classification runs."
+  );
+}
 
 /** The state counts of one run, as the schema declares them. */
 export type ClassificationStateCounts = z.infer<typeof ClassificationStateCountsSchema>;
@@ -257,6 +334,8 @@ export interface ClassificationAuditInput {
   readonly states: ClassificationStateCounts;
   /** The vendor model id the requests asked for. */
   readonly model: string;
+  /** The endpoint they were sent to, already credential-redacted by the runtime. */
+  readonly baseUrl: string;
   readonly catalogVersion: string;
   readonly classifierVersion: string;
 }
@@ -264,15 +343,48 @@ export interface ClassificationAuditInput {
 /**
  * Builds the classification section for a run where a classifier actually ran.
  *
- * @param input - State counts and the versions that produced them.
+ * @param input - State counts, the endpoint, and the versions that produced them.
  * @returns The validated section.
  */
-export function buildClassificationAudit(input: ClassificationAuditInput): ClassificationAudit {
-  return ClassificationAuditSchema.parse({
+export function buildClassificationAudit(input: ClassificationAuditInput): ConfiguredClassificationAudit {
+  return ConfiguredClassificationAuditSchema.parse({
+    configured: true,
     states: input.states,
     model: input.model,
+    base_url: input.baseUrl,
     catalog_version: input.catalogVersion,
     classifier_version: input.classifierVersion,
+  });
+}
+
+/** What an unconfigured run has to report about itself. */
+export interface UnconfiguredClassificationInput {
+  /** How many candidates this run kept, all of which stay unclassified. */
+  readonly candidateCount: number;
+}
+
+/**
+ * Builds the classification section for a run with no classifier configured.
+ *
+ * The `warnings` entry appears only when the run actually kept candidates: a
+ * document that produced nothing has nothing to warn about, and a warning on every
+ * empty ingest would train a reader to ignore it. The `consequence` is always
+ * present, because it is a property of the deployment rather than of this document.
+ *
+ * @param input - How many candidates were left undecided.
+ * @returns The validated section.
+ */
+export function buildUnconfiguredClassificationAudit(
+  input: UnconfiguredClassificationInput,
+): UnconfiguredClassificationAudit {
+  const warning = {
+    code: UNCLASSIFIED_WARNING_CODE,
+    message: unclassifiedWarningMessage(input.candidateCount),
+  };
+  return UnconfiguredClassificationAuditSchema.parse({
+    configured: false,
+    consequence: CLASSIFICATION_DISABLED_CONSEQUENCE,
+    ...(input.candidateCount <= 0 ? {} : { warnings: [warning] }),
   });
 }
 
@@ -372,7 +484,10 @@ export interface IngestAuditReport {
   readonly extraction?: ExtractionAudit;
   /** Absent when the run kept nothing outside the catalog and capped nothing. */
   readonly open?: OpenAudit;
-  /** Absent when no classifier ran, in which case every candidate stays `pending`. */
+  /**
+   * Always present on a run of this pipeline: `configured: true` when a classifier
+   * answered, `configured: false` with the consequence when none was available.
+   */
   readonly classification?: ClassificationAudit;
 }
 
@@ -502,6 +617,22 @@ export function readExtractionAudit(audit: unknown): ExtractionAudit | undefined
 export function readOpenAudit(audit: unknown): OpenAudit | undefined {
   const section = sectionOf(audit, OPEN_AUDIT_KEY);
   return section === undefined ? undefined : OpenAuditSchema.parse(section);
+}
+
+/**
+ * Reads the classification section back out of a stored `audit` value.
+ *
+ * The union is resolved by the `configured` discriminator, so a consumer cannot read
+ * an unconfigured run's section as if it carried state counts, or the reverse.
+ *
+ * @param audit - The raw `stack_documents.audit` value.
+ * @returns The parsed section, or `undefined` for a document written before this
+ *   section existed.
+ * @throws {z.ZodError} When the stored section matches neither shape.
+ */
+export function readClassificationAudit(audit: unknown): ClassificationAudit | undefined {
+  const section = sectionOf(audit, CLASSIFICATION_AUDIT_KEY);
+  return section === undefined ? undefined : ClassificationAuditSchema.parse(section);
 }
 
 /**

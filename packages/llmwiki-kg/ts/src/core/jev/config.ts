@@ -39,7 +39,26 @@
 /** Documented default base URL of the System One API. */
 export const DEFAULT_JEV_BASE_URL = "https://api.typesafe.ai";
 
-/** Documented default model id. */
+/**
+ * The documented default model id.
+ *
+ * ## This model is a paid, outbound vendor call
+ *
+ * Classification and semantic support are asked of an external service, so every
+ * configured ingest makes decisions that are **billed per token** by the vendor. This
+ * is an OPTIONAL integration, not a requirement of the pipeline:
+ *
+ * - with no `TYPESAFE_API_KEY` (or a blank one) NO call is ever made, nothing is
+ *   charged, and the pipeline still completes — every candidate is stored with the
+ *   operational state `pending` and the document's audit records that classification
+ *   was not configured, with the `?type=` consequence spelled out;
+ * - with a key, the cost is one request per candidate for the support question plus
+ *   one per candidate for the classification question, on the model named here.
+ *
+ * Nothing in this package retries a billing concern into silence: an exhausted retry
+ * budget is charged for and reported as an operational failure, which is why the
+ * retry bound is a constant rather than a configurable one.
+ */
 export const DEFAULT_JEV_MODEL = "jev-latest";
 
 /** Default per-request timeout. A decision should be quick or it is an outage. */
@@ -88,6 +107,8 @@ export interface JevConfig {
   readonly thresholds: JevThresholds;
 }
 
+import { redactEnvSecrets } from "./redact.js";
+
 /** An environment-shaped object; only string values are read. */
 export type JevEnv = Readonly<Record<string, string | undefined>>;
 
@@ -97,6 +118,21 @@ export class JevConfigError extends Error {
     super(message);
     this.name = "JevConfigError";
   }
+}
+
+/**
+ * Builds a configuration error with every configured credential stripped out.
+ *
+ * A configuration error is read by an operator and, in a bad deployment, can reach a
+ * response: a value they pasted into a URL or a variable would otherwise be
+ * published by the very message that tells them it is wrong.
+ *
+ * @param message - What is wrong, in the operator's terms.
+ * @param env - The environment the bad value came from.
+ * @returns The sanitized error.
+ */
+function configError(message: string, env: JevEnv): JevConfigError {
+  return new JevConfigError(redactEnvSecrets(message, env));
 }
 
 /**
@@ -126,7 +162,10 @@ function readProbability(env: JevEnv, name: string, fallback: number): number {
   if (raw === undefined || raw === "") return fallback;
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0 || value >= 1) {
-    throw new JevConfigError(`${name} must be a probability strictly between 0 and 1, got ${JSON.stringify(raw)}`);
+    throw configError(
+      `${name} must be a probability strictly between 0 and 1, got ${JSON.stringify(raw)}`,
+      env,
+    );
   }
   return value;
 }
@@ -145,7 +184,7 @@ function readPositiveInt(env: JevEnv, name: string, fallback: number): number {
   if (raw === undefined || raw === "") return fallback;
   const value = Number(raw);
   if (!Number.isInteger(value) || value <= 0) {
-    throw new JevConfigError(`${name} must be a positive integer, got ${JSON.stringify(raw)}`);
+    throw configError(`${name} must be a positive integer, got ${JSON.stringify(raw)}`, env);
   }
   return value;
 }
@@ -169,9 +208,10 @@ function readThresholds(env: JevEnv): JevThresholds {
     DEFAULT_JEV_THRESHOLDS.classificationUncertainBelow,
   );
   if (noMatchBelow >= uncertainBelow) {
-    throw new JevConfigError(
+    throw configError(
       `the no-match band (${String(noMatchBelow)}) must be below the uncertain band (${String(uncertainBelow)}); ` +
         "otherwise the uncertainty band is empty and the classifier can never abstain as uncertain",
+      env,
     );
   }
   return Object.freeze({

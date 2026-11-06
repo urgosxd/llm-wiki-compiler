@@ -14,6 +14,7 @@ import { sql } from "drizzle-orm";
 import type { Request, Response } from "express";
 
 import { MAX_EXTRACTION_CHARS } from "../../core/files.js";
+import type { ExtractionContract } from "../../core/graph-extraction.js";
 import { bindCallerStack } from "../../core/stack_resolver.js";
 import type { KnownIdentity } from "../../core/identity/types.js";
 import type { Database } from "../../db.js";
@@ -130,12 +131,19 @@ export function isDecodeError(error: unknown): boolean {
   return error instanceof TypeError;
 }
 
-/** A validated ingest request: both ids plus the optional override. */
+/** A validated ingest request: both ids plus the optional per-request overrides. */
 export interface IngestParams {
   readonly ok: true;
   readonly stackId: string;
   readonly docId: string;
   readonly synthesizeDescriptions: boolean | null;
+  /**
+   * The admission contract for this run: `open` unless the caller asked for `strict`.
+   *
+   * Resolved here rather than left optional, so the default direction is decided in
+   * ONE place and the pipeline can never run an ambiguous contract.
+   */
+  readonly ontologyContract: ExtractionContract;
 }
 
 /** Why the request was refused, as the entries FastAPI would report. */
@@ -145,14 +153,19 @@ export interface IngestRefusal {
 }
 
 /**
- * Validates both path parameters and the query flag, reported together.
+ * Validates both path parameters and both query flags, reported together.
  *
- * Order is `stackId`, `doc_id`, then the query entry.
+ * Order is `stackId`, `doc_id`, then the query entries in declaration order
+ * (`synthesize_descriptions`, `ontology_contract`), which is the order FastAPI reports
+ * them in.
  */
 export function parseIngestRequest(req: Request): IngestParams | IngestRefusal {
   const stackId = parseStackId(req.params["stackId"]);
   const docId = parseDocId(req.params["doc_id"]);
-  const rawQuery = { synthesize_descriptions: queryValue(req, "synthesize_descriptions") };
+  const rawQuery = {
+    synthesize_descriptions: queryValue(req, "synthesize_descriptions"),
+    ontology_contract: queryValue(req, "ontology_contract"),
+  };
   const query = IngestQuery.safeParse(rawQuery);
 
   if (stackId.ok && docId.ok && query.success) {
@@ -161,6 +174,7 @@ export function parseIngestRequest(req: Request): IngestParams | IngestRefusal {
       stackId: stackId.value,
       docId: docId.value,
       synthesizeDescriptions: query.data.synthesize_descriptions ?? null,
+      ontologyContract: query.data.ontology_contract ?? "open",
     };
   }
 

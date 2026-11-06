@@ -67,6 +67,11 @@ import { createRequestTransactionWrapper } from "../db.js";
 import { createStacksRouter } from "./stacks.js";
 import { createIngestRouter } from "./ingest.js";
 import {
+  CLASSIFICATION_DISABLED_CONSEQUENCE,
+  UNCLASSIFIED_WARNING_CODE,
+  unclassifiedWarningMessage,
+} from "./ingest/audit.js";
+import {
   createDocument,
   database,
   deleteFixtureRows,
@@ -165,6 +170,30 @@ async function createStackWith(
   return String(created.body.id);
 }
 
+/**
+ * The classification section an UNCONFIGURED run writes.
+ *
+ * No classifier is injected in this file, so every run reports `configured: false`
+ * plus the `?type=` consequence; the warning appears only when the run actually kept
+ * candidates, and its count is the number it left undecided.
+ *
+ * @param candidateCount - How many candidates the run left unclassified.
+ * @returns The section as the audit blob stores it.
+ */
+function unconfiguredClassification(candidateCount: number): unknown {
+  return {
+    configured: false,
+    consequence: CLASSIFICATION_DISABLED_CONSEQUENCE,
+    ...(candidateCount === 0
+      ? {}
+      : {
+          warnings: [
+            { code: UNCLASSIFIED_WARNING_CODE, message: unclassifiedWarningMessage(candidateCount) },
+          ],
+        }),
+  };
+}
+
 /** The audit blob recorded for one document, or null when none was written. */
 async function documentAudit(stackId: string, documentId: string): Promise<unknown> {
   const rows = await withFixtureTenant(database(), { stackId }, (tx) =>
@@ -227,8 +256,15 @@ describe.skipIf(skipReason !== false)("ingest merges into the audit blob", () =>
     // is the only way to observe that `extraction` really went, and on a missing
     // one, which is how a branch that cleared the column would show up. The
     // sibling's `quality` key must survive and `ontology` must be THIS run's.
+    // `classification` is part of the pinned shape now: no classifier is injected
+    // here, so the run must report the unconfigured state and the candidates it
+    // left undecided.
     const audit = await documentAudit(stackId, documentId);
-    expect(audit).toEqual({ quality: QUALITY, ontology: FRESH_ONTOLOGY });
+    expect(audit).toEqual({
+      quality: QUALITY,
+      ontology: FRESH_ONTOLOGY,
+      classification: unconfiguredClassification(3),
+    });
     expect(audit).not.toHaveProperty("extraction");
   });
 
@@ -249,6 +285,9 @@ describe.skipIf(skipReason !== false)("ingest merges into the audit blob", () =>
       quality: QUALITY,
       ontology: FRESH_ONTOLOGY,
       extraction: { mangledChunks: 1 },
+      // A mangled chunk produced no candidate, so the unconfigured section carries
+      // the consequence and no warning: there was nothing to leave undecided.
+      classification: unconfiguredClassification(0),
     });
   });
 });
