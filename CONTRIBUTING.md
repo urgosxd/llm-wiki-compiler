@@ -51,11 +51,22 @@ checks an installed consumer outside workspace aliases.
 ```bash
 npm run build            # Compile TypeScript
 npm test                 # Run all tests (~10 min: use test:unit while iterating)
-npm run test:unit        # Tests that never spawn a CLI subprocess (~5 min)
+npm run test:unit        # Every test tree, minus files that spawn a CLI subprocess (~5 min)
 npm run test:integration # Tests that spawn `node dist/cli.js` (~5 min)
 npx vitest related <file>  # Only the tests touching one source file (seconds)
 npm run dev              # Watch mode for development
 ```
+
+`test:unit` is not the `test/` directory. It covers every test tree in the
+repository — `test/`, `packages/`, `src/` and `scripts/` — minus the files that
+spawn a CLI subprocess, so the `packages/llmwiki-kg` suites are part of it, along
+with the three `src/dimensions/kg/` suites and `scripts/output-contracts.test.ts`.
+Those `llmwiki-kg` suites are database-backed, so `npm run test:unit` needs Docker
+(or `LLMWIKI_TEST_DATABASE_URL`), exactly like the rest of the database-gated work
+described below. Without either, those files FAIL with a message naming Docker, the
+pinned image and the override variable; `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` is the
+escape hatch, and it makes the database-backed suites skip instead, so a run that
+sets it verifies nothing about them.
 
 **Why the suite is slow, and how to stay fast.** The suite is tail-dominated:
 the median test file finishes in 0.24s, but 131 files spawn a CLI subprocess
