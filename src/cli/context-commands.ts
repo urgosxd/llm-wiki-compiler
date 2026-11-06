@@ -6,6 +6,12 @@ import type { Command } from "commander";
 import { nextCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { contextCommand, type ContextCommandOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { linksHereCommand, type LinksHereOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
+import {
+  DEFAULT_RACE_MAX_DEPTH,
+  RACE_MAX_DEPTH_CEILING,
+  raceCommand,
+  type RaceCommandOptions,
+} from "@atomicstrata/llmwiki-core/compiler-cli";
 import { setVerbose } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { runExitCodeCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 
@@ -28,6 +34,32 @@ export function registerContextCommands(program: Command, verboseEnabled: (flag?
     .option("--json", "Emit a stable JSON envelope for agent consumption")
     .action(async (slug: string, options: LinksHereOptions) =>
       runExitCodeCommand(async () => linksHereCommand(slug, options)),
+    );
+
+  program
+    .command("race <from> <to>")
+    .description(
+      "Find the shortest link route between two wiki pages (wiki-race navigation; " +
+        "read-only; e.g. 'concepts/foo concepts/bar' or two bare slugs)",
+    )
+    .option(
+      "--max-depth <n>",
+      "Maximum hops to walk before stopping " +
+        `(default ${DEFAULT_RACE_MAX_DEPTH}, max ${RACE_MAX_DEPTH_CEILING})`,
+    )
+    .option("--json", "Emit a stable JSON envelope for agent consumption")
+    .addHelpText(
+      "after",
+      "\nExit codes:\n" +
+        "  0  route found (including the zero-hop route from a page to itself)\n" +
+        "  1  target unreachable; the reason, including the depth bound when that is\n" +
+        "     what stopped the search, is written to stderr\n" +
+        "  2  invalid request (unknown page name or unusable --max-depth)\n" +
+        "\nThe route is deterministic: when several shortest routes exist, the one\n" +
+        "whose page ids sort first wins.\n",
+    )
+    .action(async (from: string, to: string, options: RaceCommandOptions) =>
+      runExitCodeCommand(async () => raceCommand(from, to, options)),
     );
 
   program

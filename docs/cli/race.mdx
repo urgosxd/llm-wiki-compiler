@@ -1,0 +1,141 @@
+---
+title: "race"
+sidebarTitle: "race"
+description: "Find the shortest link route between two pages: the wiki-race mechanic, with a deterministic winner when several routes tie and a depth bound that is always stated."
+---
+
+A compiled wiki is a graph, and a graph is only navigable if you can ask it for
+a route. `llmwiki race` answers the wiki-race question:
+
+> Can I get from page A to page B by following links, and by which route?
+
+```bash
+llmwiki race change-detection knowledge-compilation
+llmwiki race concepts/change-detection concepts/knowledge-compilation --json
+llmwiki race alpha delta --max-depth 3
+```
+
+## What it accepts
+
+Two page references, both in the same form: a namespaced page id or a bare slug.
+
+```bash
+llmwiki race concepts/change-detection concepts/knowledge-compilation
+llmwiki race change-detection knowledge-compilation
+```
+
+A bare slug is resolved against `concepts/` first, then against any other
+namespace that matches. A dangling link target is **not** a page: a ghost node
+has no article to stand on, so it is rejected as a starting point, as a
+destination, and as an intermediate stop.
+
+## Reading the output
+
+```text
+2 hop(s) from concepts/change-detection to concepts/knowledge-compilation within --max-depth 6
+
+  → concepts/change-detection
+  → concepts/compilation-pipeline
+  → concepts/knowledge-compilation
+```
+
+One line per page, in route order, and the hop count in the heading. A page is
+always reachable from itself, and that route has zero hops:
+
+```text
+0 hop(s) from concepts/change-detection to concepts/change-detection within --max-depth 6
+
+  → concepts/change-detection
+```
+
+## Determinism
+
+The walk is breadth-first, so the route is always a shortest one. When several
+shortest routes exist, the winner is the one whose page ids sort first
+ascending — never the one that happened to appear first on disk or first in an
+object's keys. Two runs of the same command on the same wiki print the same
+route.
+
+## The depth bound
+
+The search stops after a stated number of hops:
+
+| Setting | Value |
+|---|---|
+| default | `--max-depth 6` |
+| ceiling | `--max-depth 20` (a larger request is clamped) |
+| `--max-depth 0` | only the zero-hop route from a page to itself |
+
+The bound is never silent. It appears in the heading of every human result, and
+in `maxDepth` / `requestedMaxDepth` / `depthBoundReached` in the JSON envelope.
+When the bound is what stopped the search, the failure says so instead of
+pretending the destination is unreachable:
+
+```text
+No route from concepts/alpha to concepts/gamma within --max-depth 1: the depth bound stopped the search before the target was reached (raise --max-depth, maximum 20, to keep looking).
+```
+
+Raise `--max-depth` and the same pair resolves. Only when the whole reachable
+set was explored inside the bound do you get a genuine "no link path connects
+them".
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | a route was found (including the zero-hop A → A route) |
+| `1` | the target is unreachable; the reason, naming the depth bound when that is what stopped the search, is written to stderr |
+| `2` | the request is invalid: an unknown page name, or an unusable `--max-depth` |
+
+A failed race writes its reason to **stderr** and nothing to stdout, so a partial
+route can never be mistaken for an answer.
+
+## JSON envelope
+
+`--json` emits a stable envelope for agent and script consumption:
+
+```json
+{
+  "version": 1,
+  "requested": { "from": "alpha", "to": "gamma" },
+  "from": "concepts/alpha",
+  "to": "concepts/gamma",
+  "resolved": true,
+  "found": true,
+  "route": ["concepts/alpha", "concepts/beta", "concepts/gamma"],
+  "hops": 2,
+  "maxDepth": 2,
+  "requestedMaxDepth": 2,
+  "depthBoundReached": false,
+  "reason": null
+}
+```
+
+- `resolved` is `false` and the endpoint ids are `null` when a name matched no page.
+- `requestedMaxDepth` is `null` when `--max-depth` was not given.
+- `depthBoundReached` is `true` only when the bound, not the graph, ended an
+  unsuccessful search.
+- `reason` is one of `depth-bound`, `no-path`, `unknown-page`, or `null` on success.
+
+The envelope is written even on failure, and the human sentence still goes to
+stderr alongside it.
+
+## Which links are followed
+
+Outgoing links only: a race walks the direction the articles actually point. The
+edges come from the same graph the viewer serves (`buildViewerSnapshot`), so the
+route a script computes and the shape a human sees in the graph view cannot
+disagree. Typed relation edges count as links, exactly as they do for
+`llmwiki context` and `llmwiki links-here`.
+
+## How it relates to the other reading commands
+
+| Command | Question | Uses an LLM |
+|---|---|---|
+| `llmwiki links-here` | which pages point AT this one? | no |
+| `llmwiki race` | which route leads from A to B? | no |
+| `llmwiki context` | what should an agent read for this prompt? | optional |
+
+## Read-only
+
+`race` writes nothing, takes no lock and calls no LLM.

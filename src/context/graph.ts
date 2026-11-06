@@ -193,7 +193,7 @@ export function expandGraphNeighborhood(
 }
 
 /** Outgoing + incoming edge maps for fast neighbor lookup keyed by GraphNodeId. */
-interface Adjacency {
+export interface Adjacency {
   outgoing: Map<GraphNodeId, Set<GraphNodeId>>;
   incoming: Map<GraphNodeId, Set<GraphNodeId>>;
 }
@@ -203,8 +203,13 @@ interface Adjacency {
  * typed relation edges (CLP 4b) are added identically — a relation edge is just
  * another `source`→`target` pair — so context expansion traverses both without
  * any edge-kind branching.
+ *
+ * Exported because `src/context/race-path.ts` needs the same `source`→`target`
+ * reading of the edge list to answer "which route gets me from A to B?". Two
+ * independent adjacency builders would be two definitions of what an edge is,
+ * and they would drift the first time an edge kind is added.
  */
-function buildAdjacency(graph: GraphData): Adjacency {
+export function buildAdjacency(graph: GraphData): Adjacency {
   const outgoing = new Map<GraphNodeId, Set<GraphNodeId>>();
   const incoming = new Map<GraphNodeId, Set<GraphNodeId>>();
   for (const edge of graph.edges) {
@@ -257,8 +262,14 @@ function addToSetMap<K, V>(map: Map<K, Set<V>>, key: K, value: V): void {
   else map.set(key, new Set([value]));
 }
 
-/** Collect every ghost-node id so we can drop dangling targets from neighbors. */
-function collectGhostIds(nodes: GraphNode[]): Set<GraphNodeId> {
+/**
+ * Collect every ghost-node id so we can drop dangling targets from neighbors.
+ *
+ * Exported for the same reason as {@link buildAdjacency}: a dangling target is
+ * not an article, so the race traversal must refuse it as a stop using the one
+ * definition of "ghost" this module already owns.
+ */
+export function collectGhostIds(nodes: GraphNode[]): Set<GraphNodeId> {
   const ghosts = new Set<GraphNodeId>();
   for (const node of nodes) if (node.isDangling) ghosts.add(node.id);
   return ghosts;

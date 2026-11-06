@@ -51,6 +51,7 @@
               "cli/query",
               "cli/view",
               "cli/links-here",
+              "cli/race",
               "cli/status",
               "cli/lint-eval",
               "cli/export",
