@@ -69,10 +69,13 @@ import {
   useDomainPrefix,
 } from "./ingest-harness.js";
 import {
+  chunk,
   installFetchStub,
   setToolResponse,
   uninstallFetchStub,
 } from "../core/extraction-harness.js";
+import { extractGraphFromChunks } from "../core/extraction.js";
+import { validateOntology } from "../core/ontology.js";
 
 useDomainPrefix("ontology");
 
@@ -248,6 +251,31 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
 
     expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
     expect(await writtenRelationTypes(stackId)).toEqual(["EMPLOYS"]);
+  });
+
+  it("keeps the extractor's default strict while the production path is open", async () => {
+    // Two halves of the same decision, pinned together so neither can drift.
+    // The INGEST path keeps a candidate outside the declaration (above), because
+    // the pipeline names the open contract at its call site. The FUNCTION's
+    // default is still `strict`, so a caller that asks for nothing keeps the
+    // oracle-parity behaviour and a closed graph on request.
+    setToolResponse([{ triplets: [BAD_ENTITY] }]);
+    const stackId = await createStackWith(app, domain("contract"), DECLARATION);
+    const documentId = await createDocument(stackId, BODY);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    expect(await writtenEntityTypes(stackId)).toContain("ALIEN_CONSTRUCT");
+
+    const chunks = [chunk(0, BODY)];
+    setToolResponse([{ triplets: [BAD_ENTITY] }]);
+    const strict = await extractGraphFromChunks(chunks, "w2ex-stack", validateOntology(DECLARATION));
+    expect(strict.entities).toEqual([]);
+    expect(strict.rejected?.[0]?.reason).toBe("UNKNOWN_ENTITY_TYPE");
+
+    setToolResponse([{ triplets: [BAD_ENTITY] }]);
+    const open = await extractGraphFromChunks(chunks, "w2ex-stack", validateOntology(DECLARATION), {
+      contract: "open",
+    });
+    expect(open.entities.map((entity) => entity.type)).toContain("ALIEN_CONSTRUCT");
   });
 
   it("shows the declared types in the tool schema the model is given", async () => {
