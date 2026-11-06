@@ -78,7 +78,7 @@ export async function loadSelectedPages(root: string, slugs: string[]): Promise<
 
 /** Base system prompt body. The output-language directive is appended at call time. */
 const ANSWER_SYSTEM_PROMPT_BASE =
-  "You are a knowledge assistant. Answer the question using ONLY the wiki content provided. " +
+  "Answer the question using ONLY the wiki content provided. " +
   "Cite specific pages using [[Page Title]] wikilinks. " +
   "If the wiki doesn't contain enough information, say so.";
 

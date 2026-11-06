@@ -49,8 +49,9 @@ function sourcesSectionLines(): string[] {
  *
  * v5: extraction asks for exhaustive concept recall capped at
  * {@link MAX_CONCEPTS_PER_SOURCE} instead of a brief 3-8 selection.
+ * v6: the extraction concept ceiling moved from 100 to 50 per source.
  */
-export const PROMPT_VERSION = "v5";
+export const PROMPT_VERSION = "v6";
 
 /**
  * The caller's system policy as prompt lines, or nothing when none is set.

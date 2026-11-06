@@ -53,15 +53,15 @@ export async function selectPages(
   question: string,
   indexContent: string,
 ): Promise<PageSelectionResult> {
-  const systemPrompt =
-    "You are a knowledge base assistant. Given a question and a wiki index, select the most relevant pages.";
-
   // Index first, question last: without embeddings the index is identical
   // across queries, so this keeps it a prompt prefix every query shares.
   const userMessage = `Wiki Index:\n${indexContent}\n\nQuestion: ${question}`;
 
+  // No system prompt: the tool description names the task and the user message
+  // carries the index, so any prose here only restated them. `CallClaudeOptions`
+  // requires `system`, hence the empty string.
   const rawResult = await callClaude({
-    system: systemPrompt,
+    system: "",
     messages: [{ role: "user", content: userMessage }],
     tools: [PAGE_SELECTION_TOOL],
   });

@@ -42,7 +42,7 @@ export const MIN_SOURCE_CHARS = 50;
  * that overruns this limit is not corrected downstream — the exported
  * `promptVersion` is what distinguishes pages compiled under this wording.
  */
-export const MAX_CONCEPTS_PER_SOURCE = 100;
+export const MAX_CONCEPTS_PER_SOURCE = 50;
 
 /**
  * Default character budget for the combined source content sent to the LLM

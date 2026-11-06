@@ -45,4 +45,9 @@ describe("buildExtractionPrompt concept recall", () => {
       prompt().indexOf("--- SOURCE DOCUMENT ---"),
     );
   });
+
+  it("caps the ask at exactly 50 concepts per source", () => {
+    expect(MAX_CONCEPTS_PER_SOURCE).toBe(50);
+    expect(prompt()).toContain("maximum of 50 concepts");
+  });
 });
