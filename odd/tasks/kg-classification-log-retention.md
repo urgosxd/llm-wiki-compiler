@@ -188,3 +188,70 @@ not claimed:** root `npx tsc --noEmit`, `npm run build`, `npm run test:affected`
 Known residual, deliberately untouched as out of scope: `routes/reclassify/router.ts:14`
 and `:19` carry the same non-working `Authorization: Bearer` example in their `curl`
 lines. That file predates this feature and is not in this feature's edit surfaces.
+
+L6 — independent verification, its advisories closed, and the deterministic safety proofs.
+L1-L5 are unchanged; this entry is appended.
+
+**Verdict: PASS on S1-S11, no blockers.** An independent verifier re-derived every spec from
+the code and from its own execution rather than from the T1-T4 reports, and reported four
+advisories. Three of them are closed here or accepted with reasons; the fourth
+(`routes/reclassify/router.ts:14,19`, the pre-existing `Authorization: Bearer` example) stays
+out of scope as L5 recorded.
+
+**The gates it ran, with the scope of each, exactly as reported.**
+
+| Gate | Scope | Result |
+| --- | --- | --- |
+| `npx tsc --noEmit` | root tsconfig — does NOT include the KG package | exit 0, no output |
+| `npx tsc -p packages/llmwiki-kg/ts/tsconfig.json --noEmit` | the authoritative KG gate (`include: src/**/*.ts`, so the new test and harness files are covered) | exit 0, no output |
+| `npm run build` | root `dist/` only; the KG package is a separate package and is not part of this build | exit 0 (`Build success`) |
+| `npm run test:affected` | ESCALATED to the full unit tier: `test-affected: full unit tier — package-lock.json affects the whole suite` | exit 0; `Test Files 772 passed | 3 skipped (775)`, `Tests 5941 passed | 4 skipped (5945)`, 376.8 s |
+| 3 touched suites, serial | `packages/llmwiki-kg/ts/src/routes/classification-log/` | exit 0; 3 files / 14 tests passed (prune 5, prune-retention 3, prune-http 6) |
+| `npx fallow` | **NOT coverage of this change**: `.fallowrc.json` `ignorePatterns` contains `packages/llmwiki-kg/**`, so the whole diff is outside its analysis | exit 0, `0 above threshold · 15989 analyzed · maintainability 91.1`, reported as informational and NOT as a passing gate for this diff |
+
+The `test:affected` escalation is an artifact of a **stale `origin/main`** — the merge-base is
+`origin/main 8203862…`, hundreds of paths behind, so the runner concluded the change has
+suite-wide reach. It is not caused by this diff: no `package-lock.json` or `package.json`
+change exists in the working tree. The 772-file run is therefore a superset of this tree's
+blast radius, which is also why it was not run a second time after the new test file was added.
+
+**Advisory 3, corrected: the `L17` overstatement.** `algo-kg.md` claimed `S1` was "pinned by
+test (f)". It is not, and the verifier is right: no test asserts the write path. `S1` (failure
+rows stay per-occurrence, no write-time dedupe) holds because
+`routes/ingest/classification-log.ts` and `routes/reclassify/persist.ts` are unmodified, which
+is a structural fact, not a test. The sentence now says exactly that and credits test (f) with
+what it actually covers: the `47`-failure observability that the untouched write path
+produces. No other claim in `L17` changed, and the file stays insertions-only against its
+pre-feature state (`27` insertions, `0` deletions).
+
+**The deterministic safety proofs, and proof that they can fail.** These are behaviour no
+committed test proved: the sibling suites pin escaping with ONE decoy and pin serialization
+through an aggregate that a lock-free run could satisfy by timing. Three mutations were applied
+to `prune.ts` (committed by then, so each could be restored with `git checkout --`), each run
+against the new test, each restored and byte-verified with `cmp` against the committed blob:
+
+1. Deleting the `escape '\\'` clause from the eligibility predicate: the test still PASSED.
+   Honest negative, with the reason: in PostgreSQL the default LIKE escape character IS
+   backslash, so the explicit clause is documentation of intent rather than the guard.
+2. Deleting the escaping from `FAILURE_PATTERN` instead — the guard itself — makes `_` a live
+   wildcard: the test FAILED, `deletedCount 3` / `matchedCount 3` where `1`/`1` was required,
+   i.e. the literal row plus both lookalikes went. This is the mutation that proves the test.
+3. Deleting the `pg_advisory_xact_lock` call: the test FAILED at `expect(settled).toBe(false)`
+   — `expected true to be false` — after the prune had already finished during the observation
+   window, so a missing lock is detected deterministically rather than by luck. The first run
+   of this mutation reported a 30 s timeout instead, because the unreleased holder session
+   stalled `holder.end()`; the test's teardown now releases the lock before closing the
+   session, so a failed assertion reports itself.
+
+`prune-safety.test.ts` (242 lines, five tests, every test under 40 lines) also pins three
+contract facts the operator docs assert and nothing observed: a `:stackId` naming no Stack
+answers `200` with `matchedCount: 0` rather than `404`; `X-API-Key` authenticates while
+`Authorization: Bearer <same key>` answers `401` with `INVALID_API_KEY_DETAIL`; and the
+reported `cutoff` matches `/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/` at length 27.
+
+**Evidence after this entry's changes.**
+`npx tsc -p packages/llmwiki-kg/ts/tsconfig.json --noEmit` -> exit 0, no output;
+`npx vitest run packages/llmwiki-kg/ts/src/routes/classification-log/ --no-file-parallelism`
+-> `4 files passed, 19 tests passed (19)`, which is the previous 14 plus the 5 new safety
+tests. `prune.ts` is unchanged by this entry: the mutation checks left it byte-identical to
+its committed state.
