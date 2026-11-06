@@ -62,6 +62,28 @@ The change was verified by a read-only verifier that did not implement it: `gent
 - **Gate results, independent of the implementer's run.** `npm run test:pack` EXIT=0 with `1 passed (1)` in 26.88s (the full body ran, not an early death); `npx tsc --noEmit` EXIT=0; `npm run typecheck:kg` EXIT=0 (232 files, 0 diagnostics); `./node_modules/.bin/fallow` EXIT=0 (`0 above threshold · 15957 analyzed · maintainability 91.1`).
 - **What was NOT re-measured, stated plainly.** The full `npm test` was not re-run by the verifier. The 294.12s / `803 passed | 3 skipped (806)` / `6096 passed | 7 skipped` figure therefore stands as the implementer's own measurement, corroborated only on the changed gate (`test:pack`) and on the static gates above — not on the full suite.
 
+### L6 — the pin test, on a branch (recorded)
+
+**Preflight, and the branch BEFORE the first edit.** `git status --porcelain` empty, `git rev-parse HEAD` = `e0477437c0145bf8510fe44cab3d11d5ccce8d0d` on `main`. Branch `test/pack-selection-pin` was created from that SHA before any file was touched; all work and both commits live on it, and local `main` still points at `e0477437c0145bf8510fe44cab3d11d5ccce8d0d` afterwards. The three commits described in the lesson below — `9e3902ff`, `ec11f3e`, `e047743` — are the ones already on `main`; this slice adds nothing to them.
+
+**Why the pin exists.** After `9e3902ff` the selection property was true by construction, but the only proof of it was manual: run `vitest list` with the old command shape and count 3 files, run it with the pinned config and count 1. A manual proof leaves no failing test behind, so the property survived only as long as nobody re-typed the command. `test/sdk/test-pack-selection.test.ts` (commit `e28c591ea1c2e2a0efa93420f099fe815c39dc86`) turns that proof into three layers: the **config contract** (one literal `include`, explicit `root`, `node_modules` and `.worktrees` excluded, `globalSetup` / `setupFiles` / `env` all `undefined`), the **script contract** (the exact string, and no positional path), and the **observed selection** (`vitest list --config test/sdk/vitest.packaging.config.ts --filesOnly` through `process.execPath` plus `node_modules/vitest/vitest.mjs`, asserting the collected file set is exactly one path, unconditionally). The adversarial sibling path `.worktrees/orchestrator-x/test/sdk/packaging.test.ts` is matched as a pure string against the configured exclude patterns with `picomatch` — the matcher family vitest itself uses, and the one that ships no type declarations, hence the `createRequire` load — so no probe file is created inside the checkout. That is the L4 lesson applied rather than repeated.
+
+**RED, with reversible text edits only.** Setting `test:pack` back to `vitest run --config /dev/null test/sdk/packaging.test.ts` failed the script contract: `AssertionError: expected 'vitest run --config /dev/null test/sd…' not to contain 'test/sdk/packaging.test.ts'`. Relaxing `include` to `test/sdk/*.test.ts` failed the observed selection with `expected [ Array(11) ] to deeply equal [ 'test/sdk/packaging.test.ts' ]`, which proves that layer watches discovery and not only the config literal. Both restorations were verified byte-identical with `git diff --exit-code` (EXIT=0), never with a discard command: this repository has already stranded one run on the data-loss consent prompt a `rm -rf` raised (L4), so no `git checkout --`, `git restore`, `git reset --hard`, `git stash`, `git clean`, `rm` or `rm -rf` was used anywhere in this slice, and no scratch file was created inside the checkout.
+
+**Gates** (Node v24.21.0, each run unfiltered, exit code read from the command itself with no pipe, logs kept outside the worktree in `/tmp/pack-pin-gates-KQmAQu`):
+
+- `npx vitest run test/sdk/test-pack-selection.test.ts` — EXIT=0, `Test Files 1 passed (1)` / `Tests 9 passed (9)`, 1.02s.
+- `npx tsc --noEmit` — EXIT=0.
+- `npm run build` — EXIT=0 (`dist/cli.js` 469.73 KB, `dist/index.d.ts` 6.67 KB).
+- `npm run test:pack` — EXIT=0, `Test Files 1 passed (1)` / `Tests 1 passed (1)`, 31.06s. The pin test is NOT collected there: `vitest list` through that config still lists exactly `test/sdk/packaging.test.ts`.
+- `npm test` — EXIT=0, `Test Files 804 passed | 3 skipped (807)`, `Tests 6105 passed | 7 skipped (6112)`, 283.50s. The new file IS collected here: `✓ test/sdk/test-pack-selection.test.ts (9 tests) 506ms`.
+- `npm run test:affected` — EXIT=0, `Test Files 721 passed | 3 skipped (724)`, `Tests 5587 passed | 4 skipped (5591)`, 195.68s.
+- `./node_modules/.bin/fallow` — EXIT=0, `✗ 0 above threshold · 15976 analyzed · maintainability 91.1 (good)`.
+
+**Skips, named with their reasons, none introduced or changed by this slice.** `packages/llmwiki-kg/ts/src/routes/aks-gateway.test.ts` (1 skipped), `ingest-gateway.test.ts` (1) and `pages-gateway.test.ts` (2) are gated by `describe.skipIf(state.skipReason !== false || process.env["AKS_TEST_GATEWAY"] !== "1")` — the block "spends money" against a real LLM provider and is enabled only with `AKS_TEST_GATEWAY=1`. The three skipped tests in `test/quickstart-integration.test.ts` (full run only; that file is not in the affected selection) are `it.skip` under the in-file note "RETIRED, not skipped pending work: these three can never be true against this product, on any configuration".
+
+**Out of scope, stated plainly.** `npm run typecheck:tests` was neither run nor modified: it is knowingly red and outside this slice. The documentation commit carrying this entry reports its own SHA in the implementation handoff, because a commit cannot contain its own hash.
+
 ## Lessons
 
 ### Never create a discovery probe inside the checkout
@@ -79,3 +101,19 @@ This is the manager's lesson, and it is recorded as theirs. In their own words:
 **The one exception, stated honestly.** There is a case where `/tmp` proves nothing, and it is the case this feature cared about. When the probe's entire purpose is to prove what vitest's *discovery* collects, a probe in `/tmp` is invisible: a config rooted at the repository cannot discover a file outside its root, so the experiment becomes a no-op that "passes" for the wrong reason. In that case the probe must (a) live under a gitignored path — confirm the ignore rule covers it before creating the file, not afterwards; (b) be created and removed inside the SAME command chain, so no gate run can start in the window between them; and (c) never coexist with a gate run. Prefer a non-destructive move (`mv` the probe into `/tmp` and back) over a delete where possible, so a consent guard cannot strand the work the way it did here.
 
 **The observable symptom to recognise.** A gate that reports "1 test passed" while actually running files from unrelated sibling checkouts. The cause is the one recorded in L1: a positional vitest argument is a substring filter, not an exact path. When a gate's count looks right but the files it ran are wrong, the gate is not pinning selection — it is matching text.
+
+### "Work in the primary checkout" is not "work on main"
+
+This is the manager's lesson, and it is recorded as theirs. In their own words:
+
+> "an assignment that touches the primary checkout for one operation must say explicitly that edits and commits go on a branch. 'Work in the primary checkout' is not 'work on main'."
+
+**What happened.** The `test:pack` fix (`9e3902ff`) and its two documentation commits (`ec11f3e`, `e047743`) landed directly on local `main` in the primary checkout. The assignment named where the work lives and never re-scoped where the edit and the commit should live. "The primary checkout" is a statement about the FILESYSTEM; it was read as a statement about the branch, which it never was. Working directory and branch are two independent decisions, and naming one does not imply the other.
+
+**The harm was zero, and that was luck, not method.** Nothing was pushed, so no shared history moved and nobody else's branch needed repair. Local `main` was deliberately NOT rewritten: a reset to erase those commits would have restored appearances at the cost of a real risk — discarding work that is already green, plus the data-loss consent prompt this harness raises on such commands — for a purely cosmetic gain. An unrewritten `main` is a truthful record of what happened; a reset one is only a prettier one.
+
+**The rule.** Any assignment that touches the primary checkout for one operation must state explicitly where the edits and the commits live, and default to a branch. Doing work in a directory and committing a change are separate permissions; the first one granted is never the second one implied.
+
+**The observable symptom.** A commit landing on `main` while the assignment called the location "the primary checkout". If you cannot answer "which branch will this commit land on?" before the first write, the scope is under-specified — and the branch is the wrong thing to discover late.
+
+**The corrected shape, recorded here as evidence.** The slice this lesson accompanies said three separate things and inferred nothing: work in the primary checkout (filesystem), create branch `test/pack-selection-pin` before the first edit (branch), commit both changes there (commit). See L6 for the resulting evidence.
