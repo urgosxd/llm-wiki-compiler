@@ -34,7 +34,8 @@
     "@fontsource/dm-sans",
     "@fontsource/nunito",
     "@fontsource/space-grotesk",
-    "@fontsource/jetbrains-mono"
+    "@fontsource/jetbrains-mono",
+    "picomatch"
   ],
   "ignoreExports": [
     {
