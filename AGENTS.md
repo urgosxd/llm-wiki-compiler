@@ -60,10 +60,11 @@ scope you ran. Report the scope and the result together.
 Before committing any work, and before considering any task complete, you must:
 
 1. `npx tsc --noEmit` — type-check passes
-2. `npm run build` — build succeeds
-3. `npm run test:affected` — tests for what you changed pass (use `npm test` when
+2. `npm run typecheck:tests` — the test type-check ratchet passes (no new test type errors)
+3. `npm run build` — build succeeds
+4. `npm run test:affected` — tests for what you changed pass (use `npm test` when
    the change is cross-cutting or before opening a PR; see Test Execution Policy)
-4. `fallow` — run the fallow codebase health analyzer. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit until fallow reports no issues.
+5. `fallow` — run the fallow codebase health analyzer. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit until fallow reports no issues.
 
 ## General Rules
 
