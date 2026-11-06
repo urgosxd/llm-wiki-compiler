@@ -11,6 +11,9 @@
  *   - Files accidentally excluded from the `files` field
  *   - A shebang on the library bundle that would break `import`
  *   - Missing type declarations (`.d.ts`)
+ *   - A consumer-facing package subpath that does not resolve from the
+ *     installed tarballs (the facade's declarations import the core's
+ *     `compiler-sdk` subpath, so that entry is a real contract)
  *
  * Network-dependent: `npm install <tarball>` resolves llmwiki's ~17 runtime
  * deps fresh from the registry, so this is a developer-invoked `test:pack`
@@ -23,10 +26,11 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PACK_DISTRIBUTION } from "./pack-distribution.js";
 
 /** Pack already-built exact workspace dependencies alongside the standard facade. */
 function packDistribution(repo: string, destination: string): string[] {
-  return ["packages/llmwiki-core", "packages/llmwiki-local-workflows", "."].map(directory => {
+  return [...PACK_DISTRIBUTION].map(directory => {
     const output = execFileSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", destination],
       { cwd: path.join(repo, directory), encoding: "utf8" });
     const [packed] = JSON.parse(output) as Array<{ filename: string }>;
@@ -35,22 +39,34 @@ function packDistribution(repo: string, destination: string): string[] {
   });
 }
 
-/** Mixed-package consumers must share brands, including observation contracts. */
+/**
+ * A mixed-package consumer must see ONE contract through both published packages.
+ *
+ * The facade's `Wiki` is the core's `WikiCore` with nothing added, so the two
+ * declarations are mutually assignable, and the facade's `createWiki` accepts the
+ * core's `CreateWikiOptions` -- a divergence in either package breaks this file.
+ * `SlugSafe` proves the branded identifier types still survive the shipped
+ * declarations as brands: a second copy of core's `.d.ts` (or a hand-written
+ * duplicate) would either lose the brand or be indistinguishable from `string`.
+ */
 async function verifyInstalledTypes(repo: string, fixture: string): Promise<void> {
   await writeFile(path.join(fixture, "types.ts"), `
-    import { assertProductOperationOutputCurrent, type Wiki, type Sha256Digest as StandardDigest } from "llm-wiki-compiler";
-    import type { WikiCore, Sha256Digest } from "@atomicstrata/llmwiki-core";
-    import type { LocalWorkflowHost, WorkflowRun, WorkflowStageDef } from "@atomicstrata/llmwiki-core/local-workflow-contracts";
+    import { createWiki, type Wiki } from "llm-wiki-compiler";
+    import type { SlugSafe, WikiCore } from "@atomicstrata/llmwiki-core";
+    import type { CreateWikiOptions } from "@atomicstrata/llmwiki-core/compiler-sdk";
     declare const wiki: Wiki;
-    declare const digest: Sha256Digest;
-    declare const host: LocalWorkflowHost;
-    declare const run: WorkflowRun;
-    declare const stage: WorkflowStageDef;
+    declare const options: CreateWikiOptions;
+    declare const slug: SlugSafe;
+    /** True only when each package's type is assignable to the other's. */
+    type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+    /** True when a branded type collapsed to plain string in the published .d.ts. */
+    type ErasedToPlainString<T> = [T] extends [string] ? ([string] extends [T] ? true : false) : false;
+    const sameContract: MutuallyAssignable<Wiki, WikiCore> = true;
     const core: WikiCore = wiki;
-    const standardDigest: StandardDigest = digest;
-    const roundTrip: Sha256Digest = standardDigest;
-    assertProductOperationOutputCurrent(".", run, stage, host.observations);
-    void [core, roundTrip];
+    const facade: Wiki = createWiki(options);
+    const slugText: string = slug;
+    const brandSurvives: ErasedToPlainString<SlugSafe> = false;
+    void [sameContract, core, facade, slugText, brandSurvives];
   `);
   execFileSync(process.execPath, [path.join(repo, "node_modules/typescript/bin/tsc"),
     "--noEmit", "--strict", "--skipLibCheck", "--target", "ES2022",
