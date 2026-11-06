@@ -108,6 +108,15 @@ export interface ReclassificationReport {
   readonly unchanged: number;
   /** Human-verified rows the run left alone, and said so (S39). */
   readonly refused_verified: number;
+  /**
+   * How many of those refusals were already recorded under this run's versions.
+   *
+   * A verified row keeps the versions it was verified under, so it is refused again on
+   * every sweep. Only the first refusal under a given catalog and classifier version is
+   * appended; the rest are counted here, so an operator reads deduplication instead of
+   * a refusal that disappeared from the report.
+   */
+  readonly refused_verified_deduplicated: number;
   /** Rows kept intact because the classifier failed operationally (S45.13). */
   readonly preserved_after_failure: number;
   /** Rows with no located quote: selected by version, never classified without evidence. */

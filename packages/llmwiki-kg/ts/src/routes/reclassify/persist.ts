@@ -34,7 +34,24 @@
  * A verified row was separated out by stage 1 and is never classified; its refusal is
  * recorded here, naming the state and canonical type it kept, so "we did not touch it"
  * is something a reader can find instead of something a reader has to assume.
+ *
+ * ## A refusal is recorded once per version, not once per sweep
+ *
+ * A verified row keeps the versions it was verified under, so the skew predicate selects
+ * it again on every sweep: it converges on nothing, by design (S39). Recording the
+ * refusal again each time would grow `kg_classification_log` by (verified rows x sweeps)
+ * on a scheduled operation. The refusal entry therefore names the versions THIS RUN
+ * decided under — not the versions the row still holds — and is written idempotently
+ * against them (see `appendClassificationLog`): the same catalog and classifier silence a
+ * repeated refusal, and a bumped catalog or classifier version records a fresh one,
+ * because a refusal under a new vocabulary is a new decision. The counted report keeps
+ * the refusals it collapsed, so an operator sees deduplication rather than silence.
+ *
+ * Only the refusal entry is idempotent. A real change and a preserved decision happened
+ * once and must stay traceable every time they happen (S43).
  */
+
+import { sql } from "drizzle-orm";
 
 import type { CandidateDecision } from "../../core/classify/types.js";
 import { bindCallerStack } from "../../core/stack_resolver.js";
@@ -59,6 +76,8 @@ export interface PersistCounts {
   readonly versionsRefreshed: number;
   readonly unchanged: number;
   readonly preservedAfterFailure: number;
+  /** Refusals already recorded under the same versions, so nothing was written. */
+  readonly refusedDeduplicated: number;
 }
 
 /** The reason recorded for a refusal, spelled once so a reader and a test agree. */
@@ -140,10 +159,16 @@ function preservedEntry(row: ReclassifyRow, operationalState: "pending" | "faile
 /**
  * The history entry of a verified row this run refused to re-decide.
  *
+ * The versions are the RUN's, not the row's: the entry answers "under which catalog and
+ * classifier was this row refused?". That is also what makes the write idempotent — the
+ * dedupe key includes both versions, so a repeated sweep under the same vocabulary adds
+ * nothing while a bumped catalog records a fresh refusal.
+ *
  * @param row - The verified row that was left alone.
- * @returns The entry to append.
+ * @param context - Stack, versions and model for this run.
+ * @returns The entry to append at most once per version.
  */
-function refusalEntry(row: ReclassifyRow): ClassificationLogEntry {
+function refusalEntry(row: ReclassifyRow, context: ClassificationWriteContext): ClassificationLogEntry {
   return {
     candidateKind: row.kind,
     candidateRef: row.ref,
@@ -152,10 +177,27 @@ function refusalEntry(row: ReclassifyRow): ClassificationLogEntry {
     previousCanonicalType: row.stored.canonicalType,
     newCanonicalType: row.stored.canonicalType,
     readout: null,
-    catalogVersion: row.stored.catalogVersion,
-    classifierVersion: row.stored.classifierVersion,
+    catalogVersion: context.catalogVersion,
+    classifierVersion: context.classifierVersion,
     reason: VERIFIED_REFUSAL_REASON,
+    idempotent: true,
   };
+}
+
+/**
+ * Serializes the refusal writes of two sweeps of the same Stack.
+ *
+ * `not exists` is idempotent across a retry and inside one transaction, but two sweeps
+ * running at the same instant can both read before either writes. A transaction-scoped
+ * advisory lock named after the Stack closes that window: the second sweep waits for the
+ * first to commit, then sees its row and writes nothing. A hash collision between two
+ * Stacks costs a wait, never a row.
+ *
+ * @param tx - The write transaction.
+ * @param stackId - The Stack whose refusals are being recorded.
+ */
+async function serializeRefusalWrites(tx: Database, stackId: string): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`kg-refusal:${stackId}`}))`);
 }
 
 /**
@@ -179,7 +221,8 @@ export async function persistReclassification(
   let versionsRefreshed = 0;
   let unchanged = 0;
   let preservedAfterFailure = 0;
-  const history: ClassificationLogEntry[] = refused.map(refusalEntry);
+  const history: ClassificationLogEntry[] = refused.map((row) => refusalEntry(row, context));
+  if (history.length > 0) await serializeRefusalWrites(tx, context.stackId);
   for (const item of planned) {
     if (item.action.kind === "noop") {
       unchanged += 1;
@@ -209,6 +252,15 @@ export async function persistReclassification(
       reason: changeReason(item),
     });
   }
-  await appendClassificationLog(tx, context, history);
-  return { applied, changed, versionsRefreshed, unchanged, preservedAfterFailure };
+  const write = await appendClassificationLog(tx, context, history);
+  // Only refusal entries are idempotent, so every deduplicated entry is a refusal this
+  // run found already recorded under its versions.
+  return {
+    applied,
+    changed,
+    versionsRefreshed,
+    unchanged,
+    preservedAfterFailure,
+    refusedDeduplicated: write.deduplicated,
+  };
 }

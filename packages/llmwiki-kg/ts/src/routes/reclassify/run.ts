@@ -124,6 +124,7 @@ export async function reclassifyStack(
     versions_refreshed: counts.versionsRefreshed,
     unchanged: counts.unchanged,
     refused_verified: selection.refusedVerified.length,
+    refused_verified_deduplicated: counts.refusedDeduplicated,
     preserved_after_failure: counts.preservedAfterFailure,
     skipped_no_evidence: selection.skippedNoEvidence,
     truncated: selection.truncated,
