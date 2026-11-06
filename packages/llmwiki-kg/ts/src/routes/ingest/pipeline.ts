@@ -70,7 +70,7 @@ import {
   writeIngestAudit,
 } from "./audit.js";
 import type { ClassificationAudit, ExtractionAudit, OntologyAudit, OpenAudit } from "./audit.js";
-import { buildCandidateSpans } from "./candidates.js";
+import { buildCandidateSpans, originalPredicate } from "./candidates.js";
 import type { CandidateSpan } from "./candidates.js";
 import {
   CLASSIFIER_VERSION,
@@ -276,7 +276,10 @@ async function persistCandidates(
   const entityIds = await consolidateEntityRows(tx, params.stackId, params.docId, entities);
   const relationships: ConsolidationRelationship[] = extraction.relationships.map((relationship) => ({
     ...relationship,
-    predicate: relationship.type,
+    // The verb the model read, not the folded label identity uses: `type` keeps the
+    // fold for the projection column, and this column keeps the original wording so
+    // "deja sin efecto" survives ingestion verbatim (S2, S30, S31).
+    predicate: originalPredicate(relationship),
     classificationState: PENDING_STATE,
   }));
   const writtenRelationships = await consolidateRelationshipRows(

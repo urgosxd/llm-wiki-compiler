@@ -57,6 +57,7 @@ import {
 import {
   ENTITY_CLASSIFICATION_QUESTIONS,
   RELATION_CLASSIFICATION_QUESTIONS,
+  SUPPORT_QUESTION_ID,
 } from "../../core/jev/questions.js";
 import type { JevDecisionRequest, JevDecisionResponse } from "../../core/jev/types.js";
 import { createIngestRouter } from "../ingest.js";
@@ -92,8 +93,22 @@ const ANSWER = {
   entities: [{ type: "unicornio", name: "Vex" }],
 };
 
-/** The three answers this document needs, in candidate order. */
+/** One scripted semantic-support answer, as the vendor documents a `choice` answer. */
+function supportAnswer(label: "SUPPORTED" | "UNSUPPORTED"): JevScriptStep {
+  return vendorResponse({ [SUPPORT_QUESTION_ID]: choiceAnswer(label, { [label]: 0.9 }, 0.8) });
+}
+
+/**
+ * The seven answers this document needs, in call order.
+ *
+ * The support pass comes first — `Comité de Cambios`, `Gestión de cambios` and the
+ * relation are the three candidates whose quote the source contains — then the four
+ * classification questions.
+ */
 const SCRIPT: readonly JevScriptStep[] = [
+  supportAnswer("SUPPORTED"),
+  supportAnswer("SUPPORTED"),
+  supportAnswer("SUPPORTED"),
   vendorResponse({
     [ENTITY_CLASSIFICATION_QUESTIONS.choice]: choiceAnswer("Role", { Role: 0.9 }, 0.9),
     [ENTITY_CLASSIFICATION_QUESTIONS.fits]: noulAnswer(0.95),
@@ -327,12 +342,16 @@ describe.skipIf(skipReason !== false)("ingest classification wiring", () => {
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
 
-    // One probe per candidate: three entities, then the relation.
-    expect(probe.probes).toHaveLength(4);
+    // One probe per question: three support questions, then three entities and the
+    // relation. Every one of them is an external call, so every one of them is a
+    // moment at which no transaction may be open.
+    expect(probe.probes).toHaveLength(7);
     // At EVERY one of those moments no connection of this database was sitting
     // `idle in transaction` — the state a request-scoped transaction would be in
     // while awaiting the classifier.
-    expect(probe.probes.map((moment) => moment.idleInTransaction)).toEqual([0, 0, 0, 0]);
+    expect(probe.probes.map((moment) => moment.idleInTransaction)).toEqual([
+      0, 0, 0, 0, 0, 0, 0,
+    ]);
     // And stage 1's rows were already committed and visible from a connection
     // that is not the request's, which is the positive half of the same claim.
     expect(probe.probes[0]).toMatchObject({ pendingEntities: 3, pendingRelationships: 1 });

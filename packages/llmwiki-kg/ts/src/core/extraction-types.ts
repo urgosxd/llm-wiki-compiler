@@ -38,7 +38,21 @@ export interface ExtractedEntity {
 export interface ExtractedRelationship {
   fromEntityName: string;
   toEntityName: string;
+  /**
+   * The relation label FOLDED for identity, dedup, merge and the `type` projection.
+   *
+   * Unchanged in meaning and in value: every existing consumer keeps reading exactly
+   * what it read before this field existed beside it.
+   */
   type: string;
+  /**
+   * The predicate as the model emitted it, trimmed — the value S2 and S31 persist.
+   *
+   * Optional so a caller that never had a raw string (the in-process compiler path,
+   * or a hand-built relationship in a test) keeps working: absent means "the folded
+   * form is all that is known", not "the verb was empty".
+   */
+  predicate?: string;
   description: string;
   confidence: number;
   sourceChunkIndices: number[];

@@ -49,7 +49,11 @@ import { createRequestTransactionWrapper, createTransactionRunner } from "../../
 import { parseJevConfig } from "../../core/jev/config.js";
 import type { JevScriptStep } from "../../core/jev/doubles.js";
 import { choiceAnswer, noulAnswer, scriptedJevClient, vendorResponse } from "../../core/jev/doubles.js";
-import { ENTITY_CLASSIFICATION_QUESTIONS, RELATION_CLASSIFICATION_QUESTIONS } from "../../core/jev/questions.js";
+import {
+  ENTITY_CLASSIFICATION_QUESTIONS,
+  RELATION_CLASSIFICATION_QUESTIONS,
+  SUPPORT_QUESTION_ID,
+} from "../../core/jev/questions.js";
 import { createIngestRouter } from "../ingest.js";
 import type { IngestRouterDependencies } from "../ingest.js";
 import { createStacksRouter } from "../stacks.js";
@@ -107,14 +111,35 @@ function relationAnswer(label: string, probabilities: Record<string, number>, fi
   });
 }
 
+/** One scripted semantic-support decision, as the vendor documents a `choice` answer. */
+function supportAnswer(label: "SUPPORTED" | "UNSUPPORTED", top: number): JevScriptStep {
+  return vendorResponse({ [SUPPORT_QUESTION_ID]: choiceAnswer(label, { [label]: top }, 0.8) });
+}
+
 /**
- * The seven answers this document needs, in candidate order.
+ * The six support answers, in span order: the four located entities, then the two
+ * relations.
+ *
+ * `Vex` is absent on purpose — the source does not contain it, so no support
+ * question is asked about it at all (S12).
+ */
+const SUPPORT_SCRIPT: readonly JevScriptStep[] = [
+  supportAnswer("SUPPORTED", 0.94),
+  supportAnswer("SUPPORTED", 0.92),
+  supportAnswer("SUPPORTED", 0.9),
+  supportAnswer("SUPPORTED", 0.91),
+  supportAnswer("SUPPORTED", 0.93),
+  supportAnswer("SUPPORTED", 0.89),
+];
+
+/**
+ * The seven classification answers this document needs, in candidate order.
  *
  * Entities first (the four endpoints, then the standalone entity), then relations:
  * `ejecuta` and `deja sin efecto`. The two free decisions use a low "fits"
  * probability, which is the abstention S21 defines as `NO_MATCH`.
  */
-const SCRIPT: readonly JevScriptStep[] = [
+const CLASSIFICATION_SCRIPT: readonly JevScriptStep[] = [
   entityAnswer("Role", { Role: 0.9, Process: 0.05 }, 0.95),
   entityAnswer("Process", { Process: 0.88, Role: 0.1 }, 0.9),
   entityAnswer("Policy", { Policy: 0.4, Document: 0.3 }, 0.05),
@@ -123,6 +148,9 @@ const SCRIPT: readonly JevScriptStep[] = [
   relationAnswer("executes", { executes: 0.9 }, 0.9),
   relationAnswer("governs", { governs: 0.4, supports: 0.3 }, 0.03),
 ];
+
+/** The whole script: the support pass runs first, then the classification pass. */
+const SCRIPT: readonly JevScriptStep[] = [...SUPPORT_SCRIPT, ...CLASSIFICATION_SCRIPT];
 
 /** The decision runtime a test injects: the double plus the shipped thresholds. */
 function runtime(steps: readonly JevScriptStep[] = SCRIPT): ClassificationRuntime {
@@ -257,16 +285,24 @@ describe.skipIf(skipReason !== false)("ingest classifies what it extracted", () 
     await ingestAnswer(app, stackId);
 
     const rows = await relationshipRows(stackId);
-    const free = rows.find((row) => row.predicate === "DEJA_SIN_EFECTO");
-    const classified = rows.find((row) => row.predicate === "EJECUTA");
+    const free = rows.find((row) => row.predicate === "deja sin efecto");
+    const classified = rows.find((row) => row.predicate === "ejecuta");
 
+    // Two values, and the divergence between them is the point (S2, S30, S31):
+    // `predicate` is the verb the model read, byte for byte, while `type` keeps the
+    // folded projection label the AKS export and the pages already use.
     expect(free).toEqual({
       type: "DEJA_SIN_EFECTO",
-      predicate: "DEJA_SIN_EFECTO",
+      predicate: "deja sin efecto",
       classification_state: "free_no_match",
       canonical_type: null,
       compatibility: "indeterminate",
     });
+    // Nothing anywhere in the row collapsed the verb into the generic fallback.
+    expect(rows.map((row) => [row.type, row.predicate, row.canonical_type])).not.toContainEqual(
+      expect.arrayContaining(["related_to"]),
+    );
+    expect(rows.some((row) => row.canonical_type === "related_to")).toBe(false);
     expect(classified?.canonical_type).toBe("executes");
     // The compatibility verdict is recorded beside the classification, not
     // instead of it: a free relation between typed endpoints can still be
@@ -307,14 +343,20 @@ describe.skipIf(skipReason !== false)("ingest records evidence and classificatio
       }>(sql`
         select candidate_kind, candidate_ref, evidence_text, char_start, char_end,
                normalized_match, evidence_kind, model, pipeline_version
-        from kg_evidence where stack_id = ${stackId} order by evidence_text
+        from kg_evidence where stack_id = ${stackId} order by evidence_text, evidence_kind
       `),
     );
 
-    // Five entities and two relations, one span each: every candidate keeps its
-    // provenance instead of the run keeping only the ones that matched verbatim.
-    expect(rows).toHaveLength(7);
-    const committee = rows.find((row) => row.evidence_text === "Comité de Cambios");
+    // Five entities and two relations, one TEXTUAL span each: every candidate keeps
+    // its provenance instead of the run keeping only the ones that matched verbatim.
+    // The six candidates whose quote was located also carry a SEMANTIC row, which is
+    // the support judgement S12 keeps separate from presence.
+    expect(rows.filter((row) => row.evidence_kind === "textual")).toHaveLength(7);
+    expect(rows.filter((row) => row.evidence_kind === "semantic")).toHaveLength(6);
+    expect(rows).toHaveLength(13);
+    const committee = rows.find(
+      (row) => row.evidence_text === "Comité de Cambios" && row.evidence_kind === "textual",
+    );
     // The offsets are into the stored chunk, so slicing it back proves the quote.
     expect(BODY.slice(committee?.char_start ?? 0, committee?.char_end ?? 0)).toBe(
       "Comité de Cambios",

@@ -403,6 +403,10 @@ function tripletRelationship(
     // Consolidation lowercases this again; keeping the uppercase form here
     // matches the Python value that reaches it.
     type: triplet.relationType,
+    // The verb the model read, byte for byte after a trim. It travels beside the
+    // folded label so the stored `predicate` keeps its original wording (S2, S31)
+    // while identity, dedup and the `type` projection keep using the fold.
+    predicate: triplet.rawRelationType,
     description: "",
     confidence: EXTRACTED_CONFIDENCE,
     sourceChunkIndices: [chunkIndex],
@@ -411,6 +415,8 @@ function tripletRelationship(
 
 /** The dedupe key: endpoints and type, case-insensitively, NUL-separated. */
 function relationshipKey(relationship: ExtractedRelationship): string {
+  // Keyed on the FOLDED label, deliberately: two spellings of one verb are one
+  // relationship, and the merged entry keeps the first spelling's raw predicate.
   return [
     relationship.fromEntityName.toLowerCase(),
     relationship.type.toLowerCase(),

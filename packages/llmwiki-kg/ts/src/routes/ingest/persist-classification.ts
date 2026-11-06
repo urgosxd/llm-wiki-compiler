@@ -23,13 +23,14 @@
  * `source.verified` is never written. That column means a human reviewed the fact
  * (AKS semantics, S39/S4), and nothing in a classification pipeline is a human.
  *
- * ## `support_state` is written as it was received, which is currently "not judged"
+ * ## `support_state` comes from the answered question, and is NULL when unanswered
  *
- * The semantic-support question S12 separates from textual presence is a SEPARATE
- * Jev decision (`buildSupportRequest`), and this pipeline does not ask it: the
- * evidence rows here are `textual`. Passing a verdict we never obtained would be
- * exactly the fabrication S23 forbids, so the column is written from the decision,
- * which is `null` until something asks.
+ * The semantic-support question S12 separates from textual presence is asked by
+ * `support-stage.ts` before classification, and its verdict travels here on each
+ * decision. The column is written as received: `supported` / `unsupported` /
+ * `uncertain` when the classifier answered, and NULL when it did not — an unlocated
+ * quote and a provider outage both leave the question unanswered, and neither is
+ * stored as if it were a judgement about the source.
  */
 
 import { sql } from "drizzle-orm";
@@ -39,6 +40,10 @@ import type {
   EntityClassificationDecision,
   RelationClassificationDecision,
 } from "../../core/classify/types.js";
+import { hasTextualEvidence, withSupport } from "../../core/evidence/assessment.js";
+import type { SemanticSupport } from "../../core/evidence/assessment.js";
+import { evidenceProvenance } from "../../core/evidence/provenance.js";
+import type { EvidenceProvenance } from "../../core/evidence/provenance.js";
 import type { Database } from "../../db.js";
 import type { ClassificationOutcome } from "./classify-stage.js";
 import type { CandidateSpan } from "./candidates.js";
@@ -55,7 +60,7 @@ export interface ClassificationWriteContext {
 }
 
 /**
- * Writes one `kg_evidence` row per candidate span.
+ * Writes one `kg_evidence` row per provenance record.
  *
  * A span whose quote was not found still gets a row, with null offsets and
  * `normalized_match = false`: the absence is the signal, and dropping the row would
@@ -63,15 +68,14 @@ export interface ClassificationWriteContext {
  *
  * @param tx - The write transaction.
  * @param stackId - Stack the candidates belong to.
- * @param spans - Stage 2's output.
+ * @param records - The provenance records to write, textual ones first.
  */
 async function writeEvidenceRows(
   tx: Database,
   stackId: string,
-  spans: readonly CandidateSpan[],
+  records: readonly EvidenceProvenance[],
 ): Promise<void> {
-  for (const span of spans) {
-    const provenance = span.provenance;
+  for (const provenance of records) {
     await tx.execute(sql`
       insert into kg_evidence (
         stack_id, candidate_kind, candidate_ref, document_id, chunk_id, chunk_index,
@@ -87,6 +91,63 @@ async function writeEvidenceRows(
       )
     `);
   }
+}
+
+/**
+ * The SEMANTIC evidence record for one span: the same quote, judged.
+ *
+ * The textual record answers "the source contains these words"; this one answers
+ * "and here is what was decided about their meaning" (S12). Both are written, never
+ * one instead of the other, and they share the candidate ref so a reader can pair
+ * them. `withSupport` is what makes the pairing safe: it refuses a support verdict
+ * for a quote that was never located, so a fabricated judgement cannot reach storage
+ * even if a caller asks for one.
+ *
+ * @param span - The span the judgement was made about.
+ * @param support - The classifier's semantic judgement.
+ * @returns The record, with `evidence_kind = 'semantic'`.
+ */
+function semanticProvenance(span: CandidateSpan, support: SemanticSupport): EvidenceProvenance {
+  const base = span.provenance;
+  return evidenceProvenance({
+    candidateKind: base.candidateKind,
+    candidateRef: base.candidateRef,
+    documentId: base.documentId,
+    chunkId: base.chunkId,
+    chunkIndex: base.chunkIndex,
+    evidenceText: base.evidenceText,
+    assessment: withSupport(span.assessment, support),
+    model: base.model,
+    pipelineVersion: base.pipelineVersion,
+    catalogVersion: base.catalogVersion,
+  });
+}
+
+/**
+ * Every evidence record one run writes: one textual row per span, then one semantic
+ * row per span whose support question was actually answered.
+ *
+ * An unanswered question — unlocated quote, provider outage — produces no semantic
+ * row, because there is no judgement to record. That absence is the difference
+ * between "nobody asked" and "the classifier said no", and it is the reason this
+ * list is assembled from the judgements rather than from the spans.
+ *
+ * @param spans - Stage 2's output.
+ * @param outcome - Stages 4-6's output, carrying the support pass.
+ * @returns The records, textual first so the order is deterministic.
+ */
+function evidenceRecords(
+  spans: readonly CandidateSpan[],
+  outcome: ClassificationOutcome,
+): readonly EvidenceProvenance[] {
+  const textual = spans.map((span) => span.provenance);
+  const semantic: EvidenceProvenance[] = [];
+  for (const span of spans) {
+    const support = outcome.support.get(span.candidate.ref);
+    if (support === undefined || !hasTextualEvidence(span.assessment)) continue;
+    semantic.push(semanticProvenance(span, support));
+  }
+  return [...textual, ...semantic];
 }
 
 /**
@@ -216,7 +277,11 @@ export async function persistClassification(
 ): Promise<void> {
   // The tenant is bound per transaction: stage 1's binding left with stage 1.
   await bindCallerStack(tx, context.stackId, null);
-  await writeEvidenceRows(tx, context.stackId, spans);
+  await writeEvidenceRows(
+    tx,
+    context.stackId,
+    outcome === undefined ? spans.map((span) => span.provenance) : evidenceRecords(spans, outcome),
+  );
   if (outcome === undefined) return;
   for (const decision of outcome.entityDecisions) {
     const entityId = entityIds.get(decision.name.toLowerCase());

@@ -47,6 +47,7 @@ import type {
 import type { CandidateEvidence } from "../../core/classify/types.js";
 import { relationIdentityKey } from "../../core/classify/identity.js";
 import { assessQuote } from "../../core/evidence/assessment.js";
+import type { EvidenceAssessment } from "../../core/evidence/assessment.js";
 import { locateQuote } from "../../core/evidence/locate.js";
 import { evidenceProvenance, type EvidenceProvenance } from "../../core/evidence/provenance.js";
 import type { ChunkResult, ExtractionResult } from "../../core/extraction-types.js";
@@ -58,6 +59,15 @@ export interface CandidateSpan {
   readonly candidate: EntityCandidate | RelationCandidate;
   /** The `kg_evidence` shape for this span: quote, offsets, model, versions. */
   readonly provenance: EvidenceProvenance;
+  /**
+   * Which of the two questions this span can answer.
+   *
+   * `quote` was decided here by locating the text; `support` is `null` until a
+   * classifier is asked, and {@link withSupport} refuses to fill it in for a quote
+   * the source does not contain (S12). Kept on the span so the support stage adds a
+   * judgement to an existing assessment instead of rebuilding one from offsets.
+   */
+  readonly assessment: EvidenceAssessment;
   /** The STORED chunk content the offsets are valid against. */
   readonly context: string;
 }
@@ -146,10 +156,14 @@ interface SpanFields {
  *
  * @param document - The constants every span of this document shares.
  * @param span - The candidate kind, ref, chunk and quote.
- * @returns The validated provenance record.
+ * @returns The validated provenance record and the assessment it was built from.
  */
-function provenanceFor(document: DocumentProvenance, span: SpanFields): EvidenceProvenance {
-  return evidenceProvenance({
+function provenanceFor(
+  document: DocumentProvenance,
+  span: SpanFields,
+): { readonly provenance: EvidenceProvenance; readonly assessment: EvidenceAssessment } {
+  const assessment = assessQuote(locateQuote(span.quote, span.chunk.content));
+  const provenance = evidenceProvenance({
     candidateKind: span.kind,
     candidateRef: span.ref,
     documentId: document.documentId,
@@ -158,11 +172,12 @@ function provenanceFor(document: DocumentProvenance, span: SpanFields): Evidence
     chunkId: null,
     chunkIndex: span.chunk.chunkIndex,
     evidenceText: span.quote,
-    assessment: assessQuote(locateQuote(span.quote, span.chunk.content)),
+    assessment,
     model: document.model,
     pipelineVersion: document.pipeline,
     catalogVersion: document.catalogVersion,
   });
+  return { provenance, assessment };
 }
 
 /**
@@ -196,15 +211,33 @@ function entitySpan(
     description: null,
     properties: [],
   };
-  const provenance = provenanceFor(document, { kind: "entity", ref, chunk, quote: entity.name });
-  return { candidate, provenance, context: chunk.content };
+  const evidence = provenanceFor(document, { kind: "entity", ref, chunk, quote: entity.name });
+  return { candidate, ...evidence, context: chunk.content };
+}
+
+/**
+ * The original predicate of one extracted relationship.
+ *
+ * The raw string S2/S31 require when it is available, and the folded `type` as the
+ * documented fallback for a caller whose extraction predates it. Everything a
+ * reader sees — the stored predicate, the classifier's input, the evidence quote —
+ * uses this one value, so the verb cannot be shown folded in one place and raw in
+ * another.
+ *
+ * @param relationship - One extracted relationship.
+ * @returns The verb as it will be stored and classified.
+ */
+export function originalPredicate(
+  relationship: ExtractionResult["relationships"][number],
+): string {
+  return relationship.predicate ?? relationship.type;
 }
 
 /**
  * One relation's span, keyed by its endpoints and its original predicate.
  *
  * @param document - The constants every span of this document shares.
- * @param relationship - The folded relationship, whose `type` IS the predicate read.
+ * @param relationship - The folded relationship, carrying its original predicate.
  * @param chunks - The document's stored chunks.
  * @returns The span, or `undefined` when the document produced no chunk at all.
  */
@@ -215,10 +248,11 @@ function relationSpan(
 ): CandidateSpan | undefined {
   const chunk = chunkOf(chunks, relationship.sourceChunkIndices);
   if (chunk === undefined) return undefined;
+  const predicate = originalPredicate(relationship);
   const ref = relationRef(
     document.documentId,
     relationship.fromEntityName,
-    relationship.type,
+    predicate,
     relationship.toEntityName,
   );
   const candidate: RelationCandidate = {
@@ -228,16 +262,16 @@ function relationSpan(
     fromName: relationship.fromEntityName,
     toName: relationship.toEntityName,
     // The original predicate, required and never defaulted (S30, S31).
-    predicate: relationship.type,
+    predicate,
     description: null,
   };
-  const provenance = provenanceFor(document, {
+  const evidence = provenanceFor(document, {
     kind: "relationship",
     ref,
     chunk,
-    quote: relationship.type,
+    quote: predicate,
   });
-  return { candidate, provenance, context: chunk.content };
+  return { candidate, ...evidence, context: chunk.content };
 }
 
 /**

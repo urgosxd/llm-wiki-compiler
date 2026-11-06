@@ -45,7 +45,28 @@ function normalizeEntityType(raw: string): string {
 export interface Triplet {
   readonly subjectName: string;
   readonly subjectType: string;
+  /**
+   * The relation label FOLDED for matching: `trim().replaceAll(" ", "_").toUpperCase()`.
+   *
+   * This is the only value any matching, dedup, merge, budget or projection step may
+   * use. It is what the deployment already compares a declaration against, so folding
+   * here is legitimate for IDENTITY and never for the stored original.
+   */
   readonly relationType: string;
+  /**
+   * The relation label as the model emitted it, trimmed and otherwise untouched.
+   *
+   * S2 and S31 require the ORIGINAL predicate to survive ingestion: "deja sin efecto"
+   * must be stored as `deja sin efecto` even though nothing normalizes it to
+   * `invalidates`, and folding it to `DEJA_SIN_EFECTO` first would make that
+   * impossible to recover — case and internal spacing are erased, and no later stage
+   * can tell them apart. Only surrounding whitespace is dropped, because padding
+   * carries no meaning in the source document.
+   *
+   * Carried beside {@link relationType} rather than replacing it: folding stays the
+   * one rule for identity, and the raw string stays the one thing that is persisted.
+   */
+  readonly rawRelationType: string;
   readonly objectName: string;
   readonly objectType: string;
 }
@@ -152,6 +173,9 @@ export function parseTriplets(argumentsJson: string): Triplet[] {
       subjectName,
       subjectType: normalizeEntityType(subject.type),
       relationType: normalizeRelationType(relationType),
+      // The verb as the model wrote it. Folding is for identity; this is what a
+      // reader is shown and what the database stores as the original predicate (S31).
+      rawRelationType: relationType.trim(),
       objectName,
       objectType: normalizeEntityType(object.type),
     });

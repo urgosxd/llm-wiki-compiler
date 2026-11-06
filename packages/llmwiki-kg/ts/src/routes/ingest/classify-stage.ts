@@ -52,6 +52,8 @@ import { parseJevConfig, type JevConfig, type JevEnv } from "../../core/jev/conf
 import type { JevDecisionClient } from "../../core/jev/types.js";
 import type { ClassificationStateCounts } from "./audit.js";
 import { candidateEvidence, type CandidateSpan } from "./candidates.js";
+import { assessSupport, supportStatesOf } from "./support-stage.js";
+import type { SupportJudgements } from "./support-stage.js";
 
 /**
  * Our label for the classifier stage that produced a decision.
@@ -166,29 +168,40 @@ export interface ClassificationOutcome {
   readonly entityDecisions: readonly EntityClassificationDecision[];
   readonly relationDecisions: readonly RelationClassificationDecision[];
   readonly catalogVersion: string;
+  /** The semantic judgements stage 2b obtained, keyed by candidate ref. */
+  readonly support: SupportJudgements;
 }
 
 /**
- * Runs stages 4, 5 and 6 over one document's candidates, with no transaction open.
+ * Runs stages 2b, 4, 5 and 6 over one document's candidates, with no transaction open.
+ *
+ * The support questions are asked FIRST and in full, before the first classification
+ * question. That order is deliberate rather than incidental: support is a judgement
+ * about the SOURCE, so it must not be able to move when the classification answer
+ * does, and running the whole pass first makes the two request sequences independent
+ * of one another (S12, S32).
  *
  * @param input - Spans, catalog and runtime.
- * @returns One validated decision per candidate, split by kind.
+ * @returns One validated decision per candidate, split by kind, plus the support pass.
  * @throws {DecisionInvariantError} When a decision contradicts itself.
  * @throws {ClassificationInputError} When a candidate has no located evidence.
  */
 export async function classifySpans(input: ClassifySpansInput): Promise<ClassificationOutcome> {
+  const support = await assessSupport({ spans: input.spans, runtime: input.runtime });
   const batch = await classifyCandidates({
     candidates: input.spans.map((span) => span.candidate),
     catalog: input.catalog,
     client: input.runtime.client,
     config: input.runtime.config,
     evidence: candidateEvidence(input.spans),
+    supportStates: supportStatesOf(support),
   });
   validateDecisions(batch);
   return {
     entityDecisions: batch.entityDecisions,
     relationDecisions: batch.relationDecisions,
     catalogVersion: batch.catalogVersion,
+    support,
   };
 }
 

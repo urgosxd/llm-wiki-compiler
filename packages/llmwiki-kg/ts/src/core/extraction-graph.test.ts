@@ -63,6 +63,7 @@ describe("parseTriplets", () => {
         subjectName: "Gateway",
         subjectType: "PRODUCT",
         relationType: "USED_FOR",
+        rawRelationType: "USED_FOR",
         objectName: "Routing",
         objectType: "CONCEPT",
       },
