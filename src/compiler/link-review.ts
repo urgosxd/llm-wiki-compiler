@@ -11,9 +11,13 @@
  * mechanisms and only one of them may guess:
  *
  *   - RETRIEVAL is deterministic and lexical. An earlier page is a candidate for an
- *     article exactly when its own text already contains that article's title or one
- *     of its declared aliases as a PLAIN mention (not inside an existing link, a
- *     citation, or a code span). That is a hard precondition, not a hint: a link
+ *     article exactly when its own text already contains one of that article's NAMES
+ *     as a PLAIN mention (not inside an existing link, a citation, or a code span).
+ *     Its names are the union of three sources, because a synonym resolved by an
+ *     EARLIER ingest is still a real name of the concept today: the canonical title,
+ *     the aliases the identity stage folded during THIS run, and the `aliases` the
+ *     article page persists in its frontmatter. See {@link withDeclaredAliases}.
+ *     That is a hard precondition, not a hint: a link
  *     needs words on the page to anchor it, so a page that never names the article
  *     cannot receive one, however similar the two topics are. No embedding, no
  *     cosine score and no vector store is consulted here at all, which is the
@@ -62,6 +66,7 @@ import { buildLinkReviewPrompt, LINK_REVIEW_TOOL, parseLinkVerdict } from "./pro
 import { isLiteralMarkdown } from "./link-repair-code.js";
 import { readWikiPageFrom } from "./confined-wiki-read.js";
 import { linkIndexFor, listLinkPageSet, validateContextualLinks } from "./link-anchoring.js";
+import { canonicalConceptKey } from "../dimensions/wiki/concept-identity.js";
 import { applyCompilePageWritesLocked, type CompilePageWrite } from "./compile-write.js";
 import {
   pageStoreOptions,
@@ -246,8 +251,9 @@ export async function reviewEarlierPages(
   const counts = emptyLinkReviewCounts();
   counts.articles = articles.length;
   if (articles.length === 0) return counts;
-  const earlier = await loadEarlierPages(root, articles, options.seams?.content);
-  const candidates = collectCandidates(articles, earlier, counts);
+  const named = await withDeclaredAliases(root, articles, options.seams?.content);
+  const earlier = await loadEarlierPages(root, named, options.seams?.content);
+  const candidates = collectCandidates(named, earlier, counts);
   if (candidates.length === 0) return counts;
   const pageSet = await listLinkPageSet(root, options.seams?.content);
   const edits = await decideEdits(candidates, pageSet, counts);
@@ -297,6 +303,77 @@ async function loadEarlierPages(
     pages.push({ slug, title, content, body });
   }
   return pages;
+}
+
+/**
+ * This run's articles, each carrying every name its STORED page already declares.
+ *
+ * The identity stage folds aliases during THIS run and hands them over on the article,
+ * but the page also PERSISTS the names an earlier ingest resolved -- that persistence
+ * is what makes identity deterministic across runs, and it is worthless if retrieval
+ * ignores it: a page that has called the concept by an established synonym for ten
+ * runs would never be considered for a reference to it.
+ *
+ * The union is deduped by canonical key, so a name spelled twice, or a generated alias
+ * that is only a case variant of another, is offered once. The title is never repeated
+ * as its own alias, because a self-alias would make the mention scan match one name
+ * twice for no gain.
+ *
+ * A page whose stored frontmatter cannot be read contributes no declared aliases: the
+ * run's own folded names still apply, and a missing page is not a failure here.
+ *
+ * @param root - Project root the reads are confined under.
+ * @param articles - This run's articles, with the names folded during this run.
+ * @param source - Row-backed page reader, or undefined to read `wiki/concepts`.
+ * @returns The same articles, with their declared aliases merged in.
+ */
+async function withDeclaredAliases(
+  root: string,
+  articles: readonly LinkReviewArticle[],
+  source: PageContentSource | undefined,
+): Promise<LinkReviewArticle[]> {
+  const named: LinkReviewArticle[] = [];
+  for (const article of articles) {
+    // warnAlways=false: an article the run could not read back is a normal absence
+    // here, not a dropped page worth a warning on every ingest.
+    const content = await readWikiPageFrom(root, CONCEPTS_DIR, article.slug, source, false);
+    const declared = content === "" ? [] : aliasNames(parseFrontmatter(content).meta.aliases);
+    named.push({ ...article, aliases: extraNames(article.title, article.aliases, declared) });
+  }
+  return named;
+}
+
+/** The plain strings a frontmatter `aliases` value may hold. */
+function aliasNames(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((value): value is string => typeof value === "string") : [];
+}
+
+/**
+ * Every extra name an article answers to, in first-seen order, title excluded.
+ *
+ * Names folded during this run come before the ones persisted earlier, so the most
+ * recently resolved synonym is the one the mention scan tries first.
+ *
+ * @param title - The article's canonical title, which is matched separately.
+ * @param folded - Names this run's identity stage folded into the article.
+ * @param declared - Names the stored page declares in its frontmatter.
+ * @returns Deduplicated names, none of which is the title itself.
+ */
+function extraNames(
+  title: string,
+  folded: readonly string[],
+  declared: readonly string[],
+): string[] {
+  const seen = new Set<string>([canonicalConceptKey(title)]);
+  const names: string[] = [];
+  for (const raw of [...folded, ...declared]) {
+    const name = raw.trim();
+    const key = canonicalConceptKey(name);
+    if (name === "" || key === "" || seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  return names;
 }
 
 /** The names a page may use for an article, most canonical first. */

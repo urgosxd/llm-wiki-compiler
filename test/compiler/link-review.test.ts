@@ -51,9 +51,22 @@ function articleFor(slug: string, title: string, aliases: readonly string[] = []
   return { slug, title, aliases };
 }
 
-/** Write the article page the run just produced, so the link target is real. */
-async function writeArticle(root: string, slug: string, title: string): Promise<void> {
-  await writePage(conceptsDir(root), slug, { title }, "The article the run just wrote.");
+/**
+ * Write the article page the run just produced, so the link target is real.
+ *
+ * `aliases` are the names the page DECLARES IN ITS FRONTMATTER, which is what an
+ * earlier ingest persisted for it. They are deliberately separate from the
+ * `LinkReviewArticle` the stage receives, which carries only the names THIS run
+ * folded -- the two sources a retrieval predicate has to union.
+ */
+async function writeArticle(
+  root: string,
+  slug: string,
+  title: string,
+  aliases: readonly string[] = [],
+): Promise<void> {
+  const fields = aliases.length === 0 ? { title } : { title, aliases };
+  await writePage(conceptsDir(root), slug, fields, "The article the run just wrote.");
 }
 
 /** Write an earlier page of the wiki, with whatever body the case needs. */
@@ -175,6 +188,53 @@ describe("link review — similarity never creates or proposes a link", () => {
 
     await expectNoContact(root, before);
     expect(counts.candidates).toBe(0);
+  });
+});
+
+describe("link review — aliases persisted by an earlier ingest still retrieve", () => {
+  it("V7 offers the article to a page that mentions only a stored frontmatter alias", async () => {
+    const root = await tempRoot("link-review-declared-alias");
+    await writeArticle(root, "vector-db", "Vector Database", ["Vector Store"]);
+    await writeEarlierPage(
+      root,
+      "caching",
+      "Caching",
+      "Caching stores values.\n\nA Vector Store keeps them fast.",
+    );
+    const before = await readPage(root, "caching");
+    vi.mocked(callClaude).mockResolvedValue(verdict(true, "Vector Store"));
+
+    // The article carries NO aliases from this run: "Vector DB" exists only in the
+    // page's stored frontmatter, which is exactly what T2 persists so identity stays
+    // deterministic across runs.
+    const counts = await reviewArticle(root);
+
+    expect(counts.candidates).toBe(1);
+    expect(counts.reviewed).toBe(1);
+    expect(counts.linksAdded).toBe(1);
+    expect(counts.verdicts).toEqual({ accepted: 1, refused: 0, unusable: 0 });
+    expect(await readPage(root, "caching")).toBe(
+      before.replace("A Vector Store keeps", "A [[vector-db|Vector Store]] keeps"),
+    );
+  });
+
+  it("V8 PIN does not double-count a stored alias equal to the title", async () => {
+    const root = await tempRoot("link-review-title-alias");
+    await writeArticle(root, "vector-db", "Vector Database", ["Vector Database"]);
+    await writeEarlierPage(root, "caching", "Caching", "A Vector Database index keeps it fast.");
+    const before = await readPage(root, "caching");
+    vi.mocked(callClaude).mockResolvedValue(verdict(true, "Vector Database"));
+
+    const counts = await reviewArticle(root);
+
+    // The title reaches the predicate ONCE even though the page also declares it as
+    // its own alias: one candidate, one review call, one link.
+    expect(vi.mocked(callClaude)).toHaveBeenCalledTimes(1);
+    expect(counts.candidates).toBe(1);
+    expect(counts.reviewed).toBe(1);
+    expect(await readPage(root, "caching")).toBe(
+      before.replace("A Vector Database index", "A [[vector-db|Vector Database]] index"),
+    );
   });
 });
 
