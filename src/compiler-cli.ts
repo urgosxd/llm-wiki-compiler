@@ -42,6 +42,27 @@ export { default as watchCommand } from "./commands/watch.js";
 export { parseConcurrencyFlag } from "./compiler/concurrency.js";
 export { compileAndReport } from "./compiler/index.js";
 export { buildContextPack } from "./context/build.js";
+export {
+  createCategory,
+  listCategories,
+  readCategory,
+  updateCategory,
+  categoryIdForName,
+  categoryObjectId,
+  parseCategory,
+  renderCategory,
+  CategoryNotFoundError,
+  CategoryValidationError,
+  CategoryWriteRefusedError,
+} from "./categories/index.js";
+export type {
+  CategoryDraft,
+  CategoryPatch,
+  CategoryRecord,
+  CategoryRender,
+  CategoryWriteResult,
+  MemberTruncation,
+} from "./categories/index.js";
 export { findRacePath, resolveRaceEndpoint, resolveRaceMaxDepth } from "./context/race-path.js";
 export type { RaceFailureReason, RacePathQuery, RacePathResult } from "./context/race-path.js";
 export { resolveTargetNodeId } from "./context/resolve-target.js";
@@ -63,7 +84,7 @@ export { getPage, listPages } from "./pages/list.js";
 export type { Page, PageRef, PageDirectory, PageListingSource } from "./pages/list.js";
 export type { TrustDecision } from "./trust/decision.js";
 export { readCappedNoFollow } from "./utils/confined-read.js";
-export { ENV_VERBOSE, MAX_WORKFLOW_SUBMIT_FILE_BYTES, CONCEPTS_DIR, INDEX_FILE, QUERIES_DIR, SOURCES_DIR, STATE_FILE } from "./utils/constants.js";
+export { ENV_VERBOSE, MAX_WORKFLOW_SUBMIT_FILE_BYTES, CATEGORIES_DIR, MAX_CATEGORY_MEMBERS_LISTED, CONCEPTS_DIR, INDEX_FILE, QUERIES_DIR, SOURCES_DIR, STATE_FILE } from "./utils/constants.js";
 export { safeReadFile, parseFrontmatter } from "./utils/markdown.js";
 export { applyLanguageOption } from "./utils/output-language.js";
 export * as output from "./utils/output.js";

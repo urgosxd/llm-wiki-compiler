@@ -241,6 +241,45 @@ export const CONCEPTS_DIR = "wiki/concepts";
 export const QUERIES_DIR = "wiki/queries";
 
 /**
+ * The DIRECTORY COMPONENT categories are written under, as the trust planner sees
+ * it.
+ *
+ * A category is NOT a page: `PageDirectory` (`export/types.ts`) and the SQL
+ * `CHECK` on `page_directory` are closed sets, and the derived-artifact store keys
+ * on `(stack_id, kind)` with one row per kind, so neither can hold N categories
+ * without a migration. Categories are therefore stored as their own files, one per
+ * category, and this namespace is what makes that a DIFFERENT object type from
+ * `concepts` rather than a page wearing a tag: the same canonical name yields
+ * `wiki/concepts/<slug>.md` and `wiki/categories/<categoryId>.md`, two files with
+ * two identities that never merge.
+ */
+export const CATEGORY_PAGE_NAMESPACE = "categories";
+
+/**
+ * The project-relative directory category files live in.
+ *
+ * DERIVED from {@link CATEGORY_PAGE_NAMESPACE} on purpose: the write planner builds
+ * `wiki/<namespace>/<id>.md` from the namespace, while reads and reported paths use
+ * this constant, and a hand-copied `wiki/categories` could drift from the namespace
+ * and split reading from writing.
+ */
+export const CATEGORIES_DIR = `wiki/${CATEGORY_PAGE_NAMESPACE}`;
+
+/**
+ * How many member page ids ONE category lists in its rendered file.
+ *
+ * A category aggregates pages, and its file is a HUMAN-READABLE listing that is
+ * rendered on every write: an unbounded list would make the file grow with the wiki
+ * (a broad category legitimately covers hundreds of pages), turn a readable page
+ * into an index dump, and make each rewrite larger than the last. The bound stops
+ * the LISTING only — the complete member set stays recorded in the category's
+ * frontmatter, so no membership is ever dropped — and every truncation is reported
+ * twice: in the value the store returns and in the rendered body itself, so it is
+ * never a silent limit.
+ */
+export const MAX_CATEGORY_MEMBERS_LISTED = 100;
+
+/**
  * The reserved subtree workflow-run markdown PROJECTIONS must live under. A
  * `projectionFile` is confined here at profile LOAD so it can never target an
  * authored entity page; no entity `directory` may overlap this subtree either.
