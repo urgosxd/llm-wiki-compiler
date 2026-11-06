@@ -7,14 +7,15 @@ import { sql } from "drizzle-orm";
 import type { Request, Response } from "express";
 
 import {
-  ENTITY_COLUMNS,
-  RELATIONSHIP_COLUMNS,
+  EXPORT_ENTITY_COLUMNS,
+  EXPORT_RELATIONSHIP_COLUMNS,
+  aksConfidenceSql,
   fetchContributingDocuments,
-  rowToEntity,
-  rowToRelationship,
+  rowToExportEntity,
+  rowToExportRelationship,
   toPostgresArrayLiteral,
 } from "../../core/aks_serializers.js";
-import type { EntityRow } from "../../core/aks_serializers.js";
+import type { ExportEntityRow, ExportRelationshipRow } from "../../core/aks_serializers.js";
 import { resolveStack } from "../../core/stack_resolver.js";
 import type { StackRow } from "../../core/stack_resolver.js";
 import type { Database } from "../../db.js";
@@ -43,8 +44,8 @@ type ExportFilters = ReturnType<typeof ExportQuery.parse>;
 
 /** Every row one bundle is assembled from. */
 interface BundleContents {
-  readonly entityRows: readonly EntityRow[];
-  readonly relationshipRows: Awaited<ReturnType<typeof loadExportRelationships>>;
+  readonly entityRows: readonly ExportEntityRow[];
+  readonly relationshipRows: readonly ExportRelationshipRow[];
   readonly documentRows: readonly BundleDocumentRow[];
   readonly contributing: ReadonlyMap<string, readonly string[]>;
 }
@@ -96,7 +97,7 @@ async function loadBundleContents(
  * graph as it was when it was produced.
  */
 /**
- * Load the entities the export filter selects.
+ * Load the entities the export filter selects, with their classification columns.
  *
  * ## The ORDER BY is the contract, not decoration
  *
@@ -107,6 +108,14 @@ async function loadBundleContents(
  * therefore the response order of an endpoint nobody asked to change. The order is
  * now stated: `name`, then `id`, so two homonyms sharing a name still resolve to one
  * total order instead of swapping between plans.
+ *
+ * ## `min_confidence` filters the projected confidence
+ *
+ * The bundle reports the documented formula's value, so the filter has to read the
+ * same expression (`aksConfidenceSql`). Filtering the raw column while reporting a
+ * reduced number would let a client asking for `>= 0.5` receive an item displaying
+ * `0.375`. Rows with no support judgement keep factor 1, so their selection is
+ * unchanged.
  */
 async function loadExportEntities(
   tx: Database,
@@ -114,15 +123,15 @@ async function loadExportEntities(
   minConfidence: number,
   verifiedOnly: boolean,
   entityType: string | null,
-): Promise<EntityRow[]> {
+): Promise<ExportEntityRow[]> {
   const verifiedClause = verifiedOnly ? sql`and verified = true` : sql.empty();
   const typeClause = isFilterSet(entityType) ? sql`and type = ${entityType}` : sql.empty();
 
-  return tx.execute<EntityRow>(sql`
-    select ${sql.raw(ENTITY_COLUMNS)}
+  return tx.execute<ExportEntityRow>(sql`
+    select ${sql.raw(EXPORT_ENTITY_COLUMNS)}
     from ontology_entities
     where stack_id = ${stackId}
-      and confidence >= ${minConfidence}
+      and ${aksConfidenceSql()} >= ${minConfidence}
       ${verifiedClause}
       ${typeClause}
     order by name, id
@@ -134,16 +143,18 @@ async function loadExportEntities(
  *
  * Ordered for the same reason as the entity query above: `(type, from, to)` is a
  * total order inside a Stack because `unique_edge_per_stack` already forbids a
- * repeated triple, and it keeps the bundle's edge list independent of the plan.
+ * repeated triple, and it keeps the bundle's edge list independent of the plan. The
+ * order is over the STORED `type`, not the projected one, because it is a paging
+ * order rather than a statement about classification.
  */
 async function loadExportRelationships(
   tx: Database,
   stackId: string,
   entityIds: readonly string[],
-): Promise<Parameters<typeof rowToRelationship>[0][]> {
+): Promise<ExportRelationshipRow[]> {
   if (entityIds.length === 0) return [];
-  return tx.execute<Parameters<typeof rowToRelationship>[0]>(sql`
-    select ${sql.raw(RELATIONSHIP_COLUMNS)}
+  return tx.execute<ExportRelationshipRow>(sql`
+    select ${sql.raw(EXPORT_RELATIONSHIP_COLUMNS)}
     from ontology_relationships
     where stack_id = ${stackId}
       and from_entity_id = any(${toPostgresArrayLiteral(entityIds)}::uuid[])
@@ -195,9 +206,9 @@ export async function exportBundle(req: Request, res: Response, tx: Database): P
     compilation_strategy: stack.compilation_strategy,
     documents: contents.documentRows.map((row) => AKSDocumentSummary.parse(row)),
     entities: contents.entityRows.map((row) =>
-      rowToEntity(row, contents.contributing.get(row.id) ?? []),
+      rowToExportEntity(row, contents.contributing.get(row.id) ?? []),
     ),
-    relationships: contents.relationshipRows.map(rowToRelationship),
+    relationships: contents.relationshipRows.map(rowToExportRelationship),
   };
 
   res.json(AKSBundle.parse(bundle));
