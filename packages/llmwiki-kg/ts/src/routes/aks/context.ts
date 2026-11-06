@@ -26,6 +26,11 @@ import {
   toPostgresArrayLiteral,
 } from "../../core/aks_serializers.js";
 import type { EntityRow } from "../../core/aks_serializers.js";
+import {
+  CLASSIFICATION_COLUMNS,
+  withClassificationState,
+  type ClassificationColumns,
+} from "../../core/graph_read.js";
 import { toFastApiValidationError } from "../../errors.js";
 import { sendApiError, sendValidationError } from "./response.js";
 
@@ -212,6 +217,21 @@ Return ONLY the JSON object, no other text.`;
  * cannot lose a match, and a name the model invented simply matches nothing. If
  * *none* match, `traversal_path` reports the requested names and the confidence
  * drops to `LOW` — the model's own confidence is discarded on that path.
+ *
+ * ## Each entity states its classification, and each relationship cannot
+ *
+ * Both kinds of row live in one Stack now, so an entity the catalog never
+ * classified reaches this answer like any other. Each one carries
+ * `properties.kg_classification` (state, support state, reason) so a consumer does
+ * not present it as a settled catalog type (S42).
+ *
+ * A relationship has nowhere to say the same thing: `AKSRelationship` is a closed
+ * model with no extension point, and the AKS schema permits `properties` on an
+ * entity only — which is exactly why this feature keeps relationship classification
+ * metadata in its own columns and never invents a field on the wire object (S37).
+ * A consumer that must not present an uncertain edge as confirmed reads the
+ * classification of the entities it connects, and of the edge through the free-item
+ * query on `GET /aks/v1/entities`.
  */
 /** Send the canonical empty answer, used by every early exit. */
 function sendEmptyContext(
@@ -259,14 +279,19 @@ async function loadCatalog(tx: Database, stackId: string): Promise<CatalogRow[]>
  *
  * Ordered by `name, id` for the reason the export query states: homonyms are legal
  * now, and an unstated order here made the response depend on the plan.
+ *
+ * The classification columns are selected beside `ENTITY_COLUMNS` so the answer can
+ * publish each entity's state, exactly as `GET /aks/v1/entities` does. A model that
+ * selected a free entity is told so by the response instead of learning it from a
+ * label that was never a catalog type (S42).
  */
 async function loadSelectedEntities(
   tx: Database,
   stackId: string,
   entityNames: readonly string[],
-): Promise<EntityRow[]> {
-  return tx.execute<EntityRow>(sql`
-    select ${sql.raw(ENTITY_COLUMNS)}
+): Promise<(EntityRow & ClassificationColumns)[]> {
+  return tx.execute<EntityRow & ClassificationColumns>(sql`
+    select ${sql.raw(ENTITY_COLUMNS)}, ${sql.raw(CLASSIFICATION_COLUMNS)}
     from ontology_entities
     where stack_id = ${stackId}
       and lower(name) = any(${toPostgresArrayLiteral(
@@ -303,7 +328,7 @@ async function loadInternalRelationships(
 async function buildContextResponse(
   tx: Database,
   query: string,
-  entityRows: readonly EntityRow[],
+  entityRows: readonly (EntityRow & ClassificationColumns)[],
   relationships: readonly AKSRelationshipDto[],
   selection: Selection,
 ): Promise<unknown> {
@@ -311,7 +336,9 @@ async function buildContextResponse(
   const contributing = await fetchContributingDocuments(tx, entityIds);
   return AKSContextResponse.parse({
     query,
-    entities: entityRows.map((row) => rowToEntity(row, contributing.get(row.id) ?? [])),
+    entities: entityRows.map((row) =>
+      withClassificationState(rowToEntity(row, contributing.get(row.id) ?? []), row),
+    ),
     relationships,
     traversal_path: entityRows.map((row) => row.name),
     reasoning: selection.reasoning,

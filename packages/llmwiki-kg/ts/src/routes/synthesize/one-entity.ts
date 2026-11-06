@@ -10,6 +10,7 @@
 import { sql } from "drizzle-orm";
 import type { Request, Response } from "express";
 
+import { pickEntityIdByName } from "../../core/graph_read.js";
 import { resolveStack } from "../../core/stack_resolver.js";
 import type { Database } from "../../db.js";
 import { apiError, toFastApiValidationError } from "../../errors.js";
@@ -43,11 +44,8 @@ async function findEntityId(
   stackId: string,
   name: string,
 ): Promise<string | undefined> {
-  const rows = await tx.execute<{ readonly id: string }>(sql`
-    select id from ontology_entities
-    where stack_id = ${stackId} and lower(name) = lower(${name})
-  `);
-  return rows[0]?.id;
+  const entity = await pickEntityIdByName(tx, stackId, name);
+  return entity?.id;
 }
 
 /** The entity's description as it now stands, re-read after the write. */
@@ -69,13 +67,16 @@ async function readDescription(tx: Database, entityId: string): Promise<EntityDe
  * `POST /aks/v1/entities/{name}/synthesize-description` — backfill, one entity.
  *
  * The entity is found by exact, case-insensitive name inside the Stack, so a name
- * from a different Stack is a 404. The response is a plain dict in Python, which
- * means the field order is the literal insertion order:
- * `entity_name, description, synthesized`.
+ * from a different Stack is a 404. Since homonyms are legal, several rows may share
+ * the name; `pickEntityIdByName` chooses one deterministically (a classified row
+ * first, then the most confident, then by id) instead of taking whichever row the
+ * plan yielded first.
  *
  * The description is re-read **after** the write, so `description` is whatever is
  * now in the row — the freshly synthesized text, or the previous value when
- * nothing could be grounded (`synthesized: false`).
+ * nothing could be grounded (`synthesized: false`). The response body is a plain
+ * dict in Python, so its field order is the literal insertion order:
+ * `entity_name, description, synthesized`.
  */
 export async function synthesizeOneEntity(
   req: Request,

@@ -60,11 +60,37 @@ export function readQuery(req: Request, keys: readonly string[]): Record<string,
 }
 
 /**
+ * The values `classification_state` accepts on `GET /aks/v1/entities`.
+ *
+ * `free` is the union of the two free states — a decision was made and no
+ * canonical type was assigned — which is the sense "libre" carries in the
+ * feature's specs. `pending` and `failed` are deliberately OUTSIDE it: those are
+ * operational states where no decision exists yet, and calling them free would
+ * report an unanswered question as an answer about the catalog.
+ */
+export const CLASSIFICATION_STATE_FILTERS = [
+  "classified",
+  "free",
+  "free_no_match",
+  "free_uncertain",
+  "pending",
+  "failed",
+] as const;
+
+/**
  * Query schema for `GET /aks/v1/entities`.
  *
  * Declaration order mirrors `list_entities`' signature; `Optional[UUID]` and
  * `Optional[str]` both default to `None`, and `min_confidence`/`limit` carry
- * their Python defaults and inclusive bounds.
+ * their Python defaults and inclusive bounds. `classification_state` is this
+ * implementation's own filter and is declared LAST, so the order in which a
+ * multi-parameter 422 reports its entries is unchanged for every parameter the
+ * oracle already had.
+ *
+ * A closed set earns a `literal_error`, which is what FastAPI answers for a
+ * `Literal[...]` query parameter; an empty value (`?classification_state=`) is a
+ * present-but-unparseable value and is refused the same way. `type` keeps its
+ * truthiness rule (empty means "no filter") because that is what it always did.
  */
 export const EntitiesQuery = z.object({
   stackId: pydanticUuid().nullable().default(null),
@@ -72,6 +98,7 @@ export const EntitiesQuery = z.object({
   type: pydanticString().nullable().default(null),
   min_confidence: pydanticFloat({ ge: 0, le: 1 }).default(0),
   limit: pydanticInt({ ge: 1, le: 1000 }).default(100),
+  classification_state: z.enum(CLASSIFICATION_STATE_FILTERS).nullable().default(null),
 });
 
 /** Query schema for `GET /aks/v1/entities/{name}`. */
@@ -106,7 +133,14 @@ export const ExportQuery = z.object({
  * `stackId`, not the oracle's `stack_id`: one name for that concept across both
  * dimensions. Every other parameter keeps its snake_case wire name.
  */
-export const ENTITIES_QUERY_KEYS = ["stackId", "domain", "type", "min_confidence", "limit"] as const;
+export const ENTITIES_QUERY_KEYS = [
+  "stackId",
+  "domain",
+  "type",
+  "min_confidence",
+  "limit",
+  "classification_state",
+] as const;
 export const ENTITY_QUERY_KEYS = ["stackId", "domain"] as const;
 export const TRAVERSE_QUERY_KEYS = ["start", "stackId", "domain", "max_depth", "relationship_types"] as const;
 export const EXPORT_QUERY_KEYS = [

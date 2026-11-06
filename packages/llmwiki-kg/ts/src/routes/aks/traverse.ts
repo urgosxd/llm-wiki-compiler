@@ -43,7 +43,27 @@ import { TRAVERSE_QUERY_KEYS, TraverseQuery, readQuery } from "./query-params.js
  *
  * A start entity that does not exist is a **404**, not an empty result: the
  * oracle answers `Entity '<name>' not found in Stack`, the same wording the
- * single-entity endpoint uses.
+ * single-entity endpoint uses. When several rows share the start name the walk
+ * begins at the deterministically picked one — see `pickEntityIdByName` — so the
+ * answer does not depend on the plan.
+ *
+ * ## Classified and free edges are both walkable
+ *
+ * No state predicate is applied when `relationship_types` is absent: a free edge,
+ * which keeps the predicate the extractor read instead of a catalog type, is an
+ * ordinary member of the walk. `relationship_types` names CANONICAL relation
+ * types, so it answers with classified edges (plus rows with no recorded decision,
+ * whose label always answered it) and never with a free edge whose stored label
+ * merely looks canonical.
+ *
+ * ## Why this response carries no classification state
+ *
+ * `AKSTraverseStep` is a closed AKS model — `from_entity`, `relationship`,
+ * `to_entity`, `depth`, `confidence` — and AKS defines no extension point for a
+ * relationship, so there is nowhere on this surface to publish an edge's state
+ * without inventing a field the contract does not have. The state is exposed where
+ * AKS does allow it: `properties.kg_classification` on the entity reads, which is
+ * what a consumer should consult before presenting an edge as a settled fact.
  */
 export async function traverse(req: Request, res: Response, tx: Database): Promise<void> {
   const raw = readQuery(req, TRAVERSE_QUERY_KEYS);

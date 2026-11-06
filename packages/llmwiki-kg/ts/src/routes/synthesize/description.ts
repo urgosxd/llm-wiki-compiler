@@ -6,6 +6,16 @@
  * both endpoints share: the prompt, the shortest-passages chunk search, and the
  * write-back. The backfill and the single-entity route are only selection and
  * response shaping around it.
+ *
+ * ## The prompt states the classification status
+ *
+ * The prompt shows the model `ENTITY:` and `TYPE:`. For an entity the catalog never
+ * classified, that "TYPE" is only the extractor's proposal, and prose written as if
+ * it were a catalog type presents uncertain knowledge as confirmed (S42).
+ * {@link buildSynthesisPrompt} therefore accepts the entity's classification and
+ * appends one `CLASSIFICATION:` line saying what the label really is. A classified
+ * entity adds nothing, and a row with no recorded decision produces the byte-identical
+ * prompt it always produced — the pinned prompt tests remain the contract.
  */
 
 import { sql } from "drizzle-orm";
@@ -32,21 +42,71 @@ export const SYNTHESIS_MAX_TOKENS = 300;
  */
 export const SYNTHESIS_CHUNK_LIMIT = 3;
 
-/** Interpolates the description prompt from its three inputs. */
+/** How the prompt is told about one entity's classification status. */
+export interface SynthesisClassification {
+  /** The recorded state: one of `CLASSIFICATION_STATES`. */
+  readonly state: string;
+  /** The canonical type when the state is `classified`; otherwise `null`. */
+  readonly canonicalType: string | null;
+  /** The label the extractor proposed, which is what `TYPE:` shows. */
+  readonly proposedType: string | null;
+}
+
+/**
+ * The `CLASSIFICATION:` clause per state that is not `classified`.
+ *
+ * The shared middle sentence keeps the meaning of `TYPE:` unambiguous in every
+ * case: it is the extractor's proposal, not a canonical type of the catalog.
+ */
+const SYNTHESIS_NOTICE_CLAUSES: Readonly<Record<string, string>> = {
+  free_no_match: "no canonical type in this Stack's catalog matched it",
+  free_uncertain: "the classifier could not decide a canonical type",
+  pending: "no classifier decision has been recorded yet",
+  failed: "the classifier failed, so no canonical type was assigned",
+};
+
+/**
+ * The `CLASSIFICATION:` line to add to the prompt, or `""` when none is due.
+ *
+ * @param classification - The entity's classification, or `null`/absent.
+ * @param proposedType - The label shown on the `TYPE:` line.
+ * @returns One line ending in a newline, or the empty string.
+ */
+export function classificationPromptLine(
+  classification: SynthesisClassification | null | undefined,
+  proposedType: string,
+): string {
+  if (classification === null || classification === undefined) return "";
+  const clause = SYNTHESIS_NOTICE_CLAUSES[classification.state];
+  if (clause === undefined) return "";
+  const label =
+    classification.state === "pending" || classification.state === "failed"
+      ? classification.state
+      : `unclassified (${classification.state})`;
+  return (
+    `CLASSIFICATION: ${label} — "${proposedType}" is the extractor's proposal; ` +
+    `${clause}. Do not present it as a settled type.\n`
+  );
+}
+
+/** Interpolates the description prompt from its inputs. */
 export function buildSynthesisPrompt(
   entityName: string,
   entityType: string,
   domainContextNames: readonly string[],
   chunkText: string,
+  classification?: SynthesisClassification | null,
 ): string {
   // `", ".join(sorted(names))` — a code-point sort, then a comma-space join.
   const domainContext = [...domainContextNames].sort(compareCodePoints).join(", ");
+  // Empty for a classified or undecided entity, so those prompts are unchanged.
+  const classificationLine = classificationPromptLine(classification, entityType);
 
   return `You are writing a compiled description for one entity in a knowledge graph.
 
 ENTITY: ${entityName}
 TYPE: ${entityType}
-
+${classificationLine}
 OTHER ENTITIES IN THIS DOMAIN (reference them naturally if relevant):
 ${domainContext}
 
@@ -63,6 +123,9 @@ export type SynthesisEntityRow = {
   readonly id: string;
   readonly name: string;
   readonly type: string;
+  readonly classification_state: string | null;
+  readonly proposed_type: string | null;
+  readonly canonical_type: string | null;
 };
 
 /** The entity being described, or `undefined` when the row is gone. */
@@ -71,9 +134,23 @@ async function readSynthesisEntity(
   entityId: string,
 ): Promise<SynthesisEntityRow | undefined> {
   const rows = await tx.execute<SynthesisEntityRow>(sql`
-    select name, type from ontology_entities where id = ${entityId}
+    select name, type, classification_state, proposed_type, canonical_type
+    from ontology_entities where id = ${entityId}
   `);
   return rows[0];
+}
+
+/**
+ * The entity's classification as the prompt needs it, or `null` when there is
+ * nothing to state: no decision recorded, or a confirmed catalog type.
+ *
+ * @param entity - The row being described.
+ * @returns The classification to state, or `null`.
+ */
+function classificationOf(entity: SynthesisEntityRow): SynthesisClassification | null {
+  const state = entity.classification_state;
+  if (state === null || state === "classified") return null;
+  return { state, canonicalType: entity.canonical_type, proposedType: entity.proposed_type };
 }
 
 /**
@@ -148,16 +225,29 @@ export async function synthesizeOne(
 
   const chunkText = chunks.join("\n\n---\n\n");
   const newDescription = await complete(
-    buildSynthesisPrompt(entity.name, entity.type, domainContextNames, chunkText),
+    buildSynthesisPrompt(
+      entity.name,
+      entity.type,
+      domainContextNames,
+      chunkText,
+      classificationOf(entity),
+    ),
     SYNTHESIS_MAX_TOKENS,
   );
   await writeDescription(tx, entityId, newDescription);
   return true;
 }
-/** Every entity name in the Stack, in the order the domain context uses. */
+/**
+ * Every entity name in the Stack, in the order the domain context uses.
+ *
+ * Ordered by `name, id` because the ORDER is now part of what the prompt is built
+ * from: an unstated order made the model's reference list depend on the plan, and
+ * `id` breaks the tie homonyms made possible.
+ */
 export async function fetchEntityNames(tx: Database, stackId: string): Promise<string[]> {
   const rows = await tx.execute<{ readonly name: string }>(sql`
     select name from ontology_entities where stack_id = ${stackId}
+    order by name, id
   `);
   return rows.map((row) => row.name);
 }

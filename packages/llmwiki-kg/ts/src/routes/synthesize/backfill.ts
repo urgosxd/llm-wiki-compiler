@@ -92,7 +92,13 @@ async function validateRequest(req: Request): Promise<ValidatedBackfill | Refuse
   return { ok: false, failure: { status: 422, body: { detail: [...pathDetails, ...bodyDetails] } } };
 }
 
-/** Candidate rows for the run, narrowed by the two optional filters. */
+/**
+ * Candidate rows for the run, narrowed by the two optional filters.
+ *
+ * Ordered by `name, id`: the run's order decides which descriptions are written
+ * first and which candidates a partial run leaves undone, so it is stated instead of
+ * inherited from the plan, and `id` breaks the tie homonyms made possible.
+ */
 async function selectCandidates(
   tx: Database,
   stackId: string,
@@ -112,6 +118,7 @@ async function selectCandidates(
     where stack_id = ${stackId}
     ${entityIdFilter}
     ${missingFilter}
+    order by name, id
   `);
 }
 
