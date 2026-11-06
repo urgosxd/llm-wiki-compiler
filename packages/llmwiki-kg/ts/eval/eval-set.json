@@ -1,0 +1,311 @@
+{
+  "version": "kg-open-classification-eval@1.0.0",
+  "description": "Small labeled set for the open-classification ingestion path. Each example carries a source passage, the claim under review, the fact a human expects in the graph, the candidate the extractor actually produced (or its absence), and the human labels for canonical type and source support. The `recorded` block is a snapshot of ONE illustrative decision run committed so the offline runner exercises the real adapter path without a network; it is not ground truth and it is not updated to match the labels.",
+  "examples": [
+    {
+      "id": "entity-role-es",
+      "language": "es",
+      "kind": "entity",
+      "source": "El Comité de Cambios revisa toda solicitud de cambio antes de aprobarla y responde en un plazo de dos días hábiles.",
+      "quote": "El Comité de Cambios revisa toda solicitud de cambio antes de aprobarla",
+      "claim": "the entity \"Comité de Cambios\" is of type \"ROLE\"",
+      "extracted": true,
+      "candidate": { "name": "Comité de Cambios", "proposedType": "ROLE" },
+      "labels": { "canonical": "Role", "support": "supported" },
+      "recorded": {
+        "classification": {
+          "choice": "Role",
+          "probabilities": { "Role": 0.88, "Process": 0.07 },
+          "confidence": 0.71,
+          "fits": 0.93
+        },
+        "support": {
+          "choice": "SUPPORTED",
+          "probabilities": { "SUPPORTED": 0.94, "UNSUPPORTED": 0.06 },
+          "confidence": 0.82
+        }
+      }
+    },
+    {
+      "id": "entity-system-en",
+      "language": "en",
+      "kind": "entity",
+      "source": "The Access Review Queue holds every pending access request until a reviewer approves or rejects it.",
+      "quote": "The Access Review Queue holds every pending access request",
+      "claim": "the entity \"Access Review Queue\" is of type \"SYSTEM\"",
+      "extracted": true,
+      "candidate": { "name": "Access Review Queue", "proposedType": "SYSTEM" },
+      "labels": { "canonical": "System", "support": "supported" },
+      "recorded": {
+        "classification": {
+          "choice": "System",
+          "probabilities": { "System": 0.85, "Document": 0.09 },
+          "confidence": 0.68,
+          "fits": 0.9
+        },
+        "support": {
+          "choice": "SUPPORTED",
+          "probabilities": { "SUPPORTED": 0.91, "UNSUPPORTED": 0.09 },
+          "confidence": 0.79
+        }
+      }
+    },
+    {
+      "id": "entity-free-backed-es",
+      "language": "es",
+      "kind": "entity",
+      "source": "Las cintas de respaldo se guardan en la sala de resguardo físico del edificio central, con control de temperatura.",
+      "quote": "Las cintas de respaldo se guardan en la sala de resguardo físico",
+      "claim": "the entity \"sala de resguardo físico\" is of type \"FACILITY\"",
+      "extracted": true,
+      "candidate": { "name": "sala de resguardo físico", "proposedType": "FACILITY" },
+      "labels": { "canonical": "NO_MATCH", "support": "supported" },
+      "recorded": {
+        "classification": {
+          "choice": "Document",
+          "probabilities": { "Document": 0.31, "System": 0.26 },
+          "confidence": 0.2,
+          "fits": 0.11
+        },
+        "support": {
+          "choice": "SUPPORTED",
+          "probabilities": { "SUPPORTED": 0.88, "UNSUPPORTED": 0.12 },
+          "confidence": 0.74
+        }
+      }
+    },
+    {
+      "id": "entity-ambiguous-en",
+      "language": "en",
+      "kind": "entity",
+      "source": "The Windows team owns patching, though nobody wrote down whether that means the group or its weekly patching cycle.",
+      "quote": "The Windows team owns patching, though nobody wrote down whether that means the group or its weekly patching cycle",
+      "claim": "the entity \"Windows team\" is of type \"ROLE\"",
+      "extracted": true,
+      "candidate": { "name": "Windows team", "proposedType": "ROLE" },
+      "labels": { "canonical": "UNCERTAIN", "support": "supported" },
+      "recorded": {
+        "classification": {
+          "choice": "Role",
+          "probabilities": { "Role": 0.44, "Process": 0.41 },
+          "confidence": 0.12,
+          "fits": 0.78
+        },
+        "support": {
+          "choice": "SUPPORTED",
+          "probabilities": { "SUPPORTED": 0.7, "UNSUPPORTED": 0.3 },
+          "confidence": 0.41
+        }
+      }
+    },
+    {
+      "id": "entity-wrong-type-es",
+      "language": "es",
+      "kind": "entity",
+      "source": "La auditoría trimestral de accesos revisa quién conserva permisos de administrador y deja constancia de cada hallazgo.",
+      "quote": "La auditoría trimestral de accesos revisa quién conserva permisos de administrador",
+      "claim": "the entity \"auditoría trimestral de accesos\" is of type \"PROCESS\"",
+      "extracted": true,
+      "candidate": { "name": "auditoría trimestral de accesos", "proposedType": "PROCESS" },
+      "labels": { "canonical": "Process", "support": "supported" },
+      "recorded": {
+        "classification": {
+          "choice": "Document",
+          "probabilities": { "Document": 0.71, "Process": 0.22 },
+          "confidence": 0.4,
+          "fits": 0.9
+        },
+        "support": {
+          "choice": "SUPPORTED",
+          "probabilities": { "SUPPORTED": 0.86, "UNSUPPORTED": 0.14 },
+          "confidence": 0.7
+        }
+      }
+    },
+    {
+      "id": "entity-stayed-free-es",
+      "language": "es",
+      "kind": "entity",
+      "source": "El procedimiento de guardia de dos niveles define quién responde fuera de horario y cómo se escala un incidente.",
+      "quote": "El procedimiento de guardia de dos niveles define quién responde fuera de horario",
+      "claim": "the entity \"procedimiento de guardia de dos niveles\" is of type \"PROCESS\"",
+      "extracted": true,
+      "candidate": { "name": "procedimiento de guardia de dos niveles", "proposedType": "PROCESS" },
+      "labels": { "canonical": "Process", "support": "supported" },
+      "recorded": {
+        "classification": {
+          "choice": "Process",
+          "probabilities": { "Process": 0.52, "Role": 0.21 },
+          "confidence": 0.3,
+          "fits": 0.5
+        },
+        "support": {
+          "choice": "SUPPORTED",
+          "probabilities": { "SUPPORTED": 0.83, "UNSUPPORTED": 0.17 },
+          "confidence": 0.66
+        }
+      }
+    },
+    {
+      "id": "entity-omitted-en",
+      "language": "en",
+      "kind": "entity",
+      "source": "A nightly integrity check re-reads every backup index and flags any mismatch to the storage team.",
+      "quote": "A nightly integrity check re-reads every backup index",
+      "claim": "the entity \"nightly integrity check\" is of type \"PROCESS\"",
+      "extracted": false,
+      "fact": { "name": "nightly integrity check" },
+      "labels": { "canonical": "Process", "support": "supported" }
+    },
+    {
+      "id": "entity-pending-es",
+      "language": "es",
+      "kind": "entity",
+      "source": "El libro de registro de accesos físicos se completa a mano en la portería de cada turno.",
+      "quote": "El libro de registro de accesos físicos se completa a mano en la portería",
+      "claim": "the entity \"libro de registro de accesos físicos\" is of type \"DOCUMENT\"",
+      "extracted": true,
+      "candidate": { "name": "libro de registro de accesos físicos", "proposedType": "DOCUMENT" },
+      "labels": { "canonical": "Document", "support": "supported" },
+      "recorded": {
+        "classification": { "failure": "provider_failed" },
+        "support": {
+          "choice": "SUPPORTED",
+          "probabilities": { "SUPPORTED": 0.9, "UNSUPPORTED": 0.1 },
+          "confidence": 0.76
+        }
+      }
+    },
+    {
+      "id": "relation-normalizes-es",
+      "language": "es",
+      "kind": "relation",
+      "source": "El Comité de Cambios lleva a cabo el proceso de gestión de cambios en cada ventana de despliegue.",
+      "quote": "El Comité de Cambios lleva a cabo el proceso de gestión de cambios",
+      "claim": "\"Comité de Cambios\" lleva a cabo \"gestión de cambios\"",
+      "extracted": true,
+      "candidate": {
+        "from": "Comité de Cambios",
+        "predicate": "lleva a cabo",
+        "to": "gestión de cambios",
+        "proposedType": "EXECUTES"
+      },
+      "labels": { "canonical": "executes", "support": "supported" },
+      "recorded": {
+        "classification": {
+          "choice": "executes",
+          "probabilities": { "executes": 0.83, "supports": 0.07 },
+          "confidence": 0.66,
+          "fits": 0.9
+        },
+        "support": {
+          "choice": "SUPPORTED",
+          "probabilities": { "SUPPORTED": 0.89, "UNSUPPORTED": 0.11 },
+          "confidence": 0.75
+        }
+      }
+    },
+    {
+      "id": "relation-free-predicate-es",
+      "language": "es",
+      "kind": "relation",
+      "source": "La resolución 2024-07 deja sin efecto la política de retención anterior.",
+      "quote": "La resolución 2024-07 deja sin efecto la política de retención anterior",
+      "claim": "\"resolución 2024-07\" deja sin efecto \"política de retención\"",
+      "extracted": true,
+      "candidate": {
+        "from": "resolución 2024-07",
+        "predicate": "deja sin efecto",
+        "to": "política de retención",
+        "proposedType": "INVALIDATES"
+      },
+      "labels": { "canonical": "NO_MATCH", "support": "supported" },
+      "recorded": {
+        "classification": {
+          "choice": "governs",
+          "probabilities": { "governs": 0.3, "executes": 0.2 },
+          "confidence": 0.18,
+          "fits": 0.12
+        },
+        "support": {
+          "choice": "SUPPORTED",
+          "probabilities": { "SUPPORTED": 0.92, "UNSUPPORTED": 0.08 },
+          "confidence": 0.8
+        }
+      }
+    },
+    {
+      "id": "relation-unsupported-quote-en",
+      "language": "en",
+      "kind": "relation",
+      "source": "The Service Desk escalates unresolved tickets to the on-call engineer. Runbooks live in the wiki and are reviewed every quarter.",
+      "quote": "The Service Desk escalates unresolved tickets to the on-call engineer",
+      "claim": "\"Service Desk\" reviews \"on-call runbook\"",
+      "extracted": true,
+      "candidate": {
+        "from": "Service Desk",
+        "predicate": "reviews",
+        "to": "on-call runbook",
+        "proposedType": "REVIEWS"
+      },
+      "labels": { "canonical": "reviews", "support": "unsupported" },
+      "recorded": {
+        "classification": {
+          "choice": "reviews",
+          "probabilities": { "reviews": 0.79, "supports": 0.1 },
+          "confidence": 0.6,
+          "fits": 0.88
+        },
+        "support": {
+          "choice": "SUPPORTED",
+          "probabilities": { "SUPPORTED": 0.62, "UNSUPPORTED": 0.38 },
+          "confidence": 0.24
+        }
+      }
+    },
+    {
+      "id": "relation-should-abstain-en",
+      "language": "en",
+      "kind": "relation",
+      "source": "The release notes mention that the vendor is aware of the latency regression.",
+      "quote": "the vendor is aware of the latency regression",
+      "claim": "\"vendor\" is aware of \"latency regression\"",
+      "extracted": true,
+      "candidate": {
+        "from": "vendor",
+        "predicate": "is aware of",
+        "to": "latency regression",
+        "proposedType": null
+      },
+      "labels": { "canonical": "NO_MATCH", "support": "supported" },
+      "recorded": {
+        "classification": {
+          "choice": "supports",
+          "probabilities": { "supports": 0.68, "governs": 0.14 },
+          "confidence": 0.44,
+          "fits": 0.82
+        },
+        "support": {
+          "choice": "SUPPORTED",
+          "probabilities": { "SUPPORTED": 0.77, "UNSUPPORTED": 0.23 },
+          "confidence": 0.54
+        }
+      }
+    },
+    {
+      "id": "relation-omitted-es",
+      "language": "es",
+      "kind": "relation",
+      "source": "La política de retención rige el proceso de purga de cintas de cada trimestre.",
+      "quote": "La política de retención rige el proceso de purga de cintas",
+      "claim": "\"política de retención\" rige \"proceso de purga de cintas\"",
+      "extracted": false,
+      "fact": {
+        "from": "política de retención",
+        "predicate": "rige",
+        "to": "proceso de purga de cintas"
+      },
+      "labels": { "canonical": "governs", "support": "supported" }
+    }
+  ]
+}
