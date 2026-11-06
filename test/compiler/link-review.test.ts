@@ -79,6 +79,21 @@ function verdict(shouldLink: boolean, mention: string): string {
   return JSON.stringify({ should_link: shouldLink, mention });
 }
 
+/**
+ * Assert the caching page differs from `before` in exactly the one anchored span.
+ *
+ * The substitution is the assertion: `before.replace(...)` equals `after` only when every
+ * other byte survived, so the plain mention became a link and nothing else moved.
+ *
+ * @param root - Project root the page lives under.
+ * @param before - The page bytes taken before the stage ran.
+ */
+async function expectOneAnchoredLink(root: string, before: string): Promise<void> {
+  expect(await readPage(root, "caching")).toBe(
+    before.replace("A Vector Database index", "A [[vector-db|Vector Database]] index"),
+  );
+}
+
 /** One page's bytes as they are on disk right now. */
 async function readPage(root: string, slug: string): Promise<string> {
   return await readFile(path.join(conceptsDir(root), `${slug}.md`), "utf-8");
@@ -218,6 +233,32 @@ describe("link review — aliases persisted by an earlier ingest still retrieve"
     );
   });
 
+  it("V9 offers the article to a page mentioning the spelling the title folds onto", async () => {
+    const root = await tempRoot("link-review-folded-alias");
+    await writeArticle(root, "vector-db", "Vector DB", ["Vector Database"]);
+    await writeEarlierPage(
+      root,
+      "caching",
+      "Caching",
+      "Caching stores values.\n\nA Vector Database index keeps it fast.",
+    );
+    const before = await readPage(root, "caching");
+    vi.mocked(callClaude).mockResolvedValue(verdict(true, "Vector Database"));
+
+    // `Vector Database` shares the title's CANONICAL key (`db` expands to `database`)
+    // while being a different LITERAL string, and the mention scan is literal. A
+    // dedupe on the canonical key therefore discards the one spelling the earlier page
+    // actually writes, and the page that names the concept most precisely is never
+    // offered for review at all.
+    const counts = await reviewEarlierPages(root, [
+      articleFor("vector-db", "Vector DB", ["Vector Database"]),
+    ]);
+
+    expect(counts.candidates).toBe(1);
+    expect(counts.reviewed).toBe(1);
+    await expectOneAnchoredLink(root, before);
+  });
+
   it("V8 PIN does not double-count a stored alias equal to the title", async () => {
     const root = await tempRoot("link-review-title-alias");
     await writeArticle(root, "vector-db", "Vector Database", ["Vector Database"]);
@@ -232,9 +273,7 @@ describe("link review — aliases persisted by an earlier ingest still retrieve"
     expect(vi.mocked(callClaude)).toHaveBeenCalledTimes(1);
     expect(counts.candidates).toBe(1);
     expect(counts.reviewed).toBe(1);
-    expect(await readPage(root, "caching")).toBe(
-      before.replace("A Vector Database index", "A [[vector-db|Vector Database]] index"),
-    );
+    await expectOneAnchoredLink(root, before);
   });
 });
 

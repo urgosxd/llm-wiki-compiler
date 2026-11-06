@@ -10,7 +10,7 @@ import { readdir } from "fs/promises";
 import path from "path";
 import { atomicWrite, parseFrontmatter } from "../utils/markdown.js";
 import { withDerivedSource } from "../dimensions/wiki/derived-artifact-source.js";
-import { readWikiPageInDirOrWarn } from "./confined-wiki-read.js";
+import { readWikiPageInDirOrWarn, readConfinedWikiPage } from "./confined-wiki-read.js";
 import { toPosixPath } from "../utils/path-confine.js";
 import { projectSummaries } from "../dimensions/wiki/page-scan-source.js";
 import { CONCEPTS_DIR, QUERIES_DIR, INDEX_FILE } from "../utils/constants.js";
@@ -62,10 +62,11 @@ export async function generateIndex(
   // reader to keep in sync, only the write to redirect.
   const stored = await withDerivedSource(process.env, async (source) => {
     if (source === undefined) return false;
+    if (isSameRender(await source.read("index"), indexContent)) return true;
     await source.save("index", indexContent);
     return true;
   });
-  if (!stored) {
+  if (!stored && !isSameRender(await readStoredIndex(root), indexContent)) {
     await atomicWrite(path.join(root, INDEX_FILE), indexContent, { confineRoot: root });
   }
 
@@ -83,6 +84,68 @@ export async function generateIndex(
  */
 async function collectTypedPages(_root: string): Promise<EntityPage[]> {
   return [];
+}
+
+/**
+ * The run stamp the index carries, which is the ONE part of a render that changes by
+ * itself.
+ *
+ * Matched by shape rather than by `\S+` so the closing emphasis of the footer line is
+ * not swallowed with the timestamp: a difference in the markup must still count as a
+ * difference.
+ */
+const RUN_STAMP = /Generated [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z/u;
+
+/** What both sides of the comparison carry instead of a run stamp. */
+const STAMP_PLACEHOLDER = "Generated <stamp>";
+
+/**
+ * Whether an already-rendered index says the same thing as this run's render.
+ *
+ * WHY THIS EXISTS AND WHAT IT PROTECTS. `index.md` used to be rewritten on every
+ * regeneration with a fresh `Generated <ISO>` footer, so a compile whose sources did not
+ * change still dirtied a tracked file -- a compile that did no work left a diff behind,
+ * and a no-op ingest could not be told apart from a real one by looking at the wiki. The
+ * timestamp is a build marker, not content: the page list, its order and its counts are
+ * the content. So the stamp is EXCLUDED from the comparison and two renders that agree on
+ * everything else are the same index, which then is not written at all. The stamp is
+ * deliberately NOT made stable in the artifact (a single frozen timestamp would claim a
+ * build date the wiki never had); it simply keeps the value from the last real change,
+ * which is the honest answer to "when did this listing last change".
+ *
+ * @param existing - Bytes already stored, or undefined when nothing was generated yet.
+ * @param next - This run's render.
+ * @returns True when writing `next` would change no byte that is not a run stamp.
+ */
+function isSameRender(existing: string | undefined, next: string): boolean {
+  if (existing === undefined) return false;
+  return withoutRunStamp(existing) === withoutRunStamp(next);
+}
+
+/**
+ * Replace the run stamp with a fixed marker so two renders can be compared on content.
+ *
+ * @param markdown - A rendered or stored index.
+ * @returns The same text with its own stamp neutralised.
+ */
+function withoutRunStamp(markdown: string): string {
+  return markdown.replace(RUN_STAMP, STAMP_PLACEHOLDER);
+}
+
+/**
+ * The index currently on disk, read through the confined no-follow reader.
+ *
+ * A drop -- absent file, escaping symlink, unreadable leaf -- yields `undefined`, which
+ * reads as "no current render" and therefore as a real change. That is the safe
+ * direction: the alternative would skip a write because the previous file could not be
+ * inspected.
+ *
+ * @param root - Project root the index lives under.
+ * @returns Its bytes, or undefined when there are none to compare against.
+ */
+async function readStoredIndex(root: string): Promise<string | undefined> {
+  const result = await readConfinedWikiPage(root, WIKI_ROOT, path.basename(INDEX_FILE, ".md"));
+  return "content" in result ? result.content : undefined;
 }
 
 /** A scanned page paired with its parsed frontmatter. */

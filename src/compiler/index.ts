@@ -1265,6 +1265,17 @@ function linkGateFor(
  * and every other link channel has already settled the mentions it owns, so this
  * stage only sees mentions nothing else claimed.
  *
+ * IT IS WIRED, and that is the point of the call site below. For the whole of T4's
+ * delivery this function had NO caller: the stage was developed, tested through its own
+ * exported symbol, and never entered by a compile, so no ingest ever curated a link and
+ * the compile-level test that watched for its report line was passing vacuously. An
+ * unwired stage cannot be distinguished from a stage that finds nothing to do, which is
+ * why the pipeline-level test asserts a link the stage ADDS rather than silence.
+ *
+ * A run with nothing to review stays a no-op: an empty article list returns before any
+ * read, so a compile of unchanged sources performs no review, no write and no model
+ * call.
+ *
  * @param root - Project root the reads and writes are confined under.
  * @param pages - Pages this run wrote, i.e. the articles an earlier page could reference.
  * @param flags - The run's seams and its mutable totals.
@@ -1333,6 +1344,18 @@ async function finalizeWiki(
     // already valid and never looks repairable.
     await repairAndApplyLinks(
       root, seams.content, seams.scan, seams.sink, seams.remover, seams.transaction);
+    // The reference review runs LAST, and the position is the contract rather than a
+    // convenience. Three properties depend on it:
+    //   1. It needs every article of the run to exist, so a page it edits links to a
+    //      real target and the gate inside it can validate that target.
+    //   2. It needs the gate to have run, so the link it adds is judged by the same
+    //      rules and per-page budget as every other link in this wiki.
+    //   3. It needs `link-repair` to have run, so a mention an abbreviation repair has
+    //      already canonicalised is a `[[link]]` by now and the stage's mention scan
+    //      skips it -- which is what stops the resolver and this stage from creating
+    //      the same link twice. Running it before the resolver would also expose the
+    //      edits to a body rewrite the resolver builds from its own earlier read.
+    await reviewEarlierPagesForRun(root, pages, flags);
   }
 
   // SINGLE durable state write of the whole compile: the buffered draft is

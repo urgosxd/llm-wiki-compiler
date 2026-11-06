@@ -43,7 +43,6 @@ import path from "path";
 import { parseFrontmatter } from "../utils/markdown.js";
 import { isLiteralMarkdown } from "./link-repair-code.js";
 import { readWikiPageFrom } from "./confined-wiki-read.js";
-import { canonicalConceptKey } from "../dimensions/wiki/concept-identity.js";
 import {
   CONCEPTS_DIR,
   MAX_LINK_REVIEW_CANDIDATES_PER_ARTICLE,
@@ -174,10 +173,12 @@ export async function loadEarlierPages(
  * ignores it: a page that has called the concept by an established synonym for ten
  * runs would never be considered for a reference to it.
  *
- * The union is deduped by canonical key, so a name spelled twice, or a generated alias
- * that is only a case variant of another, is offered once. The title is never repeated
- * as its own alias, because a self-alias would make the mention scan match one name
- * twice for no gain.
+ * The union is deduped by LITERAL SPELLING, so a name spelled twice -- or a generated
+ * alias that is only a case variant of another -- is offered once, while a spelling the
+ * title's canonical key happens to fold is still offered, because the mention scan
+ * matches literally and would otherwise never see it (see {@link extraNames}). The title
+ * is never repeated as its own alias, because a self-alias would make the mention scan
+ * match one name twice for no gain.
  *
  * A page whose stored frontmatter cannot be read contributes no declared aliases: the
  * run's own folded names still apply, and a missing page is not a failure here.
@@ -211,29 +212,61 @@ function aliasNames(raw: unknown): string[] {
 /**
  * Every extra name an article answers to, in first-seen order, title excluded.
  *
+ * DEDUPLICATED ON THE LITERAL SPELLING, NOT ON THE CANONICAL KEY. That distinction is
+ * the whole function. The canonical key folds case, expands a reviewed acronym list
+ * (`db` -> `database`, `rag`, `llm`, ...) and stems plurals, which is exactly the rule
+ * that decides that two spellings are the SAME CONCEPT -- so it is the wrong rule for
+ * deciding whether two spellings are the same NAME. The mention scan this list feeds
+ * matches LITERALLY (see {@link firstPlainMention}), so a key that folds two distinct
+ * spellings together discards the one an earlier page actually writes: an article
+ * titled `Vector DB` with the folded alias `Vector Database` had its alias dropped as a
+ * "duplicate" of the title, and a page naming it `Vector Database` -- the precise
+ * spelling -- was never offered for review at all.
+ *
+ * Two names that differ only in case or spacing ARE the same mention, because the scan
+ * is case-insensitive, so the dedupe key is the trimmed, whitespace-collapsed, lower-
+ * cased spelling. The title's own key is pre-seeded, so the title is still never
+ * repeated as its own alias, which is what keeps one page from being matched twice for
+ * the same words.
+ *
  * Names folded during this run come before the ones persisted earlier, so the most
  * recently resolved synonym is the one the mention scan tries first.
  *
  * @param title - The article's canonical title, which is matched separately.
  * @param folded - Names this run's identity stage folded into the article.
  * @param declared - Names the stored page declares in its frontmatter.
- * @returns Deduplicated names, none of which is the title itself.
+ * @returns Deduplicated names, none of which is a case or spacing variant of the title.
  */
 function extraNames(
   title: string,
   folded: readonly string[],
   declared: readonly string[],
 ): string[] {
-  const seen = new Set<string>([canonicalConceptKey(title)]);
+  const seen = new Set<string>([mentionKey(title)]);
   const names: string[] = [];
   for (const raw of [...folded, ...declared]) {
     const name = raw.trim();
-    const key = canonicalConceptKey(name);
-    if (name === "" || key === "" || seen.has(key)) continue;
+    const key = mentionKey(name);
+    if (key === "" || seen.has(key)) continue;
     seen.add(key);
     names.push(name);
   }
   return names;
+}
+
+/**
+ * The key two NAMES are deduplicated on: the spelling the mention scan would compare.
+ *
+ * Case and internal whitespace collapse because {@link firstPlainOccurrence} compiles its
+ * pattern case-insensitively and whitespace is literal, so `Vector  Database` and
+ * `vector database` can only ever match the same words. Nothing else is folded: any
+ * further normalisation would discard a spelling the page can really contain.
+ *
+ * @param name - A title or alias as an article reports it.
+ * @returns Its comparable spelling, or `""` when it carries no characters.
+ */
+function mentionKey(name: string): string {
+  return name.trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
 /** The names a page may use for an article, most canonical first. */
