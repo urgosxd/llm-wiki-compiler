@@ -15,7 +15,10 @@
  *
  * The adjacency, the edge reading and the ghost rule are imported from
  * `graph.ts` rather than re-implemented, so a race and a context pack can never
- * disagree about what an edge is or which node is an article.
+ * disagree about what an edge is or which node is an article. Endpoint NAME
+ * resolution lives in `resolve-target.ts` for the same reason: `links-here`
+ * accepts the same user-typed names, and two chains for one question is two
+ * answers for one input.
  *
  * Determinism: the walk is breadth-first, the frontier keeps discovery order,
  * and every node's successors are visited in ascending page-id order (plain
@@ -25,6 +28,7 @@
  */
 
 import { buildAdjacency, collectGhostIds } from "./graph.js";
+import { resolveTargetNodeId } from "./resolve-target.js";
 import type { GraphData, GraphNodeId } from "../viewer/types.js";
 
 /**
@@ -91,27 +95,18 @@ export function resolveRaceMaxDepth(raw?: number): number {
 /**
  * Resolve a caller's argument to a REAL page node id.
  *
- * Accepts the namespaced form (`concepts/foo`) and a bare slug (`foo`), exactly
- * like `links-here`. Ghost nodes are never returned: a dangling target has no
- * article to stand on, so it is not a destination and not a stop. On a bare-slug
- * tie the lowest id wins, so the answer never depends on discovery order.
+ * A thin, scope-bound alias of {@link resolveTargetNodeId}, kept because
+ * `resolveRaceEndpoint` is part of the published `@atomicstrata/llmwiki-core`
+ * surface. The chain — exact id, then `concepts/`, then any directory, with the
+ * lowest id winning a tie — is the shared one; only the eligible set is fixed
+ * here: a race runs between ARTICLES, so a dangling target is never an endpoint.
  *
  * @param graph - The wiki graph.
  * @param requested - Namespaced id or bare slug.
  * @returns The resolved real node id, or `null` when nothing matches.
  */
 export function resolveRaceEndpoint(graph: GraphData, requested: string): GraphNodeId | null {
-  const ghosts = collectGhostIds(graph.nodes);
-  const realIds = graph.nodes
-    .map((node) => node.id)
-    .filter((id) => !ghosts.has(id))
-    .sort(compareNodeIds);
-  const exact = realIds.find((id) => id === requested);
-  if (exact !== undefined) return exact;
-  const namespaced = `concepts/${requested}`;
-  const asConcept = realIds.find((id) => id === namespaced);
-  if (asConcept !== undefined) return asConcept;
-  return realIds.find((id) => id.endsWith(`/${requested}`)) ?? null;
+  return resolveTargetNodeId(graph, requested, "article");
 }
 
 /**

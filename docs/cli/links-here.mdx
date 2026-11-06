@@ -28,7 +28,9 @@ llmwiki links-here change-detection
 
 A bare slug is resolved against `concepts/` first — the default kind and the only
 directory a default project writes — then against any other namespace that
-matches.
+matches. If more than one namespace could match, the lowest page id wins, and
+case is significant: `Foo` is not `foo`. `llmwiki race` resolves names with the
+same rule, so a name means the same page in both commands.
 
 ## Reading the output
 
@@ -75,6 +77,25 @@ Nothing is broken: an inbound link appears once another page mentions this one.
 page, so a caller can tell "unknown concept" from "known but orphaned" without
 parsing prose. The exit code is `0` in both cases — this command inspects, it does
 not validate.
+
+## Dangling targets
+
+A name that only exists as a broken link target — `[[nowhere]]` with no
+`concepts/nowhere` page — still resolves here, and the inbound list names the
+pages that mention it:
+
+```text
+1 page(s) link to concepts/nowhere:
+
+  [[concepts/alpha]] Alpha
+
+Follow any of these page ids with `llmwiki links-here` to keep walking.
+```
+
+That is deliberate, and it is the one place this command differs from
+`llmwiki race`, which treats a ghost as no page at all: a race runs between
+articles, while "who mentions this broken name?" is how you find the page that
+needs fixing.
 
 ## How it relates to the other reading commands
 

@@ -15,10 +15,17 @@
  * compiled leaf concept legitimately has none yet. The exit code stays 0 and the
  * envelope reports an empty list, so a caller can distinguish "orphan" from
  * "command failed" without parsing prose.
+ *
+ * NAME RESOLUTION is shared, not local: the precedence chain for `foo` versus
+ * `concepts/foo` lives in `src/context/resolve-target.ts` and `race` uses the
+ * same one. This command asks for the `"include-dangling"` scope on purpose —
+ * a broken link target is exactly what a reader wants to find here, because the
+ * inbound list names the page that mentions it and therefore needs fixing.
  */
 
 import { buildViewerSnapshot } from "../viewer/snapshot.js";
 import { findInboundLinks, type InboundLink } from "../context/links-here.js";
+import { resolveTargetNodeId } from "../context/resolve-target.js";
 import type { GraphData, GraphNodeId } from "../viewer/types.js";
 
 /** Versioned JSON envelope, incremented independently of other commands. */
@@ -35,23 +42,6 @@ interface ReportedLink {
   pageId: GraphNodeId;
   title: string;
   mutual: boolean;
-}
-
-/**
- * Resolve the caller's argument to a graph node id.
- *
- * Accepts the namespaced form (`concepts/foo`) and a bare slug (`foo`), because
- * typing the directory prefix is bookkeeping a reader should not have to do.
- * A bare slug prefers `concepts/` — the default kind and the only directory a
- * default project writes — then falls back to any other namespace that matches.
- */
-function resolveTargetId(graph: GraphData, requested: string): GraphNodeId | null {
-  const ids = graph.nodes.map((node) => node.id);
-  if (ids.includes(requested as GraphNodeId)) return requested as GraphNodeId;
-  const conceptId = `concepts/${requested}` as GraphNodeId;
-  if (ids.includes(conceptId)) return conceptId;
-  const match = ids.find((id) => id.endsWith(`/${requested}`));
-  return match ?? null;
 }
 
 /** Attach the human title for each inbound page, falling back to the page id. */
@@ -105,7 +95,7 @@ export default async function linksHereCommand(
   const root = process.cwd();
   const snapshot = await buildViewerSnapshot(root);
   const graph = snapshot.graph;
-  const targetId = resolveTargetId(graph, slug);
+  const targetId = resolveTargetNodeId(graph, slug, "include-dangling");
   const links = targetId === null ? [] : withTitles(graph, findInboundLinks(graph, targetId));
 
   if (options.json) {

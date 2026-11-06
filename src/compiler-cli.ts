@@ -44,6 +44,8 @@ export { compileAndReport } from "./compiler/index.js";
 export { buildContextPack } from "./context/build.js";
 export { findRacePath, resolveRaceEndpoint, resolveRaceMaxDepth } from "./context/race-path.js";
 export type { RaceFailureReason, RacePathQuery, RacePathResult } from "./context/race-path.js";
+export { resolveTargetNodeId } from "./context/resolve-target.js";
+export type { TargetScope } from "./context/resolve-target.js";
 export { runEval, DEFAULT_SAMPLE_SIZE } from "./eval/index.js";
 export { loadPreviousReport, loadHistory } from "./eval/stats.js";
 export { runOkfExport } from "./export/okf/run.js";

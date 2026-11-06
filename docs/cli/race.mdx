@@ -25,9 +25,12 @@ llmwiki race change-detection knowledge-compilation
 ```
 
 A bare slug is resolved against `concepts/` first, then against any other
-namespace that matches. A dangling link target is **not** a page: a ghost node
-has no article to stand on, so it is rejected as a starting point, as a
-destination, and as an intermediate stop.
+namespace that matches. If more than one namespace could match, the lowest page
+id wins, and case is significant: `Foo` is not `foo`. This is the same
+resolution `llmwiki links-here` uses, so a name means the same page in both
+commands. A dangling link target is **not** a page: a ghost node has no article
+to stand on, so it is rejected as a starting point, as a destination, and as an
+intermediate stop.
 
 ## Reading the output
 
