@@ -48,7 +48,7 @@ import {
   orphanSupersededAliasPages,
   orphanUnownedFrozenPages,
 } from "./orphan.js";
-import { resolveAndApplyLinks } from "./resolver.js";
+import { linkGateOptions, resolveAndApplyLinks } from "./resolver.js";
 import type { LinkGateOptions } from "./resolver.js";
 import {
   addContextualLinkCounts,
@@ -1234,9 +1234,11 @@ interface FinalizeFlags {
  * The final link gate's options for one run: what to judge against, and where the
  * counts go.
  *
- * The page content source is the run's OWN seam, so the gate reads the same backend
- * the pages were written to; passing nothing would judge a row corpus against a
- * filesystem that holds none of it.
+ * DELEGATES, and does not build. `linkGateOptions` is the ONE construction of these
+ * options, shared with the other writers of wiki bodies (`review approve`), so a
+ * compile and an approval cannot judge the same link against different page sets.
+ * The only thing added here is this run's aggregate collector: the page content seam
+ * is the run's OWN seam, so the gate reads the same backend the pages were written to.
  *
  * @param seams - The run's page seams.
  * @param linkCounts - The run's mutable total, when the caller wants one.
@@ -1246,12 +1248,12 @@ function linkGateFor(
   seams: PageSeams,
   linkCounts: ContextualLinkCounts | undefined,
 ): LinkGateOptions {
-  return {
-    pageContent: seams.content,
-    ...(linkCounts === undefined
-      ? {}
-      : { sink: { record: (counts: ContextualLinkCounts) => addContextualLinkCounts(linkCounts, counts) } }),
-  };
+  return linkGateOptions(
+    seams.content,
+    linkCounts === undefined
+      ? undefined
+      : { record: (counts: ContextualLinkCounts) => addContextualLinkCounts(linkCounts, counts) },
+  );
 }
 
 /**
