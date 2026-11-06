@@ -9,6 +9,7 @@
  */
 
 import type { CompilePageWrite } from "./compile-write.js";
+import type { ContextualLinkCounts } from "./link-anchoring.js";
 import type {
   ExtractedConcept,
   ReviewedCandidateRef,
@@ -66,6 +67,17 @@ export interface PageGenerationResult {
    * (MCP, embeddings, programmatic callers) see seed-page changes too.
    */
   seedSlugs: string[];
+  /**
+   * What the ONE final link gate decided for this run: links kept, and how many
+   * each rule demoted.
+   *
+   * Optional because it is filled by the link phase, which runs after this result is
+   * built and after every page of the run exists — the only point where a link into
+   * a page this same run created can be judged. `compile-report` prints it as ONE
+   * aggregate line next to the per-page detail, so a run's link budget is visible
+   * without reading every page's warning.
+   */
+  linkCounts?: ContextualLinkCounts;
 }
 
 /** Outcome of generating a single merged concept page. */

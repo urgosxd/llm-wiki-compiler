@@ -9,14 +9,26 @@
  * made, and because links are what `links-here` and the wiki-race traversal walk,
  * an unanchored link is a navigational lie that the graph then repeats forever.
  *
- * WHAT THIS MODULE IS. A deterministic pass over the BODY the model returned,
- * deciding KEEP or DEMOTE for every `[[target|visible text]]` / `[[target]]` it
- * contains. It runs no model, reads no scores, and never invents text: a demoted
- * link becomes the plain words of its own visible text, so the sentence, the
- * mention and the reader's paragraph all survive and only the link markup is
- * gone. The ANCHOR is the visible text — the words the reader actually sees —
- * and it must name the target concept by canonical key, either the target page's
- * title or one of its declared aliases.
+ * WHAT THIS MODULE IS. A deterministic pass over the FINAL BODY one page is
+ * about to be written with, deciding KEEP or DEMOTE for every
+ * `[[target|visible text]]` / `[[target]]` it contains. It runs no model, reads no
+ * scores, and never invents text: a demoted link becomes the plain words of its
+ * own visible text, so the sentence, the mention and the reader's paragraph all
+ * survive and only the link markup is gone. The ANCHOR is the visible text — the
+ * words the reader actually sees — and it must name the target concept by
+ * canonical key, either the target page's title or one of its declared aliases.
+ *
+ * WHERE THE ONE GATE SITS, AND WHY THERE. Links reach a body through two channels:
+ * the model types them inline, and `resolveLinks` wraps plain-text mentions of
+ * page titles afterwards. The gate therefore runs in the LINK PHASE, once per
+ * page, after the run's pages exist and after both channels have written into the
+ * body it is handed — one decision table, one budget, one set of counters, and no
+ * channel that can bypass them. Running it any earlier (at generation time) had
+ * two defects: a page the SAME run is creating was not on disk yet, so every link
+ * into it was demoted as `unresolved-target`, and everything `resolveLinks` added
+ * afterwards was never judged at all. Because the pages are written first, the
+ * planned page set IS the page set here: a target scheduled for writing in this
+ * run resolves, and only a target that exists nowhere is reported missing.
  *
  * THE DECISION TABLE, first failing rule wins (and it is the reported reason):
  *   1. `unresolved-target` — the target is not a real page of this wiki, or its
@@ -41,13 +53,16 @@
  *     survives only by passing the table above.
  *
  * WHAT IT DOES NOT DO. It does not rewrite a kept link's target (that is
- * `link-repair`'s canonicalisation), it never touches frontmatter, and it leaves
- * literal Markdown (fenced blocks, code spans) alone: a `[[...]]` inside a code
- * example is not a link to the reader, so demoting it would corrupt the example.
- * One consequence worth stating: a link to a page created in the SAME run is not
- * on disk yet, so it is demoted as unresolved at generation time. Title-shaped
- * mentions recover afterwards through the rule-based interlink resolver, which
- * links plain-text mentions of real page titles once every page exists.
+ * `link-repair`'s canonicalisation, which runs after this gate and creates no
+ * link, so it cannot add one the table already refused), it never touches
+ * frontmatter, and it leaves literal Markdown (fenced blocks, code spans) alone:
+ * a `[[...]]` inside a code example is not a link to the reader, so demoting it
+ * would corrupt the example.
+ *
+ * ANCHORING OF RESOLVER-CREATED LINKS. `resolveLinks` only links a real mention of
+ * a real page title, so those links are anchored by construction and are kept by
+ * the anchor rule; they are still held to the self-reference, redundancy,
+ * unresolved-target and budget rules, which is the whole reason they pass here.
  */
 
 import path from "path";
@@ -143,6 +158,10 @@ export interface LinkAnchoringIndex {
   page: LinkAnchorPage;
   /** Every real page of this wiki, as graph nodes the shared resolver accepts. */
   graph: GraphData;
+  /** Canonical title key to the one page declaring it, when the caller knows it. */
+  titles?: ReadonlyMap<string, string>;
+  /** The wiki's own repair rule, when the caller supplies it. */
+  repair?: (writtenTarget: string) => string | null;
   /** The page cap this body is held to. */
   budget: number;
   /** Reads one target page's title and aliases, or null when it is unreadable. */
@@ -150,11 +169,128 @@ export interface LinkAnchoringIndex {
 }
 
 /**
- * Build the index one generated body is validated against.
+ * This wiki's page set, listed ONCE for every body one link phase gates.
  *
- * The page being written is added even when it has no file yet: it is a real
- * page of this wiki by the end of the run, and a link back to it must be refused
- * as a self-reference rather than reported as a missing target.
+ * Listing it once is not an optimisation detail: a run gates every page it
+ * writes, and one listing per page would re-read the whole page set per page --
+ * and, worse, could answer differently for two pages of the same run. The
+ * identity cache behind it is shared for the same reason, so a target's title is
+ * read once and every body that links to it is judged against that one answer.
+ */
+export interface LinkPageSet {
+  /** Every page id of this wiki, e.g. `concepts/networks`. */
+  readonly ids: readonly string[];
+  /** The set as a graph the ONE shared target resolver accepts. */
+  readonly graph: GraphData;
+  /** Reads one target's title and aliases, cached for the whole run. */
+  readonly identity: (id: string) => Promise<LinkTargetIdentity | null>;
+  /**
+   * Canonical title key to the ONE page id that declares it.
+   *
+   * A link may name a page by its TITLE (`[[Beta Concept]]` against a page slugged
+   * `beta`), which is exactly the form `link-repair` canonicalises afterwards. Such a
+   * link names a real page, so the gate resolves it instead of reporting a missing
+   * target; a title two pages both declare is left OUT, because a wrong target is
+   * worse than a visibly unresolved one.
+   */
+  readonly titles?: ReadonlyMap<string, string>;
+  /**
+   * The wiki's OWN repair rule, for a written target too short or too inflected to
+   * match a page exactly.
+   *
+   * Supplied by the link phase, which owns that chain (`createRepairResolver`); the
+   * gate calls it and never re-implements it. Without it the gate would demote the
+   * very links `link-repair` exists to canonicalise — `[[Argo CD]]` against a page
+   * slugged `argo-cd-ownership` — and by the time repair ran the link would already
+   * be plain text.
+   */
+  readonly repair?: (writtenTarget: string) => string | null;
+}
+
+/**
+ * The unambiguous title lookups of a page set: canonical key to page id.
+ *
+ * @param entries - Every page the caller considers linkable.
+ * @returns Keys declared by exactly one page, mapped to that page's id.
+ */
+export function uniqueTitleMap(
+  entries: readonly KnownPageIdentity[],
+): ReadonlyMap<string, string> {
+  const titles = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  for (const entry of entries) {
+    const key = canonicalConceptKey(entry.title);
+    if (key === "" || ambiguous.has(key)) continue;
+    const seen = titles.get(key);
+    if (seen !== undefined && seen !== entry.id) {
+      titles.delete(key);
+      ambiguous.add(key);
+      continue;
+    }
+    titles.set(key, entry.id);
+  }
+  return titles;
+}
+
+/**
+ * List this wiki's page set once, with a shared identity cache.
+ *
+ * @param root - Project root the wiki reads are confined under.
+ * @param source - Row-backed page reader, or undefined to read `wiki/`.
+ * @returns The page set and the cached identity reader built over it.
+ */
+export async function listLinkPageSet(
+  root: string,
+  source?: PageContentSource,
+): Promise<LinkPageSet> {
+  const ids = [
+    ...await listPageIds(root, CONCEPTS_DIR, source),
+    ...await listPageIds(root, QUERIES_DIR, source),
+  ];
+  const known = new Map<string, LinkTargetIdentity | null>();
+  return {
+    ids,
+    graph: idGraph(ids),
+    identity: async (id) => {
+      if (!known.has(id)) known.set(id, await readTargetIdentity(root, id, source));
+      return known.get(id) ?? null;
+    },
+  };
+}
+
+/**
+ * Build the index ONE page's body is judged against, from a listed page set.
+ *
+ * The page being written is added even when it has no file yet: it is a real page
+ * of this wiki by the end of the run, and a link back to it must be refused as a
+ * self-reference rather than reported as a missing target. Its own identity is
+ * answered from the caller's declaration and is deliberately NOT written into the
+ * shared cache -- a self-reference is refused before identity is consulted, and
+ * caching it would make every other body linking to this page be judged against
+ * the caller's title instead of the wiki's.
+ *
+ * @param pages - This wiki's page set, listed once for the whole run.
+ * @param page - The page whose body is being validated.
+ * @returns The index this body's links are judged against.
+ */
+export function linkIndexFor(pages: LinkPageSet, page: LinkAnchorPage): LinkAnchoringIndex {
+  const graph = pages.graph.nodes.some((node) => node.id === page.id)
+    ? pages.graph
+    : idGraph([...pages.ids, page.id]);
+  return {
+    page,
+    graph,
+    ...(pages.titles === undefined ? {} : { titles: pages.titles }),
+    ...(pages.repair === undefined ? {} : { repair: pages.repair }),
+    budget: MAX_CONTEXTUAL_LINKS_PER_PAGE,
+    identity: async (id) => (id === page.id
+      ? { title: page.title, aliases: page.aliases ?? [] }
+      : pages.identity(id)),
+  };
+}
+
+/**
+ * Build the index one body is validated against, from the wiki as it is now.
  *
  * @param root - Project root the wiki reads are confined under.
  * @param page - The page whose body is being validated.
@@ -166,19 +302,33 @@ export async function buildPageLinkIndex(
   page: LinkAnchorPage,
   source?: PageContentSource,
 ): Promise<LinkAnchoringIndex> {
-  const ids = [...await listPageIds(root, CONCEPTS_DIR, source), ...await listPageIds(root, QUERIES_DIR, source)];
-  if (!ids.includes(page.id)) ids.push(page.id);
-  const known = new Map<string, LinkTargetIdentity | null>([
-    [page.id, { title: page.title, aliases: page.aliases ?? [] }],
-  ]);
+  return linkIndexFor(await listLinkPageSet(root, source), page);
+}
+
+/** A page identity the caller already holds, so the gate reads nothing. */
+export interface KnownPageIdentity extends LinkTargetIdentity {
+  /** Namespaced page id, e.g. `concepts/networks`. */
+  id: string;
+}
+
+/**
+ * Build a page set from identities the caller already read.
+ *
+ * Used when the link phase has enumerated the pages itself: judging against that
+ * enumeration costs no read and, more importantly, cannot disagree with the text the
+ * links were resolved against. It is never a disk read, so a row-backed run does not
+ * judge its links against a filesystem that holds nothing.
+ *
+ * @param entries - Every page the caller considers linkable.
+ * @returns A page set answering from those entries only.
+ */
+export function knownLinkPageSet(entries: readonly KnownPageIdentity[]): LinkPageSet {
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
   return {
-    page,
-    graph: idGraph(ids),
-    budget: MAX_CONTEXTUAL_LINKS_PER_PAGE,
-    identity: async (id) => {
-      if (!known.has(id)) known.set(id, await readTargetIdentity(root, id, source));
-      return known.get(id) ?? null;
-    },
+    ids: entries.map((entry) => entry.id),
+    graph: idGraph(entries.map((entry) => entry.id)),
+    identity: async (id) => byId.get(id) ?? null,
+    titles: uniqueTitleMap(entries),
   };
 }
 
@@ -363,12 +513,12 @@ function sectionOf(sections: readonly number[], offset: number): number {
  */
 async function decideLink(rawInner: string, offset: number, state: ValidationState): Promise<LinkDecision> {
   const { target, mention } = splitLink(rawInner);
-  const targetId = resolveLinkTarget(state.index.graph, target);
+  const targetId = resolveLinkTarget(state.index, target);
   if (targetId === null) return demote("unresolved-target", mention);
   if (targetId === state.index.page.id) return demote("self-reference", mention);
   const identity = await state.index.identity(targetId);
   if (identity === null) return demote("unresolved-target", mention);
-  if (!namesTarget(mention, identity)) return demote("unanchored", mention);
+  if (!isAnchored(state.index, target, mention, identity)) return demote("unanchored", mention);
   const section = sectionOf(state.sections, offset);
   const linked = state.linked.get(section) ?? new Set<string>();
   if (linked.has(targetId)) return demote("redundant", mention);
@@ -376,6 +526,33 @@ async function decideLink(rawInner: string, offset: number, state: ValidationSta
   linked.add(targetId);
   state.linked.set(section, linked);
   return { keep: true };
+}
+
+/**
+ * Whether this link's visible text anchors the target it resolved to.
+ *
+ * Two ways, and the second exists because the wiki resolves links two ways. The
+ * mention may NAME the target (its title or a declared alias) — the normal case. Or
+ * the link was resolved by the wiki's own repair rule, which reads the written
+ * target as an abbreviation of exactly one page: there the visible text IS the
+ * written target, and `link-repair` keeps those words as the label of the page it
+ * canonicalises, so a label that no longer matched would be a defect repair created.
+ * A label that differs from both is still unanchored and still demoted.
+ *
+ * @param index - The page set being judged.
+ * @param target - The target exactly as written.
+ * @param mention - The words the reader sees.
+ * @param identity - The resolved page's title and declared aliases.
+ * @returns True when the mention anchors the link.
+ */
+function isAnchored(
+  index: LinkAnchoringIndex,
+  target: string,
+  mention: string,
+  identity: LinkTargetIdentity,
+): boolean {
+  if (namesTarget(mention, identity)) return true;
+  return index.repair !== undefined && mention === target;
 }
 
 /** A refused link: the mention is what stays on the page. */
@@ -404,25 +581,35 @@ function splitLink(rawInner: string): { target: string; mention: string } {
 }
 
 /**
- * Resolve a written target through the ONE shared resolver.
+ * Resolve a written target through the ONE shared resolver, then by title, then by
+ * the wiki's repair rule.
  *
  * A model writing from the prompt sees page TITLES, so a bare title is offered
  * as the slug it would have as well as verbatim; a namespaced target
- * (`concepts/foo`) is offered as written. Nothing else is tried: inventing a
- * prefix or case-folding search here would be the second resolution chain this
- * pass exists to avoid.
+ * (`concepts/foo`) is offered as written. A title that no slug matches is resolved
+ * through {@link LinkPageSet.titles}, and an abbreviation through
+ * {@link LinkPageSet.repair}; both are identities this wiki already uses elsewhere,
+ * so recognising them here is not a second chain — refusing them would destroy links
+ * generation meant to make and repair meant to fix. Nothing else is tried: inventing
+ * a prefix or case-folding search here would be the second chain this pass exists to
+ * avoid.
  *
- * @param graph - Every real page of this wiki.
+ * @param index - The page set and budget this body is judged against.
  * @param target - The target text as written in the link.
  * @returns The resolved page id, or null when no real page answers to it.
  */
-function resolveLinkTarget(graph: GraphData, target: string): string | null {
+function resolveLinkTarget(index: LinkAnchoringIndex, target: string): string | null {
   const candidates = target.includes(ID_SEPARATOR) ? [target] : [slugify(target), target];
   for (const candidate of candidates) {
-    const resolved = resolveTargetNodeId(graph, candidate, "article");
+    const resolved = resolveTargetNodeId(index.graph, candidate, "article");
     if (resolved !== null) return resolved;
   }
-  return null;
+  const byTitle = index.titles?.get(canonicalConceptKey(target));
+  if (byTitle !== undefined) {
+    const resolved = resolveTargetNodeId(index.graph, byTitle, "article");
+    if (resolved !== null) return resolved;
+  }
+  return index.repair?.(target) ?? null;
 }
 
 /**
@@ -459,25 +646,61 @@ function applyRewrites(body: string, rewrites: readonly Rewrite[]): string {
   return result;
 }
 
+/** Counts with nothing demoted yet, the shape a run's total starts from. */
+export function emptyContextualLinkCounts(): ContextualLinkCounts {
+  return { kept: 0, demoted: emptyDemotions() };
+}
+
+/**
+ * Fold one page's counts into a run's total.
+ *
+ * ONE definition of what a run total is: the same reasons, in the same order, so
+ * the run line can never disagree with the per-page lines it summarizes.
+ *
+ * @param total - The run's running total, mutated in place.
+ * @param counts - One page's counts, as {@link validateContextualLinks} returned them.
+ */
+export function addContextualLinkCounts(total: ContextualLinkCounts, counts: ContextualLinkCounts): void {
+  total.kept += counts.kept;
+  for (const reason of DEMOTION_REASONS) total.demoted[reason] += counts.demoted[reason];
+}
+
+/**
+ * One line describing what a page or a run kept and refused, or null when no rule
+ * refused anything.
+ *
+ * Shared by the per-page report and the run aggregate so both read the same way:
+ * the reasons are listed in the order the table tests them, and a reason that
+ * refused nothing is left out rather than printed as a zero.
+ *
+ * @param counts - Counts for one page, or a run total.
+ * @returns The summary text, or null when nothing was demoted.
+ */
+export function describeLinkCounts(counts: ContextualLinkCounts): string | null {
+  const refused = DEMOTION_REASONS.filter((reason) => counts.demoted[reason] > 0);
+  if (refused.length === 0) return null;
+  const total = refused.reduce((sum, reason) => sum + counts.demoted[reason], 0);
+  const breakdown = refused.map((reason) => `${counts.demoted[reason]} ${reason}`).join(", ");
+  return `${counts.kept} kept, ${total} demoted (${breakdown})`;
+}
+
 /**
  * Print what this page's link validation decided: kept links, and how many each
  * rule refused.
  *
- * Emitted only when something was demoted. Silence means "every link the model
- * wrote was anchored", which is the normal case; a truncation or a refusal is a
- * limit the reader has to be able to see (no silent limits), and the per-reason
- * breakdown is what makes it actionable.
+ * Emitted only when something was demoted. Silence means "every link this page
+ * carries is anchored, unique and in budget", which is the normal case; a
+ * truncation or a refusal is a limit the reader has to be able to see (no silent
+ * limits), and the per-reason breakdown is what makes it actionable.
  *
  * @param pageTitle - The concept this body was written for.
  * @param counts - The counts returned by {@link validateContextualLinks}.
  */
 export function reportContextualLinkCounts(pageTitle: string, counts: ContextualLinkCounts): void {
-  const refused = DEMOTION_REASONS.filter((reason) => counts.demoted[reason] > 0);
-  if (refused.length === 0) return;
-  const total = refused.reduce((sum, reason) => sum + counts.demoted[reason], 0);
-  const breakdown = refused.map((reason) => `${counts.demoted[reason]} ${reason}`).join(", ");
+  const summary = describeLinkCounts(counts);
+  if (summary === null) return;
   output.status(
     "!",
-    output.warn(`Contextual links in "${pageTitle}": ${counts.kept} kept, ${total} demoted (${breakdown}).`),
+    output.warn(`Contextual links in "${pageTitle}": ${summary}.`),
   );
 }

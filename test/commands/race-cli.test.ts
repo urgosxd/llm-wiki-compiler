@@ -8,56 +8,27 @@
  * that stops at its depth bound must SAY that the bound stopped it, otherwise a
  * reader concludes the destination is unreachable when it is only far away.
  *
- * Every case builds its own throwaway wiki under `os.tmpdir()` and cleans it up,
- * so nothing here depends on the repository's own `wiki/`.
+ * Every case runs against its own throwaway wiki from `test/fixtures/temp-root.ts`,
+ * so nothing here depends on the repository's own `wiki/`, and captures command
+ * output through `test/fixtures/process-io.ts`.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { describe, expect, it, vi } from "vitest";
 import path from "node:path";
 import raceCommand from "../../src/commands/race.js";
 import linksHereCommand from "../../src/commands/links-here.js";
+import { useTempRoot } from "../fixtures/temp-root.js";
+import { captureProcessIo } from "../fixtures/process-io.js";
 import { writePage } from "../fixtures/write-page.js";
 
-/** Root of the throwaway wiki for the current case. */
-let root = "";
-/** Directory the process started in, restored after every case. */
-let origin = "";
-
-beforeEach(async () => {
-  root = await realpath(await mkdtemp(path.join(tmpdir(), "race-cli-")));
-  await mkdir(path.join(root, "wiki/concepts"), { recursive: true });
-  await mkdir(path.join(root, "wiki/queries"), { recursive: true });
-  origin = process.cwd();
-  process.chdir(root);
-});
-
-afterEach(async () => {
-  process.chdir(origin);
-  await rm(root, { recursive: true, force: true });
-  vi.restoreAllMocks();
-});
+/** Throwaway wiki for the current case: chdir'd into and removed afterwards. */
+const ctx = useTempRoot();
 
 /** Write one concept page into the throwaway wiki. */
 async function page(slug: string, title: string, body: string): Promise<void> {
-  await writePage(path.join(root, "wiki/concepts"), slug, { title }, body);
+  await writePage(path.join(ctx.dir, "wiki/concepts"), slug, { title }, body);
 }
 
-/** Capture everything the command writes to stdout and stderr. */
-function captureIo(): { out: () => string; err: () => string } {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-    stdout.push(String(chunk));
-    return true;
-  });
-  vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
-    stderr.push(String(chunk));
-    return true;
-  });
-  return { out: () => stdout.join(""), err: () => stderr.join("") };
-}
 
 /** alpha -> beta -> gamma: two hops, so a bound of one cannot reach gamma. */
 async function writeChain(): Promise<void> {
@@ -69,7 +40,7 @@ async function writeChain(): Promise<void> {
 describe("race — human output", () => {
   it("prints the ordered route and the hop count", async () => {
     await writeChain();
-    const io = captureIo();
+    const io = captureProcessIo();
     const code = await raceCommand("alpha", "gamma", { maxDepth: 2 });
     expect(code).toBe(0);
     expect(io.out()).toBe(
@@ -81,7 +52,7 @@ describe("race — human output", () => {
 
   it("prints the trivial zero-length route for a page against itself", async () => {
     await page("alpha", "Alpha", "Self.");
-    const io = captureIo();
+    const io = captureProcessIo();
     const code = await raceCommand("alpha", "alpha", {});
     expect(code).toBe(0);
     expect(io.out()).toContain("0 hop(s) from concepts/alpha to concepts/alpha");
@@ -93,11 +64,11 @@ describe("race — human output", () => {
     await page("beta", "Beta", "Links to [[delta]].");
     await page("gamma", "Gamma", "Links to [[delta]].");
     await page("delta", "Delta", "Target.");
-    const first = captureIo();
+    const first = captureProcessIo();
     await raceCommand("alpha", "delta", {});
     const firstOut = first.out();
     vi.restoreAllMocks();
-    const second = captureIo();
+    const second = captureProcessIo();
     await raceCommand("alpha", "delta", {});
     expect(second.out()).toBe(firstOut);
     expect(firstOut).toContain("  → concepts/beta\n  → concepts/delta\n");
@@ -107,7 +78,7 @@ describe("race — human output", () => {
 describe("race — unreachable target", () => {
   it("fails with the depth bound named as the reason, and shows no route", async () => {
     await writeChain();
-    const io = captureIo();
+    const io = captureProcessIo();
     const code = await raceCommand("alpha", "gamma", { maxDepth: 1 });
     expect(code).toBe(1);
     expect(io.err()).toContain("--max-depth 1");
@@ -118,10 +89,10 @@ describe("race — unreachable target", () => {
 
   it("succeeds for the same pair once --max-depth is raised", async () => {
     await writeChain();
-    const low = captureIo();
+    const low = captureProcessIo();
     expect(await raceCommand("alpha", "gamma", { maxDepth: 1 })).toBe(1);
     vi.restoreAllMocks();
-    const high = captureIo();
+    const high = captureProcessIo();
     expect(await raceCommand("alpha", "gamma", { maxDepth: 2 })).toBe(0);
     expect(high.err()).toBe("");
     expect(high.out()).toContain("concepts/gamma");
@@ -130,7 +101,7 @@ describe("race — unreachable target", () => {
 
   it("rejects a dangling link target as a destination", async () => {
     await page("alpha", "Alpha", "See [[nowhere]] for more.");
-    const io = captureIo();
+    const io = captureProcessIo();
     const code = await raceCommand("alpha", "nowhere", {});
     expect(code).toBe(2);
     expect(io.out()).toBe("");
@@ -142,7 +113,7 @@ describe("race — arguments and envelope", () => {
   it("rejects an invalid --max-depth instead of guessing", async () => {
     await page("alpha", "Alpha", "See [[beta]].");
     await page("beta", "Beta", "Target.");
-    const io = captureIo();
+    const io = captureProcessIo();
     const code = await raceCommand("alpha", "beta", { maxDepth: -3 });
     expect(code).toBe(2);
     expect(io.err()).toContain("--max-depth");
@@ -150,7 +121,7 @@ describe("race — arguments and envelope", () => {
 
   it("emits the versioned envelope for a found route", async () => {
     await writeChain();
-    const io = captureIo();
+    const io = captureProcessIo();
     await raceCommand("alpha", "gamma", { maxDepth: 2, json: true });
     expect(JSON.parse(io.out())).toEqual({
       version: 1,
@@ -170,7 +141,7 @@ describe("race — arguments and envelope", () => {
 
   it("emits the envelope for the bound-limited failure", async () => {
     await writeChain();
-    const io = captureIo();
+    const io = captureProcessIo();
     await raceCommand("alpha", "gamma", { maxDepth: 1, json: true });
     expect(JSON.parse(io.out())).toMatchObject({
       found: false,
@@ -186,7 +157,7 @@ describe("links-here — unchanged by the race navigation", () => {
   it("still reports the same inbound envelope", async () => {
     await page("alpha", "Alpha", "See [[beta]] for more.");
     await page("beta", "Beta", "Target.");
-    const io = captureIo();
+    const io = captureProcessIo();
     const code = await linksHereCommand("beta", { json: true });
     expect(code).toBe(0);
     expect(JSON.parse(io.out())).toEqual({

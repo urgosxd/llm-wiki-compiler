@@ -1,13 +1,13 @@
 /**
  * @file test/compiler/page-renderer-contextual-links.test.ts
- * @description The page writer validates the contextual links the model wrote,
- * and the only way relatedness becomes a link is a REAL mention of a real page
- * (S8, S12).
+ * @description The page writer produces the body a reader gets, and leaves every
+ * link decision to the ONE final gate in the link phase (S8, S12).
  *
  * Driven through `renderMergedPageContent`, the single renderer both the live
- * write path and the review path use, so what these cases assert is exactly what
- * a reader of the written page would see. The LLM call is stubbed: link
- * anchoring is a post-generation validation, never a property of the model.
+ * write path and the review path use. These cases pin what generation owns — the
+ * body plus its frontmatter — and prove it does not quietly judge links: that
+ * happens once, in `test/compiler/link-gate.test.ts`, after both link channels and
+ * once every page of the run exists.
  */
 
 import { vi, describe, it, expect, afterEach } from "vitest";
@@ -86,25 +86,27 @@ describe("page rendering with no contextual links", () => {
   });
 });
 
-describe("page rendering with demoted contextual links", () => {
-  it("reports kept and demoted links by reason", async () => {
-    const root = await tempRoot("renderer-report");
+describe("page rendering leaves link decisions to the one final gate", () => {
+  it("returns the generated links as written, judged later by the link phase", async () => {
+    const root = await tempRoot("renderer-gate-later");
     await writeConceptPage(root, "graph-theory", { title: "Graph Theory" });
     const io = captureProcessIo();
     const body = [
       "## Uses",
       "",
-      "Uses [[graph-theory|Graph Theory]] and [[missing|Missing Thing]] and [[graph-theory|other words]].",
+      "Uses [[graph-theory|Graph Theory]] and [[missing|Missing Thing]].",
     ].join("\n");
 
-    await render(root, entryFor("networks", "Networks"), body);
+    const page = await render(root, entryFor("networks", "Networks"), body);
 
-    expect(io.out()).toContain(
-      'Contextual links in "Networks": 1 kept, 2 demoted (1 unresolved-target, 1 unanchored).',
-    );
+    // Generation is not the gate: demoting here would judge half of the body's
+    // links (the resolver adds the other half later) and would judge a link into a
+    // page this same run is creating as missing.
+    expect(parseFrontmatter(page).body).toBe(`\n${body}\n`);
+    expect(io.out()).not.toContain("Contextual links");
   });
 
-  it("leaves frontmatter untouched when the generated body loses a link", async () => {
+  it("leaves frontmatter untouched when the generated body carries a link", async () => {
     const root = await tempRoot("renderer-frontmatter");
     await writeConceptPage(root, "networks", {
       title: "Networks",
@@ -118,11 +120,10 @@ describe("page rendering with demoted contextual links", () => {
 
     const page = await render(root, entryFor("networks", "Networks"), "Uses [[ghost-page|Ghost Page]] here.");
 
-    const { meta, body } = parseFrontmatter(page);
+    const { meta } = parseFrontmatter(page);
     expect(meta.title).toBe("Networks");
     expect(meta.sources).toEqual(["notes.md"]);
     expect(meta.createdAt).toBe("2026-01-01T00:00:00.000Z");
     expect(meta.aliases).toEqual(["Network Science"]);
-    expect(body).toBe("\nUses Ghost Page here.\n");
   });
 });

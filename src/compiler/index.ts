@@ -49,6 +49,12 @@ import {
   orphanUnownedFrozenPages,
 } from "./orphan.js";
 import { resolveAndApplyLinks } from "./resolver.js";
+import type { LinkGateOptions } from "./resolver.js";
+import {
+  addContextualLinkCounts,
+  emptyContextualLinkCounts,
+} from "./link-anchoring.js";
+import type { ContextualLinkCounts } from "./link-anchoring.js";
 import { repairAndApplyLinks } from "./link-repair.js";
 import { qualifiedPageId } from "../utils/page-id.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
@@ -549,6 +555,7 @@ async function seedThenFinalize(
   embeddingPageSource?: EmbeddingPageSource,
   seams: PageSeams = {},
   stateRows?: WikiStateRowsBackend,
+  linkCounts?: ContextualLinkCounts,
 ): Promise<void> {
   await maybeSeedPages(root, schema, generation, options, seams);
   await finalizeWiki(root, draft, generation.writtenPages, generation.seedSlugs, {
@@ -559,6 +566,7 @@ async function seedThenFinalize(
     embeddingPageSource,
     seams,
     stateRows,
+    linkCounts,
     jobObserver: options.jobObserver,
   });
 }
@@ -781,6 +789,9 @@ async function finalizeNothingToCompile(
     embeddingPageReading(db, env),
     seams,
     stateRows,
+    // Seed pages are regenerated on this path too, so their links are gated and
+    // reported per page; the run total has no compile result to ride on here.
+    emptyContextualLinkCounts(),
   ));
   return {
     ...emptyCompileResult(),
@@ -892,6 +903,10 @@ async function runCompilePipeline(
       root, draft, seams, canonicalExtractions, generation, identity,
       frozenSlugs, reconciliationSlugs,
     });
+    // The run's link totals are collected in place by the link gate, which runs in
+    // the resolution seam below — after every page of the run exists, which is the
+    // only point where a link into a page this run created can be judged fairly.
+    const linkCounts = emptyContextualLinkCounts();
     // Seed + resolution route through the SAME executor batches as the
     // no-source-changes branch (see seedThenFinalize). The draft flush is the
     // single durable state write, done inside finalizeWiki after resolution
@@ -902,8 +917,12 @@ async function runCompilePipeline(
       embeddingPageReading(db, env),
       seams,
       stateRows,
+      linkCounts,
     ), () => reportCompileStage(compileReporter, "compile.finalize"));
-    await logCompile(root, buckets, generation, existingIds, env);
+    const reportGeneration: PageGenerationResult = { ...generation, linkCounts };
+    await logCompile(root, buckets, reportGeneration, existingIds, env);
+    verbose(`compile finished in ${Date.now() - startMs} ms`);
+    return summarizeCompile(buckets, reportGeneration, canonicalExtractions, options, forgetErrors);
   }
   verbose(`compile finished in ${Date.now() - startMs} ms`);
   return summarizeCompile(buckets, generation, canonicalExtractions, options, forgetErrors);
@@ -1149,6 +1168,15 @@ interface FinalizeFlags {
    */
   stateRows?: WikiStateRowsBackend;
   /**
+   * Collector for the link gate's counts across this run.
+   *
+   * Mutable and filled in place by the resolution seam, because the run total is
+   * only known once every page has been judged — which happens below the level that
+   * builds the compile result. The pipeline hands the same object to the result
+   * afterwards, so it reports what the gate actually decided.
+   */
+  linkCounts?: ContextualLinkCounts;
+  /**
    * Job observer for the stages finalize itself runs.
    *
    * Finalize is where the embeddings refresh happens, and that refresh is a
@@ -1160,12 +1188,41 @@ interface FinalizeFlags {
 }
 
 /**
+ * The final link gate's options for one run: what to judge against, and where the
+ * counts go.
+ *
+ * The page content source is the run's OWN seam, so the gate reads the same backend
+ * the pages were written to; passing nothing would judge a row corpus against a
+ * filesystem that holds none of it.
+ *
+ * @param seams - The run's page seams.
+ * @param linkCounts - The run's mutable total, when the caller wants one.
+ * @returns The gate options for the resolution seam.
+ */
+function linkGateFor(
+  seams: PageSeams,
+  linkCounts: ContextualLinkCounts | undefined,
+): LinkGateOptions {
+  return {
+    pageContent: seams.content,
+    ...(linkCounts === undefined
+      ? {}
+      : { sink: { record: (counts: ContextualLinkCounts) => addContextualLinkCounts(linkCounts, counts) } }),
+  };
+}
+
+/**
  * Resolve interlinks, regenerate index/MOC, refresh embeddings
  * post-write. Seed-page slugs are folded into both the changed-slug
  * set (so embeddings refresh covers them) and the new-slug set (so
  * inbound-link resolution scans existing pages for mentions of seed
  * titles). Without that, schema-declared seed pages would land on
  * disk but stay unlinked and absent from the embedding store.
+ *
+ * This is also where the ONE final link gate runs, inside the resolution seam:
+ * every page this run wrote is on disk by now, so a link into a page the same run
+ * created resolves instead of being reported missing, and the links `resolveLinks`
+ * adds are judged by the same table as the ones the model typed.
  */
 async function finalizeWiki(
   root: string,
@@ -1176,7 +1233,7 @@ async function finalizeWiki(
 ): Promise<void> {
   const {
     scoped = false, embeddings = true, embeddingStore, resolverSource,
-    embeddingPageSource, seams = {}, stateRows, jobObserver,
+    embeddingPageSource, seams = {}, stateRows, jobObserver, linkCounts,
   } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
   const conceptNewSlugs = pages
@@ -1191,7 +1248,7 @@ async function finalizeWiki(
     // holds the project lock for its whole pipeline → the lock-free seam.
     await resolveAndApplyLinks(
       root, allChangedSlugs, allNewSlugs, resolverSource, seams.sink, seams.remover,
-      seams.transaction,
+      seams.transaction, linkGateFor(seams, linkCounts),
     );
     // Resolution adds links for titles it recognises; repair fixes links the
     // model already wrote against a page whose slug is longer than the name it

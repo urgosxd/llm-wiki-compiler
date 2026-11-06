@@ -11,6 +11,7 @@
 import { appendLog, formatList, formatWikilinkList } from "../utils/activity-log.js";
 import * as output from "../utils/output.js";
 import { CONCEPTS_DIR } from "../utils/constants.js";
+import { describeLinkCounts } from "./link-anchoring.js";
 import type { SchemaConfig } from "../schema/index.js";
 import type { ExtractionResult } from "./deps.js";
 import type {
@@ -67,6 +68,7 @@ export function summarizeCompile(
   output.status("✓", output.success(
     `${buckets.toCompile.length} compiled, ${buckets.unchanged.length} skipped, ${buckets.deleted.length} deleted`,
   ));
+  reportLinkTotals(generation);
   if (generation.candidates.length > 0) {
     output.status("?", output.info(
       reviewSummaryLine(generation),
@@ -103,6 +105,24 @@ export function summarizeCompile(
     baseResult.review = generation.review;
   }
   return baseResult;
+}
+
+/**
+ * Print ONE aggregate line for the whole run's contextual links.
+ *
+ * The per-page lines the gate emits say WHICH page lost a link and why; this says
+ * what the run spent of its link budget. It follows the same silence rule as those
+ * lines — it appears exactly when a rule refused something, because a clean run has
+ * nothing to report and a limit nobody can see is the defect S8 forbids.
+ *
+ * @param generation - The compile-stage result, carrying the gate's run totals when
+ *   the link phase ran.
+ */
+function reportLinkTotals(generation: PageGenerationResult): void {
+  if (generation.linkCounts === undefined) return;
+  const summary = describeLinkCounts(generation.linkCounts);
+  if (summary === null) return;
+  output.status("🔗", output.warn(`Contextual links in this run: ${summary}.`));
 }
 
 /** Human completion line for candidates created this run. */

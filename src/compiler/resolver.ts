@@ -8,6 +8,17 @@
  *
  * Complexity: O(changed * total) per incremental compile.
  * Full recompile degrades to O(total^2).
+ *
+ * THIS IS WHERE THE ONE FINAL LINK GATE RUNS. Links reach a page body through two
+ * channels — the model types them inline, and {@link resolveLinks} wraps plain-text
+ * mentions of real page titles — so the only place both are already in the body is
+ * the link phase, immediately before `finalizeWiki` writes it. Every body this
+ * module would write therefore passes {@link validateContextualLinks} first, which
+ * is what makes the model's links and the resolver's links subject to ONE decision
+ * table, ONE per-page budget and ONE set of counters. It also fixes what a gate at
+ * generation time could not: the run's own pages are written before this phase, so
+ * a link to a page the same run is creating resolves instead of being demoted as a
+ * missing target.
  */
 
 import { readdir } from "fs/promises";
@@ -17,6 +28,14 @@ import { parseFrontmatter } from "../utils/markdown.js";
 import { readWikiPageContentOrWarn } from "./confined-wiki-read.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import {
+  knownLinkPageSet,
+  linkIndexFor,
+  listLinkPageSet,
+  reportContextualLinkCounts,
+  uniqueTitleMap,
+  validateContextualLinks,
+} from "./link-anchoring.js";
+import {
   pageStoreOptions,
   type PageBatchTransaction,
   type PageRemover,
@@ -24,6 +43,10 @@ import {
 } from "../trust/page-apply.js";
 import { applyCompilePageWritesLocked } from "./compile-write.js";
 import type { CompilePageNamespace, CompilePageWrite } from "./compile-write.js";
+import { createRepairResolver } from "./link-repair.js";
+import { listLinkResolvablePendingSlugs } from "./candidate-read.js";
+import type { ContextualLinkCounts, KnownPageIdentity, LinkPageSet } from "./link-anchoring.js";
+import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
 import * as output from "../utils/output.js";
 
 /**
@@ -54,6 +77,44 @@ export interface ResolverPage {
   content: string;
   /** The body within `content`, so a rewrite replaces only the prose. */
   body: string;
+  /**
+   * Other names the page declares for itself, when the backend reports them.
+   *
+   * Optional rather than required so a source that cannot report aliases keeps
+   * working; the link gate then anchors on titles only for those pages.
+   */
+  aliases?: readonly string[];
+}
+
+/**
+ * What the final link gate judges against, and where its verdicts are collected.
+ *
+ * Grouped into one optional parameter so adding the gate did not add a fourth
+ * positional argument a caller could transpose with another.
+ */
+export interface LinkGateOptions {
+  /**
+   * Row-backed page reader, when this run's corpus lives in rows.
+   *
+   * Supplied by the compile path so the gate sees every page of every namespace —
+   * including a `queries` target, which the title index (concepts only) does not
+   * list. When it is absent the gate lists whatever backend the run itself reads:
+   * `wiki/` for a file-backed run, and the pages this phase already enumerated for a
+   * row-backed one. See {@link linkPageSetFor}.
+   */
+  pageContent?: PageContentSource;
+  /** Collector for the run's aggregate counts, so one line can summarize them. */
+  sink?: LinkGateSink;
+}
+
+/** How a run collects the link gate's per-page verdicts for its aggregate line. */
+export interface LinkGateSink {
+  /**
+   * Record what the gate decided for one page.
+   *
+   * @param counts - What that page kept, and how many links each rule refused.
+   */
+  record: (counts: ContextualLinkCounts) => void;
 }
 
 interface PageInfo {
@@ -61,6 +122,14 @@ interface PageInfo {
   root: string;
   slug: string;
   title: string;
+  /**
+   * Other names the page declares, so the link gate can accept them as anchors.
+   *
+   * Carried on the index entry rather than re-read at gate time: the gate judges a
+   * body against the SAME text the index was built from, and a second read could
+   * disagree with it.
+   */
+  aliases: readonly string[];
   filePath: string;
   /**
    * The page's markdown as the index saw it.
@@ -104,6 +173,7 @@ async function buildTitleIndex(
         root,
         slug,
         title: meta.title,
+        aliases: aliasList(meta.aliases),
         filePath: path.join(conceptsDir, file),
         content,
         body,
@@ -112,6 +182,11 @@ async function buildTitleIndex(
   }
 
   return pages;
+}
+
+/** Reduce a frontmatter value to the plain strings it may contain. */
+function aliasList(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((value): value is string => typeof value === "string") : [];
 }
 
 /**
@@ -132,6 +207,7 @@ function indexFromSource(root: string, pages: ResolverPage[]): PageInfo[] {
       root,
       slug: page.slug,
       title: page.title,
+      aliases: page.aliases ?? [],
       filePath: path.join(root, CONCEPTS_DIR, `${page.slug}.md`),
       content: page.content,
       body: page.body,
@@ -189,8 +265,14 @@ function isLinkablePosition(text: string, start: number, end: number): boolean {
 /**
  * Add [[wikilinks]] to a page's body for any title mentions.
  * Skips already-linked text and non-word-boundary matches.
+ *
+ * The page's own title is skipped here AND refused by the link gate. Both are the
+ * same rule, kept in both places on purpose: this pass would otherwise produce a
+ * self-link for every page that names itself, which the gate would then have to
+ * strip from every page on every run — and the gate would still be right, because
+ * it is the one that decides.
  */
-function addWikilinks(body: string, titles: PageInfo[], selfTitle: string): string {
+function addWikilinks(body: string, titles: readonly PageInfo[], selfTitle: string): string {
   let result = body;
   const selfLower = selfTitle.toLowerCase();
 
@@ -214,12 +296,22 @@ function addWikilinks(body: string, titles: PageInfo[], selfTitle: string): stri
  * rewritten page bodies as {@link CompilePageWrite}s for the CALLER to apply as
  * ONE journalled resolution batch (instead of an inline `atomicWrite`).
  *
- * Two passes:
+ * Two link channels feed one final body per page:
  * 1. Outbound: changed pages get [[wikilinks]] for any title they mention.
  * 2. Inbound: ALL pages get scanned for mentions of newly created titles.
  *    This ensures existing pages link to new concepts without a full recompile.
  *
+ * Every body either pass produces — and the body of every changed page the gate
+ * must still judge for the links the MODEL wrote — goes through
+ * {@link validateContextualLinks} before it becomes a write. A refused link is
+ * reduced to its mention, so the page is written with the sentence intact.
+ *
  * Complexity: O(changed * total) for outbound, O(newTitles * total) for inbound.
+ * @param root - Absolute project root the reads and writes are confined under.
+ * @param changedSlugs - Slugs whose pages get outbound links re-resolved.
+ * @param newSlugs - Slugs created by this run, scanned for inbound mentions.
+ * @param source - Row-backed page source, or undefined to read `wiki/concepts`.
+ * @param gate - What the final gate judges against, and where its counts go.
  * @returns The rewritten pages (one per page whose body actually changed).
  */
 export async function resolveLinks(
@@ -227,25 +319,209 @@ export async function resolveLinks(
   changedSlugs: string[],
   newSlugs: string[],
   source?: ResolverPageSource,
+  gate?: LinkGateOptions,
 ): Promise<CompilePageWrite[]> {
   const titleIndex = await buildTitleIndex(root, source);
   if (titleIndex.length === 0) return [];
+  const bodies = collectFinalBodies(titleIndex, changedSlugs, newSlugs);
+  const writes = await gateFinalBodies(root, titleIndex, bodies, gate, source !== undefined);
+  if (writes.length > 0) {
+    output.status("🔗", output.dim(`Resolved links in ${writes.length} page(s)`));
+  }
+  return writes;
+}
 
-  // Pass 1 (outbound) on changed pages, then Pass 2 (inbound) on all pages,
-  // de-duplicated by slug so a page changed in both passes is written once with
-  // the latest body (inbound supersedes outbound for the same page).
-  const writes = new Map<string, CompilePageWrite>();
-  for (const write of await resolveOutboundLinks(titleIndex, changedSlugs)) {
-    writes.set(write.slug, write);
-  }
-  for (const write of await resolveInboundLinks(titleIndex, newSlugs)) {
-    writes.set(write.slug, write);
-  }
+/** A page and the final body the link gate will judge. */
+interface FinalBody {
+  page: PageInfo;
+  body: string;
+}
 
-  if (writes.size > 0) {
-    output.status("🔗", output.dim(`Resolved links in ${writes.size} page(s)`));
+/**
+ * The final body of every page this phase must judge, keyed by slug.
+ *
+ * Two reasons a page is here. It was CHANGED, so its body carries whatever the
+ * model typed and has to be gated even if neither resolver pass adds anything. Or
+ * a resolver pass actually inserted a link into it, which includes pages this run
+ * did not generate (the inbound pass) — those are gated because the link being added
+ * is the resolver's, and the resolver is not above the rules.
+ *
+ * A page the run neither wrote nor changed is NOT here. Re-judging untouched pages
+ * would rewrite the whole wiki on every ingest, and it would silently demote links
+ * this run never had a reason to look at — including the prefix-shaped links
+ * `link-repair` is about to canonicalise, which run after this phase.
+ *
+ * @param titleIndex - Every page the resolver can see.
+ * @param changedSlugs - Slugs this run wrote.
+ * @param newSlugs - Slugs this run created.
+ * @returns The bodies to judge, in index order.
+ */
+function collectFinalBodies(
+  titleIndex: readonly PageInfo[],
+  changedSlugs: readonly string[],
+  newSlugs: readonly string[],
+): Map<string, FinalBody> {
+  const changed = new Set(changedSlugs);
+  const added = new Set(newSlugs);
+  const newTitles = titleIndex.filter((page) => added.has(page.slug));
+  const bodies = new Map<string, FinalBody>();
+  for (const page of titleIndex) {
+    const written = changed.has(page.slug);
+    const outbound = written ? titleIndex : [];
+    const inbound = newTitles.length > 0 && !added.has(page.slug) ? newTitles : [];
+    if (outbound.length === 0 && inbound.length === 0) continue;
+    const body = linkBody(page, outbound, inbound);
+    if (!written && body === page.body) continue;
+    bodies.set(page.slug, { page, body });
   }
-  return [...writes.values()];
+  return bodies;
+}
+
+/**
+ * Link one body: its own outbound titles first, then this run's new titles.
+ *
+ * Composed rather than one pass superseding the other. The passes used to race for
+ * the same slug so that the inbound body REPLACED the outbound one, which meant a
+ * changed page mentioning a page created by the same run was written without any
+ * of the links the outbound pass had just added. Both passes only wrap a real
+ * mention of a real title, so composing them keeps every mention, and the gate
+ * below refuses anything the rules refuse.
+ *
+ * @param page - The page whose body is being linked.
+ * @param outbound - Titles this page may link to (empty when it did not change).
+ * @param inbound - Titles created by this run (empty on the outbound-only path).
+ * @returns The body with both passes applied.
+ */
+function linkBody(
+  page: PageInfo,
+  outbound: readonly PageInfo[],
+  inbound: readonly PageInfo[],
+): string {
+  const outboundBody = outbound.length === 0 ? page.body : addWikilinks(page.body, outbound, page.title);
+  return inbound.length === 0
+    ? outboundBody
+    : addWikilinks(outboundBody, inbound, page.title);
+}
+
+/**
+ * Judge every final body through the ONE link gate, and keep the writes that
+ * actually change a page.
+ *
+ * @param root - Absolute project root the gate's reads are confined under.
+ * @param titleIndex - Every page the resolver can see, for the fallback page set.
+ * @param bodies - The bodies to judge, keyed by slug.
+ * @param gate - What to judge against and where the counts go.
+ * @returns One write per page the gate or the resolver changed.
+ */
+async function gateFinalBodies(
+  root: string,
+  titleIndex: readonly PageInfo[],
+  bodies: ReadonlyMap<string, FinalBody>,
+  gate: LinkGateOptions | undefined,
+  rowBacked: boolean,
+): Promise<CompilePageWrite[]> {
+  if (bodies.size === 0) return [];
+  const pages = await linkPageSetFor(root, titleIndex, gate?.pageContent, rowBacked);
+  const writes: CompilePageWrite[] = [];
+  for (const { page, body } of bodies.values()) {
+    const validated = await validateContextualLinks(body, linkIndexFor(pages, anchorFor(page)));
+    reportContextualLinkCounts(page.title, validated.counts);
+    gate?.sink?.record(validated.counts);
+    const write = rewritePage(page, page.content, validated.body, page.body);
+    if (write) writes.push(write);
+  }
+  return writes;
+}
+
+/**
+ * The page set the gate judges links against, taken from the run's own corpus.
+ *
+ * WHICH CORPUS. A content seam is the widest answer: every namespace, row by row.
+ * Without one, the answer depends on where this run's pages actually live, and
+ * getting that wrong is silent in one direction only: a corpus judged against the
+ * wrong backend reports EVERY link as a missing target.
+ *   - A file-backed run (no resolver source) has `wiki/` as its corpus, so `wiki/`
+ *     is what the gate lists -- both namespaces, which is what generation used to
+ *     resolve a `queries` target against and the only way such a link survives.
+ *   - A row-backed run that named no seam can only be judged against the pages this
+ *     phase already read, because the filesystem holds none of its corpus.
+ * The resolver's own index supplies the unambiguous title lookups in every case, so
+ * a title-shaped target is judged the same way whichever backend answered.
+ *
+ * @param root - Absolute project root the reads are confined under.
+ * @param titleIndex - Every page the resolver can see.
+ * @param pageContent - Row-backed reader, when the caller supplied one.
+ * @param rowBacked - Whether this run's pages live in rows rather than in `wiki/`.
+ * @returns The page set for this run's gate.
+ */
+async function linkPageSetFor(
+  root: string,
+  titleIndex: readonly PageInfo[],
+  pageContent: PageContentSource | undefined,
+  rowBacked: boolean,
+): Promise<LinkPageSet> {
+  const entries = knownEntriesOf(titleIndex);
+  const base = pageContent === undefined && rowBacked
+    ? knownLinkPageSet(entries)
+    : { ...await listLinkPageSet(root, pageContent), titles: uniqueTitleMap(entries) };
+  return { ...base, repair: await repairLookupFor(root, base) };
+}
+
+/**
+ * The wiki's OWN repair rule, bound to this page set.
+ *
+ * `createRepairResolver` is the same function `link-repair` uses, so the gate accepts
+ * exactly the abbreviations repair will canonicalise and refuses the ambiguous or
+ * missing ones repair refuses. Reusing it is what keeps this from being a second name
+ * matcher: the gate asks the owner of the rule.
+ *
+ * @param root - Absolute project root the pending-candidate read is confined under.
+ * @param pages - The page set whose slugs the rule may land on.
+ * @returns A written target to page id lookup, or undefined when there is nothing to
+ *   match against.
+ */
+async function repairLookupFor(
+  root: string,
+  pages: LinkPageSet,
+): Promise<((writtenTarget: string) => string | null) | undefined> {
+  const bySlug = new Map(pages.ids.map((id) => [slugPartOf(id).toLowerCase(), id]));
+  if (bySlug.size === 0) return undefined;
+  const repair = createRepairResolver([...bySlug.keys()], await listLinkResolvablePendingSlugs(root));
+  return (writtenTarget: string) => {
+    const slug = repair(writtenTarget);
+    return slug === null ? null : bySlug.get(slug) ?? null;
+  };
+}
+
+/** The bare slug of a namespaced page id (`concepts/networks` to `networks`). */
+function slugPartOf(id: string): string {
+  const separator = id.lastIndexOf("/");
+  return separator === -1 ? id : id.slice(separator + 1);
+}
+
+/**
+ * The identities the resolver's index already holds, in the gate's shape.
+ *
+ * The title lookups come from here in BOTH modes, so a title-shaped link is judged
+ * the same way whether the pages came from rows or from `wiki/`.
+ *
+ * @param titleIndex - Every page the resolver can see.
+ * @returns One entry per page, with its declared aliases.
+ */
+function knownEntriesOf(titleIndex: readonly PageInfo[]): KnownPageIdentity[] {
+  return titleIndex.map((page) => ({
+    id: pageIdOf(page), title: page.title, aliases: page.aliases,
+  }));
+}
+
+/** The gate's view of the page whose body is being judged. */
+function anchorFor(page: PageInfo) {
+  return { id: pageIdOf(page), title: page.title, aliases: page.aliases };
+}
+
+/** Namespaced page id of an index entry, e.g. `concepts/networks`. */
+function pageIdOf(page: PageInfo): string {
+  return `${namespaceForPath(page.filePath)}/${page.slug}`;
 }
 
 /**
@@ -262,7 +538,11 @@ export async function resolveLinks(
  * @param root - Absolute project root the writes are confined under.
  * @param changedSlugs - Slugs whose pages get outbound links re-resolved.
  * @param newSlugs - Newly-created slugs other pages get scanned for (inbound).
+ * @param source - Row writer, or undefined to write files.
  * @param sink - Row writer, or undefined to write files.
+ * @param remover - Row remover, or undefined to delete files.
+ * @param transaction - Open batch the writes join, when the caller has one.
+ * @param gate - What the final link gate judges against, and where its counts go.
  */
 export async function resolveAndApplyLinks(
   root: string,
@@ -272,9 +552,10 @@ export async function resolveAndApplyLinks(
   sink?: PageSink,
   remover?: PageRemover,
   transaction?: PageBatchTransaction,
+  gate?: LinkGateOptions,
 ): Promise<void> {
   await applyCompilePageWritesLocked(
-    root, await resolveLinks(root, changedSlugs, newSlugs, source), pageStoreOptions(sink, remover, transaction),
+    root, await resolveLinks(root, changedSlugs, newSlugs, source, gate), pageStoreOptions(sink, remover, transaction),
   );
 }
 
@@ -305,52 +586,4 @@ function rewritePage(page: PageInfo, content: string, linked: string, body: stri
     slug: page.slug,
     body: content.replace(body, () => linked),
   };
-}
-
-/** Compute outbound [[wikilink]] rewrites for changed pages. */
-async function resolveOutboundLinks(
-  titleIndex: PageInfo[],
-  changedSlugs: string[],
-): Promise<CompilePageWrite[]> {
-  const writes: CompilePageWrite[] = [];
-  for (const page of titleIndex) {
-    if (!changedSlugs.includes(page.slug)) continue;
-    const write = await linkPage(page, titleIndex);
-    if (write) writes.push(write);
-  }
-  return writes;
-}
-
-/** Compute inbound [[wikilink]] rewrites: scan ALL pages for new concept titles. */
-async function resolveInboundLinks(
-  titleIndex: PageInfo[],
-  newSlugs: string[],
-): Promise<CompilePageWrite[]> {
-  if (newSlugs.length === 0) return [];
-  const newTitles = titleIndex.filter((p) => newSlugs.includes(p.slug));
-  if (newTitles.length === 0) return [];
-
-  const writes: CompilePageWrite[] = [];
-  for (const page of titleIndex) {
-    // Skip pages already processed in the outbound pass.
-    if (newSlugs.includes(page.slug)) continue;
-    // From the index, like the outbound pass: `page.content` and `page.body` are
-    // what the title index was built from, so re-reading disk here would mix
-    // backends -- and with a row corpus the read finds nothing at all, silently
-    // producing zero inbound links while `compile` reports success.
-    const write = rewritePage(
-      page, page.content, addWikilinks(page.body, newTitles, page.title), page.body,
-    );
-    if (write) writes.push(write);
-  }
-  return writes;
-}
-
-/** Compute the wikilink rewrite for a single page, or null when unchanged. */
-async function linkPage(page: PageInfo, titleIndex: PageInfo[]): Promise<CompilePageWrite | null> {
-  // From the index, not a fresh read: the row-backed source has no file, and a
-  // second read could disagree with the body the title index was built from.
-  return rewritePage(
-    page, page.content, addWikilinks(page.body, titleIndex, page.title), page.body,
-  );
 }
