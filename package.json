@@ -38,7 +38,7 @@
     "fallow:ci": "bash scripts/fallow-ci.sh",
     "prepublishOnly": "npm run release:check-docs:current && npm run build && npm pack --dry-run --ignore-scripts",
     "prepare": "husky",
-    "test:pack": "vitest run --config /dev/null test/sdk/packaging.test.ts"
+    "test:pack": "vitest run --config test/sdk/vitest.packaging.config.ts"
   },
   "keywords": [
     "knowledge",
