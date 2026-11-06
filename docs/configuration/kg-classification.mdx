@@ -279,6 +279,165 @@ docker exec -i llmwiki-kg-db-1 psql -U aks -d aks -c "
   limit 20"
 ```
 
+The log also carries entries that are not decision changes: a failure that left a
+row's stored decision untouched appends a `provider_failure_preserved:` event, and a
+sweep that refused a verified row appends `refused:verified_row_preserved`. Neither
+rewrites the decision. Failure events are the one family that grows without bound, and
+[Prune old failure history](#prune-old-failure-history) below is the procedure that
+bounds it.
+
+## Prune old failure history
+
+The log is append-only at write time, and one row family in it is written far more
+often than the rest. When a sweep fails after its retries, the row keeps its stored
+decision and the history gains a `provider_failure_preserved:pending` or
+`provider_failure_preserved:failed` entry — **one per affected candidate per sweep**.
+That is deliberate: a refusal is state, a failure is an event, and a candidate that
+failed 47 consecutive sweeps is a different diagnosis from one that failed once during
+a transient outage. Nothing dedupes those rows, so the count stays readable as a count.
+
+The consequence is unbounded growth. A permanently failing classifier appends one row
+per sweep per candidate forever, and 47 sweeps is a matter of minutes, so a single day
+of failed sweeps already dominates the table. Bounding it is a separate, explicit
+administrative operation:
+
+`POST /stacks/:stackId/classification-log/prune`
+
+It is never automatic. No ingest, reclassification or sweep calls it, it never runs
+inside an ingest transaction, and it deletes nothing unless you explicitly confirm.
+
+### Run the retention procedure
+
+Run these four steps in order. The first three delete nothing.
+
+1. **Dry run.** Call the endpoint with no query parameters. It reports what the default
+   30-day window matches and deletes nothing.
+2. **Inspect the report.** `retentionDays` is the window that was applied, `cutoff` is
+   the instant it was measured against, and `matchedCount` is how many failure events
+   fall before it in this Stack. `dryRun` is `true` and `deletedCount` is `0`.
+3. **Archive first if the older history matters.** Pruning is irreversible and the rows
+   it removes are recoverable from nothing else. Export what you are about to delete if
+   a postmortem may need it.
+4. **Confirm the delete.** Re-run the same call with `confirm=true`. It reports
+   `dryRun: false` and deletes the rows the window matches at that moment, which is at
+   least the `matchedCount` you inspected: the cutoff is recomputed, so a later run can
+   match more but never fewer.
+
+```bash
+# 1. Dry run over the default 30-day window. Deletes nothing.
+curl -sS -X POST \
+  -H "X-API-Key: $AKS_API_KEY" \
+  "http://localhost:8000/stacks/$STACK_ID/classification-log/prune"
+
+# 4. The same window, confirmed: this deletes the rows it reports.
+curl -sS -X POST \
+  -H "X-API-Key: $AKS_API_KEY" \
+  "http://localhost:8000/stacks/$STACK_ID/classification-log/prune?confirm=true"
+
+# A wider window, for a Stack whose incidents are further apart.
+curl -sS -X POST \
+  -H "X-API-Key: $AKS_API_KEY" \
+  "http://localhost:8000/stacks/$STACK_ID/classification-log/prune?confirm=true&retentionDays=365"
+```
+
+Step 3, as a query you can run before the confirmed call:
+
+```bash
+docker exec -i llmwiki-kg-db-1 psql -U aks -d aks -c "\copy (
+  select * from kg_classification_log
+  where stack_id = '$STACK_ID'
+    and starts_with(reason, 'provider_failure_preserved:')
+    and created_at < now() - interval '30 days'
+) to '/tmp/kg-classification-log.csv' csv header"
+```
+
+`starts_with` is the faithful translation of the eligibility rule. Write it that way
+rather than as a bare `like 'provider_failure_preserved:%'`: in `LIKE`, `_` is a
+single-character wildcard, so that pattern would also match lookalikes such as
+`provider-failure-preserved:*`.
+
+### What the operation touches
+
+- **Only failure events.** Rows whose `reason` starts with
+  `provider_failure_preserved:` are eligible. Nothing else in `kg_classification_log`
+  is: a `refused:verified_row_preserved` entry is state rather than an event, and a
+  decision change is history you keep.
+- **Only one Stack.** `:stackId` bounds both the count and the delete, so no other
+  Stack's rows can be reached.
+- **No other table.** Classification state, evidence rows, entities, relations and
+  every projection are byte-identical after a prune that deletes rows.
+- **No summary row.** Nothing is rolled up or archived in the database, so a candidate
+  that failed 47 times inside the window still reads as 47 consecutive failures
+  afterwards.
+- **Nothing eligible, nothing deleted.** A second run over an already-pruned table
+  reports `matchedCount: 0` and `deletedCount: 0`.
+
+### The response
+
+The body is a bare object with exactly five keys. It is not wrapped in an envelope:
+
+```json
+{ "dryRun": true, "retentionDays": 30, "cutoff": "2025-04-01T09:00:00.123456Z", "matchedCount": 47, "deletedCount": 0 }
+```
+
+| Key | Meaning |
+| --- | --- |
+| `dryRun` | `true` when nothing was deleted. It is `false` only for a confirmed call |
+| `retentionDays` | The window actually applied, so the report is readable on its own |
+| `cutoff` | The instant the window was measured against, as a UTC timestamp that always ends in `Z` with six fractional digits, for example `2025-04-01T09:00:00.123456Z` |
+| `matchedCount` | How many failure events the window matched, deleted or not |
+| `deletedCount` | How many rows were deleted. Always `0` when `dryRun` is `true` |
+
+Both the dry run and the confirmed delete answer `200`. The body says which happened,
+so read `dryRun` rather than the status code.
+
+`cutoff` is fixed once when the operation starts and the delete is a single statement,
+so a sweep appending to the log during a prune writes rows newer than the cutoff and
+those rows survive. Two prunes of one Stack at the same time serialize, so a row is
+deleted once and never lost.
+
+### Refusals
+
+| Situation | Answer |
+| --- | --- |
+| `retentionDays` not a whole number in `1` to `3650` inclusive | `422` |
+| `confirm` set to anything but the literals `true` and `false` (`yes`, `1`, an empty value) | `422` |
+| Malformed `:stackId`, such as a value that is not a UUID | `422` |
+| Missing or invalid `X-API-Key`, when `AKS_API_KEY` is set | `401` |
+| A `:stackId` holding no eligible failure events, including one that names no Stack | `200`, with `matchedCount: 0` |
+
+A `422` deletes nothing and leaves the log untouched. The body is the array envelope
+the rest of the ingest routers answer with, and `loc` names the parameter that was
+refused (`type` and `msg` are the exact values; `input` and `ctx` are illustrative):
+
+```json
+{ "detail": [ { "type": "literal_error", "loc": ["query", "confirm"], "msg": "Input should be 'true' or 'false'", "input": "yes", "ctx": { "expected": "'true' or 'false'" } } ] }
+```
+
+Two behaviours worth knowing before you script this call:
+
+- **`confirm` is strict here, and only here.** It accepts exactly `true` and `false`.
+  The ingest parameter `synthesize_descriptions` is a lax Pydantic-style boolean that
+  also reads `1`, `0`, `on`, `yes`, `t` and `y`; this flag does not, because it deletes
+  stored rows and a coerced truthy string is not a confirmation.
+- **`retentionDays` is parsed as a number, so `1e3` means `1000`.** The window shares
+  its numeric parsing with the reclassify `limit` parameter. Write plain whole days.
+
+### The tradeoff
+
+The default window is **30 days**: a permanently failing classifier already dominates
+the table within minutes, while 30 days covers a monthly operational cycle, an incident
+postmortem and a "did this regress last month?" question. A shorter window loses the
+diagnostic tail inside the reporting period, and a longer one stops bounding growth.
+The window is set per call, so a Stack with a different incident cadence uses a
+different number without a deployment change.
+
+The cost is real and it is what this operation gives up: **the tail of a failure run
+older than the window stops being observable.** Once a row is deleted, "how long has
+this been failing?" can only be answered from inside the window, and the answer is
+capped by it. That is why the procedure puts the dry run and an export first, and why
+nothing here runs automatically.
+
 ## Tune the thresholds
 
 **The defaults are corpus-dependent starting points, not calibrated values.** They

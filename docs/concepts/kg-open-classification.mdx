@@ -116,6 +116,15 @@ Two rules follow, and the code enforces both:
    The AKS export and the pages read the same rows, so there is no second copy to
    invalidate.
 
+The log is append-only, but it is not unbounded. A classifier that keeps failing
+appends one `provider_failure_preserved:` entry per candidate per sweep, and those
+events are removed by an explicit operator-initiated prune over a retention window
+(30 days by default). Pruning deletes only failure events older than the window, never
+writes a summary row and never touches classification state, evidence or the graph, so
+a candidate's consecutive-failure count stays observable as long as its events are
+inside the window. See
+[Prune old failure history](/configuration/kg-classification#prune-old-failure-history).
+
 ### What runs outside a transaction
 
 The handler takes a transaction *runner* rather than one connection, and opens three
