@@ -16,10 +16,10 @@
  * changes publishability — or a package directory that disappears — without a
  * matching list edit turns the suite red.
  *
- * The same helper is written to be reusable by a future `publish.yml` check:
- * `derivePackDistribution` answers "what is publishable right now", and a test
- * asserting the workflow's `PACKAGE_DIRS` literal would compare against this
- * one answer rather than against a third hand-maintained copy.
+ * `derivePackDistribution` answers "what is publishable right now", and
+ * {@link readPublishPackageDirs} answers "what the release workflow intends to
+ * publish". The test compares the two answers instead of trusting a third
+ * hand-maintained copy.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -30,6 +30,24 @@ import path from "node:path";
  * the core SDK workspace plus the root facade package.
  */
 export const PACK_DISTRIBUTION: readonly string[] = ["packages/llmwiki-core", "."];
+
+/** The workflow whose `PACKAGE_DIRS` value must agree with the derived distribution. */
+const PUBLISH_WORKFLOW_PATH = ".github/workflows/publish.yml";
+
+/**
+ * Raised when the publish workflow's package list cannot be read reliably.
+ *
+ * Every failure below is an error rather than an empty result: a textual parse
+ * that silently yields nothing would make the distribution comparison pass on
+ * nothing, which is the exact blindness this module exists to remove.
+ */
+class PublishPackageDirsError extends Error {
+  /** @param reason - What is wrong with the workflow's `PACKAGE_DIRS`, for the caller's message. */
+  constructor(reason: string) {
+    super(`cannot read PACKAGE_DIRS from ${PUBLISH_WORKFLOW_PATH}: ${reason}`);
+    this.name = "PublishPackageDirsError";
+  }
+}
 
 /** The subset of a package manifest this module reads. */
 interface DistributionManifest {
@@ -67,4 +85,41 @@ export function derivePackDistribution(repoRoot: string): string[] {
   const publishable = readWorkspaceDirectories(repoRoot)
     .filter(directory => readWorkspaceManifest(repoRoot, directory).private !== true);
   return [...publishable, "."];
+}
+
+/** Read the workflow as text, so a missing or unreadable file is an error and not a skip. */
+function readWorkflowText(repoRoot: string): string {
+  try {
+    return readFileSync(path.join(repoRoot, PUBLISH_WORKFLOW_PATH), "utf8");
+  } catch (error) {
+    throw new PublishPackageDirsError(`file is unreadable (${(error as Error).message})`);
+  }
+}
+
+/** Strip one layer of matching YAML quotes from an inline scalar. */
+function stripYamlQuotes(value: string): string {
+  const quote = value.charAt(0);
+  const isQuoted = value.length > 1 && (quote === '"' || quote === "'") && value.endsWith(quote);
+  return isQuoted ? value.slice(1, -1) : value;
+}
+
+/**
+ * Read the `PACKAGE_DIRS` value the publish workflow exports.
+ *
+ * Parsed as text on purpose: this module ships without a YAML dependency, and a
+ * pattern that matches nothing must throw rather than report an empty list.
+ *
+ * @param repoRoot - Repository root containing {@link PUBLISH_WORKFLOW_PATH}.
+ * @returns The package directories, in the order the workflow publishes them.
+ */
+export function readPublishPackageDirs(repoRoot: string): string[] {
+  const match = /^[ \t]*PACKAGE_DIRS:[ \t]*(.*)$/m.exec(readWorkflowText(repoRoot));
+  if (match === null) throw new PublishPackageDirsError("the workflow has no PACKAGE_DIRS key");
+  const value = stripYamlQuotes((match[1] ?? "").trim());
+  if (value === "") throw new PublishPackageDirsError("the value is empty");
+  const entries = value.split(/[ \t]+/).filter(entry => entry !== "");
+  if (entries.length < 2) {
+    throw new PublishPackageDirsError(`expected at least two directories, parsed ${JSON.stringify(entries)}`);
+  }
+  return entries;
 }
