@@ -87,6 +87,7 @@ Interpretation (non-negotiable): embedding retrieval is legitimate for FINDING c
 | T12 | One final link gate for both link channels: same-run targets resolve, and the `resolveLinks` channel is held to the same decision table and budget as the model's inline links; run totals reported | S8, S13 | worker | 66ce7ef44d72fa56fa22f7b92f06258cb79b8442 |
 | T4b | Review retrieval unions the names an article answers to: the title, the aliases folded this run, and the `aliases` its STORED frontmatter already declares, deduped by canonical key with the title never repeated | S6, S9, S14 | worker | ae765f4bc1ff5f678aee3ea3989ba1c4eca94bc7 |
 | T13 | Gate parity for `review approve`: the approve path passes the resolver's ONE gate construction, so an approved body is judged against the run's full page set instead of the concept-only resolver index | S8, S12 | worker | 070436a645e5f516de3120990838918cd40e7c9c |
+| T14 | Restore the line-limit convention and remove the duplicated gate-options construction: split `link-review.ts` into candidate retrieval (`link-review-candidates.ts`) and stage orchestration, and make `index.ts`'s `linkGateFor` delegate to the resolver's `linkGateOptions`. Behaviour-preserving; no test assertion changed | S9, S14 (preserved, no behaviour change) | worker | c8de1242a6da0cd150f7c0a2d5540f77e0cb3fdd |
 
 ## Log
 
@@ -245,3 +246,42 @@ T13, on `070436a`: `npx tsc --noEmit` exit 0; `npm run typecheck:tests` exit 0 �
 UNNAMED-FLAKE INVESTIGATION OUTCOME: the previous worker saw `test:affected` fail once with a single unnamed test. This delivery ran it once per commit and captured FULL output to a file each time (`/tmp/t4b-test-affected-1.log`, `/tmp/t13-test-affected-1.log`): both runs exited 0 with zero `×`/`FAIL` lines, so no unnamed failure was reproduced and there is nothing to name; one earlier intermittent failure remains unexplained but is not evidence of a regression in either commit. Coverage caveat unchanged: `.fallowrc.json` ignores `packages/llmwiki-kg/**`, so a clean `fallow` result is never coverage of that package; it is covered only by its own typecheck entry points.
 
 RISK: item 3 is NOT claimed. The only shared code touched is `src/compiler/resolver.ts`, gaining a NEW exported construction (`linkGateOptions`) that nothing else calls; no existing option, parser, helper or validation rule changed, and every existing resolver and review suite above still passes with its assertions unmodified. The behaviour change is confined to the approve verb, which is the change that was asked for.
+
+L9 (T14 delivered as `c8de1242a6da0cd150f7c0a2d5540f77e0cb3fdd` `refactor(compiler): split link review into retrieval and orchestration modules`):
+
+A SHIPPED CONVENTION VIOLATION, NOT A TOLERATED CONDITION. `AGENTS.md` `Code Style & Standards`: "Code files (TypeScript, Python, JavaScript, shell, SQL) must be smaller than 400 lines excluding comments." `src/compiler/link-review.ts` crossed that ceiling when T4b added the declared-alias union (397 -> 434 by the measure below). T14 restores it by splitting the file, and pays the duplication debt T13 disclosed in `index.ts`.
+
+HOW THE COUNTS WERE MEASURED, so the numbers are reproducible. Two measures, both reported:
+- P ("total minus comment-only lines", the measure that produces the figure this task stated): `grep -cvE '^[[:space:]]*(//|\*|/\*)' FILE`, i.e. blank lines count, lines that are entirely comment do not. The task statement's 435/398 is this same measure counted one higher (its final newline treated as a line); my run reproduces 434 for the pre-split file and 397 for the pre-T4b version.
+- STRICT ("strip-comments, blanks elided", the repository's own rule from `test/fixtures/strip-comments.ts`: comment bytes blanked, string literals kept, a line counts when anything non-blank survives).
+
+Counts (total lines / P / STRICT):
+- `src/compiler/link-review.ts` BEFORE: 697 / 434 / 394 (over the ceiling under P).
+- `src/compiler/link-review.ts` AFTER: 423 / 246 / 227.
+- `src/compiler/link-review-candidates.ts` (new): 365 / 209 / 185.
+- `src/compiler/index.ts`: 1641 / 952 / 886 -> 1643 / 952 / 886 (non-comment unchanged; the +2 total lines are JSDoc on the delegating `linkGateFor`). Its 886 non-comment lines are a PRE-EXISTING violation of the same ceiling, untouched here because T14's surface for it is the duplication only.
+- `src/compiler/resolver.ts`: untouched (0 lines changed) -- the unification did not need it.
+Both new modules sit under the ceiling with headroom on both measures, which is the point of splitting "comfortably", not "barely".
+
+THE AXIS, confirmed against the code before committing to it: NAME/MENTION/CANDIDATE RETRIEVAL versus STAGE ORCHESTRATION.
+- `src/compiler/link-review-candidates.ts` owns RETRIEVAL only: the three name sources an article answers to (canonical title, the names the identity stage folded this run, the `aliases` its stored frontmatter declares), the plain-mention predicate (not inside an existing `[[link]]`, a `^[citation]` or a literal code span, not glued to a longer word), the earlier-page listing in slug order, and the bounded candidate list with `article-cap` / `run-cap` accounting. It decides no link, calls no model, reads no embedding and writes no page.
+- `src/compiler/link-review.ts` owns ORCHESTRATION: it asks retrieval for candidates, judges each one through `judge_reference`, performs the surgical single-span edit, gates the result through `validateContextualLinks` and writes only the pages whose text really changed. The dependency runs one way: orchestration -> retrieval.
+
+PURE MOVE, PROVEN RATHER THAN ASSERTED. The union of the two modules' non-comment code lines was compared against the pre-split file as a sorted line multiset; the only differences are the ones the move requires: `export` modifiers on the symbols retrieval now shares, the split import blocks, `counts` -> `tally` inside `collectCandidates` (it now reports into a narrow `CandidateTally` slice of the stage's counts instead of the whole record), and the private `countLinks` becoming `countWikilinks` beside the `WIKILINK_PATTERN` that defines what a link is. No statement, condition, ordering, counter or side effect changed. `LinkReviewArticle` and `LinkReviewTruncationReason` are re-exported from `link-review.ts`, so NO importer changed and NO test file changed at all: `git diff --stat -- test/` is empty across both commits.
+
+DUPLICATION REMOVED (the T13 follow-up). `src/compiler/index.ts`'s `linkGateFor` no longer assembles the gate options; it delegates to the resolver's exported `linkGateOptions(pageContent, sink?)`, the ONE construction `review approve` already uses, passing `seams.content` and this run's aggregate collector. Behaviour-preserving: `{pageContent, sink?}` either way, and the sink is still created only when the run keeps totals.
+
+NO TEST ASSERTION CHANGED, and the evidence is behavioural instead. This is a refactor with no new behaviour to assert, so test-first does not apply: there is no rule to write a failing test for, and inventing one would have meant inventing a behaviour. The proof that nothing moved is the existing suite plus one differential check: a scratch probe (never committed, `/tmp` only) ran the same compile scenario -- two concepts, a typed link, a redundant repeat and a self-mention, so the gate keeps, demotes and reports -- against a copy of base `6229c42` in a `mktemp -d` tree and against this change, both with `node_modules` symlinked and the SAME probe file. Result: identical exit code (0), identical stdout including both contextual-link report lines (`Contextual links in this run: 2 kept, 1 demoted (1 redundant).`), identical stderr (empty) and byte-identical pages, with the only diff being the timestamps the run stamps into frontmatter, `state.json`, `log.md` and the index footer; after normalizing those, the two outputs diff clean.
+
+GATES (Node v24.21.0, quiescent tree, scope stated per command; no failing test to name and no re-run needed):
+- `npx tsc --noEmit` -- exit 0, no diagnostics.
+- `npm run typecheck:tests` -- exit 0: "Test type-check: 1686 files checked; 260 baseline diagnostics in 94 files; no regression."
+- `npm run build` -- exit 0: ESM + DTS build success, `dist/cli.js` 498.12 KB, viewer assets copied.
+- `npm run test:affected` -- exit 0: 790 test files passed / 3 skipped (793), 6054 tests passed / 4 skipped (6058). Full output captured to `/tmp/t14-count/test-affected-t14.log`; zero `×`/`FAIL` lines.
+- `./node_modules/.bin/fallow` -- exit 0: "0 above threshold, 16443 analyzed, maintainability 91.1 (good)", dead files 0.0%, dead exports 0.0%. Its duplication section reports 61 duplicated lines across 6 files, all of them PRE-EXISTING test-file clone groups (`link-gate.test.ts`/`page-renderer-contextual-links.test.ts`, `links-here-cli.test.ts`/`race-cli.test.ts`, `ghost-rule.test.ts`, `race-path.test.ts`) that this change neither introduced nor touched.
+- Touched-file tests: `npx vitest run test/compiler/link-review.test.ts test/compiler/link-review-compile.test.ts` exit 0, 2 files / 10 tests.
+- `npx vitest related --run` per changed src file: `src/compiler/link-review.ts` 88 files / 419 tests exit 0; `src/compiler/link-review-candidates.ts` 88 files / 419 tests exit 0; `src/compiler/index.ts` 85 files / 387 tests exit 0.
+- Never claimed: the full `npm test` suite was not run (CI is the gate of record for it).
+- Coverage caveat unchanged: `.fallowrc.json` `ignorePatterns` contains `packages/llmwiki-kg/**`, so a clean `fallow` result is never coverage of that package.
+
+KNOWN LIMITATIONS STILL OPEN, unchanged by T14 (disclosed in L8, carried into the delivery report): stored aliases in frontmatter are invisible to row-backed runs because `wiki.pages` has no aliases column, so T4b's retrieval union contributes only the title and the current run's folded names on a Stack; and `checkCandidatePublication` uses a file-only citation index, so on a Stack with no `wiki/` on disk candidate links are refused as broken citations before the link gate runs.
