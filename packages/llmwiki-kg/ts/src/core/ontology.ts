@@ -139,8 +139,12 @@ export class OntologyError extends Error {
  * Internal spaces are not collapsed: one space is one underscore, so
  * `"organic  organization"` keeps two of them. That spelling rule is shared with
  * the model-facing normaliser and is not changed here.
+ *
+ * Exported because `open-admission.ts` reads the SAME model output and must fold
+ * a label identically: two implementations of "the one label rule" is how a
+ * declaration and an emission stop matching. The enforcement below is unchanged.
  */
-function normalizeType(raw: string): string {
+export function normalizeType(raw: string): string {
   return raw.trim().replaceAll(" ", "_").toUpperCase();
 }
 

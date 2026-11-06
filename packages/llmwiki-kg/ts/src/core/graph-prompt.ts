@@ -171,6 +171,86 @@ function constrainedTypeField(allowed: readonly string[], kind: "entity" | "rela
 }
 
 /**
+ * The `type` field of an entity or relation when the catalog ORIENTS instead of
+ * filtering (S7).
+ *
+ * ## Why the `enum` has to go, and why the description stays
+ *
+ * `constrainedTypeField` makes an out-of-catalog value unemittable for a provider
+ * that honours the schema: `enum` is a validation rule, not a hint. That is the
+ * right contract for a caller whose graph must stay inside the declaration, and the
+ * wrong one for open extraction, where a name whose type nobody declared is still
+ * knowledge the source supports (S1, S3).
+ *
+ * No flag repairs that from outside: `strict=False` is a llama_index argument this
+ * port does not send, so relying on it would mean relying on a library that is
+ * gone. Openness therefore lives here, in the schema the provider is given, and in
+ * the instruction text beside it — never behind a boolean.
+ *
+ * The familiar names stay in the description, deliberately. Orientation is not
+ * silence: a model told which types the Stack prefers proposes `Policy` where it
+ * would otherwise invent `Rulebook`, and a model told they are orientation still
+ * reports the fact when none of them fits.
+ *
+ * @param familiar - The declared (or default) type names, offered as orientation.
+ * @param kind - Which list this is, for the description sentence.
+ * @returns The field definition: a free string, carrying no `enum`.
+ */
+function orientationTypeField(familiar: readonly string[], kind: "entity" | "relation"): TypeField {
+  const noun = kind === "entity" ? "entities" : "relations";
+  const proposal = kind === "entity" ? "type" : "predicate";
+  return {
+    type: "string",
+    description:
+      `${kind === "entity" ? "Entity" : "Relation"} in a knowledge graph. The ${noun} below are ` +
+      `ORIENTATION, not an admission filter: report every ${kind} the text supports, and when none ` +
+      `of them fits, propose your own ${proposal} in your own words. Familiar ${noun}: ` +
+      pythonLiteral(familiar),
+  };
+}
+
+/**
+ * The tool schema for OPEN extraction: the same shape, without the `enum`.
+ *
+ * Every structural property of {@link KG_TOOL} is preserved — both arrays, the
+ * `$ref` graph, the closed objects, the required lists — because the model's output
+ * shape is a function of them and both parsers depend on it. The single difference
+ * is that the two `type` fields become free strings described as orientation, which
+ * is exactly the difference between "the catalog decides what may exist" and "the
+ * catalog helps name what exists".
+ *
+ * Called with no ontology it still returns an OPEN schema: the oracle's default type
+ * lists are offered as familiar values rather than as the only legal ones.
+ *
+ * @param ontology - The Stack's declared catalog, used as orientation only.
+ * @returns The open tool schema, structurally identical to the strict one.
+ */
+export function buildOpenToolSchema(ontology?: Ontology): ToolSchema {
+  const entityTypes = ontology?.entityTypes ?? DEFAULT_ENTITIES;
+  const relationTypes = ontology?.relationshipTypes ?? DEFAULT_RELATIONS;
+  return {
+    ...KG_TOOL,
+    parameters: {
+      ...KG_TOOL.parameters,
+      $defs: {
+        ...KG_TOOL.parameters.$defs,
+        Entity: {
+          ...KG_TOOL.parameters.$defs.Entity,
+          properties: {
+            ...KG_TOOL.parameters.$defs.Entity.properties,
+            type: orientationTypeField(entityTypes, "entity"),
+          },
+        },
+        Relation: {
+          ...KG_TOOL.parameters.$defs.Relation,
+          properties: { type: orientationTypeField(relationTypes, "relation") },
+        },
+      },
+    },
+  };
+}
+
+/**
  * The tool schema the extractor asks the model to fill.
  *
  * ## Provenance, and where this deliberately departs from it
@@ -294,8 +374,97 @@ const EXTRACTION_PROMPT =
   "{text}\n" +
   "-------\n";
 
-/** `max_triplets_per_chunk=20` from `extract_graph_from_chunks`. */
-const MAX_TRIPLETS_PER_CHUNK = 20;
+/**
+ * The per-chunk triplet budget, `max_triplets_per_chunk=20` from
+ * `extract_graph_from_chunks`.
+ *
+ * Named and exported rather than inlined because the number is a POLICY about how
+ * much one chunk may cost, not a property of the format: an operator with a small
+ * model and a dense corpus may want 10, and one paying for a long-context model
+ * may want 50. Every renderer and cap below accepts an override and falls back to
+ * this value, so the default render stays byte-identical to what the oracle sent.
+ *
+ * ## It is a request, never a truncation
+ *
+ * The budget reaches the model as an instruction, so an eager model can exceed
+ * it. Nothing in the legacy path slices a longer answer, which is why a caller
+ * that wants the budget enforced must go through {@link capTripletsPerChunk}:
+ * that returns a {@link TripletTruncation} record with the drop instead of
+ * discarding triplets silently (S9).
+ */
+export const DEFAULT_MAX_TRIPLETS_PER_CHUNK = 20;
+
+/** How a caller overrides the per-chunk triplet budget for one render or cap. */
+export interface TripletBudgetOptions {
+  /** The budget to use instead of {@link DEFAULT_MAX_TRIPLETS_PER_CHUNK}. */
+  readonly maxTripletsPerChunk?: number;
+}
+
+/**
+ * A machine-readable record that the per-chunk triplet budget dropped something.
+ *
+ * The whole point of the record is the difference between a thin answer and a
+ * capped one: a caller that sees eight triplets and no record cannot tell whether
+ * the document was sparse or the rest were thrown away.
+ */
+export interface TripletTruncation {
+  /** Which budget fired. Only the chunk budget exists today. */
+  readonly scope: "chunk";
+  /** The chunk whose answer was capped, or `null` when the caller did not say. */
+  readonly chunkIndex: number | null;
+  /** The limit that was reached. */
+  readonly limit: number;
+  /** How many triplets the answer held before the cap. */
+  readonly considered: number;
+  /** How many of them the cap dropped. */
+  readonly dropped: number;
+}
+
+/** One chunk's triplets after the budget, plus what the budget cost. */
+export interface CappedTriplets<T> {
+  readonly triplets: readonly T[];
+  /** `undefined` when nothing was dropped, so a caller logs only a real drop. */
+  readonly truncation: TripletTruncation | undefined;
+}
+
+/**
+ * Applies the per-chunk triplet budget, reporting any drop.
+ *
+ * Pure and generic so it can cap whatever the caller parsed: the legacy triplet,
+ * an open candidate, or a record the caller built. It deliberately does not
+ * decide WHICH triplets matter — it keeps the model's own order, so what survives
+ * is the prefix the model itself considered most important.
+ *
+ * @param triplets - Everything the answer contained, in the model's order.
+ * @param options - The budget, and the chunk index to record on a drop.
+ * @returns The kept prefix, and a truncation record when anything was dropped.
+ * @throws {RangeError} When the budget is not a non-negative integer, because a
+ *   negative or fractional budget would silently mean something nobody wrote.
+ */
+export function capTripletsPerChunk<T>(
+  triplets: readonly T[],
+  options: TripletBudgetOptions & { readonly chunkIndex?: number } = {},
+): CappedTriplets<T> {
+  const limit = options.maxTripletsPerChunk ?? DEFAULT_MAX_TRIPLETS_PER_CHUNK;
+  if (!Number.isSafeInteger(limit) || limit < 0) {
+    throw new RangeError(
+      `maxTripletsPerChunk must be a non-negative integer, received ${String(limit)}`,
+    );
+  }
+  if (triplets.length <= limit) {
+    return { triplets, truncation: undefined };
+  }
+  return {
+    triplets: triplets.slice(0, limit),
+    truncation: {
+      scope: "chunk",
+      chunkIndex: options.chunkIndex ?? null,
+      limit,
+      considered: triplets.length,
+      dropped: triplets.length - limit,
+    },
+  };
+}
 
 /**
  * Renders the extraction prompt for one chunk.
@@ -323,11 +492,112 @@ export function buildExtractionPrompt(
   // tool schema, so threading it here would change the oracle's bytes for no
   // gain.
   _ontology?: Ontology,
+  options: TripletBudgetOptions = {},
 ): string {
-  const nodeContent = `chunk_index: ${String(chunkIndex)}\nstack_name: ${stackName}\n\n${chunkContent}`;
-  return EXTRACTION_PROMPT.replace("{max_triplets_per_chunk}", String(MAX_TRIPLETS_PER_CHUNK)).replace(
-    "{text}",
-    nodeContent,
+  return renderPrompt(EXTRACTION_PROMPT, nodeContent(chunkContent, chunkIndex, stackName), "", options);
+}
+
+/**
+ * `text` as the model reads it: the metadata lines, a blank line, the chunk body.
+ *
+ * Shared by both renderers so a chunk is presented identically whether the
+ * catalog is enforced or only offered as orientation — the two contracts must
+ * differ in what they permit, never in what they show.
+ */
+function nodeContent(chunkContent: string, chunkIndex: number, stackName: string): string {
+  return `chunk_index: ${String(chunkIndex)}\nstack_name: ${stackName}\n\n${chunkContent}`;
+}
+
+/** Substitutes the three placeholders both templates may carry. */
+function renderPrompt(
+  template: string,
+  text: string,
+  catalog: string,
+  options: TripletBudgetOptions,
+): string {
+  const limit = options.maxTripletsPerChunk ?? DEFAULT_MAX_TRIPLETS_PER_CHUNK;
+  return template
+    .replace("{max_triplets_per_chunk}", String(limit))
+    .replace("{catalog}", catalog)
+    .replace("{text}", text);
+}
+
+/**
+ * The instruction text for open extraction, where the catalog orients and never admits.
+ *
+ * Kept beside {@link EXTRACTION_PROMPT} rather than folded into it, for the same
+ * reason the open schema is a separate builder: the strict render is pinned byte for
+ * byte by tests and by the oracle-parity harness, and an instruction that tells the
+ * model to invent types cannot share bytes with one that forbids them.
+ *
+ * Three sentences carry the contract, and each is load-bearing:
+ *
+ * - orientation is not an admission filter, so a fact whose type or predicate nobody
+ *   declared must still be reported with the model's own wording (S7, S31);
+ * - an entity with no relation belongs in the `entities` array, which is how
+ *   knowledge that never forms a triplet survives at all (S8);
+ * - the triplet budget is named as a budget, so a capped answer reads as a known
+ *   cost rather than as a thin document (S9).
+ *
+ * `{catalog}`, `{max_triplets_per_chunk}` and `{text}` are filled by
+ * {@link buildOpenExtractionPrompt}.
+ */
+const OPEN_EXTRACTION_PROMPT =
+  "Given the following text, extract the knowledge graph according to the provided schema. " +
+  "The type lists in the schema and in the catalog below are ORIENTATION and never an admission " +
+  "filter: report every entity and every relation the text supports, and when no listed type or " +
+  "predicate fits, propose your own wording instead of leaving the fact out.\n" +
+  "Report entities that take part in no relation in the entities array.\n" +
+  "{catalog}" +
+  "Try to limit to the output {max_triplets_per_chunk} extracted triplets\n" +
+  "-------\n" +
+  "{text}\n" +
+  "-------\n";
+
+/**
+ * The declared catalog as one orientation line, or nothing when none is declared.
+ *
+ * Absent rather than empty: a line saying "catalog: none" would tell the model the
+ * Stack prefers nothing, which is a different claim from "this Stack declared
+ * nothing".
+ */
+function catalogOrientation(ontology: Ontology | undefined): string {
+  if (ontology === undefined) {
+    return "";
+  }
+  return (
+    "Catalog (orientation only): entity types " +
+    `${pythonLiteral(ontology.entityTypes)}; relation types ` +
+    `${pythonLiteral(ontology.relationshipTypes)}.\n`
+  );
+}
+
+/**
+ * Renders the open extraction prompt for one chunk.
+ *
+ * Same chunk presentation as {@link buildExtractionPrompt} — the model sees the
+ * `chunk_index` and `stack_name` metadata lines in both, because the Stack's name is
+ * part of what the text means — with the admission rule inverted.
+ *
+ * @param chunkContent - The stored chunk body, exactly as `document_chunks` holds it.
+ * @param chunkIndex - The chunk's position inside its document.
+ * @param stackName - The Stack the document belongs to.
+ * @param ontology - The declared catalog, offered as orientation when supplied.
+ * @param options - The per-chunk triplet budget.
+ * @returns The rendered prompt.
+ */
+export function buildOpenExtractionPrompt(
+  chunkContent: string,
+  chunkIndex: number,
+  stackName: string,
+  ontology?: Ontology,
+  options: TripletBudgetOptions = {},
+): string {
+  return renderPrompt(
+    OPEN_EXTRACTION_PROMPT,
+    nodeContent(chunkContent, chunkIndex, stackName),
+    catalogOrientation(ontology),
+    options,
   );
 }
 
