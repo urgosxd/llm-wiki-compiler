@@ -73,14 +73,17 @@ Interpretation (non-negotiable): embedding retrieval is legitimate for FINDING c
 
 | ID | Task | Specs | Route | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | Feature document | S1-S14 | worker | pending |
-| T2 | Equivalence vs similarity: deterministic identity tiers (slug, canonical key, alias), embedding similarity demoted to link proposals only | S6, S13, S14 | worker | pending |
+| T1 | Feature document | S1-S14 | worker | 6c071271f11d85485e93537da9f1a1d11549fabb |
+| T2 | Equivalence vs similarity: deterministic identity tiers (slug, canonical key, alias), embedding similarity demoted to link proposals only | S6, S13, S14 | worker | 0add62709713704f5a6eff2f9771ae37311bd1a2 |
 | T3 | Anchored contextual links: structured anchor+target proposals, deterministic anchor validation, target/redundancy/self-link checks, reporting | S8, S13 | worker | pending |
 | T4 | Incremental link review of earlier pages, bounded and reported; also covers the defect that `relatedPages` context is an arbitrary alphabetical slice of existing concept slugs rather than a relevance ranking, so the review step must rank candidate pages by relevance (which IS the legitimate use of similarity retrieval per S14) instead of taking the first N slugs | S9, S13, S14 | worker | pending |
 | T5 | Categories: stable identity, canonical name, description, inclusion criterion, member listing, page-to-category projection | S4, S10, S11 | worker | pending |
-| T6 | Wiki-race navigation: deterministic bounded traversal over the link graph with a testable path result | S11 | worker | pending |
+| T6 | Wiki-race navigation: deterministic bounded traversal over the link graph with a testable path result | S11 | worker | fbcfb48b4ce21cb949338033c646a3340dd9c785 |
 | T7 | Multi-source synthesis and provenance: pin per-source attribution, keep sources authoritative | S2, S3, S7, S12 | worker | pending |
 | T8 | Final gates, docs and delivery report | S1, S12 | worker | pending |
+| T9 | Hoist the single shared target resolver used by `race` and `links-here` instead of duplicating it; behaviour-preserving for `links-here`, pinned by a differential check | S11, S12 | worker | pending |
+| T10 | Resolve the ghost/dangling page classification shared by `race` and `links-here`: either pin the same classification for both, or state in code and docs why they differ and pin both | S11, S12 | worker | pending |
+| T11 | Remove the retired `auto`/`review` identity ranks from `concept-forest.ts` and delete the dead `concept-aliases.ts` vocabulary left behind | S6, S14 | worker | pending |
 
 ## Log
 
@@ -126,3 +129,33 @@ Conditions of record:
 - Known consequence, user-visible, must be stated in the final report: wikis ingested before this change may contain pages that were merged by similarity and are now considered distinct concepts, so page counts can change.
 - "Do NOT build a retroactive splitter for already-merged pages. Splitting existing state is a separate, destructive operation nobody asked for. Document it as a known consequence and leave existing data alone."
 - `relatedPages` being an alphabetical slice of slugs rather than a relevance ranking is a defect; it is fixed inside T4's surface (see T4), which is the legitimate retrieval use permitted by S14.
+
+L5 (main advanced, branch rebased, and the gate set re-measured on the quiescent tree):
+Main moved to `094fd644a2101b4e9faecb3c36cdb0a20ccf4782` (`docs(agents): add the test typecheck ratchet to the pre-commit checks`) and this branch was rebased onto it, conflict-free. Post-rebase SHAs: T1 `docs(odd): add algo-wiki feature document` = `6c071271f11d85485e93537da9f1a1d11549fabb`; T2 `feat(wiki): decide concept identity by equivalence only, not similarity` = `0add62709713704f5a6eff2f9771ae37311bd1a2`; T6 `feat(cli): add deterministic bounded wiki-race navigation` = `fbcfb48b4ce21cb949338033c646a3340dd9c785`.
+
+The project's pre-commit gate set changed. `AGENTS.md` `### Pre-Commit Checks`, quoted verbatim:
+
+"Before committing any work, and before considering any task complete, you must:
+
+1. `npx tsc --noEmit` — type-check passes
+2. `npm run typecheck:tests` — the test type-check ratchet passes (no new test type errors)
+3. `npm run build` — build succeeds
+4. `npm run test:affected` — tests for what you changed pass (use `npm test` when
+   the change is cross-cutting or before opening a PR; see Test Execution Policy)
+5. `fallow` — run the fallow codebase health analyzer. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit until fallow reports no issues."
+
+Gate results on the quiescent rebased tree (Node v24.21.0), every one exit 0 and no failure to classify:
+
+1. `npx tsc --noEmit` — exit 0, no diagnostics.
+2. `npm run typecheck:tests` — exit 0, "1670 files checked; 260 baseline diagnostics in 94 files; no regression."
+3. `npm run typecheck:kg` — exit 0, "349 files checked; 0 diagnostics baselined across 0 entries; no regression."; `npx tsc -p packages/llmwiki-kg/ts/tsconfig.json --noEmit` — exit 0, no diagnostics.
+4. `npm run build` — exit 0, ESM + DTS build success (dist/index.js 443.32 KB, dist/cli.js 498.12 KB, viewer assets copied).
+5. `npm run test:affected` — exit 0, 779 test files passed / 3 skipped (782), 5990 tests passed / 4 skipped (5994).
+6. `./node_modules/.bin/fallow` — exit 0, "0 above threshold · 16172 analyzed · maintainability 91.1 (good)".
+7. T2 re-run: `npx vitest run test/dimensions/wiki-concept-resolution.test.ts test/dimensions/wiki-concept-merge-plan.test.ts test/compiler/extraction-identity.test.ts test/compiler/page-renderer-aliases.test.ts test/compiler/identity-stage-snapshot.test.ts` — exit 0, 5 files / 54 tests passed.
+8. T6 re-run: `npx vitest run test/context/race-path.test.ts test/commands/race-cli.test.ts test/commands/race-registration.test.ts` — exit 0, 3 files / 28 tests passed.
+9. `npx vitest related --run` — `src/context/graph.ts` exit 0, 48 files / 329 tests passed; `src/dimensions/wiki/concept-resolution.ts` exit 0, 88 files / 436 tests passed; `src/compiler/identity-stage.ts` exit 0, 85 files / 390 tests passed.
+
+Coverage caveat of record: `.fallowrc.json` `ignorePatterns` contains `packages/llmwiki-kg/**`, so a clean `fallow` result is not coverage of that package; `packages/llmwiki-kg` is covered only by `npm run typecheck:kg` and the explicit `tsc -p packages/llmwiki-kg/ts/tsconfig.json --noEmit`.
+
+Known consequence, verbatim: "Wikis ingested before this commit may contain pages that were merged by embedding similarity and are now considered distinct concepts, so page counts can change. No retroactive splitter was built; existing data is left alone."
