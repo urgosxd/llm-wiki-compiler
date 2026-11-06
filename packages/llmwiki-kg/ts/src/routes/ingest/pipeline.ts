@@ -60,6 +60,7 @@ import {
   synthesizeEntityDescriptions,
 } from "../../core/extraction.js";
 import { defaultOntology } from "../../core/default_ontology.js";
+import { loadStackCatalog } from "../../core/catalog/stack-catalog.js";
 import { normalizeCatalogName } from "../../core/catalog/names.js";
 import type { TypeCatalog } from "../../core/catalog/types.js";
 import {
@@ -74,7 +75,6 @@ import { buildCandidateSpans, originalPredicate } from "./candidates.js";
 import type { CandidateSpan } from "./candidates.js";
 import {
   CLASSIFIER_VERSION,
-  classificationCatalog,
   classifySpans,
   stateCounts,
 } from "./classify-stage.js";
@@ -329,7 +329,11 @@ async function prepareIngest(
   const input = await loadIngestInput(tx, params, res);
   if (input === undefined) return undefined;
   const processed = await chunkAndExtract(tx, params, input.loaded.text, input.document);
-  const catalog = classificationCatalog(input.document.stack_type_catalog);
+  // The Stack's OWN vocabulary, resolved in the documented order (S14): a declared
+  // `type_catalog`, else a catalog derived from the legacy `ontology`, else the
+  // shipped default. Reading it here — never writing it — is what keeps ingestion
+  // from extending anybody's catalog (S16).
+  const catalog = (await loadStackCatalog(tx, params.stackId)).catalog;
   const identityKeys = resolveIdentityKeys(
     processed.extraction,
     await loadKnownIdentities(tx, params.stackId),

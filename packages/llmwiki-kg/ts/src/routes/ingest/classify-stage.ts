@@ -37,9 +37,6 @@
  * That is what lets the pipeline run stages 4-6 with no transaction open (S44).
  */
 
-import { defaultTypeCatalog } from "../../core/catalog/default_catalog.js";
-import { parseTypeCatalog } from "../../core/catalog/parse.js";
-import type { TypeCatalog } from "../../core/catalog/types.js";
 import { classifyCandidates } from "../../core/classify/batch.js";
 import type {
   CandidateDecision,
@@ -54,6 +51,7 @@ import type { ClassificationStateCounts } from "./audit.js";
 import { candidateEvidence, type CandidateSpan } from "./candidates.js";
 import { assessSupport, supportStatesOf } from "./support-stage.js";
 import type { SupportJudgements } from "./support-stage.js";
+import type { TypeCatalog } from "../../core/catalog/types.js";
 
 /**
  * Our label for the classifier stage that produced a decision.
@@ -89,23 +87,6 @@ export function classificationRuntime(env: JevEnv = process.env): Classification
     // decisions were made with are the thresholds the caller can read back.
     config: parseJevConfig(env),
   };
-}
-
-/**
- * The vocabulary the classifier is asked against.
- *
- * The Stack's own versioned catalog when it has one, otherwise the documented
- * default. A stored catalog that does not parse raises: it is the vocabulary every
- * later classification is measured against, so silently substituting the default
- * would attribute decisions to a catalog nobody configured.
- *
- * @param stored - The raw `stacks.type_catalog` value.
- * @returns The validated, immutable catalog.
- * @throws {TypeCatalogError} When a stored catalog is present but invalid.
- */
-export function classificationCatalog(stored: unknown): TypeCatalog {
-  if (stored === null || stored === undefined) return defaultTypeCatalog();
-  return parseTypeCatalog(stored);
 }
 
 /** Raised when a decision claims something the storage layer forbids. */
