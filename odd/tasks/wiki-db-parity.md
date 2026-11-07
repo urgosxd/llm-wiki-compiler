@@ -33,7 +33,7 @@ S8 — REACHABILITY: every new stage or store must be shown reachable from the c
 | T7 | S7 | Parity test: one input ingested through the file-backed path and the row-backed path, equivalent observable output for all four artifacts. ACCEPTANCE. | worker | `3c09f3d1f5ba2eb700a57a6f9ddc7c6bac95c05f`, temp-root teardown in `396f982545f095178477253190dc2416142bdc6b` |
 | T8 | S8 | Reachability proof for every new stage and store: `file:line` call chain plus `git grep`, and RED observed by unwiring the stage. | worker | `bbda95e3d46bd6e2dd19bf7cb654ee80e1eb7e01` (the durable documentation), `f469c9a54153f8fddcab6089dd9bc58307960f38` (the parity suite fails instead of skipping), `60e2672bbcc5b91a4242a3a3b4ace077657713a3` (the curated-link fallback pinned) — see L10 |
 | T9 | S6, S7 | Documentation: the DB path's behaviour and the exact migration command. | worker | `730f53d05affafb343ef9787fe97b47dcac02648` — see L11 |
-| T10 | S1-S8 | Full gate run and delivery report. | lead | |
+| T10 | S1-S8 | Full gate run and delivery report. | lead | `66f0b84a164f5a5bc08eb37f7eafd845fdaa7dae` (the `--check` flag), `4f27013b3b493b894f96fcaa664a1f126782203f` (the curated-link store header), and the `docs(odd): record T10 and the gate results` commit that carries this row and L12 |
 
 ## Log
 
@@ -448,3 +448,123 @@ not share their curated links" — the exact claim the code no longer makes true
 just corrected. It is a comment, not behaviour, but it is now the only place in the tree
 that says it.
 
+### L12 — T10: the two stale items closed, and the full gate run
+
+Two commits, then this record. Node `v24.21.0` on PATH for every command; no `EBADENGINE`
+warning appeared in any run (`grep -c EBADENGINE` over the `npm test` and `fallow` logs:
+`0` and `0`).
+
+**(a) `66f0b84` — `scripts/apply-schemas.sh` now parses `--check`.** The usage header
+advertised the flag while `CHECK_ONLY` was read only from the environment, so `$1` became the
+target and `--check` was handed to psql as a connection string. Chosen fix: MAKE THE
+DOCUMENTED FLAG WORK rather than correct the header, because it is a small, safe parse
+(`for argument in "$@"` with `--check` → `CHECK_ONLY=true`, any other recognised-flag-shaped
+argument refused, everything else the target) and the header was the interface a reader
+relies on. `CHECK_ONLY=true`, which CI runs at `.github/workflows/ci.yml:95` and
+`publish.yml:269`, is untouched. RED first, in `test/apply-schemas-check-flag.test.ts` (3
+cases, no database needed — the cases distinguish the missing-target branch from the
+connection branch): `× reads --check as the verify mode, not as the target →
+AssertionError: expected 'error: cannot connect to the database…' to contain 'error: no
+target. Pass a connection s…'`, with the two PRESERVE cases already green. After the fix:
+3/3 green. Proven against the live database (read-only; check mode issues SELECTs only):
+
+```text
+$ PSQL="docker exec -i llmwiki-kg-db-1 psql -U aks -d aks" ./scripts/apply-schemas.sh --check
+policies: 32
+  MISSING RLS: wiki.category_members
+  MISSING RLS: wiki.categories
+  MISSING RLS: wiki.curated_links
+drift detected.
+exit=1
+
+$ PSQL="docker exec -i llmwiki-kg-db-1 psql -U aks -d aks" ./scripts/apply-schemas.sh postgresql://aks:aks@localhost:5434/aks --check
+policies: 32
+  MISSING RLS: wiki.category_members
+  MISSING RLS: wiki.categories
+  MISSING RLS: wiki.curated_links
+drift detected.
+exit=1
+
+$ CHECK_ONLY=true PSQL="docker exec -i llmwiki-kg-db-1 psql -U aks -d aks" ./scripts/apply-schemas.sh
+policies: 32
+  MISSING RLS: wiki.category_members
+  MISSING RLS: wiki.categories
+  MISSING RLS: wiki.curated_links
+drift detected.
+exit=1
+
+$ ./scripts/apply-schemas.sh --bogus
+error: unknown option: --bogus
+exit=2
+```
+
+The flag now reaches check mode and reports the drift L11 measured on that database, which
+has NOT had the migration applied. The three `MISSING RLS` lines are that state, not a
+regression. Two prose follow-ups in the same commit: the `<Note>` in
+`docs/guides/wiki-db-parity-migration.mdx` that warned the flag was not parsed now documents
+both forms, and the `ci.yml` comment that quoted the removed expression
+`TARGET="${1:-${DATABASE_URL:-}}"` now describes the rule instead. `bash -n` clean;
+`shellcheck` is not installed on this host, so the script has no linter result (named below).
+
+**(b) `4f27013` — the `curated-links-store.ts` header corrected.** It still asserted "on a
+Stack the pages live in rows and the curated records live on the host that compiled them, so
+two hosts sharing one Stack do not share their curated links", which T5 falsified when
+`wiki.curated_links` landed. The header now says what the code does: the file backend is this
+module and is what a project with NO Stack gets (`curated-links-apply.ts:76`,
+`link-review.ts:482` are the fallbacks), the Stack-backed backend is
+`src/dimensions/wiki/curated-links-row-store.ts` selected at `page-source-seam.ts:408`, and
+the record shape, bounds and overlay are shared so a lost anchor is dropped and reported
+identically. The first line also stopped claiming to hold "the one function that applies it
+to bodies" — the overlay is `curated-links-overlay.ts` and this file only stores. Comments
+only; `git diff` on that commit touches no statement. Nothing else in the tree still carries
+the false claim (`git grep -n "do not share their curated"` exits 1).
+
+**THE FULL GATE RUN on the tree after both fixes.** Every command below was run in the
+foreground, in this order, with the exact exit code observed.
+
+| # | gate | exact command | exit | result |
+|---|------|---------------|------|--------|
+| 1 | root type-check | `npx tsc --noEmit` | 0 | no output, no diagnostics |
+| 2 | KG package type-check | `npx tsc -p packages/llmwiki-kg/ts/tsconfig.json --noEmit` | 0 | no diagnostics |
+| 3 | test type-check ratchet | `npm run typecheck:tests` | 0 | `1745 files checked; 260 baseline diagnostics in 94 files; no regression.` |
+| 4 | KG type-check ratchet | `npm run typecheck:kg` | 0 | `349 files checked; 0 diagnostics baselined across 0 entries; no regression.` |
+| 5 | build | `npm run build` | 0 | `ESM dist/index.js 443.66 KB`, `ESM dist/cli.js 501.70 KB`, `DTS dist/index.d.ts 6.67 KB`, viewer assets copied |
+| 6 | affected tests | `npm run test:affected` | 0 | escalated to the full unit tier (the diff includes `scripts/`): `815 passed | 3 skipped (818)` files, `6189 passed | 4 skipped (6193)` tests, 226.69s |
+| 7 | EXHAUSTIVE | `npm test` | 0 | `899 passed | 3 skipped (902)` files, `6717 passed | 7 skipped (6724)` tests, 321.92s, zero failures |
+| 8 | static analysis | `./node_modules/.bin/fallow` | 0 | dead code `No issues found`; 4 duplicate clone groups, 61 lines, `0.0%`; `✗ 0 above threshold · 17228 analyzed · maintainability 91.1`; no unresolved imports (run AFTER gate 5, so `dist/` existed and the five phantom unresolved-import failures did not appear) |
+
+The 7 skips in gate 7 are accounted for: 4 are the database-gated gateway files the run
+names (`packages/llmwiki-kg/ts/src/routes/aks-gateway.test.ts` 1,
+`ingest-gateway.test.ts` 1, `pages-gateway.test.ts` 2) and the other 3 are inside a file that
+otherwise passed (`test/quickstart-integration.test.ts`, `19 tests | 3 skipped`). Neither of
+those files, nor the conditions their skips test, appears in
+`git diff --name-only a40fc3f..HEAD`, so this branch introduced none of the 7. The 4 clone
+groups in gate 8 are in
+six test files (`test/compiler/link-gate.test.ts`, `test/compiler/page-renderer-contextual-links.test.ts`,
+`test/commands/links-here-cli.test.ts`, `test/commands/race-cli.test.ts`,
+`test/context/ghost-rule.test.ts`, `test/context/race-path.test.ts`), none of which appears
+in `git diff --stat a40fc3f..HEAD`, so they are pre-existing and untouched here.
+
+**`fallow` IS NOT COVERAGE OF THE KG PACKAGE.** `.fallowrc.json` lists
+`packages/llmwiki-kg/**` under `ignorePatterns`, so gate 8 says nothing about that package.
+Gate 2 and gate 4 are what cover it, and both are green.
+
+**CHECKS THAT DID NOT RUN, named:**
+
+- `shellcheck scripts/apply-schemas.sh` — not installed on this host. `bash -n` was run
+  instead (clean), and the behaviour is pinned by the 3-case suite.
+- `npm run fallow:ci` (`scripts/fallow-ci.sh`, which wraps the analyzer against a report) —
+  not in the task's gate list; the analyzer binary itself was run as gate 8.
+- `npm run test:pack` (SDK packaging config) — out of the task's gate list and untouched by
+  this diff.
+- `npm run lint` — no such script exists in `package.json`; the analyzer is `fallow`.
+- A browser/TUI check of anything — no UI changed.
+- The docs anchor/link audit T9 ran — not repeated: this slice removed a `<Note>` and added
+  a sentence inside an existing section, so no heading or link target moved.
+  `npm run release:check-docs` (exit 0) and `npm run release:check-docs:current`
+  (exit 0) were run because docs prose changed.
+
+**SCRATCH ARTIFACTS LEFT ON DISK** (outside the worktree, for removal after review):
+`/tmp/t10-npm-test.log` (the full gate-7 output) and `/tmp/t10-fallow.log` (the gate-8
+output). The focused-test and gate runs created no directory inside the worktree;
+`git status --porcelain` was empty before this record commit.
