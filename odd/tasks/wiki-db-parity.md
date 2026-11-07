@@ -33,7 +33,7 @@ S8 — REACHABILITY: every new stage or store must be shown reachable from the c
 | T7 | S7 | Parity test: one input ingested through the file-backed path and the row-backed path, equivalent observable output for all four artifacts. ACCEPTANCE. | worker | `3c09f3d1f5ba2eb700a57a6f9ddc7c6bac95c05f`, temp-root teardown in `396f982545f095178477253190dc2416142bdc6b` |
 | T8 | S8 | Reachability proof for every new stage and store: `file:line` call chain plus `git grep`, and RED observed by unwiring the stage. | worker | `bbda95e3d46bd6e2dd19bf7cb654ee80e1eb7e01` (the durable documentation), `f469c9a54153f8fddcab6089dd9bc58307960f38` (the parity suite fails instead of skipping), `60e2672bbcc5b91a4242a3a3b4ace077657713a3` (the curated-link fallback pinned) — see L10 |
 | T9 | S6, S7 | Documentation: the DB path's behaviour and the exact migration command. | worker | `730f53d05affafb343ef9787fe97b47dcac02648` — see L11 |
-| T10 | S1-S8 | Full gate run and delivery report. | lead | `66f0b84a164f5a5bc08eb37f7eafd845fdaa7dae` (the `--check` flag), `4f27013b3b493b894f96fcaa664a1f126782203f` (the curated-link store header), and the `docs(odd): record T10 and the gate results` commit that carries this row and L12 |
+| T10 | S1-S8 | Full gate run and delivery report. | lead | `66f0b84a164f5a5bc08eb37f7eafd845fdaa7dae` (the `--check` flag), `4f27013b3b493b894f96fcaa664a1f126782203f` (the curated-link store header), `4818b51be7a7dcb8826d476a37410148c17d78de` (the gate results and L12), `c5795b66555ff1ef063b66c74b562c5a235cc292` (the schema comment about the migration proof), `81a5cfd4b87f9bdfbeaf21342860aad8cab8e2e9` (the durable anti-fallback suite), and the `docs(odd): record the T10 closure` commit that carries L13 |
 
 ## Log
 
@@ -568,3 +568,158 @@ Gate 2 and gate 4 are what cover it, and both are green.
 `/tmp/t10-npm-test.log` (the full gate-7 output) and `/tmp/t10-fallow.log` (the gate-8
 output). The focused-test and gate runs created no directory inside the worktree;
 `git status --porcelain` was empty before this record commit.
+
+### L13 — T10 closure: the durable anti-fallback proof, and the last stale comment
+
+Two commits, then this record. Node `v24.21.0` on PATH for every command (no
+`EBADENGINE` warning in any run). No SQL statement, no source behaviour and no fixture
+changed: the diff is one comment block, one new test file and this entry.
+
+**(a) `c5795b6` — `src/dimensions/wiki/schema.sql`, the stale comment corrected.** The
+comment above the section 2-4 mirror claimed the delimiters exist because
+`test/dimensions/db-parity-migration.test.ts` "strips the region rather than keeping a
+third copy of the DDL". That has been FALSE since `d66612f` (L5): the suite builds its
+pre-migration database from the frozen snapshot
+`test/fixtures/wiki-schema-pre-db-parity.sql`, and it reads no marker at all — the
+`wiki-db-parity-mirror` string appears in exactly one place in the tree, in that suite's
+header, which says the suite "no longer reads them". The comment now states the current
+truth: the delimiters are DOCUMENTATION ONLY, the snapshot is what the test starts from,
+and deriving both sides from one file is precisely the drift the snapshot exists to
+prevent.
+
+DECISION — the markers STAY, and the comment says why. Three reasons: (1) they mark
+exactly which statements are the mirror, which is the region a reviewer has to compare
+against `migration_wiki_db_parity.sql`; (2) the migration's own header already states they
+are for "a reader's benefit" and that the test does not read them, so removing them would
+make one file contradict the other again in the opposite direction; (3) they sit inside a
+HIGH-RISK, already-reviewed migration slice, and deleting them would touch that slice's
+text for a cosmetic gain. Measured: `git show c5795b6 | grep '^[+-]'` filtered to lines
+that are not comments is EMPTY (7 insertions, 3 deletions, every one a `--` line), so no
+DDL moved. `npx vitest run test/dimensions/db-parity-migration.test.ts` → exit 0, 9/9,
+which is the suite that would notice if a statement had.
+
+**(b) `81a5cfd` — `test/dimensions/row-store-of-record.test.ts`, the durable
+anti-fallback suite (S1-S5, S8).** 261 lines, 130 non-comment, 7 cases, the longest case 8
+lines. It closes the weakness L9 measured: parity compares two backends, so an UNWIRED row
+seam stays green — the run falls back to `.llmwiki/curated-links.json` and the link still
+comes back. The claim tested here is not "both backends agree" but "the row-backed half
+needs nothing but rows".
+
+The cases, in order, each `it` under 40 lines:
+
+1. ANTI-VACUITY: the corpus run really produced all four artifacts in rows — the folded
+   alias, ONE curated record (by stable key), the category's membership `evidenceKey`, and
+   the marked gap `[consenso.md]`.
+2. NO FALLBACK FILES: `wiki/concepts` holds no `.md`, `wiki/categories` holds no entry,
+   and `.llmwiki/curated-links.json` does not exist (`stat` must reject with `ENOENT`).
+3. The on-disk `sources/` directory was really deleted (a non-zero count before the
+   removal, an empty listing after), so cases 4-7 read AFTER the last on-disk input is
+   gone.
+4. Aliases and title, through the row page reader the compile path installs on its seams
+   (`createPageContentSource(...).read("concepts", …)`), equal to what the corpus recorded.
+5. The attribution gap `[consenso.md]` and the merged body, through the same reader.
+6. The category and its membership evidence, through the CATEGORY STORE PORT the compile
+   path installs (`storeFor(harness)`, i.e. `createRowCategoryStore`).
+7. The curated records through the ROW CURATED-LINK STORE at the count the corpus ends at:
+   `rows.recordsAfterDrop === 0` and the live store's `load()` holds 0 — a store that never
+   forgot a dropped record answers 1 and fails here.
+
+NAMES ADAPTED RATHER THAN PASTED. Read before writing, every export used verified by grep:
+`test/fixtures/category-rows.ts` exports `categoryRows`, `memberRows`, `storeFor`,
+`withoutStack`, `parityRoots`, `saveScenarioSources`, `answerFor`, `stubCategoryCompile`,
+`categoryLines`; `test/fixtures/store-parity-corpus.ts` exports the corpus constants,
+`artifactLines`, `runParityCorpus`, `ParityEvidence`; the Stack helper
+`test/dimensions/store-parity.test.ts` uses is `createProbeStack` from
+`./harness-lifecycle.js` — the name the handoff guessed, and the real one. Two deliberate
+choices: `parityRoots` is NOT used, because this suite needs ONE row-backed root and the
+helper's `files/` sibling would be an empty directory that case 2 would then have to
+explain; and `withoutStack` is NOT used, because there is no file-backed half here. The
+reader signature is `PageContentSource.read(directory, slug)` from
+`src/dimensions/wiki/page-scan-source.ts:324-345`; the store factories are
+`createRowCuratedLinkStore` (`curated-links-row-store.ts:216`) and
+`createRowCategoryStore` (`categories-row-store.ts:360`).
+
+The no-database rule is the repository's, not a skip: the suite calls `missingTestDatabase`
+(`test/fixtures/test-database-handoff.ts`) itself, so an unreachable database FAILS headed
+`test/dimensions/row-store-of-record.test.ts (the row-store-of-record suite) needs a
+Postgres database and none could be obtained.`, and only `LLMWIKI_TEST_ALLOW_NO_DATABASE=1`
+turns it into explicit skips under an annotated title. It does NOT use
+`withRowsStack`, whose contract is `if (!harness.reachable) return;` — a silent skip.
+
+MEASURED TEETH, on the COMMITTED file. Inverse edit: `curatedLinks: createRowCuratedLinkStore(db as never, stackId),`
+removed from `resolvePageSeams` (`src/dimensions/wiki/page-source-seam.ts:402-411`), which
+is the exact degradation L9 recorded:
+
+```text
+ FAIL  test/dimensions/row-store-of-record.test.ts > a row-backed wiki keeps no file a fallback could serve > really recorded all four artifacts in rows before anything was removed
+AssertionError: expected [] to have a length of 1 but got +0
+ ❯ test/dimensions/row-store-of-record.test.ts:217:67
+ FAIL  test/dimensions/row-store-of-record.test.ts > a row-backed wiki keeps no file a fallback could serve > left no page, category or curated-link file a fallback could serve
+AssertionError: promise resolved "Stats{ dev: 66306, mode: 33204, …(12) }" instead of rejecting
+ ❯ test/dimensions/row-store-of-record.test.ts:225:66
+      Tests  2 failed | 5 passed (7)
+exit=1
+```
+
+TWO failures, and they are the two directions of the same defect: the record had gone to
+the FALLBACK FILE (case 2) and the Stack held nothing (case 1). The other five cases stayed
+green, which is exactly why the record and the file assertions are both needed. Restored by
+inverse edit; `git diff --stat src/dimensions/wiki/page-source-seam.ts` is EMPTY after the
+restore, and the suite is green again:
+
+```text
+ ✓ test/dimensions/row-store-of-record.test.ts (7 tests)
+      Tests  7 passed (7)
+exit=0
+```
+
+**THE GATE RUN on the tree before this record.** Every command in the foreground, in this
+order, with the exit code observed.
+
+| # | gate | exact command | exit | result |
+|---|------|---------------|------|--------|
+| 1 | new suite | `npx vitest run test/dimensions/row-store-of-record.test.ts` | 0 | `1 passed (1)` file, `7 passed (7)` tests |
+| 2 | parity + new | `npx vitest run test/dimensions/store-parity.test.ts test/dimensions/row-store-of-record.test.ts` | 0 | `2 passed (2)` files, `14 passed (14)` tests |
+| 3 | related | `npx vitest related --run src/dimensions/wiki/schema.sql test/dimensions/row-store-of-record.test.ts` | 0 | selected only the new file (`1 passed (1)`, `7 passed (7)`): `schema.sql` is read by no importer, so its only runnable relation is the migration suite, run below |
+| 4 | migration suite (because `schema.sql` changed) | `npx vitest run test/dimensions/db-parity-migration.test.ts` | 0 | `1 passed (1)` file, `9 passed (9)` tests |
+| 5 | root type-check | `npx tsc --noEmit` | 0 | no output (0 lines), no diagnostics |
+| 6 | test type-check ratchet | `npm run typecheck:tests` | 0 | `1746 files checked; 260 baseline diagnostics in 94 files; no regression.` (baseline NOT regenerated) |
+| 7 | KG type-check ratchet | `npm run typecheck:kg` | 0 | `349 files checked; 0 diagnostics baselined across 0 entries; no regression.` |
+| 8 | build | `npm run build` | 0 | `ESM` + `DTS dist/index.d.ts 6.67 KB`, viewer assets copied |
+| 9 | static analysis | `./node_modules/.bin/fallow` | 0 | dead code `✓ No issues found`; `✗ 0 above threshold · 17251 analyzed · maintainability 91.1 (good)`; no unresolved imports (run AFTER gate 8) |
+
+**`fallow` IS NOT COVERAGE OF THE KG PACKAGE.** `.fallowrc.json` lists
+`packages/llmwiki-kg/**` under `ignorePatterns`, so gate 9 says nothing about that package;
+gates 5/6/7 are what cover it and all three are green.
+
+DUPLICATION, reported rather than glossed. Gate 9 reports 6 clone groups; at `4818b51`
+there were 4, and the 2 new ones involve the new file:
+`test/dimensions/row-store-of-record.test.ts:115-132` ↔
+`test/dimensions/store-parity.test.ts:158-181` (the probe-Stack gate: `skipReasonFor` +
+`probeStack`), and `test/dimensions/row-store-of-record.test.ts:204-215` ↔
+`test/dimensions/store-parity.test.ts:211-223` (the `afterAll` teardown). Both are BELOW
+the analyzer's threshold, so the gate is green, and both are the same intent written twice.
+The real fix is one shared fixture — the same cure `category-rows.ts` applied to the
+category suites ("duplication in tests is duplication of intent") — and it needs an edit to
+`test/dimensions/store-parity.test.ts`, which is outside this closure's edit surface.
+Left as a NAMED risk for the parent rather than papered over; one attempt was made to
+shrink the pair (the anti-vacuity case was re-expressed, and its assertions became
+STRONGER — it now pins the membership `evidenceKey` instead of a length), and the two
+groups above survived it.
+
+CHECKS THAT DID NOT RUN, named: `npm test` / `npm run test:affected` (both already run for
+this feature at L12 and unaffected by a comment, a new test file and an ODD record — the
+focused suites and the migration suite were run instead); `npx tsc -p
+packages/llmwiki-kg/ts/tsconfig.json --noEmit` (untouched package, covered by gate 7's
+ratchet); `shellcheck` (not installed on this host); `npm run release:check-docs` (no
+`docs/` file changed here); no browser/TUI check (no UI changed).
+
+SCRATCH ARTIFACTS LEFT ON DISK, outside the worktree, for removal after review:
+`/tmp/t10c-new-test.log`, `/tmp/t10c-pair.log`, `/tmp/t10c-related.log`,
+`/tmp/t10c-migration.log`, `/tmp/t10c-tsc.log`, `/tmp/t10c-tct.log`,
+`/tmp/t10c-tck.log`, `/tmp/t10c-build.log`, `/tmp/t10c-fallow.log`,
+`/tmp/t10c-red-final.log`, `/tmp/t10c-green-final.log`, plus the L12 pair
+`/tmp/t10-npm-test.log` and `/tmp/t10-fallow.log`. No temporary directory was
+created inside the worktree (each suite's `mkdtemp` root is removed in its own `afterAll`,
+and the probe Stack is torn down there too), and no database was created by this closure —
+the suites run against the run's own per-run database, which the harness drops.
