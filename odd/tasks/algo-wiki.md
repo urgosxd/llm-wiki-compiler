@@ -79,13 +79,13 @@ Interpretation (non-negotiable): embedding retrieval is legitimate for FINDING c
 | T4 | Incremental link review of earlier pages, bounded and reported; also covers the defect that `relatedPages` context is an arbitrary alphabetical slice of existing concept slugs rather than a relevance ranking, so the review step must rank candidate pages by relevance (which IS the legitimate use of similarity retrieval per S14) instead of taking the first N slugs | S9, S13, S14 | worker | fe48024e6a72477e8e775a291d2c82895d546279 |
 | T5 | Categories: stable identity, canonical name, description, inclusion criterion, member listing, page-to-category projection | S4, S10, S11 | worker | split — T5a and T5b delivered (rows below) |
 | T5a | Category OBJECT MODEL + STORE: `src/categories/**` — record with stable `categoryId`, canonical name, description, inclusion criterion and per-member evidence; lossless frontmatter round trip; deterministic member order; named member bound with reported truncation; files at `wiki/categories/<categoryId>.md` written through the trust planner + journalled executor. No compile integration, no CLI, no closed-set change | S4, S10 | worker | 167cb67395845007463b24f7d29f8376718c2f7e |
-| T5b | Category assignment wired into the compile (proposal → checkable criterion → reuse-by-key → evidence-bearing members, three named bounds and one report line) plus the two read-only navigation verbs `category` / `categories-here`, their help text, docs page and nav entry | S4, S10, S11, S12 | worker | 2a41db3 (compile), e259f42 (CLI) |
+| T5b | Category assignment wired into the compile (proposal → checkable criterion → reuse-by-key → evidence-bearing members, three named bounds and one report line) plus the two read-only navigation verbs `category` / `categories-here`, their help text, docs page and nav entry | S4, S10, S11, S12 | worker | 2a41db3e5dfc411f431a2651fd2f99f9684df324 (compile), e259f42a03990af36a6246c7fe5dae3628d44946 (CLI) |
 | T6 | Wiki-race navigation: deterministic bounded traversal over the link graph with a testable path result | S11 | worker | fbcfb48b4ce21cb949338033c646a3340dd9c785 |
-| T7 | Multi-source synthesis and provenance: pin per-source attribution, keep sources authoritative | S2, S3, S7, S12 | worker | b3c5b29 |
-| T8 | Final gates, docs and delivery report | S1, S12 | worker | pending |
-| T9 | Hoist the single shared target resolver used by `race` and `links-here` instead of duplicating it; behaviour-preserving for `links-here`, pinned by a differential check | S11, S12 | worker | pending |
-| T10 | Resolve the ghost/dangling page classification shared by `race` and `links-here`: either pin the same classification for both, or state in code and docs why they differ and pin both | S11, S12 | worker | pending |
-| T11 | Remove the retired `auto`/`review` identity ranks from `concept-forest.ts` and delete the dead `concept-aliases.ts` vocabulary left behind | S6, S14 | worker | pending |
+| T7 | Multi-source synthesis and provenance: pin per-source attribution, keep sources authoritative | S2, S3, S7, S12 | worker | b3c5b2915a30caef982689d1b896813fe6598d81 |
+| T8 | Final gates, docs and delivery report | S1, S12 | worker | this record commit, `docs(odd): record the final verification of the algo-wiki feature` (a commit cannot cite its own SHA; see L17) |
+| T9 | Hoist the single shared target resolver used by `race` and `links-here` instead of duplicating it; behaviour-preserving for `links-here`, pinned by a differential check | S11, S12 | worker | dcc17c513afced2b260e8315898fff396f331b7d |
+| T10 | Resolve the ghost/dangling page classification shared by `race` and `links-here`: either pin the same classification for both, or state in code and docs why they differ and pin both | S11, S12 | worker | d6b20987c4201093762258ed82e0f10665a29f09 |
+| T11 | Remove the retired `auto`/`review` identity ranks from `concept-forest.ts` and delete the dead `concept-aliases.ts` vocabulary left behind | S6, S14 | worker | **NOT DELIVERED — no commit exists, the task is still open (see L17 §6)** |
 | T12 | One final link gate for both link channels: same-run targets resolve, and the `resolveLinks` channel is held to the same decision table and budget as the model's inline links; run totals reported | S8, S13 | worker | 66ce7ef44d72fa56fa22f7b92f06258cb79b8442 |
 | T4b | Review retrieval unions the names an article answers to: the title, the aliases folded this run, and the `aliases` its STORED frontmatter already declares, deduped by canonical key with the title never repeated | S6, S9, S14 | worker | ae765f4bc1ff5f678aee3ea3989ba1c4eca94bc7 |
 | T13 | Gate parity for `review approve`: the approve path passes the resolver's ONE gate construction, so an approved body is judged against the run's full page set instead of the concept-only resolver index | S8, S12 | worker | 070436a645e5f516de3120990838918cd40e7c9c |
@@ -634,3 +634,150 @@ LINE LIMITS (AGENTS.md, non-comment measure): `src/compiler/prompts.ts` 573 tota
 LIMITATIONS OF RECORD: (1) attribution is ASKED for by the prompt and MEASURED by the census, not gated — a model that ignores the rule still gets its page written, because rejecting or rewriting it would destroy content and because the hold-back code is in `src/compiler/index.ts`, outside this task; (2) the census counts a source as attributed when ANY citation marker names it, so a page that attributes one sentence to a source and paraphrases the rest from it reads as fully attributed — the source-utilization report has the same granularity; (3) the truncation report does not name which sources were clipped (see item 4 above); (4) a page whose only contributing sources are truncated can still be reported as an attribution gap, which is a true statement about the bytes, not a contradiction; (5) the gap line is per page, on stdout, with no `--json` envelope — an aggregate run counter would need `PageGenerationResult` to carry it, which `generatePagesPhase` fills in `src/compiler/index.ts`.
 
 RISK: item 3 (a shared contract others consume) is claimed, narrowly. `renderMergedPageContent` and `buildPagePrompt` are used by BOTH the live-write path and the review-candidate path, and the prompt is shared by every page of every run, so the change reaches beyond the merge case: any project that regenerates a page gets the new prompt text and the new `promptVersion` stamp. Proof that nothing else moved: the differential above (single-source compile byte-identical except `promptVersion` and the version line, no new stdout), `npx vitest related --run` on both changed files (98/457 and 113/589, assertions unchanged), `npm run test:affected` green on the re-run, and the fact that `reportAttributionGap` returns before printing for every page with fewer than two contributing sources. No prompt invalidation was introduced: a bump changes no stored page, which is the T18 rule and is why the version line reports the split instead.
+
+L17 (T8 delivered as this record commit, `docs(odd): record the final verification of the algo-wiki feature`; NO product code and NO test changed by this task — its output is evidence):
+
+### 1. `AGENTS.md` `### Pre-Commit Checks`, quoted verbatim from this tip
+
+"Before committing any work, and before considering any task complete, you must:
+
+1. `npx tsc --noEmit` — type-check passes
+2. `npm run typecheck:tests` — the test type-check ratchet passes (no new test type errors)
+3. `npm run build` — build succeeds
+4. `npm run test:affected` — tests for what you changed pass (use `npm test` when
+   the change is cross-cutting or before opening a PR; see Test Execution Policy)
+5. `fallow` — run the fallow codebase health analyzer. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit until fallow reports no issues."
+
+### 2. The eight gates on the quiescent tree (Node v24.21.0, `$HOME/.nvm/versions/node/v24.21.0/bin` first on `PATH`; each command run separately, in the foreground)
+
+1. `npx tsc --noEmit` — **exit 0**, no diagnostics.
+2. `npm run typecheck:tests` — **exit 0**: "Test type-check: 1730 files checked; 260 baseline diagnostics in 94 files; no regression."
+3. `npm run typecheck:kg` — **exit 0**: "KG package type-check: 349 files checked; 0 diagnostics baselined across 0 entries in packages/llmwiki-kg/ts/tsconfig.json; no regression."
+4. `npx tsc -p packages/llmwiki-kg/ts/tsconfig.json --noEmit` — **exit 0**, no diagnostics.
+5. `npm run build` — **exit 0**: ESM `dist/index.js` 443.46 KB, `dist/cli.js` 501.47 KB, DTS `dist/index.d.ts` 6.67 KB, viewer assets copied.
+6. `npm run test:affected` — **exit 0**: `Test Files 806 passed | 3 skipped (809)`, `Tests 6155 passed | 4 skipped (6159)`, 281.59 s. Full output captured to `/tmp/t8-gates/test-affected.log`; zero `×`/`FAIL`/`AssertionError` lines, so there is no failing test to name and nothing to re-run.
+7. `npm test` (the FULL suite; this change is cross-cutting — six new model-call stages and new CLI verbs) — **exit 0**: `Test Files 889 passed | 3 skipped (892)`, `Tests 6679 passed | 7 skipped (6686)`, 367.12 s. Full output captured to `/tmp/t8-gates/npm-test.log`; zero `×`/`FAIL`/`AssertionError` lines. The 3 skipped files are the kg gateway route suites (`aks-gateway`, `ingest-gateway`, `pages-gateway`), skipped by their own guards, and 7 skipped tests are theirs too. No failure to name and nothing to re-run.
+8. `./node_modules/.bin/fallow` — **exit 0**: "✗ 0 above threshold · 16931 analyzed · maintainability 91.1 (good)".
+
+COVERAGE CAVEAT OF RECORD, unchanged and stated plainly: `.fallowrc.json` `ignorePatterns` contains `packages/llmwiki-kg/**`, so a clean `fallow` result is **never** coverage of that package. `packages/llmwiki-kg` is covered only by gate 3 (`npm run typecheck:kg`) and gate 4 (its own `tsc -p` entry point), and nothing else in this audit measured it.
+
+### 3. The `compile-token-budget` question, decided from git
+
+Range inspected: `git log --oneline 094fd64..HEAD` — 31 commits, `6c07127 docs(odd): add algo-wiki feature document` through `ce6a2d4 docs(odd): record T7`.
+
+- `git log --oneline 094fd64..HEAD -- test/compile-token-budget.test.ts` returns **nothing**: the file was NOT edited anywhere in this feature's range. `git log --oneline --all -- test/compile-token-budget.test.ts` returns exactly one commit, `5890016 feat(compile): configure shared completion token budget (#203) (#210)`, which is an ancestor of the branch base.
+- `git log --oneline 094fd64..HEAD -S "maxTokens" -- src/` returns `2a41db3` and `fe48024`, so the change was in `src/`.
+- **VERDICT: it was a CODE change, not a test edit.** `src/categories/assign.ts:304-309` carries the reasoning in place — "No explicit `maxTokens`: the operator's configured output budget applies, exactly as it does to extraction and page generation. Pinning a smaller number here would make one phase of the compile silently ignore LLMWIKI_MAX_TOKENS." — and the call passes no budget. `src/utils/llm.ts:18-20` is the rule it defers to: `resolveMaxTokens` returns an explicit value when given, otherwise the operator's `LLMWIKI_MAX_TOKENS`, otherwise 4096. So NO assertion was weakened; there is no test diff in this range to weaken at all, and `test/compile-token-budget.test.ts` passes unmodified.
+- **NEW FINDING, reported rather than fixed (no product code in T8's surfaces):** `src/compiler/link-review.ts:370` still passes `maxTokens: 512` for the `judge_reference` call. Because `resolveMaxTokens` lets an explicit value win (`src/utils/llm.ts:19`), that one request ignores `LLMWIKI_MAX_TOKENS`. `test/compile-token-budget.test.ts` cannot see it: its scenario is a single-source compile with no earlier page, so the reference review makes no call and its `requests.every((request) => request.body?.max_tokens === 8192)` assertion never meets the 512 request. The same class of defect T5b fixed in the category stage is therefore still present in the review stage.
+
+### 4. Reachability, final state at `ce6a2d4` (`git grep -n` call sites, then the chain read)
+
+| Stage / surface | Chain from the compile or CLI entry to the invocation | Classification |
+| --- | --- | --- |
+| stage-5 reference review | `src/cli.ts` compile registration → `compileCommand` (`src/commands/compile.ts:38`) → `compileAndReport` (`src/compiler/index.ts:323`) → `runCompilePipeline` (`:1061`) → `seedThenFinalize` (`:750`) → `finalizeWiki` (`:1645`) → `reviewEarlierPagesForRun` (`:1552`, called at `:1694`) → `reviewEarlierPages` (`src/compiler/link-review.ts:238`) → `applyCompilePageWritesLocked` | **REACHABLE FROM PRODUCTION** |
+| contextual-link gate | `finalizeWiki` (`index.ts:1645`) → `resolveAndApplyLinks` (`src/compiler/resolver.ts:671`, called at `index.ts:1667`) → `resolveLinks` (`resolver.ts:345`) → `collectFinalBodies` (`:468`) / `linkBody` → `gateFinalBodies` (`:540`) → `validateContextualLinks` (`src/compiler/link-anchoring.ts:447`) | **REACHABLE FROM PRODUCTION** (also from `src/commands/review-approve.ts:396` and `src/import/okf-refresh.ts:33`) |
+| curated-link overlay — store | `recordCuratedLinks` (`src/compiler/curated-links-store.ts:301`, called from `link-review.ts:486`); read path `applyCuratedOverlay` → `curated-links-apply.ts:73` → `overlayCuratedLinks` (`curated-links-overlay.ts:105`) | **REACHABLE FROM PRODUCTION** |
+| curated-link overlay — apply, generation site | `commitLivePageWrites` (`index.ts:526`) → `overlayCuratedPageWrites` (`src/compiler/curated-links-apply.ts:98`, called at `index.ts:540`) | **REACHABLE FROM PRODUCTION** |
+| curated-link overlay — apply, seed site | `generateSeedPages` (`src/compiler/seed-pages.ts:53`) → `overlayCuratedPageWrites` (`seed-pages.ts:86`) | **REACHABLE FROM PRODUCTION** |
+| curated-link overlay — apply, resolution site | `resolveLinks` → `restoreCuratedLinks` (`resolver.ts:403`, called at `:371`) → `applyCuratedOverlay` | **REACHABLE FROM PRODUCTION** (compile, `review approve`, OKF import) |
+| curated-link overlay — claimed non-sites | `git grep -n "overlay\|curated" -- src/compiler/link-repair.ts src/compiler/orphan.ts src/compiler/page-renderer.ts` returns **nothing**, which confirms the three files L13 claims are deliberately NOT overlay sites | claim verified |
+| alias declaration into frontmatter | `generatePagesPhase` (`index.ts:394`) → `generateMergedPage` (`src/compiler/review-pipeline.ts:61`, called at `index.ts:430`) → `renderMergedPageContent` (`src/compiler/page-renderer.ts:96`, called at `review-pipeline.ts:69`) → `buildMergedFrontmatter` (`:207`) → `applyDeclaredAliases` (`:228-246`) | **REACHABLE FROM PRODUCTION** |
+| category assignment | `finalizeWiki` → `assignCategoriesForRun` (`index.ts:1583`, called at `:1699`) → `assignCategories` (`src/categories/assign.ts:213`) → `createCategory` (`src/categories/store.ts:107`) / `updateCategory` (`:131`) → trust planner + `applyApprovedMutationsLocked` | **REACHABLE FROM PRODUCTION** |
+| race traversal | `src/cli.ts` → `registerContextCommands` (`src/cli/context-commands.ts:22`) `.command("race <from> <to>")` (`:111`) → `raceCommand` (`src/commands/race.ts:174`) → `findRacePath` (`src/context/race-path.ts:119`, called at `race.ts:206`) → `resolveTargetNodeId` (`src/context/resolve-target.ts:69`) + `isGhostNode` (`src/context/graph.ts:288`) | **REACHABLE FROM PRODUCTION** |
+| graph-health | `.command("graph-health")` (`context-commands.ts:82`) → `graphHealthCommand` (`src/commands/graph-health.ts:92`) → `analyzeGraphHealth` (`src/context/graph-health.ts:216`, called at `commands/graph-health.ts:84`) → `findRacePath` (`graph-health.ts:228`) | **REACHABLE FROM PRODUCTION** |
+| the version report line | `compileAndReport` → `runCompilePipeline` → `summarizeCompile` (`src/compiler/compile-report.ts:65`) → `reportVersionSplit` (`:217`, called at `:80`); and on the no-source-changes branch `finalizeNothingToCompile` (`index.ts:1001`) → `readVersionSplit` (`src/compiler/version-report.ts:222`) → `reportVersionSplit` (`index.ts:1049`) | **REACHABLE FROM PRODUCTION** (both branches) |
+| `compile --recompile` | `src/cli.ts:168` (`--recompile <pages...>`) → action (`:195`) → `compileCommand` (`src/commands/compile.ts:38`, dispatch at `:42`, `runRecompile` → `compileRecompiling` at `:83`) → `compileRecompiling` (`index.ts:307`) → `recompileScope.run` (`:311`) → `planRecompile` (`index.ts:250`, defined `version-report.ts:302`) | **REACHABLE FROM PRODUCTION** |
+
+**NOT REACHABLE FROM PRODUCTION — named loudly, twice:**
+
+1. **`src/dimensions/wiki/concept-aliases.ts` — ONLY FROM TESTS, i.e. effectively DEAD.** `git grep -n "concept-aliases" -- src/ test/ scripts/` returns only the module's own `@file` header, a comment in `src/dimensions/wiki/schema.sql:124`, and `test/dimensions/wiki-concept-aliases.test.ts`. No production module imports it. This is exactly what **T11** was written to delete, and T11 was never delivered (row marked NOT DELIVERED above).
+2. **The retired identity ranks in `src/dimensions/wiki/concept-forest.ts:29-30` (`auto: 2`, `review: 3`) and `MergeTier`'s `"auto" | "review"` members (`src/dimensions/wiki/concept-resolution.ts:65`) are DEAD VOCABULARY inside reachable modules.** The module is reachable (it builds the union-find), but the two ranks cannot be produced by any rule: `identityTierOf` (`concept-resolution.ts:225-233`) throws `retired similarity tier "<tier>" cannot decide concept identity` if one ever reaches group construction. Also T11's scope, also not delivered.
+
+### 5. Inverted tests
+
+`git grep -n "test\.fails\|it\.fails" -- test/` and `git grep -n "\.fails\b" -- test/ src/` both return **one** hit, and it is a comment, not a test: `test/compiler/wiki-stability.test.ts:90` — "WAS `test.fails` UNTIL THE CURATED-LINK OVERLAY…". **Zero expected-failure tests remain in the suite.** No stale `test.fails` exists, because the three T15 pins were flipped by T16 and T16b (two to passing `it`s, one replaced by the overlay's own cases), and no other `.fails` was ever added. Nothing is lying about a fixed defect.
+
+### 6. `AGENTS.md` size limits — measurement method and violations
+
+METHOD, stated so the numbers are reproducible: for every one of the **106 files** in `git diff --name-only 094fd64..HEAD` (99 `.ts`, 5 `.mdx`, 1 `.md`, 1 `.json`) the file is read at HEAD and at base `094fd64` (`git show`), comment bytes are blanked by a character scanner (block `/* */`, line `//`, quote-aware so `//` inside strings survives), and a line counts when anything non-blank survives — the same non-comment measure L9 called STRICT. A function or test's length is the count of such lines from its declaration line to its matching closing brace at the same depth; functions are `function name(...)` and `const name = (...) =>` declarations, tests are `it(...)`/`test(...)` calls. It is a brace-matching approximation, not a TypeScript parser, so a declaration whose body contains an unbalanced brace inside a template literal or a regex could be mis-measured; every violation below was also opened and read.
+
+FILES OVER 400 non-comment lines (`base -> HEAD`):
+- `src/compiler/index.ts` — **807 -> 1032**. PRE-EXISTING violation (recorded by T14, T16, T16b, T18), grown by ~225 lines across this feature.
+- `src/cli.ts` — **409 -> 422**. PRE-EXISTING violation, grown by 13 lines (the `--recompile` option and its action).
+- **No file this feature CREATED exceeds 400.** Largest created modules: `src/compiler/link-review.ts` 268, `src/categories/assign.ts` 268, `src/compiler/curated-links-store.ts` ~238, `src/compiler/version-report.ts` 222, `src/context/graph-health.ts` 169. Largest changed module: `src/compiler/resolver.ts` 218 -> 384, still under.
+
+FUNCTIONS OVER 40 non-comment lines at HEAD (`base length` in brackets):
+- `src/cli/context-commands.ts:22` `registerContextCommands` — **133L** [43L at base: already over the limit, and this feature added ~90 lines registering `category`, `categories-here`, `graph-health`, `race`]. VIOLATION, badly worsened.
+- `src/compiler/index.ts:1061` `runCompilePipeline` — **95L** [74L]. PRE-EXISTING, worsened.
+- `src/compiler/index.ts:394` `generatePagesPhase` — 47L [47L]. PRE-EXISTING, unchanged.
+- `src/compiler/index.ts:1001` `finalizeNothingToCompile` — **42L** [34L]. NEWLY OVER 40 (the version-line call).
+- `src/compiler/compile-report.ts:65` `summarizeCompile` — **44L** [39L]. NEWLY OVER 40 (four new report calls).
+- `src/dimensions/wiki/concept-resolution.ts:514` `similarityProposals` — **41L** [absent: new function]. VIOLATION introduced by T2.
+- `src/context/graph.ts:142` `expandGraphNeighborhood` — 41L [41L]. PRE-EXISTING, unchanged.
+
+TESTS OVER 40 non-comment lines: **none.** No test file this feature created or changed has an individual test over the limit.
+
+NOTE ON THE DISAGREEMENT: `fallow` (gate 8) reports 0 functions above its complexity threshold while these seven functions exceed the repository's own 40-line rule. The two measures are different (cyclomatic/CRAP vs length), so a green `fallow` is not evidence of line-limit compliance and is not claimed as such here.
+
+### 7. Docs coverage for every new command, option and report line
+
+| Surface | Help text | `docs/cli/*.mdx` | `docs/docs.json` nav | Verdict |
+| --- | --- | --- | --- | --- |
+| `race <from> <to>` (+ `--max-depth`, `--json`) | yes, `src/cli/context-commands.ts:111-135`, exit-code block 0/1/2; confirmed through the built binary (`node dist/cli.js race --help`) | `docs/cli/race.mdx` | `cli/race` (`docs/docs.json:54`) | complete |
+| `category <slug>` (+ `--json`) | yes, `context-commands.ts:43-62`, exit-code block; `node dist/cli.js category --help` prints it | `docs/cli/category.mdx` | `cli/category` (`docs/docs.json:56`) | complete |
+| `categories-here <page-id>` (+ `--json`) | yes, `context-commands.ts:64-79`, exit-code block; binary confirmed | `docs/cli/category.mdx` (its own section, titled "category & categories-here") | covered by the same `cli/category` entry — no separate page was created, which is a choice, not a gap | complete |
+| `graph-health` (+ `--pairs <n>`, `--json`) | yes, `context-commands.ts:82-109`, exit-code block 0/2; binary confirmed | `docs/cli/graph-health.mdx` | `cli/graph-health` (`docs/docs.json:55`) | complete |
+| `compile --recompile <pages...>` | yes, `src/cli.ts:168-176`, including the refusal contract (`exit 1`, `--review` incompatible); binary confirmed | `docs/cli/compile.mdx:30` (flags table) and `docs/cli/compile.mdx:345-397` ("Synthesis versions and regenerating a page") | nav entry is the existing `cli/compile` (`docs/docs.json:49`) | complete |
+| report line `Synthesis version: …` / `Synthesis version split: …` | printed by every compile run (`src/compiler/compile-report.ts:217`); described in help only indirectly through `--recompile` | **documented**: `docs/cli/compile.mdx:345-370`, including both exact shapes | n/a (rides `cli/compile`) | complete |
+| report line `Categories: N page(s) assigned …` | printed by `reportCategoryAssignment` | **documented as an example output line**: `docs/cli/category.mdx:172` | n/a (rides `cli/category`) | adequate |
+| report line `Contextual links in this run: N kept, M demoted (…)` | printed by `reportLinkTotals` | **GAP — not documented anywhere.** `git grep -rn "Contextual link" -- docs/` returns one hit, `docs/cli/graph-health.mdx:7`, which is the word used in prose, not the line | n/a | **GAP** |
+| report line `Link review of earlier pages: …` | printed by `reportLinkReview` | **GAP — not documented.** `git grep -rn "ink review" -- docs/` returns nothing | n/a | **GAP** |
+| report line `Curated links: N link(s) restored, …` and `Curated link dropped on …` | printed by `reportCuratedLinks` / the overlay | **GAP — not documented.** `git grep -rn "urated link" -- docs/` returns only `docs/cli/compile.mdx:351`, a passing mention of curated links in prose | n/a | **GAP** |
+| report line `Page "X" merges N source(s) but attributes M: …` | printed by `reportAttributionGap` (`src/compiler/page-renderer.ts:193`, called at `:127`) | **GAP — not documented** as a line; `docs/concepts/wiki-model.mdx` has a "Source Attribution" section about citations, not about this diagnostic | n/a | **GAP** |
+
+BROADER DOCS GAP, stated because the four gaps above are symptoms of it: the mechanics that carry S6, S8, S9 and S14 — the equivalence tiers and the ban on a score deciding identity, the anchor rule and its five demotion reasons, the three reference-review bounds, and the curated-link record — are documented nowhere under `docs/`. `git grep -rn "anchor" -- docs/` finds only GitHub anchor syntax and SVG `text-anchor` attributes. They live in code JSDoc and in this feature document.
+
+### 8. Consolidated limitations and known gaps stated anywhere in L1-L16
+
+1. Wikis ingested before T2 may hold pages that embedding similarity merged and that are now distinct concepts, so page counts can change; no retroactive splitter was built (L4, L5).
+2. Stored `aliases` are invisible to row-backed runs — `wiki.pages` has no aliases column — so T4b's retrieval union contributes only the title and the current run's folded names on a Stack (L8, L9, L13).
+3. `checkCandidatePublication` reads a FILE-only citation index, so on a Stack with no `wiki/` on disk every candidate link is refused as a broken citation before the link gate runs (L8).
+4. `review approve` does not run the stage-5 reference review (L8, L12).
+5. `review approve` does not assign categories to an approved candidate (L14).
+6. The curated-link store is a FILE even on a Stack, so two hosts sharing one Stack do not share curated links (L13).
+7. Category files are likewise not shared across hosts on a Stack — a category is deliberately not a page (L10, L14).
+8. `canonicalConceptKey` folds case, plurals and the acronym table but NOT accents, so `llmwiki category teoria` does not find "Teoría" (L14).
+9. A proposed category whose slug collides with an existing file of a different name is refused by the trust planner and counted as `write(s) refused` (L14).
+10. Per-source attribution is ASKED for by the prompt (`PAGE_MULTI_SOURCE_LINES`, `PROMPT_VERSION` v9) and MEASURED by `censusSourceAttribution`, never gated; a model that ignores it still gets its page written (L16).
+11. The attribution census counts a source as attributed when ANY citation names it, so one attributed sentence plus paraphrase reads as fully attributed (L16).
+12. The prompt-budget truncation line counts chars and sources but does not NAME which sources were clipped (L16).
+13. A page whose only contributing sources were truncated can still be reported as an attribution gap — true about the bytes, not a contradiction (L16).
+14. The attribution-gap line is per page on stdout with no `--json` envelope (L16).
+15. `graph-health` is a deterministic SAMPLE above `MAX_GRAPH_HEALTH_PAIRS`: the first N pairs in page-id order, not a random sample (L15).
+16. `graph-health` inherits the graph's own limits — the linker matches titles rather than aliases, and a page nothing points at has no path back to it (L15).
+17. The version split reads CONCEPT pages only, and on a row-backed Stack it depends on the content seam exposing frontmatter — the same seam family that loses `aliases` (L15).
+18. `--recompile` costs one extraction per owning source plus one generation, and refuses a page no source owns (a seed page, an approved candidate) (L15).
+19. The `--recompile` request scope is an `AsyncLocalStorage`, so a caller that invokes `compileAndReport` directly (the SDK) gets an ordinary compile (L15).
+20. A `PROMPT_VERSION` bump deliberately invalidates nothing; the version line is the only surface, by decision (L11 S-A4, L15).
+21. The reference review's three-writes-per-run bound also bounds how many curated-link RECORDS a run can create (L13).
+22. A curated link is FORGOTTEN when the prose stops supporting its anchor; the drop is reported with its reason and cannot be re-proposed, because there is no mention left to propose from (L13).
+23. No new `CompileStage` job stage name was added, so the reference review runs inside the existing `compile.finalize` timing boundary (L7).
+24. `src/compiler/index.ts` (807 -> 1032) and `src/cli.ts` (409 -> 422) exceed the 400-line ceiling; seven functions exceed the 40-line rule, three of them newly (see §6).
+25. `.fallowrc.json` ignores `packages/llmwiki-kg/**`, so a clean `fallow` is never coverage of that package (L5 onward, restated in §2).
+26. **T11 was never delivered**: the retired `auto`/`review` identity ranks and the dead `concept-aliases.ts` module are still in the tree (see §4).
+27. **`src/compiler/link-review.ts:370` pins `maxTokens: 512`**, so the reference review's request ignores `LLMWIKI_MAX_TOKENS`, and `test/compile-token-budget.test.ts` cannot detect it (see §3).
+
+### 9. Feature log and totals
+
+`git log --oneline 094fd64..HEAD` — 32 commits: 19 code/test commits and 13 `docs(odd)` records (twelve of them plus this one), first `6c07127 docs(odd): add algo-wiki feature document`, tip `77e645d docs(odd): record the final verification of the algo-wiki feature`. At the time §3 inspected history the tip was `ce6a2d4 docs(odd): record T7` and the range held 31 commits, which is why that section quotes 31.
+`git diff --stat 094fd64..HEAD` totals: **106 files changed, 15965 insertions(+), 785 deletions(-)** (99 `.ts`, 5 `.mdx`, 1 `.md`, 1 `.json`).
+
+### 10. What this audit did NOT run, and why
+
+Nothing under `## Verification`/§2 was skipped: all eight gates ran on the quiescent tree in the foreground and all eight exited 0. NOT run, deliberately: (a) any differential check against the base commit — this task changed no product code, so there is nothing to compare; (b) `fallow fix --dry-run` / `--yes` — gate 8 reported no issue to fix, and mutating anything here is outside T8's surfaces; (c) any coverage measurement of `packages/llmwiki-kg` beyond its two typecheck entry points, which is the standing caveat rather than a new omission. The only commands run beyond the eight gates were read-only inspections (`git log`, `git show`, `git grep`, `git diff --stat`) and `node dist/cli.js <verb> --help` for the four new verbs, all of which are read-only.
+
+T8's own SHA is not recorded in its row because a commit cannot cite itself; the commit is the one whose subject is `docs(odd): record the final verification of the algo-wiki feature` and whose only content change is this document.
+
+Scratch created outside the worktree by this task: `/tmp/t8-gates/` (two vitest logs). Nothing was created inside the worktree, and no scratch, cache or temporary path appears in `git status --short` — its only entry is this document.
+
+RISK: none. T8 changes no product code, no test and no configuration; it adds one documentation record and fills commit SHAs into the feature document's own task table.
