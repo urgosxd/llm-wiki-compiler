@@ -55,8 +55,10 @@ export function registerContextCommands(program: Command, verboseEnabled: (flag?
         "\nMembers are listed in the stored order (page id, then reason), so two runs\n" +
         "on the same wiki print the same bytes. `llmwiki categories-here <page-id>`\n" +
         "answers the opposite direction.\n" +
-        "\nCategories are read from the storage this project uses: wiki/categories/*.md,\n" +
-        "or the wiki.categories rows of the Stack AKS_STACK_ID names.\n",
+        "\nWhere categories are read from is decided by one variable: with no\n" +
+        "AKS_STACK_ID they come from the project's wiki/categories/*.md files, and with\n" +
+        "AKS_STACK_ID set from that Stack's wiki.categories rows in the database, so an\n" +
+        "AKS_STACK_ID exported for compile or ingest also moves this read.\n",
     )
     .action(async (slug: string, options: CategoryCommandOptions) =>
       runExitCodeCommand(async () => categoryCommand(slug, options)),
@@ -73,9 +75,10 @@ export function registerContextCommands(program: Command, verboseEnabled: (flag?
       "after",
       "\nExit codes:\n" +
         "  0  answered (including a page in no category, and a wiki with none yet)\n" +
-        "\n`llmwiki category <slug>` answers the opposite direction. Both read the\n" +
-        "categories of the storage this project uses: wiki/categories/*.md, or the\n" +
-        "wiki.categories rows of the Stack AKS_STACK_ID names.\n",
+        "\n`llmwiki category <slug>` answers the opposite direction. Both read from the\n" +
+        "project's wiki/categories/*.md files when AKS_STACK_ID is unset, and from that\n" +
+        "Stack's wiki.categories rows in the database when it is set, so an\n" +
+        "AKS_STACK_ID exported for compile or ingest also moves this read.\n",
     )
     .action(async (pageId: string, options: CategoriesHereOptions) =>
       runExitCodeCommand(async () => categoriesHereCommand(pageId, options)),

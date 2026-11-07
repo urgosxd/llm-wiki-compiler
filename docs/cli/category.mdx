@@ -23,6 +23,11 @@ resolves it: with a Stack addressed (`AKS_STACK_ID`) the categories come from
 `wiki.categories` and `wiki.category_members`, the same rows the compile wrote; with none
 they come from `wiki/categories/*.md`. The output does not depend on which one answered.
 
+Because that variable is the whole addressing model, and neither verb takes a `--stack`
+flag, an `AKS_STACK_ID` exported for `compile`, `ingest` or `graph-health` also moves where
+these two verbs read from. See
+[Choosing which Stack a command uses](/concepts/tenant-isolation#choosing-which-stack-a-command-uses).
+
 ```bash
 llmwiki category sistemas-distribuidos
 llmwiki category sistemas-distribuidos --json
