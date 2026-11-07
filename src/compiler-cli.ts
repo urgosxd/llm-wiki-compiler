@@ -24,6 +24,8 @@ export { default as categoriesHereCommand } from "./commands/categories-here.js"
 export type { CategoriesHereOptions } from "./commands/categories-here.js";
 export { default as raceCommand, DEFAULT_RACE_MAX_DEPTH, RACE_MAX_DEPTH_CEILING } from "./commands/race.js";
 export type { RaceCommandOptions } from "./commands/race.js";
+export { default as graphHealthCommand } from "./commands/graph-health.js";
+export type { GraphHealthOptions } from "./commands/graph-health.js";
 export { default as lintCommand } from "./commands/lint.js";
 export { default as nextCommand } from "./commands/next.js";
 export { default as queryCommand, generateAnswer, assertQuerySaveOptions } from "./commands/query.js";

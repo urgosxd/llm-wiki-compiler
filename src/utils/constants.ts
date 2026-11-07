@@ -852,3 +852,32 @@ export const MAX_EMBEDDING_ENTRIES = 100_000;
  * the store toward the byte cap or pollute search ranking.
  */
 export const MAX_EMBEDDING_FIELD_CHARS = MAX_SOURCE_CHARS;
+
+/**
+ * Ceiling on how many ORDERED page pairs one `graph-health` measurement walks.
+ *
+ * `graph-health` answers "is this graph navigable?" by asking the EXISTING race
+ * traversal for the shortest route between ordered pairs of articles, so its cost is
+ * (pairs x traversal). The pair set is quadratic in the page count, and a wiki with a
+ * thousand articles would ask for a million routes.
+ *
+ * 200 is the size at which the measurement stays a bounded read on an ordinary wiki
+ * (dozens of pages answer completely, so the cap is never even reached) while a large
+ * corpus is SAMPLED rather than skipped. The report always carries the cap, the total
+ * pair count and how many pairs were actually walked, so a sampled answer is never
+ * mistaken for a complete one: S12 forbids a limit nobody can see. Raising it is a
+ * product decision, which is why the number lives here beside its reason.
+ */
+export const MAX_GRAPH_HEALTH_PAIRS = 200;
+
+/**
+ * Depth at or below which a reachable pair counts as a SHALLOW observation.
+ *
+ * `graph-health` does not invent a "correct" depth distribution -- a small wiki is
+ * legitimately shallow -- but it must not hide the shape that makes wiki-race trivial:
+ * if every sampled reachable pair resolves in at most two hops, the graph is connected
+ * only through a hub (or barely at all) and the report says so as an observation next to
+ * the numbers. 2 is that shape, not a target: a graph measured at 3 or 4 hops prints no
+ * observation, and nothing about this constant changes what is measured.
+ */
+export const GRAPH_HEALTH_FLAT_DEPTH = 2;

@@ -8,6 +8,7 @@ import { contextCommand, type ContextCommandOptions } from "@atomicstrata/llmwik
 import { linksHereCommand, type LinksHereOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { categoryCommand, type CategoryCommandOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { categoriesHereCommand, type CategoriesHereOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { graphHealthCommand, type GraphHealthOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
 import {
   DEFAULT_RACE_MAX_DEPTH,
   RACE_MAX_DEPTH_CEILING,
@@ -75,6 +76,35 @@ export function registerContextCommands(program: Command, verboseEnabled: (flag?
     )
     .action(async (pageId: string, options: CategoriesHereOptions) =>
       runExitCodeCommand(async () => categoriesHereCommand(pageId, options)),
+    );
+
+  program
+    .command("graph-health")
+    .description(
+      "Measure whether the compiled link graph is navigable: the shortest-path depth " +
+        "distribution over ordered page pairs, and how many pairs have no route at all " +
+        "(read-only)",
+    )
+    .option(
+      "--pairs <n>",
+      "Maximum ordered page pairs to walk (default 200; the report always states the cap, " +
+        "the total pair count and how many pairs were actually walked)",
+    )
+    .option("--json", "Emit a stable JSON envelope for agent consumption")
+    .addHelpText(
+      "after",
+      "\nExit codes:\n" +
+        "  0  measured (including a wiki with no pages: an empty wiki is an answer, not a\n" +
+        "     failure)\n" +
+        "  2  unusable request (--pairs is not a non-negative integer)\n" +
+        "\nA pair is an ordered pair of pages: links are directional, so A -> B says nothing\n" +
+        "about B -> A. Depth is the number of links the shortest route follows, measured by\n" +
+        "the same traversal `llmwiki race` plays. An unreachable pair is one with no route\n" +
+        "within the printed hop bound. The sample is skipped onward in page-id order, so two\n" +
+        "runs over the same wiki print the same bytes.\n",
+    )
+    .action(async (options: GraphHealthOptions) =>
+      runExitCodeCommand(async () => graphHealthCommand(options)),
     );
 
   program

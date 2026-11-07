@@ -52,6 +52,7 @@
               "cli/view",
               "cli/links-here",
               "cli/race",
+              "cli/graph-health",
               "cli/category",
               "cli/status",
               "cli/lint-eval",
