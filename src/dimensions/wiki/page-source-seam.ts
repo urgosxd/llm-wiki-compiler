@@ -36,6 +36,7 @@ import { readStateClassifiedFromRows, writeWikiStateToRows } from "./wiki-state-
 import { createRegistryPageSource } from "./page-registry-source.js";
 import { databaseEmbeddingSource } from "../../utils/embeddings-database.js";
 import { createRowCuratedLinkStore } from "./curated-links-row-store.js";
+import { createRowCategoryStore } from "./categories-row-store.js";
 import type { CuratedLinkStorePort } from "../../compiler/curated-links.js";
 import type { CategoryStorePort } from "../../categories/types.js";
 import { listSourceDocuments } from "./source-documents-store.js";
@@ -405,6 +406,7 @@ export function resolvePageSeams(
     resolver: createResolverPageSource(db as never, stackId),
     transaction: createPageBatchTransaction(db as never, stackId),
     curatedLinks: createRowCuratedLinkStore(db as never, stackId),
+    categories: createRowCategoryStore(db as never, stackId),
   };
 }
 
