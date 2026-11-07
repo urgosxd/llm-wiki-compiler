@@ -47,7 +47,7 @@
  * directly proves nothing about integration (S8).
  */
 
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -78,11 +78,13 @@ const probe = await createProbeStack("store-parity");
 describe.skipIf(!probe.harness.reachable)("file-backed and row-backed wikis behave identically", () => {
   let files: ParityEvidence;
   let rows: ParityEvidence;
+  let projectRoot = "";
   let saved: NodeJS.ProcessEnv = { ...process.env };
 
   beforeAll(async () => {
     saved = { ...process.env };
     const root = await mkdtemp(path.join(os.tmpdir(), "store-parity-"));
+    projectRoot = root;
     const { filesRoot, rowsRoot } = await parityRoots(root);
     // The file-backed half runs with NO Stack, so every seam resolves to the on-disk
     // backend; the row-backed half runs with the probe's Stack installed.
@@ -94,6 +96,9 @@ describe.skipIf(!probe.harness.reachable)("file-backed and row-backed wikis beha
   afterAll(async () => {
     process.env = saved;
     vi.restoreAllMocks();
+    // The temp root holds two real compiles' worth of page files; it is this suite's to
+    // remove, and leaving it behind is how a test run silently fills the host's /tmp.
+    await rm(projectRoot, { recursive: true, force: true });
     await probe.harness.cleanup();
   });
 
