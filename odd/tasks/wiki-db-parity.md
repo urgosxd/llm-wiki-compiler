@@ -29,7 +29,7 @@ S8 — REACHABILITY: every new stage or store must be shown reachable from the c
 | T3 | S2 | Aliases persist through the page-row seam and are read back across runs, so the identity tier folds identically in both paths. | worker | `fa75f5e549e3f37d5aa36f29043dda62795b9e33` |
 | T4 | S5 | `attributionGaps` persist through the page-row seam and are marked, counted and named in the row-backed run output. | worker | `e1a2cd49c88c97d4b0e7c2842ebb03bfdd40f554` |
 | T5 | S3 | Curated links persist in `wiki.curated_links` behind the store seam; the overlay re-validates the anchor on every render and a lost anchor drops the link AND reports it. | worker | `15c5cda964906b07246c01f7bfdc0728d3317c98`, refactor-only prerequisite in `df804c6ba6dc1fe7e270b8c3c8baa27e3bcf4e4d` (the `CuratedLinkStorePort` and the file backend behind it; behaviour-preserving, type-checked on its own) |
-| T6 | S4 | Categories persist in `wiki.categories` + `wiki.category_members`; identity minted once, membership stored as evidence, category and concept of the same name stay two objects. | worker | |
+| T6 | S4 | Categories persist in `wiki.categories` + `wiki.category_members`; identity minted once, membership stored as evidence, category and concept of the same name stay two objects. | worker | `7e6e9fc5f8f266efabab075cacb6a5a94518fa1a` (the `CategoryStorePort` and the file backend behind it; behaviour-preserving), `43dab47f0c9a01ad1d4238ab4ee89e3587e54a17` (the row store, the seam selection and the suites) |
 | T7 | S7 | Parity test: one input ingested through the file-backed path and the row-backed path, equivalent observable output for all four artifacts. ACCEPTANCE. | worker | |
 | T8 | S8 | Reachability proof for every new stage and store: `file:line` call chain plus `git grep`, and RED observed by unwiring the stage. | worker | |
 | T9 | S6, S7 | Documentation: the DB path's behaviour and the exact migration command. | worker | |
@@ -142,3 +142,19 @@ What T7 can now assert, and T5 no longer folds:
 - The same suite already asserts `fromRows.restoredBody` `toBe` `fromFiles.restoredBody`, which is now a byte-exact cross-backend body equality rather than an accident of trimming.
 - `test/dimensions/row-page-round-trip.test.ts` pins idempotency: the raw `body` column must be byte-identical across two round trips. RED was observed by restoring the two-newline template (`× expected '\n\nAlpha Topic…' to be '\nAlpha Topic…'`) and reverted by inverse edit.
 - T7 should therefore treat ANY whitespace difference between the two backends as a regression, and should keep driving the trip through `createPageContentSource` + `createPageWriteSink` rather than through a hand-written render.
+
+### L8 — T6 landed, and the `!regenerateOnly` gate is scope, not backend
+
+T6 (`7e6e9fc` refactor, `43dab47` feature). Categories now have a DB twin behind the SAME port the file store answers, selected in `resolvePageSeams` beside the curated-link store, so there is one notion of "database-backed" for pages, links and taxonomy alike.
+
+What T6 reuses rather than restates, all unchanged: `buildCategoryRecord` and `mergeCategoryPatch` (`src/categories/model.ts`), `categoryIdForName`/`categoryObjectId` (`identity.ts`), `sortMembers` (`members.ts`), the criterion test (`criteria.ts`, exercised through `assignCategories`). The row store owns only WHERE the record lives: `wiki.categories` for the identity and its four fields plus both timestamps, `wiki.category_members` for `page_id`, `reason`, `evidence_key`.
+
+Identity: `category_id` is minted once by `buildCategoryRecord` and the update statement (`patchCategoryTx`) names only `canonical_name`, `description`, `inclusion_criterion`, `updated_at`. A rename therefore cannot move the id, and the suite asserts the COLUMN before and after.
+
+A create against a taken identity raises `CategoryWriteRefusedError("deny")` — the same error, with the same decision string, that the file path's trust planner produces — so a caller cannot tell the backends apart, and the stored row is unchanged afterwards.
+
+THE GATE, answered: `finalizeWiki` runs `assignCategoriesForRun` only inside `if (!regenerateOnly)` (`src/compiler/index.ts:1745-1751`), and `regenerateOnly` is `recompileRequest() !== undefined` (`:814`). That is a SCOPE gate, not a backend branch: a `--recompile` run rewrites exactly the pages it names, and a category write touches objects it did not name. The row-backed path inherits the identical behaviour because the flag is decided before any seam is consulted, so categories are left unwritten by a scoped regeneration in BOTH paths — parity, not a gap. A full compile writes them.
+
+Unwiring evidence, each restored by inverse edit with the suites green again: removing the `categories:` selection from `resolvePageSeams`, and separately removing `store: flags.seams?.categories` from `assignCategoriesForRun`, each turned all seven cases red (`expected [] to have a length of 1 but got +0`, `expected undefined to deeply equal {...}`), because the run fell back to the file store.
+
+Known limitation, deliberately not changed: the CLI surfaces (`category`, `categories-here`) still read categories from files. They are read-only commands outside the compile path, and pointing them at rows is a separate decision about which Stack they mean; T9 should say so in the docs rather than leave it implied.
