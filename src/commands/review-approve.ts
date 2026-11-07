@@ -395,7 +395,7 @@ async function refreshWikiAfterApproval(root: string, candidate: ReviewCandidate
       // verbs drift apart again. No run totals exist on this path, so no sink.
       await resolveAndApplyLinks(
         root, [slug], [slug], seams.resolver, seams.sink, seams.remover, undefined,
-        linkGateOptions(seams.content),
+        linkGateOptions(seams.content), seams.curatedLinks,
       );
       await repairAndApplyLinks(root, seams.content, seams.scan, seams.sink, seams.remover);
     });

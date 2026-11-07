@@ -30,6 +30,12 @@
  * validate -- wrong field types, an unknown provenance, or a `stableKey` that does not
  * recompute from its own (source, target, anchor) -- is skipped with a warning naming how
  * many were skipped, and the next write persists the cleaned set.
+ *
+ * WHAT THIS MODULE PUBLISHES. The three operations stay module-private and are handed out
+ * as ONE {@link createFileCuratedLinkStore} port, because a backend is only ever chosen
+ * as a whole: exporting load, keep and forget separately is what lets a caller mix the
+ * file's records with a Stack's page rows. `emptyCuratedLinkStore` stays exported for the
+ * suites and for the in-memory transform `addCuratedLinks` operates on.
  */
 
 import { openFileNoFollow } from "../utils/no-follow-open.js";
@@ -48,6 +54,7 @@ import {
   type CuratedLinkProvenance,
   type CuratedLinkRecord,
   type CuratedLinkStore,
+  type CuratedLinkStorePort,
 } from "./curated-links.js";
 import {
   resolveConfinedPrivateDir,
@@ -254,7 +261,7 @@ function anchorOf(raw: unknown): CuratedLinkAnchor | null {
  * @param root - Absolute project root.
  * @returns The records, or an empty list when the store is absent or untrustworthy.
  */
-export async function loadCuratedLinks(root: string): Promise<readonly CuratedLinkRecord[]> {
+async function loadCuratedLinks(root: string): Promise<readonly CuratedLinkRecord[]> {
   const read = await readCuratedLinkStore(root);
   if (read.status === "unavailable") {
     output.status("!", output.warn(
@@ -298,7 +305,7 @@ async function mutateCuratedLinks(
  * @param incoming - Records in the order the review accepted them.
  * @param tally - Counters to fill with what was stored and what a bound refused.
  */
-export async function recordCuratedLinks(
+async function recordCuratedLinks(
   root: string,
   incoming: readonly CuratedLinkRecord[],
   tally: CuratedLinkCounts,
@@ -315,7 +322,7 @@ export async function recordCuratedLinks(
  * @param stableKeys - Keys of the dropped records.
  * @returns How many records were removed.
  */
-export async function dropCuratedLinks(
+async function dropCuratedLinks(
   root: string,
   stableKeys: readonly string[],
 ): Promise<number> {
@@ -328,4 +335,22 @@ export async function dropCuratedLinks(
     return removed === 0 ? store : { ...store, links };
   });
   return removed;
+}
+
+/**
+ * The confined-file backend, as the port every curated-link consumer takes.
+ *
+ * A thin adapter on purpose: the three functions above are the file backend, and this
+ * only names them together so a caller can be handed a backend without knowing which
+ * one it got. Nothing about the file layout, the version check or the byte caps moves.
+ *
+ * @param root - Absolute project root the store is confined under.
+ * @returns The file-backed port.
+ */
+export function createFileCuratedLinkStore(root: string): CuratedLinkStorePort {
+  return {
+    load: async () => await loadCuratedLinks(root),
+    record: async (incoming, tally) => await recordCuratedLinks(root, incoming, tally),
+    drop: async (stableKeys) => await dropCuratedLinks(root, stableKeys),
+  };
 }

@@ -91,8 +91,9 @@ import {
   emptyCuratedLinkCounts,
   type CuratedLinkCounts,
   type CuratedLinkRecord,
+  type CuratedLinkStorePort,
 } from "./curated-links.js";
-import { recordCuratedLinks } from "./curated-links-store.js";
+import { createFileCuratedLinkStore } from "./curated-links-store.js";
 import * as output from "../utils/output.js";
 import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
 
@@ -138,7 +139,7 @@ export interface LinkReviewOptions {
   seams?: LinkReviewSeams;
 }
 
-/** The four seams this stage needs, all of which a compile already resolved. */
+/** The seams this stage needs, all of which a compile already resolved. */
 export interface LinkReviewSeams {
   /** Row-backed page reader, or undefined for `wiki/concepts`. */
   readonly content?: PageContentSource;
@@ -148,6 +149,14 @@ export interface LinkReviewSeams {
   readonly remover?: PageRemover;
   /** Open batch the writes join, when the caller has one. */
   readonly transaction?: PageBatchTransaction;
+  /**
+   * The run's curated-link store, or undefined for the confined file.
+   *
+   * Carried with the page seams because the records this stage keeps are promises about
+   * the bodies those seams write: a run that wrote a row and kept the record on the
+   * compiling host would answer "does this wiki have that link" differently per machine.
+   */
+  readonly curatedLinks?: CuratedLinkStorePort;
 }
 
 /** One page being edited, with its accumulating body and the records it earned. */
@@ -456,14 +465,33 @@ async function gateEdits(
 }
 
 /**
+ * The curated-link store this stage keeps its records in.
+ *
+ * The run's own answer when a compile resolved one, and the confined file otherwise --
+ * the same fallback `pageStoreOptions` makes for the page writes, so a caller that hands
+ * the stage nothing keeps today's behaviour byte for byte.
+ *
+ * @param root - Project root the file backend is confined under.
+ * @param seams - The run's seams, when a compile supplied them.
+ * @returns The store to keep records in.
+ */
+function curatedStoreFor(
+  root: string,
+  seams: LinkReviewSeams | undefined,
+): CuratedLinkStorePort {
+  return seams?.curatedLinks ?? createFileCuratedLinkStore(root);
+}
+
+/**
  * Apply the edits as ONE journalled batch through the trust-floored write path, and
  * count only what committed.
  *
  * A page the trust floor skipped is reported rather than counted: the run must not
  * claim a link it did not write. Only the COMMITTED pages' records are stored, so the
- * store can never promise a link the wiki does not have.
+ * store can never promise a link the wiki does not have -- and they go to the store the
+ * page write went to, chosen once for the run by {@link LinkReviewSeams}.
  *
- * @param root - Project root the writes are confined under.
+ * @param root - Project root the file backend is confined under.
  * @param edits - The pages to write.
  * @param counts - Totals to fill with the committed modifications.
  * @param options - The run's write seams.
@@ -488,7 +516,7 @@ async function applyEdits(
     counts.linksAdded += edit.linksAdded;
     records.push(...edit.records);
   }
-  await recordCuratedLinks(root, records, counts.curated);
+  await curatedStoreFor(root, options.seams).record(records, counts.curated);
   for (const item of skipped) {
     output.status("!", output.warn(`Link review write skipped for "${item.item.slug}" — ${item.reason}`));
   }

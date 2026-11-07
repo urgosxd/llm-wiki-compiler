@@ -28,9 +28,14 @@ export async function refreshAfterImport(root: string, pageIds: PageId[]): Promi
   // this routes through the lock-free resolution seam.
   const slugs = pageIds.map(slugFromPageId);
   // Seams, not bare root: on a Stack the resolver reads concept pages from ROWS,
-  // and a call without a source lists a directory that holds no page files.
+  // and a call without a source lists a directory that holds no page files. The curated
+  // store travels with them for the same reason: the overlay this phase runs restores
+  // records about those rows, so it must read them from the Stack rather than from
+  // whatever `.llmwiki/curated-links.json` this checkout happens to hold.
   await withPageSeams(process.env, (seams) =>
-    resolveAndApplyLinks(root, slugs, slugs, seams.resolver, seams.sink, seams.remover));
+    resolveAndApplyLinks(
+      root, slugs, slugs, seams.resolver, seams.sink, seams.remover, undefined, undefined,
+      seams.curatedLinks));
   await regenerateIndices(root, process.env);
   // Union the imported page-ids into the shared pending-marker drain (preserves
   // the existing changed-id set; the drain adds prior-pending ids on top).

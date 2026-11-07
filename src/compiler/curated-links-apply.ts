@@ -13,22 +13,26 @@
  * Reporting is part of the application rather than the caller's business: a dropped
  * curated link is a link the wiki just lost, and S12 is explicit that no limit and no
  * partial processing may be silent.
+ *
+ * ONE OVERLAY, TWO STORES. The records are read and forgotten through a
+ * `CuratedLinkStorePort`, which is the confined file on a project with no Stack and the
+ * Stack's `wiki.curated_links` rows on a row-backed one. Nothing below branches on the
+ * backend: the re-anchoring rule is this function, so the two paths cannot disagree
+ * about whether a mention still supports its link.
  */
 
 import { parseFrontmatter } from "../utils/markdown.js";
 import {
   emptyCuratedLinkCounts,
   type CuratedLinkCounts,
+  type CuratedLinkStorePort,
 } from "./curated-links.js";
 import {
   overlayCuratedLinks,
   reportCuratedLinkDrops,
   type CuratedOverlayOutcome,
 } from "./curated-links-overlay.js";
-import {
-  dropCuratedLinks,
-  loadCuratedLinks,
-} from "./curated-links-store.js";
+import { createFileCuratedLinkStore } from "./curated-links-store.js";
 import type { CompilePageWrite } from "./compile-write.js";
 
 /** One body to overlay: the page it belongs to, and its prose without frontmatter. */
@@ -56,17 +60,21 @@ export interface CuratedOverlayBatch {
  * different notions of whether a curated link is still anchored, and with a record
  * store that grows every time a page is regenerated.
  *
- * @param root - Absolute project root.
+ * @param root - Absolute project root the file backend is confined under.
  * @param targets - The bodies to overlay, with their page ids.
+ * @param store - The durable store to read and forget through; omitted means the
+ *   confined file, which is what every caller without a Stack gets.
  * @returns The overlaid bodies and the batch's counts.
  */
 export async function applyCuratedOverlay(
   root: string,
   targets: readonly CuratedBodyTarget[],
+  store?: CuratedLinkStorePort,
 ): Promise<CuratedOverlayBatch> {
   const batch: CuratedOverlayBatch = { bodies: new Map(), counts: emptyCuratedLinkCounts() };
   if (targets.length === 0) return batch;
-  const records = await loadCuratedLinks(root);
+  const backend = store ?? createFileCuratedLinkStore(root);
+  const records = await backend.load();
   if (records.length === 0) return batch;
   const dropped: string[] = [];
   for (const target of targets) {
@@ -79,7 +87,7 @@ export async function applyCuratedOverlay(
     reportCuratedLinkDrops(target.pageId, outcome.dropped);
     for (const record of outcome.dropped) dropped.push(record.stableKey);
   }
-  await dropCuratedLinks(root, dropped);
+  await backend.drop(dropped);
   return batch;
 }
 
@@ -91,13 +99,15 @@ export async function applyCuratedOverlay(
  * frontmatter is preserved byte for byte -- the overlay edits prose only, and the rebuild
  * is a replacement FUNCTION so page prose containing `$&` or `$$` is never reinterpreted.
  *
- * @param root - Absolute project root.
+ * @param root - Absolute project root the file backend is confined under.
  * @param writes - The page writes about to be applied.
+ * @param store - The durable store to read and forget through; omitted means the file.
  * @returns The writes to apply instead, and what the overlay did.
  */
 export async function overlayCuratedPageWrites(
   root: string,
   writes: readonly CompilePageWrite[],
+  store?: CuratedLinkStorePort,
 ): Promise<{ writes: CompilePageWrite[]; counts: CuratedLinkCounts }> {
   const prose = writes.map((write) => ({
     write, parsed: parseFrontmatter(write.body), pageId: `${write.namespace}/${write.slug}`,
@@ -105,6 +115,7 @@ export async function overlayCuratedPageWrites(
   const batch = await applyCuratedOverlay(
     root,
     prose.map((item) => ({ pageId: item.pageId, body: item.parsed.body })),
+    store,
   );
   const overlaid = prose.map((item) => {
     const outcome = batch.bodies.get(item.pageId);

@@ -34,7 +34,11 @@ import {
   type SkippedWrite,
 } from "./compile-write.js";
 import { overlayCuratedPageWrites } from "./curated-links-apply.js";
-import { addCuratedLinkCounts, emptyCuratedLinkCounts } from "./curated-links.js";
+import {
+  addCuratedLinkCounts,
+  emptyCuratedLinkCounts,
+  type CuratedLinkStorePort,
+} from "./curated-links.js";
 import * as output from "../utils/output.js";
 import { CONCEPTS_DIR } from "../utils/constants.js";
 import type { WikiFrontmatter } from "../utils/types.js";
@@ -49,6 +53,11 @@ import type { PageGenerationResult } from "./types.js";
  * @param root - Project root directory.
  * @param schema - Resolved schema config.
  * @param generation - Result of the concept-page generation phase.
+ * @param source - Row-backed page reader, or undefined to read `wiki/concepts`.
+ * @param sink - Row writer, or undefined to write files.
+ * @param remover - Row remover, or undefined to unlink files.
+ * @param transaction - Open batch the writes join, when the caller has one.
+ * @param curatedStore - The run's curated-link store, or undefined for the file one.
  */
 export async function generateSeedPages(
   root: string,
@@ -58,6 +67,7 @@ export async function generateSeedPages(
   sink?: PageSink,
   remover?: PageRemover,
   transaction?: PageBatchTransaction,
+  curatedStore?: CuratedLinkStorePort,
 ): Promise<void> {
   if (schema.seedPages.length === 0) return;
   // Dedup seeds by slug FIRST-SEEN-WINS before rendering, mirroring
@@ -82,8 +92,9 @@ export async function generateSeedPages(
   }
   // A seed page is a concept page like any other: the reference review can have curated
   // a link into it, and this stage REPLACES its body. The overlay runs on the fresh
-  // bodies before they are planned, for the same reason generation does.
-  const overlaid = await overlayCuratedPageWrites(root, writes);
+  // bodies before they are planned, for the same reason generation does -- and through
+  // the SAME store, so a row-backed run restores from the Stack.
+  const overlaid = await overlayCuratedPageWrites(root, writes, curatedStore);
   generation.curatedLinks = generation.curatedLinks ?? emptyCuratedLinkCounts();
   addCuratedLinkCounts(generation.curatedLinks, overlaid.counts);
   const { skipped } = await applyCompilePageWritesLocked(

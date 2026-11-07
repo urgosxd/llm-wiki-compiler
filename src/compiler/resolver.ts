@@ -46,6 +46,7 @@ import type { CompilePageNamespace, CompilePageWrite } from "./compile-write.js"
 import { createRepairResolver } from "./link-repair.js";
 import { listLinkResolvablePendingSlugs } from "./candidate-read.js";
 import { applyCuratedOverlay } from "./curated-links-apply.js";
+import type { CuratedLinkStorePort } from "./curated-links.js";
 import type { ContextualLinkCounts, KnownPageIdentity, LinkPageSet } from "./link-anchoring.js";
 import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
 import * as output from "../utils/output.js";
@@ -357,6 +358,7 @@ function addWikilinks(body: string, titles: readonly PageInfo[], selfTitle: stri
  * @param newSlugs - Slugs created by this run, scanned for inbound mentions.
  * @param source - Row-backed page source, or undefined to read `wiki/concepts`.
  * @param gate - What the final gate judges against, and where its counts go.
+ * @param curatedStore - The run's curated-link store, or undefined for the file one.
  * @returns The rewritten pages (one per page whose body actually changed).
  */
 export async function resolveLinks(
@@ -365,10 +367,11 @@ export async function resolveLinks(
   newSlugs: string[],
   source?: ResolverPageSource,
   gate?: LinkGateOptions,
+  curatedStore?: CuratedLinkStorePort,
 ): Promise<CompilePageWrite[]> {
   const titleIndex = await buildTitleIndex(root, source);
   if (titleIndex.length === 0) return [];
-  await restoreCuratedLinks(root, scopedPages(titleIndex, changedSlugs, newSlugs));
+  await restoreCuratedLinks(root, scopedPages(titleIndex, changedSlugs, newSlugs), curatedStore);
   const bodies = collectFinalBodies(titleIndex, changedSlugs, newSlugs);
   const writes = await gateFinalBodies(root, titleIndex, bodies, gate, source !== undefined);
   if (writes.length > 0) {
@@ -399,11 +402,18 @@ export async function resolveLinks(
  *
  * @param root - Absolute project root the store is confined under.
  * @param pages - The pages this phase must judge, mutated in place with their bodies.
+ * @param store - The run's curated-link store, or undefined for the confined file.
  */
-async function restoreCuratedLinks(root: string, pages: readonly PageInfo[]): Promise<void> {
+async function restoreCuratedLinks(
+  root: string,
+  pages: readonly PageInfo[],
+  store?: CuratedLinkStorePort,
+): Promise<void> {
   if (pages.length === 0) return;
   const batch = await applyCuratedOverlay(
-    root, pages.map((page) => ({ pageId: pageIdOf(page), body: page.body })),
+    root,
+    pages.map((page) => ({ pageId: pageIdOf(page), body: page.body })),
+    store,
   );
   for (const page of pages) {
     const restored = batch.bodies.get(pageIdOf(page));
@@ -667,6 +677,7 @@ function pageIdOf(page: PageInfo): string {
  * @param remover - Row remover, or undefined to delete files.
  * @param transaction - Open batch the writes join, when the caller has one.
  * @param gate - What the final link gate judges against, and where its counts go.
+ * @param curatedStore - The run's curated-link store, or undefined for the file one.
  */
 export async function resolveAndApplyLinks(
   root: string,
@@ -677,9 +688,12 @@ export async function resolveAndApplyLinks(
   remover?: PageRemover,
   transaction?: PageBatchTransaction,
   gate?: LinkGateOptions,
+  curatedStore?: CuratedLinkStorePort,
 ): Promise<void> {
   await applyCompilePageWritesLocked(
-    root, await resolveLinks(root, changedSlugs, newSlugs, source, gate), pageStoreOptions(sink, remover, transaction),
+    root,
+    await resolveLinks(root, changedSlugs, newSlugs, source, gate, curatedStore),
+    pageStoreOptions(sink, remover, transaction),
   );
 }
 

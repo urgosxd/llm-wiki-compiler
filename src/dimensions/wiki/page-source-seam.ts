@@ -35,6 +35,7 @@ import type { WikiState } from "../../utils/types.js";
 import { readStateClassifiedFromRows, writeWikiStateToRows } from "./wiki-state-source.js";
 import { createRegistryPageSource } from "./page-registry-source.js";
 import { databaseEmbeddingSource } from "../../utils/embeddings-database.js";
+import type { CuratedLinkStorePort } from "../../compiler/curated-links.js";
 import { listSourceDocuments } from "./source-documents-store.js";
 import type { SourceDocumentListing } from "../../status/collect.js";
 import type { EmbeddingStoreSource } from "../../utils/embeddings-load.js";
@@ -350,6 +351,20 @@ export interface PageSeams {
    * here to close.
    */
   transaction?: PageBatchTransaction;
+  /**
+   * Store the run's durable CURATED LINKS in rows instead of `.llmwiki/`.
+   *
+   * Resolved here, beside the page seams, because it is the same decision: a curated
+   * link is a promise about a page body, so a run that writes its pages to rows and its
+   * records to a file on the compiling host keeps half of its promise on one machine.
+   * With this in the same bundle, no run can be database-backed for pages and
+   * file-backed for curated links, and there is no second notion of "is this a Stack".
+   *
+   * The OVERLAY is not here: re-anchoring a record onto a regenerated body is one shared
+   * function (`curated-links-apply.ts`) and a backend variant of it would be the fork
+   * D3 forbids.
+   */
+  curatedLinks?: CuratedLinkStorePort;
 }
 
 /**

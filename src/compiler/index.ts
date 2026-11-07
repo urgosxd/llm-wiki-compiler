@@ -71,6 +71,7 @@ import {
   addCuratedLinkCounts,
   emptyCuratedLinkCounts,
   type CuratedLinkCounts,
+  type CuratedLinkStorePort,
 } from "./curated-links.js";
 import { overlayCuratedPageWrites } from "./curated-links-apply.js";
 import { readWikiPageFrom } from "./confined-wiki-read.js";
@@ -408,6 +409,7 @@ async function generatePagesPhase(
   pageRemover: PageRemover | undefined,
   transaction: PageBatchTransaction | undefined,
   contentSource: PageContentSource | undefined,
+  curatedStore: CuratedLinkStorePort | undefined,
   progressSink?: CompileProgressReporter,
 ): Promise<PageGenerationResult> {
   // Publish the denominator as soon as the stage owns it. Announcing the stage
@@ -465,7 +467,7 @@ async function generatePagesPhase(
   // then derive writtenPages from what ACTUALLY committed (skipped pages folded
   // into errors), so finalizeWiki never resolves/embeds an uncommitted page.
   const { writtenPages, batchErrors, curated } = await commitLivePageWrites(
-    root, outcomes, pageSink, pageRemover, transaction);
+    root, outcomes, pageSink, pageRemover, transaction, curatedStore);
   errors.push(...batchErrors);
   return {
     pages, writtenPages, errors, candidates, review, seedSlugs: [],
@@ -551,10 +553,16 @@ interface GeneratedOutcome {
  * runs on the fresh bodies immediately before they are planned, re-anchoring each record
  * against the body that is about to be written and forgetting the records whose mention
  * the new prose no longer contains. See `curated-links.ts` for the rule and
- * `curated-links-store.ts` for the store.
+ * `curated-links-store.ts` for the file store; WHICH store is the run's decision, taken
+ * once in `resolvePageSeams` beside the page seams, so a run cannot write its pages to
+ * rows and keep its records on the compiling host.
  *
  * @param root - Project root the writes are confined under.
  * @param outcomes - Source-ordered generation outcomes.
+ * @param pageSink - Row writer, or undefined to write files.
+ * @param pageRemover - Row remover, or undefined to unlink files.
+ * @param transaction - Open batch the writes join, when the caller has one.
+ * @param curatedStore - The run's curated-link store, or undefined for the file one.
  * @returns The committed entries, any floor-skip errors, and the overlay's counts.
  */
 async function commitLivePageWrites(
@@ -563,6 +571,7 @@ async function commitLivePageWrites(
   pageSink: PageSink | undefined,
   pageRemover: PageRemover | undefined,
   transaction: PageBatchTransaction | undefined,
+  curatedStore: CuratedLinkStorePort | undefined,
 ): Promise<{
   writtenPages: MergedConcept[];
   batchErrors: string[];
@@ -571,7 +580,7 @@ async function commitLivePageWrites(
   const live = outcomes.filter((o) => o.result.liveWrite);
   const overlaid = live.length === 0
     ? { writes: [], counts: emptyCuratedLinkCounts() }
-    : await overlayCuratedPageWrites(root, live.map((o) => o.result.liveWrite!));
+    : await overlayCuratedPageWrites(root, live.map((o) => o.result.liveWrite!), curatedStore);
   const { skipped } = await applyCompilePageWritesLocked(
     root,
     overlaid.writes,
@@ -769,7 +778,8 @@ async function maybeSeedPages(
 ): Promise<void> {
   if (!options.review && !options.skipSeedPages) {
     await generateSeedPages(
-      root, schema, generation, seams.content, seams.sink, seams.remover, seams.transaction);
+      root, schema, generation, seams.content, seams.sink, seams.remover,
+      seams.transaction, seams.curatedLinks);
   }
 }
 
@@ -997,6 +1007,7 @@ async function runGenerationStage(
     input.seams.remover,
     input.seams.transaction,
     input.seams.content,
+    input.seams.curatedLinks,
     input.compileReporter,
   ), () => reportCompileStage(input.compileReporter, "compile.page-generation"));
   reportCompileProgress(
@@ -1701,7 +1712,7 @@ async function finalizeWiki(
     // holds the project lock for its whole pipeline → the lock-free seam.
     await resolveAndApplyLinks(
       root, allChangedSlugs, allNewSlugs, resolverSource, seams.sink, seams.remover,
-      seams.transaction, linkGateFor(seams, totals?.linkCounts),
+      seams.transaction, linkGateFor(seams, totals?.linkCounts), seams.curatedLinks,
     );
     // Resolution adds links for titles it recognises; repair fixes links the
     // model already wrote against a page whose slug is longer than the name it
