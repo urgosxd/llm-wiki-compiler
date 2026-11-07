@@ -13,6 +13,7 @@ import { buildFrontmatter, parseFrontmatter } from "../src/utils/markdown.js";
 import { readState, writeState } from "../src/utils/state.js";
 import * as embeddings from "../src/utils/embeddings.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
+import { EMPTY_CATEGORY_ANSWER, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
 
 const EXTRACTION = JSON.stringify({
   concepts: [{ concept: "Shared Topic", summary: "Shared summary.", is_new: true }],
@@ -41,7 +42,8 @@ async function arrangeReconciliation(): Promise<ReconciliationProbe> {
   let phase: "initial" | "deleted" | "failed" = "initial";
   const extractionSystems: string[] = [];
   const pageSystems: string[] = [];
-  vi.spyOn(AnthropicProvider.prototype, "toolCall").mockImplementation(async (system) => {
+  vi.spyOn(AnthropicProvider.prototype, "toolCall").mockImplementation(async (system, _messages, tools) => {
+    if (isCategoryAssignmentCall([system, _messages, tools])) return EMPTY_CATEGORY_ANSWER;
     extractionSystems.push(system);
     // A FAILED extraction is an unreadable response, not an empty concept list.
     // An empty list is a valid answer (the model reporting nothing new), and it

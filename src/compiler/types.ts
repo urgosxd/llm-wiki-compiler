@@ -11,6 +11,7 @@
 import type { CompilePageWrite } from "./compile-write.js";
 import type { ContextualLinkCounts } from "./link-anchoring.js";
 import type { CuratedLinkCounts } from "./curated-links.js";
+import type { CategoryAssignmentCounts } from "../categories/assign.js";
 import type { LinkReviewCounts } from "./link-review.js";
 import type { RelatedPageIndex } from "./page-renderer.js";
 import type {
@@ -107,6 +108,15 @@ export interface PageGenerationResult {
    * put back silently is as opaque as a link lost silently (S12).
    */
   curatedLinks?: CuratedLinkCounts;
+  /**
+   * What CATEGORY ASSIGNMENT did this run: memberships committed, categories created or
+   * reused, proposals refused, and the bounds that cut the work short.
+   *
+   * Optional for the same reason as the fields above: the stage runs after this result
+   * is built, once every page of the run is final. A category is its own object type, so
+   * these counts describe files under `wiki/categories/`, never pages.
+   */
+  categories?: CategoryAssignmentCounts;
 }
 
 /**
@@ -125,6 +135,8 @@ export interface RunReportTotals {
   linkReview: LinkReviewCounts;
   /** Curated links restored, stored and refused while this run wrote page bodies. */
   curatedLinks: CuratedLinkCounts;
+  /** Memberships committed to categories, and what refused or bounded them. */
+  categories: CategoryAssignmentCounts;
 }
 
 /** Outcome of generating a single merged concept page. */

@@ -14,6 +14,7 @@ import { CONCEPTS_DIR } from "../utils/constants.js";
 import { describeLinkCounts } from "./link-anchoring.js";
 import { describeLinkReview, hasLinkReviewTruncation } from "./link-review.js";
 import { describeCuratedLinks } from "./curated-links.js";
+import { describeCategoryAssignment, hasCategoryAssignmentTruncation } from "../categories/assign.js";
 import type { SchemaConfig } from "../schema/index.js";
 import type { ExtractionResult } from "./deps.js";
 import type {
@@ -73,6 +74,7 @@ export function summarizeCompile(
   reportLinkTotals(generation);
   reportLinkReview(generation);
   reportCuratedLinks(generation);
+  reportCategoryAssignment(generation);
   if (generation.candidates.length > 0) {
     output.status("?", output.info(
       reviewSummaryLine(generation),
@@ -175,7 +177,30 @@ function reportCuratedLinks(generation: PageGenerationResult): void {
   output.status("🔗", counts.dropped["anchor-missing"] > 0 ? output.warn(line) : output.info(line));
 }
 
-/** Human completion line for candidates created this run. */function reviewSummaryLine(generation: PageGenerationResult): string {
+/**
+ * Print ONE line for what CATEGORY ASSIGNMENT did this run (S10, S12).
+ *
+ * Categories are a second object type, so their line cannot be folded into the link
+ * ones: it reports memberships recorded in `wiki/categories/`, not links in page prose.
+ * It follows the same silence rule -- it appears exactly when the stage assigned
+ * something, refused something, or hit one of its named bounds -- because a taxonomy
+ * that quietly stopped growing and one that never tried look identical otherwise.
+ *
+ * @param generation - The compile-stage result, carrying the assignment totals when the
+ *   link phase ran.
+ */
+function reportCategoryAssignment(generation: PageGenerationResult): void {
+  const counts = generation.categories;
+  if (counts === undefined) return;
+  const summary = describeCategoryAssignment(counts);
+  if (summary === null) return;
+  const line = `Categories: ${summary}.`;
+  const actionable = hasCategoryAssignmentTruncation(counts) || counts.writeFailed > 0;
+  output.status("🏷", actionable ? output.warn(line) : output.info(line));
+}
+
+/** Human completion line for candidates created this run. */
+function reviewSummaryLine(generation: PageGenerationResult): string {
   const held = generation.review.held.length;
   const forced = generation.review.forced.length;
   if (held > 0 && forced === 0) {

@@ -6,6 +6,7 @@
  */
 
 import { vi } from "vitest";
+import { EMPTY_CATEGORY_ANSWER, isCategoryAssignmentCall } from "./provider-calls.js";
 import { AnthropicProvider } from "../../src/providers/anthropic.js";
 import * as embeddings from "../../src/utils/embeddings.js";
 
@@ -29,7 +30,11 @@ export function stubOwnerClosureProvider(
   resolveExtraction: (system: string) => string,
 ): string[] {
   const systems: string[] = [];
-  vi.spyOn(AnthropicProvider.prototype, "toolCall").mockImplementation(async (system) => {
+  vi.spyOn(AnthropicProvider.prototype, "toolCall").mockImplementation(async (system, _messages, tools) => {
+    // The category assignment stage is a later tool call on the same method, and it is
+    // NOT an extraction: answering it as one, or letting it into `systems`, would make
+    // the extraction assertions below count a request they were never about.
+    if (isCategoryAssignmentCall([system, _messages, tools])) return EMPTY_CATEGORY_ANSWER;
     systems.push(system);
     return resolveExtraction(system);
   });

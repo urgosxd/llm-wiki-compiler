@@ -16,6 +16,7 @@ import { listCandidates } from "../src/compiler/candidates.js";
 import reviewApproveCommand from "../src/commands/review-approve.js";
 import reviewRejectCommand from "../src/commands/review-reject.js";
 import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { EMPTY_CATEGORY_ANSWER, extractionCalls, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
 import { readStateClassified } from "../src/utils/state.js";
 import { CONCEPTS_DIR } from "../src/utils/constants.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
@@ -44,7 +45,11 @@ function stubTwoConcepts(): ReturnType<typeof vi.spyOn> {
       { concept: "Beta", summary: "Beta summary.", is_new: true, confidence: 0.9 },
     ],
   });
-  const spy = vi.spyOn(AnthropicProvider.prototype, "toolCall").mockResolvedValue(extraction);
+  const spy = vi.spyOn(AnthropicProvider.prototype, "toolCall").mockImplementation(
+    async (system, messages, tools) => (isCategoryAssignmentCall([system, messages, tools])
+      ? EMPTY_CATEGORY_ANSWER
+      : extraction),
+  );
   vi.spyOn(AnthropicProvider.prototype, "complete").mockResolvedValue(PAGE_BODY);
   vi.spyOn(console, "log").mockImplementation(() => {});
   return spy;
@@ -96,7 +101,7 @@ describe("compile review policy", () => {
     expect(state.sources["sample.md"]).toBeDefined();
     expect(second.compiled).toBe(0);
     expect(second.candidates ?? []).toEqual([]);
-    expect(extractSpy).toHaveBeenCalledTimes(1);
+    expect(extractionCalls(extractSpy)).toHaveLength(1);
   });
 
   it("does not duplicate or re-extract an unchanged pending candidate", async () => {
@@ -111,7 +116,7 @@ describe("compile review policy", () => {
     expect(second.compiled).toBe(0);
     expect(second.candidates ?? []).toEqual([]);
     expect(candidates.map((c) => c.id)).toEqual([firstId]);
-    expect(extractSpy).toHaveBeenCalledTimes(1);
+    expect(extractionCalls(extractSpy)).toHaveLength(1);
   });
 
   it("policy off preserves normal direct-write behavior", async () => {

@@ -23,6 +23,7 @@ import { resolveStaleRefresh } from "../src/compiler/refresh-plan.js";
 import refreshCommand from "../src/commands/refresh.js";
 import { listCandidates } from "../src/compiler/candidates.js";
 import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { EMPTY_CATEGORY_ANSWER, extractionCalls, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
 import { readStateClassified } from "../src/utils/state.js";
 import { CONCEPTS_DIR } from "../src/utils/constants.js";
 import { makeCompileProjectRoot } from "./fixtures/compile-project.js";
@@ -103,8 +104,11 @@ async function writeConceptPage(root: string, slug: string, title: string, sourc
 
 /** Stub extraction and page-body calls on AnthropicProvider. Returns the extraction spy. */
 function stubProviderCalls(extractionTitle: string, confidence?: number) {
-  const spy = vi.spyOn(AnthropicProvider.prototype, "toolCall")
-    .mockResolvedValue(extractionFor(extractionTitle, confidence));
+  const spy = vi.spyOn(AnthropicProvider.prototype, "toolCall").mockImplementation(
+    async (system, messages, tools) => (isCategoryAssignmentCall([system, messages, tools])
+      ? EMPTY_CATEGORY_ANSWER
+      : extractionFor(extractionTitle, confidence)),
+  );
   vi.spyOn(AnthropicProvider.prototype, "complete").mockResolvedValue(STUB_BODY);
   return spy;
 }
@@ -148,7 +152,7 @@ describe("refresh --stale (real run, stubbed provider)", () => {
       // No page file for new.md landed on disk either (slug "new-topic" from "# New Topic").
       expect(existsSync(path.join(root, CONCEPTS_DIR, "new-topic.md"))).toBe(false);
       // Only a.md was extracted; new.md was filtered out by changeFilter.
-      expect(extractSpy).toHaveBeenCalledTimes(1);
+      expect(extractionCalls(extractSpy)).toHaveLength(1);
     } finally {
       await cleanupTestRoot(root);
     }
@@ -197,7 +201,7 @@ describe("refresh --stale (real run, stubbed provider)", () => {
       expect(afterContent).not.toContain("Existing body of X.");
       expect(result.pages).toContain("topic-x");
       // The unchanged survivor is force-reconciled because b.md was deleted.
-      expect(extractSpy).toHaveBeenCalledTimes(1);
+      expect(extractionCalls(extractSpy)).toHaveLength(1);
     } finally {
       await cleanupTestRoot(root);
     }

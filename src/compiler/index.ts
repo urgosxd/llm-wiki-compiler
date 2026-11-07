@@ -68,6 +68,13 @@ import {
   type CuratedLinkCounts,
 } from "./curated-links.js";
 import { overlayCuratedPageWrites } from "./curated-links-apply.js";
+import { readWikiPageFrom } from "./confined-wiki-read.js";
+import {
+  addCategoryAssignmentCounts,
+  assignCategories,
+  emptyCategoryAssignmentCounts,
+  type CategoryAssignmentArticle,
+} from "../categories/assign.js";
 import { repairAndApplyLinks } from "./link-repair.js";
 import { qualifiedPageId } from "../utils/page-id.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
@@ -78,6 +85,7 @@ import {
 import * as output from "../utils/output.js";
 import { verbose } from "../utils/output.js";
 import { loadReviewPolicy } from "../review/config.js";
+import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
 import { isPolicyOff } from "../review/policy.js";
 import type { ReviewPolicy } from "../review/policy.js";
 import {
@@ -855,6 +863,8 @@ async function finalizeNothingToCompile(
       linkCounts: emptyContextualLinkCounts(),
       linkReview: emptyLinkReviewCounts(),
       curatedLinks: emptyGeneration.curatedLinks as CuratedLinkCounts,
+      // No article is written on this path, so no page can be assigned to a category.
+      categories: emptyCategoryAssignmentCounts(),
     },
   ));
   return {
@@ -976,6 +986,9 @@ async function runCompilePipeline(
       // The generation overlay already counted what it restored while writing pages;
       // the review stage below folds its own recording into the SAME object.
       curatedLinks: generation.curatedLinks ?? emptyCuratedLinkCounts(),
+      // Filled by the category assignment stage, which runs after every page of the
+      // run is final: a membership is recorded against the page the wiki now serves.
+      categories: emptyCategoryAssignmentCounts(),
     };
     // Seed + resolution route through the SAME executor batches as the
     // no-source-changes branch (see seedThenFinalize). The draft flush is the
@@ -994,6 +1007,7 @@ async function runCompilePipeline(
       linkCounts: totals.linkCounts,
       linkReview: totals.linkReview,
       curatedLinks: totals.curatedLinks,
+      categories: totals.categories,
     };
     await logCompile(root, buckets, reportGeneration, existingIds, env);
     verbose(`compile finished in ${Date.now() - startMs} ms`);
@@ -1327,6 +1341,63 @@ async function reviewEarlierPagesForRun(
   addCuratedLinkCounts(flags.totals.curatedLinks, counts.curated);
 }
 
+/**
+ * Assign this run's articles to categories (S10), and fold the totals into the run.
+ *
+ * Runs in the link phase, after the reference review, and it is the LAST stage that
+ * writes anything: a category is its own object type in `wiki/categories/`, so nothing
+ * downstream reads it and nothing can discard it. The articles it sees are the ones the
+ * run really wrote, each read back as the page the wiki now serves -- the criterion a
+ * proposal states is checked against THAT text, not against the source excerpt the
+ * model worked from, so membership is justified by what a reader can see.
+ *
+ * A run with nothing to write stays a no-op: an empty article list returns before any
+ * read, so a compile of unchanged sources makes no assignment call and writes no file.
+ *
+ * @param root - Project root the reads and writes are confined under.
+ * @param pages - Pages this run wrote, i.e. the articles that can be categorised.
+ * @param flags - The run's seams and its mutable totals.
+ */
+async function assignCategoriesForRun(
+  root: string,
+  pages: readonly MergedConcept[],
+  flags: FinalizeFlags,
+): Promise<void> {
+  if (pages.length === 0 || flags.totals === undefined) return;
+  const articles = await categoryArticlesOf(root, pages, flags.seams?.content);
+  // The compile holds the project lock for its whole pipeline, so the stage writes
+  // through the reentrancy-safe executor instead of re-acquiring (see the category store).
+  const counts = await assignCategories(root, articles, { lockHeld: true });
+  addCategoryAssignmentCounts(flags.totals.categories, counts);
+}
+
+/**
+ * This run's articles, each with the body the wiki now serves for it.
+ *
+ * The body is read back through the run's own page seam, so a row-backed compile checks
+ * its criteria against the rows it just wrote rather than against a filesystem that
+ * holds nothing. A page the run cannot read back is skipped instead of being categorised
+ * on evidence nobody can inspect.
+ *
+ * @param root - Project root the reads are confined under.
+ * @param pages - Pages this run wrote.
+ * @param source - Row-backed page reader, or undefined to read `wiki/concepts`.
+ * @returns The articles the stage may categorise.
+ */
+async function categoryArticlesOf(
+  root: string,
+  pages: readonly MergedConcept[],
+  source: PageContentSource | undefined,
+): Promise<CategoryAssignmentArticle[]> {
+  const articles: CategoryAssignmentArticle[] = [];
+  for (const entry of pages) {
+    const content = await readWikiPageFrom(root, CONCEPTS_DIR, entry.slug, source, false);
+    if (content === "") continue;
+    articles.push({ slug: entry.slug, title: entry.concept.concept, body: parseFrontmatter(content).body });
+  }
+  return articles;
+}
+
 /** This run's articles, as the review stage names them. */
 function reviewArticlesOf(pages: readonly MergedConcept[]): LinkReviewArticle[] {
   return pages.map((entry) => ({
@@ -1393,6 +1464,11 @@ async function finalizeWiki(
     //      the same link twice. Running it before the resolver would also expose the
     //      edits to a body rewrite the resolver builds from its own earlier read.
     await reviewEarlierPagesForRun(root, pages, flags);
+    // Categories come LAST because they are a different object type: a category file is
+    // read by nothing in this pipeline, so no later stage can discard the membership it
+    // records, and every page it describes is final by now. Guarded like the review: a
+    // run with no article makes no assignment call and writes no category file.
+    await assignCategoriesForRun(root, pages, flags);
   }
 
   // SINGLE durable state write of the whole compile: the buffered draft is

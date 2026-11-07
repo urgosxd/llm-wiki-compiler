@@ -152,11 +152,24 @@ export interface MemberTruncation {
   omitted: number;
 }
 
-/** A rendered category file: its markdown, plus the bound it hit if it hit one. */
-export interface CategoryRender {
+/** A rendered category file: its markdown, plus the bound it hit if it hit one. */export interface CategoryRender {
   markdown: string;
   /** Present only when the member listing was truncated. */
   truncation?: MemberTruncation;
+}
+
+/**
+ * How a category write reaches the executor.
+ *
+ * `lockHeld` exists for the one caller that cannot acquire the project lock: a compile
+ * holds it for its whole pipeline and the category assignment stage runs inside it, so
+ * the write must use the reentrancy-safe executor instead of re-acquiring. It defaults
+ * to `false`, so every caller outside a compile keeps the ordinary locking guarantee and
+ * only a caller that really holds the lock can opt out of it.
+ */
+export interface CategoryWriteOptions {
+  /** True when the caller already holds the project lock (a compile does). */
+  lockHeld?: boolean;
 }
 
 /** The result of a create or an update. */

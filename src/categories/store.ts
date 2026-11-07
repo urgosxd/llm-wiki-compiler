@@ -49,7 +49,7 @@
 import path from "path";
 import { readdir } from "fs/promises";
 import { planPageMutation } from "../trust/planner.js";
-import { applyApprovedMutations } from "../trust/executor.js";
+import { applyApprovedMutations, applyApprovedMutationsLocked } from "../trust/executor.js";
 import type { PlannedMutation } from "../trust/planner.js";
 import { CATEGORIES_DIR, CATEGORY_PAGE_NAMESPACE } from "../utils/constants.js";
 import { safeReadFile } from "../utils/markdown.js";
@@ -66,6 +66,7 @@ import type {
   CategoryDraft,
   CategoryPatch,
   CategoryRecord,
+  CategoryWriteOptions,
   CategoryWriteResult,
   MemberTruncation,
 } from "./types.js";
@@ -95,6 +96,7 @@ interface PlannedCategoryWrite {
  * @param root - Absolute project root the file must stay confined to.
  * @param draft - The category's canonical name, description, inclusion criterion and
  *   optional members.
+ * @param options - Write seam options; see {@link CategoryWriteOptions}.
  * @returns The stored record, its object id, its absolute path and — when the member
  *   listing was capped — the truncation.
  * @throws {CategoryValidationError} When a required field is missing or unusable.
@@ -102,9 +104,13 @@ interface PlannedCategoryWrite {
  *   example because a category with that id already exists: creating never
  *   overwrites).
  */
-export async function createCategory(root: string, draft: CategoryDraft): Promise<CategoryWriteResult> {
+export async function createCategory(
+  root: string,
+  draft: CategoryDraft,
+  options: CategoryWriteOptions = {},
+): Promise<CategoryWriteResult> {
   const record = buildCategoryRecord(draft, new Date().toISOString());
-  return await writeCategory(root, record, false);
+  return await writeCategory(root, record, false, options);
 }
 
 /**
@@ -116,6 +122,7 @@ export async function createCategory(root: string, draft: CategoryDraft): Promis
  * @param root - Absolute project root.
  * @param categoryId - The stable id of the category to update.
  * @param patch - The fields to change; omitted fields keep their stored value.
+ * @param options - Write seam options; see {@link CategoryWriteOptions}.
  * @returns The stored record, its object id, its absolute path and any truncation.
  * @throws {CategoryNotFoundError} When no category file exists for the id.
  * @throws {CategoryValidationError} When a supplied field is blank or not a string.
@@ -125,10 +132,13 @@ export async function updateCategory(
   root: string,
   categoryId: string,
   patch: CategoryPatch,
+  options: CategoryWriteOptions = {},
 ): Promise<CategoryWriteResult> {
   const existing = await readCategory(root, categoryId);
   if (existing === null) throw new CategoryNotFoundError(categoryId);
-  return await writeCategory(root, mergeCategoryPatch(existing, patch, new Date().toISOString()), true);
+  return await writeCategory(
+    root, mergeCategoryPatch(existing, patch, new Date().toISOString()), true, options,
+  );
 }
 
 /**
@@ -210,6 +220,7 @@ async function readCategoryContent(root: string, categoryId: string): Promise<st
  * @param record - The complete record to store.
  * @param allowOverwrite - `true` for an update (an intended overwrite), `false` for a
  *   create (a colliding id is refused rather than replaced).
+ * @param options - Write seam options; see {@link CategoryWriteOptions}.
  * @returns The write result.
  * @throws {CategoryWriteRefusedError} When the planner returns no live-write mutation.
  */
@@ -217,15 +228,43 @@ async function writeCategory(
   root: string,
   record: CategoryRecord,
   allowOverwrite: boolean,
+  options: CategoryWriteOptions,
 ): Promise<CategoryWriteResult> {
   const { planned, truncation } = await planCategoryWrite(root, record, allowOverwrite);
-  await applyApprovedMutations(root, planned);
+  await applyCategoryMutations(root, planned, options.lockHeld === true);
   return {
     record,
     objectId: categoryObjectId(record.categoryId),
     path: await categoryFilePath(root, record.categoryId),
     ...(truncation === undefined ? {} : { truncation }),
   };
+}
+
+/**
+ * Hand the plan to the executor, acquiring the project lock unless the caller holds it.
+ *
+ * WHY THE OPTION EXISTS. A compile holds the project lock for its WHOLE pipeline, and
+ * the category assignment stage runs inside it, so a nested acquisition there is refused
+ * ("another compilation is running") and every category write of the run would be lost
+ * while the run reported success. `applyApprovedMutationsLocked` is the SAME locked,
+ * journalled executor without the re-acquisition -- the seam every other compile-path
+ * writer uses -- so the compile passes `lockHeld` and nothing else changes. The default
+ * is to acquire, so a caller outside the compile keeps the ordinary guarantee.
+ *
+ * @param root - Absolute project root.
+ * @param planned - The approved mutations.
+ * @param lockHeld - True when the caller already holds the project lock.
+ */
+async function applyCategoryMutations(
+  root: string,
+  planned: PlannedMutation[],
+  lockHeld: boolean,
+): Promise<void> {
+  if (lockHeld) {
+    await applyApprovedMutationsLocked(root, planned);
+    return;
+  }
+  await applyApprovedMutations(root, planned);
 }
 
 /**

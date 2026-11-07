@@ -22,6 +22,7 @@ import path from "node:path";
 import { compileAndReport } from "../src/compiler/index.js";
 import { readState } from "../src/utils/state.js";
 import { mockReconciliationProvider, useReconciliationProject } from "./fixtures/reconciliation-project.js";
+import { EMPTY_CATEGORY_ANSWER, extractionCalls, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
 
 const ctx = useReconciliationProject({
   dirSuffix: "empty-extraction-state",
@@ -33,7 +34,8 @@ const ctx = useReconciliationProject({
 function mockDeduplicatedProvider() {
   const provider = mockReconciliationProvider();
   let call = 0;
-  provider.toolCall.mockImplementation(async () => {
+  provider.toolCall.mockImplementation(async (system, messages, tools) => {
+    if (isCategoryAssignmentCall([system, messages, tools])) return EMPTY_CATEGORY_ANSWER;
     call += 1;
     const concepts = call === 1
       ? [{ concept: "Durable Subject", summary: "The subject persists.", is_new: true, confidence: 0.9 }]
@@ -58,6 +60,6 @@ describe("empty re-extraction is settled, not failed", () => {
     const secondHash = (await readState(ctx.dir)).sources["alpha.md"]?.hash ?? "";
     expect(secondHash).not.toBe("");
     expect(secondHash).not.toBe(firstHash);
-    expect(provider.toolCall).toHaveBeenCalledTimes(2);
+    expect(extractionCalls(provider.toolCall)).toHaveLength(2);
   });
 });

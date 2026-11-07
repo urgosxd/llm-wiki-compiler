@@ -30,6 +30,12 @@ export interface CompileProviderAnswers {
    * candidate mention must not pay for a call.
    */
   review?: (system: string) => string;
+  /**
+   * Category-assignment answer, chosen from the assignment prompt's system text.
+   * Omitted means a run that proposes no categories, which is the shape a project
+   * without categories has: the stage runs and writes nothing.
+   */
+  categories?: (system: string) => string;
 }
 
 /**
@@ -41,6 +47,7 @@ export function stubCompileProvider(answers: CompileProviderAnswers): void {
   vi.spyOn(AnthropicProvider.prototype, "toolCall").mockImplementation(
     async (system: string, _messages, tools) => {
       if (tools[0]?.name === "judge_reference") return answers.review?.(system) ?? "";
+      if (tools[0]?.name === "assign_categories") return answers.categories?.(system) ?? "";
       return answers.extraction(system);
     },
   );

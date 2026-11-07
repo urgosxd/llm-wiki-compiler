@@ -68,6 +68,53 @@ export const MAX_CONCEPTS_PER_SOURCE = 50;
 export const MAX_CONTEXTUAL_LINKS_PER_PAGE = 12;
 
 /**
+ * Ceiling on how many CATEGORIES one article may be assigned to in a run.
+ *
+ * S10 asks for Wikipedia-like categories, and a category is a grouping a reader
+ * navigates, not a tag cloud: an article that belongs to fifteen groups belongs to
+ * none of them usefully. This cap also bounds the WRITES, because a new category is a
+ * new file and a reused one is a rewritten file. Proposals past it are dropped and
+ * counted under the reason `article-cap`, never silently (S12).
+ *
+ * 3 is the size of the taxonomy a single article can honestly justify -- the topic it
+ * is about, the kind of thing it is, and at most one cross-cutting grouping -- and it
+ * keeps a first compile of a large corpus from producing a category per sentence.
+ * Raising it is a product decision, which is why the number lives here beside its
+ * reason.
+ */
+export const MAX_CATEGORIES_PER_ARTICLE = 3;
+
+/**
+ * Ceiling on how many NEW categories ONE RUN may create.
+ *
+ * Categories are durable files that outlive the run that created them, and a run
+ * that mints one per article would leave a wiki whose taxonomy is an artifact of
+ * which sources happened to arrive together. Reuse is the normal path -- an existing
+ * category with the same canonical name is matched by canonical key, not by raw
+ * string equality -- so this cap only ever bites a genuinely new vocabulary.
+ * Proposals past it are dropped and counted under `new-category-cap`, never silently
+ * (S12): the point is that an operator can see the taxonomy stop growing.
+ *
+ * 10 covers a first ingest that really does open several areas at once, while keeping
+ * the number of new files a single run can add small enough to read in one review.
+ */
+export const MAX_NEW_CATEGORIES_PER_RUN = 10;
+
+/**
+ * Ceiling on how many ARTICLES one run may offer to the category assignment model.
+ *
+ * One article is one model call, so this is the run's request budget for the stage --
+ * the same reason {@link MAX_LINK_REVIEW_PAGES_PER_RUN} exists. A first compile of a
+ * large corpus creates hundreds of articles, and categorising every one of them in a
+ * single run would make the stage the most expensive part of the ingest. Articles past
+ * it are dropped and counted under `run-cap`, never silently (S12).
+ *
+ * 20 matches the reference review's run budget, so an ingest that pays for one stage
+ * also pays for the other, and neither can quietly become the dominant cost.
+ */
+export const MAX_CATEGORY_ASSIGNMENT_ARTICLES_PER_RUN = 20;
+
+/**
  * Ceiling on how many EARLIER pages ONE article's reference review may judge.
  *
  * S9 asks the compiler to "recupera páginas anteriores que podrían necesitar una

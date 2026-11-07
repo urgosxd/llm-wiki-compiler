@@ -21,6 +21,7 @@ import path from "path";
 import { compileAndReport } from "../src/compiler/index.js";
 import type { CompileOptions } from "../src/utils/types.js";
 import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { EMPTY_CATEGORY_ANSWER, extractionCalls, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 import { writeSourceState, sha256Hex } from "./fixtures/state-json.js";
 import { CONCEPTS_DIR } from "../src/utils/constants.js";
@@ -45,7 +46,8 @@ const STUB_BODY = "Body content. ^[a.md]";
  */
 function stubProviderFor(titlesBySource: Record<string, string>): void {
   vi.spyOn(AnthropicProvider.prototype, "toolCall").mockImplementation(
-    async (system: string) => {
+    async (system: string, messages, tools) => {
+      if (isCategoryAssignmentCall([system, messages, tools])) return EMPTY_CATEGORY_ANSWER;
       for (const [, title] of Object.entries(titlesBySource)) {
         if (system.includes(title)) return extractionFor(title);
       }
@@ -127,7 +129,9 @@ describe("changeFilter scopes the run", () => {
     // page-BODY call (once per page) and would pass even without b.md, so the
     // co-contributor assertion must hinge on toolCall instead.
     const extractSpy = vi.spyOn(AnthropicProvider.prototype, "toolCall")
-      .mockImplementation(async (_system: string) => extractionFor("Topic X"));
+      .mockImplementation(async (_system: string, messages, tools) => (isCategoryAssignmentCall(
+        [_system, messages, tools],
+      ) ? EMPTY_CATEGORY_ANSWER : extractionFor("Topic X")));
     vi.spyOn(AnthropicProvider.prototype, "complete").mockResolvedValue(STUB_BODY);
 
     const result = await runFilteredToA(ctx.dir);
@@ -138,8 +142,8 @@ describe("changeFilter scopes the run", () => {
     // source, so exactly two extraction calls (a.md + the b.md co-contributor)
     // prove b.md was processed. This goes red if augmentWithAffectedSources is
     // disabled (only a.md would be extracted).
-    expect(extractSpy).toHaveBeenCalledTimes(2);
-    const extractedBContent = extractSpy.mock.calls.some(
+    expect(extractionCalls(extractSpy)).toHaveLength(2);
+    const extractedBContent = extractionCalls(extractSpy).some(
       ([system]) => typeof system === "string" && system.includes("About B."),
     );
     expect(extractedBContent).toBe(true);

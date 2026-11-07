@@ -10,6 +10,7 @@ import { compileAndReport } from "../src/compiler/index.js";
 import { readState, writeState } from "../src/utils/state.js";
 import { parseFrontmatter } from "../src/utils/markdown.js";
 import { mockReconciliationProvider, useReconciliationProject } from "./fixtures/reconciliation-project.js";
+import { EMPTY_CATEGORY_ANSWER, extractionCalls, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
 
 const ctx = useReconciliationProject({
   dirSuffix: "extraction-reuse", sourceFile: "alpha.md",
@@ -20,7 +21,8 @@ const ctx = useReconciliationProject({
 async function seed() {
   await writeFile(path.join(ctx.dir, "sources/beta.md"), "# Beta\n\nBeta evidence about the shared subject.");
   const provider = mockReconciliationProvider();
-  provider.toolCall.mockImplementation(async (system) => {
+  provider.toolCall.mockImplementation(async (system, _messages, tools) => {
+    if (isCategoryAssignmentCall([system, _messages, tools])) return EMPTY_CATEGORY_ANSWER;
     const source = system.split("--- SOURCE DOCUMENT ---")[1];
     const name = source.includes("Alpha") ? "Alpha" : source.includes("Beta") ? "Beta" : "Gamma";
     return JSON.stringify({ concepts: ["Shared", name].map((concept) => ({
@@ -46,7 +48,7 @@ describe("unchanged extraction reuse", () => {
     const before = await readFile(path.join(ctx.dir, "wiki/concepts/beta.md"), "utf8");
     const owner = (await readState(ctx.dir)).sources["beta.md"];
     expect((await addGamma()).errors).toEqual([]);
-    expect(provider.toolCall).toHaveBeenCalledTimes(1);
+    expect(extractionCalls(provider.toolCall)).toHaveLength(1);
     expect(provider.complete).toHaveBeenCalledTimes(2);
     expect(await readFile(path.join(ctx.dir, "wiki/concepts/beta.md"), "utf8")).toBe(before);
     expect((await readState(ctx.dir)).sources["beta.md"]).toEqual(owner);
@@ -60,9 +62,9 @@ describe("unchanged extraction reuse", () => {
     const provider = await seed();
     await writeFile(path.join(ctx.dir, "sources/alpha.md"), "# Alpha\n\nChanged Alpha evidence.");
     await compileAndReport(ctx.dir);
-    expect(provider.toolCall).toHaveBeenCalledTimes(1);
+    expect(extractionCalls(provider.toolCall)).toHaveLength(1);
     expect(provider.complete).toHaveBeenCalledTimes(2);
-    expect(provider.toolCall.mock.calls[0][0]).toContain("Changed Alpha evidence");
+    expect(extractionCalls(provider.toolCall)[0][0]).toContain("Changed Alpha evidence");
   });
 
   it("updates a dropped assignment using its remaining cached owner", async () => {
@@ -113,14 +115,14 @@ describe("unchanged extraction reuse", () => {
     for (const entry of Object.values(state.sources)) delete (entry as unknown as Record<string, unknown>).extraction;
     await writeState(ctx.dir, state);
     await addGamma();
-    expect(provider.toolCall).toHaveBeenCalledTimes(3);
+    expect(extractionCalls(provider.toolCall)).toHaveLength(3);
   });
 
   it("keeps deletion reconciliation on the fresh-extraction path", async () => {
     const provider = await seed();
     await rm(path.join(ctx.dir, "sources/alpha.md"));
     await compileAndReport(ctx.dir);
-    expect(provider.toolCall).toHaveBeenCalledTimes(1);
+    expect(extractionCalls(provider.toolCall)).toHaveLength(1);
     const shared = await readFile(path.join(ctx.dir, "wiki/concepts/shared.md"), "utf8");
     expect(shared).not.toContain("alpha.md");
   });
@@ -130,7 +132,7 @@ describe("unchanged extraction reuse", () => {
     const before = await readFile(path.join(ctx.dir, ".llmwiki/state.json"), "utf8");
     await writeFile(path.join(ctx.dir, "sources/gamma.md"), "# Gamma\n\nGamma evidence.");
     await compileAndReport(ctx.dir, { review: true });
-    expect(provider.toolCall).toHaveBeenCalledTimes(3);
+    expect(extractionCalls(provider.toolCall)).toHaveLength(3);
     expect(await readFile(path.join(ctx.dir, ".llmwiki/state.json"), "utf8")).toBe(before);
   });
 
@@ -140,7 +142,7 @@ describe("unchanged extraction reuse", () => {
     state.frozenSlugs = ["shared"];
     await writeState(ctx.dir, state);
     await compileAndReport(ctx.dir);
-    expect(provider.toolCall).toHaveBeenCalledTimes(2);
+    expect(extractionCalls(provider.toolCall)).toHaveLength(2);
     expect((await readState(ctx.dir)).frozenSlugs).toEqual([]);
   });
 });

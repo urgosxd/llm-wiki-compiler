@@ -22,7 +22,7 @@ import { MAX_CONCEPTS_PER_SOURCE } from "../utils/constants.js";
  * the prompt builders to splice in the output-language directive only
  * when the user opted in.
  */
-function withLangLine(...lines: string[]): string[] {
+export function withLangLine(...lines: string[]): string[] {
   const lang = languageDirective();
   return lang ? [...lines, lang] : lines;
 }
@@ -58,6 +58,13 @@ function sourcesSectionLines(): string[] {
  * mention that already exists on an EARLIER page. It writes no prose and takes no
  * part in page generation, so no compiled page changes shape under it; it is
  * versioned because the answers it produces are part of what a run judged.
+ *
+ * NOT bumped by the CATEGORY-ASSIGNMENT prompt (`buildCategoryAssignmentPrompt`).
+ * That prompt never writes a byte of a page: it proposes categories, which are their
+ * own object type in `wiki/categories/`, and the version stamped into a page's
+ * frontmatter is a statement about how that page's PROSE was produced. Bumping it
+ * here would claim every page in the wiki was regenerated under a new wording when
+ * nothing about page generation changed.
  */
 export const PROMPT_VERSION = "v8";
 
