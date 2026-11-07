@@ -39,6 +39,24 @@ export interface CompileProviderAnswers {
 }
 
 /**
+ * The tool-call answer that extracts the given concept titles from ANY source.
+ *
+ * Shared because every compile-path case that needs an extraction otherwise restates the
+ * same `{concepts: [...]}` payload, and those copies drift one field at a time. The summary
+ * is derived from the title so a case never has to keep two literals in sync.
+ *
+ * @param titles - Concept titles the extraction should report.
+ * @returns The JSON body the extraction tool call answers with.
+ */
+export function extractionAnswer(titles: readonly string[]): string {
+  return JSON.stringify({
+    concepts: titles.map((title) => ({
+      concept: title, summary: `Summary of ${title}.`, is_new: true,
+    })),
+  });
+}
+
+/**
  * Install the stub on both provider methods a compile uses.
  *
  * @param answers - What each call should return.

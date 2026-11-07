@@ -82,6 +82,16 @@ interface RenderableConcept {
    * read per page.
    */
   relatedPages?: RelatedPageIndex;
+  /**
+   * The run's shared attribution accumulator, when the caller built one.
+   *
+   * Carried on the entry for the same reason {@link relatedPages} is: it is ONE object
+   * per compile run, handed to every page, so the renderer records a page's gap without
+   * the pipeline threading a second argument through the candidate/live branches. Absent
+   * for a single-page caller (a test), where the page is still marked but nothing
+   * aggregates it.
+   */
+  attribution?: AttributionSink;
 }
 
 /**
@@ -124,11 +134,115 @@ export async function renderMergedPageContent(
     entry.combinedContent,
     entry.rebuild === true,
   );
-  reportAttributionGap(entry.concept.concept, censusSourceAttribution(pageBody, entry.sourceFiles));
+  // ONE census, three surfaces: the gap is recorded on the run's accumulator, printed, and
+  // written into the page's own frontmatter -- all from this single reading of the body.
+  const census = censusSourceAttribution(pageBody, entry.sourceFiles);
+  const gap = markAttributionGap(entry, census);
+  reportAttributionGap(entry.concept.concept, census);
 
-  const frontmatter = buildMergedFrontmatter(entry, existingPage, schema);
+  const frontmatter = buildMergedFrontmatter(entry, existingPage, schema, gap);
   reportContradictionWarnings(entry.concept.concept, entry.concept);
   return `${frontmatter}\n\n${pageBody}\n`;
+}
+
+/*
+ * THE ATTRIBUTION MARKER, AND WHY IT IS OBSERVABLE RATHER THAN ONLY PRINTED.
+ *
+ * The Manager's rule: a page that is not fully attributed is never PRESENTED as fully
+ * attributed. A merged article whose prose attributes one of its two sources used to be
+ * written with `sources: [alpha.md, beta.md]` and nothing else, so the stored page looked
+ * exactly like a fully attributed one to a reader, an exporter or a host replaying the
+ * corpus later -- the run's warning was the only trace, and it does not travel with the
+ * page. Three surfaces, ONE detection (the census below), and the page is still WRITTEN:
+ * holding it back would delete content nobody asked to lose, which is not the rule.
+ */
+
+/** One page whose prose leaves at least one contributing source unattributed. */
+export interface AttributionGap {
+  /** The page's title, as its frontmatter records it: what a reader of the run sees. */
+  page: string;
+  /** Contributing sources no citation marker in the body names, in source-list order. */
+  missing: readonly string[];
+}
+
+/**
+ * The accumulator ONE compile run fills while it renders its pages.
+ *
+ * A shared mutable sink rather than a return value because the renderer's result IS the
+ * page: every caller of {@link renderMergedPageContent} writes it, and a page that
+ * reported its gap by changing its return shape would change the contract for the review
+ * candidate path too. Gaps are appended as pages settle, so the totals below sort them:
+ * the printed line must be a function of the SET of imperfect pages, never of the order a
+ * concurrent run happened to finish them in.
+ */
+export interface AttributionSink {
+  /** Every gap recorded so far, in completion order. */
+  readonly gaps: AttributionGap[];
+}
+
+/**
+ * Start the accumulator a compile run hands to every page it renders.
+ * @returns An empty sink.
+ */
+export function createAttributionSink(): AttributionSink {
+  return { gaps: [] };
+}
+
+/** What a whole run's attribution marking adds up to. */
+export interface AttributionCounts {
+  /** How many pages of the run are not fully attributed. */
+  pages: number;
+  /** How many source references are missing across those pages. */
+  missing: number;
+  /** The gaps themselves, in page-title order (UTF-16 code unit, never the locale). */
+  gaps: readonly AttributionGap[];
+}
+
+/**
+ * Turn a run's accumulator into its totals, sorted by page title.
+ *
+ * The sort is what makes the aggregate line deterministic: pages are rendered in
+ * parallel, so appending order is a property of the machine, not of the wiki.
+ * @param sink - The accumulator the run's renderer filled.
+ * @returns The run's totals.
+ */
+export function attributionCountsOf(sink: AttributionSink): AttributionCounts {
+  const gaps = [...sink.gaps].sort((left, right) => (left.page < right.page ? -1 : left.page > right.page ? 1 : 0));
+  return {
+    pages: gaps.length,
+    missing: gaps.reduce((sum, gap) => sum + gap.missing.length, 0),
+    gaps,
+  };
+}
+
+/**
+ * The ONE counted line a compile prints for this rule, in the shape of its other
+ * refusal lines: it aggregates across pages and names each page with what it leaves out.
+ * @param counts - The run's totals.
+ * @returns The line, or null when every page attributed every contributing source.
+ */
+export function describeAttribution(counts: AttributionCounts): string | null {
+  if (counts.pages === 0) return null;
+  const detail = counts.gaps
+    .map((gap) => `${gap.page} is missing ${gap.missing.join(", ")}`)
+    .join("; ");
+  return `Attribution: ${counts.pages} page(s) not fully attributed ` +
+    `(${counts.missing} source reference(s) missing) — ${detail}`;
+}
+
+/**
+ * The compile SUMMARY mention: the same count, stated beside the run's headline.
+ *
+ * It carries no page names on purpose -- the counted line above it does -- because its job
+ * is that a reader who stops at the completion banner cannot conclude the run's pages are
+ * complete.
+ * @param counts - The run's totals.
+ * @returns The summary line, or null when every page attributed every source.
+ */
+export function describeAttributionSummary(counts: AttributionCounts): string | null {
+  if (counts.pages === 0) return null;
+  return `Attribution summary: ${counts.pages} page(s) of this run not fully attributed ` +
+    `(${counts.missing} source reference(s) missing).`;
 }
 
 /** Which of a page's contributing sources its prose actually attributes, and which not. */
@@ -174,6 +288,38 @@ function censusSourceAttribution(
 }
 
 /**
+ * Decide whether a census is a gap worth MARKING, and record it on the run's accumulator.
+ *
+ * The same predicate {@link reportAttributionGap} prints on, so the page's marker and the
+ * run's line can never disagree about which pages are imperfect. Silence below two
+ * contributing sources is deliberate and shared: single-source citation hygiene is the
+ * citation lint's job, and the rule this marks is the MERGED page (S2).
+ * @param entry - The page being rendered, carrying the run's accumulator when it has one.
+ * @param census - What the rendered body attributed.
+ * @returns The gap to stamp into frontmatter, or null for a fully attributed page.
+ */
+function markAttributionGap(
+  entry: RenderableConcept,
+  census: AttributionCensus,
+): AttributionGap | null {
+  if (!isAttributionGap(census)) return null;
+  const gap: AttributionGap = { page: entry.concept.concept, missing: [...census.unattributed] };
+  entry.attribution?.gaps.push(gap);
+  return gap;
+}
+
+/**
+ * Whether a page's prose attributes every contributing source: the ONE rule all three
+ * surfaces read, so no two of them can classify a page differently.
+ * @param census - What the rendered body attributed.
+ * @returns True when the page draws on more than one source and names fewer than all.
+ */
+function isAttributionGap(census: AttributionCensus): boolean {
+  const total = census.attributed.length + census.unattributed.length;
+  return census.unattributed.length > 0 && total >= 2;
+}
+
+/**
  * Report a MERGED article that leaves one of its contributing sources unattributed.
  *
  * WHAT THIS IS, AND IS NOT. It is the observable half of the prompt rule: the prompt asks
@@ -191,9 +337,8 @@ function censusSourceAttribution(
  * @param census - What the rendered body attributed.
  */
 function reportAttributionGap(concept: string, census: AttributionCensus): void {
-  if (census.unattributed.length === 0) return;
+  if (!isAttributionGap(census)) return;
   const total = census.attributed.length + census.unattributed.length;
-  if (total < 2) return;
   output.status("!", output.warn(
     `Page "${concept}" merges ${total} source(s) but attributes ${census.attributed.length}: ` +
     `no statement is attributed to ${census.unattributed.join(", ")}.`,
@@ -203,11 +348,22 @@ function reportAttributionGap(concept: string, census: AttributionCensus): void 
 /**
  * Construct the frontmatter block for a merged concept, preserving createdAt
  * and stamping the `kind` field from the schema's default kind.
+ *
+ * `attributionGaps` is written ONLY when the page is not fully attributed, so a complete
+ * page keeps exactly the frontmatter it had before this field existed (no empty array
+ * polluting pages) and a page compiled earlier stays valid without it.
+ *
+ * @param entry - The concept being rendered.
+ * @param existingPage - The page already on disk, read for its own fields.
+ * @param schema - Resolved schema config, source of the default `kind`.
+ * @param gap - The attribution gap the renderer just measured, or null when there is none.
+ * @returns The frontmatter block, fences included.
  */
 function buildMergedFrontmatter(
   entry: RenderableConcept,
   existingPage: string,
   schema: SchemaConfig,
+  gap: AttributionGap | null = null,
 ): string {
   const now = new Date().toISOString();
   const existing = existingPage ? parseFrontmatter(existingPage) : null;
@@ -226,6 +382,7 @@ function buildMergedFrontmatter(
   addProvenanceMeta(frontmatterFields, entry.concept);
   addModelProvenanceMeta(frontmatterFields);
   applyDeclaredAliases(frontmatterFields, entry, existing?.meta.aliases);
+  if (gap !== null) frontmatterFields.attributionGaps = [...gap.missing];
   return buildFrontmatter(frontmatterFields);
 }
 

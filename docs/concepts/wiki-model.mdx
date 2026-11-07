@@ -232,6 +232,50 @@ Page "Vector DB" merges 2 source(s) but attributes 1: no statement is attributed
 A single-source page never triggers this line: citation hygiene for one source is the
 citation linter's job.
 
+### Marked pages: a page is never presented as fully attributed
+
+The warning above is per page and lives on the run's output, which does not travel with
+the page. So a merged article whose prose attributes only one of its sources also carries
+the gap in its OWN frontmatter, and the run prints the totals:
+
+```yaml
+---
+title: Vector DB
+summary: Embedding indexes and the vectors they hold.
+kind: concept
+sources:
+  - alpha.md
+  - beta.md
+attributionGaps:
+  - beta.md
+createdAt: "2026-04-05T12:00:00Z"
+updatedAt: "2026-04-05T12:00:00Z"
+---
+```
+
+`attributionGaps` lists the contributing source files that no citation in the body
+attributes. Three properties of the field matter:
+
+- it is **omitted entirely** on a fully attributed page, so a complete page looks exactly
+  as it did before the field existed and no page carries an empty array;
+- it is **advisory, not a gate**: the page is still written, because discarding a page over
+  a missing marker would destroy content nobody asked to lose;
+- a page compiled by an older version that has no such field stays valid and is read as
+  fully attributed.
+
+The run states the same thing twice more, both times counted and aggregated across the
+pages of that run:
+
+```text
+! Attribution summary: 1 page(s) of this run not fully attributed (1 source reference(s) missing).
+! Attribution: 1 page(s) not fully attributed (1 source reference(s) missing) — Vector DB is missing beta.md
+```
+
+The summary line sits directly under the completion banner, so the headline of a run is
+true on its own; the counted line lists every imperfect page with the sources it leaves
+out, in page-title order. Both stay silent when every page attributed every contributing
+source.
+
 ## Imported OKF Provenance
 
 Pages imported from Open Knowledge Format bundles are marked as imported knowledge. The mapped page frontmatter carries `provenanceState: imported`, an `okf:<bundle>` source token, and an `x-okf` provenance snapshot that records the original bundle path and original OKF frontmatter.

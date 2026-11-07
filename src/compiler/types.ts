@@ -14,7 +14,7 @@ import type { CuratedLinkCounts } from "./curated-links.js";
 import type { CategoryAssignmentCounts } from "../categories/assign.js";
 import type { LinkReviewCounts } from "./link-review.js";
 import type { VersionSplit } from "./version-report.js";
-import type { RelatedPageIndex } from "./page-renderer.js";
+import type { AttributionCounts, AttributionSink, RelatedPageIndex } from "./page-renderer.js";
 import type {
   ExtractedConcept,
   ReviewedCandidateRef,
@@ -47,6 +47,15 @@ export interface MergedConcept {
    * wiki per page. Built once by the pipeline; absent for a single-page caller.
    */
   relatedPages?: RelatedPageIndex;
+  /**
+   * The run's shared attribution accumulator, handed to every page the renderer writes.
+   *
+   * A page whose prose leaves a contributing source unattributed records the gap here so
+   * ONE detection reaches three surfaces: the page's own `attributionGaps` frontmatter,
+   * the run's counted line, and the compile summary. Built once by the pipeline; absent
+   * for a single-page caller, where the page is still marked but nothing aggregates it.
+   */
+  attribution?: AttributionSink;
 }
 
 /** Buckets of source changes used by the compile pipeline. */
@@ -129,6 +138,17 @@ export interface PageGenerationResult {
    * from a broken one.
    */
   versionSplit?: VersionSplit;
+  /**
+   * What the attribution rule found this run: how many pages are not fully attributed, how
+   * many source references they miss, and which ones.
+   *
+   * Filled by page generation itself, because the gap is measured on the rendered body and
+   * the page's marker is derived from the same reading. Optional so a caller can summarize a
+   * result built by hand (a test, a synthetic run), which then prints no attribution line.
+   * `compile-report` prints it as ONE counted line plus a summary mention, and stays silent
+   * when no page has a gap.
+   */
+  attribution?: AttributionCounts;
 }
 
 /**

@@ -29,28 +29,21 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { compileAndReport } from "../../src/compiler/index.js";
 import { parseFrontmatter } from "../../src/utils/markdown.js";
-import { CONCEPTS_DIR } from "../../src/utils/constants.js";
 import { useCompileProject } from "../fixtures/compile-project.js";
-import { readConceptPage } from "../fixtures/concept-page.js";
-import { stubCompileProvider } from "../fixtures/compile-provider.js";
+import { listConceptPages, readConceptPage } from "../fixtures/concept-page.js";
+import { extractionAnswer, stubCompileProvider } from "../fixtures/compile-provider.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
-import { writeSource } from "../fixtures/curated-scenario.js";
+import { BETA, BETA_SOURCE, addBetaSource } from "../fixtures/synthesis-scenario.js";
 
 /** The source the fixture project starts with. */
 const ALPHA = "alpha.md";
 
-/** The second source, written by the cases that need an overlapping ingest. */
-const BETA = "beta.md";
-
 /** Alpha's whole text: short on purpose, so a budget case can force truncation. */
 const ALPHA_SOURCE = "# Append-only log\n\nAlpha says the log is append-only.\n";
-
-/** Beta's whole text: the same concept, a different account of it. */
-const BETA_SOURCE = "# Vector DB\n\nBeta says embeddings are indexed.\n";
 
 /** The one concept both sources substantiate: the merged article's slug. */
 const CONCEPT = "Vector DB";
@@ -84,20 +77,9 @@ afterEach(() => {
  */
 function stubSynthesis(body: string, title: string = CONCEPT): void {
   stubCompileProvider({
-    extraction: () =>
-      JSON.stringify({ concepts: [{ concept: title, summary: `Summary of ${title}.`, is_new: true }] }),
+    extraction: () => extractionAnswer([title]),
     body: () => body,
   });
-}
-
-/** Write beta's source file into the project, leaving alpha's in place. */
-async function addBetaSource(root: string): Promise<void> {
-  await writeSource(root, BETA, BETA_SOURCE);
-}
-
-/** Every concept-namespace page the wiki stores, in directory order. */
-async function conceptPages(root: string): Promise<string[]> {
-  return (await readdir(path.join(root, CONCEPTS_DIR))).filter((file) => file.endsWith(".md"));
 }
 
 /** The `sources` frontmatter of one page, sorted so arrival order cannot mask a gap. */
@@ -109,7 +91,7 @@ async function sourcesOf(root: string, slug: string): Promise<string[]> {
 
 /** Assert the wiki holds exactly ONE page for the merged concept, naming both sources. */
 async function expectOneMergedPage(root: string): Promise<void> {
-  expect(await conceptPages(root)).toEqual(["vector-db.md"]);
+  expect(await listConceptPages(root)).toEqual(["vector-db.md"]);
   expect(await sourcesOf(root, "vector-db")).toEqual([ALPHA, BETA]);
 }
 
@@ -169,7 +151,7 @@ describe("multi-source synthesis", () => {
 
     await compileAndReport(ctx.dir);
 
-    expect(await conceptPages(ctx.dir)).toEqual(["append-only-log.md"]);
+    expect(await listConceptPages(ctx.dir)).toEqual(["append-only-log.md"]);
     expect(await readConceptPage(ctx.dir, "append-only-log")).toContain(`^[${ALPHA}:1-1]`);
     expect(await sourcesOf(ctx.dir, "append-only-log")).toEqual([ALPHA]);
     expect(io.out()).not.toContain("no statement is attributed to");

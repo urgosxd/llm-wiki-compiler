@@ -61,6 +61,11 @@ import {
   type LinkReviewArticle,
 } from "./link-review.js";
 import { buildRelatedPageIndex, type RelatedPageIndex } from "./page-renderer.js";
+import {
+  attributionCountsOf,
+  createAttributionSink,
+  type AttributionSink,
+} from "./page-renderer.js";
 import type { ContextualLinkCounts } from "./link-anchoring.js";
 import {
   addCuratedLinkCounts,
@@ -416,6 +421,13 @@ async function generatePagesPhase(
     ? await buildExtractionSourceStates(root, extractions)
     : {};
   const limit = pLimit(concurrency);
+  // ONE attribution accumulator for the whole run, handed to every page the renderer
+  // writes. The renderer records each page's gap into it (the same reading that stamps the
+  // page's own frontmatter), and the totals travel on the result so `summarizeCompile` can
+  // print them: without that the count of imperfect pages would be visible only in the
+  // per-page warnings, one page at a time.
+  const attribution = createAttributionSink();
+  const renderable = withAttributionSink(merged, attribution);
   // Collect per-outcome errors and candidate info into the ordered outcomes array
   // AFTER Promise.all, then derive candidates/review by iterating outcomes in source order.
   // This ensures stable, source-order ordering regardless of parallel completion timing.
@@ -425,7 +437,7 @@ async function generatePagesPhase(
   // "0 of N" for the whole generation, which is the longest stage.
   let settledPages = 0;
   const outcomes = await Promise.all(
-    merged.map((entry) => limit(async () => {
+    renderable.map((entry) => limit(async () => {
       try {
         const result = await generateMergedPage(root, entry, schema, options, sourceStates, policy);
         return { entry, result };
@@ -452,7 +464,10 @@ async function generatePagesPhase(
   const { writtenPages, batchErrors, curated } = await commitLivePageWrites(
     root, outcomes, pageSink, pageRemover, transaction);
   errors.push(...batchErrors);
-  return { pages, writtenPages, errors, candidates, review, seedSlugs: [], curatedLinks: curated };
+  return {
+    pages, writtenPages, errors, candidates, review, seedSlugs: [],
+    curatedLinks: curated, attribution: attributionCountsOf(attribution),
+  };
 }
 
 /**
@@ -475,6 +490,22 @@ function withFoldedAliases(
     const aliases = aliasesBySlug.get(entry.slug);
     return aliases === undefined || aliases.length === 0 ? entry : { ...entry, aliases };
   });
+}
+
+/**
+ * Attach the run's shared attribution accumulator to every page it will render.
+ *
+ * Same shape as {@link withRelatedPageIndex}: one object per run, carried on the entries
+ * instead of threaded through the candidate/live branches, which keep one signature.
+ * @param merged - The merged concept pages, in write order.
+ * @param sink - The run's accumulator.
+ * @returns The same pages, carrying the accumulator.
+ */
+function withAttributionSink(
+  merged: MergedConcept[],
+  sink: AttributionSink,
+): MergedConcept[] {
+  return merged.map((entry) => ({ ...entry, attribution: sink }));
 }
 
 /**

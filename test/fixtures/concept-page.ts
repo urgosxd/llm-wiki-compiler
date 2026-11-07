@@ -11,6 +11,7 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { buildFrontmatter, parseFrontmatter } from "../../src/utils/markdown.js";
 import { CONCEPTS_DIR } from "../../src/utils/constants.js";
@@ -24,6 +25,20 @@ import { CONCEPTS_DIR } from "../../src/utils/constants.js";
  */
 export async function readConceptPage(root: string, slug: string): Promise<string> {
   return await readFile(path.join(root, CONCEPTS_DIR, `${slug}.md`), "utf-8");
+}
+
+/**
+ * Every concept-namespace page the wiki stores, in name order.
+ *
+ * Sorted, so an assertion about WHICH pages exist cannot depend on the order the filesystem
+ * happens to return them in.
+ *
+ * @param root - Project root.
+ * @returns Page file names under `wiki/concepts`, `.md` included.
+ */
+export async function listConceptPages(root: string): Promise<string[]> {
+  const files = await readdir(path.join(root, CONCEPTS_DIR)).catch(() => [] as string[]);
+  return files.filter((file) => file.endsWith(".md")).sort();
 }
 
 /**

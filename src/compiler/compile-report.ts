@@ -15,6 +15,7 @@ import { describeLinkCounts } from "./link-anchoring.js";
 import { describeLinkReview, hasLinkReviewTruncation } from "./link-review.js";
 import { describeCuratedLinks } from "./curated-links.js";
 import { describeCategoryAssignment, hasCategoryAssignmentTruncation } from "../categories/assign.js";
+import { describeAttribution, describeAttributionSummary } from "./page-renderer.js";
 import { describeVersionSplit } from "./version-report.js";
 import type { VersionSplit } from "./version-report.js";
 import type { SchemaConfig } from "../schema/index.js";
@@ -73,6 +74,10 @@ export function summarizeCompile(
   output.status("✓", output.success(
     `${buckets.toCompile.length} compiled, ${buckets.unchanged.length} skipped, ${buckets.deleted.length} deleted`,
   ));
+  // Immediately after the headline, because this is the one report that says a page of this
+  // run is NOT what its `sources` list makes it look like. A reader who stops at "N compiled"
+  // must not conclude the pages are complete.
+  reportAttribution(generation);
   reportLinkTotals(generation);
   reportLinkReview(generation);
   reportCuratedLinks(generation);
@@ -114,6 +119,30 @@ export function summarizeCompile(
     baseResult.review = generation.review;
   }
   return baseResult;
+}
+
+/**
+ * Print the run's attribution totals: a SUMMARY mention beside the headline, then ONE
+ * counted detail line naming every imperfect page and the sources it leaves out.
+ *
+ * WHY TWO LINES ON TOP OF THE PER-PAGE WARNING. `reportAttributionGap` in the renderer says,
+ * page by page, what one render saw; that is detail a reader needs once they know to look.
+ * These are the run-level half of the same rule: the summary keeps the headline honest, and
+ * the counted line puts the number of pages and of missing source references in one place,
+ * in the shape of the link, review, curated-link and category lines. Both are silent when no
+ * page has a gap, because a clean run has nothing to report and a line that appears only
+ * sometimes is indistinguishable from a broken one.
+ *
+ * @param generation - The compile-stage result, carrying the totals when generation ran.
+ */
+function reportAttribution(generation: PageGenerationResult): void {
+  const counts = generation.attribution;
+  if (counts === undefined) return;
+  const summary = describeAttributionSummary(counts);
+  const detail = describeAttribution(counts);
+  if (summary === null || detail === null) return;
+  output.status("!", output.warn(summary));
+  output.status("!", output.warn(detail));
 }
 
 /**
