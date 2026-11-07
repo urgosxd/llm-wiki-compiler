@@ -379,3 +379,20 @@ regenerating one page never leaves its siblings looking orphaned.
 It costs one extraction per owning source plus one page generation. A request that names a
 page the wiki does not store, or a page no source owns (a seed page, an approved candidate),
 is refused before anything is written, with exit code `1`.
+
+## Reading the link and provenance lines
+
+Besides the version line above, a compile prints three lines about links and one about
+attribution. Each is silent when there is nothing to say, and each names any bound it hit:
+
+- `Contextual links in this run: …` - the links kept, and how many each rule demoted.
+- `Link review of earlier pages: …` - what the incremental review of already-written pages
+  did, and which of its bounds truncated the run.
+- `Curated links: …` - curated links restored into regenerated bodies, records kept, and
+  records dropped because their anchor no longer exists.
+- `Page "X" merges N source(s) but attributes M: …` - a merged page that cites only some of
+  the sources it merges.
+
+The rules behind those lines - the anchor requirement, the five refusal reasons, the review
+bounds and the curated-link record - are documented in
+[Wiki Model](/concepts/wiki-model#contextual-links-and-their-refusal-reasons).

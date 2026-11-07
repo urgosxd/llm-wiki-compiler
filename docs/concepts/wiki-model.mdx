@@ -1,7 +1,7 @@
 ---
 title: "llmwiki Output Model: Wiki, State, and Activity Journal"
 sidebarTitle: "Wiki Model"
-description: "Learn how llmwiki organizes compiled wiki pages, wikilinks, the activity journal, and the .llmwiki directory for embeddings and state."
+description: "Learn how llmwiki organizes compiled wiki pages, wikilinks, concept identity, contextual links, the activity journal, and the .llmwiki directory for embeddings and state."
 ---
 
 When llmwiki compiles your sources, it writes everything into a predictable, file-system-native layout. The compiled wiki lives in `wiki/`, the compiler's internal state lives in `.llmwiki/`, and every operation - ingest, compile, query - appends a timestamped entry to `log.md`. Wiki pages and the journal remain plain text you can open in Obsidian. The derived embedding index can use binary storage; other state files use JSON.
@@ -20,6 +20,7 @@ wiki/
   embeddings.bin        binary index when selected; takes precedence over JSON
   schema.json           optional page-kind and cross-link policy
   config.json           review policy (hold modes and thresholds)
+  curated-links.json    curated links kept outside the page bodies they belong to
   candidates/           pages held for review
   candidates/archive/   rejected candidates kept for audit
   eval/
@@ -60,6 +61,9 @@ wiki/
   <Card title="config.json" icon="gear">
     Holds the review policy: which hold modes are active (`low-confidence`, `contradicted`, `schema-violating`, `provenance-violating`) and the `lowConfidenceThreshold`. A missing or empty `config.json` means all pages are written directly to `wiki/` with no review step.
   </Card>
+  <Card title="curated-links.json" icon="link">
+    The links the review step added to already-written pages, stored outside those pages' bodies so a regenerated body cannot erase them. Every record carries its anchor and is re-validated on each render. See [Curated Links](#curated-links).
+  </Card>
 </CardGroup>
 
 ## Wikilinks and Alias Resolution
@@ -83,6 +87,118 @@ Any `[[multi-head self-attention]]` or `[[MHA]]` link in the wiki resolves to th
   The wiki is fully Obsidian-compatible. Open the `wiki/` directory as an Obsidian vault to browse compiled pages, follow wikilinks, and view the knowledge graph - no additional configuration required.
 </Note>
 
+## Concept Identity: Equivalence, Not Similarity
+
+One concept is one article. When two names from your sources describe the same
+referent, the compile writes **one** page whose frontmatter lists every contributing
+source - never one page per spelling, and never the two texts joined without
+attribution. Deciding that two names are the same concept is a *name* decision, made by
+three rules in this order:
+
+1. **slug** - `slugify(a) === slugify(b)`: the two names differ only in case, spacing or
+   punctuation.
+2. **canonical key** - the reviewed normalization rule folds case, plurals and a fixed
+   list of acronyms (`db` and `database` share a key). Accents are not folded.
+3. **alias** - the candidate's name matches an `aliases` entry the target page already
+   declares in its frontmatter, or one of the candidate's own aliases matches the
+   page's canonical name. Compared on canonical keys, never on raw strings.
+
+An embedding score is not one of those rules, and no score can reach the decision: a
+vector may **retrieve** candidates, it may never **decide** identity. Pairs no name rule
+folded are still scored and offered to you as leads, clearly labelled as unmerged:
+
+```text
+Possible duplicate (similarity 0.93): "Vector Search" and "Vector Indexing" look related but were NOT merged — equivalence needs a name or alias match.
+```
+
+Names the rules did fold are reported once per run:
+
+```text
+Concept identity: 2 name(s) folded into 1 concept page(s).
+```
+
+## Contextual Links and Their Refusal Reasons
+
+A link belongs in the wiki only where it helps a reader of that passage, and every link
+must be anchored to a real mention or a real section of the article. The compile holds
+every link to one decision table, whichever channel created it - the model's inline
+links and the compiler's own mention wrapping alike. The first rule that fails demotes
+the link back to plain text and the reason is counted:
+
+| Reason | What it means |
+| --- | --- |
+| `unresolved-target` | The target is not a page this wiki serves. The check runs against the whole page set of the run, so a page the same run creates is a valid target. |
+| `self-reference` | The link points at the page it is written on. |
+| `unanchored` | Nothing in the body supports the link: the words it would hang on are not a plain mention (they are inside another link, a citation marker or a code span, or they are part of a longer word). |
+| `redundant` | The same target is already linked in the same section. A repeat adds no navigation. |
+| `over-budget` | The page went past its contextual-link budget of 12 links (`MAX_CONTEXTUAL_LINKS_PER_PAGE`). |
+
+A demoted link is not an error - the mention stays as text - but it is never silent:
+
+```text
+Contextual links in this run: 3 kept, 2 demoted (1 unanchored, 1 redundant).
+```
+
+Per-page lines use the same counts (`Contextual links in "<title>": …`), reasons are
+listed in the order the table tests them, and a reason that refused nothing is left out
+rather than printed as a zero. When no rule refused anything, there is no line.
+
+## Reviewing Earlier Pages
+
+Ingesting a new article does not rewrite the wiki. When a run creates or updates an
+article, the compiler looks for earlier pages that already **name** it - by its title, by
+the aliases the run folded, or by the aliases that page's own frontmatter declares - and
+asks the model about each mention in its own paragraph: does linking these words help
+this page's reader? Only a yes changes anything, and only that one mention becomes a
+link; every other byte of the page stays as it was. A page that never names the article
+is never offered, however close the two topics are.
+
+Three bounds keep the review incremental. Each one is counted by reason and reported, so
+a review that was cut short can never read as a quiet one:
+
+| Bound | Value | What it limits |
+| --- | --- | --- |
+| `MAX_LINK_REVIEW_CANDIDATES_PER_ARTICLE` (`article-cap`) | 4 | earlier pages reviewed for one new article |
+| `MAX_LINK_REVIEW_PAGES_PER_RUN` (`run-cap`) | 20 | earlier pages reviewed in one run |
+| `MAX_LINK_REVIEW_PAGES_MODIFIED_PER_RUN` (`modify-cap`) | 3 | earlier pages that may be rewritten in one run |
+
+The run reports the result in one line, and prints nothing when it had nothing to do:
+
+```text
+Link review of earlier pages: 2 review(s) of 2 earlier page(s), 1 link(s) added in 1 page(s), 1 refused, truncated 2 modify-cap.
+```
+
+## Curated Links
+
+A link the review adds to an earlier page lives outside that page's body, in
+`.llmwiki/curated-links.json`, because every compile regenerates bodies from the model's
+output and a body-only edit would be erased by the next render. Each record stores the
+source page id, the resolved target page id, the mention the link hangs on with about 60
+characters of surrounding prose, and which rule accepted it (`model-verdict`).
+
+The anchor is re-validated on every render. If the body already carries the link nothing
+happens; if the words are still a plain mention the link is restored; otherwise the link
+is **dropped** and the record is forgotten with reason `anchor-missing`, because a link
+whose anchor no longer exists is exactly the unanchored link this wiki refuses. Losing a
+link is named rather than swallowed:
+
+```text
+Curated link dropped on concepts/alpha-topic: concepts/vector-db — anchor-missing ("pgvector store" is no longer a plain mention).
+Curated links: 2 link(s) restored, 1 record(s) kept, 1 dropped (1 anchor-missing).
+```
+
+The store is bounded as well: 8 curated links per page (`MAX_CURATED_LINKS_PER_PAGE`),
+20 per run (`MAX_CURATED_LINKS_PER_RUN`) and 256 KiB for the file
+(`MAX_CURATED_LINKS_BYTES`); a refusal is counted as `page-cap` or `run-cap` in the same
+line. Only links the review curated are recorded - a link the compiler re-creates from a
+title mention on every render, or one the repair pass rewrote from the text, is derived
+from the body and needs no record.
+
+<Note>
+  The file belongs to the checkout, not to the Stack: two hosts sharing a Stack do not
+  share curated links.
+</Note>
+
 ## Source Attribution
 
 Every compiled page declares its source files in frontmatter:
@@ -102,6 +218,19 @@ updatedAt: "2026-04-05T12:00:00Z"
 The `sources` field lists the filenames from `sources/` that contributed to this page. These filenames - combined with the content hashes recorded in `.llmwiki/state.json` - are what llmwiki compares on subsequent runs to determine whether a page is fresh, stale, or orphaned.
 
 When multiple sources merge into one page, all contributing source filenames appear in the `sources` array.
+
+Attribution is required of every merged article, and the compile measures it: the page
+prompt asks the model to cite each contributing source somewhere in the body, and the
+rendered body is read to see which sources are actually named. A merged page that cites
+only some of them is reported rather than rewritten - a page is never held back over a
+missing marker:
+
+```text
+Page "Vector DB" merges 2 source(s) but attributes 1: no statement is attributed to beta.md.
+```
+
+A single-source page never triggers this line: citation hygiene for one source is the
+citation linter's job.
 
 ## Imported OKF Provenance
 
