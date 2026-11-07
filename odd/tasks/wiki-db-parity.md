@@ -26,8 +26,8 @@ S8 — REACHABILITY: every new stage or store must be shown reachable from the c
 |----|-------|------|-------|--------|
 | T1 | S1, S2 | Record the adopt-or-reject decision for the dead `wiki.concept_aliases` table and the full task breakdown (this document). | worker | `afea095647ef3ae3617879ec794cd05ca78adab1` |
 | T2 | S6 | Migration `src/dimensions/wiki/migration_wiki_db_parity.sql`: add `wiki.pages.aliases` and `wiki.pages.attribution_gaps`; create `wiki.curated_links`, `wiki.categories`, `wiki.category_members`. Non-destructive, idempotent. Mirror into `src/dimensions/wiki/schema.sql`, append to `scripts/apply-schemas.sh`, prove by pre-migration-vs-schema.sql database diff. HIGH RISK — own commit. | worker | `c0559fc59eb63a263fffc09e8c06f3d8f242ff63`, review closures in `d66612fb36557116e4169975f05b79a195a74517` (frozen pre-migration fixture, grants/non-destructiveness/data pinned, D4 claim corrected — see L5) |
-| T3 | S2 | Aliases persist through the page-row seam and are read back across runs, so the identity tier folds identically in both paths. | worker | |
-| T4 | S5 | `attributionGaps` persist through the page-row seam and are marked, counted and named in the row-backed run output. | worker | |
+| T3 | S2 | Aliases persist through the page-row seam and are read back across runs, so the identity tier folds identically in both paths. | worker | `fa75f5e549e3f37d5aa36f29043dda62795b9e33` |
+| T4 | S5 | `attributionGaps` persist through the page-row seam and are marked, counted and named in the row-backed run output. | worker | `e1a2cd49c88c97d4b0e7c2842ebb03bfdd40f554` |
 | T5 | S3 | Curated links persist in `wiki.curated_links` behind the store seam; the overlay re-validates the anchor on every render and a lost anchor drops the link AND reports it. | worker | |
 | T6 | S4 | Categories persist in `wiki.categories` + `wiki.category_members`; identity minted once, membership stored as evidence, category and concept of the same name stay two objects. | worker | |
 | T7 | S7 | Parity test: one input ingested through the file-backed path and the row-backed path, equivalent observable output for all four artifacts. ACCEPTANCE. | worker | |
@@ -97,3 +97,20 @@ Review closures delivered with commit `d66612fb36557116e4169975f05b79a195a74517`
 2. Database A no longer derives from the current `schema.sql`. It is built from `test/fixtures/wiki-schema-pre-db-parity.sql`, a frozen copy of `schema.sql` at `a40fc3f` with a header saying it must never be regenerated, and only the fresh install follows `schema.sql`. Measured teeth: changing the pre-migration portion of `schema.sql` (`body text` -> `varchar(1024)`) fails the new suite and PASSES the previous one, which is exactly the drift the old arrangement could not see.
 3. Grants, non-destructiveness and data survival are assertions now, not comments: the migration text is scanned for `drop table`, `drop column`, `truncate`, `delete from`, `insert into` and `update ... set`; `wiki.concept_aliases` must still exist; `llmwiki_app` must hold SELECT/INSERT/UPDATE/DELETE on `wiki.pages`, `wiki.curated_links`, `wiki.categories` and `wiki.category_members` identically in the migrated and the fresh database (they agree — no mirror defect found); and an `md5` digest of every pre-existing `wiki.pages` column is unchanged across two applies.
 4. `src/dimensions/wiki/schema.sql` was NOT edited by this slice, and its `wiki-db-parity-mirror` markers are documentation only now: the suite no longer strips them.
+
+### L6 — T3 and T4 landed, and the two things the seam was missing
+
+T3 (`fa75f5e`) and T4 (`e1a2cd4`). Both are verified through `compileAndReport` on a real Stack with the real document store, not through exported helpers.
+
+WHAT THE CODE DID NOT DO, found by reading it rather than by assuming the brief's file list was complete:
+
+1. `generateMergedPage` called `renderMergedPageContent(root, entry, schema)` with NO page source, so the renderer read the page it was about to replace from `wiki/concepts` — a directory a row-backed project does not have. Emitting aliases from the row was therefore not enough: the re-render never saw them. The page reader is now threaded from `resolvePageSeams` through `generatePagesPhase` to the renderer; absent (no Stack) keeps the on-disk read, so the file path is unchanged.
+2. `renderPageMarkdown` is the ONLY way a row becomes markdown, and `resolver.ts` `rewritePage` patches a page's body inside that rendered text. Measured: with the `attributionGaps` emission removed, one run that adds an inbound wikilink to a marked page writes the row again WITHOUT the gap, so the page silently becomes fully attributed. That is a test (`row-page-attribution-gaps.test.ts`, the rewrite case), not a comment.
+
+MEASURED UNWIRING, each restored by inverse edit with the suite green again: removing the reader threading, the `aliases` emission, the sink's alias carry-over, the sink's gap carry-over, and the `attributionGaps` emission each turned the corresponding test red, and only that one.
+
+T3 alone is green: the T3 slice was committed from a tree where every `attribution_gaps` line had been removed again, and `npx tsc --noEmit` plus the aliases suite passed there before the T4 lines were restored. So the two slices are independently reviewable.
+
+`Page` gained OPTIONAL `aliases`/`attributionGaps`, and `buildPage` deliberately does not populate them: that builder is the file path's and its output is public, so teaching it these fields would change what every on-disk `listPages` call reports.
+
+NOT DONE HERE, and still open for the later tasks: `createRawPageSource`'s `frontmatter` (the export/viewer collectors) still carries only title, summary, tags and the two flags, and `withRelatedPageIndex` still builds the sibling index from `wiki/concepts` rather than from the run's own corpus. Both are visible in the row path today and neither is T3's or T4's spec; T7's parity test will meet them.
