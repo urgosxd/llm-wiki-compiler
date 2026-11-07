@@ -35,6 +35,7 @@ import type { WikiState } from "../../utils/types.js";
 import { readStateClassifiedFromRows, writeWikiStateToRows } from "./wiki-state-source.js";
 import { createRegistryPageSource } from "./page-registry-source.js";
 import { databaseEmbeddingSource } from "../../utils/embeddings-database.js";
+import { createRowCuratedLinkStore } from "./curated-links-row-store.js";
 import type { CuratedLinkStorePort } from "../../compiler/curated-links.js";
 import { listSourceDocuments } from "./source-documents-store.js";
 import type { SourceDocumentListing } from "../../status/collect.js";
@@ -387,6 +388,7 @@ export function resolvePageSeams(
     remover: createPageRemoveSink(db as never, stackId),
     resolver: createResolverPageSource(db as never, stackId),
     transaction: createPageBatchTransaction(db as never, stackId),
+    curatedLinks: createRowCuratedLinkStore(db as never, stackId),
   };
 }
 
