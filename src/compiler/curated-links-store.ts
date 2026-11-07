@@ -1,22 +1,34 @@
 /**
- * @file The durable curated-link STORE, and the one function that applies it to bodies
- * (S8, S9, S12).
+ * @file The durable curated-link STORE's file backend, and the confined `.llmwiki` leaf
+ * it keeps its records on (S8, S9, S12).
  *
- * WHERE IT LIVES AND WHY. `.llmwiki/curated-links.json`, beside `state.json`,
+ * WHERE IT LIVES, AND FOR WHOM. `.llmwiki/curated-links.json`, beside `state.json`,
  * `pending-embeddings.json` and `rule-state.json`, because that directory is this
  * project's convention for durable compiler state: it is never emitted into `wiki/`, it
  * is resolved through the same trust-boundary helpers as the lock, and every file in it
  * is written with the shared hardened {@link atomicWrite} (random `O_EXCL` temp then
- * `rename`) so a crash leaves either the old file or the new one.
+ * `rename`) so a crash leaves either the old file or the new one. This is the backend a
+ * project with NO Stack gets; a Stack-backed run is handed a different one, below.
  *
- * WHY NOT A PAGE AND NOT A ROW. Not a page: a curated link is not a document and must
- * never appear in the wiki's own listing. Not a row: the derived-artifact store keys on
- * `(stack_id, kind)` with a constrained `kind` and one row per kind, and the pending-marker
- * rows are a two-value set (`pending`/`quarantined`) with no place for N link records. A
- * row would need a schema change nobody asked for, so a Stack-backed project keeps its
- * curated links in the same confined file. That is a LIMITATION, stated rather than
- * faked: on a Stack the pages live in rows and the curated records live on the host that
- * compiled them, so two hosts sharing one Stack do not share their curated links.
+ * WHY NOT A PAGE, AND WHERE THE ROWS WENT. Not a page: a curated link is not a document
+ * and must never appear in the wiki's own listing. A row was not available when this store
+ * was written -- the derived-artifact store keys on `(stack_id, kind)` with one row per
+ * kind, and the pending-marker rows are a two-value set (`pending`/`quarantined`), neither
+ * with a place for N link records -- so a Stack-backed project used to keep its records in
+ * this same file on the host that compiled. That is no longer true:
+ * `wiki.curated_links` now holds one row per record, and
+ * `src/dimensions/wiki/curated-links-row-store.ts` is the backend a Stack-backed run gets
+ * (`page-source-seam.ts:408` selects it), so every host serving that Stack restores the
+ * same links. This module stays the whole store for a project without a Stack, and the
+ * fallback `curated-links-apply.ts:76` and `link-review.ts:482` choose when a run carries
+ * no Stack.
+ *
+ * THIS MODULE IS A BACKEND, NOT THE CONTRACT. The record shape, the bounds, the
+ * deduplication rule and the provenance set are `src/compiler/curated-links.ts`, and the
+ * overlay that re-anchors a record onto a regenerated body is
+ * `src/compiler/curated-links-overlay.ts`; it runs unchanged on both backends, which is
+ * what keeps a lost anchor dropped and reported identically either way. What differs
+ * between the backends is only WHERE the record lives.
  *
  * CONFINEMENT IS ENFORCED AT BOTH LEVELS, exactly as `pending-embeddings.ts` does it:
  * the directory through {@link resolveConfinedPrivateDir} / {@link
