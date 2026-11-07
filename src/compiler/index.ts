@@ -1635,7 +1635,13 @@ async function assignCategoriesForRun(
   const articles = await categoryArticlesOf(root, pages, flags.seams?.content);
   // The compile holds the project lock for its whole pipeline, so the stage writes
   // through the reentrancy-safe executor instead of re-acquiring (see the category store).
-  const counts = await assignCategories(root, articles, { lockHeld: true });
+  // The STORE comes from the same seam bundle that decided where this run's pages went:
+  // a row-backed run records its taxonomy in `wiki.categories`, a file-backed one in
+  // `wiki/categories/`, and neither can be wired to the other's backend by accident.
+  const counts = await assignCategories(root, articles, {
+    lockHeld: true,
+    store: flags.seams?.categories,
+  });
   addCategoryAssignmentCounts(flags.totals.categories, counts);
 }
 

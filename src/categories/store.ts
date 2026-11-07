@@ -66,6 +66,8 @@ import type {
   CategoryDraft,
   CategoryPatch,
   CategoryRecord,
+  CategoryStoreOutcome,
+  CategoryStorePort,
   CategoryWriteOptions,
   CategoryWriteResult,
   MemberTruncation,
@@ -163,6 +165,53 @@ export async function readCategory(root: string, categoryId: string): Promise<Ca
     );
   }
   return record;
+}
+
+/**
+ * The confined FILE backend, as the port every category consumer takes.
+ *
+ * ## Why the backend is decided here and not at each call site
+ *
+ * A category lives in `wiki/categories/<categoryId>.md` for a file-backed project and in
+ * `wiki.categories` rows for a Stack (`src/dimensions/wiki/categories-row-store.ts`).
+ * Both answer the same four operations, so the assignment stage asks the PORT and never
+ * the file, and the backend is chosen once — by the compile's seam, from the same Stack
+ * variable that decides where pages go. Without that, every caller would decide for
+ * itself, which is how a run ends up writing its pages to rows and its categories to a
+ * directory a Stack never reads.
+ *
+ * The port is BEHAVIOUR-PRESERVING for the file path: it delegates to the functions
+ * above, unchanged, so a caller that installs nothing keeps exactly what it had.
+ *
+ * @param root - Absolute project root the writes are confined under.
+ * @returns The file-backed port.
+ */
+export function createFileCategoryStore(root: string): CategoryStorePort {
+  return {
+    create: async (draft, options) => outcomeOf(await createCategory(root, draft, options)),
+    read: async (categoryId) => await readCategory(root, categoryId),
+    list: async () => await listCategories(root),
+    update: async (categoryId, patch, options) =>
+      outcomeOf(await updateCategory(root, categoryId, patch, options)),
+  };
+}
+
+/**
+ * The port's answer for one write, from the file store's own result.
+ *
+ * The path and the object id stay on {@link CategoryWriteResult} because they are what a
+ * file caller reports; the port carries the identity and the record, which is what both
+ * backends can answer.
+ *
+ * @param stored - The file store's result.
+ * @returns The outcome the port reports.
+ */
+function outcomeOf(stored: CategoryWriteResult): CategoryStoreOutcome {
+  return {
+    record: stored.record,
+    objectId: stored.objectId,
+    ...(stored.truncation === undefined ? {} : { truncation: stored.truncation }),
+  };
 }
 
 /**

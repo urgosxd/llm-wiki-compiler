@@ -152,7 +152,66 @@ export interface MemberTruncation {
   omitted: number;
 }
 
-/** A rendered category file: its markdown, plus the bound it hit if it hit one. */export interface CategoryRender {
+/**
+ * What a store reports after a create or an update, in the terms every caller needs.
+ *
+ * Deliberately NARROWER than {@link CategoryWriteResult}: a file store can name the path
+ * it wrote and a Stack's rows cannot, so a port that demanded a path would force the
+ * row backend to invent one. The compile path only ever needs the identity (`objectId`)
+ * and the record it stored, which both backends answer.
+ */
+export interface CategoryStoreOutcome {
+  /** The record as stored. */
+  record: CategoryRecord;
+  /** The object identity, `categories/<categoryId>` — never a `concepts/` id. */
+  objectId: string;
+  /** Present only when a render capped the member listing (a file-store concern). */
+  truncation?: MemberTruncation;
+}
+
+/**
+ * The four operations every category backend answers, in the record's own terms.
+ *
+ * A PORT rather than a second store model. `wiki/categories/<categoryId>.md` and a
+ * Stack's `wiki.categories` rows differ only in WHERE the records live, so a caller
+ * that needs to create, read, list or update a category asks for these four methods and
+ * stays ignorant of the backend. That is what keeps the assignment stage — the reuse
+ * rule, the criterion test, the evidence recorded per member — a single implementation
+ * instead of one per backend.
+ *
+ * {@link CategoryWriteOptions} rides along because the file backend writes through the
+ * project lock: a compile holds it for its whole pipeline and passes `lockHeld`. A row
+ * backend answers the same signature and ignores it, because rows have no project lock —
+ * the transaction `withTenant` opens is the unit there.
+ */
+export interface CategoryStorePort {
+  /**
+   * Create a category, minting its identity from the canonical name.
+   *
+   * @throws {CategoryValidationError} When a required field is missing or unusable.
+   * @throws {CategoryWriteRefusedError} When a category with that id already exists:
+   *   creating never overwrites, in either backend.
+   */
+  create: (draft: CategoryDraft, options?: CategoryWriteOptions) => Promise<CategoryStoreOutcome>;
+  /** One stored category, or `null` when the backend holds none under that id. */
+  read: (categoryId: string) => Promise<CategoryRecord | null>;
+  /** Every stored category, in ascending id order. */
+  list: () => Promise<CategoryRecord[]>;
+  /**
+   * Apply a partial change to a stored category, preserving its identity.
+   *
+   * @throws {CategoryNotFoundError} When the backend holds no category under that id.
+   * @throws {CategoryValidationError} When a supplied field is blank or not a string.
+   */
+  update: (
+    categoryId: string,
+    patch: CategoryPatch,
+    options?: CategoryWriteOptions,
+  ) => Promise<CategoryStoreOutcome>;
+}
+
+/** A rendered category file: its markdown, plus the bound it hit if it hit one. */
+export interface CategoryRender {
   markdown: string;
   /** Present only when the member listing was truncated. */
   truncation?: MemberTruncation;

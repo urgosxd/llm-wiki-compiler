@@ -37,6 +37,7 @@ import { createRegistryPageSource } from "./page-registry-source.js";
 import { databaseEmbeddingSource } from "../../utils/embeddings-database.js";
 import { createRowCuratedLinkStore } from "./curated-links-row-store.js";
 import type { CuratedLinkStorePort } from "../../compiler/curated-links.js";
+import type { CategoryStorePort } from "../../categories/types.js";
 import { listSourceDocuments } from "./source-documents-store.js";
 import type { SourceDocumentListing } from "../../status/collect.js";
 import type { EmbeddingStoreSource } from "../../utils/embeddings-load.js";
@@ -366,6 +367,21 @@ export interface PageSeams {
    * D3 forbids.
    */
   curatedLinks?: CuratedLinkStorePort;
+  /**
+   * Store the run's CATEGORIES and their membership evidence in rows instead of
+   * `wiki/categories/`.
+   *
+   * Resolved here, beside the page seams, because it is the same decision: a category
+   * groups the pages of THIS Stack, and its membership records why each page was put in.
+   * A run that writes its pages to rows and its taxonomy to a directory on the
+   * compiling host leaves the Stack with a wiki nobody can browse by topic, and two
+   * hosts serving one Stack would disagree about what its categories are.
+   *
+   * The stage itself is not here: reuse-by-canonical-key, the criterion test and the
+   * evidence recorded per member are `src/categories/assign.ts` and run unchanged on
+   * both backends, so no rule can fork per store.
+   */
+  categories?: CategoryStorePort;
 }
 
 /**

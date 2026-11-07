@@ -11,7 +11,12 @@
 
 export { categoryIdForName, categoryObjectId } from "./identity.js";
 export { parseCategory, renderCategory } from "./markdown.js";
-export { createCategory, listCategories, readCategory, updateCategory } from "./store.js";
+export {
+  createCategory,
+  listCategories,
+  readCategory,
+  updateCategory,
+} from "./store.js";
 export type {
   CategoryDraft,
   CategoryMemberDraft,

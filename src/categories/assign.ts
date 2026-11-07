@@ -47,7 +47,7 @@
  * proposal, every dropped article and every refused write is counted.
  */
 
-import { createCategory, listCategories, updateCategory } from "./store.js";
+import { createFileCategoryStore } from "./store.js";
 import { matchingCriterionTerm, evidenceKeyFor } from "./criteria.js";
 import {
   parseCategoryProposals,
@@ -65,7 +65,7 @@ import {
   MAX_NEW_CATEGORIES_PER_RUN,
 } from "../utils/constants.js";
 import * as output from "../utils/output.js";
-import type { CategoryMemberDraft, CategoryRecord } from "./types.js";
+import type { CategoryMemberDraft, CategoryRecord, CategoryStorePort } from "./types.js";
 
 /** Why a bound dropped work. One reason per named bound. */
 export type CategoryAssignmentTruncationReason = "article-cap" | "run-cap" | "new-category-cap";
@@ -88,6 +88,17 @@ const CATEGORY_TRUNCATION_REASONS: readonly CategoryAssignmentTruncationReason[]
 export interface CategoryAssignmentOptions {
   /** True when the caller already holds the project lock (a compile does). */
   lockHeld?: boolean;
+  /**
+   * Where the categories are stored; the confined file store rooted at the project when
+   * omitted.
+   *
+   * The compile installs a Stack's row backend here, from the SAME seam that decides
+   * where its pages go, so a row-backed run cannot read its memberships from rows and
+   * write the taxonomy to a directory nobody serving that Stack will ever read. Every
+   * rule of the stage — reuse by canonical key, the criterion test, the evidence
+   * recorded per member — stays here and is shared by both backends.
+   */
+  store?: CategoryStorePort;
 }
 
 /** One article offered to the stage: its page id, its title and its rendered text. */
@@ -205,7 +216,7 @@ export function describeCategoryAssignment(counts: CategoryAssignmentCounts): st
 /**
  * Assign the articles of one run to categories.
  *
- * @param root - Project root the reads and writes are confined under.
+ * @param root - Project root the default (file) store confines its writes under.
  * @param articles - Articles this run created or updated, each with its rendered body.
  * @param options - Where the writes go; see {@link CategoryAssignmentOptions}.
  * @returns What this run assigned, created, refused and truncated.
@@ -218,10 +229,11 @@ export async function assignCategories(
   const counts = emptyCategoryAssignmentCounts();
   counts.articles = articles.length;
   if (articles.length === 0) return counts;
+  const store = options.store ?? createFileCategoryStore(root);
   const planned = new Map<string, PlannedCategory>();
-  for (const record of await listCategories(root)) planned.set(canonicalConceptKey(record.canonicalName), existingPlan(record));
+  for (const record of await store.list()) planned.set(canonicalConceptKey(record.canonicalName), existingPlan(record));
   await offerArticles(articles, planned, counts);
-  await flushCategories(root, planned, counts, options);
+  await flushCategories(store, planned, counts, options);
   return counts;
 }
 
@@ -409,23 +421,23 @@ function addMember(
  * Write every planned category through the store, in id order.
  *
  * Only a plan whose member set really grew is written, so a second run that assigns
- * nothing touches no file. A refused write is counted and warned: the run must not
- * claim a category it did not store.
+ * nothing touches no file and no row. A refused write is counted and warned: the run
+ * must not claim a category it did not store.
  *
- * @param root - Project root the writes are confined under.
+ * @param store - The backend the writes go to.
  * @param planned - The categories this run assembled.
  * @param counts - Totals to fill with what committed.
  * @param options - Where the writes go.
  */
 async function flushCategories(
-  root: string,
+  store: CategoryStorePort,
   planned: Map<string, PlannedCategory>,
   counts: CategoryAssignmentCounts,
   options: CategoryAssignmentOptions,
 ): Promise<void> {
   const plans = [...planned.values()].filter((plan) => plan.dirty).sort(byCategoryId);
   for (const plan of plans) {
-    const committed = await commitCategory(root, plan, options);
+    const committed = await commitCategory(store, plan, options);
     if (committed === null) {
       counts.writeFailed += 1;
       continue;
@@ -439,25 +451,25 @@ async function flushCategories(
 /**
  * Create or update ONE planned category.
  *
- * @param root - Project root.
+ * @param store - The backend the write goes to.
  * @param plan - The category to store.
  * @param options - Where the write goes, and whether the lock is already held.
  * @returns The stored object id, or null when the write was refused.
  */
 async function commitCategory(
-  root: string,
+  store: CategoryStorePort,
   plan: PlannedCategory,
   options: CategoryAssignmentOptions,
 ): Promise<string | null> {
   try {
     const stored = plan.existing === null
-      ? await createCategory(root, {
+      ? await store.create({
         canonicalName: plan.canonicalName,
         description: plan.description,
         inclusionCriterion: plan.inclusionCriterion,
         members: plan.members,
       }, options)
-      : await updateCategory(root, plan.existing.categoryId, { members: plan.members }, options);
+      : await store.update(plan.existing.categoryId, { members: plan.members }, options);
     return stored.objectId;
   } catch (error) {
     output.status("!", output.warn(
