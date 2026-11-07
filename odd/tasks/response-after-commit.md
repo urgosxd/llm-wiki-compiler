@@ -91,12 +91,13 @@ ancestor of it.
 | T5 | Implement the transactional boundary move | S3, S5, S6, S8 | ed4b94a |
 | T6 | Document the behaviour change | S5 | ed4b94a |
 | T7 | Differential check against `fea6291` in a `mktemp -d` scratch copy | S8, S9(d) | ed4b94a |
-| T8 | Gates | S11 | PARTIAL — tsc, KG tsc, typecheck:tests, typecheck:kg, focused tests and vitest related exit 0; npm test, test:affected and fallow NOT VERIFIED |
-| T9 | Contention AFTER measurement on the integrated tree — not run here; argument by construction only | S2, S9 | not run — AFTER measurement belongs to the integrated tree |
+| T8 | Gates: root tsc 0; KG tsc 0; typecheck:tests 0 (baseline NOT regenerated); typecheck:kg 0; focused 16/16 at dbdbf87; test:affected escalated to the full unit tier because package-lock.json differs from origin/main — 822 files, 6219 tests, 0 failed, run twice with identical counts; npm test 906 files (903 passed, 3 skipped), 6750 tests (6743 passed, 7 skipped), exit 0. fallow is NOT VERIFIED as coverage — .fallowrc.json ignores packages/llmwiki-kg/** — though the pre-commit hook ran it on every commit | S11 | dbdbf87 |
+| T9 | Contention AFTER: NOT RUN and NOT RUNNABLE — the BEFORE was never measured (one attempt produced zero evidence, the second was cancelled for container coordination), so an AFTER would be decoration rather than a comparison | S2, S9 | not run |
 | T10 | Ingest success path: answer only after the third transaction commits (authorized option (a)) | S3, S5, S9 | c40b098 |
 | T11 | Ingest early-exit responses (`:532`, 404/415) still written inside a read transaction — NOT authorized, reported only | S2, S7 | not implemented |
 | T12 | Pre-existing S44 violations, tracked and UNOWNED — not remediated here: POST /aks/v1/context (aks.ts:68 -> context.ts:363, :382, response :435) and POST /stacks/:stackId/synthesize-descriptions (synthesize/router.ts:52 -> description.ts:227, write :237 on the same tx); pre-existing at fea6291 | S7 | not implemented |
 | T13 | documents/delete.ts:78 unlinks the file inside the transaction: pre-existing data-consistency gap, NOT introduced by this change, made VISIBLE by it — a failed COMMIT now answers 500 while the bytes are already gone and the row rolls back; before, the client saw a success and the file was equally gone (silent inconsistency) | S5, S6 | not implemented |
+| T14 | db.ts is at 399 of 400 lines: the next change to that file, however small, breaches the house rule — extract the wrapper's neighbours (createTransactionRunner / withTransaction / closeDatabase / isDatabaseReachable) into their own module. NOT done here | — | not implemented |
 
 ## Log
 
@@ -249,3 +250,27 @@ Judgement, on the record: the direction is an improvement and a strictly better 
 silent storage/database divergence is unrecoverable by observation whereas a 500 names the failure on a
 request the caller can retry. It is an alerting improvement on top of a data-consistency bug, not a fix
 for that bug, and it must not be reported as either "fixed" or "caused by us".
+
+L13 — Suite tier, measured on `dbdbf87`, and what it does NOT cover.
+
+- Focused: the three boundary/recorder test files, 16 of 16 passing on `dbdbf87` — the same commit that
+  was previously HELD on container contention. The held rerun was executed, not waived.
+- `npm run test:affected`: exit 0, run twice with identical counts (822 files, 6219 tests, 0 failed). It
+  ESCALATED to the full unit tier because `package-lock.json` differs from `origin/main`
+  (`scripts/test-affected.ts`), so the tier was not selected because of `db.ts`.
+- `npm test`: exit 0 in 452 s — 906 files (903 passed, 3 skipped), 6750 tests (6743 passed, 7 skipped),
+  no failure markers.
+
+What this green run does NOT cover, stated so nobody reads it as more than it is: the three skipped
+files are `routes/aks-gateway.test.ts`, `routes/ingest-gateway.test.ts` and
+`routes/pages-gateway.test.ts`. `ingest-gateway.test.ts` is the home of the `23503` signature
+(`ingest-harness.ts:262-264`), so the exhaustive suite does not exercise the path whose flake motivated
+this work. `vitest related` widening to 526 files is NOT `npm test`, and `fallow` covered none of the
+changed package: `.fallowrc.json` ignores `packages/llmwiki-kg/**`, so "0 above threshold" from the
+pre-commit hook is a statement about the rest of the repository, not about this change.
+
+The contended `23503` AFTER measurement is NOT RUN and NOT RUNNABLE: the BEFORE was never measured — one
+attempt produced zero evidence and the second was cancelled for container coordination — so there is no
+comparison to draw. The evidence for this change is the construction argument (a client cannot observe a
+success before the COMMIT), the two inverse-edit bite proofs, and the 50-record differential with its
+base-vs-base control.
