@@ -86,6 +86,56 @@ Baselines: `dead-code` 12,977 bytes / 239 entries; `health` 2,285 bytes /
 - `npm run test:affected` → exit 0, escalated to "full unit tier — package-lock.json affects the whole suite": 825 files passed, 3 skipped; 6236 tests passed, 4 skipped
 - `./node_modules/.bin/fallow --root . --format json` → exit 0, `check.total_issues` 0, maintainability 91.1, 1479 files. The expected 6 `unresolved_imports` for unbuilt `dist/` are absent because `npm run build` had just run; the root gate still ignores KG (1829 files with KG vs 1479 without).
 
+### Decisive false-positive test (follow-up delivery)
+
+The false-positive risk this document recorded — a **pre-existing** KG finding
+inside a *touched* file being attributed `introduced` because
+`dead_code_inherited` is always 0 — was tested directly and is **false at HEAD**.
+No invocation change was needed, so the conditionally-authorized TEST 2 (switch
+`fallow:kg` to a per-analysis whole-tree chain) was **not** run: TEST 1 passed.
+
+File under test: `packages/llmwiki-kg/ts/src/core/page/json-dumps.ts`, which
+carries five pre-existing `unused_exports`, all present in
+`baselines/dead-code-baseline.json`: `JsonNumberSource:21`,
+`pythonJsonString:61`, `isPythonFalsy:74`, `emitPythonJson:126`,
+`numberSourceReviver:164`.
+
+Literal runs, all `--root packages/llmwiki-kg/ts -c
+packages/llmwiki-kg/ts/.fallowrc.json --gate new-only`:
+
+| run | tree | exit | verdict | attribution |
+| --- | --- | --- | --- | --- |
+| 1 | clean | 0 | `pass` | all counters 0, `changed_files_count: 9` |
+| 2 | comment-only edit in the file above | **0** | `pass` | all counters 0, `changed_files_count: 10` |
+| 3 | run 2's tree with `--dead-code-baseline` omitted | 0 | `pass` | `dead_code_introduced: 0`, `dead_code_inherited: 5`, each entry `introduced: false` |
+| 4 | export declaration line of `JsonNumberSource` reformatted, baseline applied | 0 | `pass` | all counters 0 |
+| 5 | one new unused export added to the same file, baseline applied | **1** | `fail` | `dead_code_introduced: 1`, only `jsonDumpsAttributionProbe` (line 218) |
+
+Conclusions, measured rather than argued:
+
+- `audit` **does** apply the per-analysis baselines to changed files, so a
+  baselined finding in a touched file never reaches attribution. The claim on
+  `docs/fallow-gates.md` that the baselines "match zero current issues during an
+  audit run" was wrong and is corrected there.
+- Attribution is base-ref based, not file-presence based: with the dead-code
+  baseline removed, the same five findings in the same touched file come back as
+  `inherited`, not `introduced` (run 3).
+- Dead-code baseline entries match by `path:export_name`, not by line, so
+  rewriting the declaration line of a baselined finding keeps it quiet (run 4).
+- The gate still bites on genuinely new debt in a file full of baselined debt,
+  naming only the new finding (run 5).
+
+The temporary edit was restored byte-identically (`sha256sum` unchanged from the
+copy taken before the edit; `git diff --stat` and `git status --short` empty).
+Verdict: **`npm run fallow:kg` as shipped is usable** — no invocation change, no
+baseline tuning.
+
+### CI job keys (branch-protection check)
+
+`.github/workflows/ci.yml` gained one step, not a job. The job-key diff against
+`819f51e4` is empty; `build-and-test` is at `:24` on both sides and
+`codebase-health` moved from `:115` to `:116` purely from the added line.
+
 ## Log
 
 - L1 (manager decision, verbatim): "DECISION: (C) — a separate, package-scoped fallow configuration for KG. Implement it." plus: "Those are separate deliveries and I want them named in your close so they cannot be mistaken for solved" and the out-of-scope list: `scripts/check-fallow-report.mjs:18` baseline-blind `functions_above_threshold`; its ignored `coverage_unavailable`/`unknown` verdicts; the 6 unbuilt-`dist/` findings; `.husky/pre-commit` not being a gate.
@@ -128,3 +178,17 @@ Baselines: `dead-code` 12,977 bytes / 239 entries; `health` 2,285 bytes /
   `npm run fallow:ci` exits **1 on `main` with no changes** (20 pre-existing clone groups,
   all below fallow's own threshold): AGENTS.md pre-commit gate 5 is unsatisfiable on any
   branch, and CI's `fail-on-issues: true` disagrees. Deliberately not baselined here; own delivery.
+- L9 (follow-up delivery, decisive test): the `dead_code_inherited: 0` risk from
+  `C4` was put under test instead of left as a warning. File chosen from the
+  whole-tree dead-code JSON: `src/core/page/json-dumps.ts`, five pre-existing
+  `unused_exports`, all baselined. A comment-only edit in that file →
+  `npm run fallow:kg` **exit 0** (`verdict: pass`, every attribution counter 0,
+  `changed_files_count` 9 → 10); restored with `cp` from a `/tmp` copy, not with
+  `git restore`/`git checkout`. Hypothesis refuted, TEST 2 not triggered, no
+  `package.json` change. Follow-up measurements recorded above: attribution is
+  base-ref based (`dead_code_inherited: 5` with the dead-code baseline removed),
+  baseline entries match by `path:export_name` not line, and a new unused export
+  in that same file still exits 1 naming only itself. `docs/fallow-gates.md`
+  rewritten accordingly (new sections `What "new" means under the shipped
+  invocation` and `Measured attribution`), including the retraction of the
+  baselines-are-inert claim. CI job keys re-proved unchanged against `819f51e4`.

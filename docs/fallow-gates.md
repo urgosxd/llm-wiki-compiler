@@ -125,26 +125,41 @@ root-relative.
 `fallow audit --gate new-only` scoped to the package, with the three baselines
 applied.
 
-- **Covers:** a new finding in any file the changeset touches inside the package.
-  A newly added file (even untracked) is part of the changeset and is attributed
-  as `introduced`.
+### What "new" means under the shipped invocation
+
+**"New" means "absent from the matching per-analysis baseline".** It does *not*
+mean "present in a file the changeset touched", and it does not mean "written by
+this diff". The three baselines are the authority on what is pre-existing debt,
+and they are live during `audit`.
+
+That matters the moment the gate goes red for you: the thing to check is not
+whether you edited the file, it is whether the finding is in
+`packages/llmwiki-kg/ts/baselines/<analysis>-baseline.json`. If it is, the gate
+stays quiet even when your diff strips and rewrites the line it sits on. If it is
+not, you either fix it or accept it deliberately by regenerating the baseline
+(the "Regenerate them" block above) — and that regeneration is the only way debt
+enters the baseline, so it is the point where a reviewer has to look.
+
+- **Covers:** a new, unbaselined finding in any file the changeset touches inside
+  the package. A newly added file (even untracked) is part of the changeset and
+  is attributed as `introduced`. Adding one new unused export to a file that
+  already carries five baselined unused exports fails the gate naming *only* the
+  new one.
+- **Pre-existing findings in a touched file do not fail the gate.** Measured, not
+  assumed — see "Measured attribution" below. The earlier wording on this page
+  warned the opposite (`dead_code_inherited` is "always 0", so every finding in a
+  touched file would be attributed `introduced`); that prediction was wrong at
+  HEAD and is retracted.
+- **The three baseline files are not inert in `audit` mode.** An earlier revision
+  of this page claimed they "match zero current issues during an audit run". They
+  do match, and they are exactly what keeps pre-existing findings inside touched
+  files quiet. `dead_code_inherited: 0` in a passing run means "no *unbaselined*
+  finding exists in any changed file", not "attribution is not comparing against
+  the base ref".
 - **Does not cover:** dead code created *without* touching its own file — for
   example, deleting the last consumer of an export in another file leaves that
   export dead in an unchanged file, and `audit` only analyzes changed files.
-  `audit` is changeset-scoped by design, so the whole-tree baselines match zero
-  current issues during an audit run (fallow warns about this on stderr; the
-  script passes `-q`).
-- **Untested false-positive risk: `dead_code_inherited` is always 0.** Because
-  `audit` only analyzes changed files, it never sees the inherited whole-tree
-  baselines, so *every* finding inside a touched file counts as `introduced`.
-  A **pre-existing** KG finding that lives in a file the changeset happens to
-  touch is therefore attributed `introduced` and fails the gate even though it
-  is not new debt. Observed: every audit run so far reports
-  `dead_code_inherited: 0` regardless of changed-file count. Not observed, and
-  therefore genuinely untested: the false-positive itself — no test pins it, and
-  reproducing it needs an edit to a file that already holds a baselined finding,
-  so do not read this bullet as known-good behaviour. Expect it the first time
-  someone edits a file holding a baselined unused export.
+  This is the residual hole; the measurements below do not cover it.
 - The stronger whole-tree form was verified but is not wired in: for
   `fallow dead-code --baseline packages/llmwiki-kg/ts/baselines/dead-code-baseline.json`
   a clean tree exits 0 and a single new unused export exits 1 naming only that
@@ -152,6 +167,36 @@ applied.
   `health` and `dupes` do not fail on remaining findings from `--baseline`
   alone — they gate through `--min-score` and `--threshold` — so a chain of
   three would need per-analysis thresholds.
+
+## Measured attribution
+
+Five runs, pinned `fallow` 2.82.0, `--root packages/llmwiki-kg/ts`, all with
+`--gate new-only`. The file under test is
+`packages/llmwiki-kg/ts/src/core/page/json-dumps.ts`, which carries five
+pre-existing `unused_exports` findings and they are all in the dead-code
+baseline:
+
+```text
+JsonNumberSource:21  pythonJsonString:61  isPythonFalsy:74
+emitPythonJson:126   numberSourceReviver:164
+```
+
+| run | diff on that file | exit | verdict | attribution |
+| --- | --- | --- | --- | --- |
+| 1 | clean tree, file untouched | 0 | `pass` | all counters 0, `changed_files_count: 9` |
+| 2 | comment line added (nothing new introduced) | **0** | `pass` | all counters 0, `changed_files_count: 10` |
+| 3 | same diff, `--dead-code-baseline` removed | 0 | `pass` | `dead_code_inherited: 5`, `dead_code_introduced: 0` — the five come back with `introduced: false` |
+| 4 | export declaration line of `JsonNumberSource` reformatted, baseline applied | 0 | `pass` | all counters 0 — baselined findings match by `path:exportName`, not by line |
+| 5 | one new unused export added to that same file, baseline applied | **1** | `fail` | `dead_code_introduced: 1`, naming only `jsonDumpsAttributionProbe` (line 218) |
+
+Run 2 is the decisive one: a file that carries five pre-existing findings and is
+in the changeset still exits 0. Run 3 shows why — attribution compares against the
+base ref, so pre-existing findings are `inherited`, not `introduced`. Run 5 shows
+the two rules do not blur together: the baseline suppresses the five old findings
+and the one new finding still bites, alone.
+
+The temporary edit for runs 2-5 was restored byte-identically (`sha256sum`
+unchanged, `git diff --stat` and `git status --short` both empty).
 
 ## Explicitly out of scope, and named so they cannot be read as solved
 
