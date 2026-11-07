@@ -34,7 +34,7 @@
  *    candidate rows, committed BEFORE the first classifier call.
  * 4. an external decision stage — the support questions and then the classification
  *    questions, again with nothing open.
- * 5. WRITE — evidence, decisions, history, the audit blob and the response.
+ * 5. WRITE — evidence, decisions, history and the audit; the 200 follows the COMMIT.
  *
  * An extraction outage therefore no longer rolls the chunk rows back, because they
  * are not written until it succeeded: the run stops before stage 3 and the document
@@ -473,19 +473,17 @@ async function prepareIngest(
 }
 
 /**
- * Stage 8: writes the audit blob and answers with the nine-key payload.
+ * Stage 8: writes the audit blob and returns the payload the caller answers with.
  *
  * @param tx - The second short transaction.
  * @param prepared - What stages 1-3 produced.
  * @param classification - The section for this run, or `undefined` when none ran.
- * @param res - Response the 200 payload is written to.
  */
 async function finishIngest(
   tx: Database,
   prepared: PreparedIngest,
   classification: ClassificationAudit,
-  res: Response,
-): Promise<void> {
+): Promise<IngestionResultDto> {
   const { params, processed } = prepared;
   // A fresh transaction, so the tenant binding has to be made again.
   await bindCallerStack(tx, params.stackId, null);
@@ -503,7 +501,7 @@ async function finishIngest(
     truncated: prepared.truncated,
     descriptionsSynthesized: processed.shouldSynthesize,
   });
-  res.status(200).json(IngestionResult.parse(payload));
+  return IngestionResult.parse(payload);
 }
 
 /**
@@ -540,8 +538,8 @@ export async function ingestDocument(
   const prepared = await run((tx) => prepareIngest(tx, params, input, processed));
   // 4. DECISION STAGE: the support questions, then classification. Nothing is open.
   const outcome = classification === undefined ? undefined : await classifyDocument(prepared, classification);
-  // 5. WRITE: evidence, decisions, history, audit and the response.
-  await run(async (tx) => {
+  // 5. WRITE: evidence, decisions, history and audit, committed before the answer.
+  const result = await run(async (tx) => {
     await persistClassification(
       tx,
       {
@@ -554,8 +552,10 @@ export async function ingestDocument(
       prepared.spans,
       outcome,
     );
-    await finishIngest(tx, prepared, classificationReport(outcome, classification, prepared), res);
+    return finishIngest(tx, prepared, classificationReport(outcome, classification, prepared));
   });
+  // The COMMIT above has landed, so no client can see pre-commit state after it.
+  res.status(200).json(result);
 }
 
 /**
