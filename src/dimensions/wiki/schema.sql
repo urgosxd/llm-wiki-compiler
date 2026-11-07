@@ -136,9 +136,13 @@ create index if not exists idx_wiki_pages_summary_trgm
 -- Mirrored statement for statement from `migration_wiki_db_parity.sql` sections 2-4, so
 -- a fresh database and a MIGRATED one agree -- which
 -- `test/dimensions/db-parity-migration.test.ts` proves by building both and diffing
--- their catalogues. The delimiters below are what lets that test reconstruct the
--- PRE-migration schema from this file (it strips the region rather than keeping a
--- third copy of the DDL): keep them, and keep this region equal to the migration's.
+-- their catalogues. The delimiters below are DOCUMENTATION ONLY: no code reads them.
+-- That test builds its pre-migration database from the frozen snapshot
+-- `test/fixtures/wiki-schema-pre-db-parity.sql`, applies the migration to it, and
+-- compares the result against a fresh install built from THIS file -- it never strips
+-- a region out of this file, because deriving both sides from one file would hide any
+-- drift inside it. The delimiters stay because they mark exactly which statements are
+-- the mirror: keep this region equal to the migration's.
 -- wiki-db-parity-mirror:begin -- curated links and categories
 create table if not exists wiki.curated_links (
     stack_id       uuid        not null references public.stacks(id) on delete cascade,
