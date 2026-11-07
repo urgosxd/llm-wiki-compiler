@@ -5,6 +5,7 @@ import postgres from "postgres";
 import type { PostgresType, Sql } from "postgres";
 
 import { config } from "./config.js";
+import { ResponseRecorder } from "./request-transaction-response.js";
 import * as schema from "./schema.js";
 
 /**
@@ -305,36 +306,38 @@ export type TransactionalHandler = (
 ) => Promise<void>;
 
 /**
- * Wraps a route handler so it runs inside one transaction, reproducing the
- * Python `Depends(get_db)` commit/rollback/close contract exactly.
+ * Wraps a route handler so it runs inside one transaction, and so the client
+ * receives nothing until that transaction has COMMITTED.
  *
- * - handler resolves -> COMMIT.
- * - handler throws   -> ROLLBACK, then the error is forwarded to Express's
- *   error handler unchanged (matching Python's `raise` after `rollback()`).
- * - either way       -> the connection is released back to the pool, including
- *   when the client aborts and makes the handler throw.
+ * ## Contract, deliberately a behaviour change
  *
- * Usage:
+ * - handler resolves -> COMMIT, then replay: COMMIT lands BEFORE the answer.
+ * - handler throws -> ROLLBACK, then the error reaches Express unchanged
+ *   (`raise` after `rollback()`), with the same shape as before.
+ * - handler answers and THEN throws -> nothing commits; the client gets that
+ *   error instead of a stale success.
+ * - COMMIT fails -> nothing is replayed; the error is forwarded, so `handleError`
+ *   answers 500 `text/plain` `Internal Server Error`. A caller that used to get a
+ *   success for a rolled-back write now gets an error: the point of this change.
+ * - either way -> the connection returns to the pool, even on client abort.
  *
- *   app.get("/stacks", withRequestTransaction(async (req, res, tx) => {
- *     const rows = await tx.select().from(stacks);
- *     res.json(rows);
- *   }));
+ * ## Why record instead of flushing
+ *
+ * A handler cannot know its final status before the COMMIT, so it cannot be trusted
+ * to flush: flushing is what puts the answer ahead of the COMMIT. It gets a
+ * {@link ResponseRecorder} typed as `Response` that captures every call and replays
+ * it after the transaction resolves, so the body comes from the same Express path,
+ * only ordered after the COMMIT. `finish`/`close` listeners now fire after it.
  *
  * ## Why a route wrapper and not `app.use` middleware
  *
- * A transaction-owning *middleware* cannot be implemented correctly on
- * Express 5. `next()` returns `void`, so a middleware cannot observe a
- * downstream handler's rejection: the middleware's view of the chain resolves
- * as soon as `next()` returns, while the handler's promise is still pending.
- * Verified experimentally -- with `app.use` the middleware saw a resolved chain
- * even though the handler threw and Express answered 500. Such a middleware
- * would therefore COMMIT a transaction whose handler failed.
- *
- * Inferring the outcome from `res.statusCode` is not equivalent either: a
- * handler that writes and then deliberately returns 404 must still COMMIT, as
- * it would in Python, so a status-code heuristic would silently diverge.
- *
+ * A transaction-owning *middleware* cannot work on Express 5: `next()` returns
+ * `void`, so it cannot observe a downstream handler's rejection -- it sees the
+ * chain resolve while the handler's promise is still pending. Verified
+ * experimentally: with `app.use` it saw a resolved chain even though the handler
+ * threw and Express answered 500, so it would COMMIT a failed transaction.
+ * Inferring the outcome from `res.statusCode` is not equivalent either: a handler
+ * that writes and then deliberately returns 404 must still COMMIT, as in Python.
  * Awaiting the handler is the only form that observes the real outcome, so the
  * transaction is scoped by a wrapper the handler is passed through.
  */
@@ -343,11 +346,13 @@ export function createRequestTransactionWrapper(
 ): (handler: TransactionalHandler) => RequestHandler {
   return (handler: TransactionalHandler): RequestHandler => {
     return (req: Request, res: Response, next: NextFunction): void => {
+      const recorder = new ResponseRecorder(res);
+      const recorded: Response = recorder.response;
       void database
-        .transaction(async (tx) => handler(req, res, tx))
+        .transaction(async (tx) => handler(req, recorded, tx))
+        .then(() => recorder.replay())
         .catch((error: unknown) => {
-          // A handler that already sent a response cannot be re-reported:
-          // deferring to Express here would raise "headers already sent".
+          // Nothing replayed on failure: a response `next` already sent stands.
           if (res.headersSent) {
             return;
           }
