@@ -105,6 +105,7 @@
               "guides/sdk-upgrade",
               "guides/atomic-memory-bridge",
               "guides/ci-quality-gates",
+              "guides/row-backed-wiring-reachability",
               "guides/kg-classification-migration",
               {
                 "group": "Configurable Lifecycle Profiles",

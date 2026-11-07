@@ -1,0 +1,178 @@
+---
+title: "Verify That a Row-Backed Store Reaches the Compile Path"
+sidebarTitle: "Row-Backed Wiring Reachability"
+description: "The file:line call chain from compile() down to wiki.pages, wiki.curated_links, wiki.categories and the attribution columns, the git grep that proves each call exists, and the fallback that makes an unwired store invisible."
+---
+
+A Stack whose pages live in Postgres keeps its aliases, curated links, categories and
+attribution gaps in rows. Every one of those facts travels from
+`src/compiler/index.ts` down to a SQL statement, and a rule that is worth documenting is
+worth being able to re-check: this page is the map and the checker.
+
+## Why a passing test is not proof of wiring
+
+A test can call `createRowCuratedLinkStore(db, stackId)` directly, write a record, read it
+back and pass. That test proves **the function works**, and nothing about integration: it
+would stay green for a compile path that never selected the row store, because the test
+selected it by hand.
+
+So "the store is wired" has to be shown twice, and neither proof substitutes for the
+other:
+
+- **statically** — a `file:line` call chain from the entry point a user runs to the SQL,
+  plus a `git grep` that finds the call. This survives refactoring of the tests.
+- **behaviourally** — a test that drives the real entry point (`compileAndReport`) and
+  fails when one link of that chain is removed.
+
+Stack-backed runs take their choice of backend in exactly one place, so the chain has one
+root:
+
+```text
+src/compiler/index.ts:286   compile()
+src/compiler/index.ts:287   → compileAndReport()
+src/compiler/index.ts:329     compileAndReport()
+src/compiler/index.ts:374     → runCompilePipeline(root, options, dimensionsDb.db)
+src/compiler/index.ts:1107    runCompilePipeline()
+src/compiler/index.ts:1132    → resolvePageSeams(db, env)
+src/dimensions/wiki/page-source-seam.ts:395  resolvePageSeams()
+src/dimensions/wiki/page-source-seam.ts:408  → curatedLinks: createRowCuratedLinkStore(...)
+src/dimensions/wiki/page-source-seam.ts:409  → categories:   createRowCategoryStore(...)
+```
+
+`resolvePageSeams` returns an empty bundle when the run has no Stack, and that empty
+bundle is what makes every seam fall back to `wiki/` and `.llmwiki/`. A run therefore
+cannot store pages in rows while keeping its curated links on the compiling host, which is
+the defect the seams exist to prevent.
+
+## The four artifacts, end to end
+
+Line numbers below are as of the commit that added this page; the `git grep` command
+beside each row is the durable check, because it does not care where a line moved to.
+
+### Aliases
+
+| Direction | Call chain | `git grep` | Hits |
+| --- | --- | --- | --- |
+| write | `index.ts:973 snapshotIncumbentConcepts` → `index.ts:974 applyConceptIdentity` → `page-renderer.ts:384 applyDeclaredAliases` → `page-write-sink.ts:119 aliases: stringList(meta.aliases)` → `wiki.pages.aliases` | `git grep -n 'aliases: stringList' -- src/` | 3 (`page-write-sink.ts`, `page-store.ts`, `link-anchoring.ts`) |
+| read | `index.ts:973` passes `seams.content` → `page-scan-source.ts:357 createPageContentSource` → `page-scan-source.ts:224 renderPageMarkdown` → `page-scan-source.ts:230 emitList(lines, "aliases", ...)` → `page-store.ts:135 aliases: stringList(row.aliases)` | `git grep -n 'emitList(lines, "aliases"' -- src/` | 1 (`page-scan-source.ts`) |
+
+The read side matters as much as the write side: `applyConceptIdentity` folds a spelling
+onto the page that already answers to it only if it can see the incumbents' aliases, and
+those incumbents are read through the run's own page source.
+
+### Curated links
+
+| Direction | Call chain | `git grep` | Hits |
+| --- | --- | --- | --- |
+| selection | `page-source-seam.ts:408` → `index.ts:1010 input.seams.curatedLinks` → `index.ts:583 overlayCuratedPageWrites(..., curatedStore)` | `git grep -n 'curatedLinks: createRowCuratedLinkStore' -- src/` | 1 (`page-source-seam.ts`) |
+| overlay | `curated-links-apply.ts:107 overlayCuratedPageWrites` → `curated-links-apply.ts:69 applyCuratedOverlay` → `curated-links-overlay.ts:105 overlayCuratedLinks` (re-anchors on every render) → `curated-links-apply.ts:76 backend = store ?? createFileCuratedLinkStore(root)` | `git grep -n 'input.seams.curatedLinks' -- src/compiler/index.ts` | 1 |
+| storage | record path → `curated-links-row-store.ts:157 insert into wiki.curated_links`; load → `:100 from wiki.curated_links`; drop → `:196 delete from wiki.curated_links` | `git grep -n 'insert into wiki.curated_links' -- src/` | 1 |
+
+The overlay is path-agnostic on purpose: `overlayCuratedLinks(body, pageId, records)` takes
+a body string and a record list, so re-validating the anchor on every render is a property
+of the shared code rather than of each backend. Only WHERE the records live changes.
+
+### Categories
+
+| Direction | Call chain | `git grep` | Hits |
+| --- | --- | --- | --- |
+| selection | `index.ts:1751 assignCategoriesForRun` → `index.ts:1643 store: flags.seams?.categories` → `categories/assign.ts:232 store ?? createFileCategoryStore(root)` | `git grep -n 'store: flags.seams?.categories' -- src/compiler/index.ts` | 1 |
+| stage | `categories/assign.ts:224 assignCategories` (reuse by canonical key, criterion test, membership evidence) | `git grep -n 'export async function assignCategories' -- src/` | 1 |
+| storage | `categories-row-store.ts:360 createRowCategoryStore` → `:221 insert into wiki.categories`, `:275 insert into wiki.category_members`, `:186`/`:189` reads | `git grep -n 'categories: createRowCategoryStore' -- src/` | 1 (`page-source-seam.ts`) |
+
+Nothing that DECIDES what a category is lives in the row store: `buildCategoryRecord`,
+`mergeCategoryPatch`, `categoryIdForName` and `sortMembers` are called there, not restated.
+The store owns only where the record lives.
+
+### Attribution gaps
+
+| Direction | Call chain | `git grep` | Hits |
+| --- | --- | --- | --- |
+| write | `page-renderer.ts:385 frontmatterFields.attributionGaps` → `page-write-sink.ts:120 attributionGaps: stringList(meta.attributionGaps)` → `wiki.pages.attribution_gaps` | `git grep -n 'attributionGaps: stringList' -- src/` | 2 (`page-write-sink.ts`, `page-store.ts`) |
+| read | `page-scan-source.ts:231 emitList(lines, "attributionGaps", ...)` → `page-store.ts:136 attributionGaps: stringList(row.attribution_gaps)` | `git grep -n 'emitList(lines, "attributionGaps"' -- src/` | 1 (`page-scan-source.ts`) |
+| report | `index.ts:1247 summarizeCompile` → `compile-report.ts:80 reportAttribution(generation)` → `compile-report.ts:138 reportAttribution` | `git grep -n 'reportAttribution(generation)' -- src/` | 1 |
+
+`renderPageMarkdown` (`page-scan-source.ts:224`) is the ONLY way a row becomes markdown,
+and the resolver writes a page back by patching its body inside that rendered text — so a
+gap that is not emitted there is silently erased by the next rewrite of the page. That
+round trip is pinned by `test/dimensions/row-page-round-trip.test.ts`.
+
+## The degradation that makes an unwired store invisible
+
+Measured on the curated-link store, and true of the pattern rather than of that store
+alone. Remove line `page-source-seam.ts:408` — the `curatedLinks:` entry of the seam
+bundle — and:
+
+- the curated link **still works**. The overlay falls back to
+  `.llmwiki/curated-links.json` (`curated-links-apply.ts:76`), records the link there,
+  reads it back from there, and restores it into the regenerated body. The run that
+  "restores the link" stays green, and so does the run that drops and reports it.
+- only an assertion about the RECORD — that `wiki.curated_links` holds it, or that the
+  project's `.llmwiki/curated-links.json` was never created — detects the loss.
+
+So **"the link still worked" is not evidence of wiring**. Anyone re-checking a backend
+decision by watching behaviour alone will pass a Stack whose curated links quietly moved
+back to the compiling host.
+
+Two tests exist because of that measurement:
+
+- `test/dimensions/row-page-curated-links.test.ts` — *"keeps a row-backed Stack's records
+  out of the project's curated-links file"* asserts the file is absent after a row-backed
+  run AND that the same scenario file-backed does create it, so the assertion cannot pass
+  vacuously. Unwiring `page-source-seam.ts:408` turns exactly this case red.
+- `test/dimensions/store-parity.test.ts` — the four-artifact parity acceptance suite, which
+  compares the RECORDS field for field rather than comparing restored bodies alone.
+
+## Check it yourself
+
+```bash
+# 1. The selection decision still names the row stores.
+git grep -n 'curatedLinks: createRowCuratedLinkStore' -- src/
+git grep -n 'categories: createRowCategoryStore' -- src/
+
+# 2. The stages still consume what the seam bundle carries.
+git grep -n 'input.seams.curatedLinks' -- src/compiler/index.ts
+git grep -n 'store: flags.seams?.categories' -- src/compiler/index.ts
+
+# 3. The columns are still written and read.
+git grep -n 'aliases: stringList' -- src/
+git grep -n 'emitList(lines, "aliases"' -- src/
+git grep -n 'attributionGaps: stringList' -- src/
+git grep -n 'emitList(lines, "attributionGaps"' -- src/
+
+# 4. The behaviour, through the entry point a user runs.
+npx vitest run test/dimensions/store-parity.test.ts test/dimensions/row-page-curated-links.test.ts
+```
+
+Step 4 needs a reachable Postgres. `LLMWIKI_TEST_DATABASE_URL` points at one;
+`postgresql://aks:aks@localhost:5434/aks` is the documented local container.
+
+## These suites fail rather than skip when there is no database
+
+A skipped suite is reported by every runner in this repository as a pass, so a
+database-backed suite that cannot reach Postgres would print a green while asserting
+nothing. Both suites above therefore go through `missingTestDatabase`
+(`test/fixtures/test-database-handoff.ts`, the root twin of
+`packages/llmwiki-kg/ts/src/testing/no-database.ts`) and **fail** with the suite named and
+every way to supply a database listed:
+
+```text
+Error: test/dimensions/store-parity.test.ts (the file-backed/row-backed parity suite) needs a Postgres database and none could be obtained.
+```
+
+Exactly one opt-out exists, `LLMWIKI_TEST_ALLOW_NO_DATABASE=1`. With it set the run skips,
+prints the same reason, and annotates the suite title, so an offline run is explicit about
+what it dropped.
+
+## Scope boundaries worth knowing
+
+- **The CLI read commands are not part of this chain.** `llmwiki category` and
+  `llmwiki categories-here` read `wiki/categories/*.md`; pointing them at rows is a
+  separate decision about which Stack they mean. They are read-only commands outside the
+  compile path, and no wiring claim on this page covers them.
+- **`--recompile` writes no categories, in either path.** Category assignment runs inside
+  `if (!regenerateOnly)` (`src/compiler/index.ts:1745`), decided before any seam is
+  consulted. That is scope parity, not a missing backend.
+- **Static analysis does not cover the KG package.** `.fallowrc.json` lists
+  `packages/llmwiki-kg/**` under `ignorePatterns`, so a clean `fallow` run says nothing
+  about the files in that package.
