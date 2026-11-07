@@ -48,6 +48,7 @@ import {
 import {
   createConceptForest,
   groupsByRoot,
+  isDeterministicTier,
   tierOfRoot,
   tierThatJoined,
   unionCandidates,
@@ -55,14 +56,15 @@ import {
 } from "./concept-forest.js";
 
 /**
- * The evidence vocabulary the shared union-find still declares.
+ * The evidence vocabulary of the shared union-find.
  *
- * `auto` and `review` are RETIRED identity ranks: no path in this module can join
- * two nodes at them, and {@link identityTierOf} refuses them loudly instead of
- * mapping them onto a deterministic tier. They stay in the type only because
- * `concept-forest.ts` owns the rank table.
+ * Only the deterministic name rules are in it. Similarity used to contribute two
+ * further ranks -- `auto` and `review` -- which are RETIRED and absent from this
+ * type: no path in this module can produce one, and both the union-find (which
+ * refuses a rank it does not own) and {@link identityTierOf} (which refuses a rank
+ * it cannot map) reject them if an untyped caller ever presents one.
  */
-export type MergeTier = "slug" | "normalized" | "auto" | "review";
+export type MergeTier = "slug" | "normalized";
 
 /** How a group's members were decided to be the same concept. */
 export type IdentityTier = "slug" | "normalized" | "alias";
@@ -220,17 +222,25 @@ function strongestTier(tiers: readonly IdentityTier[]): IdentityTier | undefined
 }
 
 /**
- * Narrows the union-find's rank vocabulary to the deterministic tiers.
+ * Narrows a reported rank to the deterministic tiers.
  *
- * Reaching a retired rank means a similarity score found its way back into group
- * construction — the exact regression S6 and S14 forbid — so this throws instead of
- * silently reporting a deterministic rule that decided nothing.
+ * The parameter is deliberately `string` rather than {@link MergeTier}: the rank
+ * vocabulary is a type, and a type is not a runtime check. Reaching a rank the name
+ * rules do not own means a similarity score found its way back into identity -- the
+ * exact regression S6 and S14 forbid -- so this throws instead of silently reporting
+ * a deterministic rule that decided nothing.
+ *
+ * @param tier - A rank reported by the union-find, checked rather than trusted.
+ * @returns The same rank, as an {@link IdentityTier}.
+ * @throws Error when `tier` is not one of the deterministic name rules.
  */
-function identityTierOf(tier: MergeTier): IdentityTier {
-  if (tier === "slug" || tier === "normalized") {
+function identityTierOf(tier: string): IdentityTier {
+  if (isDeterministicTier(tier)) {
     return tier;
   }
-  throw new Error(`retired similarity tier "${tier}" cannot decide concept identity`);
+  throw new Error(
+    `"${tier}" is not a deterministic identity rule; similarity cannot decide concept identity`,
+  );
 }
 
 /** The name-rule tiers: the only ranks the union-find is ever fed. */
