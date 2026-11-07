@@ -314,11 +314,13 @@ does not cite reads as not fully attributed on both.
 
 Three limits are worth knowing before you rely on that:
 
-- **The category read commands are not Stack-aware yet.** `llmwiki category` and
-  `llmwiki categories-here` read `wiki/categories/*.md` and nothing else, so on a
-  Stack-backed project they answer from the category files in the checkout while the
-  compile writes rows. The compile path is row-backed; these two verbs are not. See
-  [`category` & `categories-here`](/cli/category#what-it-cannot-do-yet).
+- **The category read commands are Stack-aware, and not a second taxonomy.**
+  `llmwiki category` and `llmwiki categories-here` resolve their store the way the compile
+  does, from `AKS_STACK_ID`: on a Stack-backed project they answer from
+  `wiki.categories` and `wiki.category_members` — the rows the compile wrote — and on a
+  project with no Stack from `wiki/categories/*.md`. A Stack that is addressed but
+  unreachable makes them fail rather than answer from whatever files the checkout happens
+  to hold. See [`category` & `categories-here`](/cli/category).
 - **`--recompile` writes no categories, on either storage.** Category assignment changes
   objects the run did not name, so a scoped regeneration skips it. That is the promise of
   the lever, not a missing backend: a full compile writes categories on both.

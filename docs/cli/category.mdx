@@ -18,6 +18,11 @@ Two commands make that second object navigable:
 | `llmwiki category <slug>` | from a category → its member pages |
 | `llmwiki categories-here <page-id>` | from a page → the categories that contain it |
 
+Both verbs read **the storage this project uses**, resolved exactly the way a compile
+resolves it: with a Stack addressed (`AKS_STACK_ID`) the categories come from
+`wiki.categories` and `wiki.category_members`, the same rows the compile wrote; with none
+they come from `wiki/categories/*.md`. The output does not depend on which one answered.
+
 ```bash
 llmwiki category sistemas-distribuidos
 llmwiki category sistemas-distribuidos --json
@@ -176,22 +181,21 @@ run may categorise.
 
 ## Read-only
 
-Both commands write nothing, take no lock, and call no LLM. They read the category files
-under `wiki/categories/` and nothing else — no page is opened, so a page that a category
-still lists after deletion is reported as a member rather than hidden. Neither command
-consults the Stack, so on a Stack-backed project they see the checkout's category files and
-never the `wiki.categories` rows a compile wrote.
+Both commands write nothing, take no lock, and call no LLM. They read the category store
+and nothing else — no page is opened, so a page that a category still lists after deletion
+is reported as a member rather than hidden. The store is chosen once, from the same
+`AKS_STACK_ID` every other Stack-aware surface reads: rows on a Stack-backed project,
+`wiki/categories/*.md` on a project with no Stack. Neither command takes a `--stack` flag;
+the variable is the addressing model, here as everywhere else.
+
+A Stack that is addressed but whose database cannot be reached makes these commands
+**fail**. They never fall back to the checkout's category files: a checkout can hold
+stale files, or none, and answering from them would report a taxonomy the Stack does not
+have while looking exactly like a successful read.
 
 ## What it cannot do yet
 
-- **These two commands read files, even on a Stack-backed project.** A Stack-backed compile
-  persists categories in `wiki.categories` and their membership evidence in
-  `wiki.category_members`, with the same four fields and the same identity rule, so two
-  hosts serving one Stack do share categories. What has not changed is the READ side:
-  these two verbs read `wiki/categories/*.md` and nothing else, so they answer from the
-  category files in the checkout. Pointing them at rows is a separate decision about which
-  Stack they mean; see [Where a Stack-backed Run Keeps
-  Them](/concepts/wiki-model#where-a-stack-backed-run-keeps-them).
 - **No membership editing.** Membership is recorded by compiles; there is no verb to add
   or remove a member by hand. Edit the category file if you must, and keep the four
-  required fields intact or the store will refuse to read it.
+  required fields intact or the store will refuse to read it. On a Stack-backed project
+  the membership lives in `wiki.category_members`, which this CLI does not edit at all.

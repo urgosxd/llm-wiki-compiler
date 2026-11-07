@@ -85,10 +85,18 @@ of the shared code rather than of each backend. Only WHERE the records live chan
 | selection | `index.ts:1751 assignCategoriesForRun` → `index.ts:1643 store: flags.seams?.categories` → `categories/assign.ts:232 store ?? createFileCategoryStore(root)` | `git grep -n 'store: flags.seams?.categories' -- src/compiler/index.ts` | 1 |
 | stage | `categories/assign.ts:224 assignCategories` (reuse by canonical key, criterion test, membership evidence) | `git grep -n 'export async function assignCategories' -- src/` | 1 |
 | storage | `categories-row-store.ts:360 createRowCategoryStore` → `:221 insert into wiki.categories`, `:275 insert into wiki.category_members`, `:186`/`:189` reads | `git grep -n 'categories: createRowCategoryStore' -- src/` | 1 (`page-source-seam.ts`) |
+| CLI read | `category.ts:175`/`categories-here.ts:135` → `page-source-seam.ts:512 withCategoryStore` → `withPageSeams` (`:465`) → `resolvePageSeams` (`:396`) → `:410 categories: createRowCategoryStore` → `categories-row-store.ts:365 list` → `:184 readAllTx` | `git grep -c 'withCategoryStore' -- src/` | 3 files: 1 (`page-source-seam.ts`), 3 (`category.ts`), 4 (`categories-here.ts`) — comments included |
 
 Nothing that DECIDES what a category is lives in the row store: `buildCategoryRecord`,
 `mergeCategoryPatch`, `categoryIdForName` and `sortMembers` are called there, not restated.
 The store owns only where the record lives.
+
+The CLI read direction is the fifth row on purpose. It is not part of `compile()`, but it
+is part of the same claim: the taxonomy a compile persists is worth nothing if the verb a
+reader types cannot see it. `withCategoryStore` therefore asks the SAME seam bundle -- one
+variable, one place that turns it into a backend -- and hands the command a
+`CategoryStorePort`, so `category` and `categories-here` never import a row store, never
+read the environment and never open a database of their own.
 
 ### Attribution gaps
 
@@ -140,6 +148,9 @@ git grep -n 'categories: createRowCategoryStore' -- src/
 git grep -n 'input.seams.curatedLinks' -- src/compiler/index.ts
 git grep -n 'store: flags.seams?.categories' -- src/compiler/index.ts
 
+# 2b. The CLI read verbs still go through the seam rather than choosing a backend.
+git grep -n 'withCategoryStore' -- src/
+
 # 3. The columns are still written and read.
 git grep -n 'aliases: stringList' -- src/
 git grep -n 'emitList(lines, "aliases"' -- src/
@@ -172,10 +183,16 @@ what it dropped.
 
 ## Scope boundaries worth knowing
 
-- **The CLI read commands are not part of this chain.** `llmwiki category` and
-  `llmwiki categories-here` read `wiki/categories/*.md`; pointing them at rows is a
-  separate decision about which Stack they mean. They are read-only commands outside the
-  compile path, and no wiring claim on this page covers them.
+- **The CLI read commands are wired to the same seam, and pinned separately.** `llmwiki
+  category` and `llmwiki categories-here` resolve their store through
+  `withCategoryStore` (`page-source-seam.ts:512`), so a Stack addressed by `AKS_STACK_ID`
+  is read from rows and a project with no Stack from `wiki/categories/*.md`. There is no
+  `--stack` flag: the variable is the addressing model, exactly as on every other surface.
+  `test/dimensions/store-parity.test.ts` compares both verbs' `--json` envelopes across the
+  two backends and asserts that an addressed-but-unreachable Stack fails instead of
+  answering from files. The catalogues are worth one caveat of their own: unwiring the
+  seam makes a row-backed compile write category FILES as its fallback, so the two verbs
+  still agree with each other, and only the cross-backend comparison notices.
 - **`--recompile` writes no categories, in either path.** Category assignment runs inside
   `if (!regenerateOnly)` (`src/compiler/index.ts:1745`), decided before any seam is
   consulted. That is scope parity, not a missing backend.
