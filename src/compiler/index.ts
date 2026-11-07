@@ -345,7 +345,13 @@ export async function compileAndReport(
   // `process.env`, which is exactly what the CLI does today.
   const dimensionsDb = createDimensionsDatabase(options.env ?? process.env);
 
-  const locked = await acquireMutationLock(root, "ordinary");
+  // The lock's environment is the RUN's too, for the same reason and from the same
+  // value: `acquireLock` keys the advisory lock on the Stack the environment names,
+  // so a lock taken from `process.env` while the rows go to `options.env`'s Stack
+  // gives a per-request host exclusion on the WRONG Stack -- its own requests never
+  // contend for one Stack, and two unrelated Stacks serialise. Omitted stays
+  // `process.env`, which is exactly what the CLI passes.
+  const locked = await acquireMutationLock(root, "ordinary", { env: options.env });
   if (!locked) {
     output.status("!", output.error("Could not acquire lock. Try again later."));
     return {
@@ -375,7 +381,11 @@ export async function compileAndReport(
     );
   } finally {
     await dimensionsDb.close();
-    await releaseLock(root);
+    // Released under the SAME environment: `releaseLock` finds the held connection in
+    // the registry by the key IT derives, so releasing with the ambient environment
+    // would miss the entry this run stored and leave a session-level advisory lock
+    // held on its reserved connection until the process died.
+    await releaseLock(root, options.env);
   }
 }
 
