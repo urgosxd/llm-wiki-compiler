@@ -6,6 +6,8 @@ import type { Command } from "commander";
 import { nextCommand } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { contextCommand, type ContextCommandOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
 import { linksHereCommand, type LinksHereOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { categoryCommand, type CategoryCommandOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { categoriesHereCommand, type CategoriesHereOptions } from "@atomicstrata/llmwiki-core/compiler-cli";
 import {
   DEFAULT_RACE_MAX_DEPTH,
   RACE_MAX_DEPTH_CEILING,
@@ -34,6 +36,45 @@ export function registerContextCommands(program: Command, verboseEnabled: (flag?
     .option("--json", "Emit a stable JSON envelope for agent consumption")
     .action(async (slug: string, options: LinksHereOptions) =>
       runExitCodeCommand(async () => linksHereCommand(slug, options)),
+    );
+
+  program
+    .command("category <slug>")
+    .description(
+      "List the pages a wiki category groups, with the reason each was assigned " +
+        "(read-only; e.g. 'sistemas-distribuidos', 'categories/sistemas-distribuidos' " +
+        "or its canonical name)",
+    )
+    .option("--json", "Emit a stable JSON envelope for agent consumption")
+    .addHelpText(
+      "after",
+      "\nExit codes:\n" +
+        "  0  answered (including an unknown category name or a category with no\n" +
+        "     members: both are reported in the output, not as a failure)\n" +
+        "\nMembers are listed in the stored order (page id, then reason), so two runs\n" +
+        "on the same wiki print the same bytes. `llmwiki categories-here <page-id>`\n" +
+        "answers the opposite direction.\n",
+    )
+    .action(async (slug: string, options: CategoryCommandOptions) =>
+      runExitCodeCommand(async () => categoryCommand(slug, options)),
+    );
+
+  program
+    .command("categories-here <page-id>")
+    .description(
+      "List the wiki categories a page belongs to (read-only; e.g. " +
+        "'concepts/some-concept' or a bare 'some-concept')",
+    )
+    .option("--json", "Emit a stable JSON envelope for agent consumption")
+    .addHelpText(
+      "after",
+      "\nExit codes:\n" +
+        "  0  answered (including a page in no category, and a wiki with none yet)\n" +
+        "\n`llmwiki category <slug>` answers the opposite direction. Both read the\n" +
+        "category files under wiki/categories/ and nothing else.\n",
+    )
+    .action(async (pageId: string, options: CategoriesHereOptions) =>
+      runExitCodeCommand(async () => categoriesHereCommand(pageId, options)),
     );
 
   program
