@@ -349,6 +349,12 @@ async function reviewCandidate(
  * One review call. A provider failure is an unusable verdict, never a failed
  * compile: this stage improves the wiki, it is not a precondition for publishing it.
  *
+ * No explicit `maxTokens`: the operator's configured output budget applies, exactly
+ * as it does to extraction, page generation and category assignment. Pinning a
+ * smaller number here would make one phase of the compile silently ignore
+ * `LLMWIKI_MAX_TOKENS` -- the shared resolver in `src/utils/llm.ts` lets an explicit
+ * value win, so the pinned number would be the only one this request ever had.
+ *
  * @param candidate - The candidate being judged.
  * @returns The parsed verdict, or null when the answer could not be read.
  */
@@ -367,7 +373,6 @@ async function requestVerdict(candidate: Candidate): Promise<ReturnType<typeof p
         content: `Should "${candidate.page.title}" link its mention of "${candidate.article.title}"?`,
       }],
       tools: [LINK_REVIEW_TOOL],
-      maxTokens: 512,
     });
     return parseLinkVerdict(raw);
   } catch {
