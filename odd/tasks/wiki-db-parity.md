@@ -33,7 +33,7 @@ S8 — REACHABILITY: every new stage or store must be shown reachable from the c
 | T7 | S7 | Parity test: one input ingested through the file-backed path and the row-backed path, equivalent observable output for all four artifacts. ACCEPTANCE. | worker | `3c09f3d1f5ba2eb700a57a6f9ddc7c6bac95c05f`, temp-root teardown in `396f982545f095178477253190dc2416142bdc6b` |
 | T8 | S8 | Reachability proof for every new stage and store: `file:line` call chain plus `git grep`, and RED observed by unwiring the stage. | worker | `bbda95e3d46bd6e2dd19bf7cb654ee80e1eb7e01` (the durable documentation), `f469c9a54153f8fddcab6089dd9bc58307960f38` (the parity suite fails instead of skipping), `60e2672bbcc5b91a4242a3a3b4ace077657713a3` (the curated-link fallback pinned) — see L10 |
 | T9 | S6, S7 | Documentation: the DB path's behaviour and the exact migration command. | worker | `730f53d05affafb343ef9787fe97b47dcac02648` — see L11 |
-| T10 | S1-S8 | Full gate run and delivery report. | lead | `66f0b84a164f5a5bc08eb37f7eafd845fdaa7dae` (the `--check` flag), `4f27013b3b493b894f96fcaa664a1f126782203f` (the curated-link store header), `4818b51be7a7dcb8826d476a37410148c17d78de` (the gate results and L12), `c5795b66555ff1ef063b66c74b562c5a235cc292` (the schema comment about the migration proof), `81a5cfd4b87f9bdfbeaf21342860aad8cab8e2e9` (the durable anti-fallback suite), and the `docs(odd): record the T10 closure` commit that carries L13 |
+| T10 | S1-S8 | Full gate run and delivery report. | lead | `66f0b84a164f5a5bc08eb37f7eafd845fdaa7dae` (the `--check` flag), `4f27013b3b493b894f96fcaa664a1f126782203f` (the curated-link store header), `4818b51be7a7dcb8826d476a37410148c17d78de` (the gate results and L12), `c5795b66555ff1ef063b66c74b562c5a235cc292` (the schema comment about the migration proof), `81a5cfd4b87f9bdfbeaf21342860aad8cab8e2e9` (the durable anti-fallback suite), `bfe609cdd573b9355c2767a679fd9f1317b2e728` (the `docs(odd): record the T10 closure` commit that carries L13), `9b6088e2c60913e20bf113f16e963c80984b68de` (the shared probe-stack fixture, L14), and the `docs(odd): record the final gate run` commit that carries L14 |
 
 ## Log
 
@@ -723,3 +723,171 @@ SCRATCH ARTIFACTS LEFT ON DISK, outside the worktree, for removal after review:
 created inside the worktree (each suite's `mkdtemp` root is removed in its own `afterAll`,
 and the probe Stack is torn down there too), and no database was created by this closure —
 the suites run against the run's own per-run database, which the harness drops.
+
+### L14 — Final closure: the duplication `fallow` reported, and the gate of record on the final tree
+
+Two commits, then this record. Node `v24.21.0` on PATH for every command (`node -v`
+printed `v24.21.0`); `grep -c EBADENGINE` over the `npm test` and `fallow` logs: `0` and
+`0`.
+
+**(a) `9b6088e` — `test(db): share the parity probe-stack gate and teardown`.** L13 left the
+two clone groups as a NAMED risk because the fix needed an edit to
+`test/dimensions/store-parity.test.ts`, which was outside that closure's edit surface. This
+closure has that surface.
+
+WHAT WAS DUPLICATED, as `fallow` measured it at `bfe609c` BEFORE the change: 6 clone
+groups, 128 lines across 8 files. The two new ones were both between the same pair of
+suites — `row-store-of-record.test.ts:115-132` ↔ `store-parity.test.ts:158-181` (the
+probe-Stack gate: provisioning, the `Observed:` detail, the no-database decision and the
+`runSuite` choice) and `row-store-of-record.test.ts:204-215` ↔ `store-parity.test.ts:211-223`
+(the `afterAll` teardown). The other four groups are untouched here.
+
+WHERE IT WENT, and why there. One fixture, `test/fixtures/probe-stack-suite.ts` (218 lines,
+77 non-comment), beside `category-rows.ts` and `store-parity-corpus.ts`, and exporting in
+their style: `createProbeSuite({ label, databaseContext, title })` returns
+`{ probeStack, skipReason, suiteTitle, runSuite, teardown }`. It imports `createProbeStack`
+from `../dimensions/harness-lifecycle.js`, the same direction `test/fixtures/stack-env.ts`,
+`query-stack-root.ts` and `stack-status-fixtures.ts` already import it. No new convention.
+
+The rule it enforces is the repository's, not a new one: `missingTestDatabase`
+(`test/fixtures/test-database-handoff.ts`) decides, it THROWS unless
+`LLMWIKI_TEST_ALLOW_NO_DATABASE=1` is set, and only that opt-out turns a suite into explicit
+skips under an annotated title. `teardown(projectRoot, savedEnv)` restores the environment,
+calls `vi.restoreAllMocks()`, deletes the suite's temp root and then cleans the probe Stack
+up, in that order.
+
+BEHAVIOUR, MEASURED AGAINST THE PRE-CHANGE TREE, both states observed on each side:
+
+| state | before (`bfe609c`) | after (`9b6088e`) |
+|---|---|---|
+| live database | `2 passed (2)` files, `14 passed (14)` tests, exit 0 | identical: `2 passed (2)`, `14 passed (14)`, exit 0 |
+| unreachable database (`LLMWIKI_TEST_DATABASE_URL=postgresql://aks:aks@127.0.0.1:1/aks`) | `2 failed (2)` files, `Tests no tests`, exit 1, each file headed `<its path> needs a Postgres database and none could be obtained.` | identical files, exit and headline |
+| same unreachable database + `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` | `2 skipped (2)` files, `14 skipped (14)`, exit 0, `<its path>: every case in this file is skipped.` twice | identical, same counts and lines |
+
+ONE OBSERVABLE DIAGNOSTIC CHANGED, in the safe direction and stated rather than glossed:
+the store-of-record suite quoted only the FIRST line of the harness message as its
+`Observed:` detail (`firstLineOf`), while the parity suite stripped just the repeated advice
+block (`observedFrom`). The shared helper has one implementation — the parity suite's — so
+the store-of-record suite now reports the same fuller detail, e.g.
+`Observed: select 1 against postgresql://aks:aks@127.0.0.1:1/aks failed — Failed query:
+select 1` and, in the opt-out path, the trailing `— the warning printed above says whether
+the server was unreachable or the Stack could not be provisioned`. The headline, the exit
+code, the skip decision and the advice block are unchanged; only the `Observed:` detail
+gained a line. Nothing was weakened: no assertion was edited, and the parity, anti-vacuity,
+anti-fallback and record assertions are byte-identical to `bfe609c`.
+
+SIZE, after the extraction: `store-parity.test.ts` 237 lines / 135 non-comment,
+`row-store-of-record.test.ts` 195 lines / 96 non-comment, the fixture 218 / 77. The longest
+`it` is 22 lines (`store-parity.test.ts`) and 8 lines (`row-store-of-record.test.ts`), both
+under the 40-line limit; that length is pre-existing and was not touched by the extraction.
+`npx tsc --noEmit` was clean on the intermediate tree, and
+`npm run typecheck:tests` moved from `1746` to `1747 files checked` with the same `260
+baseline diagnostics in 94 files` — the new fixture is one more file, not one more
+diagnostic. The baseline was NOT regenerated. `git diff bfe609c 9b6088e` over the two
+suites adds and removes no line containing `expect(` or `it(`, so every assertion and every
+case is byte-identical.
+
+`fallow` AFTER the change, run after `npm run build` as AGENTS.md requires: 4 clone groups
+(the four pre-existing ones in `test/compiler/link-gate.test.ts`,
+`test/compiler/page-renderer-contextual-links.test.ts`, `test/commands/links-here-cli.test.ts`,
+`test/commands/race-cli.test.ts`, `test/context/ghost-rule.test.ts`,
+`test/context/race-path.test.ts`), 61 lines duplicated, `0.0%`, `✗ 0 above threshold · 17249
+analyzed · maintainability 91.1 (good)`, dead code `✓ No issues found`, and no
+unresolved-import section. Target met: back to the 4 pre-existing groups, 0 new ones.
+
+**(b) THE GATE OF RECORD on the FINAL tree** (HEAD `9b6088e`, the duplication fix included,
+the new suite included). Every command in the foreground, in this order, exact exit codes as
+observed.
+
+| # | gate | exact command | exit | result |
+|---|------|---------------|------|--------|
+| 1 | EXHAUSTIVE | `npm test` | 0 | `900 passed | 3 skipped (903)` files, `6724 passed | 7 skipped (6731)` tests, 323.83s, zero failures. `test/dimensions/row-store-of-record.test.ts (7 tests)` and `test/dimensions/store-parity.test.ts (7 tests)` both green — the new suite is INSIDE this run, closing the L12/L13 gap |
+| 2 | affected tests | `npm run test:affected` | 1 then 0 | first run: `1 failed | 815 passed | 3 skipped (819)` files, `1 failed | 6195 passed | 4 skipped (6200)` tests — the failure is the unrelated KG flake characterised below. Re-run of the SAME command, same selection (`819` files, `6200` tests): `816 passed | 3 skipped (819)`, `6196 passed | 4 skipped (6200)`, exit 0 |
+| 3 | root type-check | `npx tsc --noEmit` | 0 | no output (0 lines) |
+| 4 | KG package type-check | `npx tsc -p packages/llmwiki-kg/ts/tsconfig.json --noEmit` | 0 | no output (0 lines) |
+| 5 | test type-check ratchet | `npm run typecheck:tests` | 0 | `1747 files checked; 260 baseline diagnostics in 94 files; no regression.` (baseline NOT regenerated) |
+| 6 | KG type-check ratchet | `npm run typecheck:kg` | 0 | `349 files checked; 0 diagnostics baselined across 0 entries in packages/llmwiki-kg/ts/tsconfig.json; no regression.` |
+| 7 | build | `npm run build` | 0 | `ESM dist/index.js 443.66 KB`, `ESM dist/cli.js 501.70 KB`, `DTS dist/index.d.ts 6.67 KB`, viewer assets copied |
+| 8 | static analysis | `./node_modules/.bin/fallow` | 0 | dead code `✓ No issues found`; `● Duplicates (4 clone groups)`, `61 lines (0.0%) duplicated across 6 files`; `✗ 0 above threshold · 17249 analyzed · maintainability 91.1 (good)`; no unresolved imports (run AFTER gate 7, so `dist/` existed) |
+
+THE 7 SKIPS IN GATE 1 are the same 7 L12 accounted for and the branch still does not touch
+them: `packages/llmwiki-kg/ts/src/routes/aks-gateway.test.ts` 1,
+`ingest-gateway.test.ts` 1, `pages-gateway.test.ts` 2 (the database-gated gateway files), and
+`test/quickstart-integration.test.ts` `19 tests | 3 skipped`.
+
+**GATE 2's SINGLE FAILURE, quoted verbatim and characterised** — it is PRE-EXISTING and not
+caused by this branch:
+
+```text
+ FAIL  packages/llmwiki-kg/ts/src/routes/ingest/support-wiring.test.ts > ingest asks the semantic-support question > leaves the support question unanswered when the provider fails (S25, S12)
+AssertionError: expected 'pending' to be 'classified' // Object.is equality
+
+Expected: "classified"
+Received: "pending"
+
+ ❯ packages/llmwiki-kg/ts/src/routes/ingest/support-wiring.test.ts:320:43
+      Tests  1 failed | 6195 passed | 4 skipped (6200)
+```
+
+The evidence that it is not this branch's: (i) `git diff --stat
+a40fc3f078bef4816ff90cff1c8c7c8b8c626d53..HEAD -- packages/llmwiki-kg/` is EMPTY and
+`git log a40fc3f..HEAD -- packages/llmwiki-kg/ts/src/routes/ingest/support-wiring.test.ts`
+lists no commit, so that file and the code it exercises are byte-identical to `main`'s tip;
+(ii) `package.json` and `package-lock.json` are not in the branch diff either; (iii) gate 1,
+the exhaustive run on THIS tree, passed that same file four minutes earlier (`7 tests` inside
+a green 903-file run); (iv) the failing case passes deterministically on its own — 3 runs at
+`9b6088e` and 5 runs in a `a40fc3f` worktree at `/tmp/t10f-base-a40fc3f`, all `5 passed (5)`;
+(v) the whole `packages/llmwiki-kg/ts/src/routes/ingest/` directory 3 times at `a40fc3f` and
+3 times at `9b6088e`, `56 passed (56)` each. The assertion itself is order-sensitive: the
+injected `JevProviderError` is the FIRST step of a scripted client that answers BOTH the
+classification and the support question, so a call order that puts classification first
+makes the failure land on classification and leaves the row at `pending` instead of
+`classified`. That fragility is in the test's scripting, in a package this branch never
+opened. NOTHING WAS CHANGED to make it pass; the re-run is reported beside the first run
+rather than in place of it.
+
+**`fallow` IS NOT COVERAGE OF THE KG PACKAGE.** `.fallowrc.json` lists
+`packages/llmwiki-kg/**` under `ignorePatterns`, so gate 8 says nothing about the package
+that gate 2's flake lives in; gates 4 and 6 are what cover it, and both are green.
+
+**CHECKS THAT DID NOT RUN, named:**
+
+- `shellcheck scripts/apply-schemas.sh` — not installed on this host. Not re-run here either;
+  the script was not touched by this closure.
+- `npm run fallow:ci` (`scripts/fallow-ci.sh`) — wraps the analyzer against a report and is
+  not in the task's gate list; the analyzer binary itself was gate 8.
+- `npm run test:pack` (SDK packaging config) — out of the gate list, and this diff touches no
+  packaging file.
+- `npm run lint` — no such script exists in `package.json`.
+- `npm run release:check-docs` / `:current` — not run: no `docs/` file changed in either
+  commit (only two test files, one new fixture and this document).
+- A browser/TUI check of anything — no UI changed. The migration suite
+  (`test/dimensions/db-parity-migration.test.ts`) and `src/dimensions/wiki/**` were NOT
+  re-run separately: they are inside gate 1's exhaustive run, which covers them.
+- `git worktree remove /tmp/t10f-base-a40fc3f` — deliberately not run (no deletion
+  operations); the worktree is left on disk and named below for the owner to remove.
+
+**SCRATCH ARTIFACTS LEFT ON DISK** (outside the worktree, for removal after review):
+`/tmp/t10f-base-a40fc3f`, a `git worktree add --detach` of
+`a40fc3f078bef4816ff90cff1c8c7c8b8c626d53` with symlinked `node_modules`,
+`packages/llmwiki-kg/ts/node_modules` and `dist` pointing at this worktree (that symlink is
+why the base run used this tree's dependencies and is not a second install); plus
+`/tmp/t10f-build-baseline.log`, `/tmp/t10f-fallow-baseline.log`,
+`/tmp/t10f-baseline-pair.log`, `/tmp/t10f-baseline-nodb.log`,
+`/tmp/t10f-baseline-optout.log`, `/tmp/t10f-after-pair.log`, `/tmp/t10f-after-nodb.log`,
+`/tmp/t10f-after-optout.log`, `/tmp/t10f-b-nodb.n`, `/tmp/t10f-a-nodb.n`,
+`/tmp/t10f-b-opt.n`, `/tmp/t10f-a-opt.n`, `/tmp/t10f-build-after.log`,
+`/tmp/t10f-fallow-after.log`, `/tmp/t10f-gate1-npm-test.log`,
+`/tmp/t10f-gate2-test-affected.log`, `/tmp/t10f-gate2-test-affected-rerun.log`,
+`/tmp/t10f-gate3-tsc.log`, `/tmp/t10f-gate4-tsc-kg.log`, `/tmp/t10f-gate5-tct.log`,
+`/tmp/t10f-gate6-tck.log`, `/tmp/t10f-gate7-build.log`, `/tmp/t10f-gate8-fallow.log`,
+`/tmp/t10f-support-alone-{1,2,3}.log`, `/tmp/t10f-base-support-{1,2,3,4,5}.log`,
+`/tmp/t10f-base-ingest-dir-{1,2,3}.log`, `/tmp/t10f-head-ingest-dir-{1,2,3}.log`.
+
+NO SCRATCH DATABASE was created by hand. Both suites and every database-backed file in the
+runs above use the run's own per-run database, which the harness drops; the container
+`kind_kirch` was ADOPTED by the run (`[test-database] adopted running
+pgvector/pgvector:pg16 container kind_kirch`) and left running (`keeping reusable container
+kind_kirch for the next run`), so it is a reusable resource, not a leak. No temporary
+directory was created inside the worktree, and `git status --porcelain` was empty before
+this record commit.
