@@ -1085,10 +1085,16 @@ the run had touched the shared server:
 
 WHAT THIS DOES AND DOES NOT SETTLE. It settles the verdict: the earlier reds were
 environmental contention on a shared database, not a property of this branch, and the same
-tree passes exhaustively on a server no other session was writing to. It does NOT settle the
-per-file attribution of those earlier reds and this entry claims none — a green isolated run
-disproves "always red"; it does not name which files the earlier runs failed. The run-1 and
-run-2 file sets L15 lists remain descriptions of two contaminated runs.
+tree passes exhaustively on a server no other session was writing to. The per-file attribution of
+those earlier reds is settled as well, recovered by READING the surviving run logs rather than by
+re-running them. `/tmp/t10f-gate2-test-affected.log` recorded `ingest/support-wiring.test.ts`
+failing the test `leaves the support question unanswered when the provider fails (S25, S12)` with
+`AssertionError: expected 'pending' to be 'classified'` at `support-wiring.test.ts:320:43`. A
+second, distinct signature in the contended run was `PostgresError … violates foreign key
+constraint "stack_documents_stack_id_fkey"` (SQLSTATE 23503), issued from `ingest-harness.ts:264`
+inside the transaction at `:262` — and it appears on another branch as well, so it is not
+branch-specific. Those log paths are the only surviving copies and live outside the worktree. The
+run-1 and run-2 file sets L15 lists remain descriptions of two contaminated runs.
 
 REPRODUCE IT (Node 24; no host `psql` needed — the fixtures replay `scripts/apply-schemas.sh`
 through the pg client, `packages/llmwiki-kg/ts/src/testing/per-run-database.ts:257`). If a
