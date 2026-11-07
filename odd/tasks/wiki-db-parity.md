@@ -32,7 +32,7 @@ S8 — REACHABILITY: every new stage or store must be shown reachable from the c
 | T6 | S4 | Categories persist in `wiki.categories` + `wiki.category_members`; identity minted once, membership stored as evidence, category and concept of the same name stay two objects. | worker | `7e6e9fc5f8f266efabab075cacb6a5a94518fa1a` (the `CategoryStorePort` and the file backend behind it; behaviour-preserving), `43dab47f0c9a01ad1d4238ab4ee89e3587e54a17` (the row store, the seam selection and the suites) |
 | T7 | S7 | Parity test: one input ingested through the file-backed path and the row-backed path, equivalent observable output for all four artifacts. ACCEPTANCE. | worker | `3c09f3d1f5ba2eb700a57a6f9ddc7c6bac95c05f`, temp-root teardown in `396f982545f095178477253190dc2416142bdc6b` |
 | T8 | S8 | Reachability proof for every new stage and store: `file:line` call chain plus `git grep`, and RED observed by unwiring the stage. | worker | `bbda95e3d46bd6e2dd19bf7cb654ee80e1eb7e01` (the durable documentation), `f469c9a54153f8fddcab6089dd9bc58307960f38` (the parity suite fails instead of skipping), `60e2672bbcc5b91a4242a3a3b4ace077657713a3` (the curated-link fallback pinned) — see L10 |
-| T9 | S6, S7 | Documentation: the DB path's behaviour and the exact migration command. | worker | |
+| T9 | S6, S7 | Documentation: the DB path's behaviour and the exact migration command. | worker | `730f53d05affafb343ef9787fe97b47dcac02648` — see L11 |
 | T10 | S1-S8 | Full gate run and delivery report. | lead | |
 
 ## Log
@@ -334,3 +334,117 @@ Stack do not share curated links", which T5-T7 made false for a Stack-backed run
 guide states the current truth (a Stack keeps them in `wiki.curated_links`); that Note and
 the CLI read-command caveat are T9's to correct. Also for T9: T7 confirms `--recompile`
 writes no categories in EITHER path (scope parity, not a gap).
+
+OPEN FOR T9 (not T8's scope, and does not block T8): `docs/concepts/wiki-model.mdx` still
+carries the Note "The file belongs to the checkout, not to the Stack: two hosts sharing a
+Stack do not share curated links", which T5-T7 made false for a Stack-backed run. The new
+guide states the current truth (a Stack keeps them in `wiki.curated_links`); that Note and
+the CLI read-command caveat are T9's to correct. Also for T9: T7 confirms `--recompile`
+writes no categories in EITHER path (scope parity, not a gap).
+
+[Resolved by L11: the Note and the CLI caveat were corrected, and `--recompile` is
+documented as scope parity.]
+
+### L11 — T9: the docs, the migration runbook, and two false claims corrected
+
+`730f53d`. Files: `docs/guides/wiki-db-parity-migration.mdx` (new, 213 lines),
+`docs/concepts/wiki-model.mdx`, `docs/cli/category.mdx`,
+`docs/guides/row-backed-wiring-reachability.mdx`, `docs/docs.json`. Source and tests were
+not touched.
+
+TWO DOC CLAIMS WERE FALSE, both from the file-backed era, and both were corrected against
+the code rather than reworded:
+
+1. `docs/concepts/wiki-model.mdx`, the Note closing "Curated Links". Before: "The file
+   belongs to the checkout, not to the Stack: two hosts sharing a Stack do not share
+   curated links." After: the records live in `wiki.curated_links` on a row-backed run, so
+   every host serving that Stack restores the same links; a project with NO Stack keeps
+   them in `.llmwiki/curated-links.json`, which is the case the old sentence was still true
+   about (two hosts sharing only the Stack, not the checkout, do not share them, and a
+   fresh clone starts with none). Checked against
+   `src/dimensions/wiki/curated-links-row-store.ts` (`createRowCuratedLinkStore`) and
+   `src/compiler/curated-links-store.ts` (`createFileCuratedLinkStore`, now the fallback
+   `curated-links-apply.ts:76` selects when the run has no Stack).
+2. `docs/cli/category.mdx`, "What it cannot do yet". Before: "**Row-backed Stacks keep
+   categories on disk.** … Two hosts sharing one Stack do not share their categories."
+   That was falsified by T6: a Stack-backed compile writes `wiki.categories` and
+   `wiki.category_members`. After: those rows and their membership evidence ARE shared, and
+   the limitation that remains is the READ side — `llmwiki category` and
+   `llmwiki categories-here` still read `wiki/categories/*.md` and are not Stack-aware.
+   Checked by reading `src/commands/category.ts` and `src/commands/categories-here.ts`
+   (both call `listCategories(root)` from `src/categories/store.ts`, which lists
+   `wiki/categories/*.md`; neither file mentions a Stack) — the L8 finding, now stated to
+   users instead of left implied.
+
+The same page lost two more file-only assumptions: the opening paragraph now names both
+storages per object kind, and the heading "What a category file carries" became "What a
+category carries" (nothing linked to that anchor — checked with `git grep`).
+
+WHERE THE BEHAVIOUR IS DOCUMENTED. `docs/concepts/wiki-model.mdx` gained a section "Where
+a Stack-backed Run Keeps Them": one table pairing each of the four artifacts with its file
+and row location, the statement that only the location changes (identity folding, anchor
+re-validation, category identity, attribution marking are all shared code), and three
+limits: the category read commands are not Stack-aware; `--recompile` writes no categories
+on either storage (scope parity, not a gap); and a restored curated link is re-tested on
+every render on both backends. Aliases, curated links and attribution each gained a
+sentence in their own section saying which column or file carries the fact for a
+Stack-backed run.
+
+The FOURTH caveat the task named — `.fallowrc.json` lists `packages/llmwiki-kg/**` under
+`ignorePatterns`, so a clean `fallow` run is never coverage of that package — was NOT
+duplicated into the user-facing concept page. It is already stated, and verified, in
+`docs/guides/row-backed-wiring-reachability.mdx` ("Static analysis does not cover the KG
+package"), which is the page that carries every other verification caveat, and the new
+wiki-model section links to it for exactly that reason. Duplicating a repo-development fact
+into a user-facing concept page would be the wrong home for it.
+
+THE MIGRATION RUNBOOK. `docs/guides/wiki-db-parity-migration.mdx` is a sibling of
+`docs/guides/kg-classification-migration.mdx` — same shape (what it changes, why it is safe
+to re-run, apply it, a fresh install needs nothing, verify it applied, after migrating,
+there is no down migration), same Guides group, registered in `docs/docs.json`. The exact
+commands documented, each verified against `scripts/apply-schemas.sh` and the compose files:
+
+- `./scripts/apply-schemas.sh postgresql://aks:aks@localhost:5434/aks`
+- `DATABASE_URL=postgresql://aks:aks@localhost:5434/aks ./scripts/apply-schemas.sh`
+- `PSQL="docker exec -i llmwiki-kg-db-1 psql -U aks -d aks" ./scripts/apply-schemas.sh`
+- `docker exec -i llmwiki-kg-db-1 psql -U aks -d aks < src/dimensions/wiki/migration_wiki_db_parity.sql`
+- `docker compose -f docker-compose.yml exec -T db psql -U llmwiki -d llmwiki < src/dimensions/wiki/migration_wiki_db_parity.sql`
+- `psql "postgresql://aks:aks@localhost:5434/aks" -f src/dimensions/wiki/migration_wiki_db_parity.sql`
+- `CHECK_ONLY=true ./scripts/apply-schemas.sh postgresql://aks:aks@localhost:5434/aks` (drift)
+
+The page states non-destructiveness and idempotency with the reasons (no `drop`, every
+statement guarded by `if not exists`, no backfill because both new columns are NOT NULL with
+a constant default), cites the nine cases of `test/dimensions/db-parity-migration.test.ts`
+by name, and states that the drift check now expects the three new tables: on the local
+`llmwiki-kg-db-1` it printed `policies: 32`, then `MISSING RLS: wiki.category_members`,
+`MISSING RLS: wiki.categories`, `MISSING RLS: wiki.curated_links`, `drift detected.`, exit
+1. That database has NOT had the migration applied (`to_regclass` returned NULL for all
+three tables, `information_schema.columns` returned 0 rows for `aliases` and
+`attribution_gaps`), so the drift report is measured, not imagined.
+
+A DEFECT FOUND IN THE RUNNER'S OWN DOCUMENTATION, fixed in the docs rather than the script
+(the script is outside T9's edit surface): the usage header advertises
+`./scripts/apply-schemas.sh --check`, but `--check` is never parsed. The script reads
+`TARGET="${1:-${DATABASE_URL:-}}"` and `CHECK_ONLY="${CHECK_ONLY:-false}"`, so `--check`
+is consumed as a CONNECTION STRING. Measured: `./scripts/apply-schemas.sh --check` → exit 2,
+`error: cannot connect to the database.` The working form is `CHECK_ONLY=true`, which is
+what `.github/workflows/ci.yml:95` and `publish.yml:269` already run. The new page documents
+that form and warns about the flag. The script's usage comment is still wrong; that is
+reported for T10, not fixed here.
+
+CHECKS RUN: `npm run release:check-docs` → exit 0; `npm run release:check-docs:current` →
+exit 0; a `node -e` audit of `docs/docs.json` → all 61 navigation pages resolve to a file
+(`missing: []`) and the new page is registered; a `node -e` link audit of the four changed
+pages → every `](/path#anchor)` link resolves to an existing page AND an existing heading
+anchor (`link problems: none`); the seven migration-suite case names quoted in the new page
+were re-read from the test file; the mirror markers were re-read from
+`src/dimensions/wiki/schema.sql:96,105,142,210`. No runnable test covers prose, and no test
+suite was run for this slice.
+
+STILL STALE AND OUTSIDE T9's EDIT SURFACE, for T10: the JSDoc header of
+`src/compiler/curated-links-store.ts` still asserts "on a Stack the pages live in rows and
+the curated records live on the host that compiled them, so two hosts sharing one Stack do
+not share their curated links" — the exact claim the code no longer makes true and the docs
+just corrected. It is a comment, not behaviour, but it is now the only place in the tree
+that says it.
+
