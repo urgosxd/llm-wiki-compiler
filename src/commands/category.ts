@@ -7,10 +7,19 @@
  * command prints is auditable rather than an opinion — a reader can see WHY a page is
  * grouped here, not only that it is.
  *
- * READ-ONLY and provider-free. It reads the category store (files under
- * `wiki/categories/`) and nothing else: no page is read, no lock is taken, no model is
- * called. The members come back in the one stored order — page id, then reason, then
- * evidence key — so two runs of the command on the same wiki print the same bytes.
+ * READ-ONLY and provider-free. It reads the category store and nothing else: no page is
+ * read, no lock is taken, no model is called. The members come back in the one stored
+ * order — page id, then reason, then evidence key — so two runs of the command on the
+ * same wiki print the same bytes.
+ *
+ * ONE STORE, TWO BACKENDS. The store is resolved by `withCategoryStore`, which asks the
+ * same seam the compile path uses: with a Stack addressed (`AKS_STACK_ID`) the categories
+ * come from `wiki.categories` and `wiki.category_members`, exactly the rows the compile
+ * wrote; with none they come from `wiki/categories/<categoryId>.md`. The ENVELOPE is the
+ * same either way, because both backends answer the same `CategoryStorePort` and nothing
+ * below this line branches on the backend. A Stack whose database cannot be reached FAILS
+ * rather than quietly answering from the checkout's files — a read that reports a
+ * taxonomy the Stack does not have is worse than no answer.
  *
  * A category with no members is a normal answer, not an error: a category created by the
  * first run that opened it legitimately groups one page at a time. The exit code stays
@@ -23,8 +32,8 @@
  * really assigned it.
  */
 
-import { listCategories } from "../categories/store.js";
 import { categoryObjectId } from "../categories/identity.js";
+import { withCategoryStore } from "../dimensions/wiki/page-source-seam.js";
 import { canonicalConceptKey } from "../dimensions/wiki/concept-identity.js";
 import type { CategoryMember, CategoryRecord } from "../categories/types.js";
 
@@ -163,7 +172,12 @@ export default async function categoryCommand(
   requested: string,
   options: CategoryCommandOptions = {},
 ): Promise<number> {
-  const record = resolveCategory(requested, await listCategories(process.cwd()));
+  const categories = await withCategoryStore(
+    process.cwd(),
+    process.env,
+    async (store) => await store.list(),
+  );
+  const record = resolveCategory(requested, categories);
   const members = record === null ? [] : reportedMembers(record.members);
 
   if (options.json) {

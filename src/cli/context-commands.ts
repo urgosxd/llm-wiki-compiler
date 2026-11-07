@@ -54,7 +54,9 @@ export function registerContextCommands(program: Command, verboseEnabled: (flag?
         "     members: both are reported in the output, not as a failure)\n" +
         "\nMembers are listed in the stored order (page id, then reason), so two runs\n" +
         "on the same wiki print the same bytes. `llmwiki categories-here <page-id>`\n" +
-        "answers the opposite direction.\n",
+        "answers the opposite direction.\n" +
+        "\nCategories are read from the storage this project uses: wiki/categories/*.md,\n" +
+        "or the wiki.categories rows of the Stack AKS_STACK_ID names.\n",
     )
     .action(async (slug: string, options: CategoryCommandOptions) =>
       runExitCodeCommand(async () => categoryCommand(slug, options)),
@@ -72,7 +74,8 @@ export function registerContextCommands(program: Command, verboseEnabled: (flag?
       "\nExit codes:\n" +
         "  0  answered (including a page in no category, and a wiki with none yet)\n" +
         "\n`llmwiki category <slug>` answers the opposite direction. Both read the\n" +
-        "category files under wiki/categories/ and nothing else.\n",
+        "categories of the storage this project uses: wiki/categories/*.md, or the\n" +
+        "wiki.categories rows of the Stack AKS_STACK_ID names.\n",
     )
     .action(async (pageId: string, options: CategoriesHereOptions) =>
       runExitCodeCommand(async () => categoriesHereCommand(pageId, options)),

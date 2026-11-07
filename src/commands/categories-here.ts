@@ -7,6 +7,13 @@
  * reason and evidence key that admitted them — so this command reads categories and
  * nothing else: no page is opened, no lock is taken, no model is called.
  *
+ * ONE STORE, TWO BACKENDS, the same resolution `llmwiki category` uses: `withCategoryStore`
+ * asks the compile path's own seam, so a Stack addressed through `AKS_STACK_ID` is read
+ * from `wiki.categories` / `wiki.category_members` and a project with no Stack from
+ * `wiki/categories/<categoryId>.md`. This direction is the one that showed the gap most
+ * plainly: a compile persisted the membership evidence in rows, and this verb reported the
+ * page as belonging to no category because the checkout had no category files at all.
+ *
  * A PAGE THAT IS IN NO CATEGORY IS A NORMAL ANSWER. Most pages of a young wiki are in
  * none, and a wiki with no categories at all is an ordinary state: the exit code stays
  * 0 and the envelope reports an empty list, so a caller can tell "not grouped" from
@@ -19,8 +26,8 @@
  * reported unresolved instead of silently returning an empty list.
  */
 
-import { listCategories } from "../categories/store.js";
 import { categoryObjectId } from "../categories/identity.js";
+import { withCategoryStore } from "../dimensions/wiki/page-source-seam.js";
 import type { CategoryRecord } from "../categories/types.js";
 
 /** Versioned JSON envelope, incremented independently of other commands. */
@@ -116,6 +123,19 @@ function buildJsonPayload(
 }
 
 /**
+ * Every category of this project, from whichever backend its storage answers.
+ *
+ * One line so the command's body stays a description of its answer rather than of its
+ * storage: the backend decision is `withCategoryStore`'s (the seam the compile path
+ * installs), and a page id that could never be a member does not pay for a read.
+ *
+ * @returns The stored records, in ascending id order.
+ */
+async function listEveryCategory(): Promise<CategoryRecord[]> {
+  return await withCategoryStore(process.cwd(), process.env, async (store) => await store.list());
+}
+
+/**
  * Run `llmwiki categories-here <page-id>`.
  * @param requested - Namespaced page id (`concepts/foo`) or a bare slug (`foo`).
  * @param options - `--json` switches to the stable envelope.
@@ -126,9 +146,7 @@ export default async function categoriesHereCommand(
   options: CategoriesHereOptions = {},
 ): Promise<number> {
   const pageId = pageIdFor(requested);
-  const categories = pageId === null
-    ? []
-    : categoriesContaining(await listCategories(process.cwd()), pageId);
+  const categories = pageId === null ? [] : categoriesContaining(await listEveryCategory(), pageId);
 
   if (options.json) {
     process.stdout.write(`${JSON.stringify(buildJsonPayload(requested, pageId, categories), null, 2)}\n`);

@@ -37,6 +37,7 @@ import { createRegistryPageSource } from "./page-registry-source.js";
 import { databaseEmbeddingSource } from "../../utils/embeddings-database.js";
 import { createRowCuratedLinkStore } from "./curated-links-row-store.js";
 import { createRowCategoryStore } from "./categories-row-store.js";
+import { createFileCategoryStore } from "../../categories/store.js";
 import type { CuratedLinkStorePort } from "../../compiler/curated-links.js";
 import type { CategoryStorePort } from "../../categories/types.js";
 import { listSourceDocuments } from "./source-documents-store.js";
@@ -473,6 +474,48 @@ export async function withPageSeams<T>(
   } finally {
     await dimensionsDb.close();
   }
+}
+
+/**
+ * Run `fn` with the CATEGORY store this project's storage answers.
+ *
+ * ## Why a read-only command asks HERE instead of choosing a backend itself
+ *
+ * The compile path and every Stack-aware read resolve their backend in ONE place,
+ * {@link resolvePageSeams}, from ONE variable (`AKS_STACK_ID`). A command that picked
+ * its own would be a second opinion about what "database-backed" means, and the two
+ * would disagree the moment one of them changed -- which is exactly how the category
+ * read verbs ended up answering from `wiki/categories/*.md` while the compile that
+ * produced the taxonomy wrote `wiki.categories` rows.
+ *
+ * The PATTERN is the one `graph-health` uses (`buildViewerSnapshot`): a wrapper that
+ * resolves the seams internally and hands the caller the capability, so the command
+ * never imports a row store, never reads the environment and never opens a database.
+ *
+ * ## Why files are the default and rows are not a fallback
+ *
+ * A project with no Stack keeps its categories in `wiki/categories/<categoryId>.md`, so
+ * with no Stack addressed the file port is the correct answer, not a degradation. The
+ * two cases are decided ONCE, by the same empty-variable test the seams use.
+ *
+ * The dangerous case is the third one: a Stack IS addressed and its database cannot be
+ * reached. There the file port is NOT substituted, because a checkout can hold leftover
+ * category files (or none), and answering from them would report a taxonomy the Stack
+ * does not have while looking exactly like a successful read. The query error therefore
+ * propagates to the caller, which is the only layer that can report it.
+ *
+ * @param root - Project root, used only by the file backend.
+ * @param env - Environment to read the Stack from.
+ * @param fn - Receives the port; only its read operations are meaningful to a reader.
+ * @returns Whatever `fn` returns.
+ */
+export async function withCategoryStore<T>(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  fn: (store: CategoryStorePort) => Promise<T>,
+): Promise<T> {
+  return await withPageSeams(env, async (seams) =>
+    await fn(seams.categories ?? createFileCategoryStore(root)));
 }
 
 /**
