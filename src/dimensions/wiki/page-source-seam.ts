@@ -206,8 +206,12 @@ export async function withRawPageSource<T>(
  * of twice, and a caller cannot regenerate one while leaving the other summarizing a
  * directory the run no longer writes.
  *
+ * `env` reaches BOTH renderers, not only the scan: the rendered artifacts are stored
+ * in the Stack this environment names, so passing it only to {@link withPageScan} left
+ * the two writes resolving the ambient Stack while their input came from the request's.
+ *
  * @param root - Project root.
- * @param env - Environment to read the Stack from.
+ * @param env - Environment to read the Stack from, and to store the renders in.
  * @param options - `skipMoc` for the index-only caller.
  * @returns Resolves when both artifacts are written.
  */
@@ -217,8 +221,8 @@ export async function regenerateIndices(
   options: { skipMoc?: boolean } = {},
 ): Promise<void> {
   await withPageScan(env, async (source) => {
-    await generateIndex(root, source);
-    if (options.skipMoc !== true) await generateMOC(root, source);
+    await generateIndex(root, env, source);
+    if (options.skipMoc !== true) await generateMOC(root, env, source);
   });
 }
 

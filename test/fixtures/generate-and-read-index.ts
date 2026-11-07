@@ -14,6 +14,6 @@ import { generateIndex } from "../../src/compiler/indexgen.js";
  * @returns The full text content of the generated index.md.
  */
 export async function generateAndReadIndex(root: string): Promise<string> {
-  await generateIndex(root);
+  await generateIndex(root, process.env);
   return readFile(path.join(root, "wiki/index.md"), "utf-8");
 }

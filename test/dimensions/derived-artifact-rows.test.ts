@@ -38,7 +38,7 @@ describe("derived artifacts on rows", () => {
     withProject("moc-nofile", async (dir) => {
       await seedConcept(dir, "alpha", "Alpha", "topic");
 
-      await generateMOC(dir);
+      await generateMOC(dir, process.env);
 
       expect(existsSync(path.join(dir, "wiki", "MOC.md"))).toBe(false);
     }));
@@ -47,7 +47,7 @@ describe("derived artifacts on rows", () => {
     withProject("moc-content", async (dir) => {
       await seedConcept(dir, "alpha", "Alpha", "topic");
 
-      await generateMOC(dir);
+      await generateMOC(dir, process.env);
 
       const stored = await withDerivedSource(process.env, async (source) =>
         source!.read("moc"),
@@ -59,10 +59,10 @@ describe("derived artifacts on rows", () => {
   it("replaces the row on regeneration instead of duplicating it", () =>
     withProject("moc-idempotent", async (dir) => {
       await seedConcept(dir, "alpha", "Alpha", "topic");
-      await generateMOC(dir);
+      await generateMOC(dir, process.env);
       const first = await withDerivedSource(process.env, async (s) => s!.read("moc"));
 
-      await generateMOC(dir);
+      await generateMOC(dir, process.env);
       const second = await withDerivedSource(process.env, async (s) => s!.read("moc"));
 
       // Regeneration is a FUNCTION of the registry: the same corpus yields the same
@@ -92,7 +92,7 @@ describe("derived artifacts on rows", () => {
 async function storedMocUnder(label: string, dir: string): Promise<string | undefined> {
   let stored: string | undefined;
   await withStackEnv(label, async () => {
-    await generateMOC(dir);
+    await generateMOC(dir, process.env);
     stored = await withDerivedSource(process.env, async (source) => source!.read("moc"));
   });
   return stored;

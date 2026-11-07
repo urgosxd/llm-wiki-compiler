@@ -49,7 +49,7 @@ describe("OKF refresh drains the pending-embeddings marker", () => {
     // Core succeeds for every id it is asked to embed (always eligible+embedded).
     const okSpy = mockEmbeddingSuccess();
 
-    await refreshAfterImport(root, [IMPORTED_ID]);
+    await refreshAfterImport(root, [IMPORTED_ID], process.env);
 
     const refreshed = okSpy.mock.calls.flatMap((c) => c[1] as string[]);
     expect(refreshed).toEqual(expect.arrayContaining([PENDING_A, PENDING_B, IMPORTED_ID]));

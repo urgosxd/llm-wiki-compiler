@@ -33,9 +33,15 @@ import type { EntityPage } from "../profile/types.js";
  * non-default profile is active.
  *
  * @param root - Project root directory.
+ * @param env - The RUN's environment; it names the Stack the render is stored in.
+ *   Required rather than defaulted to `process.env`: a default is what let a
+ *   per-request run render this artifact into the AMBIENT Stack, and a required
+ *   parameter makes every caller state its tenant instead of inheriting one.
+ * @param scanSource - Row-backed scan source, or undefined to scan `wiki/` on disk.
  */
 export async function generateIndex(
   root: string,
+  env: NodeJS.ProcessEnv,
   scanSource?: PageScanSource,
 ): Promise<void> {
   output.status("*", output.info("Generating index..."));
@@ -60,7 +66,11 @@ export async function generateIndex(
   // A Stack stores the render; the file is what a project without one gets, byte for
   // byte as before. `index.md` is DERIVED -- nothing reads it back -- so there is no
   // reader to keep in sync, only the write to redirect.
-  const stored = await withDerivedSource(process.env, async (source) => {
+  //
+  // The Stack is the one `env` names, NOT the ambient one: this render belongs to the
+  // run that produced it, and reading `process.env` here wrote one tenant's index into
+  // another tenant's rows.
+  const stored = await withDerivedSource(env, async (source) => {
     if (source === undefined) return false;
     if (isSameRender(await source.read("index"), indexContent)) return true;
     await source.save("index", indexContent);

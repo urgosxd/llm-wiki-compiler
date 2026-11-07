@@ -59,7 +59,7 @@ describe("generateIndex derived-write confinement", () => {
     const { root, outside } = ctx;
     await plantEscapingWikiDir(root, outside);
 
-    await expect(generateIndex(root)).rejects.toThrow();
+    await expect(generateIndex(root, process.env)).rejects.toThrow();
 
     // The outside target must remain unwritten.
     expect(existsSync(path.join(outside, "index.md"))).toBe(false);
@@ -69,7 +69,7 @@ describe("generateIndex derived-write confinement", () => {
     const { root } = ctx;
     await makeConceptsDir(root);
 
-    await generateIndex(root);
+    await generateIndex(root, process.env);
 
     const written = await readFile(path.join(root, INDEX_FILE), "utf-8");
     expect(written).toContain("# Knowledge Wiki");
@@ -82,7 +82,7 @@ describe("generateMOC derived-write confinement", () => {
     const { root, outside } = ctx;
     await plantEscapingWikiDir(root, outside);
 
-    await expect(generateMOC(root)).rejects.toThrow();
+    await expect(generateMOC(root, process.env)).rejects.toThrow();
 
     // The outside target must remain unwritten.
     expect(existsSync(path.join(outside, "MOC.md"))).toBe(false);
@@ -92,7 +92,7 @@ describe("generateMOC derived-write confinement", () => {
     const { root } = ctx;
     await makeConceptsDir(root);
 
-    await generateMOC(root);
+    await generateMOC(root, process.env);
 
     const written = await readFile(path.join(root, MOC_FILE), "utf-8");
     expect(written).toContain("# Map of Content");

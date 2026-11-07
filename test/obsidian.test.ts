@@ -81,7 +81,7 @@ describe("generateMOC", () => {
     await writePage(dir, "beta", "Beta", ["ml"]);
     await writePage(dir, "gamma", "Gamma", ["databases"]);
 
-    await generateMOC(root);
+    await generateMOC(root, process.env);
     const moc = await readFile(path.join(root, "wiki/MOC.md"), "utf-8");
 
     expect(moc).toContain("## ml");
@@ -96,7 +96,7 @@ describe("generateMOC", () => {
     await writePage(dir, "alpha", "Alpha", ["ml"]);
     await writePage(dir, "beta", "Beta");
 
-    await generateMOC(root);
+    await generateMOC(root, process.env);
     const moc = await readFile(path.join(root, "wiki/MOC.md"), "utf-8");
 
     expect(moc).toContain("## Uncategorized");
@@ -107,7 +107,7 @@ describe("generateMOC", () => {
     const dir = path.join(root, "wiki/concepts");
     await writePage(dir, "alpha", "Alpha", ["ml"]);
 
-    await generateMOC(root);
+    await generateMOC(root, process.env);
     const moc = await readFile(path.join(root, "wiki/MOC.md"), "utf-8");
 
     expect(moc).toMatch(/^# Map of Content/);
@@ -115,7 +115,7 @@ describe("generateMOC", () => {
   });
 
   it("handles empty concepts directory", async () => {
-    await generateMOC(root);
+    await generateMOC(root, process.env);
     const moc = await readFile(path.join(root, "wiki/MOC.md"), "utf-8");
     expect(moc).toContain("# Map of Content");
   });
@@ -126,7 +126,7 @@ describe("generateMOC", () => {
     const orphanFm = buildFrontmatter({ title: "Dead", summary: "Gone", orphaned: true, tags: ["ml"] });
     await writeFile(path.join(dir, "dead.md"), `${orphanFm}\n\nOrphaned.\n`);
 
-    await generateMOC(root);
+    await generateMOC(root, process.env);
     const moc = await readFile(path.join(root, "wiki/MOC.md"), "utf-8");
 
     expect(moc).toContain("[[alive|Alive]]");

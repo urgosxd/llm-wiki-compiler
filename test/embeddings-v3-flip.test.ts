@@ -132,7 +132,7 @@ describe("v3 flip — writer", () => {
     // qualified <targetDirectory>/<slug> ids the import wrote.
     await acquireLockBlocking(root);
     try {
-      await refreshAfterImport(root, ["concepts/foo", "queries/foo"]);
+      await refreshAfterImport(root, ["concepts/foo", "queries/foo"], process.env);
     } finally {
       await releaseLock(root);
     }

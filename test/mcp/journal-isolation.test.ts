@@ -24,9 +24,10 @@
  * so every case below calls the tool a caller actually calls.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { withDerivedSource } from "../../src/dimensions/wiki/derived-artifact-source.js";
 import { journalDescriptions, rowOnlyProviderModule, seedConceptPage } from "../fixtures/mcp-stack-rows.js";
 import { buildServer, callTool } from "../fixtures/mcp-test-env.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
@@ -113,12 +114,20 @@ describe("tool journal isolation", () => {
     // A refusal would leave the index alone and make the assertions below pass for
     // the wrong reason, so the save is required to have really happened.
     expect(answered.saved).toBeTypeOf("string");
-    const index = await readFile(path.join(root, "wiki/index.md"), "utf8");
+    // The index belongs to the Stack the call NAMED, so it is that Stack's row. Read
+    // it through the production seam rather than the file: a Stack resolves the
+    // artifact destination to its own row, and the file is the NO-Stack fallback.
+    const index = await withDerivedSource(
+      { AKS_STACK_ID: named.harness.stackId, AKS_DATABASE_URL: named.harness.url } as NodeJS.ProcessEnv,
+      async (source) => source!.read("index"),
+    );
     // Both sides: the index lists the named Stack's corpus...
     expect(index).toContain("Journal Page");
     // ...and not the deployment's pages, which is exactly what an ambient scan of
     // `wiki/concepts` would have summarised instead.
     expect(index).not.toContain("Ambient Page");
+    // The rows path answered, so the file backend must not be covering for it.
+    expect(existsSync(path.join(root, "wiki/index.md"))).toBe(false);
   }, 60_000);
 });
 

@@ -820,6 +820,12 @@ async function seedThenFinalize(
   // `finalizeWiki`) and must not run the stages that edit other pages.
   const regenerating = recompileRequest() !== undefined;
   await finalizeWiki(root, draft, generation.writtenPages, generation.seedSlugs, {
+    // The run's environment, taken from the options THIS run was given and resolved
+    // ONCE, here: it is the same value the pipeline derives for every other seam, and
+    // `finalizeWiki`'s derived-artifact write must land in that Stack rather than in
+    // whatever `process.env` happens to name. Omitted stays `process.env`, which is
+    // exactly what the CLI passes.
+    env: options.env ?? process.env,
     scoped: options.changeFilter !== undefined || regenerating,
     regenerateOnly: regenerating,
     embeddings: options.embeddings !== false,
@@ -1473,6 +1479,17 @@ async function forgetDeletedSources(
  */
 interface FinalizeFlags {
   /**
+   * The RUN's environment, resolved once at the pipeline boundary.
+   *
+   * Required, and required on purpose. Finalize is where `index.md` and `MOC.md` are
+   * regenerated, and those renders are STORED IN A STACK: reading `process.env` there
+   * wrote a per-request run's navigation into the ambient tenant's rows. An optional
+   * field with (or without) a `process.env` default would re-create exactly that one
+   * level down, so the flags object carries the value the caller resolved — and a
+   * caller cannot compile without saying which Stack it compiles.
+   */
+  env: NodeJS.ProcessEnv;
+  /**
    * Refresh the embedding store after the durable state write. `false` skips it
    * entirely, including the pending-embeddings drain, for a caller that keeps
    * its own semantic index.
@@ -1709,10 +1726,10 @@ async function finalizeWiki(
   draft: CompileStateDraft | null,
   pages: MergedConcept[],
   seedSlugs: string[] = [],
-  flags: FinalizeFlags = {},
+  flags: FinalizeFlags,
 ): Promise<void> {
   const {
-    scoped = false, embeddings = true, embeddingStore, resolverSource,
+    env, scoped = false, embeddings = true, embeddingStore, resolverSource,
     embeddingPageSource, seams = {}, stateRows, jobObserver, totals, regenerateOnly = false,
   } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
@@ -1784,7 +1801,7 @@ async function finalizeWiki(
     await draft.flush(root, stateRows);
   }
 
-  await regenerateIndices(root, process.env);
+  await regenerateIndices(root, env);
   if (embeddings) {
     await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(
       root, allChangedSlugs, embeddingStore, embeddingPageSource, jobObserver?.compile,

@@ -19,10 +19,20 @@ import { withPageSeams } from "../dimensions/wiki/page-source-seam.js";
  * finally releaseLock), so the shared drain's lock-free Core is correct (the
  * self-locking wrapper would deadlock under the held lock).
  *
+ * `env` is the import's environment, threaded here instead of defaulted to
+ * `process.env`: every seam below writes to a Stack, and a default would resolve the
+ * AMBIENT one — the cross-tenant write this seam used to perform while its caller had
+ * already resolved the request's Stack.
+ *
  * @param root - Project root path.
  * @param pageIds - Qualified page ids of the imported pages (`<namespace>/<slug>`).
+ * @param env - The import's environment; the Stack the derived artifacts belong to.
  */
-export async function refreshAfterImport(root: string, pageIds: PageId[]): Promise<void> {
+export async function refreshAfterImport(
+  root: string,
+  pageIds: PageId[],
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
   // resolveAndApplyLinks operates on bare slugs (default concepts/queries
   // pipeline). The OKF import already holds the project lock (runOkfImport), so
   // this routes through the lock-free resolution seam.
@@ -32,11 +42,11 @@ export async function refreshAfterImport(root: string, pageIds: PageId[]): Promi
   // store travels with them for the same reason: the overlay this phase runs restores
   // records about those rows, so it must read them from the Stack rather than from
   // whatever `.llmwiki/curated-links.json` this checkout happens to hold.
-  await withPageSeams(process.env, (seams) =>
+  await withPageSeams(env, (seams) =>
     resolveAndApplyLinks(
       root, slugs, slugs, seams.resolver, seams.sink, seams.remover, undefined, undefined,
       seams.curatedLinks));
-  await regenerateIndices(root, process.env);
+  await regenerateIndices(root, env);
   // Union the imported page-ids into the shared pending-marker drain (preserves
   // the existing changed-id set; the drain adds prior-pending ids on top).
   await refreshEmbeddingsDrainingPending(root, pageIds);

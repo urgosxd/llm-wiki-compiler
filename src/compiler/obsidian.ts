@@ -108,9 +108,14 @@ function generateAbbreviation(title: string): string | null {
  * Reads all concept pages, extracts their tags from frontmatter, and writes
  * a structured MOC.md with sections per tag and an Uncategorized section.
  * @param root - Project root directory.
+ * @param env - The RUN's environment; it names the Stack the render is stored in.
+ *   Required rather than defaulted to `process.env`, for the same reason as the
+ *   index: a default silently renders this artifact into the AMBIENT Stack.
+ * @param scanSource - Row-backed scan source, or undefined to scan `wiki/` on disk.
  */
 export async function generateMOC(
   root: string,
+  env: NodeJS.ProcessEnv,
   scanSource?: PageScanSource,
 ): Promise<void> {
   const conceptsPath = path.join(root, CONCEPTS_DIR);
@@ -124,8 +129,9 @@ export async function generateMOC(
   const content = buildMOCContent(tagGroups);
 
   // Same split as the index: the MOC is derived, so a Stack stores the render and a
-  // project without one keeps the file.
-  const stored = await withDerivedSource(process.env, async (source) => {
+  // project without one keeps the file. The Stack is the one `env` names — the run's,
+  // never the ambient process's.
+  const stored = await withDerivedSource(env, async (source) => {
     if (source === undefined) return false;
     await source.save("moc", content);
     return true;

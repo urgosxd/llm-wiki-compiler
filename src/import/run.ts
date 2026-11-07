@@ -79,7 +79,7 @@ async function writeAll(root: string, valid: MappedOkfPage[], env: NodeJS.Proces
         written.push(qualifiedPageId(page.targetDirectory, page.slug));
       }
     } finally {
-      if (written.length) await refreshAfterImport(root, written);
+      if (written.length) await refreshAfterImport(root, written, env);
     }
   });
 }
