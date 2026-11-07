@@ -96,6 +96,7 @@ Interpretation (non-negotiable): embedding retrieval is legitimate for FINDING c
 | T17 | Graph health from the existing traversal: `graph-health` reports the shortest-path depth distribution over ordered article pairs plus the unreachable count, bounded by a named sampled-pair cap that is always reported, with a `--json` envelope, registration, help text, docs page and nav entry | S11, S12 | worker | 7a4a80d041037e6e396ce2e6ea91727acf32ae1a |
 | T18 | Synthesis-version observability (REPORT-ONLY): the version split of the stored pages is printed on every compile run, `compile --recompile <pages...>` (or `all`) regenerates a named page at the current version, and the module JSDoc states the standing standard for any future version-shaped state | S12, S13 | worker | 840c0b5d83810e2ca563d7f8fd6c3effb5559160 |
 | T19 | Close-out of the L17 audit: drop the pinned `maxTokens` from the link review so `LLMWIKI_MAX_TOKENS` governs it and widen the budget test until it reaches that request; deliver T11 (delete the dead alias module, remove the retired `auto`/`review` tiers, keep and prove the identity guard); document the user-visible identity, link, review, curated-link and attribution rules and their four report lines | S6, S8, S9, S12, S14 | worker | 4c80e969292b0db14d42c009fceb6b6a7716ce71 (token budget), 28b17e1de4830fc473e04e90e13f29826425d3d8 (T11), f0597843e69ace5d644ecc601e3265c576977306 (docs) |
+| T20 | Attribution made OBSERVABLE, not silent and not a hold-back: ONE census feeds three surfaces -- the page's own `attributionGaps` frontmatter naming the sources its prose never attributes (omitted when the page is fully attributed), ONE counted `Attribution:` line aggregated across the run's pages, and a summary mention under the completion banner -- and the page is still WRITTEN | S2, S7, S12 | worker | 209922b453e502ddb14b09509a8a78041eb8e08e |
 
 ## Log
 
@@ -833,3 +834,132 @@ COVERAGE CAVEAT OF RECORD, unchanged: `.fallowrc.json` `ignorePatterns` contains
 5. Scratch created by this task, all OUTSIDE the worktree: `/tmp/t19-c1-test-affected.log`, `/tmp/t19-c2-test-affected.log`, `/tmp/t19-c3-test-affected.log`, `/tmp/t19-npm-test.log`, `/tmp/dbg-budget.test.ts` and `/tmp/zz-dbg-budget.test.ts` (two throwaway probe specs used to find the alias-anchored scenario, moved out of the worktree instead of deleted). `git status --short` on the delivered tree shows no scratch, cache or temporary path.
 
 RISK: item 3 is claimed for commit 1 and NOT for commits 2 and 3, precisely. Commit 1 changes one code path every project's compile reaches when an earlier page names a new article (the review's model request, whose output budget now follows `LLMWIKI_MAX_TOKENS`): the same compile can now spend the operator's larger budget on that request, and on a machine where `LLMWIKI_MAX_TOKENS` is set above 512 the review's answer can be longer than before. Proof it did not break anything else: the full gate set, `npx vitest related --run src/compiler/link-review.ts` (95 files / 467 tests) and the full suite, all green with no assertion changed except the widening this task asked for. Commit 2 is item-3-free by design: `MergeTier`, `TIER_RANK` and `identityTierOf` are internal to `src/dimensions/wiki/**` and consumed by nothing outside the identity path, the removed module had no production importer, and the behaviour is unchanged for every input the name rules can produce -- the only visible consequence is that a rank outside `slug`/`normalized` is now refused at construction instead of at reporting. Commit 3 changes documentation only.
+
+L19 (T20 delivered as `209922b453e502ddb14b09509a8a78041eb8e08e` `feat(compiler): mark pages that are not fully attributed`; attribution made OBSERVABLE, three surfaces from ONE detection, no hold-back and no prompt change. The record commit cannot cite its own SHA.)
+
+### 1. The decision this task carried out
+
+L16 delivered attribution as a REPORT-ONLY diagnostic: `censusSourceAttribution` measured a merged page's attribution and `reportAttributionGap` printed one line per page. What it could not do is travel with the page. A merged article whose prose attributed one of its two sources was written with `sources: [alpha.md, beta.md]` and nothing else, so the stored bytes were indistinguishable from a fully attributed page for a reader, an export consumer, or a host replaying the corpus months later; the run's warning was the only trace and it lives on stdout. The Manager's rule, verbatim: **"a page that is not fully attributed is never presented AS fully attributed."** The three decisions taken from it, in substance as given:
+
+1. **Do not hold the page back — write it, mark it.** Discarding a page over a missing marker destroys content nobody asked to lose, and L16 already argued that. The page is still written (T5 pins it).
+2. **Three observable effects, all in the existing refusal-reporting shape with its own count.** A frontmatter field on the page, one counted compile-output line, and a mention in the compile summary.
+3. **Extend the existing census rather than write a second detector.** One detection, three surfaces. T20 is not a prompt change and did not touch prompt text or `PROMPT_VERSION` (still `v9`, as the differential's `promptVersion: v9` in both trees shows).
+
+### 2. The frontmatter field: name, shape, and the three properties that matter
+
+Field name: **`attributionGaps`**. Value: a list of the contributing source files that NO citation marker in the body attributes, in the page's own `sources` order. Rendered example (a merged page that cites alpha and never beta):
+
+```yaml
+---
+title: Vector DB
+sources:
+  - alpha.md
+  - beta.md
+kind: concept
+attributionGaps:
+  - beta.md
+createdAt: "2026-11-06T20:59:31.410Z"
+updatedAt: "2026-11-06T20:59:31.410Z"
+---
+```
+
+- It round-trips through the EXISTING renderer and parser (`buildFrontmatter` / `parseFrontmatter`, both in `src/utils/markdown.ts`, neither edited): `yaml.dump` writes the sequence and `yaml.load` reads it back as `["beta.md"]`. T1 and T5 assert the PARSED value, not the text.
+- It is **omitted entirely** when the page is fully attributed (`buildMergedFrontmatter` writes it only for a non-null gap), so no page carries an empty array and a complete page's bytes are what they were before the field existed. T2 pins the absence (`page` bytes do not contain `attributionGaps`; the frontmatter key set is unchanged).
+- Existing pages without the field stay valid and read as fully attributed.
+
+NOT DONE, and disclosed rather than faked: `WikiFrontmatter` (`src/utils/types.ts`) is the interface that documents a page's frontmatter shape, and it is OUTSIDE T20's allowed edit surfaces, so `attributionGaps` is not an optional member of it. Nothing needs the member at runtime (`buildMergedFrontmatter` builds a `Record<string, unknown>` and `parseFrontmatter` returns one), so this is a typing/documentation gap, not a behaviour one; the field is documented in the `buildMergedFrontmatter` JSDoc and in `docs/concepts/wiki-model.mdx`, and adding the member to that interface is a one-line follow-up in that file.
+
+### 3. The counted compile-output line, exact wording
+
+```
+Attribution: 1 page(s) not fully attributed (1 source reference(s) missing) — Vector DB is missing beta.md
+```
+
+Aggregated across pages, so a run marks every imperfect page in ONE line:
+
+```
+Attribution: 2 page(s) not fully attributed (2 source reference(s) missing) — Append Only Log is missing alpha.md; Vector DB is missing beta.md
+```
+
+It is a WARNING (the `!` icon plus `output.warn`), it is printed by `summarizeCompile` in the same block as the link, review, curated-link, category and version lines, and it is SILENT when no page has a gap — the silence rule the other refusal lines follow (a clean run has nothing to report, and a line that appears only sometimes is indistinguishable from a broken one). Pages are listed in **page-title order** (UTF-16 code-unit compare, never the locale), because pages render in parallel through `p-limit` and appending order would make the line a property of the machine rather than of the wiki.
+
+The per-page line L16 added is UNCHANGED and still prints: `Page "Vector DB" merges 2 source(s) but attributes 1: no statement is attributed to beta.md.` It is the detail a reader needs once the counted line tells them to look.
+
+### 4. The compile-summary mention, exact wording
+
+```
+Attribution summary: 1 page(s) of this run not fully attributed (1 source reference(s) missing).
+```
+
+It is printed immediately after the `✓ N compiled, M skipped, D deleted` line and before every other report line, so a reader who stops at the completion banner cannot conclude the run's pages are complete. It carries no page names on purpose — the counted line above does — and it is silent when no page has a gap.
+
+### 5. ONE detection, three surfaces (the wiring, and why it is a sink)
+
+- `censusSourceAttribution(body, sourceFiles)` is read ONCE per rendered page, on the final normalized body, with `extractClaimCitations` — unchanged from L16, so "attributed" still means exactly what the viewer, the citation lint and the source-utilization report mean by it.
+- `isAttributionGap(census)` is the ONE predicate (< two contributing sources ⇒ never a gap ⇒ silent, which is what keeps T3's single-source page untouched). Both `markAttributionGap` (frontmatter + run accumulator) and `reportAttributionGap` (the per-page line) read it, so the page's marker and the run's line cannot classify a page differently.
+- The run accumulator is an `AttributionSink` created once in `generatePagesPhase` and carried on each merged entry (`withAttributionSink`, the same shape `withRelatedPageIndex` already used), so the renderer records the gap WITHOUT threading a second argument through the candidate and live-write branches (`src/compiler/review-pipeline.ts` keeps one signature and was not edited). `attributionCountsOf(sink)` sorts and totals it into `PageGenerationResult.attribution`, which `summarizeCompile` prints.
+- Reachability: `compileAndReport` → `runCompilePipeline` → `runGenerationStage` → `generatePagesPhase` (sink created, totals attached) → `generateMergedPage` → `renderMergedPageContent` (census → marker → frontmatter + sink) → `summarizeCompile` → `reportAttribution`. The marker reaches DISK through the same write path the page already used (`commitLivePageWrites` → `applyCompilePageWritesLocked`), and the candidate path persists the same frontmatter inside the candidate record.
+
+### 6. Tests, RED and GREEN, and the inverse-edit proof
+
+`test/compiler/attribution-marking.test.ts` (new, 6 cases, every one through `compileAndReport`, provider stubbed, project in an OS temp dir the fixture removes):
+
+- **T1** a merged page that attributes one of its two sources carries `attributionGaps: ["beta.md"]` and the run prints the counted line naming page and source — "the count is 1".
+- **T2** (PIN) a fully attributed merged page has NO field and prints no attribution line; `title` and the sorted `sources` are unchanged, so the frontmatter is what it was.
+- **T3** (PIN) a single-source page is unchanged: no field, no attribution line, no per-page merges line, citation and `sources` intact.
+- **T4** two imperfect pages aggregate into `2 page(s)`, `2 source reference(s)`, listed in page-title order.
+- **T5** the marked page is STILL WRITTEN: `CompileResult.pages` is `["vector-db"]`, the file exists, `hasFrontmatterBlock` true, `malformedFrontmatter` false, `attributionGaps` parsed, both sources, body intact, exactly one page on disk.
+- **T6** the compile summary mentions the incompleteness.
+
+RED before the change (`/tmp/t20-gates/red-1.log`), verbatim shape: `Tests 4 failed | 2 passed (6)` — T1, T4, T5, T6 failed (`expected undefined to deeply equal [ 'beta.md' ]` and `expected '…Compilation complete…' to contain 'Attribution summary: …'`), while T2 and T3 PASSED then, as they must: both assert ABSENCE, so they are recorded as pins, not as invented REDs. GREEN after: `Tests 6 passed (6)`.
+
+INVERSE EDIT, both runs observed: the marker write `if (gap !== null) frontmatterFields.attributionGaps = [...gap.missing];` was replaced by a comment, never committed → `Tests 3 failed | 3 passed (6)`: T1, T4 and T5 RED with `expected undefined to deeply equal [ 'beta.md' ]`, while T6 still passed (the run's line does not depend on the frontmatter write) — which is exactly the distinction the inverse edit exists to prove: the marker goes through the COMPILE path to DISK, and the counting does not. Restored → `Tests 6 passed (6)`; afterwards `grep -c "INVERSE-PROBE-T20" src/compiler/page-renderer.ts` = 0 and no probe symbol remains in `src/` or `test/`.
+
+PRESERVE: `test/compiler/synthesis-provenance.test.ts` (Q1-Q6) runs with its assertions unchanged, 7 tests passing, including Q2's per-page line and the single-source silence rule. Shared-code discipline: the three fixture helpers this task needed were extracted instead of copied (`extractionAnswer` in `test/fixtures/compile-provider.ts`, `listConceptPages` in `test/fixtures/concept-page.ts`, and the new `test/fixtures/synthesis-scenario.ts`), which took `fallow`'s duplication count back from 5 clone groups / 113 lines to the 4 PRE-EXISTING groups / 61 lines / 6 files.
+
+### 7. Gates
+
+Node v24.21.0, `$HOME/.nvm/versions/node/v24.21.0/bin` first on `PATH`, every command in the foreground, scope stated per command:
+
+- `npx tsc --noEmit` — **exit 0**, no diagnostics.
+- `npm run typecheck:tests` — **exit 0**: "Test type-check: 1731 files checked; 260 baseline diagnostics in 94 files; no regression."
+- `npm run build` — **exit 0**: ESM (`dist/cli.js` 501.47 KB) + DTS (`dist/index.d.ts` 6.67 KB), viewer assets copied.
+- `npm run test:affected` — **exit 0**: `Test Files 807 passed | 3 skipped (810)`, `Tests 6153 passed | 4 skipped (6157)`, full output `/tmp/t20-gates/test-affected-2.log`, zero `×`/`FAIL` lines, so no failing test to name and nothing to re-run.
+- `npm test` (the FULL suite, required because this changes the page writer) — **FIRST run exit 1**, one failure, NAMED here: `packages/llmwiki-kg/ts/src/routes/pages-pages.test.ts > pages endpoints (LLM stubbed) > writes the page to entity_pages, upserting on repeat generation` (`AssertionError: expected [] to have a length of 1 but got +0`), in a package this diff does not touch (no file under `packages/` is modified; `.fallowrc.json` excludes it). Re-ran that file ALONE: **exit 0, 13 tests passed**, i.e. it does not reproduce. Re-ran the whole gate: **exit 0** — `Test Files 890 passed | 3 skipped (893)`, `Tests 6678 passed | 7 skipped (6685)`, 323.90 s, `/tmp/t20-gates/npm-test-3.log`, zero `×`/`FAIL` lines. Recorded as a FLAKE of the same family L16 already recorded once (`db.test.ts > withRequestTransaction`), NOT as coverage and NOT as a blocker; nothing was changed to make it pass.
+- `./node_modules/.bin/fallow` — **exit 0**: "✗ 0 above threshold · 16956 analyzed · maintainability 91.1 (good)", dead files 0.0%, dead exports 0.0%, duplication = the four PRE-EXISTING test clone groups.
+- `npx vitest run` on every touched test file — **exit 0**: `attribution-marking.test.ts` + `synthesis-provenance.test.ts` 2 files / 13 tests; with the renderer suites (`page-renderer-aliases`, `page-renderer-related-pages`, `page-renderer-contextual-links`) 5 files / 22 tests.
+- `npx vitest related --run` per changed src file, all **exit 0**: `src/compiler/page-renderer.ts` 100 files / 478 tests; `src/compiler/compile-report.ts` 95 / 464; `src/compiler/index.ts` 93 / 440; `src/compiler/types.ts` maps NO test file and exits 0 with none run.
+- Coverage caveat unchanged: `.fallowrc.json` `ignorePatterns` contains `packages/llmwiki-kg/**`, so a clean `fallow` result is NEVER coverage of that package; nothing here measured it beyond the suites `npm test` ran.
+
+### 8. Differential (single-source compile, must be byte-identical)
+
+Scratch trees `/tmp/gplmiYqZ/tmp.qY0EhlDjwb/{base,change}` outside the worktree, created with `git archive 558bf518e4822dfc8fab7a923d72555a46f6fc24`, the four changed `src/compiler/*.ts` copied into `change`, `node_modules` symlinked into both, and the SAME probe spec (`probe-diff.test.ts`, never committed) in each: one source, one concept, a body citing that source. Result: **exit 0 in both**, and after normalizing ISO timestamps and durations, `pages`, `compiled`, `stdout`, `pageText`, `indexText`, `mocText`, `hasAttributionField`, `hasAttributionLine` and the frontmatter key list are **identical**. `hasAttributionField` is `false` and `hasAttributionLine` is `false` on BOTH sides, the key list is `title, summary, sources, kind, createdAt, updatedAt, tags, aliases, modelId, promptVersion` on both, and the only difference in the raw file hashes is each run's own wall clock (`createdAt`/`updatedAt`/`Generated`), which no change could make equal. A fully attributed page is therefore byte-identical to the base tip, which is the requested differential.
+
+### 9. Decisions to record (no code)
+
+**`wiki.concept_aliases` will NOT be dropped, and no migration was written.** The table is declared at `src/dimensions/wiki/schema.sql:133` with its column set, plus `enable row level security` / `force row level security` and the `tenant_isolation` policy at lines 152-162, and the comment at line 124 that names the module T19 deleted. Exact table name: **`wiki.concept_aliases`**. NOTHING in `src/` reads or writes it: `git grep -n "concept_aliases" -- src/` returns only those five `schema.sql` lines, and the only other hits are two test files (`test/dimensions/wiki-page-reader.test.ts:29`, `test/dimensions/wiki-page-store.test.ts:35`) that use it as a "is this Stack provisioned" probe (`wikiTablesPresent(harness.db, ["pages", "concept_aliases"])`), not as product code. It is therefore dead schema that awaits a dedicated cleanup with its own migration and its own review. No migration was run, no SQL was edited, and none of it is in this task's surfaces.
+
+**Refactor debt stays out of scope, with the three files measured.** The repository's own ceiling (`AGENTS.md`: "Code files … must be smaller than 400 lines excluding comments") is exceeded by three files. Both measures are reported because the two disagree on one of them and a reader must be able to reproduce the numbers:
+
+| File | total lines | non-comment, strict (comment bytes blanked, blanks elided) | non-comment, P (comment-only lines dropped, blanks counted; `grep -cvE` over `//`, `*` and `/*` lines) | status |
+| --- | --- | --- | --- | --- |
+| `src/compiler/index.ts` | 2039 | **1048** (base tip `558bf51`: 1032) | 1129 (base tip: 1112) | PRE-EXISTING violation, deepened by +16 strict / +17 P lines in this task |
+| `src/cli.ts` | 495 | **422** | 458 | PRE-EXISTING violation, untouched by this task (0 lines changed) |
+| `src/dimensions/wiki/concept-resolution.ts` | 618 | 373 | **412** (base `176cd0a`: 409) | ALREADY over the ceiling at base, and this feature PUSHED IT FURTHER — not a pre-existing violation left untouched |
+
+The third file's history, stated accurately rather than folded in with the first two: `concept-resolution.ts` was **already 409 non-comment lines at base `176cd0a`**, i.e. already over the 400 ceiling before this feature began, and the feature took it to **412** — the file is not a pre-existing violation the feature left alone, it is a pre-existing violation the feature made worse. By contrast `src/cli.ts` is a pre-existing violation this task did not touch at all, and `src/compiler/index.ts` is a pre-existing violation this task deepened by +16 lines (the accumulator, the sink attachment and the totals on the result). Files CREATED or edited by T20 are all comfortably under the ceiling: `src/compiler/page-renderer.ts` 277 strict / 309 P, `src/compiler/compile-report.ts` 166 / 182, `src/compiler/types.ts` 61, `test/compiler/attribution-marking.test.ts` 111 / 143, `test/fixtures/synthesis-scenario.ts` 6. Function lengths: every function added is under 20 lines and every test under 40; `summarizeCompile` goes from 44 to 45 non-comment lines, staying inside the PRE-EXISTING over-40 violation L17 recorded for it.
+
+### 10. Limitations of record
+
+1. The marker is advisory, not a gate: a page that fails to attribute a source is still written and still served, now marked. That is the decision, and holding it back is explicitly not wanted.
+2. It counts a source as attributed when ANY citation marker in the body names it (the census granularity L16 disclosed): one attributed sentence plus paraphrase reads as fully attributed, and the source-utilization report shares that granularity.
+3. It only marks MERGED pages: a single-source page is never marked, by design, because citation hygiene for one source is the citation lint's job.
+4. `WikiFrontmatter` (`src/utils/types.ts`) does not declare the field — that file is outside T20's surfaces (see §2).
+5. The summary and counted lines are stdout only, with no `--json` envelope field; `PageGenerationResult.attribution` exists but the JSON export does not carry it.
+6. On a row-backed Stack the field survives only if `renderPageMarkdown` re-emits frontmatter from the row — the same seam family that already loses `aliases` (L8) and the recorded version (L15).
+
+### 11. Scratch, and what remains
+
+Created OUTSIDE the worktree and NOT removed, named here so the parent can remove them: `/tmp/t20-gates/` (RED/GREEN/inverse-edit and gate logs, the line-count script, and a copy of `page-renderer.ts` used to restore after the inverse edit), `/tmp/gplmiYqZ/tmp.qY0EhlDjwb/` (the differential's `base` and `change` trees plus the probe spec), and the compiled project roots the differential left under the OS temp dir (`/tmp/t20-diff-*`). `git status --short` on the delivered tree shows no scratch, cache or temporary path: its only entries are this document and, before the code commit, the files that commit contains.
+
+RISK: **item 3 is claimed, precisely.** This diff changes code every page of every project's compile runs: `buildMergedFrontmatter` is the ONE frontmatter builder for live writes AND review candidates, `renderMergedPageContent` is the shared renderer, and `summarizeCompile` prints a line on every run. Proof it did not change anything nobody asked for: the differential above (a fully attributed single-source compile is byte-identical with an identical stdout, an identical frontmatter key set and no new line), `npx vitest related --run` green on all three touched modules with assertions unmodified, `npm test` green after the flake refuted above, and the fact that every new surface returns before doing anything when the page is fully attributed. Items 1 and 2 are not claimed: nothing is deleted or rewritten, no stored data changes shape, and the addition is an optional frontmatter key plus two warning lines. Known consequences to state plainly: a merged page that misses a source now carries `attributionGaps` in its own bytes (so its file differs from what the previous version would have written for the same body), and a run with imperfect pages now prints two additional warning lines.
