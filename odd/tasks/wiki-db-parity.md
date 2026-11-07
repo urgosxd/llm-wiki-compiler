@@ -31,7 +31,7 @@ S8 — REACHABILITY: every new stage or store must be shown reachable from the c
 | T5 | S3 | Curated links persist in `wiki.curated_links` behind the store seam; the overlay re-validates the anchor on every render and a lost anchor drops the link AND reports it. | worker | `15c5cda964906b07246c01f7bfdc0728d3317c98`, refactor-only prerequisite in `df804c6ba6dc1fe7e270b8c3c8baa27e3bcf4e4d` (the `CuratedLinkStorePort` and the file backend behind it; behaviour-preserving, type-checked on its own) |
 | T6 | S4 | Categories persist in `wiki.categories` + `wiki.category_members`; identity minted once, membership stored as evidence, category and concept of the same name stay two objects. | worker | `7e6e9fc5f8f266efabab075cacb6a5a94518fa1a` (the `CategoryStorePort` and the file backend behind it; behaviour-preserving), `43dab47f0c9a01ad1d4238ab4ee89e3587e54a17` (the row store, the seam selection and the suites) |
 | T7 | S7 | Parity test: one input ingested through the file-backed path and the row-backed path, equivalent observable output for all four artifacts. ACCEPTANCE. | worker | `3c09f3d1f5ba2eb700a57a6f9ddc7c6bac95c05f`, temp-root teardown in `396f982545f095178477253190dc2416142bdc6b` |
-| T8 | S8 | Reachability proof for every new stage and store: `file:line` call chain plus `git grep`, and RED observed by unwiring the stage. | worker | |
+| T8 | S8 | Reachability proof for every new stage and store: `file:line` call chain plus `git grep`, and RED observed by unwiring the stage. | worker | `bbda95e3d46bd6e2dd19bf7cb654ee80e1eb7e01` (the durable documentation), `f469c9a54153f8fddcab6089dd9bc58307960f38` (the parity suite fails instead of skipping), `60e2672bbcc5b91a4242a3a3b4ace077657713a3` (the curated-link fallback pinned) — see L10 |
 | T9 | S6, S7 | Documentation: the DB path's behaviour and the exact migration command. | worker | |
 | T10 | S1-S8 | Full gate run and delivery report. | lead | |
 
@@ -254,3 +254,83 @@ for both backends' compiles (eight full compiles writing real page, source and c
 files) and removed nothing, so a run left that tree in `/tmp`. The probe Stack was already
 torn down in `afterAll`; the filesystem teardown now sits beside it, and a run leaves no
 `/tmp/store-parity-*` behind.
+
+### L10 — T8: reachability made checkable, the skip hole closed, and no leaked harness text
+
+THREE SLICES. `bbda95e` (documentation), `f469c9a` (the parity suite's no-database
+decision), `60e2672` (the curated-link fallback pinned by a test).
+
+WHERE THE DOCUMENTATION WENT, and why. The repository documents every user-facing change as
+a Mintlify page under `docs/`, registered in `docs/docs.json`; the closest precedent for
+"here is a SQL migration and exactly how to verify it" is
+`docs/guides/kg-classification-migration.mdx`. So the reachability map is
+`docs/guides/row-backed-wiring-reachability.mdx`, filed under Guides beside that page and
+listed in `docs/docs.json`. It is NOT a new convention: one `.mdx`, frontmatter with
+`title`/`sidebarTitle`/`description`, one navigation entry.
+
+WHAT IT CONTAINS, all re-measured on `c39c622` rather than copied from L9 (whose line
+numbers had drifted): the chain `compile()` -> `compileAndReport` -> `runCompilePipeline` ->
+`resolvePageSeams` (`src/compiler/index.ts:286,287,329,374,1107,1132` ->
+`page-source-seam.ts:395,408,409`), then the write AND read chain for each of the four
+artifacts down to the SQL, each with the `git grep` command and its observed hit count. It
+states plainly that a test calling an exported function proves the function and nothing
+about integration, and it records the T7 degradation verbatim: with `page-source-seam.ts:408`
+removed the link still restores from `.llmwiki/curated-links.json`
+(`curated-links-apply.ts:76`), so "the link still worked" is not evidence of wiring and only
+a record-level assertion detects the loss.
+
+TASK B, MEASURED BEFORE AND AFTER. The premise needed correcting: with an unreachable
+database the file ALREADY failed, because `createKgPostgresHarness` throws through
+`missingTestDatabase` before any `skipIf` is evaluated. Measured on `c39c622` with
+`LLMWIKI_TEST_DATABASE_URL=postgresql://aks:aks@127.0.0.1:1/aks`, no opt-out: exit 1, file
+failed, message headed `store-parity-79699b6c: the kg harness needs a Postgres database`.
+The residual hole was narrower and real: the suite's own skip was a BOOLEAN
+(`describe.skipIf(!probe.harness.reachable)`), so with the documented opt-out it printed
+`7 skipped (7)` decided by a value with no reason of its own, and the warning it did print
+was the fixture's, not the suite's. After `f469c9a` the suite consults `missingTestDatabase`
+itself: without the opt-out it fails headed
+`test/dimensions/store-parity.test.ts (the file-backed/row-backed parity suite) needs a
+Postgres database and none could be obtained.` (exit 1), and with
+`LLMWIKI_TEST_ALLOW_NO_DATABASE=1` it prints the same reason, names itself, and skips under
+an annotated title (exit 0, `7 skipped`). Measurement deviation, stated rather than glossed:
+the unreachable database was produced with `LLMWIKI_TEST_DATABASE_URL`, not by inverse edit,
+because the URL is resolved by `test/fixtures/test-database.ts` and the suite cannot reach
+it — an inverse edit of the suite could not point it anywhere. No fixture behaviour changed.
+
+WHICH "no database" MODULE. `packages/llmwiki-kg/ts/src/testing/no-database.ts` is the
+in-package twin (its own header says `test/fixtures/test-database-handoff.ts` owns the
+wording for the root suites, because that package compiles with `rootDir: "src"`), so this
+root suite uses the root one. Same rule, same wording, one copy per compilation boundary.
+
+TASK C, VERDICT: **NO LEAK**. Evidence, on `c39c622`:
+`git grep -n "Context backstop" -- . ':!node_modules'` exits 1 (no matches);
+`git grep -rn "delegate the next bounded unit" -- . ':!node_modules'` exits 1 (no matches);
+`git grep -rniE "supervisor_state|available_tools|agent_definitions|addendum|project_context"
+-- . ':!node_modules' ':!*.md'` exits 1 (no matches). The `backstop` hits a loose scan did
+find are the domain word ("the primary key is the backstop, not the plan",
+`categories-row-store.ts:211`; also `page-store.ts:33`, `event-log-store.ts:111`,
+`compile-config-store.ts:31`), and `supervisor` appears only in
+`packages/llmwiki-kg/ts/src/testing/per-run-database.ts`. `git log --oneline -12` and
+`git show --stat` for T5-T7 were read: the fixtures added by `43dab47`/`3c09f3d`
+(`store-parity-corpus.ts`, `category-rows.ts`, both row-store suites, `row-page-round-trip`,
+`row-category-identity`) contain English JSDoc and no prose that does not belong to the
+code. The phenomenon a T7 worker reported is reproducible in THIS session — a
+`Context backstop: …` line was appended to the output of one of my own `bash` results — which
+establishes it as harness output attached to a tool result, not bytes in the tree.
+
+THE PERMANENT TEST, AND ITS RED. `test/dimensions/row-page-curated-links.test.ts` gained
+"keeps a row-backed Stack's records out of the project's curated-links file": after a real
+`compileAndReport` scenario it asserts `.llmwiki/curated-links.json` does not exist and that
+the same scenario file-backed does create it (anti-vacuity, no mocks). RED observed by
+inverse-editing `page-source-seam.ts:408` away: `× keeps a row-backed Stack's records out of
+the project's curated-links file → expected promise to reject, received Stats { … }` — i.e.
+the record HAD gone to the file, while the sibling "restores the link" case stayed green,
+which is exactly the degradation L9 measured. Restored by inverse edit; GREEN again with the
+suite at 5/5.
+
+OPEN FOR T9 (not T8's scope, and does not block T8): `docs/concepts/wiki-model.mdx` still
+carries the Note "The file belongs to the checkout, not to the Stack: two hosts sharing a
+Stack do not share curated links", which T5-T7 made false for a Stack-backed run. The new
+guide states the current truth (a Stack keeps them in `wiki.curated_links`); that Note and
+the CLI read-command caveat are T9's to correct. Also for T9: T7 confirms `--recompile`
+writes no categories in EITHER path (scope parity, not a gap).
