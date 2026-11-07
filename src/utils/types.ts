@@ -167,6 +167,8 @@ export interface WikiFrontmatter extends ProvenanceMetadata {
   orphaned?: boolean;
   tags?: string[];
   aliases?: string[];
+  /** Source keys that contribute to the page but are not cited by its prose; omitted when fully attributed. */
+  attributionGaps?: string[];
   createdAt: string;
   updatedAt: string;
   /**
