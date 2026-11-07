@@ -35,10 +35,19 @@ export type MutationGateIntent =
 /**
  * Run the recovery gate, releasing the held lock if it refuses.
  *
+ * The release runs under the SAME environment the acquire used. `acquireLock` keys the
+ * advisory lock on `options.env`'s Stack, and `releaseLock` finds the held connection in
+ * `lockRegistry` by the key IT derives from the environment it is given — so releasing
+ * with the default `process.env` while the caller passed a different Stack found nothing
+ * to release, fell through to a file lock that was never written, and left the
+ * session-level advisory lock held on the caller's reserved connection until the process
+ * died. A per-request host (one process, many Stacks) is exactly that caller.
+ *
  * @param root - Absolute project root whose journal is settled.
+ * @param env - The environment the caller acquired with; defaults to `process.env`.
  * @throws {JournalUnsafeError} when the journal is unsafe or cannot be replayed.
  */
-async function gateOrRelease(root: string): Promise<void> {
+async function gateOrRelease(root: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   // No `.catch(() => unsafe)`: that collapsed every failure -- an unsafe journal, a
   // symlink escape, and an unexpected replay fault -- into one private error type
   // nobody catches. `recoverJournalBeforeCompile` already maps the unsafe cases to
@@ -46,7 +55,7 @@ async function gateOrRelease(root: string): Promise<void> {
   // the one `compile` used to raise from its own recovery check.
   const recovery = await recoverJournalBeforeCompile(root);
   if (recovery.status !== "unsafe") return;
-  await releaseLock(root);
+  await releaseLock(root, env);
   throw new JournalUnsafeError("pre-compile journal recovery unsafe");
 }
 
@@ -71,7 +80,7 @@ export async function acquireMutationLock(
   const acquired = await acquireLock(root, options);
   if (!acquired) return false;
   if (intent === "recovery") return true;
-  await gateOrRelease(root);
+  await gateOrRelease(root, options.env);
   return true;
 }
 
@@ -90,7 +99,7 @@ export async function acquireMutationLockBlocking(
 ): Promise<void> {
   await acquireLockBlocking(root, options);
   if (intent === "recovery") return;
-  await gateOrRelease(root);
+  await gateOrRelease(root, options.env);
 }
 
 /**
