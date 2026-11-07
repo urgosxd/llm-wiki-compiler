@@ -9,6 +9,12 @@ attribution gaps in rows. Every one of those facts travels from
 `src/compiler/index.ts` down to a SQL statement, and a rule that is worth documenting is
 worth being able to re-check: this page is the map and the checker.
 
+A database that still has the pre-parity shape has to have the migration applied before
+any of this is true. The exact commands are in
+[Wiki DB Parity Migration](/guides/wiki-db-parity-migration); what the four artifacts look
+like to a user, and what is still file-only, is in
+[Where a Stack-backed Run Keeps Them](/concepts/wiki-model#where-a-stack-backed-run-keeps-them).
+
 ## Why a passing test is not proof of wiring
 
 A test can call `createRowCuratedLinkStore(db, stackId)` directly, write a record, read it

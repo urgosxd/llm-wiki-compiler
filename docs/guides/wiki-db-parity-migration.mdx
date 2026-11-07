@@ -1,0 +1,243 @@
+---
+title: "Upgrade a database for row-backed wiki parity"
+sidebarTitle: "Wiki DB Parity Migration"
+description: "Apply src/dimensions/wiki/migration_wiki_db_parity.sql to an existing database: exact commands, what it adds, why it is safe to re-run, how to verify it applied, and what a database that skipped it reports."
+---
+
+A Stack whose pages live in `wiki.pages` rows used to lose four facts on every compile:
+concept aliases, curated contextual links, categories with their membership evidence, and
+`attributionGaps`. The columns and tables that keep them ship as one SQL file:
+
+```text
+src/dimensions/wiki/migration_wiki_db_parity.sql
+```
+
+Apply it **before** pointing this build at an existing database. A file-backed project
+needs nothing: it persists all four in page frontmatter, in `.llmwiki/curated-links.json`
+and in `wiki/categories/`, and none of that changed. See
+[Where a Stack-backed Run Keeps Them](/concepts/wiki-model#where-a-stack-backed-run-keeps-them)
+for the behaviour this migration makes possible.
+
+## What it changes
+
+| Object | Change |
+| --- | --- |
+| `wiki.pages` | `add column aliases jsonb not null default '[]'` and `add column attribution_gaps jsonb not null default '[]'` |
+| New table `wiki.curated_links` | one row per curated link: `stable_key`, `source_page_id`, `target_page_id`, `anchor_text`, `anchor_before`, `anchor_after`, `provenance`, `created_at`; primary key `(stack_id, stable_key)`; indexes on `(stack_id, source_page_id)` and `(stack_id, target_page_id)` |
+| New table `wiki.categories` | the identity minted once (`category_id`), `canonical_name`, `description`, `inclusion_criterion`, `created_at`, `updated_at`; primary key `(stack_id, category_id)` |
+| New table `wiki.category_members` | membership as evidence: `page_id`, `reason`, `evidence_key`; primary key `(stack_id, category_id, page_id)`, foreign key to `wiki.categories`, index on `(stack_id, page_id)` |
+| Row-level security | `enable` and `force` plus a `tenant_isolation` policy on all four relations, reading `app.stack_id`; `wiki.pages` keeps the predicate it already had, so a migrated database and a fresh one agree |
+| Grants | `select, insert, update, delete` on the three new tables to `llmwiki_app` |
+
+Aliases and attribution gaps are columns rather than tables on purpose: the file path keeps
+both in a single page's frontmatter, so parity is a per-page field. Curated links and
+categories are tables because the file path already stores many of each.
+
+`wiki.concept_aliases` is **not touched**. It is a dead table — read by nothing and written
+by nothing — and this migration neither adopts it nor drops it.
+
+## Why it is safe to re-run
+
+The file is non-destructive by construction: no `drop table`, no `drop column`, no
+`truncate`, no rebuild and no volume reset. Columns arrive through `add column if not
+exists`, tables through `create table if not exists`, indexes through `create index if not
+exists`, and every policy is dropped with `drop policy if exists` before it is created.
+
+It is idempotent, and there is nothing to backfill: the two new columns are `not null` with
+a constant default, so Postgres fills existing rows with `[]` as part of the DDL and does
+not rewrite them.
+
+That is checked, not asserted. `test/dimensions/db-parity-migration.test.ts` builds a real
+pre-migration database — every file `scripts/apply-schemas.sh` lists, in that script's
+order, with the migration excluded and the wiki schema replaced by the frozen snapshot
+`test/fixtures/wiki-schema-pre-db-parity.sql` — applies this file to it, and diffs the
+result against a database built from the current
+`src/dimensions/wiki/schema.sql`. The cases worth knowing:
+
+- *"migrates a pre-migration database into the shape a fresh install reaches"* — the diff.
+- *"is idempotent: a second apply changes nothing and the fresh install needs it not"*.
+- *"carries no destructive or data-writing statement and leaves `concept_aliases` alone"* —
+  the file's own text is scanned for `drop table`, `drop column`, `truncate`,
+  `delete from`, `insert into` and `update … set`.
+- *"rewrites no value an existing page row already held"* and *"keeps an existing page row
+  and defaults the new columns to an empty array"* — an `md5` digest of every pre-existing
+  `wiki.pages` column is unchanged across two applies.
+- *"grants the application role what a fresh install grants it"* and *"tenant-isolates the
+  new tables exactly as their siblings are"*.
+
+The frozen snapshot is what gives that diff teeth: deriving the pre-migration side from the
+current `schema.sql` would compare one file against itself, and drift inside its
+pre-migration portion would stay invisible.
+
+## Apply it
+
+The file alters `wiki.pages` and creates tables whose foreign keys reach `public.stacks`, so
+it must run against a database that already has the wiki schema and the `llmwiki_app` role.
+On a database that has neither, run the whole schema runner below instead of this file
+alone.
+
+### Through the schema runner (the recommended form)
+
+`./scripts/apply-schemas.sh` is this repository's runner and lists every schema and
+migration in dependency order, with this file last. It is idempotent, so running it against
+an up-to-date database is a no-op:
+
+```bash
+# From the repository root, with the connection string as the argument.
+./scripts/apply-schemas.sh postgresql://aks:aks@localhost:5434/aks
+```
+
+```bash
+# Or through the environment variable, which is what the script reads when it gets no argument.
+DATABASE_URL=postgresql://aks:aks@localhost:5434/aks ./scripts/apply-schemas.sh
+```
+
+The runner needs `psql` on `PATH`. When the database lives in a container and `psql` is not
+installed on the host, point `PSQL` at the container's client — the runner then pipes each
+file in on stdin:
+
+```bash
+PSQL="docker exec -i llmwiki-kg-db-1 psql -U aks -d aks" ./scripts/apply-schemas.sh
+```
+
+### In-container, this file alone
+
+`psql` runs inside the database container and the file is piped from the host, so no path
+has to exist inside the container:
+
+```bash
+# From the repository root.
+docker exec -i llmwiki-kg-db-1 psql -U aks -d aks \
+  < src/dimensions/wiki/migration_wiki_db_parity.sql
+```
+
+```bash
+# Same thing through compose, if you prefer the service name to the container name.
+docker compose -f docker-compose.yml exec -T db psql -U llmwiki -d llmwiki \
+  < src/dimensions/wiki/migration_wiki_db_parity.sql
+```
+
+`docker compose -f docker-compose.yml ps` prints the container name if yours differs, and
+the root compose database uses the `llmwiki` role and database rather than `aks`.
+`docker exec … psql -f /path/to/file` also works, but then the file must exist **inside**
+the container; piping it from the host does not have that requirement.
+
+### From a host with `psql`
+
+```bash
+psql "postgresql://aks:aks@localhost:5434/aks" \
+  -f src/dimensions/wiki/migration_wiki_db_parity.sql
+```
+
+Use the port your database actually publishes. The two local containers publish different
+ones: `llmwiki-kg-db-1` publishes `5434` (`packages/llmwiki-kg/docker-compose.override.yml`)
+and the root compose publishes `5435`; inside their own networks both still answer on the
+standard `5432`.
+
+## A fresh install needs nothing
+
+The same DDL is mirrored inside `src/dimensions/wiki/schema.sql`, between the
+`wiki-db-parity-mirror:begin` and `wiki-db-parity-mirror:end` comments. That duplication is
+this package's existing convention — there is no migration runner in the application, so
+`schema.sql` must be self-sufficient for a clean install while a live database also needs
+this file applied. The mirror is why `scripts/apply-schemas.sh` reaches the same shape from
+either direction: on a fresh database the migration's `if not exists` statements find the
+objects already there and change nothing.
+
+The mirror comments are for a reader. The migration suite compares the two copies with a
+database, not by reading those markers.
+
+## Verify it applied
+
+Three tables, or nothing:
+
+```bash
+docker exec -i llmwiki-kg-db-1 psql -U aks -d aks -c "
+  select to_regclass('wiki.curated_links')    as curated_links,
+         to_regclass('wiki.categories')       as categories,
+         to_regclass('wiki.category_members') as category_members"
+```
+
+Expect three names. Before the migration all three columns come back empty, which is the
+plainest signal that this database still has the pre-parity shape.
+
+The two page columns:
+
+```bash
+docker exec -i llmwiki-kg-db-1 psql -U aks -d aks -c "
+  select table_name, column_name
+  from information_schema.columns
+  where table_schema = 'wiki' and table_name = 'pages'
+    and column_name in ('aliases', 'attribution_gaps')"
+```
+
+Expect `2` rows. The three tables are tenant-secured like their siblings:
+
+```bash
+docker exec -i llmwiki-kg-db-1 psql -U aks -d aks -c "
+  select c.relname, c.relrowsecurity, c.relforcerowsecurity
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'wiki'
+    and c.relname in ('curated_links', 'categories', 'category_members')"
+```
+
+Expect `relrowsecurity` and `relforcerowsecurity` true on all three.
+
+### The runner reports drift for a database that skipped it
+
+`--check` mode verifies the tenant tables that a complete database must expose, and this
+migration added three of them to that list. On a database that has not applied it:
+
+```bash
+CHECK_ONLY=true ./scripts/apply-schemas.sh postgresql://aks:aks@localhost:5434/aks
+```
+
+```text
+policies: 32
+  MISSING RLS: wiki.category_members
+  MISSING RLS: wiki.categories
+  MISSING RLS: wiki.curated_links
+drift detected.
+```
+
+Exit code `1`. The `policies:` count is that database's own; the three `MISSING RLS` lines
+are the ones this migration accounts for. Once the file is applied, the same run finds
+every table present and secured and ends with `ok: every tenant table enforces row-level
+security.`
+
+<Note>
+  The runner's own usage header spells this `--check`, but the flag is not parsed: the first
+  argument is taken as the connection target, so `./scripts/apply-schemas.sh --check` tries
+  to connect to a database named `--check` and exits `2` with `error: cannot connect to the
+  database.` Use `CHECK_ONLY=true`, which is the form CI runs.
+</Note>
+
+## After migrating
+
+- **A Stack-backed compile now keeps all four facts.** Aliases and attribution gaps travel
+  in the page row, curated links in `wiki.curated_links`, and categories with their
+  membership evidence in `wiki.categories` and `wiki.category_members`.
+- **The rules are the same ones the file path uses.** The curated-link anchor is
+  re-validated against the regenerated body on every render, and a lost anchor drops the
+  link and reports it with reason `anchor-missing`. A category's identity is minted once
+  from its canonical name and is never recomputed on rename. A page that draws on a source
+  it does not cite reads as not fully attributed.
+- **Existing pages arrive empty, not wrong.** A page row that predates this migration has
+  `[]` for both arrays and no curated records until the next run that writes it. Nothing is
+  invented for it: an empty alias list and an empty gap list are what the file path means by
+  "nothing declared".
+- **Scope limits apply on both storages.** `llmwiki category` and `llmwiki categories-here`
+  still read `wiki/categories/*.md`, and a `--recompile` run writes no categories. Both are
+  documented in
+  [Where a Stack-backed Run Keeps Them](/concepts/wiki-model#where-a-stack-backed-run-keeps-them).
+- **Verification lives in one place.** The `file:line` chain, the `git grep` that re-checks
+  it, and what static analysis does and does not cover are in
+  [Row-Backed Wiring Reachability](/guides/row-backed-wiring-reachability).
+
+## There is no down migration
+
+The change is additive and every new column has a constant default, so reverting means
+deploying the previous build: the extra columns and tables are simply not read. Dropping
+them is a destructive operation this repository does not ship and this runbook does not
+recommend — a curated link and a membership reason are operator decisions that no rebuild
+can reconstruct.

@@ -62,7 +62,7 @@ wiki/
     Holds the review policy: which hold modes are active (`low-confidence`, `contradicted`, `schema-violating`, `provenance-violating`) and the `lowConfidenceThreshold`. A missing or empty `config.json` means all pages are written directly to `wiki/` with no review step.
   </Card>
   <Card title="curated-links.json" icon="link">
-    The links the review step added to already-written pages, stored outside those pages' bodies so a regenerated body cannot erase them. Every record carries its anchor and is re-validated on each render. See [Curated Links](#curated-links).
+    The links the review step added to already-written pages, stored outside those pages' bodies so a regenerated body cannot erase them. Every record carries its anchor and is re-validated on each render. See [Curated Links](#curated-links). A Stack-backed run keeps the same records in `wiki.curated_links` rows instead of this file; see [Where a Stack-backed Run Keeps Them](#where-a-stack-backed-run-keeps-them).
   </Card>
 </CardGroup>
 
@@ -82,6 +82,8 @@ aliases:
 ```
 
 Any `[[multi-head self-attention]]` or `[[MHA]]` link in the wiki resolves to this page, even if the slug is `multi-head-attention`. Alias resolution is honored by the local viewer, the MCP `read_page` tool, and `llmwiki query`.
+
+A page keeps the aliases it was folded onto, so the next compile folds against the same names instead of re-deriving them: `aliases:` in the file when the page is a markdown file, the `wiki.pages.aliases` column when the page is a row. Both are read back by the identity tier before it decides anything. See [Where a Stack-backed Run Keeps Them](#where-a-stack-backed-run-keeps-them).
 
 <Note>
   The wiki is fully Obsidian-compatible. Open the `wiki/` directory as an Obsidian vault to browse compiled pages, follow wikilinks, and view the knowledge graph - no additional configuration required.
@@ -170,11 +172,15 @@ Link review of earlier pages: 2 review(s) of 2 earlier page(s), 1 link(s) added 
 
 ## Curated Links
 
-A link the review adds to an earlier page lives outside that page's body, in
-`.llmwiki/curated-links.json`, because every compile regenerates bodies from the model's
-output and a body-only edit would be erased by the next render. Each record stores the
-source page id, the resolved target page id, the mention the link hangs on with about 60
-characters of surrounding prose, and which rule accepted it (`model-verdict`).
+A link the review adds to an earlier page lives outside that page's body, because every
+compile regenerates bodies from the model's output and a body-only edit would be erased by
+the next render. Each record stores the source page id, the resolved target page id, the
+mention the link hangs on with about 60 characters of surrounding prose, and which rule
+accepted it (`model-verdict`).
+
+Where the records live depends on where the pages live: `.llmwiki/curated-links.json` for
+a project with no Stack, `wiki.curated_links` rows for a Stack-backed one. The fields are
+the same, and so is every rule below.
 
 The anchor is re-validated on every render. If the body already carries the link nothing
 happens; if the words are still a plain mention the link is restored; otherwise the link
@@ -195,8 +201,13 @@ title mention on every render, or one the repair pass rewrote from the text, is 
 from the body and needs no record.
 
 <Note>
-  The file belongs to the checkout, not to the Stack: two hosts sharing a Stack do not
-  share curated links.
+  **A Stack unifies the records; a plain checkout does not.** A row-backed run stores
+  curated links in `wiki.curated_links` on the database, so every host that serves that
+  Stack restores the same links. A project with no Stack stores them in
+  `.llmwiki/curated-links.json` inside the checkout, so two hosts sharing only the Stack -
+  and not the checkout - do not share curated links, and a fresh clone starts with none.
+  See [Where a Stack-backed Run Keeps Them](#where-a-stack-backed-run-keeps-them) and
+  [Row-Backed Wiring Reachability](/guides/row-backed-wiring-reachability).
 </Note>
 
 ## Source Attribution
@@ -275,6 +286,52 @@ The summary line sits directly under the completion banner, so the headline of a
 true on its own; the counted line lists every imperfect page with the sources it leaves
 out, in page-title order. Both stay silent when every page attributed every contributing
 source.
+
+The field itself is written where the page is written: in its frontmatter for a
+file-backed project, in `wiki.pages.attribution_gaps` for a Stack-backed one. A row-backed
+page that draws on a source it does not cite is marked, counted and named exactly as a
+file-backed page is, and its next regeneration cannot erase the mark, because the renderer
+re-emits the column it reads.
+
+## Where a Stack-backed Run Keeps Them
+
+A project can keep its pages in a Stack - rows in `wiki.pages` - instead of markdown
+files. The four facts this page describes survive there too, in the same run order and
+across runs:
+
+| Fact | File-backed project | Stack-backed project |
+| --- | --- | --- |
+| aliases | `aliases:` in page frontmatter | `wiki.pages.aliases` |
+| curated links | `.llmwiki/curated-links.json` | `wiki.curated_links` |
+| categories and membership evidence | `wiki/categories/<categoryId>.md` | `wiki.categories` and `wiki.category_members` |
+| attribution gaps | `attributionGaps:` in page frontmatter | `wiki.pages.attribution_gaps` |
+
+Only the location changes; the rules do not. The identity tier folds under the same three
+name rules on both, the curated-link anchor is re-validated against the regenerated body on
+every render on both, a lost anchor drops the link AND reports it on both, a category's
+identity is minted once from its canonical name on both, and a page drawing on a source it
+does not cite reads as not fully attributed on both.
+
+Three limits are worth knowing before you rely on that:
+
+- **The category read commands are not Stack-aware yet.** `llmwiki category` and
+  `llmwiki categories-here` read `wiki/categories/*.md` and nothing else, so on a
+  Stack-backed project they answer from the category files in the checkout while the
+  compile writes rows. The compile path is row-backed; these two verbs are not. See
+  [`category` & `categories-here`](/cli/category#what-it-cannot-do-yet).
+- **`--recompile` writes no categories, on either storage.** Category assignment changes
+  objects the run did not name, so a scoped regeneration skips it. That is the promise of
+  the lever, not a missing backend: a full compile writes categories on both.
+- **A restored curated link is never taken on trust.** Every render re-tests the anchor
+  against the body it just produced, on both storages, and drops the record with reason
+  `anchor-missing` when the mention is gone. That check is shared code, not two
+  implementations that could drift apart.
+
+How each claim is checked - the `file:line` chain, the `git grep`, and what static
+analysis does and does not cover - is in
+[Row-Backed Wiring Reachability](/guides/row-backed-wiring-reachability). A database that
+still has the pre-parity shape needs one migration applied first; see
+[Wiki DB Parity Migration](/guides/wiki-db-parity-migration).
 
 ## Imported OKF Provenance
 

@@ -106,6 +106,7 @@
               "guides/atomic-memory-bridge",
               "guides/ci-quality-gates",
               "guides/row-backed-wiring-reachability",
+              "guides/wiki-db-parity-migration",
               "guides/kg-classification-migration",
               {
                 "group": "Configurable Lifecycle Profiles",

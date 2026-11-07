@@ -6,8 +6,10 @@ description: "Navigate compiled categories in both directions: from a category t
 
 A category is a **grouping**, not a topic. The concept "Sistemas distribuidos" is an
 article that explains the subject; the category "Sistemas distribuidos" is a group of
-pages about it. They may share a name, and they are still two objects: the article is
-`wiki/concepts/<slug>.md`, the category is `wiki/categories/<categoryId>.md`.
+pages about it. They may share a name, and they are still two objects: the article is a
+page (`wiki/concepts/<slug>.md`, or a `wiki.pages` row on a Stack-backed project) and the
+category is a separate record (`wiki/categories/<categoryId>.md`, or `wiki.categories`
+rows). Two different kinds of object, on both storages.
 
 Two commands make that second object navigable:
 
@@ -23,7 +25,7 @@ llmwiki categories-here concepts/map-reduce
 llmwiki categories-here map-reduce --json
 ```
 
-## What a category file carries
+## What a category carries
 
 Every category states four things, and a compile refuses to create one without them:
 
@@ -176,14 +178,20 @@ run may categorise.
 
 Both commands write nothing, take no lock, and call no LLM. They read the category files
 under `wiki/categories/` and nothing else — no page is opened, so a page that a category
-still lists after deletion is reported as a member rather than hidden.
+still lists after deletion is reported as a member rather than hidden. Neither command
+consults the Stack, so on a Stack-backed project they see the checkout's category files and
+never the `wiki.categories` rows a compile wrote.
 
 ## What it cannot do yet
 
-- **Row-backed Stacks keep categories on disk.** The page store's directory set is closed
-  and a category is deliberately not a page, so `wiki/categories/` is a filesystem
-  artifact even when the pages live in a Stack. Two hosts sharing one Stack do not share
-  their categories.
+- **These two commands read files, even on a Stack-backed project.** A Stack-backed compile
+  persists categories in `wiki.categories` and their membership evidence in
+  `wiki.category_members`, with the same four fields and the same identity rule, so two
+  hosts serving one Stack do share categories. What has not changed is the READ side:
+  these two verbs read `wiki/categories/*.md` and nothing else, so they answer from the
+  category files in the checkout. Pointing them at rows is a separate decision about which
+  Stack they mean; see [Where a Stack-backed Run Keeps
+  Them](/concepts/wiki-model#where-a-stack-backed-run-keeps-them).
 - **No membership editing.** Membership is recorded by compiles; there is no verb to add
   or remove a member by hand. Edit the category file if you must, and keep the four
   required fields intact or the store will refuse to read it.
