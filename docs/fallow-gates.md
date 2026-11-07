@@ -33,10 +33,18 @@ fallow activating its `drizzle` plugin because the package depends on
 `drizzle-orm`. **That cause is wrong at HEAD.** Measured with the pinned
 `fallow` 2.82.0, with the KG ignore removed and nothing else changed:
 
-| run (repo-wide, `--root .`) | total issues | dead code | entry points | files |
+| run (repo-wide, `--root .`) | dead code | files | total issues (measured once) | entry points (measured once) |
 | --- | --- | --- | --- | --- |
-| KG un-ignored | 1084 | 1075 | 303 | 1829 |
-| KG un-ignored, plus `packages/llmwiki-kg/ts/vitest.config.ts` ignored | 247 | 238 | 1073 | 1828 |
+| KG un-ignored | 1075 | 1829 | 1084 | 303 |
+| KG un-ignored, plus `packages/llmwiki-kg/ts/vitest.config.ts` ignored | 238 | 1828 | 247 | 1073 |
+
+The **dead code** and **files** columns are exact and reproduce on every run: the
+probe was re-measured and returns 1075/1829 and 238/1828 unchanged. The **total
+issues** and **entry points** columns were measured once, on a tree without a
+built `dist/`, and are build-state dependent rather than exact — re-measured on a
+tree with `dist/` present the same two runs report 1077/309 and 240/1079. The
+drift is `dist/` resolution state (see the unresolved-import note below), not a
+config difference, so read those two columns as magnitudes, not values.
 
 One ignored file — `packages/llmwiki-kg/ts/vitest.config.ts:3-7`, whose
 `test.include: ["src/**/*.test.ts"]` makes fallow treat the vitest config as a
@@ -49,7 +57,11 @@ is the vitest config, not the dependency.
 `packages/llmwiki-kg/ts/.fallowrc.json` extends `../../../.fallowrc.json`, so it
 inherits the root's `ignoreExports`, `overrides`, and `ignoreDependencies`
 without duplicating them. `extends` accepts only **relative** paths; an absolute
-path fails with `extends paths must be relative`.
+path fails with exit 2 and
+`failed to load config '<cfg>': extends paths must be relative, got absolute path: <path> (in '<cfg>')`,
+emitted as JSON on **stdout** (`{"error": true, "message": …, "exit_code": 2}`)
+with an empty stderr — not on stderr, so a script that only captures stderr sees
+nothing.
 
 Under a package root, the inherited `"packages/llmwiki-kg/**"` ignore pattern
 matches nothing (patterns are resolved relative to the analysis root), so the
@@ -57,11 +69,22 @@ config is not self-erasing and does not need `sealed` or an `ignorePatterns`
 override. Measured at `--root packages/llmwiki-kg/ts`:
 
 - 350 files analyzed
-- 239 total issues, of which 236 are dead code (199 unused exports, 32 unused
-  types, 1 unused file, 4 duplicate exports) plus 1 unresolved import,
-  1 unlisted dependency, 1 circular dependency
 - average maintainability 90.4
 - 142 entry points
+- **238 total issues with `dist/` built — the CI reality**, because
+  `npm run build` runs before this gate in the `build-and-test` job: 236 dead
+  code (199 unused exports, 32 unused types, 1 unused file, 4 duplicate exports),
+  1 unlisted dependency, 1 circular dependency, **0 unresolved imports**
+- **239 total issues on an unbuilt tree**: the same findings plus **1 unresolved
+  import**. Both numbers are correct; neither is a defect, and the difference is
+  purely build state.
+
+The unresolved-import delta comes from
+`packages/llmwiki-kg/ts/src/testing/per-run-database.ts:75`:
+`new URL("../../../../..", import.meta.url)` points at the repository root, so it
+only resolves once the root `dist/` exists. That is why an unbuilt tree reports
+239 (238 + 1) and a built tree reports 238 (238 + 0). Quote whichever number
+matches your tree: the gate's own CI number is **238 total / 0 unresolved**.
 
 ## Baselines
 
@@ -69,13 +92,18 @@ Three per-analysis baselines live next to the config:
 
 | file | shape | entries |
 | --- | --- | --- |
-| `baselines/dead-code-baseline.json` | one array per finding category (`unused_files`, `unused_exports`, …) | 239 |
+| `baselines/dead-code-baseline.json` | one array per finding category (`unused_files`, `unused_exports`, …) | 239 (238 stable findings plus the `dist`-dependent unresolved import above) |
 | `baselines/health-baseline.json` | `finding_counts` per file, plus `target_keys` | 19 findings across 13 files (17 file+severity keys), 16 target keys |
 | `baselines/dupes-baseline.json` | `clone_groups` | 184 |
 
-fallow rejects one global `--baseline` on `audit` ("The global
-`--baseline` / `--save-baseline` flags are rejected on audit"), so each analysis
-keeps its own file. Regenerate them after an intentional cleanup:
+fallow rejects one global `--baseline` on `audit`, so each analysis keeps its own
+file. Literal stderr, exit 2:
+
+```text
+Error: audit uses per-analysis baselines. Use --dead-code-baseline, --health-baseline, or --dupes-baseline (or save them with `fallow dead-code|health|dupes --save-baseline <file>`)
+```
+
+Regenerate them after an intentional cleanup:
 
 ```bash
 R=packages/llmwiki-kg/ts
@@ -106,6 +134,17 @@ applied.
   `audit` is changeset-scoped by design, so the whole-tree baselines match zero
   current issues during an audit run (fallow warns about this on stderr; the
   script passes `-q`).
+- **Untested false-positive risk: `dead_code_inherited` is always 0.** Because
+  `audit` only analyzes changed files, it never sees the inherited whole-tree
+  baselines, so *every* finding inside a touched file counts as `introduced`.
+  A **pre-existing** KG finding that lives in a file the changeset happens to
+  touch is therefore attributed `introduced` and fails the gate even though it
+  is not new debt. Observed: every audit run so far reports
+  `dead_code_inherited: 0` regardless of changed-file count. Not observed, and
+  therefore genuinely untested: the false-positive itself — no test pins it, and
+  reproducing it needs an edit to a file that already holds a baselined finding,
+  so do not read this bullet as known-good behaviour. Expect it the first time
+  someone edits a file holding a baselined unused export.
 - The stronger whole-tree form was verified but is not wired in: for
   `fallow dead-code --baseline packages/llmwiki-kg/ts/baselines/dead-code-baseline.json`
   a clean tree exits 0 and a single new unused export exits 1 naming only that

@@ -39,6 +39,9 @@ the bottom of this file.
   (236 dead code: 199 unused exports, 32 unused types, 1 unused file,
   4 duplicate exports; plus 1 unresolved import, 1 unlisted dependency,
   1 circular dependency), maintainability 90.4, 142 entry points, exit 0.
+  The 239 was measured on an unbuilt tree; with the root `dist/` present the same
+  run reports **238 total / 0 unresolved imports** (that one finding resolves
+  through `dist/`), which is the CI figure — see `docs/fallow-gates.md`.
   Not 0 issues → no erasure, so no `sealed` and no `ignorePatterns` override.
   The delta from the 246 reference figure is explained by inheritance: the root
   `ignoreExports` entries and the `unused-class-members: off` override for
@@ -88,4 +91,35 @@ Baselines: `dead-code` 12,977 bytes / 239 entries; `health` 2,285 bytes /
 - L1 (manager decision, verbatim): "DECISION: (C) — a separate, package-scoped fallow configuration for KG. Implement it." plus: "Those are separate deliveries and I want them named in your close so they cannot be mistaken for solved" and the out-of-scope list: `scripts/check-fallow-report.mjs:18` baseline-blind `functions_above_threshold`; its ignored `coverage_unavailable`/`unknown` verdicts; the 6 unbuilt-`dist/` findings; `.husky/pre-commit` not being a gate.
 - L2 (mid-flight constraint from the manager, verbatim key lines): "`git status` currently contains ` M .github/workflows/ci.yml` — a different writer's verified change, deliberately uncommitted. It is NOT yours." · "**Never `git add -A` / `git add .`**" · "`new-only` attributes findings against a **changeset** (git base ref vs working tree). An *untracked* probe file is invisible to `git diff`, so `npm run fallow:kg` may return **exit 0 even with the probe present**." · "If `new-only` still cannot bite locally, switch to a per-analysis gated invocation that needs **no changeset**" · "**Hard requirement either way:** clean tree → **exit 0**; probe present → **exit 1 naming only the probe finding**; **per-analysis baselines, never one global `--baseline`**." Outcome: `new-only` does bite on an untracked file, so the S3 form shipped unchanged; the whole-tree `fallow dead-code --baseline` form was measured as well (clean 0, probe 1) and documented as the stronger alternative.
 - L3 (decision record): docs note placed at `docs/fallow-gates.md` plus one line in `docs/README.md`, because the root `.fallowrc.json` is strict JSON (`additionalProperties: false`, no comment or `$comment`) and is outside this work unit's edit surface.
-- L4 (evidence, commit shas): the gate work unit shipped in `2687084` (`chore(fallow): add package-scoped gate for llmwiki-kg`) — the package config, the three per-analysis baselines, the `fallow:kg` script, and the docs note. The CI wiring (`- run: npm run fallow:kg`, immediately after the `typecheck:kg` step in `build-and-test`) ships in the commit that carries this note. The measured acceptance numbers recorded under `## Results` are unchanged by either commit.
+- L4 (evidence, commit shas): the gate work unit shipped in `c04205c`
+  (`chore(fallow): add package-scoped gate for llmwiki-kg`) — the package config,
+  the three per-analysis baselines, the `fallow:kg` script, and the docs note. The
+  CI wiring (`- run: npm run fallow:kg`, immediately after the `typecheck:kg` step
+  in `build-and-test`) shipped in `3a7415d`
+  (`ci(fallow): run the KG fallow gate in build-and-test`). Both shas are
+  **post-replay reissues** of the same two work units, which were first committed
+  as `2687084` and `4332412`; the content is identical apart from the
+  `C1`-`C5` doc-accuracy corrections.
+- L5 (replay, evidence): both work units were replayed onto
+  `819f51e4a1da4367aa6187fb12f624c0c807ea69` (`docs(odd): record the follow-ups
+  from the contributing removal`). The replay was **clean, with no conflict**: the
+  base's new 13-line verified comment block above the `codebase-health` job and
+  this delivery's single `- run: npm run fallow:kg` line inside `build-and-test`
+  do not textually overlap. The comment block survives byte-identical
+  (`.github/workflows/ci.yml:103-115`) and the only diff against the base in that
+  file is the one added line (`+      - run: npm run fallow:kg`, at `:90`), with
+  zero deletions anywhere in the workflow.
+- L6 (decision, verbatim intent): doc-accuracy corrections `C1`-`C5` from an
+  independent verification pass — the state-dependent KG issue count (238 total /
+  0 unresolved with `dist/` built, 239/1 unbuilt), the approximate comparative
+  table totals and entry points, two misquoted error strings and their channels,
+  the new `dead_code_inherited: 0` false-positive risk, and the decision below.
+- L7 (decision, C5): **no durable test was added.** The verifier proposed
+  `test/fallow/kg-gate.test.ts` shelling out to `npm run fallow:kg`. Rejected
+  because `fallow:kg` runs `audit --gate new-only`, which resolves a git base ref
+  (`base_ref` in its JSON report); `npm test` runs in CI checkouts where that ref
+  may not resolve, and `audit` then exits 2, which would make the suite flaky on
+  infrastructure rather than on code. Follow-up, not in scope here: if a durable
+  gate test is ever wanted, put it at `test/fallow/kg-gate.test.ts` against the
+  whole-tree `fallow dead-code --baseline …` form, which needs no git base ref and
+  was already verified to exit 0 clean / 1 on a single introduced unused export.
