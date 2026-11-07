@@ -319,27 +319,27 @@ export type TransactionalHandler = (
  * - COMMIT fails -> nothing is replayed; the error is forwarded, so `handleError`
  *   answers 500 `text/plain` `Internal Server Error`. A caller that used to get a
  *   success for a rolled-back write now gets an error: the point of this change.
+ * - On the two endpoints that hold their transaction across a provider call
+ *   (`POST /aks/v1/context`, `POST /stacks/:stackId/synthesize-descriptions`), the
+ *   client now waits for a COMMIT that follows that call: the boundary move makes the
+ *   cost of S44 felt, not created.
  * - either way -> the connection returns to the pool, even on client abort.
  *
  * ## Why record instead of flushing
  *
- * A handler cannot know its final status before the COMMIT, so it cannot be trusted
- * to flush: flushing is what puts the answer ahead of the COMMIT. It gets a
- * {@link ResponseRecorder} typed as `Response` that captures every call and replays
- * it after the transaction resolves, so the body comes from the same Express path,
- * only ordered after the COMMIT. `finish`/`close` listeners now fire after it.
+ * A handler cannot know its final status before the COMMIT, so it cannot flush -- flushing
+ * puts the answer ahead of it. It gets a {@link ResponseRecorder} typed as `Response` that
+ * captures every call and replays it after the transaction resolves, so the body comes from
+ * the same Express path, only ordered after the COMMIT. `finish`/`close` fire after it.
  *
  * ## Why a route wrapper and not `app.use` middleware
  *
- * A transaction-owning *middleware* cannot work on Express 5: `next()` returns
- * `void`, so it cannot observe a downstream handler's rejection -- it sees the
- * chain resolve while the handler's promise is still pending. Verified
- * experimentally: with `app.use` it saw a resolved chain even though the handler
- * threw and Express answered 500, so it would COMMIT a failed transaction.
- * Inferring the outcome from `res.statusCode` is not equivalent either: a handler
- * that writes and then deliberately returns 404 must still COMMIT, as in Python.
- * Awaiting the handler is the only form that observes the real outcome, so the
- * transaction is scoped by a wrapper the handler is passed through.
+ * Express 5 `next()` returns `void`, so a transaction-owning *middleware* cannot observe
+ * a downstream rejection -- it sees the chain resolve while the handler's promise is
+ * pending. Verified: with `app.use`, an experimental run saw a resolved chain even though
+ * the handler threw and Express answered 500, so it would COMMIT a failed transaction.
+ * `res.statusCode` is no substitute either: write-then-404 must still COMMIT. Only
+ * awaiting the handler observes the real outcome, hence this wrapper.
  */
 export function createRequestTransactionWrapper(
   database: Database,

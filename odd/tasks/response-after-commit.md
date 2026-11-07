@@ -84,18 +84,19 @@ ancestor of it.
 
 | ID | What | Specs | Commit |
 | --- | --- | --- | --- |
-| T1 | Feature document | — | uncommitted |
-| T2 | Enumerate every path through the wrapper with `path:line` evidence | S4 | uncommitted |
-| T3 | Design the boundary move and its commit-failure error semantics | S3, S5, S6, S7 | uncommitted |
-| T4 | RED tests: post-200 independent visibility, commit failure, preserved rollback | S9 | uncommitted |
-| T5 | Implement the transactional boundary move | S3, S5, S6, S8 | uncommitted |
-| T6 | Document the behaviour change | S5 | pending |
-| T7 | Differential check against `fea6291` in a `mktemp -d` scratch copy | S8, S9(d) | uncommitted |
-| T8 | Gates | S11 | pending |
-| T9 | Contention AFTER measurement on the integrated tree — not run here; argument by construction only | S2, S9 | pending |
-| T10 | Ingest success path: answer only after the third transaction commits (authorized option (a)) | S3, S5, S9 | uncommitted |
+| T1 | Feature document | — | 30514f8 |
+| T2 | Enumerate every path through the wrapper with `path:line` evidence | S4 | ed4b94a |
+| T3 | Design the boundary move and its commit-failure error semantics | S3, S5, S6, S7 | ed4b94a |
+| T4 | RED tests: post-200 independent visibility, commit failure, preserved rollback | S9 | ed4b94a |
+| T5 | Implement the transactional boundary move | S3, S5, S6, S8 | ed4b94a |
+| T6 | Document the behaviour change | S5 | ed4b94a |
+| T7 | Differential check against `fea6291` in a `mktemp -d` scratch copy | S8, S9(d) | ed4b94a |
+| T8 | Gates | S11 | PARTIAL — tsc, KG tsc, typecheck:tests, typecheck:kg, focused tests and vitest related exit 0; npm test, test:affected and fallow NOT VERIFIED |
+| T9 | Contention AFTER measurement on the integrated tree — not run here; argument by construction only | S2, S9 | not run — AFTER measurement belongs to the integrated tree |
+| T10 | Ingest success path: answer only after the third transaction commits (authorized option (a)) | S3, S5, S9 | c40b098 |
 | T11 | Ingest early-exit responses (`:532`, 404/415) still written inside a read transaction — NOT authorized, reported only | S2, S7 | not implemented |
-| T12 | S44 violations on `POST /aks/v1/context` and `POST /stacks/:stackId/synthesize-descriptions` — pre-existing, NOT fixed here, reported to the Manager | S7 | not implemented |
+| T12 | Pre-existing S44 violations, tracked and UNOWNED — not remediated here: POST /aks/v1/context (aks.ts:68 -> context.ts:363, :382, response :435) and POST /stacks/:stackId/synthesize-descriptions (synthesize/router.ts:52 -> description.ts:227, write :237 on the same tx); pre-existing at fea6291 | S7 | not implemented |
+| T13 | documents/delete.ts:78 unlinks the file inside the transaction: pre-existing data-consistency gap, NOT introduced by this change, made VISIBLE by it — a failed COMMIT now answers 500 while the bytes are already gone and the row rolls back; before, the client saw a success and the file was equally gone (silent inconsistency) | S5, S6 | not implemented |
 
 ## Log
 
@@ -229,3 +230,22 @@ Known gaps this change does NOT close, named rather than implied: the ingest ear
 writes 404/415 responses from inside a read transaction; `routes/documents/delete.ts:78` unlinks the
 file inside the transaction, so a failed COMMIT now answers 500 with the bytes already deleted and the
 row rolled back; and the two S44 violations recorded in L7.
+
+L12 — The census, corrected, and three facts that must be read together. The wrapper serves 25
+`deps.wrap(` registration sites (24 distinct endpoints); "22" is 24 minus the two differential SKIPs and
+must not be read as the census. One endpoint carries three facts at once, and naming them separately
+would make each look survivable: `/aks/v1/context` is OUTSIDE the differential, so it has no
+body-preservation evidence; it is an S44 violator, holding its transaction across `embedQuery` and
+`complete`; and it is one of the two endpoints whose latency this change worsens. On those two
+endpoints the client now waits for a COMMIT that follows an LLM call — S44 is why that is possible, and
+the boundary move is what makes it felt.
+
+The `documents/delete.ts:78` gap, on its own line because it is the most serious item in the list: an
+irreversible unlink happens inside the transaction. BEFORE this change a failed COMMIT showed the
+client a success and the file was equally gone — silent inconsistency, unobservable from any response.
+AFTER, the client receives the error while the artifact is still deleted and the row still rolls back.
+The hazard is pre-existing; this change does not create it and does not fix it, it makes it VISIBLE.
+Judgement, on the record: the direction is an improvement and a strictly better failure mode, because a
+silent storage/database divergence is unrecoverable by observation whereas a 500 names the failure on a
+request the caller can retry. It is an alerting improvement on top of a data-consistency bug, not a fix
+for that bug, and it must not be reported as either "fixed" or "caused by us".
