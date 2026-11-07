@@ -114,3 +114,31 @@ T3 alone is green: the T3 slice was committed from a tree where every `attributi
 `Page` gained OPTIONAL `aliases`/`attributionGaps`, and `buildPage` deliberately does not populate them: that builder is the file path's and its output is public, so teaching it these fields would change what every on-disk `listPages` call reports.
 
 NOT DONE HERE, and still open for the later tasks: `createRawPageSource`'s `frontmatter` (the export/viewer collectors) still carries only title, summary, tags and the two flags, and `withRelatedPageIndex` still builds the sibling index from `wiki/concepts` rather than from the run's own corpus. Both are visible in the row path today and neither is T3's or T4's spec; T7's parity test will meet them.
+
+### L7 — The row-to-markdown newline: root cause, and it COMPOUNDED
+
+Measured on a real Stack with one page (`test/dimensions/row-page-round-trip.test.ts`), body `BODY` = `Alpha Topic stores vectors in a pgvector store. ^[alpha.md:1-1]`:
+
+- stored `wiki.pages.body` after the compile: `"\n" + BODY + "\n"`
+- the file path's parsed body for the same corpus: `"\n" + BODY + "\n"` — identical, so the leading newline is the CONVENTION, not a row defect
+- stored body after ONE `row -> markdown -> row` trip: `"\n\n" + BODY + "\n"`
+- after a second trip: a third newline. **It compounds.**
+
+Root cause, in the order the bytes travel:
+
+1. `src/compiler/page-renderer.ts:145` — a compiled page is `${frontmatter}\n\n${pageBody}\n`, so a parsed body legitimately BEGINS with the newline that separated it from the closing fence.
+2. `src/utils/markdown.ts:123` — `parseFrontmatterStatus` matches `^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$`: it strips the closing fence and AT MOST ONE following newline.
+3. `src/dimensions/wiki/page-write-sink.ts:108` — `toPage` parses that same markdown, so the row stores the body including that leading newline.
+4. `src/dimensions/wiki/page-scan-source.ts:222` (pre-fix) — `renderPageMarkdown` emitted `---\n…\n---\n\n${body}`, re-adding a separator IN FRONT OF a body that already carried one. The parser then removed only one of the two, so the trip gained a newline.
+5. `src/compiler/resolver.ts:725` — `rewritePage` writes `content.replace(page.body, …)` back through the sink, and `content` is `renderPageMarkdown(page)`. That is the write that paid the growth, once per rewrite, forever.
+
+The fix is one character class of change: emit exactly one newline after the closing fence. `---\n…\n---\n${body}` is the exact inverse of `parseFrontmatter` for ANY stored body, and with a file-convention body the rendered markdown is byte-identical to the page file. File-backed behaviour is untouched because `renderPageMarkdown` only ever renders a row.
+
+It was (a) added by the render template, not (b) stored in the row nor (c) left by the parser: the row body is clean and the parser is the writer's inverse; only the renderer disagreed with both.
+
+What T7 can now assert, and T5 no longer folds:
+
+- `test/dimensions/row-page-curated-links.test.ts` `comparable` compares `anchor` EXACTLY, and the per-field case pins `"\nAlpha Topic stores vectors in a "` / `". ^[alpha.md:1-1]\n"`. The whitespace trimming workaround is gone.
+- The same suite already asserts `fromRows.restoredBody` `toBe` `fromFiles.restoredBody`, which is now a byte-exact cross-backend body equality rather than an accident of trimming.
+- `test/dimensions/row-page-round-trip.test.ts` pins idempotency: the raw `body` column must be byte-identical across two round trips. RED was observed by restoring the two-newline template (`× expected '\n\nAlpha Topic…' to be '\nAlpha Topic…'`) and reverted by inverse edit.
+- T7 should therefore treat ANY whitespace difference between the two backends as a regression, and should keep driving the trip through `createPageContentSource` + `createPageWriteSink` rather than through a hand-written render.
