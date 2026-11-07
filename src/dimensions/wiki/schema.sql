@@ -93,6 +93,16 @@ create table if not exists wiki.pages (
     archived       boolean     not null default false,
     created_at     timestamptz not null default now(),
     updated_at     timestamptz not null default now(),
+    -- wiki-db-parity-mirror:begin -- mirrors `migration_wiki_db_parity.sql` section 1.
+    -- The merged-away names that resolve to this page, in fold order. Same facts the
+    -- file path keeps in page frontmatter, in the same per-page unit: `renderPageMarkdown`
+    -- can only rebuild a page from columns, so an artifact with no column cannot survive
+    -- the round trip. jsonb rather than a child table because nothing queries a single alias.
+    aliases          jsonb not null default '[]'::jsonb,
+    -- Sources this page draws on and does not cite, so a row-backed page is never read
+    -- back as fully attributed when it is not (D2).
+    attribution_gaps jsonb not null default '[]'::jsonb,
+    -- wiki-db-parity-mirror:end
     primary key (stack_id, page_directory, slug)
 );
 
@@ -117,6 +127,87 @@ create index if not exists idx_wiki_pages_title_trgm
 
 create index if not exists idx_wiki_pages_summary_trgm
     on wiki.pages using gin (summary gin_trgm_ops);
+
+-- ------------------------------------------------------------
+-- Curated links, categories and membership evidence
+-- ------------------------------------------------------------
+-- The three stores the file path keeps in `.llmwiki/curated-links.json` and
+-- `wiki/categories/<categoryId>.md`, and the row-backed path had nowhere to keep.
+-- Mirrored statement for statement from `migration_wiki_db_parity.sql` sections 2-4, so
+-- a fresh database and a MIGRATED one agree -- which
+-- `test/dimensions/db-parity-migration.test.ts` proves by building both and diffing
+-- their catalogues. The delimiters below are what lets that test reconstruct the
+-- PRE-migration schema from this file (it strips the region rather than keeping a
+-- third copy of the DDL): keep them, and keep this region equal to the migration's.
+-- wiki-db-parity-mirror:begin -- curated links and categories
+create table if not exists wiki.curated_links (
+    stack_id       uuid        not null references public.stacks(id) on delete cascade,
+    stable_key     text        not null,
+    source_page_id text        not null,
+    target_page_id text        not null,
+    anchor_text    text        not null,
+    anchor_before  text        not null default '',
+    anchor_after   text        not null default '',
+    provenance     text        not null,
+    created_at     timestamptz not null default now(),
+    primary key (stack_id, stable_key)
+);
+
+create index if not exists idx_wiki_curated_links_source
+    on wiki.curated_links (stack_id, source_page_id);
+
+create index if not exists idx_wiki_curated_links_target
+    on wiki.curated_links (stack_id, target_page_id);
+
+create table if not exists wiki.categories (
+    stack_id            uuid        not null references public.stacks(id) on delete cascade,
+    category_id         text        not null,
+    canonical_name      text        not null,
+    description         text        not null default '',
+    inclusion_criterion text        not null default '',
+    created_at          timestamptz not null default now(),
+    updated_at          timestamptz not null default now(),
+    primary key (stack_id, category_id)
+);
+
+create table if not exists wiki.category_members (
+    stack_id     uuid not null,
+    category_id  text not null,
+    page_id      text not null,
+    reason       text not null default '',
+    evidence_key text not null default '',
+    primary key (stack_id, category_id, page_id),
+    constraint category_members_category_fkey
+        foreign key (stack_id, category_id)
+        references wiki.categories (stack_id, category_id)
+        on delete cascade
+);
+
+create index if not exists idx_wiki_category_members_page
+    on wiki.category_members (stack_id, page_id);
+
+alter table wiki.curated_links    enable row level security;
+alter table wiki.curated_links    force row level security;
+alter table wiki.categories       enable row level security;
+alter table wiki.categories       force row level security;
+alter table wiki.category_members enable row level security;
+alter table wiki.category_members force row level security;
+
+drop policy if exists tenant_isolation on wiki.curated_links;
+create policy tenant_isolation on wiki.curated_links
+    using (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid)
+    with check (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);
+
+drop policy if exists tenant_isolation on wiki.categories;
+create policy tenant_isolation on wiki.categories
+    using (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid)
+    with check (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);
+
+drop policy if exists tenant_isolation on wiki.category_members;
+create policy tenant_isolation on wiki.category_members
+    using (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid)
+    with check (stack_id = nullif(current_setting('app.stack_id', true), '')::uuid);
+-- wiki-db-parity-mirror:end
 
 -- ------------------------------------------------------------
 -- Concept alias records

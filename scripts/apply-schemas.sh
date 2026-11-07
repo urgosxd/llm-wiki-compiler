@@ -63,6 +63,12 @@ readonly SCHEMA_FILES=(
   "src/dimensions/wiki/migration_wiki_project_config.sql"
   "src/dimensions/wiki/migration_page_embeddings.sql"
   "src/dimensions/wiki/migration_wiki_jobs.sql"
+  # Last on purpose. It alters `wiki.pages` and creates three tables whose foreign keys
+  # reach `public.stacks`, so it needs both the KG schema (first in this list) and
+  # `wiki/schema.sql` to have run. Nothing after it depends on it, and its `if not exists`
+  # statements make the mirror in `wiki/schema.sql` a no-op on a fresh database instead
+  # of a conflict.
+  "src/dimensions/wiki/migration_wiki_db_parity.sql"
 )
 
 # Tenant-isolated relations a complete database must expose. Used by --check to
@@ -76,7 +82,10 @@ readonly REQUIRED_TENANT_TABLES=(
   "public.ontology_relationships"
   "public.stack_documents"
   "public.stacks"
+  "wiki.category_members"
+  "wiki.categories"
   "wiki.concept_aliases"
+  "wiki.curated_links"
   "wiki.embedding_store_meta"
   "wiki.page_chunk_embeddings"
   "wiki.page_embeddings"
