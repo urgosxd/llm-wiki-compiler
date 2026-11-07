@@ -16,7 +16,13 @@
 # Usage:
 #   ./scripts/apply-schemas.sh                      # against $DATABASE_URL
 #   ./scripts/apply-schemas.sh postgres://u:p@h/db  # explicit target
+#   ./scripts/apply-schemas.sh --check              # verify only, no writes
 #   DATABASE_URL=... ./scripts/apply-schemas.sh --check   # verify only, no writes
+#   CHECK_ONLY=true ./scripts/apply-schemas.sh       # same mode as --check
+#
+# `--check` and `CHECK_ONLY=true` are the same switch; CI uses the variable form. Any
+# argument that is not `--check` is the connection target, and `$DATABASE_URL` is the
+# fallback when none is given.
 #
 # Requires `psql` on PATH, or set PSQL to a wrapper (the dev container is reachable
 # with `docker exec -i llmwiki-kg-db-1 psql -U aks -d aks`).
@@ -24,8 +30,23 @@
 set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly TARGET="${1:-${DATABASE_URL:-}}"
-readonly CHECK_ONLY="${CHECK_ONLY:-false}"
+
+# `--check` used to be documented and never parsed, so it was consumed as the connection
+# string: `./scripts/apply-schemas.sh --check` tried to reach a database named `--check`
+# and exited 2 with "cannot connect", which reads as a broken database rather than a
+# misread flag. Parse it, and reject anything else that looks like a flag instead of
+# handing it to psql as a target.
+TARGET=""
+CHECK_ONLY="${CHECK_ONLY:-false}"
+for argument in "$@"; do
+  case "$argument" in
+    --check) CHECK_ONLY="true" ;;
+    -*) echo "error: unknown option: $argument" >&2; exit 2 ;;
+    *) TARGET="$argument" ;;
+  esac
+done
+TARGET="${TARGET:-${DATABASE_URL:-}}"
+readonly TARGET CHECK_ONLY
 
 # Order matters. The knowledge-graph schema first because the wiki schema and the
 # migrations add tenant policies that assume `public.stacks` exists; the page

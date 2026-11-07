@@ -192,6 +192,10 @@ migration added three of them to that list. On a database that has not applied i
 CHECK_ONLY=true ./scripts/apply-schemas.sh postgresql://aks:aks@localhost:5434/aks
 ```
 
+The same mode is reachable as a flag, which is the form the runner's usage header shows:
+`./scripts/apply-schemas.sh postgresql://aks:aks@localhost:5434/aks --check`. `--check` and
+`CHECK_ONLY=true` are one switch; CI uses the variable form.
+
 ```text
 policies: 32
   MISSING RLS: wiki.category_members
@@ -204,13 +208,6 @@ Exit code `1`. The `policies:` count is that database's own; the three `MISSING 
 are the ones this migration accounts for. Once the file is applied, the same run finds
 every table present and secured and ends with `ok: every tenant table enforces row-level
 security.`
-
-<Note>
-  The runner's own usage header spells this `--check`, but the flag is not parsed: the first
-  argument is taken as the connection target, so `./scripts/apply-schemas.sh --check` tries
-  to connect to a database named `--check` and exits `2` with `error: cannot connect to the
-  database.` Use `CHECK_ONLY=true`, which is the form CI runs.
-</Note>
 
 ## After migrating
 
