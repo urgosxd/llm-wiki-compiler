@@ -53,20 +53,24 @@
  * skipped (7)` beside a zero exit status, and not one of the four parity claims above had
  * been measured. A skip is not a smaller test, it is a pass with the test removed.
  *
- * So the decision is the repository's, taken HERE: `missingTestDatabase`
+ * So the decision is the repository's, taken by `createProbeSuite`
+ * (`test/fixtures/probe-stack-suite.ts`), which defers the wording to `missingTestDatabase`
  * (`test/fixtures/test-database-handoff.ts`, the root twin of
- * `packages/llmwiki-kg/ts/src/testing/no-database.ts`) THROWS unless the one documented
+ * `packages/llmwiki-kg/ts/src/testing/no-database.ts`): it THROWS unless the one documented
  * opt-out `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` is set, and only then does this file skip --
  * with the reason printed and the title annotated, so an offline run is explicit about
  * what it dropped instead of quietly passing.
+ *
+ * That gate, the probe Stack and the `afterAll` teardown live in the shared fixture rather
+ * than in this file, because the store-of-record suite needs the identical three things;
+ * see the fixture's own header for why one copy is the only safe number.
  */
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { createProbeStack, type ProbeStack } from "./harness-lifecycle.js";
-import { missingTestDatabase } from "../fixtures/test-database-handoff.js";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { createProbeSuite } from "../fixtures/probe-stack-suite.js";
 import { parityRoots, withoutStack } from "../fixtures/category-rows.js";
 import { CATEGORY_CRITERION, CATEGORY_DESCRIPTION, CATEGORY_REASON, SISTEMAS_TITLE } from "../fixtures/category-scenario.js";
 import {
@@ -91,109 +95,16 @@ const ANCHOR_AFTER = `. ^[sistemas.md:1-1]\n`;
 const DATABASE_CONTEXT =
   "test/dimensions/store-parity.test.ts (the file-backed/row-backed parity suite)";
 
-/** A probe Stack, or the message explaining why there is none. */
-type ProbeOutcome =
-  | { readonly stack: ProbeStack }
-  | { readonly failure: string };
-
-/**
- * Provision this suite's probe Stack, keeping a provisioning failure as EVIDENCE.
- *
- * Letting the fixture's error escape would report a randomly suffixed Stack label instead
- * of this file, and would leave the suite with no statement of its own about the database
- * it needs -- which is the whole point of the rule applied below.
- *
- * @returns The Stack, or the message that explains why there is none.
- */
-async function provisionProbe(): Promise<ProbeOutcome> {
-  try {
-    return { stack: await createProbeStack("store-parity") };
-  } catch (error) {
-    return { failure: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-/**
- * The informative part of a caught "no database" failure, without its advice block.
- *
- * The fixture's message already ends in the shared "supply a database" advice. Quoting it
- * whole as this suite's `Observed:` detail would print that block twice, and a failure
- * that repeats itself reads as two problems instead of one.
- *
- * @param message - The caught message.
- * @returns What was observed, up to the first advice line.
- */
-function observedFrom(message: string): string {
-  const kept: string[] = [];
-  for (const line of message.split("\n")) {
-    if (ADVICE_MARKERS.some((marker) => line.startsWith(marker))) break;
-    kept.push(line);
-  }
-  const observed = kept.join("\n").trim();
-  return observed === "" ? message : observed;
-}
-
-/** Lines that begin the shared advice a nested failure already carries. */
-const ADVICE_MARKERS = [
-  "Database-backed suites must not skip here:",
-  "Skipping is not an option here:",
-  "Supply a database in any of these ways:",
-];
-
-/**
- * What this suite does when it has no usable database: FAIL loudly, or (only with the
- * documented opt-out) skip EXPLICITLY and say why.
- *
- * The decision and its wording belong to `missingTestDatabase`, so this file cannot
- * invent a softer rule than the rest of the repository. It decides only whether the
- * database is usable: a Stack the harness could not provision is as unusable as a server
- * that did not answer, and both used to become the same silent skip.
- *
- * @param outcome - The probe Stack, or why provisioning failed.
- * @returns "" when the database is usable; otherwise the reason the skip reports.
- * @throws the shared actionable failure when `LLMWIKI_TEST_ALLOW_NO_DATABASE` is not `1`.
- */
-function databaseSkipReason(outcome: ProbeOutcome): string {
-  if ("stack" in outcome && outcome.stack.harness.reachable) return "";
-  const observed = "failure" in outcome
-    ? observedFrom(outcome.failure)
-    : `the kg harness reported reachable = false for stack ${outcome.stack.harness.stackId}`
-      + " — the warning printed above says whether the server was unreachable or the Stack"
-      + " could not be provisioned";
-  const missing = missingTestDatabase(DATABASE_CONTEXT, observed);
-  if (missing.error !== undefined) throw missing.error;
-  console.warn(`${DATABASE_CONTEXT}: every case in this file is skipped.`);
-  console.warn(missing.message);
-  return missing.message;
-}
-
-/**
- * This suite's probe Stack.
- *
- * Unwrapped through a guard rather than narrowed per case: the cases only exist when the
- * database does, so a run that somehow reached them without a Stack is a defect that must
- * be loud instead of asserting against `undefined`.
- *
- * @returns The provisioned Stack.
- */
-function probeStack(): ProbeStack {
-  if (!("stack" in probeOutcome)) throw new Error(`${DATABASE_CONTEXT}: ${probeOutcome.failure}`);
-  return probeOutcome.stack;
-}
-
-const probeOutcome = await provisionProbe();
-const skipReason = databaseSkipReason(probeOutcome);
-
-/** Title the runner prints; annotated when the opt-out turned the suite into skips. */
-const SUITE_TITLE = skipReason === ""
-  ? "file-backed and row-backed wikis behave identically"
-  : "file-backed and row-backed wikis behave identically — SKIPPED: no database, reason below";
+const suite = await createProbeSuite({
+  label: "store-parity",
+  databaseContext: DATABASE_CONTEXT,
+  title: "file-backed and row-backed wikis behave identically",
+});
+const { probeStack, runSuite } = suite;
 
 // `describe.skip` still COLLECTS the cases and runs none of them, so an opted-out run
 // reports them as skips under a title that says why, instead of a bare green count.
-const runSuite = skipReason === "" ? describe : describe.skip;
-
-runSuite(SUITE_TITLE, () => {
+runSuite(suite.suiteTitle, () => {
   let files: ParityEvidence;
   let rows: ParityEvidence;
   let projectRoot = "";
@@ -211,14 +122,10 @@ runSuite(SUITE_TITLE, () => {
     rows = await runParityCorpus(rowsRoot, probeStack().harness);
   });
 
-  afterAll(async () => {
-    process.env = saved;
-    vi.restoreAllMocks();
-    // The temp root holds two real compiles' worth of page files; it is this suite's to
-    // remove, and leaving it behind is how a test run silently fills the host's /tmp.
-    await rm(projectRoot, { recursive: true, force: true });
-    await probeStack().harness.cleanup();
-  });
+  // The temp root holds two real compiles' worth of page files and the probe Stack owns a
+  // database domain; both are removed here, and leaving either behind is how a run fills
+  // the host's /tmp or deletes a later suite's rows.
+  afterAll(() => suite.teardown(projectRoot, saved));
 
   it("carries the same aliases, folded onto the same page, in both backends", () => {
     // ANTI-VACUITY: both sides must have folded something before they are compared.
