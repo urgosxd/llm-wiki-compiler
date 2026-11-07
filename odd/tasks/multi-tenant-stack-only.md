@@ -345,12 +345,13 @@ hypothesis that nothing was released.
 pass unchanged, because they exercise the FILE path, which is still exactly what it
 was — the fallback for a project with no Stack.
 
-##### Open defect found while closing T4 — NOT fixed, recorded here
+##### Defect found while closing T4 — RESOLVED (2026-10-26, `7c9a042`)
 
-The lock is keyed by **path**, not by Stack:
+**What was believed when T4 closed (2026-02): the lock is keyed by path, not by
+Stack.**
 
 ```ts
-// src/utils/lock.ts:161
+// src/utils/lock.ts:161, as it read then
 const lockKey = await realpath(root).catch(() => path.resolve(root));
 ```
 
@@ -361,22 +362,42 @@ PROBE same Stack, two hosts -> A: true B: true
 PROBE verdict -> BOTH ACQUIRED: the lock is per-PATH, not per-Stack
 ```
 
-**Why this matters more than it looks.** `lock-postgres.ts` justifies the whole
+**Why it mattered more than it looked.** `lock-postgres.ts` justified the whole
 migration as "visibility across machines ... two hosts sharing one Stack each held
 the lock on their own disk and could compile concurrently". Two hosts have different
-paths, so the key differs, so both acquire. The property that motivated W2.1 is
-still not delivered: an advisory lock keyed by path reproduces the file lock's
-defect with more steps.
+paths, so the key differed, so both acquired: an advisory lock keyed by path
+reproduced the file lock's defect with more steps, and the property that motivated
+W2.1 was not delivered by it.
 
-**Not fixed here** because it changes the identity every one of the 52 callers
-serializes on, which is a contract decision rather than a defect fix, and because
-the human chose to close T4 on evidence. Candidate fix: key on the Stack id when one
-is configured, and on the resolved path only for the file fallback.
+**It was not fixed in T4** because it changes the identity every one of the 52
+callers serializes on, which is a contract decision rather than a defect fix, and
+because the human chose to close T4 on evidence. The candidate fix recorded at the
+time was: key on the Stack id when one is configured, and on the resolved path only
+for the file fallback.
 
-**A second, smaller observation.** `databaseUrlFor` (`lock.ts:191`) requires
-`AKS_STACK_ID` *and* a non-empty `AKS_DATABASE_URL`, but `config.ts` already defaults
-the DSN. So a Stack-configured project that never sets `AKS_DATABASE_URL` silently
-falls back to the FILE lock — the one path W2.1 was meant to replace. This is
+**RESOLVED — `7c9a042` `fix(lock): key the advisory lock on the Stack, not the
+checkout path`, committed 2026-10-26, confirmed at HEAD on 2026-11-07.** That
+candidate fix is what landed and nothing else: the key derives in ONE place —
+`stackIdOf(env) ?? await realpath(root).catch(() => path.resolve(root))` in
+`lockKeyFor`, used by acquire, release and the same-process FIFO alike — so two hosts
+naming one Stack contend for one advisory key, and the resolved path survives only as
+the file fallback for a project with no database configured. This entry is marked
+resolved instead of kept as history because a task log that asserts a fixed defect
+is worse than no task log: it sends the next session to re-fix delivered code.
+
+**The line number is the generalisable lesson.** The quoted `lock.ts:161` was
+pre-`7c9a042` code; at HEAD that line sits inside `acquireDatabaseLock`'s DSN lookup,
+and the derivation had moved to `lockKeyFor` at `src/utils/lock.ts:207-209` (HEAD
+`fea6291` — the observability comments on this branch push it further down again).
+The smaller observation below has drifted the same way: it cites `lock.ts:191`, where
+`databaseUrlFor` is now `lock.ts:222`. Verify a cited line against HEAD before acting
+on it — a task log can be stale as well as absent.
+
+**A second, smaller observation — still true.** `databaseUrlFor` (`lock.ts:191` then,
+`lock.ts:222` at HEAD) requires `AKS_STACK_ID` *and* a non-empty `AKS_DATABASE_URL`, but
+`config.ts` already defaults the DSN. So a Stack-configured project that never sets
+`AKS_DATABASE_URL` silently falls back to the FILE lock — the one path W2.1 was meant to
+replace. This is
 deliberate per the doc comment ("gated on AKS_STACK_ID rather than the DSN alone"),
 but the effect is worth stating: with a Stack and no explicit DSN, the lock stays
 local, which is the failure mode the migration exists to remove.

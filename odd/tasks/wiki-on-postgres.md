@@ -595,9 +595,27 @@ remaining work and is a release-note-level product change.
 
 ## Known defects, recorded and unfixed
 
-1. **The lock keys on resolved PATH, not Stack.** Two checkouts of one Stack both
+1. **The lock keys on resolved PATH, not Stack — RESOLVED (2026-10-26, `7c9a042`).**
+   *What was believed when this entry was recorded: two checkouts of one Stack both
    acquire, which is the cross-machine collision the advisory lock exists to prevent.
-   Fix: key on `stackId` when configured, path only for the file fallback.
+   The candidate fix recorded at the time was: key on `stackId` when configured, path
+   only for the file fallback.*
+
+   **That candidate fix is what landed**, as `7c9a042`
+   `fix(lock): key the advisory lock on the Stack, not the checkout path`, committed
+   2026-10-26: the key now derives in one place — `lockKeyFor` in
+   `src/utils/lock.ts`, `stackIdOf(env) ?? await realpath(root).catch(() =>
+   path.resolve(root))` — and acquire, release and the same-process FIFO all use it,
+   so two hosts naming one Stack contend for one advisory key. The resolved path
+   survives only as the file fallback for a project with no database configured.
+
+   **This file contradicted itself.** The Step 5 section above already recorded the
+   fix — "Keying is fixed; the fallback is not removed" (`:222`) — while this list
+   still carried the defect as current. The entry is corrected rather than kept as
+   history for the same reason the equivalent entry was corrected in
+   `odd/tasks/multi-tenant-stack-only.md`: a task log that asserts a fixed defect is
+   worse than no task log, because it sends the next session to re-fix delivered
+   code. Items 2 and 3 below remain genuinely open.
 2. **A Stack-configured project without `AKS_DATABASE_URL` silently uses the file
    lock**, because `databaseUrlFor` requires both variables while `config.ts` already
    defaults the DSN.
