@@ -34,6 +34,7 @@ S8 — REACHABILITY: every new stage or store must be shown reachable from the c
 | T8 | S8 | Reachability proof for every new stage and store: `file:line` call chain plus `git grep`, and RED observed by unwiring the stage. | worker | `bbda95e3d46bd6e2dd19bf7cb654ee80e1eb7e01` (the durable documentation), `f469c9a54153f8fddcab6089dd9bc58307960f38` (the parity suite fails instead of skipping), `60e2672bbcc5b91a4242a3a3b4ace077657713a3` (the curated-link fallback pinned) — see L10 |
 | T9 | S6, S7 | Documentation: the DB path's behaviour and the exact migration command. | worker | `730f53d05affafb343ef9787fe97b47dcac02648` — see L11 |
 | T10 | S1-S8 | Full gate run and delivery report. | lead | `66f0b84a164f5a5bc08eb37f7eafd845fdaa7dae` (the `--check` flag), `4f27013b3b493b894f96fcaa664a1f126782203f` (the curated-link store header), `4818b51be7a7dcb8826d476a37410148c17d78de` (the gate results and L12), `c5795b66555ff1ef063b66c74b562c5a235cc292` (the schema comment about the migration proof), `81a5cfd4b87f9bdfbeaf21342860aad8cab8e2e9` (the durable anti-fallback suite), `bfe609cdd573b9355c2767a679fd9f1317b2e728` (the `docs(odd): record the T10 closure` commit that carries L13), `9b6088e2c60913e20bf113f16e963c80984b68de` (the shared probe-stack fixture, L14), and the `docs(odd): record the final gate run` commit that carries L14 |
+| T11 | S4, S7, S8 | Close the read side: `llmwiki category` and `llmwiki categories-here` take their `CategoryStorePort` from the compile path's own seam (`withCategoryStore` -> `withPageSeams` -> `resolvePageSeams`), default to the file store with no Stack, and fail loudly when an addressed Stack is unreachable; parity cases through the real verbs; docs corrected. | worker | `52f8ea76ea909256a62f96c6d7fd1131a63f83d3` (the verbs), `f8efc03712ceac914e62ef17a8831265a931f99e` (the parity cases), `6a14f8d14ab6a638b3e4c9075f1b40af4982c658` (the docs), and the `docs(odd): record the CLI closure` commit that carries L15 |
 
 ## Log
 
@@ -891,3 +892,132 @@ pgvector/pgvector:pg16 container kind_kirch`) and left running (`keeping reusabl
 kind_kirch for the next run`), so it is a reusable resource, not a leak. No temporary
 directory was created inside the worktree, and `git status --porcelain` was empty before
 this record commit.
+
+### L15 — T11: the CLI read surface closed, and where S8 stops applying
+
+The blocker L8 recorded and L11 documented as a user-facing limitation: `llmwiki category`
+and `llmwiki categories-here` called `listCategories(process.cwd())`, so for a row-backed
+Stack the taxonomy a compile had just written to `wiki.categories` / `wiki.category_members`
+was UNREADABLE through the CLI. Parity with an unreadable surface is not parity. Three
+commits: `52f8ea76ea909256a62f96c6d7fd1131a63f83d3` (the verbs), `f8efc03712ceac914e62ef17a8831265a931f99e`
+(the parity cases), `6a14f8d14ab6a638b3e4c9075f1b40af4982c658` (the docs), then this record.
+
+THE PATTERN WAS COPIED, NOT INVENTED. The command the shape comes from is `graph-health`:
+a read-only verb that reaches Stack-scoped data through a WRAPPER which resolves the seams
+internally (`buildViewerSnapshot` -> `withRawPageSource`), so the command never reads the
+environment, never imports a row store and never opens a database. The seam that actually
+decides is `resolvePageSeams` (`src/dimensions/wiki/page-source-seam.ts:396`), reached here
+through the multi-seam wrapper `withPageSeams` (`:465`). `withCategoryStore` (`:512`) is the
+one new function, and the whole of it is one line of delegation:
+
+```ts
+return await withPageSeams(env, async (seams) =>
+  await fn(seams.categories ?? createFileCategoryStore(root)));
+```
+
+Same variable (`AKS_STACK_ID`), same empty-means-files rule, same order as the compile path.
+No new flag (`--stack` exists for write verbs in `src/cli/stack-option.ts` and was
+deliberately NOT added here: the variable is the addressing model), no second notion of
+"database-backed", and neither command chooses a backend.
+
+S8, ANSWERED HONESTLY, AND ITS LIMIT. The reachability claim is `git`-checkable: `git grep -n
+'withCategoryStore' -- src/` → `page-source-seam.ts:512` plus the two commands, and the
+chain continues into `resolvePageSeams:410 categories: createRowCategoryStore` →
+`categories-row-store.ts:365 list` → `:184 readAllTx`. The unwire proof has TWO results and
+the second one is the interesting one:
+
+1. Removing `categories: createRowCategoryStore(db as never, stackId)` from
+   `resolvePageSeams` (the L9/RED unwire) turned `stores the same category with the same
+   membership evidence` and the unreachable-Stack case red, and left BOTH new CLI parity
+   cases GREEN. Reason, measured rather than assumed: with the seam entry gone the
+   row-backed COMPILE also falls back (`index.ts:1643 store: flags.seams?.categories` →
+   `categories/assign.ts store ?? createFileCategoryStore(root)`), so it writes category
+   FILES into the row-backed root and the two verbs agree with each other. This is exactly
+   the invisibility L9 recorded for curated links, now measured on categories, and it is why
+   a parity comparison alone cannot prove this wiring.
+2. So the wiring claim is pinned where it actually lives: reverting `withCategoryStore` to
+   its pre-change body (`return await fn(createFileCategoryStore(root))`) turned all three
+   new cases red (`3 failed | 7 passed (10)`), and restoring it returned `10 passed (10)`.
+
+S# COVERED: **S4** (categories read back through the row store, identity and membership
+evidence intact, byte-identical envelope) and **S7** (the parity claim now covers the CLI
+surface, not only the stores) and **S8** (reachability, above). No other `S#` was in scope;
+S1 is the request itself and was already carried by T1-T10.
+
+WHAT WAS NOT CHANGED, named: the four existing parity artifact cases are untouched (the
+file grew by three cases and one helper: 237 -> 312 lines, 10 cases); `docs/` prose only in
+the three pages that carried the false claim; no migration, no schema, no store. `Risk:
+item 3 (a change to a contract others consume: both command surfaces and the CLI help text
+now address a Stack), mitigated by the byte-identical envelope the parity case pins and by
+the file-backed halves of the unchanged `category-cli` / `categories-here-cli` suites.`
+
+MEASURED, every command in the foreground on this tree, Node `v24.21.0`:
+
+| # | check | exact command | exit | result |
+|---|-------|---------------|------|--------|
+| 1 | RED | `npx vitest run test/dimensions/store-parity.test.ts` (before the feature slice) | 1 | `3 failed | 7 passed (10)` — the three new cases only |
+| 2 | GREEN | same, after the slice | 0 | `10 passed (10)` |
+| 3 | UNWIRE RED | same, `withCategoryStore` reverted to the file store | 1 | `3 failed | 7 passed (10)` |
+| 4 | UNWIRE restore | same | 0 | `10 passed (10)` |
+| 5 | existing CLI suites | `npx vitest run test/commands/category-cli.test.ts test/commands/categories-here-cli.test.ts` | 0 | `6 passed` + `6 passed` |
+| 6 | related | `npx vitest related --run src/commands/category.ts src/commands/categories-here.ts src/dimensions/wiki/page-source-seam.ts src/cli/context-commands.ts` | 0 | `232 passed (232)` files, `1389 passed (1389)` tests |
+| 7 | root type-check | `npx tsc --noEmit` | 0 | no output |
+| 8 | test ratchet | `npm run typecheck:tests` | 0 | `1747 files checked; 260 baseline diagnostics in 94 files; no regression.` (baseline NOT regenerated) |
+| 9 | KG ratchet | `npm run typecheck:kg` | 0 | `349 files checked; 0 diagnostics baselined across 0 entries; no regression.` |
+| 10 | build | `npm run build` | 0 | `ESM dist/index.js 443.66 KB`, `DTS dist/index.d.ts 6.67 KB`, viewer assets copied |
+| 11 | static analysis (after gate 10) | `./node_modules/.bin/fallow` | 0 | dead code `✓ No issues found`; `● Duplicates (4 clone groups)`, 61 lines, `0.0%` — the four pre-existing groups, no new one; `✗ 0 above threshold · 17258 analyzed · maintainability 91.1 (good)`; no unresolved imports |
+| 12 | docs | `npm run release:check-docs` and `npm run release:check-docs:current` | 0 / 0 | both silent-clean |
+
+`fallow` IS NOT COVERAGE OF THE KG PACKAGE: `.fallowrc.json` lists `packages/llmwiki-kg/**`
+under `ignorePatterns`, so gate 11 says nothing about that package; gates 7/8/9 cover it and
+all three are green.
+
+**`npm test` EXITED 1 TWICE, IN THE KG PACKAGE ONLY, AND NOT REPRODUCIBLY.** Reported
+rather than laundered:
+
+- run 1: `12 failed | 888 passed | 3 skipped (903)` files, `21 failed | 6706 passed | 7 skipped
+  (6734)` tests — every failing file under `packages/llmwiki-kg/ts/src/` (`db.test.ts`,
+  `backfeed-approve`, `backfeed-ontology`, `backfeed-reject`, `ingest/classification-audit`,
+  `ingest/classification-wiring`, `ingest/convergence`, `ingest-formation`,
+  `ingest-ontology`, `ingest/support-wiring`, `reclassify/reclassify-wiring`, `stack-graph`).
+  9 of the 21 failures are one cause, quoted: `Caused by: PostgresError: insert or update on
+  table "stack_documents" violates foreign key constraint "stack_documents_stack_id_fkey"`,
+  `Key (stack_id)=(…) is not present in table "stacks"` — a Stack row that existed when the
+  suite provisioned it was gone when it inserted.
+- run 2, same command, same tree: `3 failed | 897 passed | 3 skipped (903)` files, `3 failed |
+  6724 passed | 7 skipped (6734)` tests — `backfeed-approve`, `backfeed-ontology` (1 case
+  each, the same ones as run 1) plus `documents-upload`, which run 1 did not fail. A
+  DIFFERENT set on the same code, which is what makes it a flake rather than a defect.
+- NOT THIS BRANCH: `git diff --stat a40fc3f..HEAD -- packages/llmwiki-kg/` is empty and this
+  slice touches no file in that package, no `vitest.config.ts`, no global setup, no fixture.
+- NOT REPRODUCIBLE IN ISOLATION: the 12 files of run 1 together → `12 passed (12)` files,
+  `98 passed (98)` tests, exit 0; the 3 files of run 2 together → `3 passed (3)`, `20 passed
+  (20)`, exit 0.
+- CAUSE, MEASURED: another session on this host was running vitest against the SAME Postgres
+  database throughout (`ps -eo args | grep vitest` showed 12 vitest processes at the start of
+  run 2, including `ingest/*.test.ts` batches; a `pgrep` poll of ~7 minutes never found the
+  database free). Several sessions sharing one container is the environmental condition L14
+  already characterised for `support-wiring`, and it is why a Stack row can vanish between
+  provision and insert.
+- A BASE MEASUREMENT WAS ATTEMPTED AND IS NOT EVIDENCE: `npm test` in the pre-existing
+  worktree `/tmp/t10f-base-a40fc3f` (`a40fc3f`) exited 1 with `5 failed | 885 passed | 3
+  skipped (893)` files — a DIFFERENT set again (`test/cli.test.ts`, `test/mcp-stdio`,
+  `test/okf-mcp-stdio`, `test/quickstart-integration`, `test/viewer-pack`), all subprocess
+  tests. That worktree symlinks `node_modules` and `dist` to THIS tree (L14), so its `dist`
+  is built from branch code and the comparison is contaminated at exactly the tests that
+  spawn a CLI. Stated, not relied on.
+
+REUSABLE PATHS: `test/dimensions/store-parity.test.ts` (the `readCategorySurface` helper and
+the three cases), `src/dimensions/wiki/page-source-seam.ts:512`, `docs/cli/category.mdx`.
+
+SCRATCH LEFT ON DISK (outside the worktree, for the owner to remove): `/tmp/cli-parity-red.log`,
+`/tmp/cli-parity-green.log`, `/tmp/cli-parity-green2.log`, `/tmp/cli-parity-unwired.log`,
+`/tmp/cli-parity-unwired-resolver.log`, `/tmp/cli-tsc.log`, `/tmp/cli-tct.log`,
+`/tmp/cli-tck.log`, `/tmp/cli-build.log`, `/tmp/cli-fallow.log`, `/tmp/cli-related.log`,
+`/tmp/cli-npm-test.log`, `/tmp/cli-npm-test-2.log`, `/tmp/cli-base-npm-test.log`,
+`/tmp/cli-kg-files.txt`, `/tmp/cli-kg-group-head.log`, `/tmp/cli-kg-group2.log`,
+`/tmp/cli-check-docs.log`, `/tmp/cli-check-docs2.log`, `/tmp/cli-final-suites.log`,
+`/tmp/cli-commit2.log`, `/tmp/cli-commit3.log`, and the pre-existing
+`/tmp/t10f-base-a40fc3f` worktree. No temporary directory was created inside the worktree
+(`git status --porcelain` was empty before each commit), and no database was created by hand:
+the suites use the run's own per-run database.
