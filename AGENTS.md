@@ -10,6 +10,7 @@ A knowledge compiler CLI. Raw sources in, interlinked wiki out.
 - Functions must be smaller than 40 lines excluding comments and the catch/finally blocks of try/catch sections. If a function exceeds that, refactor it.
 - test files must be smaller than 400 lines excluding comments. Once 400 is exceeded, split the tests into multiple files.
 - tests must be smaller than 40 lines excluding comments and the catch/finally blocks of try/catch sections. If a test exceeds that, refactor it, or separate it into multiple tests.
+- Use TypeScript with proper types — avoid `any`.
 
 
 ### clean code rules
@@ -55,6 +56,32 @@ iterating.
 Never claim a task complete on the strength of a partial run without saying which
 scope you ran. Report the scope and the result together.
 
+**`npm run test:integration`** is the remaining tier: it runs only the tests that
+spawn a CLI subprocess (`node dist/cli.js`), so it covers the built command
+surface end to end rather than behaviour reached in process. `test:unit` and
+`test:integration` partition the suite between them and `npm test` runs both, so
+a change to a file that spawns a CLI subprocess is covered only by the
+integration tier.
+
+Tests must not depend on timing or external services.
+
+**`test:unit` is not the `test/` directory.** It covers every test tree in the
+repository — `test/`, `packages/`, `src/` and `scripts/` — minus the files that
+spawn a CLI subprocess, so the `packages/llmwiki-kg` suites are part of it, along
+with the three `src/dimensions/kg/` suites and `scripts/output-contracts.test.ts`.
+Those `llmwiki-kg` suites are database-backed, so without Docker or
+`LLMWIKI_TEST_DATABASE_URL` they fail — they do not skip. `LLMWIKI_TEST_ALLOW_NO_DATABASE=1`
+is the only escape hatch, and it converts those hard database failures into
+silent skips, so a run that sets it verifies nothing about them. It exists for
+local debugging: **CI must never set `LLMWIKI_TEST_ALLOW_NO_DATABASE=1`**, because
+a green run there would then prove nothing about the database-backed suites.
+
+**The build in `test/global-setup.ts` is cached.** A content hash of `src/`,
+`packages/` and the tsup configs is recorded in `.llmwiki/build-stamp.json`, so
+when nothing feeds that hash a run skips the ~42 s tsup rebuild and a single-file
+run drops from ~48 s to under a second. To force the rebuild anyway — after a
+suspicious `dist/`, for example — set `LLMWIKI_TEST_FORCE_BUILD=1`.
+
 ### Pre-Commit Checks
 
 Before committing any work, and before considering any task complete, you must:
@@ -66,9 +93,20 @@ Before committing any work, and before considering any task complete, you must:
    the change is cross-cutting or before opening a PR; see Test Execution Policy)
 5. `fallow` — run the fallow codebase health analyzer. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit until fallow reports no issues.
 
+Never bypass these gates with `--no-verify`; fix the underlying issue instead.
+
+### Branch protection
+
+`test-typecheck` is required by main's branch protection, alongside
+`codebase-health` and `build-and-test (24)`. Branches must be up to date before
+merging. Workflow changes must preserve the required check name or update branch
+protection in the same rollout: **renaming a CI job without updating branch
+protection silently un-gates `main`**.
+
 ## General Rules
 
 - First think through the problem, read the codebase for relevant files.
+- Name branches `feature/<name>` for new features and `fix/<name>` for bug fixes.
 - Make every task and code change you do as simple as possible. We want to avoid making any massive or complex changes. Every change should impact as little code as possible. Everything is about simplicity.
 - Never speculate about code you have not opened. If the user references a specific file, you MUST read the file before answering. Make sure to investigate and read relevant files BEFORE answering questions about the codebase. Never make any claims about code before investigating unless you are certain of the correct answer - give grounded and hallucination-free answers.
 
