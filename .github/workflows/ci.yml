@@ -87,6 +87,7 @@ jobs:
       # `kg-typecheck-baseline.json`, and on a baselined one that disappeared.
       - name: Type-check the KG package against its diagnostic ratchet
         run: npm run typecheck:kg
+      - run: npm run fallow:kg
       # Build the schema from the same runner operators use, before any test needs
       # it. If a migration is missing from the runner, this is where it shows up --
       # `--check` asserts every tenant table exists AND enforces row-level security.
