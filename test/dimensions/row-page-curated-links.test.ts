@@ -28,6 +28,12 @@
  *  - the parity case runs the whole scenario twice -- once row-backed, once file-backed
  *    -- and compares the records, the restored body and the drop report. Equivalent
  *    observable behaviour is the requirement; byte-identical storage is not.
+ *  - the no-file-fallback case asserts that a row-backed run never touches the project's
+ *    `.llmwiki/curated-links.json`. It exists because the DEGRADATION this file cannot
+ *    otherwise see was measured (see `odd/tasks/wiki-db-parity.md` L9): with the row store
+ *    removed from the seam bundle the run falls back to that file and the link still
+ *    works, so `restored` stays green while the Stack silently holds nothing. Only an
+ *    assertion about the file, or about the record, detects the loss.
  *
  * ## Why the comparison is EXACT
  *
@@ -44,7 +50,7 @@
  * compile path (S8).
  */
 
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
@@ -52,6 +58,7 @@ import { compileAndReport } from "../../src/compiler/index.js";
 import { getStoredPage } from "../../src/dimensions/wiki/page-store.js";
 import { saveSourceDocument } from "../../src/dimensions/wiki/source-documents-store.js";
 import { parseFrontmatter } from "../../src/utils/markdown.js";
+import { CURATED_LINKS_FILE } from "../../src/utils/constants.js";
 import { readConceptPage } from "../fixtures/concept-page.js";
 import { extractionAnswer, stubCompileProvider } from "../fixtures/compile-provider.js";
 import { curatedRecordsFor, writeSource, type StoredCuratedLink } from "../fixtures/curated-scenario.js";
@@ -389,6 +396,28 @@ describe("curated links through the row seam", () => {
       expect(io.out()).toContain(DROP_SUMMARY);
       // Forgotten, so the next run does not re-report a link that is already gone.
       expect(await storedRecords(root, harness)).toEqual([]);
+    }));
+
+  it("keeps a row-backed Stack's records out of the project's curated-links file", () =>
+    withRowsStack("row-curated-no-file-fallback", async ({ root, harness }) => {
+      const filesRoot = path.join(root, "files");
+      await mkdir(filesRoot);
+
+      await curateLink(root, harness);
+      // The FILE backend never ran. Asserted FIRST, because this is the observation that
+      // an unwired seam cannot survive: with `curatedLinks: createRowCuratedLinkStore`
+      // gone from the seam bundle the run falls back to this file, the link still comes
+      // back, and every other case above stays green while the Stack holds nothing.
+      await expect(stat(path.join(root, CURATED_LINKS_FILE))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      // ... and the record is where it belongs instead.
+      expect(await storedRecords(root, harness)).toHaveLength(1);
+
+      // Anti-vacuity: the SAME scenario file-backed does create that file, so its absence
+      // above is a property of the row-backed store and not of the scenario.
+      await withoutStack(() => curateLink(filesRoot));
+      expect(await curatedRecordsFor(filesRoot, `concepts/${ALPHA_SLUG}`)).toHaveLength(1);
     }));
 
   it("records, restores and reports exactly what the file path does", () =>
