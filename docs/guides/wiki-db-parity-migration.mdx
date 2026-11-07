@@ -80,7 +80,23 @@ alone.
 
 `./scripts/apply-schemas.sh` is this repository's runner and lists every schema and
 migration in dependency order, with this file last. It is idempotent, so running it against
-an up-to-date database is a no-op:
+an up-to-date database is a no-op.
+
+**Prerequisite: a `psql` client on `PATH`.** The runner probes the connection and applies
+every file by shelling out to `psql` (`scripts/apply-schemas.sh:139-147`, `:164-169`). With
+no client installed, the probe's own error is discarded, so the run exits `2` printing
+
+```text
+error: cannot connect to the database.
+```
+
+which reads as a broken database when the real cause is a missing binary. Without a host
+client, the documented forms that work are the in-container ones: the `PSQL` wrapper below,
+which pipes each file in on stdin, and
+[the single-file form](#in-container-this-file-alone), which pipes one file into
+`docker exec` or `docker compose exec`.
+
+With `psql` on `PATH`, either of these two works:
 
 ```bash
 # From the repository root, with the connection string as the argument.
@@ -92,9 +108,8 @@ an up-to-date database is a no-op:
 DATABASE_URL=postgresql://aks:aks@localhost:5434/aks ./scripts/apply-schemas.sh
 ```
 
-The runner needs `psql` on `PATH`. When the database lives in a container and `psql` is not
-installed on the host, point `PSQL` at the container's client — the runner then pipes each
-file in on stdin:
+When the database lives in a container and `psql` is not installed on the host, point `PSQL`
+at the container's client — the runner then pipes each file in on stdin:
 
 ```bash
 PSQL="docker exec -i llmwiki-kg-db-1 psql -U aks -d aks" ./scripts/apply-schemas.sh

@@ -1021,3 +1021,98 @@ SCRATCH LEFT ON DISK (outside the worktree, for the owner to remove): `/tmp/cli-
 `/tmp/t10f-base-a40fc3f` worktree. No temporary directory was created inside the worktree
 (`git status --porcelain` was empty before each commit), and no database was created by hand:
 the suites use the run's own per-run database.
+
+### L16 — The exhaustive gate, proven in isolation
+
+L15 left `npm test` reported AND UNRESOLVED: exit 1 twice on the same tree, with DIFFERENT
+failure sets — `12 failed | 888 passed | 3 skipped (903)` files and then `3 failed | 897
+passed | 3 skipped (903)` files — every failing file under `packages/llmwiki-kg/ts/src/`. A
+flake is not a closed gate. The gate was re-run against a database this session owned, and
+this entry records what that measured and what it did NOT establish.
+
+WHAT THE EARLIER REDS RAN AGAINST. The shared server those two runs used is the Postgres
+`llmwiki-kg-db-1` publishes on 5434, and OTHER SESSIONS' VITEST WORK WAS RUNNING AGAINST IT
+throughout: TWELVE concurrent vitest processes were measured on that server at the start of
+run 2 (`ps -eo args | grep vitest`), and a `pgrep` poll over roughly seven minutes never
+found it free. Twelve writers on one database, one schema and one `stacks` table accounts
+for a Stack row vanishing between provision and insert — the `stack_documents_stack_id_fkey`
+violation L14 and L15 already quoted.
+
+NOT THIS BRANCH: `git diff --stat a40fc3f..HEAD -- packages/llmwiki-kg/` is empty. Every
+failing file lived in that package; this branch's diff does not reach it.
+
+THE GATE ON A PRIVATE SERVER. A pgvector container of its own was started for the run —
+`llmwiki-isolated-gate`, image `pgvector/pgvector:pg16`, host port `5455` — and the run was
+pinned to it through BOTH variables the harnesses read, `LLMWIKI_TEST_DATABASE_URL`
+(`test/fixtures/test-database.ts:41`) and `AKS_TEST_DATABASE_URL`
+(`packages/llmwiki-kg/ts/src/routes/ingest-harness.ts:41-47` and its sibling harnesses):
+
+```bash
+docker run -d --name llmwiki-isolated-gate -p 5455:5432 \
+  -e POSTGRES_USER=aks -e POSTGRES_PASSWORD=aks -e POSTGRES_DB=aks \
+  pgvector/pgvector:pg16
+LLMWIKI_TEST_DATABASE_URL=postgresql://aks:aks@localhost:5455/aks \
+AKS_TEST_DATABASE_URL=postgresql://aks:aks@localhost:5455/aks \
+  npm test
+```
+
+RESULT: exit `0`, zero failures.
+
+| line | value |
+| --- | --- |
+| `Test Files` | `900 passed`, `3 skipped`, `903` total |
+| `Tests` | `6727 passed`, `7 skipped`, `6734` total |
+| `Duration` | `365.70s` |
+
+The three skipped files are the by-design gateway suites,
+`packages/llmwiki-kg/ts/src/routes/{aks,ingest,pages}-gateway.test.ts` — the same three the
+earlier runs skipped, so nothing was skipped to make this run green.
+
+ISOLATION WAS EVIDENCED, NOT ASSUMED. Four observations, each of which would have failed if
+the run had touched the shared server:
+
+- the run log printed `[test-database] LLMWIKI_TEST_DATABASE_URL is set; no container
+  started` (`test/fixtures/testcontainers-postgres.ts:324`): the resolver took the override
+  branch and started nothing of its own.
+- the handoff record the run publishes reported `container: null` and `reused: false` — the
+  `source: "override"` record built at `test/fixtures/testcontainers-postgres.ts:325`, which
+  is what "this run owns no container and adopted none" means.
+- `ss -tnp` showed NO client sockets on port 5455 once the run was done, so nothing was left
+  holding a connection to the private server (`pg_stat_activity` on that container reported
+  `0` client connections afterwards).
+- `kind_kirch` (32782) and `llmwiki-kg-db-1` (5434), the shared servers, were never
+  connected to during the run.
+
+WHAT THIS DOES AND DOES NOT SETTLE. It settles the verdict: the earlier reds were
+environmental contention on a shared database, not a property of this branch, and the same
+tree passes exhaustively on a server no other session was writing to. It does NOT settle the
+per-file attribution of those earlier reds and this entry claims none — a green isolated run
+disproves "always red"; it does not name which files the earlier runs failed. The run-1 and
+run-2 file sets L15 lists remain descriptions of two contaminated runs.
+
+REPRODUCE IT (Node 24; no host `psql` needed — the fixtures replay `scripts/apply-schemas.sh`
+through the pg client, `packages/llmwiki-kg/ts/src/testing/per-run-database.ts:257`). If a
+container of that name is still running, reuse it or pick another name and port:
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
+docker run -d --name llmwiki-isolated-gate -p 5455:5432 \
+  -e POSTGRES_USER=aks -e POSTGRES_PASSWORD=aks -e POSTGRES_DB=aks \
+  pgvector/pgvector:pg16
+LLMWIKI_TEST_DATABASE_URL=postgresql://aks:aks@localhost:5455/aks \
+AKS_TEST_DATABASE_URL=postgresql://aks:aks@localhost:5455/aks \
+  npm test
+```
+
+Then confirm the run took the override branch: its log must contain `[test-database]
+LLMWIKI_TEST_DATABASE_URL is set; no container started`. If it does not, the run used a
+different server and its verdict does not transfer to this entry.
+
+S# COVERED: none. This entry records a measurement of the existing tree; no file under
+`src/`, `packages/` or `test/` changed and no `S#` was in scope. `Risk: none` — no code,
+schema, contract or configuration changed; this is the feature document's own log.
+
+SCRATCH LEFT ON DISK: the container `llmwiki-isolated-gate` (host port 5455) is still
+running, left for the owner to remove; the run's own log is outside the worktree. Neither is
+a path inside the repository — `git status --porcelain` was empty before the commit that
+holds this entry.
