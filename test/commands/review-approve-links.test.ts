@@ -112,7 +112,7 @@ async function approveOnStack(body: string): Promise<Page | undefined> {
   return await withStack("approve-links", async (harness) => {
     await seedQueriesPage(harness);
     return await withStackEnv(harness, async () => {
-      const candidate = await writeCandidate(project.root, {
+      const candidate = await writeCandidate(project.root, process.env, {
         title: TITLE, slug: SLUG, summary: "", sources: [], body,
       });
       // Imported here rather than at module scope so the command graph binds to the
@@ -173,7 +173,7 @@ describe("review approve — links are judged against the full page set", () => 
 describe("review approve — the file-backed behaviour is unchanged", () => {
   it("A3 approves with the same exit code, messages and page bytes", async () => {
     const body = `---\ntitle: ${TITLE}\n---\n\n# ${TITLE}\n\nBody with no links.\n`;
-    const candidate = await writeCandidate(project.root, {
+    const candidate = await writeCandidate(project.root, process.env, {
       title: TITLE, slug: SLUG, summary: "", sources: [], body,
     });
     const { default: reviewApproveCommand } = await import("../../src/commands/review-approve.js");

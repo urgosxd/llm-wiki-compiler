@@ -17,11 +17,11 @@ const ctx = useTempRoot();
 it("repairs a deferred prefix when its candidate becomes live", async () => {
   const page = path.join(ctx.dir, "wiki/concepts/deployment.md");
   await writeFile(page, "---\ntitle: Deployment\n---\n\nUses [[Argo CD]].\n");
-  const candidate = await writeCandidate(ctx.dir, {
+  const candidate = await writeCandidate(ctx.dir, process.env, {
     title: "Ownership", slug: "argo-cd-ownership", summary: "Details", sources: [],
     body: "---\ntitle: Ownership\nsummary: Details\nsources: []\n---\n\nOwnership details.\n",
   });
-  expect(await repairLinks(ctx.dir)).toEqual([]);
+  expect(await repairLinks(ctx.dir, process.env)).toEqual([]);
   vi.spyOn(embeddings, "updateEmbeddingsLockedCore").mockResolvedValue({ embedded: [], eligible: [], pruned: [] });
   await reviewApproveCommand(candidate.id);
   expect(await readFile(page, "utf8")).toContain("[[argo-cd-ownership|Argo CD]]");

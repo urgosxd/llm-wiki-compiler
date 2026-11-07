@@ -15,7 +15,7 @@ const root = useTempRoot();
 describe("public candidate directory aliases", () => {
   it("reads and archives through an in-root alias, but strict scans refuse it", async () => {
     const retained = path.join(root.dir, "retained-candidates");
-    const candidate = await writeCandidate(root.dir, {
+    const candidate = await writeCandidate(root.dir, process.env, {
       title: "Alias", slug: "alias", summary: "", sources: [], body: "First",
     });
     await rename(path.join(root.dir, ".llmwiki", "candidates"), retained);

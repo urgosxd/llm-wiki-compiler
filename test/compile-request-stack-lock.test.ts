@@ -29,13 +29,7 @@
  * releases it, so the held window is the compile's own and no sleep is involved. The
  * observability of the lock itself (`lock: acquired …`) is pinned in
  * `test/lock-observability.test.ts`; nothing here reads `lockRegistry` or any other
- * internal.
- *
- * ## Why every Stack id is a fresh `randomUUID()`
- *
- * The container behind the test database is long-lived, and a session-level advisory
- * lock leaked by an earlier probe outlives the run that leaked it. A shared id would let
- * that leak masquerade as this file's subject.
+ * internal — the fixture's teardown does, to release a leaked entry.
  *
  * ## Why the AMBIENT Stack is provisioned rather than a bare uuid
  *
@@ -47,20 +41,17 @@
  * capture would fail on a foreign key and this file could not reach its own assertions.
  * The lock assertions below do not depend on it -- a `pg_try_advisory_lock` key needs no
  * row -- so provisioning it weakens nothing that is measured here.
+ *
+ * The Stack pair, the ambient environment binding and the teardown live in
+ * `test/fixtures/request-stack.ts`, shared with the sibling request-stack suites.
  */
 
-import { rm } from "node:fs/promises";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { compileAndReport } from "../src/compiler/index.js";
 import { saveSourceDocument } from "../src/dimensions/wiki/source-documents-store.js";
 import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { lockRegistry, tryAcquirePostgresLock } from "../src/utils/lock-postgres.js";
-import { scratchProjectRoot } from "./fixtures/host-scratch.js";
-import { perRunDatabase } from "./fixtures/per-run-database.js";
-import { provisionStack, type ProvisionedStack } from "./fixtures/stack-harness.js";
-
-/** This process's own database; provisioning fails loudly rather than skipping. */
-const DSN = (await perRunDatabase()).url;
+import { tryAcquirePostgresLock } from "../src/utils/lock-postgres.js";
+import { REQUEST_STACK_DSN, useRequestStacks } from "./fixtures/request-stack.js";
 
 /** The one source the compile extracts into a page. */
 const SOURCE = {
@@ -117,81 +108,48 @@ function holdExtraction(): ExtractionBarrier {
  * contention the caller is measuring.
  */
 async function isKeyHeldElsewhere(key: string): Promise<boolean> {
-  const held = await tryAcquirePostgresLock(DSN, key);
+  const held = await tryAcquirePostgresLock(REQUEST_STACK_DSN, key);
   if (held === null) return true;
   await held.release();
   return false;
 }
 
 describe("a compile locks the Stack its request names", () => {
-  let stack: ProvisionedStack;
-  let ambient: ProvisionedStack;
-  let root = "";
-  let requestStackId = "";
-  let ambientStackId = "";
-  let env: NodeJS.ProcessEnv;
-  const savedEnv = { stackId: process.env.AKS_STACK_ID, dsn: process.env.AKS_DATABASE_URL };
-
-  beforeEach(async () => {
-    stack = await provisionStack("request-stack-lock");
-    ambient = await provisionStack("ambient-stack-lock");
-    root = await scratchProjectRoot("request-stack-lock-");
-    requestStackId = stack.harness.stackId;
-    // The AMBIENT Stack is a different Stack on purpose: that difference is the defect.
-    ambientStackId = ambient.harness.stackId;
-    expect(ambientStackId).not.toBe(requestStackId);
-    env = { AKS_STACK_ID: requestStackId, AKS_DATABASE_URL: DSN } as NodeJS.ProcessEnv;
-    process.env.AKS_STACK_ID = ambientStackId;
-    process.env.AKS_DATABASE_URL = DSN;
-  });
-
-  afterEach(async () => {
-    // A leaked entry is a live reserved connection holding a session-level lock.
-    for (const held of lockRegistry.values()) void held.release().catch(() => {});
-    lockRegistry.clear();
-    vi.unstubAllEnvs();
-    vi.restoreAllMocks();
-    for (const [name, value] of [
-      ["AKS_STACK_ID", savedEnv.stackId],
-      ["AKS_DATABASE_URL", savedEnv.dsn],
-    ] as const) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-    await stack.release();
-    await ambient.release();
-    await rm(root, { recursive: true, force: true });
+  const stacks = useRequestStacks({
+    request: "request-stack-lock",
+    ambient: "ambient-stack-lock",
+    root: "request-stack-lock-",
   });
 
   it("holds the request's key and leaves the ambient key free, then frees both", async () => {
-    await saveSourceDocument(stack.harness.db, requestStackId, SOURCE);
+    await saveSourceDocument(stacks.request.harness.db, stacks.requestStackId, SOURCE);
     const extraction = holdExtraction();
 
-    const compileRun = compileAndReport(root, { embeddings: false, env });
+    const compileRun = compileAndReport(stacks.root, { embeddings: false, env: stacks.env });
     await extraction.reached;
 
-    expect(await isKeyHeldElsewhere(requestStackId)).toBe(true);
-    expect(await isKeyHeldElsewhere(ambientStackId)).toBe(false);
+    expect(await isKeyHeldElsewhere(stacks.requestStackId)).toBe(true);
+    expect(await isKeyHeldElsewhere(stacks.ambientStackId)).toBe(false);
 
     extraction.release();
     expect(await compileRun).toMatchObject({ errors: [] });
 
-    expect(await isKeyHeldElsewhere(requestStackId)).toBe(false);
-    expect(await isKeyHeldElsewhere(ambientStackId)).toBe(false);
+    expect(await isKeyHeldElsewhere(stacks.requestStackId)).toBe(false);
+    expect(await isKeyHeldElsewhere(stacks.ambientStackId)).toBe(false);
   });
 
   it("still locks the ambient Stack for a caller that passes no environment", async () => {
-    process.env.AKS_STACK_ID = requestStackId;
-    await saveSourceDocument(stack.harness.db, requestStackId, SOURCE);
+    process.env.AKS_STACK_ID = stacks.requestStackId;
+    await saveSourceDocument(stacks.request.harness.db, stacks.requestStackId, SOURCE);
     const extraction = holdExtraction();
 
-    const compileRun = compileAndReport(root, { embeddings: false });
+    const compileRun = compileAndReport(stacks.root, { embeddings: false });
     await extraction.reached;
 
-    expect(await isKeyHeldElsewhere(requestStackId)).toBe(true);
+    expect(await isKeyHeldElsewhere(stacks.requestStackId)).toBe(true);
 
     extraction.release();
     expect(await compileRun).toMatchObject({ errors: [] });
-    expect(await isKeyHeldElsewhere(requestStackId)).toBe(false);
+    expect(await isKeyHeldElsewhere(stacks.requestStackId)).toBe(false);
   });
 });

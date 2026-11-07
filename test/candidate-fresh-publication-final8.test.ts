@@ -43,7 +43,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
   it("preserves a pending collision and retries with a distinct id", async () => {
     const existing = await plant("pending", COLLISION, "manual-authority");
 
-    const created = await writeFreshCandidate(root.dir, draft(), {
+    const created = await writeFreshCandidate(root.dir, process.env, draft(), {
       idForAttemptForTest: ids(COLLISION, SECOND),
     });
 
@@ -55,7 +55,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
   it("does not reuse an archived predecessor identity", async () => {
     const archived = await plant("archive", COLLISION, "archived-authority");
 
-    const created = await writeFreshCandidate(root.dir, draft(), {
+    const created = await writeFreshCandidate(root.dir, process.env, draft(), {
       idForAttemptForTest: ids(COLLISION, SECOND),
     });
 
@@ -72,7 +72,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
     await writeFile(authority, "manual-authority");
     await symlink(authority, collision);
 
-    const created = await writeFreshCandidate(root.dir, draft(), {
+    const created = await writeFreshCandidate(root.dir, process.env, draft(), {
       idForAttemptForTest: ids(COLLISION, SECOND),
     });
 
@@ -84,7 +84,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
   it("loses a publish race without replacing the raced pending leaf", async () => {
     const raced = path.join(root.dir, ".llmwiki", "candidates", `${COLLISION}.json`);
 
-    const created = await writeFreshCandidate(root.dir, draft(), {
+    const created = await writeFreshCandidate(root.dir, process.env, draft(), {
       idForAttemptForTest: ids(COLLISION, SECOND),
       beforePublishForTest: async (_id, attempt) => {
         if (attempt === 0) await writeFile(raced, "raced-authority");
@@ -96,7 +96,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
   });
 
   it("treats post-link cleanup failure as committed publication", async () => {
-    const created = await writeFreshCandidate(root.dir, draft(), {
+    const created = await writeFreshCandidate(root.dir, process.env, draft(), {
       idForAttemptForTest: ids(SECOND),
       afterPublishForTest: async () => { throw new Error("cleanup failed"); },
     });
@@ -112,7 +112,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
     const before = await snapshotCandidateQueue(root.dir);
     let attempts = 0;
 
-    const writing = writeFreshCandidate(root.dir, draft(), {
+    const writing = writeFreshCandidate(root.dir, process.env, draft(), {
       idForAttemptForTest: () => { attempts += 1; return COLLISION; },
     });
 

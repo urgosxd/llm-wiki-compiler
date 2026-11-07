@@ -44,7 +44,7 @@ const FOO_LINK_PAGE = [
 describe("pending-target lint", () => {
   it("reports pending-target instead of broken-wikilink and does not penalize health", async () => {
     await env.writeConcept("live-page", LIVE_PAGE);
-    await writeCandidate(env.dir, {
+    await writeCandidate(env.dir, process.env, {
       title: "Pending Page",
       slug: "pending-page",
       summary: "Pending.",
@@ -67,7 +67,7 @@ describe("pending-target lint", () => {
 
   it("does NOT suppress a broken wikilink for a TYPED pending candidate", async () => {
     await env.writeConcept("foo-linker", FOO_LINK_PAGE);
-    await writeCandidate(env.dir, {
+    await writeCandidate(env.dir, process.env, {
       title: "Foo",
       slug: "foo",
       summary: "Typed foo.",
@@ -83,7 +83,7 @@ describe("pending-target lint", () => {
 
   it("still demotes a broken wikilink for a DEFAULT pending candidate", async () => {
     await env.writeConcept("foo-linker", FOO_LINK_PAGE);
-    await writeCandidate(env.dir, {
+    await writeCandidate(env.dir, process.env, {
       title: "Foo",
       slug: "foo",
       summary: "Default foo.",

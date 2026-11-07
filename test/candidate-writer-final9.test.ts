@@ -23,6 +23,7 @@ const SECOND = "generic-second";
 
 type GenericWriter = (
   root: string,
+  env: NodeJS.ProcessEnv,
   draft: CandidateDraft,
   options?: FreshCandidateWriteOptions,
 ) => ReturnType<typeof writeCandidate>;
@@ -34,7 +35,7 @@ function draft(body = "new"): CandidateDraft {
 
 /** Call the future options-bearing generic writer without weakening its public type. */
 function writeGeneric(options: FreshCandidateWriteOptions) {
-  return (writeCandidate as GenericWriter)(root.dir, draft(), options);
+  return (writeCandidate as GenericWriter)(root.dir, process.env, draft(), options);
 }
 
 /** Plant exact authority in pending or archive. */
@@ -122,10 +123,10 @@ describe("Final9 generic collision-exclusive publication", () => {
   });
 
   it("refuses canonical replacement when its custody changes before commit", async () => {
-    const first = await writeCandidate(root.dir, draft("first"));
+    const first = await writeCandidate(root.dir, process.env, draft("first"));
     const file = path.join(root.dir, ".llmwiki", "candidates", `${first.id}.json`);
 
-    const replacing = (writeCandidate as GenericWriter)(root.dir, draft("second"), {
+    const replacing = (writeCandidate as GenericWriter)(root.dir, process.env, draft("second"), {
       beforePublishForTest: async () => { await writeFile(file, "raced-authority"); },
     });
 
@@ -134,12 +135,12 @@ describe("Final9 generic collision-exclusive publication", () => {
   });
 
   it("refuses canonical replacement when archive also owns the identity", async () => {
-    const first = await writeCandidate(root.dir, draft("first"));
+    const first = await writeCandidate(root.dir, process.env, draft("first"));
     const pending = path.join(root.dir, ".llmwiki", "candidates", `${first.id}.json`);
     const archived = await plant("archive", first.id, "historical-authority");
     const before = await readFile(pending, "utf8");
 
-    await expect(writeCandidate(root.dir, draft("second")))
+    await expect(writeCandidate(root.dir, process.env, draft("second")))
       .rejects.toBeInstanceOf(CandidateCustodyUnavailableError);
     expect(await readFile(pending, "utf8")).toBe(before);
     expect(await readFile(archived, "utf8")).toContain("historical-authority");

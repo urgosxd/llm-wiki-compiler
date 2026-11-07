@@ -482,7 +482,7 @@ function handleApiGraph(res: ServerResponse, snapshot: ViewerSnapshot): void {
  * and every absolute path (see `buildReviewsEnvelope`).
  */
 async function handleApiReviews(res: ServerResponse, root: string): Promise<void> {
-  writeJson(res, 200, buildReviewsEnvelope(await listCandidatePage(root, REVIEW_LIST_LIMIT)));
+  writeJson(res, 200, buildReviewsEnvelope(await listCandidatePage(root, process.env, REVIEW_LIST_LIMIT)));
 }
 
 /** `/api/health` — cheap status summary. */

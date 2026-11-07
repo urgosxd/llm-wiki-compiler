@@ -52,9 +52,9 @@ function partition(pages: MappedOkfPage[], collisionSkips: OkfImportSkip[]): { v
   return { valid, skipped: [...collisionSkips, ...invalid] };
 }
 
-async function stageAll(root: string, valid: MappedOkfPage[]): Promise<void> {
+async function stageAll(root: string, valid: MappedOkfPage[], env: NodeJS.ProcessEnv): Promise<void> {
   for (const page of valid) {
-    await writeCandidate(root, {
+    await writeCandidate(root, env, {
       title: page.title, slug: page.slug, summary: page.summary, sources: page.sources, body: page.body,
       reviewMode: "imported", heldReasons: [{ code: "imported-okf" }],
       targetDirectory: page.targetDirectory, okfPath: page.okfPath,
@@ -152,7 +152,7 @@ export async function runOkfImport(root: string, dir: string, opts: OkfImportOpt
     const { valid, skipped: allSkipped } = partition(imported.pages, imported.skipped as OkfImportSkip[]);
     await assertQueueCapacity(root, valid.length, opts);
     if (opts.trusted) await writeAll(root, valid, env);
-    else await stageAll(root, valid);
+    else await stageAll(root, valid, env);
     const bundle = await bundleSectionsFor(root, imported.bundleBlock);
     return {
       mode: opts.trusted ? "written" : "staged",

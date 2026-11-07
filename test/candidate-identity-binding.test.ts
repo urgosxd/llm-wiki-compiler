@@ -77,7 +77,7 @@ async function expectMismatchRefusal(
   const before = await snapshotQueueFiles();
   let caught: unknown;
   try {
-    await writeCandidate(root.dir, targetDraft());
+    await writeCandidate(root.dir, process.env, targetDraft());
   } catch (error) {
     caught = error;
   }
@@ -130,7 +130,7 @@ describe("candidate mutation identity binding", () => {
     await plantCandidate({ fileId: "unrelated-file", slug: UNRELATED_SLUG });
     const before = await snapshotQueueFiles();
 
-    const created = await writeCandidate(root.dir, targetDraft());
+    const created = await writeCandidate(root.dir, process.env, targetDraft());
     const after = await snapshotQueueFiles();
 
     expect(created.id).toBe("canonical");
@@ -145,7 +145,7 @@ describe("candidate mutation identity binding", () => {
     });
     const before = await snapshotQueueFiles();
 
-    const created = await writeCandidate(root.dir, targetDraft());
+    const created = await writeCandidate(root.dir, process.env, targetDraft());
     const after = await snapshotQueueFiles();
 
     expect(created.id).toMatch(/^target-topic-[0-9a-f]{8}$/);

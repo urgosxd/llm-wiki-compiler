@@ -54,7 +54,7 @@ async function plantInProjectAlias(id = "planted"): Promise<string> {
 async function withUnreadablePending(
   assertion: (candidateId: string) => Promise<void>,
 ): Promise<string> {
-  const candidate = await writeCandidate(root.dir, draft());
+  const candidate = await writeCandidate(root.dir, process.env, draft());
   const dir = path.join(root.dir, ".llmwiki", "candidates");
   await chmod(dir, 0o000);
   try {
@@ -76,15 +76,15 @@ describe("Confined candidate namespaces", () => {
     const planted = await plantInProjectAlias();
     const before = await readFile(planted, "utf8");
 
-    await expect(writeCandidate(root.dir, draft())).rejects.toBeInstanceOf(CandidatePublicationUnavailableError);
+    await expect(writeCandidate(root.dir, process.env, draft())).rejects.toBeInstanceOf(CandidatePublicationUnavailableError);
     expect(await readFile(planted, "utf8")).toBe(before);
   });
 
   it("reads and deletes through a stable in-project pending alias", async () => {
     const planted = await plantInProjectAlias();
 
-    expect((await readCandidate(root.dir, "planted"))?.id).toBe("planted");
-    await expect(deleteCandidate(root.dir, "planted")).resolves.toBe(true);
+    expect((await readCandidate(root.dir, process.env, "planted"))?.id).toBe("planted");
+    await expect(deleteCandidate(root.dir, process.env, "planted")).resolves.toBe(true);
     await expect(lstat(planted)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -118,7 +118,7 @@ describe("Confined candidate namespaces", () => {
 
   it("keeps advisory reads tolerant but refuses unreadable mutation authority", async () => {
     await withUnreadablePending(async (candidateId) => {
-      await expect(readCandidate(root.dir, candidateId)).resolves.toBeNull();
+      await expect(readCandidate(root.dir, process.env, candidateId)).resolves.toBeNull();
       await expect(readCandidateEntryForMutation(root.dir, candidateId))
         .rejects.toBeInstanceOf(CandidateCustodyUnavailableError);
     });
@@ -133,7 +133,7 @@ describe("Confined candidate namespaces", () => {
 
   it("reports unreadable delete authority without removing the candidate", async () => {
     const file = await withUnreadablePending(async (candidateId) => {
-      await expect(deleteCandidate(root.dir, candidateId))
+      await expect(deleteCandidate(root.dir, process.env, candidateId))
         .rejects.toBeInstanceOf(CandidateCustodyUnavailableError);
     });
 

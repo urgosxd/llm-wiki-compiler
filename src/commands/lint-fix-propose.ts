@@ -94,7 +94,7 @@ async function proposeLocked(root: string, n: number): Promise<number> {
   const current = await readFile(edit.file, "utf8");
   const meta = parseFrontmatter(current).meta as { title?: unknown; summary?: unknown };
   const slug = path.basename(edit.file, ".md");
-  const candidate = await writeCandidate(root, {
+  const candidate = await writeCandidate(root, process.env, {
     title: typeof meta.title === "string" ? meta.title : slug,
     slug,
     summary: typeof meta.summary === "string" ? meta.summary : "",

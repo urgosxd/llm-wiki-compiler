@@ -16,22 +16,22 @@ const root = useTempRoot();
 
 it("round trips the exact kind and manifest through all consumed reads", async () => {
   const draft = answerDraft();
-  const created = await writeFreshCandidate(root.dir, draft);
+  const created = await writeFreshCandidate(root.dir, process.env, draft);
   expect(created).toMatchObject(draft);
-  expect(await readCandidate(root.dir, created.id)).toEqual(created);
+  expect(await readCandidate(root.dir, process.env, created.id)).toEqual(created);
   expect((await readCandidateSnapshot(root.dir, created.id))?.candidate).toEqual(created);
   expect((await listCandidates(root.dir))[0]).toEqual(created);
-  expect((await listCandidatePage(root.dir, 10)).candidates).toEqual([created]);
+  expect((await listCandidatePage(root.dir, process.env, 10)).candidates).toEqual([created]);
   expect(await readFile(candidateFile(root.dir, created.id), "utf8")).toBe(JSON.stringify(created, null, 2));
 });
 
 it("preserves legacy bytes and omission of both additive fields", async () => {
   const draft = { title: "Old", slug: "old", summary: "", sources: [], body: "Old body" };
-  const created = await writeCandidate(root.dir, draft);
+  const created = await writeCandidate(root.dir, process.env, draft);
   const expected = { id: created.id, ...draft, generatedAt: created.generatedAt,
     reviewMode: "forced", heldReasons: [{ code: "manual-review-requested" }] };
   expect(await readFile(candidateFile(root.dir, created.id), "utf8")).toBe(JSON.stringify(expected, null, 2));
-  expect(await readCandidate(root.dir, created.id)).toEqual(expected);
+  expect(await readCandidate(root.dir, process.env, created.id)).toEqual(expected);
 });
 
 it.each([
@@ -51,26 +51,26 @@ it.each([
   ["unsafe internal id", { id: "../outside" }],
   ["mismatched internal id", { id: "other" }],
 ])("skips %s with a named warning and retains original bytes", async (_name, changes) => {
-  const created = await writeFreshCandidate(root.dir, answerDraft());
+  const created = await writeFreshCandidate(root.dir, process.env, answerDraft());
   const raw = await replaceCandidate(root.dir, created.id, { ...created, ...changes });
   const note = vi.spyOn(output, "note").mockImplementation(() => {});
-  expect(await readCandidate(root.dir, created.id)).toBeNull();
+  expect(await readCandidate(root.dir, process.env, created.id)).toBeNull();
   expect(await listCandidates(root.dir, { strictIo: true })).toEqual([]);
   expect(await countCandidates(root.dir)).toBe(0);
-  const targeted = readCandidate(root.dir, created.id, { rejectInvalidMetadata: true });
+  const targeted = readCandidate(root.dir, process.env, created.id, { rejectInvalidMetadata: true });
   await expect(targeted).rejects.toBeInstanceOf(InvalidCandidateMetadataError);
   await expect(targeted).rejects.toMatchObject({ name: "InvalidCandidateMetadataError", candidateId: created.id });
-  expect(await listCandidatePage(root.dir, 10)).toEqual({ candidates: [], total: 0 });
+  expect(await listCandidatePage(root.dir, process.env, 10)).toEqual({ candidates: [], total: 0 });
   expect(note).toHaveBeenCalledWith(expect.stringContaining(`InvalidCandidateMetadata: ${created.id}`));
   expect(await readFile(candidateFile(root.dir, created.id), "utf8")).toBe(raw);
 });
 
 it("targeted metadata diagnostics are invalid-candidate rather than not-found", async () => {
-  const created = await writeFreshCandidate(root.dir, answerDraft());
+  const created = await writeFreshCandidate(root.dir, process.env, answerDraft());
   await replaceCandidate(root.dir, created.id, { ...created, citationManifest: undefined });
   const status = vi.spyOn(output, "status").mockImplementation(() => {});
   try {
-    expect(await loadCandidateOrFail(root.dir, created.id)).toBeNull();
+    expect(await loadCandidateOrFail(root.dir, process.env, created.id)).toBeNull();
     expect(process.exitCode).toBe(1);
     expect(status.mock.calls.flat().join(" ")).toContain("InvalidCandidateMetadata");
     expect(status.mock.calls.flat().join(" ")).not.toContain("not found");
@@ -80,6 +80,6 @@ it("targeted metadata diagnostics are invalid-candidate rather than not-found", 
 it("rejects invalid draft metadata before any write or generic canonicalization", async () => {
   const draft = answerDraft();
   const invalid = { ...draft, citationManifest: undefined };
-  await expect(writeCandidate(root.dir, invalid)).rejects.toMatchObject({ name: "InvalidCandidateMetadataError" });
+  await expect(writeCandidate(root.dir, process.env, invalid)).rejects.toMatchObject({ name: "InvalidCandidateMetadataError" });
   expect(await listCandidates(root.dir)).toEqual([]);
 });

@@ -79,7 +79,7 @@ async function withApprovedCandidate(
   try {
     if (!harness.reachable) return;
     await withStackEnvFor(harness, async () => {
-      const candidate = await writeCandidate(project.root, {
+      const candidate = await writeCandidate(project.root, process.env, {
         title: "Row Only", slug: SLUG, summary: "", sources: [], body: BODY,
       });
       const { default: reviewApproveCommand } = await import("../../src/commands/review-approve.js");

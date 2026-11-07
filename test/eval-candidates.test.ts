@@ -34,7 +34,7 @@ describe("pending candidate evaluation", () => {
 
   /** A real persisted candidate, with an optional original-source fingerprint. */
   async function stage(text = body, file = "ref.md", original: string | undefined = source) {
-    return writeCandidate(env.dir, { title: "Pending", slug: "same", summary: "Draft", body: text,
+    return writeCandidate(env.dir, process.env, { title: "Pending", slug: "same", summary: "Draft", body: text,
       sources: [file], ...(original === undefined ? {} : { sourceStates: {
         [file]: { hash: evaluationHash(original), concepts: ["same"], compiledAt: "2026-09-17" },
       } }) });
@@ -47,7 +47,7 @@ describe("pending candidate evaluation", () => {
     // The queue is rows, so "unchanged" is a read-back comparison rather than a byte
     // snapshot of a file. The record is captured through the same accessor the reader
     // uses, so the revision the evaluator hashes is comparable run to run.
-    const original = ser(await readCandidate(env.dir, candidate.id));
+    const original = ser(await readCandidate(env.dir, process.env, candidate.id));
     await mkdir(path.join(env.dir, ".llmwiki"), { recursive: true });
     await writeFile(path.join(env.dir, ".llmwiki/state.json"), "original-state");
     await evaluateCitationSupport(env.dir);
@@ -56,7 +56,7 @@ describe("pending candidate evaluation", () => {
     expect(report.candidates[0]).toMatchObject({ id: candidate.id, target: "concepts/same",
       contentHash: evaluationHash(body) });
     expect(report.assessments[0].judgement?.pageSlug).toContain(`candidate:${candidate.id}@`);
-    expect(ser(await readCandidate(env.dir, candidate.id))).toBe(original);
+    expect(ser(await readCandidate(env.dir, process.env, candidate.id))).toBe(original);
     expect(await readFile(path.join(env.dir, "wiki/concepts/same.md"), "utf8")).toBe(body);
     expect(await readFile(path.join(env.dir, ".llmwiki/state.json"), "utf8")).toBe("original-state");
     await expect(readFile(path.join(env.dir, ".llmwiki/eval/history.jsonl"))).rejects.toThrow();
@@ -88,7 +88,7 @@ describe("pending candidate evaluation", () => {
   it("binds unrecorded evidence to actual bytes and invalidates changed spans", async () => {
     await env.writeSource("ref.md", source);
     // Legacy/imported records may never have recorded generation hashes.
-    await writeCandidate(env.dir, { title: "Legacy", slug: "legacy", summary: "", sources: ["ref.md"], body });
+    await writeCandidate(env.dir, process.env, { title: "Legacy", slug: "legacy", summary: "", sources: ["ref.md"], body });
     const first = await evaluateCandidates(env.dir, "full");
     expect(first.assessments[0].evidence).toMatchObject({ status: "unrecorded", sourceHash: evaluationHash(source), spanText: source });
     await env.writeSource("ref.md", "Different first line.\nDifferent second line.");
@@ -156,7 +156,7 @@ describe("pending candidate evaluation", () => {
   });
 
   it("includes typed and malformed records as skips without judging them", async () => {
-    const candidate = await writeCandidate(env.dir, { title: "Typed", slug: "typed", summary: "",
+    const candidate = await writeCandidate(env.dir, process.env, { title: "Typed", slug: "typed", summary: "",
       body, sources: [], targetEntityType: "papers" });
     await writeFile(path.join(env.dir, ".llmwiki/candidates/broken.json"), "not-json");
     const report = await evaluateCandidates(env.dir, "full");

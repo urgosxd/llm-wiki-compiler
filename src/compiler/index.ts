@@ -1744,7 +1744,7 @@ async function finalizeWiki(
     // Compute + apply the resolution rewrites as ONE journalled batch. compile
     // holds the project lock for its whole pipeline → the lock-free seam.
     await resolveAndApplyLinks(
-      root, allChangedSlugs, allNewSlugs, resolverSource, seams.sink, seams.remover,
+      root, env, allChangedSlugs, allNewSlugs, resolverSource, seams.sink, seams.remover,
       seams.transaction, linkGateFor(seams, totals?.linkCounts), seams.curatedLinks,
     );
     // Resolution adds links for titles it recognises; repair fixes links the
@@ -1752,7 +1752,7 @@ async function finalizeWiki(
     // used. Ordered after resolution so a link resolution has just created is
     // already valid and never looks repairable.
     await repairAndApplyLinks(
-      root, seams.content, seams.scan, seams.sink, seams.remover, seams.transaction);
+      root, env, seams.content, seams.scan, seams.sink, seams.remover, seams.transaction);
     // The reference review runs LAST, and the position is the contract rather than a
     // convenience. Three properties depend on it:
     //   1. It needs every article of the run to exist, so a page it edits links to a

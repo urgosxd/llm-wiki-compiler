@@ -74,6 +74,12 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     throw new Error(`createWiki: root exists but is not a directory: ${root}`);
   }
 
+  // THE BOUNDARY for the SDK. `CreateWikiOptions.env` is the optional request
+  // environment; omitting it targets the AMBIENT Stack, which is the documented
+  // contract. Resolved ONCE here so no method below can disagree about the tenant it
+  // is addressing — the defect this replaces read `process.env` inside each method.
+  const env = options.env ?? process.env;
+
   return {
     ingest: ({ source }) => runQuiet(() => ingestSource(root, source)),
 
@@ -90,7 +96,7 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
         ensureProviderAvailable();
         // One source for ranking AND hydration: selecting against rows and then
         // reading files would drop every ref of a Stack-backed wiki as absent.
-        const selected = await withRegistrySource(process.env, async (registrySource) => {
+        const selected = await withRegistrySource(env, async (registrySource) => {
           const { refs, warnings } = await pickSearchRefs(root, question, { ...opts, registrySource });
           return { refs, warnings, pages: await loadSelectedRefs(root, refs, registrySource) };
         });
@@ -103,7 +109,7 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
         ensureProviderAvailable();
         // The registry source is an internal handle, never part of the public SDK
         // options, so the facade resolves it here for every embedder.
-        return withRegistrySource(process.env, (registrySource) =>
+        return withRegistrySource(env, (registrySource) =>
           generateAnswer(root, question, { ...opts, registrySource }),
         );
       }),
@@ -112,10 +118,10 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     // seam so a listing and a single-page read can never disagree about which
     // backend they are looking at.
     getPage: (ref) =>
-      runQuiet(() => withPageSource(process.env, (source) => getPage(root, ref, source))),
+      runQuiet(() => withPageSource(env, (source) => getPage(root, ref, source))),
 
     listPages: (opts) =>
-      runQuiet(() => withPageSource(process.env, (source) => listPages(root, { ...opts, pageSource: source }))),
+      runQuiet(() => withPageSource(env, (source) => listPages(root, { ...opts, pageSource: source }))),
 
     listSources: (opts) => runQuiet(() => listSources(root, opts)),
 

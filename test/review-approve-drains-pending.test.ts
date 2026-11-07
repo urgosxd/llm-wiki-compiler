@@ -45,7 +45,7 @@ describe("review approve drains the pending-embeddings marker", () => {
       { pageId: PENDING_A, attempts: 0 },
       { pageId: PENDING_B, attempts: 0 },
     ]);
-    const candidate = await writeCandidate(ctx.dir, {
+    const candidate = await writeCandidate(ctx.dir, process.env, {
       title: "gamma", slug: "gamma", summary: "A summary",
       sources: ["source.md"], body: validBody("gamma"),
     });

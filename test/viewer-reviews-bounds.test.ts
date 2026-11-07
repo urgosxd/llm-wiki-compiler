@@ -45,7 +45,7 @@ async function seedQueue(count: number): Promise<string> {
   const root = await makeTempRoot("reviews-bounds");
   for (let i = 0; i < count; i++) {
     const slug = `candidate-${String(i).padStart(3, "0")}`;
-    await writeFreshCandidate(root, {
+    await writeFreshCandidate(root, process.env, {
       title: `Candidate ${i}`,
       slug,
       summary: `Summary ${i}`,
@@ -60,21 +60,21 @@ async function seedQueue(count: number): Promise<string> {
 describe("listCandidatePage — bounded disk I/O", () => {
   it("reads only the served slice, not the whole queue", async () => {
     const root = await seedQueue(12);
-    const page = await listCandidatePage(root, 5);
+    const page = await listCandidatePage(root, process.env, 5);
     expect(page.candidates).toHaveLength(5);
     expect(candidateReadCount()).toBe(5);
   });
 
   it("reports the true total without reading past the slice", async () => {
     const root = await seedQueue(12);
-    const page = await listCandidatePage(root, 5);
+    const page = await listCandidatePage(root, process.env, 5);
     expect(page.total).toBe(12);
     expect(candidateReadCount()).toBe(5);
   });
 
   it("reads the whole queue only when the whole queue fits under the limit", async () => {
     const root = await seedQueue(4);
-    const page = await listCandidatePage(root, 5);
+    const page = await listCandidatePage(root, process.env, 5);
     expect(page.candidates).toHaveLength(4);
     expect(page.total).toBe(4);
     expect(candidateReadCount()).toBe(4);
@@ -83,7 +83,7 @@ describe("listCandidatePage — bounded disk I/O", () => {
   it("reads nothing when no candidates directory exists", async () => {
     const root = await makeTempRoot("reviews-bounds-empty");
     vi.mocked(safeReadFile).mockClear();
-    expect(await listCandidatePage(root, 5)).toEqual({ candidates: [], total: 0 });
+    expect(await listCandidatePage(root, process.env, 5)).toEqual({ candidates: [], total: 0 });
     expect(candidateReadCount()).toBe(0);
   });
 });
@@ -91,7 +91,7 @@ describe("listCandidatePage — bounded disk I/O", () => {
 describe("listCandidatePage — ordering guarantee", () => {
   it("serves the first N by ascending candidate file id, the order it documents", async () => {
     const root = await seedQueue(12);
-    const page = await listCandidatePage(root, 5);
+    const page = await listCandidatePage(root, process.env, 5);
     const slugs = page.candidates.map((candidate) => candidate.slug);
     expect(slugs).toEqual([
       "candidate-000",
@@ -104,8 +104,8 @@ describe("listCandidatePage — ordering guarantee", () => {
 
   it("serves the same slice on every call, so a revisit is not a reshuffle", async () => {
     const root = await seedQueue(12);
-    const first = await listCandidatePage(root, 5);
-    const second = await listCandidatePage(root, 5);
+    const first = await listCandidatePage(root, process.env, 5);
+    const second = await listCandidatePage(root, process.env, 5);
     expect(second.candidates.map((c) => c.id)).toEqual(first.candidates.map((c) => c.id));
   });
 });

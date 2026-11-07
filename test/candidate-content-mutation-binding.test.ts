@@ -48,7 +48,7 @@ async function plantCandidate(fixture: CandidateFixture): Promise<void> {
 /** Assert deletion refuses with the expected type and preserves every byte. */
 async function expectDeleteRefusal(errorType: new (...args: any[]) => Error): Promise<void> {
   const before = await snapshotCandidateQueue(root.dir);
-  await expect(deleteCandidateBySlug(root.dir, TARGET_SLUG)).rejects.toBeInstanceOf(errorType);
+  await expect(deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG)).rejects.toBeInstanceOf(errorType);
   expect(await snapshotCandidateQueue(root.dir)).toEqual(before);
 }
 
@@ -83,7 +83,7 @@ describe("content-selected candidate deletion", () => {
     await plantCandidate({ fileId: "unrelated-file", slug: OTHER_SLUG });
     const unrelated = (await snapshotCandidateQueue(root.dir))["unrelated-file.json"];
 
-    await expect(deleteCandidateBySlug(root.dir, TARGET_SLUG)).resolves.toBe(true);
+    await expect(deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG)).resolves.toBe(true);
 
     expect(await snapshotCandidateQueue(root.dir)).toEqual({ "unrelated-file.json": unrelated });
   });
@@ -93,7 +93,7 @@ describe("content-selected candidate deletion", () => {
     await plantCandidate({ fileId: "other-file", recordId: "other-record", slug: OTHER_SLUG });
     const before = await snapshotCandidateQueue(root.dir);
 
-    await expect(deleteCandidateBySlug(root.dir, TARGET_SLUG)).resolves.toBe(true);
+    await expect(deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG)).resolves.toBe(true);
 
     expect(await snapshotCandidateQueue(root.dir)).toEqual({ "other-file.json": before["other-file.json"] });
   });

@@ -86,7 +86,7 @@ async function writeRunPage(
 
 /** Run the link phase exactly as `finalizeWiki` does for this run's pages. */
 async function runLinkPhase(root: string, changed: string[], added: string[]): Promise<void> {
-  await resolveAndApplyLinks(root, changed, added);
+  await resolveAndApplyLinks(root, process.env, changed, added);
 }
 
 /** The body a reader would get for one page of the isolated wiki. */

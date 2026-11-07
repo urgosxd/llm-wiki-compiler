@@ -23,7 +23,7 @@ afterEach(() => { process.exitCode = 0; });
 
 /** Persist unsupported metadata and return its exact original bytes. */
 async function invalidCandidate() {
-  const candidate = await writeFreshCandidate(root.dir, answerDraft());
+  const candidate = await writeFreshCandidate(root.dir, process.env, answerDraft());
   const raw = await replaceCandidate(root.dir, candidate.id, { ...candidate,
     id: "../untrusted", candidateKind: { name: "validated-answer", version: 99 } });
   return { id: candidate.id, raw };
@@ -59,7 +59,7 @@ it("keeps report, status, listing and generic writes usable beside invalid metad
   expect(await reportAnswerCitations(root.dir, "[[answer]]")).toEqual({ version: 1,
     citations: [{ target: "answer", status: "broken" }] });
   expect((await collectStatus(root.dir)).pendingCandidates).toBe(0);
-  const generic = await writeCandidate(root.dir, { title: "Answer", slug: "answer", summary: "",
+  const generic = await writeCandidate(root.dir, process.env, { title: "Answer", slug: "answer", summary: "",
     sources: [], body: "Generic", targetDirectory: "queries" });
   expect(generic.id).not.toBe(id);
   expect(await readFile(candidateFile(root.dir, id), "utf8")).toBe(raw);
@@ -103,7 +103,7 @@ it("refuses a candidate symlink to another regular in-project file", async () =>
 });
 
 it("approval rechecks invalid metadata introduced while waiting for its lock", async () => {
-  const candidate = await writeFreshCandidate(root.dir, answerDraft());
+  const candidate = await writeFreshCandidate(root.dir, process.env, answerDraft());
   const status = vi.spyOn(output, "status").mockImplementation(() => {});
   vi.spyOn(lock, "acquireLock").mockImplementation(async () => {
     await replaceCandidate(root.dir, candidate.id, { ...candidate, candidateKind: { name: "other", version: 1 } });
@@ -118,7 +118,7 @@ it("approval rechecks invalid metadata introduced while waiting for its lock", a
 
 it("rejection rechecks a symlink substituted while waiting for its lock", async () => {
   const { id } = await invalidCandidate();
-  const sibling = await writeFreshCandidate(root.dir, answerDraft());
+  const sibling = await writeFreshCandidate(root.dir, process.env, answerDraft());
   const bytes = await readFile(candidateFile(root.dir, sibling.id), "utf8");
   vi.spyOn(lock, "acquireLock").mockImplementation(async () => {
     await unlink(candidateFile(root.dir, id));

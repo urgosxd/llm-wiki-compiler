@@ -71,10 +71,10 @@ async function expectReservedMatchRefusedWithoutMutation(
 ): Promise<void> {
   const before = await snapshotCandidateFiles();
   await expect(
-    writeCandidate(root.dir, draftFor("legacy-bundle-collision")),
+    writeCandidate(root.dir, process.env, draftFor("legacy-bundle-collision")),
   ).rejects.toBeInstanceOf(UnsafeCandidateIdError);
   expect(await snapshotCandidateFiles()).toEqual(before);
-  expect(await readCandidate(root.dir, fileId)).toMatchObject({
+  expect(await readCandidate(root.dir, process.env, fileId)).toMatchObject({
     id: expectedCandidateId,
     slug: "legacy-bundle-collision",
   });
@@ -97,7 +97,7 @@ async function expectNonreflectingUnsafe(action: () => Promise<unknown>): Promis
 
 describe("candidate id/slug path-traversal safety", () => {
   it("refuses an unsafe traversal slug and writes nothing", async () => {
-    await expect(writeCandidate(root.dir, draftFor("../evil"))).rejects.toBeInstanceOf(
+    await expect(writeCandidate(root.dir, process.env, draftFor("../evil"))).rejects.toBeInstanceOf(
       UnsafeCandidateIdError,
     );
     const dir = path.join(root.dir, CANDIDATES_DIR);
@@ -106,7 +106,7 @@ describe("candidate id/slug path-traversal safety", () => {
   });
 
   it("refuses a slug containing a path separator and writes nothing", async () => {
-    await expect(writeCandidate(root.dir, draftFor("nested/evil"))).rejects.toBeInstanceOf(
+    await expect(writeCandidate(root.dir, process.env, draftFor("nested/evil"))).rejects.toBeInstanceOf(
       UnsafeCandidateIdError,
     );
     expect(existsSync(path.join(root.dir, "nested"))).toBe(false);
@@ -114,15 +114,15 @@ describe("candidate id/slug path-traversal safety", () => {
 
   it("does not escape the candidates dir for a deep traversal slug", async () => {
     await expect(
-      writeCandidate(root.dir, draftFor("../../outside")),
+      writeCandidate(root.dir, process.env, draftFor("../../outside")),
     ).rejects.toBeInstanceOf(UnsafeCandidateIdError);
     expect(existsSync(path.join(path.dirname(root.dir), "outside.json"))).toBe(false);
   });
 
   it("round-trips a normal safe candidate identically", async () => {
-    const created = await writeCandidate(root.dir, draftFor("attention-rag"));
+    const created = await writeCandidate(root.dir, process.env, draftFor("attention-rag"));
     expect(created.id).toMatch(/^attention-rag-[0-9a-f]{8}$/);
-    const loaded = await readCandidate(root.dir, created.id);
+    const loaded = await readCandidate(root.dir, process.env, created.id);
     expect(loaded?.body).toBe(BODY);
     const file = path.join(root.dir, CANDIDATES_DIR, `${created.id}.json`);
     expect(JSON.parse(await readFile(file, "utf8")).slug).toBe("attention-rag");
@@ -133,7 +133,7 @@ describe("candidate id/slug path-traversal safety", () => {
     await mkdir(path.dirname(candidatesPath), { recursive: true });
     await writeFile(candidatesPath, "store access must not occur");
 
-    await expect(writeCandidate(root.dir, draftFor("bnd_new-candidate"))).rejects.toBeInstanceOf(
+    await expect(writeCandidate(root.dir, process.env, draftFor("bnd_new-candidate"))).rejects.toBeInstanceOf(
       UnsafeCandidateIdError,
     );
     expect(await readFile(candidatesPath, "utf8")).toBe("store access must not occur");
@@ -181,7 +181,7 @@ describe("candidate id/slug path-traversal safety", () => {
     const legacyFile = path.join(root.dir, CANDIDATES_DIR, `${LEGACY_BUNDLE_ID}.json`);
     const before = await readFile(legacyFile);
 
-    const created = await writeCandidate(root.dir, draftFor("ordinary-candidate"));
+    const created = await writeCandidate(root.dir, process.env, draftFor("ordinary-candidate"));
 
     expect(created.id).toMatch(/^ordinary-candidate-[0-9a-f]{8}$/);
     expect(await readFile(legacyFile)).toEqual(before);
@@ -195,7 +195,7 @@ describe("candidate id/slug path-traversal safety", () => {
     let caught: unknown;
 
     try {
-      await writeCandidate(root.dir, draftFor("legacy-bundle-collision"));
+      await writeCandidate(root.dir, process.env, draftFor("legacy-bundle-collision"));
     } catch (error) {
       caught = error;
     }
@@ -208,7 +208,7 @@ describe("candidate id/slug path-traversal safety", () => {
   it("reserves every ASCII case variant in the fresh candidate writer", async () => {
     for (const slug of ["bnd_fresh-candidate", "BND_fresh-candidate"]) {
       await expect(
-        writeFreshCandidate(root.dir, draftFor(slug)),
+        writeFreshCandidate(root.dir, process.env, draftFor(slug)),
       ).rejects.toBeInstanceOf(UnsafeCandidateIdError);
     }
   });
@@ -216,7 +216,7 @@ describe("candidate id/slug path-traversal safety", () => {
   it("does not reflect an oversized hostile draft slug", async () => {
     const hostile = `../${"x".repeat(10_000)}\u0000\u0085\u2028\u2029\u202e${SECRET_SENTINEL}`;
 
-    await expectNonreflectingUnsafe(() => writeCandidate(root.dir, draftFor(hostile)));
+    await expectNonreflectingUnsafe(() => writeCandidate(root.dir, process.env, draftFor(hostile)));
 
     const dir = path.join(root.dir, CANDIDATES_DIR);
     expect(existsSync(dir) ? await readdir(dir) : []).toHaveLength(0);
@@ -228,7 +228,7 @@ describe("candidate id/slug path-traversal safety", () => {
     const before = await snapshotCandidateFiles();
 
     await expectNonreflectingUnsafe(
-      () => writeCandidate(root.dir, draftFor("legacy-bundle-collision")),
+      () => writeCandidate(root.dir, process.env, draftFor("legacy-bundle-collision")),
     );
 
     expect(await snapshotCandidateFiles()).toEqual(before);

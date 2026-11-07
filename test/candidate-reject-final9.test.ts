@@ -42,7 +42,7 @@ describe("Final9 custody-bound rejection", () => {
   afterEach(() => { process.exitCode = undefined; });
 
   it("preserves pending and archive bytes when the archive identity is occupied", async () => {
-    const candidate = await writeCandidate(root.dir, draft());
+    const candidate = await writeCandidate(root.dir, process.env, draft());
     const occupied = await occupyArchive(candidate.id);
 
     expect(await archiveCandidate(root.dir, candidate.id)).toBe(false);
@@ -51,7 +51,7 @@ describe("Final9 custody-bound rejection", () => {
   });
 
   it("rejects archive-to-pending aliasing without moving or deleting the source", async () => {
-    const candidate = await writeCandidate(root.dir, draft());
+    const candidate = await writeCandidate(root.dir, process.env, draft());
     const candidates = path.join(root.dir, ".llmwiki", "candidates");
     const pending = path.join(candidates, `${candidate.id}.json`);
     const before = await readFile(pending, "utf8");
@@ -62,7 +62,7 @@ describe("Final9 custody-bound rejection", () => {
   });
 
   it("sets a nonzero exit and never prints success on an occupied archive", async () => {
-    const candidate = await writeCandidate(root.dir, draft());
+    const candidate = await writeCandidate(root.dir, process.env, draft());
     const occupied = await occupyArchive(candidate.id);
     const lines = captureOutput();
 
@@ -74,7 +74,7 @@ describe("Final9 custody-bound rejection", () => {
   });
 
   it("fails at the real CLI boundary without claiming an occupied archive", async () => {
-    const candidate = await writeCandidate(root.dir, draft());
+    const candidate = await writeCandidate(root.dir, process.env, draft());
     const occupied = await occupyArchive(candidate.id);
 
     const result = await runCLI(["review", "reject", candidate.id], root.dir);

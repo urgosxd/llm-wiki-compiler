@@ -44,11 +44,11 @@ function validDraft(slug: string) {
 describe("candidate JSON validation (Issue C)", () => {
   it("preserves public candidate writing when an unrelated record is malformed", async () => {
     await writeMalformedCandidate(root.dir, "bad.json", "{broken");
-    const written = await writeCandidate(root.dir, validDraft("good-slug"));
+    const written = await writeCandidate(root.dir, process.env, validDraft("good-slug"));
     expect((await listCandidates(root.dir)).map(candidate => candidate.id)).toEqual([written.id]);
   });
   it("skips truncated/unparseable JSON and still lists valid candidates", async () => {
-    const valid = await writeCandidate(root.dir, validDraft("good-slug"));
+    const valid = await writeCandidate(root.dir, process.env, validDraft("good-slug"));
     await writeMalformedCandidate(root.dir, "bad-truncated.json", '{"id":"bad-trunc","title":"T","slug":"bad-trunc","body":"B","sources":[');
 
     const candidates = await listCandidates(root.dir);
@@ -77,7 +77,7 @@ describe("candidate JSON validation (Issue C)", () => {
     };
     await writeMalformedCandidate(root.dir, "bad-date-cand.json", JSON.stringify(badDate));
 
-    const candidate = await readCandidate(root.dir, "bad-date-cand");
+    const candidate = await readCandidate(root.dir, process.env, "bad-date-cand");
     expect(candidate).not.toBeNull();
     expect(typeof candidate?.generatedAt).toBe("string");
   });
@@ -95,7 +95,7 @@ describe("candidate JSON validation (Issue C)", () => {
     };
     await writeMalformedCandidate(root.dir, "bogus-mode-cand.json", JSON.stringify(bogusMode));
 
-    const candidate = await readCandidate(root.dir, "bogus-mode-cand");
+    const candidate = await readCandidate(root.dir, process.env, "bogus-mode-cand");
     expect(candidate?.reviewMode).toBe("forced");
   });
 
@@ -111,7 +111,7 @@ describe("candidate JSON validation (Issue C)", () => {
     };
     await writeMalformedCandidate(root.dir, "no-reasons-cand.json", JSON.stringify(noReasons));
 
-    const candidate = await readCandidate(root.dir, "no-reasons-cand");
+    const candidate = await readCandidate(root.dir, process.env, "no-reasons-cand");
     expect(candidate?.heldReasons).toEqual([{ code: "manual-review-requested" }]);
   });
 
@@ -132,12 +132,12 @@ describe("candidate JSON validation (Issue C)", () => {
     };
     await writeMalformedCandidate(root.dir, "unk-code-cand.json", JSON.stringify(unknownCode));
 
-    const candidate = await readCandidate(root.dir, "unk-code-cand");
+    const candidate = await readCandidate(root.dir, process.env, "unk-code-cand");
     expect(candidate?.heldReasons.map((r) => r.code)).toEqual(["low-confidence"]);
   });
 
   it("review list does not throw when malformed files are present", async () => {
-    await writeCandidate(root.dir, validDraft("safe-slug"));
+    await writeCandidate(root.dir, process.env, validDraft("safe-slug"));
     await writeMalformedCandidate(root.dir, "crash-bait.json", "not-json-at-all!!!");
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -147,7 +147,7 @@ describe("candidate JSON validation (Issue C)", () => {
   });
 
   it("review show does not throw for a valid candidate even when malformed files exist", async () => {
-    const good = await writeCandidate(root.dir, validDraft("show-safe-slug"));
+    const good = await writeCandidate(root.dir, process.env, validDraft("show-safe-slug"));
     await writeMalformedCandidate(root.dir, "another-bad.json", '{"broken":}');
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -169,7 +169,7 @@ describe("candidate JSON validation (Issue C)", () => {
     };
     await writeMalformedCandidate(root.dir, "all-bad-reasons.json", JSON.stringify(allBadReasons));
 
-    const candidate = await readCandidate(root.dir, "all-bad-reasons");
+    const candidate = await readCandidate(root.dir, process.env, "all-bad-reasons");
     expect(candidate?.heldReasons).toEqual([{ code: "manual-review-requested" }]);
   });
 });

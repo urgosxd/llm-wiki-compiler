@@ -39,21 +39,21 @@ describe("checkBrokenWikilinks", () => {
   it("does not widen default lint to manually maintained wiki directories", async () => {
     await mkdir(path.join(tmpDir, "wiki", "notes"), { recursive: true });
     await writeFile(path.join(tmpDir, "wiki", "notes", "todo.md"), "See [[Unwritten Page]].");
-    expect(await checkBrokenWikilinks(tmpDir)).toEqual([]);
+    expect(await checkBrokenWikilinks(tmpDir, process.env)).toEqual([]);
   });
 
   it("returns no results when all wikilinks are valid", async () => {
     await writeConcept("machine-learning", "---\ntitle: Machine Learning\n---\nSee [[Neural Networks]].");
     await writeConcept("neural-networks", "---\ntitle: Neural Networks\n---\nA type of ML model.");
 
-    const results = await checkBrokenWikilinks(tmpDir);
+    const results = await checkBrokenWikilinks(tmpDir, process.env);
     expect(results).toHaveLength(0);
   });
 
   it("detects broken wikilinks", async () => {
     await writeConcept("machine-learning", "---\ntitle: Machine Learning\n---\nSee [[Nonexistent Topic]].");
 
-    const results = await checkBrokenWikilinks(tmpDir);
+    const results = await checkBrokenWikilinks(tmpDir, process.env);
     expect(results).toHaveLength(1);
     expect(results[0].rule).toBe("broken-wikilink");
     expect(results[0].severity).toBe("error");
@@ -64,7 +64,7 @@ describe("checkBrokenWikilinks", () => {
     await writeConcept("intro", "---\ntitle: Intro\n---\nSee [[My Query]].");
     await writeQuery("my-query", "---\ntitle: My Query\n---\nAnswer to the query.");
 
-    const results = await checkBrokenWikilinks(tmpDir);
+    const results = await checkBrokenWikilinks(tmpDir, process.env);
     expect(results).toHaveLength(0);
   });
 
@@ -72,7 +72,7 @@ describe("checkBrokenWikilinks", () => {
     const content = "---\ntitle: Test\n---\nLine one.\nLine two.\n[[Missing Page]] here.";
     await writeConcept("test", content);
 
-    const results = await checkBrokenWikilinks(tmpDir);
+    const results = await checkBrokenWikilinks(tmpDir, process.env);
     expect(results).toHaveLength(1);
     expect(results[0].line).toBe(6);
   });
@@ -81,14 +81,14 @@ describe("checkBrokenWikilinks", () => {
     await writeConcept("target-page", "---\ntitle: Target Page\n---\nTarget content.");
     await writeConcept("source-page", "---\ntitle: Source Page\n---\nSee [[target-page|Custom Label]] for details.");
 
-    const results = await checkBrokenWikilinks(tmpDir);
+    const results = await checkBrokenWikilinks(tmpDir, process.env);
     expect(results).toHaveLength(0);
   });
 
   it("reports broken wikilink when pipe alias target does not exist", async () => {
     await writeConcept("source-page", "---\ntitle: Source Page\n---\nSee [[missing-page|Custom Label]] for details.");
 
-    const results = await checkBrokenWikilinks(tmpDir);
+    const results = await checkBrokenWikilinks(tmpDir, process.env);
     expect(results).toHaveLength(1);
     expect(results[0].rule).toBe("broken-wikilink");
     expect(results[0].message).toContain("missing-page|Custom Label");

@@ -10,7 +10,7 @@ afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true })
 describe("imported mode/reason survive candidate sanitization", () => {
   it("keeps reviewMode=imported and code=imported-okf after listCandidates", async () => {
     dir = await mkdtemp(path.join(tmpdir(), "okf-mode-"));
-    await writeCandidate(dir, {
+    await writeCandidate(dir, process.env, {
       title: "A", slug: "a", summary: "s", sources: ["okf:b"], body: "---\ntitle: A\n---\n\nx\n",
       reviewMode: "imported", heldReasons: [{ code: "imported-okf" }],
     });

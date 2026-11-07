@@ -40,7 +40,7 @@ export async function stageQueryProposal(input: {
   const slug = slugify(question);
   const body = parseFrontmatter(document).body;
   const precondition = await captureQueryPrecondition(root, slug);
-  const candidate = await writeFreshCandidate(root, {
+  const candidate = await writeFreshCandidate(root, process.env, {
     title: question, slug, summary: summarizeAnswer(body),
     body: document, sources: [], targetDirectory: "queries", reviewMode: "forced",
     candidateKind: { name: "validated-answer", version: 1 },

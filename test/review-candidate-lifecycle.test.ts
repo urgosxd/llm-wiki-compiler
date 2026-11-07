@@ -37,8 +37,8 @@ function draft(slug: string, body: string) {
 
 describe("pending candidate lifecycle", () => {
   it("supersedes an existing slug while preserving candidate id", async () => {
-    const first = await writeCandidate(root.dir, draft("topic", "first body"));
-    const second = await writeCandidate(root.dir, draft("topic", "second body"));
+    const first = await writeCandidate(root.dir, process.env, draft("topic", "first body"));
+    const second = await writeCandidate(root.dir, process.env, draft("topic", "second body"));
     const all = await listCandidates(root.dir);
 
     expect(second.id).toBe(first.id);
@@ -47,13 +47,13 @@ describe("pending candidate lifecycle", () => {
   });
 
   it("lists and deletes pending candidates by slug", async () => {
-    const candidate = await writeCandidate(root.dir, draft("topic", "body"));
-    expect(await readCandidateBySlug(root.dir, "topic")).toMatchObject({ id: candidate.id });
-    expect(await listLinkResolvablePendingSlugs(root.dir)).toEqual(new Set(["topic"]));
+    const candidate = await writeCandidate(root.dir, process.env, draft("topic", "body"));
+    expect(await readCandidateBySlug(root.dir, process.env, "topic")).toMatchObject({ id: candidate.id });
+    expect(await listLinkResolvablePendingSlugs(root.dir, process.env)).toEqual(new Set(["topic"]));
 
-    expect(await deleteCandidateBySlug(root.dir, "topic")).toBe(true);
-    expect(await readCandidateBySlug(root.dir, "topic")).toBeNull();
-    expect(await deleteCandidateBySlug(root.dir, "topic")).toBe(false);
+    expect(await deleteCandidateBySlug(root.dir, process.env, "topic")).toBe(true);
+    expect(await readCandidateBySlug(root.dir, process.env, "topic")).toBeNull();
+    expect(await deleteCandidateBySlug(root.dir, process.env, "topic")).toBe(false);
   });
 });
 
@@ -81,7 +81,7 @@ describe("duplicate slug canonicalization (Issue D)", () => {
     expect(before.filter((id) => id.startsWith("dup-slug"))).toHaveLength(2);
 
     // writeCandidate should pick the canonical id and delete the extra
-    const result = await writeCandidate(root.dir, draft("dup-slug", "new body"));
+    const result = await writeCandidate(root.dir, process.env, draft("dup-slug", "new body"));
 
     const after = await listCandidateFileIds(candidatesDir);
     const remaining = after.filter((id) => id.startsWith("dup-slug"));
@@ -93,7 +93,7 @@ describe("duplicate slug canonicalization (Issue D)", () => {
     await seedDuplicates(root.dir, "canon-slug");
 
     // writeCandidate triggers canonicalization
-    await writeCandidate(root.dir, draft("canon-slug", "updated body"));
+    await writeCandidate(root.dir, process.env, draft("canon-slug", "updated body"));
 
     const candidates = await listCandidates(root.dir);
     const forSlug = candidates.filter((c) => c.slug === "canon-slug");
@@ -104,9 +104,9 @@ describe("duplicate slug canonicalization (Issue D)", () => {
   it("preserves the earliest id (canonical) when duplicates exist", async () => {
     const { firstId } = await seedDuplicates(root.dir, "early-slug");
 
-    await writeCandidate(root.dir, draft("early-slug", "body"));
+    await writeCandidate(root.dir, process.env, draft("early-slug", "body"));
 
-    const found = await readCandidateBySlug(root.dir, "early-slug");
+    const found = await readCandidateBySlug(root.dir, process.env, "early-slug");
     expect(found?.id).toBe(firstId);
   });
 });

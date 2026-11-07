@@ -18,7 +18,7 @@ describe("okfPath durability across approval + export", () => {
   it("keeps x-okf.okfPath on the live page and surfaces it through collectExportPages", async () => {
     dir = await mkdtemp(path.join(tmpdir(), "okf-okfpath-"));
     const mapped = okfDocToPage(FOREIGN, ctx);
-    await writeCandidate(dir, {
+    await writeCandidate(dir, process.env, {
       title: mapped.title, slug: mapped.slug, summary: mapped.summary, sources: mapped.sources,
       body: mapped.body, reviewMode: "imported", heldReasons: [{ code: "imported-okf" }],
       targetDirectory: mapped.targetDirectory, okfPath: mapped.okfPath,

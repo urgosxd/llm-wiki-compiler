@@ -46,7 +46,7 @@ it("refuses approval of a candidate whose stored manifest recorded the alias as 
   await seedPriorAnswer();
   const document = buildQueryDocument("Answer", "Uses [[old-evidence]].", "2026-09-19T00:00:00Z").document;
   const stale = { version: 1 as const, citations: [{ target: "old-evidence", status: "resolved" as const, pageId: "queries/answer" as const }] };
-  const candidate = (await readCandidate(root.dir, await stageQueryProposal({ root: root.dir, question: "Answer", document, report: stale })))!;
+  const candidate = (await readCandidate(root.dir, process.env, await stageQueryProposal({ root: root.dir, question: "Answer", document, report: stale })))!;
   const before = await candidateBytes(root.dir, candidate.id);
   await approve(candidate.id);
   expect(process.exitCode).toBe(1);

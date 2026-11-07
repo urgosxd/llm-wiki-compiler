@@ -42,9 +42,9 @@ describe("link resolution from rows", () => {
     await sink({ directory: "concepts", slug: "alpha", body: ALPHA });
     await sink({ directory: "concepts", slug: "beta", body: BETA });
 
-    const fromDisk = await resolveLinks(root, ["alpha"], ["beta"]);
+    const fromDisk = await resolveLinks(root, process.env, ["alpha"], ["beta"]);
     const fromRows = await resolveLinks(
-      root, ["alpha"], ["beta"], createResolverPageSource(harness.db, harness.stackId),
+      root, process.env, ["alpha"], ["beta"], createResolverPageSource(harness.db, harness.stackId),
     );
 
     expect(fromRows.map((w) => w.slug)).toEqual(fromDisk.map((w) => w.slug));
@@ -61,7 +61,7 @@ describe("link resolution from rows", () => {
     });
 
     const writes = await resolveLinks(
-      root, ["alpha"], ["beta"], createResolverPageSource(harness.db, harness.stackId),
+      root, process.env, ["alpha"], ["beta"], createResolverPageSource(harness.db, harness.stackId),
     );
 
     expect(writes).toEqual([]);
@@ -82,7 +82,7 @@ describe("link resolution from rows", () => {
 
     // `beta` is NEW and `alpha` is untouched: only the inbound pass can link them.
     const writes = await resolveLinks(
-      root, [], ["beta"], createResolverPageSource(harness.db, harness.stackId),
+      root, process.env, [], ["beta"], createResolverPageSource(harness.db, harness.stackId),
     );
 
     expect(writes.map((w) => w.slug)).toEqual(["alpha"]);

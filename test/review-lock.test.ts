@@ -56,7 +56,7 @@ async function writeSampleCandidate(
   slug: string,
   sourceStates?: ReviewCandidate["sourceStates"],
 ): Promise<ReviewCandidate> {
-  return writeCandidate(root, {
+  return writeCandidate(root, process.env, {
     title,
     slug,
     summary: `${title} summary`,

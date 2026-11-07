@@ -37,7 +37,7 @@ function collectLogOutput(spy: ReturnType<typeof vi.spyOn>): string {
  * tests so the seed → spy → render → collect boilerplate lives in one place.
  */
 async function renderListAndShow(rootDir: string, draft: CandidateDraft): Promise<string> {
-  const candidate = await writeCandidate(rootDir, draft);
+  const candidate = await writeCandidate(rootDir, process.env, draft);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   await reviewListCommand();
   await reviewShowCommand(candidate.id);
@@ -61,14 +61,14 @@ function policyDraft(): CandidateDraft {
 
 describe("review candidate metadata", () => {
   it("defaults writeCandidate metadata to forced manual review", async () => {
-    const candidate = await writeCandidate(root.dir, {
+    const candidate = await writeCandidate(root.dir, process.env, {
       title: "Policy Held",
       slug: "policy-held",
       summary: "Held by policy.",
       sources: [],
       body: BODY,
     });
-    const loaded = await readCandidate(root.dir, candidate.id);
+    const loaded = await readCandidate(root.dir, process.env, candidate.id);
     expect(loaded?.reviewMode).toBe("forced");
     expect(loaded?.heldReasons.map((r) => r.code)).toEqual(["manual-review-requested"]);
   });

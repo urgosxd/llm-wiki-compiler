@@ -182,11 +182,15 @@ export type CandidateWriteOptions = FreshCandidateWriteOptions & CandidateDeleti
  * hand-edited state or a legacy run), this canonicalizes to the earliest id and
  * deletes all extra duplicate files so at most one file per slug remains.
  * @param root - Project root directory.
+ * @param env - Environment naming the Stack the candidate is stored in. REQUIRED: the
+ *   tenant is resolved from THIS environment, so a request that named a Stack stages
+ *   the candidate in that Stack rather than in the bound deployment's.
  * @param draft - The candidate fields to persist.
  * @returns The full ReviewCandidate (with id + generatedAt populated).
  */
 export async function writeCandidate(
   root: string,
+  env: NodeJS.ProcessEnv,
   draft: CandidateDraft,
   options: CandidateWriteOptions = {},
 ): Promise<ReviewCandidate> {
@@ -194,7 +198,7 @@ export async function writeCandidate(
   // canonicalisation, duplicate reconciliation, exclusive allocation -- exists to
   // give a DIRECTORY the identity a row has for free. A Stack's queue is keyed by
   // (stack_id, candidate_id), so the same write is one upsert.
-  const viaRows = await withCandidateSource(process.env, async (source) => {
+  const viaRows = await withCandidateSource(env, async (source) => {
     if (source === undefined) return undefined;
     return await publishCandidateToRows(source, draft, options);
   });
@@ -202,7 +206,7 @@ export async function writeCandidate(
 
   // Validated answers always take a fresh id: a later import or generic write
   // for the same target must never rewrite an answer under its id or delete it.
-  if (Object.hasOwn(draft, "candidateKind")) return writeFreshCandidate(root, draft, options);
+  if (Object.hasOwn(draft, "candidateKind")) return writeFreshCandidate(root, env, draft, options);
   const generatedId = writableCandidateId(draft.slug, 0, options);
   const targetKey = candidateTargetKey(draft);
   const matches = await selectReadableCandidateEntriesForMutation(
@@ -220,13 +224,14 @@ export async function writeCandidate(
 /** Persist a new candidate without target-key canonicalization. Used only by typed staging supersede. */
 export async function writeFreshCandidate(
   root: string,
+  env: NodeJS.ProcessEnv,
   draft: CandidateDraft,
   options: FreshCandidateWriteOptions = {},
 ): Promise<ReviewCandidate> {
   // The typed-staging and validated-answer paths call this directly, bypassing
   // writeCandidate, so it needs the same backend decision rather than falling through
   // to the filesystem allocator.
-  const viaRows = await withCandidateSource(process.env, async (source) => {
+  const viaRows = await withCandidateSource(env, async (source) => {
     if (source === undefined) return undefined;
     const id = writableCandidateId(draft.slug, 0, options);
     const candidate = buildCandidate(draft, id);
@@ -424,12 +429,13 @@ async function deleteCandidateWithCustody(
 /** Remove a pending candidate after capturing its exact current custody. */
 export async function deleteCandidate(
   root: string,
+  env: NodeJS.ProcessEnv,
   id: string,
   hooks: CandidateDeletionHooks = {},
 ): Promise<boolean> {
   // A row has no inode to capture and no parent directory to validate, so the
   // custody preconditions below are vacuous; the delete is the whole operation.
-  const viaRows = await withCandidateSource(process.env, async (source) =>
+  const viaRows = await withCandidateSource(env, async (source) =>
     source === undefined ? undefined : await source.remove(id),
   );
   if (viaRows !== undefined) return viaRows;
@@ -455,6 +461,7 @@ export async function deleteCandidate(
  */
 export async function deleteCandidateBySlug(
   root: string,
+  env: NodeJS.ProcessEnv,
   slug: string,
   hooks: CandidateDeletionHooks = {},
 ): Promise<boolean> {
@@ -463,7 +470,7 @@ export async function deleteCandidateBySlug(
   // Rows answer the whole match in one query: the slug is an indexed comparison, not
   // a directory walk filtered by a parsed target key. Every match is removed, which is
   // what the file path reached by collecting entries first.
-  const viaRows = await withCandidateSource(process.env, async (source) => {
+  const viaRows = await withCandidateSource(env, async (source) => {
     if (source === undefined) return undefined;
     const target = `concepts/${slug}`;
     const matching = (await source.list()).filter(

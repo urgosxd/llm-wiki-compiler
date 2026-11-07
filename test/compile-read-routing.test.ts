@@ -86,7 +86,7 @@ describe("resolution does not re-emit a symlinked page's bytes", () => {
       "---\ntitle: Beta\n---\nBeta mentions Secret here.",
     );
 
-    await resolveLinks(root, ["beta"], ["alpha"]);
+    await resolveLinks(root, process.env, ["beta"], ["alpha"]);
 
     // The escaping symlink (`alpha.md`) is dropped, so its title never enters
     // the index and its bytes are never laundered into another real page. We

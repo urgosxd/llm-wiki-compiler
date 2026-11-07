@@ -37,13 +37,13 @@ export { loadCandidateUnderLockOrFail as readCandidateUnderLock };
 export async function runReviewUnderLock(
   id: string,
   underLock: (root: string, id: string) => Promise<void>,
-  precheck: (root: string, id: string) => Promise<unknown> = loadCandidateOrFail,
+  precheck: (root: string, env: NodeJS.ProcessEnv, id: string) => Promise<unknown> = loadCandidateOrFail,
 ): Promise<void> {
   const root = process.cwd();
 
   // Fast-fail: surface a clear error for obviously missing ids.
   // The callback repeats its admitted or raw-file check under the lock.
-  const preCheck = await precheck(root, id);
+  const preCheck = await precheck(root, process.env, id);
   if (!preCheck) return;
 
   const locked = await acquireMutationLock(root, "review");

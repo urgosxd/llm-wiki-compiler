@@ -33,7 +33,7 @@ describe("resolveLinks", () => {
   // executor batch. Mirror that here so these on-disk assertions exercise the
   // batch model rather than an inline write.
   async function resolveAndApply(changed: string[], newSlugs: string[]): Promise<void> {
-    const writes = await resolveLinks(tmpDir, changed, newSlugs);
+    const writes = await resolveLinks(tmpDir, process.env, changed, newSlugs);
     await applyCompilePageWritesLocked(tmpDir, writes);
   }
 

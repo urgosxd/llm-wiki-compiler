@@ -57,7 +57,7 @@ function collectLog(spy: ReturnType<typeof vi.spyOn>): string {
 describe("typed-target metadata on page candidates", () => {
   it("(a) writeCandidate persists + round-trips targetEntityType + trustDecision", async () => {
     const decision: TrustDecision = "stage-for-review";
-    const created = await writeCandidate(root.dir, {
+    const created = await writeCandidate(root.dir, process.env, {
       title: "Typed Target",
       slug: "typed-target",
       summary: "A typed candidate.",
@@ -67,13 +67,13 @@ describe("typed-target metadata on page candidates", () => {
       trustDecision: decision,
     });
 
-    const loaded = await readCandidate(root.dir, created.id);
+    const loaded = await readCandidate(root.dir, process.env, created.id);
     expect(loaded?.targetEntityType).toBe("papers");
     expect(loaded?.trustDecision).toBe("stage-for-review");
   });
 
   it("(b) PARITY GUARD: a default draft persists JSON with neither key present", async () => {
-    const created = await writeCandidate(root.dir, {
+    const created = await writeCandidate(root.dir, process.env, {
       title: "Default",
       slug: "default-candidate",
       summary: "No typed fields.",
@@ -86,7 +86,7 @@ describe("typed-target metadata on page candidates", () => {
   });
 
   it("(c) sanitizes a malformed trustDecision value on read (field dropped)", async () => {
-    const created = await writeCandidate(root.dir, {
+    const created = await writeCandidate(root.dir, process.env, {
       title: "Malformed",
       slug: "malformed-decision",
       summary: "Bad decision value.",
@@ -97,12 +97,12 @@ describe("typed-target metadata on page candidates", () => {
     const onDisk = { ...(await readCandidateJson(root.dir, created.id)), trustDecision: "bogus" };
     await writeFile(file, JSON.stringify(onDisk));
 
-    const loaded = await readCandidate(root.dir, created.id);
+    const loaded = await readCandidate(root.dir, process.env, created.id);
     expect(loaded?.trustDecision).toBeUndefined();
   });
 
   it("(d) review list rendering is unchanged for a default candidate", async () => {
-    await writeCandidate(root.dir, {
+    await writeCandidate(root.dir, process.env, {
       title: "Default",
       slug: "default-candidate",
       summary: "No typed fields.",

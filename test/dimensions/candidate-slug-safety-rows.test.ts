@@ -32,7 +32,7 @@ function draftFor(slug: string) {
 describe("candidate slug hardening on rows", () => {
   it("refuses a traversal slug and persists nothing", () =>
     withProjectRoot("slug-traversal", async (dir) => {
-      await expect(writeCandidate(dir, draftFor("../evil"))).rejects.toBeInstanceOf(
+      await expect(writeCandidate(dir, process.env, draftFor("../evil"))).rejects.toBeInstanceOf(
         UnsafeCandidateIdError,
       );
       expect(await listCandidates(dir)).toHaveLength(0);
@@ -40,7 +40,7 @@ describe("candidate slug hardening on rows", () => {
 
   it("refuses a slug containing a path separator", () =>
     withProjectRoot("slug-sep", async (dir) => {
-      await expect(writeCandidate(dir, draftFor("a/b"))).rejects.toBeInstanceOf(
+      await expect(writeCandidate(dir, process.env, draftFor("a/b"))).rejects.toBeInstanceOf(
         UnsafeCandidateIdError,
       );
       expect(await listCandidates(dir)).toHaveLength(0);
@@ -48,7 +48,7 @@ describe("candidate slug hardening on rows", () => {
 
   it("refuses a deep traversal slug rather than resolving it", () =>
     withProjectRoot("slug-deep", async (dir) => {
-      await expect(writeCandidate(dir, draftFor("../../../../etc/passwd"))).rejects.toBeInstanceOf(
+      await expect(writeCandidate(dir, process.env, draftFor("../../../../etc/passwd"))).rejects.toBeInstanceOf(
         UnsafeCandidateIdError,
       );
       expect(await listCandidates(dir)).toHaveLength(0);
@@ -56,7 +56,7 @@ describe("candidate slug hardening on rows", () => {
 
   it("round-trips a normal safe slug unchanged", () =>
     withProjectRoot("slug-safe", async (dir) => {
-      const written = await writeCandidate(dir, draftFor("normal-slug"));
+      const written = await writeCandidate(dir, process.env, draftFor("normal-slug"));
 
       expect(written.slug).toBe("normal-slug");
       expect((await listCandidates(dir)).map((c) => c.id)).toEqual([written.id]);
@@ -65,7 +65,7 @@ describe("candidate slug hardening on rows", () => {
   it("does not reflect an oversized hostile slug", () =>
     withProjectRoot("slug-oversize", async (dir) => {
       // A slug past the writable cap must be refused, not echoed into an id.
-      await expect(writeCandidate(dir, draftFor("x".repeat(4096)))).rejects.toThrow();
+      await expect(writeCandidate(dir, process.env, draftFor("x".repeat(4096)))).rejects.toThrow();
       expect(await listCandidates(dir)).toHaveLength(0);
     }));
 });

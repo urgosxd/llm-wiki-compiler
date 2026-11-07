@@ -25,7 +25,7 @@ describe("ReviewCandidate gains targetDirectory + okfPath", () => {
     dir = await mkdtemp(path.join(tmpdir(), "okf-cand-"));
 
     await withStackEnv("okf-cand", async () => {
-      const c = await writeCandidate(dir, {
+      const c = await writeCandidate(dir, process.env, {
         title: "Q", slug: "my-query", summary: "s", sources: ["okf:bundle"],
         body: "---\ntitle: Q\n---\n\nbody\n",
         reviewMode: "imported", heldReasons: [{ code: "imported-okf" }],
@@ -35,7 +35,7 @@ describe("ReviewCandidate gains targetDirectory + okfPath", () => {
       expect(c.okfPath).toBe("queries/my-query.md");
 
       // The same fields survive the round trip through the store.
-      const stored = await readCandidate(dir, c.id);
+      const stored = await readCandidate(dir, process.env, c.id);
       expect(stored?.targetDirectory).toBe("queries");
       expect(stored?.okfPath).toBe("queries/my-query.md");
 

@@ -57,7 +57,7 @@ const recordFor = (id: string) => path.join(root.dir, CANDIDATES_DIR, `${id}.jso
  * step so each reroute test asserts only its own outcome.
  */
 async function approveDraft(slug: string, body?: string): Promise<string> {
-  const candidate = await writeCandidate(root.dir, draftFor(slug, body ?? validBody(slug)));
+  const candidate = await writeCandidate(root.dir, process.env, draftFor(slug, body ?? validBody(slug)));
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   await reviewApproveCommand(candidate.id);

@@ -43,7 +43,7 @@ const SAMPLE_VIOLATION: LintResult = {
 
 describe("candidate schema violations — persistence", () => {
   it("writeCandidate stores schemaViolations when provided", async () => {
-    const candidate = await writeCandidate(root.dir, {
+    const candidate = await writeCandidate(root.dir, process.env, {
       title: "Overview Page",
       slug: "overview-page",
       summary: "An overview.",
@@ -57,7 +57,7 @@ describe("candidate schema violations — persistence", () => {
   });
 
   it("readCandidate round-trips schemaViolations from disk", async () => {
-    const written = await writeCandidate(root.dir, {
+    const written = await writeCandidate(root.dir, process.env, {
       title: "Overview Page",
       slug: "overview-page",
       summary: "An overview.",
@@ -66,12 +66,12 @@ describe("candidate schema violations — persistence", () => {
       schemaViolations: [SAMPLE_VIOLATION],
     });
 
-    const loaded = await readCandidate(root.dir, written.id);
+    const loaded = await readCandidate(root.dir, process.env, written.id);
     expect(loaded?.schemaViolations).toEqual([SAMPLE_VIOLATION]);
   });
 
   it("writeCandidate omits schemaViolations when not provided", async () => {
-    const candidate = await writeCandidate(root.dir, {
+    const candidate = await writeCandidate(root.dir, process.env, {
       title: "Overview Page",
       slug: "overview-page",
       summary: "An overview.",
@@ -85,7 +85,7 @@ describe("candidate schema violations — persistence", () => {
 
 describe("review show — schema violations display", () => {
   it("prints violations block when the candidate has schemaViolations", async () => {
-    const candidate = await writeCandidate(root.dir, {
+    const candidate = await writeCandidate(root.dir, process.env, {
       title: "Overview Page",
       slug: "overview-page",
       summary: "An overview.",
@@ -100,7 +100,7 @@ describe("review show — schema violations display", () => {
   });
 
   it("does not print violations block when the candidate has no schemaViolations", async () => {
-    const candidate = await writeCandidate(root.dir, {
+    const candidate = await writeCandidate(root.dir, process.env, {
       title: "Clean Page",
       slug: "clean-page",
       summary: "No violations.",

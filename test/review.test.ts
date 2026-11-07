@@ -60,7 +60,7 @@ function sampleDraft(slug = "sample-concept") {
 
 describe("candidates module", () => {
   it("writes a candidate JSON file under .llmwiki/candidates/", async () => {
-    const candidate = await writeCandidate(root.dir, sampleDraft());
+    const candidate = await writeCandidate(root.dir, process.env, sampleDraft());
     expect(candidate.id).toMatch(/^sample-concept-[0-9a-f]+$/);
 
     const filePath = path.join(root.dir, CANDIDATES_DIR, `${candidate.id}.json`);
@@ -68,31 +68,31 @@ describe("candidates module", () => {
   });
 
   it("reads back a written candidate verbatim", async () => {
-    const candidate = await writeCandidate(root.dir, sampleDraft());
-    const loaded = await readCandidate(root.dir, candidate.id);
+    const candidate = await writeCandidate(root.dir, process.env, sampleDraft());
+    const loaded = await readCandidate(root.dir, process.env, candidate.id);
     expect(loaded).toEqual(candidate);
   });
 
   it("lists pending candidates sorted by generation time", async () => {
-    const first = await writeCandidate(root.dir, sampleDraft("alpha"));
+    const first = await writeCandidate(root.dir, process.env, sampleDraft("alpha"));
     // Sleep-free ordering: rewrite generatedAt explicitly so the test never races.
     const filePath = path.join(root.dir, CANDIDATES_DIR, `${first.id}.json`);
     const earlier = { ...first, generatedAt: "2025-01-01T00:00:00.000Z" };
     await writeFile(filePath, JSON.stringify(earlier, null, 2));
 
-    const second = await writeCandidate(root.dir, sampleDraft("beta"));
+    const second = await writeCandidate(root.dir, process.env, sampleDraft("beta"));
     const all = await listCandidates(root.dir);
     expect(all.map((c) => c.id)).toEqual([first.id, second.id]);
   });
 
   it("counts candidates without parsing each file body", async () => {
-    await writeCandidate(root.dir, sampleDraft("alpha"));
-    await writeCandidate(root.dir, sampleDraft("beta"));
+    await writeCandidate(root.dir, process.env, sampleDraft("alpha"));
+    await writeCandidate(root.dir, process.env, sampleDraft("beta"));
     expect(await countCandidates(root.dir)).toBe(2);
   });
 
   it("countCandidates and listCandidates agree even with malformed JSON files", async () => {
-    await writeCandidate(root.dir, sampleDraft("good"));
+    await writeCandidate(root.dir, process.env, sampleDraft("good"));
     // Drop a syntactically-broken candidate file alongside the valid one.
     const candidatesDir = path.join(root.dir, CANDIDATES_DIR);
     await writeFile(
@@ -108,18 +108,18 @@ describe("candidates module", () => {
   });
 
   it("returns null when reading a missing candidate", async () => {
-    expect(await readCandidate(root.dir, "no-such-id")).toBeNull();
+    expect(await readCandidate(root.dir, process.env, "no-such-id")).toBeNull();
   });
 
   it("deletes a candidate and reports whether it existed", async () => {
-    const candidate = await writeCandidate(root.dir, sampleDraft());
-    expect(await deleteCandidate(root.dir, candidate.id)).toBe(true);
+    const candidate = await writeCandidate(root.dir, process.env, sampleDraft());
+    expect(await deleteCandidate(root.dir, process.env, candidate.id)).toBe(true);
     expect(existsSync(path.join(root.dir, CANDIDATES_DIR, `${candidate.id}.json`))).toBe(false);
-    expect(await deleteCandidate(root.dir, candidate.id)).toBe(false);
+    expect(await deleteCandidate(root.dir, process.env, candidate.id)).toBe(false);
   });
 
   it("archives a rejected candidate without removing the record", async () => {
-    const candidate = await writeCandidate(root.dir, sampleDraft());
+    const candidate = await writeCandidate(root.dir, process.env, sampleDraft());
     expect(await archiveCandidate(root.dir, candidate.id)).toBe(true);
 
     const pending = path.join(root.dir, CANDIDATES_DIR, `${candidate.id}.json`);
@@ -131,7 +131,7 @@ describe("candidates module", () => {
 
 describe("review approve command", () => {
   it("writes the candidate body into wiki/concepts and clears the candidate", async () => {
-    const candidate = await writeCandidate(root.dir, sampleDraft());
+    const candidate = await writeCandidate(root.dir, process.env, sampleDraft());
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     await reviewApproveCommand(candidate.id);
@@ -147,7 +147,7 @@ describe("review approve command", () => {
 
   it("rejects approval when the candidate body is invalid", async () => {
     const draft = { ...sampleDraft("broken"), body: "no frontmatter here" };
-    const candidate = await writeCandidate(root.dir, draft);
+    const candidate = await writeCandidate(root.dir, process.env, draft);
     vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -162,7 +162,7 @@ describe("review approve command", () => {
 
 describe("review reject command", () => {
   it("archives the candidate without touching wiki/concepts", async () => {
-    const candidate = await writeCandidate(root.dir, sampleDraft());
+    const candidate = await writeCandidate(root.dir, process.env, sampleDraft());
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     await reviewRejectCommand(candidate.id);
@@ -189,7 +189,7 @@ describe("review list and show commands", () => {
   });
 
   it("show prints the candidate id, slug, and body", async () => {
-    const candidate = await writeCandidate(root.dir, sampleDraft());
+    const candidate = await writeCandidate(root.dir, process.env, sampleDraft());
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     await reviewShowCommand(candidate.id);
     const allOutput = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");

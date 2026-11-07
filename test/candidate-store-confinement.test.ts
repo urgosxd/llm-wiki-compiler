@@ -55,21 +55,21 @@ async function outsideEntries(): Promise<string[]> {
 describe("candidate store — symlinked candidates dir (filesystem tampering)", () => {
   it("writeCandidate REFUSES and creates nothing outside root", async () => {
     await symlinkCandidatesOutside();
-    await expect(writeCandidate(ctx.root, draftFor("safe"))).rejects.toBeInstanceOf(UnsafeCandidateDirError);
+    await expect(writeCandidate(ctx.root, process.env, draftFor("safe"))).rejects.toBeInstanceOf(UnsafeCandidateDirError);
     expect(await outsideEntries()).toHaveLength(0);
   });
 
   it("readCandidate over the symlinked dir fails closed, leaving outside untouched", async () => {
     await writeFile(path.join(ctx.outside, "planted.json"), "{}", "utf8");
     await symlinkCandidatesOutside();
-    await expect(readCandidate(ctx.root, "planted")).rejects.toBeInstanceOf(UnsafeCandidateDirError);
+    await expect(readCandidate(ctx.root, process.env, "planted")).rejects.toBeInstanceOf(UnsafeCandidateDirError);
     expect(await outsideEntries()).toEqual(["planted.json"]);
   });
 
   it("deleteCandidate over the symlinked dir fails closed, leaving outside untouched", async () => {
     await writeFile(path.join(ctx.outside, "victim.json"), "{}", "utf8");
     await symlinkCandidatesOutside();
-    await expect(deleteCandidate(ctx.root, "victim")).rejects.toBeInstanceOf(UnsafeCandidateDirError);
+    await expect(deleteCandidate(ctx.root, process.env, "victim")).rejects.toBeInstanceOf(UnsafeCandidateDirError);
     expect(await outsideEntries()).toEqual(["victim.json"]);
   });
 
@@ -90,9 +90,9 @@ describe("candidate store — symlinked candidates dir (filesystem tampering)", 
 
 describe("candidate store — normal dir regression", () => {
   it("round-trips a candidate identically through a REAL candidates dir", async () => {
-    const created = await writeCandidate(ctx.root, draftFor("attention-rag"));
+    const created = await writeCandidate(ctx.root, process.env, draftFor("attention-rag"));
     expect(created.id).toMatch(/^attention-rag-[0-9a-f]{8}$/);
-    const loaded = await readCandidate(ctx.root, created.id);
+    const loaded = await readCandidate(ctx.root, process.env, created.id);
     expect(loaded?.body).toBe(BODY);
     expect(await listCandidates(ctx.root)).toHaveLength(1);
   });

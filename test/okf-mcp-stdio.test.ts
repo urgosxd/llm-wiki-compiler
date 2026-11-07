@@ -22,7 +22,7 @@
  */
 
 import { describe, it, expect, afterAll } from "vitest";
-import { stat, writeFile, mkdir } from "fs/promises";
+import { stat, writeFile, mkdir, readdir } from "fs/promises";
 import path from "path";
 import { useMcpRoot, connectMcpClient } from "./fixtures/mcp-test-env.js";
 import { listCandidates } from "../src/compiler/candidates.js";
@@ -92,7 +92,13 @@ describe("MCP stdio: import_okf stages candidates", () => {
     try {
       const result = await client.callTool({ name: "import_okf", arguments: { dir: "kb", stackId } });
       expect(result.isError).toBeFalsy();
-      expect((await listCandidates(root)).length).toBe(1);
+      // S11: asserts the INTENDED effect — the candidate is staged on the Stack the call
+      // NAMED (read back with that Stack's env) and the ambient file queue stays empty.
+      // The old `listCandidates(root).length === 1` counted the leak instead: staged with
+      // no request Stack id, the write fell through to `.llmwiki/candidates`.
+      const staged = await listCandidates(root, {}, { ...process.env, ...stack.env() });
+      expect(staged.map((c) => c.slug)).toEqual(["a"]);
+      expect(await readdir(path.join(root, ".llmwiki/candidates")).catch(() => [])).toEqual([]);
       expect(payloadOf(result).nextAction).toMatch(/review|approve|staged/i);
     } finally {
       await client.close();

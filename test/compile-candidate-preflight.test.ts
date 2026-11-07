@@ -19,7 +19,7 @@ describe("public-default candidate discovery", () => {
     const large = "x".repeat(5 * 1024 * 1024);
     const file = path.join(project.dir, ".llmwiki", "candidates", "large.json");
     await writeFile(file, large);
-    await expect(writeCandidate(project.dir, {
+    await expect(writeCandidate(project.dir, process.env, {
       title: "Small", slug: "small", summary: "", sources: [], body: "Small body",
     })).resolves.toMatchObject({ slug: "small" });
     expect(await readFile(file, "utf8")).toBe(large);

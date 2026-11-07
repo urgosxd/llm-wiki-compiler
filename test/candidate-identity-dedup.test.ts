@@ -28,11 +28,11 @@ function conceptsDraft(slug: string, body: string) {
 
 /** Write two candidate drafts in order and return every persisted candidate. */
 async function writeBothThenList(
-  firstDraft: Parameters<typeof writeCandidate>[1],
-  secondDraft: Parameters<typeof writeCandidate>[1],
+  firstDraft: Parameters<typeof writeCandidate>[2],
+  secondDraft: Parameters<typeof writeCandidate>[2],
 ) {
-  const first = await writeCandidate(root.dir, firstDraft);
-  await writeCandidate(root.dir, secondDraft);
+  const first = await writeCandidate(root.dir, process.env, firstDraft);
+  await writeCandidate(root.dir, process.env, secondDraft);
   return { first, all: await listCandidates(root.dir) };
 }
 
@@ -41,8 +41,8 @@ async function writeBothThenList(
  * a SINGLE canonical file (same id, latest body wins).
  */
 async function expectCollapsesToOne(
-  firstDraft: Parameters<typeof writeCandidate>[1],
-  secondDraft: Parameters<typeof writeCandidate>[1],
+  firstDraft: Parameters<typeof writeCandidate>[2],
+  secondDraft: Parameters<typeof writeCandidate>[2],
 ): Promise<void> {
   const { first, all } = await writeBothThenList(firstDraft, secondDraft);
   expect(all).toHaveLength(1);

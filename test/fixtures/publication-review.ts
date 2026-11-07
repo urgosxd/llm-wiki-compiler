@@ -34,12 +34,12 @@ export async function propose(root: string, answer = "[[Alpha]]", question = "An
   const result = await maybeSaveQueryPage({ root, question, answer, save: true, review: true, document });
   expect(result.saved).toBeUndefined();
   expect(result.candidateId).toBeTypeOf("string");
-  return (await readCandidate(root, result.candidateId!))!;
+  return (await readCandidate(root, process.env, result.candidateId!))!;
 }
 
 /** Stage an ordinary untyped candidate with a real full document. */
 export function generic(root: string, slug: string, body: string, queries = false) {
-  return writeCandidate(root, { title: slug, slug, summary: "Summary", sources: [],
+  return writeCandidate(root, process.env, { title: slug, slug, summary: "Summary", sources: [],
     body: buildQueryDocument(slug, body, "2026-09-19T00:00:00Z").document,
     ...(queries ? { targetDirectory: "queries" as const } : {}) });
 }

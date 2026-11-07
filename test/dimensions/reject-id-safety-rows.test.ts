@@ -47,7 +47,7 @@ describe("reject refuses unsafe ids on rows", () => {
 
   it("leaves the queue untouched when the id is unsafe", async () => {
     await withStackEnv("reject-untouched", async () => {
-      const kept = await writeCandidate(projectDir, {
+      const kept = await writeCandidate(projectDir, process.env, {
         title: "Keep", slug: "keep-me", summary: "", sources: [], body: "# Keep\n",
       } as never);
 

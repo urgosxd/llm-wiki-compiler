@@ -35,7 +35,7 @@ describe("repairLinks", () => {
   }
 
   async function repairAndApply(): Promise<void> {
-    await applyCompilePageWritesLocked(tmpDir, await repairLinks(tmpDir));
+    await applyCompilePageWritesLocked(tmpDir, await repairLinks(tmpDir, process.env));
   }
 
   it("repoints a link to the single page its slug prefixes", async () => {
@@ -71,10 +71,10 @@ describe("repairLinks", () => {
   it("counts pending prefixes when refusing ambiguity", async () => {
     await writePage("argo-cd-guide", "Details.");
     await writePage("deployment", "See [[Argo CD]].");
-    await writeCandidate(tmpDir, {
+    await writeCandidate(tmpDir, process.env, {
       slug: "argo-cd-ownership", title: "Ownership", summary: "Pending", sources: [], body: "Pending body.",
     });
-    expect(await repairLinks(tmpDir)).toEqual([]);
+    expect(await repairLinks(tmpDir, process.env)).toEqual([]);
   });
 
   it("does not collapse two live namespaces into one prefix candidate", async () => {
@@ -83,7 +83,7 @@ describe("repairLinks", () => {
     const queries = path.join(tmpDir, "wiki/queries");
     await mkdir(queries, { recursive: true });
     await writeFile(path.join(queries, "argo-cd-guide.md"), "Query details.");
-    expect(await repairLinks(tmpDir)).toEqual([]);
+    expect(await repairLinks(tmpDir, process.env)).toEqual([]);
   });
 
   it("drops escaping pages before their bytes enter a write", async () => {
@@ -91,14 +91,14 @@ describe("repairLinks", () => {
     const outside = path.join(tmpDir, "outside.md");
     await writeFile(outside, "Secret [[Argo CD]].");
     await symlink(outside, path.join(conceptsDir, "escape.md"));
-    expect(await repairLinks(tmpDir)).toEqual([]);
+    expect(await repairLinks(tmpDir, process.env)).toEqual([]);
     expect(await readFile(outside, "utf8")).toBe("Secret [[Argo CD]].");
   });
 
   it.skipIf(process.platform === "win32")("drops a named pipe without blocking the repair pass", async () => {
     await writePage("argo-cd-guide", "Details.");
     execFileSync("mkfifo", [path.join(conceptsDir, "pipe.md")]);
-    expect(await repairLinks(tmpDir)).toEqual([]);
+    expect(await repairLinks(tmpDir, process.env)).toEqual([]);
   }, 2_000);
 
   it("keeps the displayed text byte-identical", async () => {
@@ -166,7 +166,7 @@ describe("repairLinks", () => {
     await writePage("deployment", "Managed by [[Argo CD]].");
 
     await repairAndApply();
-    const writes = await repairLinks(tmpDir);
+    const writes = await repairLinks(tmpDir, process.env);
 
     expect(writes).toEqual([]);
   });

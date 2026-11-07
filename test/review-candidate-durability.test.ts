@@ -79,7 +79,7 @@ async function assertSourceStateEntryDropped(
     ...baseCandidate(id, slug),
     sourceStates: { "source.md": invalidEntry },
   });
-  const candidate = await readCandidate(dir, id);
+  const candidate = await readCandidate(dir, process.env, id);
   expect(candidate).not.toBeNull();
   expect(candidate?.sourceStates?.["source.md"]).toBeUndefined();
 }
@@ -117,7 +117,7 @@ describe("Finding 2 — sourceStates validation at candidate read time", () => {
         "../evil.md": { hash: "abc123", concepts: ["slug"], compiledAt: "2026-01-01T00:00:00.000Z" },
       },
     });
-    const candidate = await readCandidate(root.dir, id);
+    const candidate = await readCandidate(root.dir, process.env, id);
     expect(candidate).not.toBeNull();
     expect(candidate?.sourceStates?.["../evil.md"]).toBeUndefined();
   });
@@ -130,7 +130,7 @@ describe("Finding 2 — sourceStates validation at candidate read time", () => {
         "dir/source.md": { hash: "abc123", concepts: ["slug"], compiledAt: "2026-01-01T00:00:00.000Z" },
       },
     });
-    const candidate = await readCandidate(root.dir, id);
+    const candidate = await readCandidate(root.dir, process.env, id);
     expect(candidate).not.toBeNull();
     expect(candidate?.sourceStates?.["dir/source.md"]).toBeUndefined();
   });
@@ -143,7 +143,7 @@ describe("Finding 2 — sourceStates validation at candidate read time", () => {
         "source.md": { hash: "abc123", concepts: ["valid-state"], compiledAt: "2026-01-01T00:00:00.000Z" },
       },
     });
-    const candidate = await readCandidate(root.dir, id);
+    const candidate = await readCandidate(root.dir, process.env, id);
     expect(candidate?.sourceStates?.["source.md"]).toEqual({
       hash: "abc123",
       concepts: ["valid-state"],
@@ -157,7 +157,7 @@ describe("Finding 2 — sourceStates validation at candidate read time", () => {
       ...baseCandidate(id, "non-object-states"),
       sourceStates: "not-an-object",
     });
-    const candidate = await readCandidate(root.dir, id);
+    const candidate = await readCandidate(root.dir, process.env, id);
     expect(candidate).not.toBeNull();
     expect(candidate?.sourceStates).not.toBe("not-an-object");
     if (candidate?.sourceStates !== undefined) {
@@ -175,7 +175,7 @@ describe("Finding 2 — sourceStates validation at candidate read time", () => {
         "good.md": { hash: "goodhash", concepts: [id], compiledAt: "2026-01-01T00:00:00.000Z" },
       },
     });
-    const candidate = await readCandidate(root.dir, id);
+    const candidate = await readCandidate(root.dir, process.env, id);
     expect(candidate?.sourceStates?.["bad.md"]).toBeUndefined();
     expect(candidate?.sourceStates?.["good.md"]?.hash).toBe("goodhash");
     // Only good.md reaches approval — bad.md can never corrupt state.json
@@ -212,19 +212,19 @@ describe("Finding 3 — deleteCandidateBySlug deletes all duplicate files for a 
     const candidatesDir = path.join(root.dir, CANDIDATES_DIR);
     expect((await listCandidateFileIds(candidatesDir)).filter((id) => id.startsWith("dup-delete-slug"))).toHaveLength(2);
 
-    const deleted = await deleteCandidateBySlug(root.dir, "dup-delete-slug");
+    const deleted = await deleteCandidateBySlug(root.dir, process.env, "dup-delete-slug");
     expect(deleted).toBe(true);
     expect((await listCandidateFileIds(candidatesDir)).filter((id) => id.startsWith("dup-delete-slug"))).toHaveLength(0);
   });
 
   it("returns false when no candidate exists for the slug", async () => {
-    const result = await deleteCandidateBySlug(root.dir, "nonexistent-slug");
+    const result = await deleteCandidateBySlug(root.dir, process.env, "nonexistent-slug");
     expect(result).toBe(false);
   });
 
   it("leaves zero candidates in listCandidates after deletion of duplicates", async () => {
     await seedNDuplicates(root.dir, "zero-after-slug", 2);
-    await deleteCandidateBySlug(root.dir, "zero-after-slug");
+    await deleteCandidateBySlug(root.dir, process.env, "zero-after-slug");
     const remaining = await listCandidates(root.dir);
     expect(remaining.filter((c) => c.slug === "zero-after-slug")).toHaveLength(0);
   });
@@ -235,7 +235,7 @@ describe("Finding 3 — deleteCandidateBySlug deletes all duplicate files for a 
       ...baseCandidate("other-slug-aaaa9999", "other-slug"),
     });
 
-    await deleteCandidateBySlug(root.dir, "target-slug");
+    await deleteCandidateBySlug(root.dir, process.env, "target-slug");
 
     const remaining = await listCandidates(root.dir);
     expect(remaining.filter((c) => c.slug === "target-slug")).toHaveLength(0);
@@ -248,7 +248,7 @@ describe("Finding 3 — deleteCandidateBySlug deletes all duplicate files for a 
     const candidatesDir = path.join(root.dir, CANDIDATES_DIR);
     expect((await listCandidateFileIds(candidatesDir)).filter((id) => id.startsWith(slug))).toHaveLength(3);
 
-    await deleteCandidateBySlug(root.dir, slug);
+    await deleteCandidateBySlug(root.dir, process.env, slug);
 
     expect((await listCandidateFileIds(candidatesDir)).filter((id) => id.startsWith(slug))).toHaveLength(0);
   });

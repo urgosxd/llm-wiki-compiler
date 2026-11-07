@@ -52,6 +52,17 @@ export interface SdkCompileOptions {
 export interface CreateWikiOptions {
   /** Absolute or relative path to the project root. Normalized once inside `createWiki`. */
   root: string;
+  /**
+   * Environment naming the Stack this core reads and writes.
+   *
+   * OMITTING `env` TARGETS THE AMBIENT STACK. That fallback is a deliberate contract
+   * rather than an inherited accident: an embedder that serves one deployment passes
+   * nothing and keeps addressing the Stack the process is bound to. An embedder that
+   * serves MANY Stacks must pass the request's environment here, or every write and
+   * read this core performs lands in the bound deployment's tenant instead of the
+   * one the request named.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**

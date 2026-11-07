@@ -72,12 +72,29 @@ function buildPageSlugSet(
   return slugs;
 }
 
-/** Find [[Title]] wikilinks that don't match any existing wiki page. */
-export async function checkBrokenWikilinks(root: string, scope: PageScope = "generic"): Promise<LintResult[]> {
+/**
+ * Find [[Title]] wikilinks that don't match any existing wiki page.
+ *
+ * @param root - Project root directory.
+ * @param env - Environment naming the Stack whose PENDING candidate queue this rule
+ *   consults. REQUIRED, not defaulted: `lint` is a request-scoped entry point —
+ *   `src/mcp/wiki-read-tools.ts` reaches it as
+ *   `withRequestEnv(stackId, (env) => lint(root, env))`, and `withRequestEnv` hands
+ *   over a COPY of `process.env` naming the request's Stack without mutating the
+ *   ambient one. Reading `process.env` here made a lint of Stack A answer from Stack
+ *   B's queue: B's pending slugs were reported as `pending-target` and A's genuinely
+ *   broken links vanished from the error count.
+ * @param scope - Which page family this run claims.
+ */
+export async function checkBrokenWikilinks(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  scope: PageScope = "generic",
+): Promise<LintResult[]> {
   // Existing profile projects also retain public default coverage.
   const pages = await readLintPages(root, scope);
   const existingSlugs = buildPageSlugSet(pages);
-  const pendingSlugs = await listLinkResolvablePendingSlugs(root);
+  const pendingSlugs = await listLinkResolvablePendingSlugs(root, env);
   const results: LintResult[] = [];
 
   for (const page of pages) {

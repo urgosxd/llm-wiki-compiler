@@ -351,12 +351,14 @@ function namespaceForPage(filePath: string): CompilePageNamespace {
  * and calls no model, so the cost is the same order as `llmwiki lint`.
  *
  * @param root - Absolute project root the reads and writes are confined under.
+ * @param env - Environment naming the Stack the pending candidates are read from.
  * @param source - Row-backed page reader, or undefined to read `wiki/`.
  * @param scan - Row-backed listing, or undefined to list `wiki/`.
  * @returns One write per page whose body actually changed.
  */
 export async function repairLinks(
   root: string,
+  env: NodeJS.ProcessEnv,
   source?: PageContentSource,
   scan?: PageScanSource,
 ): Promise<CompilePageWrite[]> {
@@ -364,7 +366,7 @@ export async function repairLinks(
   if (pages.length === 0) return [];
 
   const slugs = pages.map((page) => page.slug.toLowerCase());
-  const pending = await listLinkResolvablePendingSlugs(root);
+  const pending = await listLinkResolvablePendingSlugs(root, env);
   const resolve = createRepairResolver(slugs, pending);
 
   const writes: CompilePageWrite[] = [];
@@ -400,12 +402,14 @@ export async function repairLinks(
  * interlink resolution is applied from the same place in the pipeline.
  *
  * @param root - Absolute project root the writes are confined under.
+ * @param env - Environment naming the Stack the pending candidates are read from.
  * @param source - Row-backed page reader, or undefined to read `wiki/`.
  * @param scan - Row-backed listing, or undefined to list `wiki/`.
  * @param sink - Row writer, or undefined to write files.
  */
 export async function repairAndApplyLinks(
   root: string,
+  env: NodeJS.ProcessEnv,
   source?: PageContentSource,
   scan?: PageScanSource,
   sink?: PageSink,
@@ -413,5 +417,5 @@ export async function repairAndApplyLinks(
   transaction?: PageBatchTransaction,
 ): Promise<void> {
   await applyCompilePageWritesLocked(
-    root, await repairLinks(root, source, scan), pageStoreOptions(sink, remover, transaction));
+    root, await repairLinks(root, env, source, scan), pageStoreOptions(sink, remover, transaction));
 }

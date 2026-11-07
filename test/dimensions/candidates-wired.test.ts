@@ -61,7 +61,7 @@ async function candidateDirExists(): Promise<boolean> {
 
 describe("candidates wired to rows", () => {
   it("writes to rows and creates no candidates directory", async () => {
-    const written = await writeCandidate(root, draft("Alpha"));
+    const written = await writeCandidate(root, process.env, draft("Alpha"));
 
     expect(written.id).toBeTruthy();
     expect(await candidateDirExists()).toBe(false);
@@ -69,7 +69,7 @@ describe("candidates wired to rows", () => {
   });
 
   it("reads back what it wrote, optionals included", async () => {
-    const written = await writeCandidate(root, {
+    const written = await writeCandidate(root, process.env, {
       ...draft("Beta"),
       promptModifiers: "digest-1",
       confidence: 0.5,
@@ -80,7 +80,7 @@ describe("candidates wired to rows", () => {
     // default. That is correct rather than lossy -- every consumer tests
     // `=== "queries" ? ... : "concepts"`, so absent and 'concepts' already mean the
     // same thing. Asserted explicitly so a real loss cannot hide behind the default.
-    const stored = await readCandidate(root, written.id);
+    const stored = await readCandidate(root, process.env, written.id);
     expect(stored).toEqual({ ...written, targetDirectory: "concepts" });
     expect(stored?.promptModifiers).toBe("digest-1");
     expect(stored?.confidence).toBe(0.5);
@@ -89,19 +89,19 @@ describe("candidates wired to rows", () => {
   it("re-proposing the same target UPDATES the row instead of adding one", async () => {
     // The file path reached this by searching the directory for a matching target
     // key. A row already holds that key, so the id is reused and the queue stays one.
-    const first = await writeCandidate(root, draft("Gamma"));
-    const second = await writeCandidate(root, draft("Gamma"));
+    const first = await writeCandidate(root, process.env, draft("Gamma"));
+    const second = await writeCandidate(root, process.env, draft("Gamma"));
 
     expect(second.id).toBe(first.id);
     expect(await listCandidates(root)).toHaveLength(1);
   });
 
   it("deletes from rows, and reports the honest answer", async () => {
-    const written = await writeCandidate(root, draft("Delta"));
+    const written = await writeCandidate(root, process.env, draft("Delta"));
 
-    expect(await deleteCandidate(root, written.id)).toBe(true);
+    expect(await deleteCandidate(root, process.env, written.id)).toBe(true);
     // Already gone: the caller's signal that the queue entry was consumed.
-    expect(await deleteCandidate(root, written.id)).toBe(false);
+    expect(await deleteCandidate(root, process.env, written.id)).toBe(false);
     expect(await listCandidates(root)).toEqual([]);
   });
 
@@ -125,8 +125,8 @@ describe("candidates wired to rows", () => {
       // else, so a short placeholder would test the validator rather than the wiring.
       citationManifest: { version: 1 as const, bodyDigest: "a".repeat(64), citations: [] },
     };
-    const first = await writeCandidate(root, answer);
-    const second = await writeCandidate(root, answer);
+    const first = await writeCandidate(root, process.env, answer);
+    const second = await writeCandidate(root, process.env, answer);
 
     // A fresh id every time, so the queue holds two rather than the second replacing
     // the first.
@@ -140,10 +140,10 @@ describe("rejection on a Stack-backed project", () => {
     // `review reject` archived by moving the queue FILE. A row has no file to move,
     // so the unmigrated path failed outright -- the candidate stayed pending and the
     // command reported "could not be archived safely".
-    const written = await writeCandidate(root, draft("Zeta"));
+    const written = await writeCandidate(root, process.env, draft("Zeta"));
 
     const { archiveRejectedCandidate } = await import("../../src/compiler/candidate-rejection.js");
-    expect(await archiveRejectedCandidate(root, written.id)).toBe(true);
+    expect(await archiveRejectedCandidate(root, process.env, written.id)).toBe(true);
     expect(await candidateDirExists()).toBe(false);
     expect(await listCandidates(root)).toEqual([]);
   });
@@ -154,7 +154,7 @@ describe("other candidate entry points", () => {
     // Typed staging supersede and validated answers call this directly, bypassing
     // writeCandidate. It was still allocating through the filesystem allocator.
     const { writeFreshCandidate } = await import("../../src/compiler/candidates.js");
-    const fresh = await writeFreshCandidate(root, draft("Eta"));
+    const fresh = await writeFreshCandidate(root, process.env, draft("Eta"));
 
     expect(fresh.id).toBeTruthy();
     expect(await candidateDirExists()).toBe(false);
@@ -163,11 +163,11 @@ describe("other candidate entry points", () => {
 
   it("deleteCandidateBySlug removes every row for one concepts slug", async () => {
     const { deleteCandidateBySlug } = await import("../../src/compiler/candidates.js");
-    await writeCandidate(root, draft("Theta"));
+    await writeCandidate(root, process.env, draft("Theta"));
 
-    expect(await deleteCandidateBySlug(root, "theta")).toBe(true);
+    expect(await deleteCandidateBySlug(root, process.env, "theta")).toBe(true);
     expect(await listCandidates(root)).toEqual([]);
     // Nothing left to match: the honest answer, same as the file path's false.
-    expect(await deleteCandidateBySlug(root, "theta")).toBe(false);
+    expect(await deleteCandidateBySlug(root, process.env, "theta")).toBe(false);
   });
 });

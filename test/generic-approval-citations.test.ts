@@ -15,7 +15,7 @@ import * as planner from "../src/trust/planner.js";
 const root = usePublicationRoot();
 it("imported generic query citing pending candidate approves with byte-identical content", async () => {
   const body = "---\ntitle: Imported\n---\nUses [[beta]].\n";
-  const candidate = await writeCandidate(root.dir, { title: "Imported", slug: "imported", summary: "s", sources: ["okf:b"],
+  const candidate = await writeCandidate(root.dir, process.env, { title: "Imported", slug: "imported", summary: "s", sources: ["okf:b"],
     body, targetDirectory: "queries", reviewMode: "imported", heldReasons: [{ code: "imported-okf" }], okfPath: "queries/imported.md" });
   await approve(candidate.id);
   expect(process.exitCode).toBe(0);

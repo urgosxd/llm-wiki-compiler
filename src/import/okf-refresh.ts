@@ -44,7 +44,7 @@ export async function refreshAfterImport(
   // whatever `.llmwiki/curated-links.json` this checkout happens to hold.
   await withPageSeams(env, (seams) =>
     resolveAndApplyLinks(
-      root, slugs, slugs, seams.resolver, seams.sink, seams.remover, undefined, undefined,
+      root, env, slugs, slugs, seams.resolver, seams.sink, seams.remover, undefined, undefined,
       seams.curatedLinks));
   await regenerateIndices(root, env);
   // Union the imported page-ids into the shared pending-marker drain (preserves

@@ -26,19 +26,19 @@ it.each([
   ["unsorted pending identities", { citations: [{ target: "x", status: "pending", candidateIds: ["b", "a"] }] }],
   ["cross-status fields", { citations: [{ target: "x", status: "broken", pageId: "concepts/x" }] }],
 ])("refuses malformed observation metadata: %s", async (_name, fields) => {
-  const candidate = await writeFreshCandidate(root.dir, answerDraft());
+  const candidate = await writeFreshCandidate(root.dir, process.env, answerDraft());
   await replaceCandidate(root.dir, candidate.id, { ...candidate,
     citationManifest: { ...answerDraft().citationManifest, ...fields } });
-  expect(await readCandidate(root.dir, candidate.id)).toBeNull();
+  expect(await readCandidate(root.dir, process.env, candidate.id)).toBeNull();
 });
 
 it("preserves all supported observations including the normalized empty broken target", async () => {
-  const candidate = await writeFreshCandidate(root.dir, answerDraft());
+  const candidate = await writeFreshCandidate(root.dir, process.env, answerDraft());
   const citationManifest = { ...answerDraft().citationManifest, citations: [
     { target: "alias", status: "resolved", pageId: "queries/Raw Name" },
     { target: "pending", status: "pending", candidateIds: ["pending-01", "pending-02"] },
     { target: "", status: "broken" },
   ] };
   await replaceCandidate(root.dir, candidate.id, { ...candidate, citationManifest });
-  expect((await readCandidate(root.dir, candidate.id))?.citationManifest).toEqual(citationManifest);
+  expect((await readCandidate(root.dir, process.env, candidate.id))?.citationManifest).toEqual(citationManifest);
 });

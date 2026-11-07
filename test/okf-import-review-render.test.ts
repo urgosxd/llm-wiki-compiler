@@ -9,9 +9,9 @@ let dir: string; const cwd = process.cwd();
 afterEach(async () => { process.chdir(cwd); vi.restoreAllMocks(); if (dir) await rm(dir, { recursive: true, force: true }); });
 
 /** Stage a candidate, run reviewShowCommand under a console.log spy, return joined output. */
-async function showCapture(prefix: string, draft: Parameters<typeof writeCandidate>[1]): Promise<string> {
+async function showCapture(prefix: string, draft: Parameters<typeof writeCandidate>[2]): Promise<string> {
   dir = await mkdtemp(path.join(tmpdir(), prefix));
-  await writeCandidate(dir, draft);
+  await writeCandidate(dir, process.env, draft);
   process.chdir(dir);
   const [c] = await listCandidates(dir);
   const spy = vi.spyOn(console, "log").mockImplementation(() => {});

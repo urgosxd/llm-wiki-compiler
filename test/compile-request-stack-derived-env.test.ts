@@ -30,28 +30,19 @@
  *    same refusal seam `test/compile-rejected-input-unchanged.test.ts` uses) leaves
  *    both Stacks' derived sets exactly as they were.
  *
- * ## Why every Stack id is a fresh `randomUUID()`
- *
- * The container behind the test database is long-lived, so a row or an advisory lock
- * leaked by an earlier probe outlives the run that leaked it; a shared id would let
- * that leak masquerade as this file's subject.
+ * The Stack pair, the ambient environment binding, the restore and the fresh-id-per-test
+ * rule all live in `test/fixtures/request-stack.ts`, which the three request-stack
+ * suites share — the rationale for each is documented there.
  */
 
-import { rm } from "node:fs/promises";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { compileAndReport, compileRecompiling } from "../src/compiler/index.js";
 import { withDerivedSource } from "../src/dimensions/wiki/derived-artifact-source.js";
 import { createPageWriteSink } from "../src/dimensions/wiki/page-write-sink.js";
 import { saveSourceDocument } from "../src/dimensions/wiki/source-documents-store.js";
 import { regenerateIndices } from "../src/dimensions/wiki/page-source-seam.js";
 import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { lockRegistry } from "../src/utils/lock-postgres.js";
-import { scratchProjectRoot } from "./fixtures/host-scratch.js";
-import { perRunDatabase } from "./fixtures/per-run-database.js";
-import { provisionStack, type ProvisionedStack } from "./fixtures/stack-harness.js";
-
-/** This process's own database; provisioning fails loudly rather than skipping. */
-const DSN = (await perRunDatabase()).url;
+import { useRequestStacks } from "./fixtures/request-stack.js";
 
 /** The one source the compile extracts into a page. */
 const SOURCE = {
@@ -87,104 +78,79 @@ function stubProvider(): void {
 }
 
 describe("the derived artifacts follow the request's Stack", () => {
-  let request: ProvisionedStack;
-  let ambient: ProvisionedStack;
-  let root = "";
-  let requestStackId = "";
-  let ambientStackId = "";
-  let env: NodeJS.ProcessEnv;
-  let ambientEnv: NodeJS.ProcessEnv;
-  const savedEnv = { stackId: process.env.AKS_STACK_ID, dsn: process.env.AKS_DATABASE_URL };
-
-  beforeEach(async () => {
-    request = await provisionStack("request-derived-env");
-    ambient = await provisionStack("ambient-derived-env");
-    root = await scratchProjectRoot("request-derived-env-");
-    requestStackId = request.harness.stackId;
-    // The AMBIENT Stack is a different, REAL Stack on purpose: a missing one would fail
-    // loudly on the foreign key instead of performing the cross-tenant write measured here.
-    ambientStackId = ambient.harness.stackId;
-    expect(ambientStackId).not.toBe(requestStackId);
-    env = { AKS_STACK_ID: requestStackId, AKS_DATABASE_URL: DSN } as NodeJS.ProcessEnv;
-    ambientEnv = { AKS_STACK_ID: ambientStackId, AKS_DATABASE_URL: DSN } as NodeJS.ProcessEnv;
-    process.env.AKS_STACK_ID = ambientStackId;
-    process.env.AKS_DATABASE_URL = DSN;
+  const stacks = useRequestStacks({
+    request: "request-derived-env",
+    ambient: "ambient-derived-env",
+    root: "request-derived-env-",
   });
 
-  afterEach(async () => {
-    // A leaked entry is a live reserved connection holding a session-level lock.
-    for (const held of lockRegistry.values()) void held.release().catch(() => {});
-    lockRegistry.clear();
-    vi.unstubAllEnvs();
-    vi.restoreAllMocks();
-    for (const [name, value] of [
-      ["AKS_STACK_ID", savedEnv.stackId],
-      ["AKS_DATABASE_URL", savedEnv.dsn],
-    ] as const) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-    await request.release();
-    await ambient.release();
-    await rm(root, { recursive: true, force: true });
-  });
+  /**
+   * Give the AMBIENT Stack a real render, the run an omitted-env caller reproduces.
+   *
+   * Shared because two cases below need that render as a PRECONDITION rather than as
+   * their subject: without it "the ambient set is unchanged" would be a comparison of
+   * empties. The assertions it performs are the same ones both cases made inline.
+   */
+  const compileIntoAmbient = async (): Promise<void> => {
+    await saveSourceDocument(stacks.ambient.harness.db, stacks.ambientStackId, SOURCE);
+    expect(await compileAndReport(stacks.root, { embeddings: false })).toMatchObject({ errors: [] });
+  };
 
   it("stores both artifacts in the request's Stack and leaves the ambient Stack untouched", async () => {
     stubProvider();
-    await saveSourceDocument(request.harness.db, requestStackId, SOURCE);
-    const ambientBefore = await derivedSet(ambientEnv);
+    await saveSourceDocument(stacks.request.harness.db, stacks.requestStackId, SOURCE);
+    const ambientBefore = await derivedSet(stacks.ambientEnv);
 
-    expect(await compileAndReport(root, { embeddings: false, env })).toMatchObject({ errors: [] });
+    expect(await compileAndReport(stacks.root, { embeddings: false, env: stacks.env }))
+      .toMatchObject({ errors: [] });
 
     // The half that bites: one tenant's render must never land in another's rows.
-    expect(await derivedSet(ambientEnv)).toEqual(ambientBefore);
-    const stored = await derivedSet(env);
+    expect(await derivedSet(stacks.ambientEnv)).toEqual(ambientBefore);
+    const stored = await derivedSet(stacks.env);
     expect(stored.index).toContain("Knowledge Wiki");
     expect(stored.moc).toContain("Map of Content");
   });
 
   it("stores the index alone in the request's Stack for the skipMoc caller", async () => {
-    await createPageWriteSink(request.harness.db, requestStackId)({
+    await createPageWriteSink(stacks.request.harness.db, stacks.requestStackId)({
       directory: "concepts", slug: "alpha", body: ALPHA,
     });
-    const ambientBefore = await derivedSet(ambientEnv);
+    const ambientBefore = await derivedSet(stacks.ambientEnv);
 
-    await regenerateIndices(root, env, { skipMoc: true });
+    await regenerateIndices(stacks.root, stacks.env, { skipMoc: true });
 
-    expect(await derivedSet(ambientEnv)).toEqual(ambientBefore);
-    const stored = await derivedSet(env);
+    expect(await derivedSet(stacks.ambientEnv)).toEqual(ambientBefore);
+    const stored = await derivedSet(stacks.env);
     expect(stored.index).toContain("Alpha");
     expect(stored.moc).toBeUndefined();
   });
 
   it("still stores both artifacts in the ambient Stack for a caller that passes no environment", async () => {
     stubProvider();
-    await saveSourceDocument(ambient.harness.db, ambientStackId, SOURCE);
+    await compileIntoAmbient();
 
-    expect(await compileAndReport(root, { embeddings: false })).toMatchObject({ errors: [] });
-
-    const stored = await derivedSet(ambientEnv);
+    const stored = await derivedSet(stacks.ambientEnv);
     expect(stored.index).toContain("Knowledge Wiki");
     expect(stored.moc).toContain("Map of Content");
     // The request's Stack was named by nobody, so it keeps no derived row.
-    expect(await derivedSet(env)).toEqual({ index: undefined, moc: undefined });
+    expect(await derivedSet(stacks.env)).toEqual({ index: undefined, moc: undefined });
   });
 
   it("leaves both Stacks' derived sets unchanged when the run is refused", async () => {
     stubProvider();
-    await saveSourceDocument(request.harness.db, requestStackId, SOURCE);
-    expect(await compileAndReport(root, { embeddings: false, env })).toMatchObject({ errors: [] });
+    await saveSourceDocument(stacks.request.harness.db, stacks.requestStackId, SOURCE);
+    expect(await compileAndReport(stacks.root, { embeddings: false, env: stacks.env }))
+      .toMatchObject({ errors: [] });
     // Both tenants hold a REAL render, so "unchanged" is not a comparison of empties.
-    await saveSourceDocument(ambient.harness.db, ambientStackId, SOURCE);
-    expect(await compileAndReport(root, { embeddings: false })).toMatchObject({ errors: [] });
-    const requestBefore = await derivedSet(env);
-    const ambientBefore = await derivedSet(ambientEnv);
+    await compileIntoAmbient();
+    const requestBefore = await derivedSet(stacks.env);
+    const ambientBefore = await derivedSet(stacks.ambientEnv);
     expect(requestBefore.index).toBeDefined();
     expect(ambientBefore.index).toBeDefined();
 
-    expect((await compileRecompiling(root, [UNKNOWN_PAGE])).errors).toEqual([UNKNOWN_PAGE_REFUSAL]);
+    expect((await compileRecompiling(stacks.root, [UNKNOWN_PAGE])).errors).toEqual([UNKNOWN_PAGE_REFUSAL]);
 
-    expect(await derivedSet(env)).toEqual(requestBefore);
-    expect(await derivedSet(ambientEnv)).toEqual(ambientBefore);
+    expect(await derivedSet(stacks.env)).toEqual(requestBefore);
+    expect(await derivedSet(stacks.ambientEnv)).toEqual(ambientBefore);
   });
 });

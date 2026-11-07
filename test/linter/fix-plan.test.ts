@@ -133,7 +133,7 @@ describe("pending targets are the linter's to report, not the planner's", () => 
     // same link "cannot be repaired automatically" would contradict it.
     const root = await wiki({ index: { title: "Index", body: "See [[Pending Page]]." } });
     const { writeCandidate } = await import("../../src/compiler/candidates.js");
-    await writeCandidate(root, {
+    await writeCandidate(root, process.env, {
       title: "Pending Page", slug: "pending-page", summary: "Pending.",
       sources: [], body: "pending body", reviewMode: "policy",
       heldReasons: [{ code: "low-confidence" }],

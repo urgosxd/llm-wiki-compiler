@@ -26,7 +26,7 @@ async function queryBundle(): Promise<string> {
 it.each([true, false])("preserves actual OKF collision behavior with import-first=%s", async importFirst => {
   const bundle = await queryBundle();
   if (importFirst) expect((await runOkfImport(root.dir, bundle)).pages).toHaveLength(1);
-  const answer = await writeFreshCandidate(root.dir, answerDraft());
+  const answer = await writeFreshCandidate(root.dir, process.env, answerDraft());
   const original = await readFile(candidateFile(root.dir, answer.id), "utf8");
   const report = await runOkfImport(root.dir, bundle);
   expect(report.pages).toEqual([]);
@@ -36,8 +36,8 @@ it.each([true, false])("preserves actual OKF collision behavior with import-firs
 });
 
 it("keeps evaluation advisory and skips invalid metadata without rewriting either record", async () => {
-  const valid = await writeFreshCandidate(root.dir, answerDraft());
-  const invalid = await writeFreshCandidate(root.dir, answerDraft());
+  const valid = await writeFreshCandidate(root.dir, process.env, answerDraft());
+  const invalid = await writeFreshCandidate(root.dir, process.env, answerDraft());
   const original = await readFile(candidateFile(root.dir, valid.id), "utf8");
   const invalidRaw = await replaceCandidate(root.dir, invalid.id, { ...invalid, citationManifest: undefined });
   const report = await evaluateCandidates(root.dir, "fast");
@@ -48,8 +48,8 @@ it("keeps evaluation advisory and skips invalid metadata without rewriting eithe
 });
 
 it("rejects just the explicit sibling and gives retained pages precedence", async () => {
-  const first = await writeFreshCandidate(root.dir, answerDraft());
-  const second = await writeFreshCandidate(root.dir, answerDraft());
+  const first = await writeFreshCandidate(root.dir, process.env, answerDraft());
+  const second = await writeFreshCandidate(root.dir, process.env, answerDraft());
   const bytes = await readFile(candidateFile(root.dir, second.id), "utf8");
   await writeFile(path.join(root.dir, "wiki/queries/answer.md"), "---\ntitle: Retained\n---\n\nRetained.");
   expect((await reportAnswerCitations(root.dir, "[[answer]]")).citations).toEqual([

@@ -127,7 +127,7 @@ describe("checkPageBrokenCitations — pure body lint", () => {
 
 describe("candidate provenance violations — persistence", () => {
   it("writeCandidate stores provenanceViolations when provided", async () => {
-    const candidate = await writeCandidate(root.dir, {
+    const candidate = await writeCandidate(root.dir, process.env, {
       title: "Sample",
       slug: "sample",
       summary: "A sample.",
@@ -141,7 +141,7 @@ describe("candidate provenance violations — persistence", () => {
   });
 
   it("readCandidate round-trips provenanceViolations from disk", async () => {
-    const written = await writeCandidate(root.dir, {
+    const written = await writeCandidate(root.dir, process.env, {
       title: "Sample",
       slug: "sample",
       summary: "A sample.",
@@ -150,12 +150,12 @@ describe("candidate provenance violations — persistence", () => {
       provenanceViolations: [SAMPLE_PROVENANCE_VIOLATION],
     });
 
-    const loaded = await readCandidate(root.dir, written.id);
+    const loaded = await readCandidate(root.dir, process.env, written.id);
     expect(loaded?.provenanceViolations).toEqual([SAMPLE_PROVENANCE_VIOLATION]);
   });
 
   it("writeCandidate omits provenanceViolations when not provided", async () => {
-    const candidate = await writeCandidate(root.dir, {
+    const candidate = await writeCandidate(root.dir, process.env, {
       title: "Sample",
       slug: "sample",
       summary: "A sample.",
@@ -169,7 +169,7 @@ describe("candidate provenance violations — persistence", () => {
 
 describe("review show — provenance violations display", () => {
   it("prints provenance block when the candidate has provenanceViolations", async () => {
-    const candidate = await writeCandidate(root.dir, {
+    const candidate = await writeCandidate(root.dir, process.env, {
       title: "Sample",
       slug: "sample",
       summary: "A sample.",
@@ -184,7 +184,7 @@ describe("review show — provenance violations display", () => {
   });
 
   it("does not print provenance block when the candidate has no provenanceViolations", async () => {
-    const candidate = await writeCandidate(root.dir, {
+    const candidate = await writeCandidate(root.dir, process.env, {
       title: "Clean",
       slug: "clean",
       summary: "No violations.",

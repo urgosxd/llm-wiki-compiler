@@ -22,7 +22,7 @@ export default async function reviewRejectCommand(id: string): Promise<void> {
 
 /** Archive the candidate while holding the lock; the helper reports every refusal. */
 async function rejectUnderLock(root: string, id: string): Promise<void> {
-  if (!await archiveRejectedCandidate(root, id)) return;
+  if (!await archiveRejectedCandidate(root, process.env, id)) return;
   output.status(
     "-",
     output.warn(`Rejected candidate ${id} — archived, wiki unchanged.`),

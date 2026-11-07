@@ -12,7 +12,7 @@ import { listLinkResolvablePendingSlugs } from "../compiler/candidate-read.js";
 /** Return only broken targets that cannot resolve through production prefix repair. */
 export async function genericBrokenTargets(root: string, document: string): Promise<string[]> {
   const index = await collectAnswerCitationIndex(root);
-  const pending = await listLinkResolvablePendingSlugs(root, { strictIo: true });
+  const pending = await listLinkResolvablePendingSlugs(root, process.env, { strictIo: true });
   const repair = createRepairResolver(index.retained.map(page => page.slug.toLowerCase()), pending);
   const report = classifyAnswerCitations(parseFrontmatter(document).body, index);
   return report.citations.filter(citation => citation.status === "broken" && !repair(citation.target))

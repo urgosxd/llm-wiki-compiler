@@ -122,7 +122,7 @@ function corruptConnectorBlock(): DurableConnectorBlock {
 
 /** Print a single candidate's full content to stdout. */
 export default async function reviewShowCommand(id: string): Promise<void> {
-  const candidate = await loadCandidateOrFail(process.cwd(), id);
+  const candidate = await loadCandidateOrFail(process.cwd(), process.env, id);
   if (!candidate) return;
 
   output.header(`Candidate ${candidate.id}`);

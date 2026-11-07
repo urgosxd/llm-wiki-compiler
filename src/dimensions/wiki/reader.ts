@@ -162,14 +162,16 @@ async function passageOf(
  * Build the wiki dimension's reader.
  *
  * @param root - Absolute path to the wiki project root.
+ * @param env - Environment naming the Stack the read comes from. REQUIRED: the request's
+ *   env, so a reader built for a NAMED Stack does not answer from the bound deployment's.
  * @returns A reader bound to that project.
  */
-export function createWikiReader(root: string): DimensionReader {
+export function createWikiReader(root: string, env: NodeJS.ProcessEnv): DimensionReader {
   return {
     name: "wiki",
     // The seam wraps the WHOLE read, so a question that lists pages and then reads
     // a passage hits one backend for both halves. Resolving it per call would let a
     // listing come from rows and its passages from disk.
-    read: (query: DimensionQuery) => withPageSource(process.env, (source) => readWiki(root, query, source)),
+    read: (query: DimensionQuery) => withPageSource(env, (source) => readWiki(root, query, source)),
   };
 }

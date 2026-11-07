@@ -76,6 +76,12 @@ export async function generateMergedPage(
   policy: ReviewPolicy,
   contentSource?: PageContentSource,
 ): Promise<MergedPageOutcome> {
+  // THE BOUNDARY. `generateMergedPage` is where the request enters the page pipeline:
+  // `CompileOptions` carries the caller's `env`, and this is the ONE place it is
+  // resolved. Every seam below is handed the result, so a run answering for a NAMED
+  // Stack stages its candidate and clears its duplicate in THAT Stack instead of in
+  // whichever tenant the process happens to be bound to.
+  const env = options.env ?? process.env;
   const fullPage = await renderMergedPageContent(root, entry, schema, contentSource);
   const diagnostics = await collectReviewDiagnostics(root, entry, fullPage, schema);
   const signals = buildPolicySignals(fullPage, diagnostics);
@@ -86,14 +92,14 @@ export async function generateMergedPage(
     return await persistReviewCandidate(root, entry, fullPage, sourceStates, diagnostics, signals, {
       reviewMode: "forced",
       heldReasons,
-    });
+    }, env);
   }
 
   if (reasons.length > 0) {
     return await persistReviewCandidate(root, entry, fullPage, sourceStates, diagnostics, signals, {
       reviewMode: "policy",
       heldReasons: reasons,
-    });
+    }, env);
   }
 
   // Live-write branch: run the same validate prefilter (skip-invalid), then
@@ -104,7 +110,7 @@ export async function generateMergedPage(
     output.status("!", output.warn(`Invalid page for "${entry.concept.concept}" — skipped.`));
     return { error: `Invalid page for "${entry.concept.concept}" — failed validation` };
   }
-  await deleteCandidateBySlug(root, entry.slug);
+  await deleteCandidateBySlug(root, env, entry.slug);
   return { liveWrite: { namespace: "concepts", slug: entry.slug, body: fullPage } };
 }
 
@@ -151,8 +157,9 @@ async function persistReviewCandidate(
   diagnostics: ReviewDiagnostics,
   signals: ReturnType<typeof buildPolicySignals>,
   meta: ReviewCandidateMeta,
+  env: NodeJS.ProcessEnv,
 ): Promise<MergedPageOutcome> {
-  const candidate: ReviewCandidate = await writeCandidate(root, {
+  const candidate: ReviewCandidate = await writeCandidate(root, env, {
     title: entry.concept.concept,
     slug: entry.slug,
     summary: entry.concept.summary,

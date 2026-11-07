@@ -354,6 +354,7 @@ function addWikilinks(body: string, titles: readonly PageInfo[], selfTitle: stri
  *
  * Complexity: O(changed * total) for outbound, O(newTitles * total) for inbound.
  * @param root - Absolute project root the reads and writes are confined under.
+ * @param env - Environment naming the Stack this resolution reads candidates from.
  * @param changedSlugs - Slugs whose pages get outbound links re-resolved.
  * @param newSlugs - Slugs created by this run, scanned for inbound mentions.
  * @param source - Row-backed page source, or undefined to read `wiki/concepts`.
@@ -363,6 +364,7 @@ function addWikilinks(body: string, titles: readonly PageInfo[], selfTitle: stri
  */
 export async function resolveLinks(
   root: string,
+  env: NodeJS.ProcessEnv,
   changedSlugs: string[],
   newSlugs: string[],
   source?: ResolverPageSource,
@@ -373,7 +375,7 @@ export async function resolveLinks(
   if (titleIndex.length === 0) return [];
   await restoreCuratedLinks(root, scopedPages(titleIndex, changedSlugs, newSlugs), curatedStore);
   const bodies = collectFinalBodies(titleIndex, changedSlugs, newSlugs);
-  const writes = await gateFinalBodies(root, titleIndex, bodies, gate, source !== undefined);
+  const writes = await gateFinalBodies(root, env, titleIndex, bodies, gate, source !== undefined);
   if (writes.length > 0) {
     output.status("🔗", output.dim(`Resolved links in ${writes.length} page(s)`));
   }
@@ -542,6 +544,7 @@ function linkBody(
  * actually change a page.
  *
  * @param root - Absolute project root the gate's reads are confined under.
+ * @param env - Environment naming the Stack the page set's pending candidates come from.
  * @param titleIndex - Every page the resolver can see, for the fallback page set.
  * @param bodies - The bodies to judge, keyed by slug.
  * @param gate - What to judge against and where the counts go.
@@ -549,13 +552,14 @@ function linkBody(
  */
 async function gateFinalBodies(
   root: string,
+  env: NodeJS.ProcessEnv,
   titleIndex: readonly PageInfo[],
   bodies: ReadonlyMap<string, FinalBody>,
   gate: LinkGateOptions | undefined,
   rowBacked: boolean,
 ): Promise<CompilePageWrite[]> {
   if (bodies.size === 0) return [];
-  const pages = await linkPageSetFor(root, titleIndex, gate?.pageContent, rowBacked);
+  const pages = await linkPageSetFor(root, env, titleIndex, gate?.pageContent, rowBacked);
   const writes: CompilePageWrite[] = [];
   for (const { page, body } of bodies.values()) {
     const validated = await validateContextualLinks(body, linkIndexFor(pages, anchorFor(page)));
@@ -583,6 +587,7 @@ async function gateFinalBodies(
  * a title-shaped target is judged the same way whichever backend answered.
  *
  * @param root - Absolute project root the reads are confined under.
+ * @param env - Environment naming the Stack the pending candidates are read from.
  * @param titleIndex - Every page the resolver can see.
  * @param pageContent - Row-backed reader, when the caller supplied one.
  * @param rowBacked - Whether this run's pages live in rows rather than in `wiki/`.
@@ -590,6 +595,7 @@ async function gateFinalBodies(
  */
 async function linkPageSetFor(
   root: string,
+  env: NodeJS.ProcessEnv,
   titleIndex: readonly PageInfo[],
   pageContent: PageContentSource | undefined,
   rowBacked: boolean,
@@ -598,7 +604,7 @@ async function linkPageSetFor(
   const base = pageContent === undefined && rowBacked
     ? knownLinkPageSet(entries)
     : { ...await listLinkPageSet(root, pageContent), titles: uniqueTitleMap(entries) };
-  return { ...base, repair: await repairLookupFor(root, base) };
+  return { ...base, repair: await repairLookupFor(root, env, base) };
 }
 
 /**
@@ -610,17 +616,22 @@ async function linkPageSetFor(
  * matcher: the gate asks the owner of the rule.
  *
  * @param root - Absolute project root the pending-candidate read is confined under.
+ * @param env - Environment naming the Stack the pending candidates are read from.
  * @param pages - The page set whose slugs the rule may land on.
  * @returns A written target to page id lookup, or undefined when there is nothing to
  *   match against.
  */
 async function repairLookupFor(
   root: string,
+  env: NodeJS.ProcessEnv,
   pages: LinkPageSet,
 ): Promise<((writtenTarget: string) => string | null) | undefined> {
   const bySlug = new Map(pages.ids.map((id) => [slugPartOf(id).toLowerCase(), id]));
   if (bySlug.size === 0) return undefined;
-  const repair = createRepairResolver([...bySlug.keys()], await listLinkResolvablePendingSlugs(root));
+  const repair = createRepairResolver(
+    [...bySlug.keys()],
+    await listLinkResolvablePendingSlugs(root, env),
+  );
   return (writtenTarget: string) => {
     const slug = repair(writtenTarget);
     return slug === null ? null : bySlug.get(slug) ?? null;
@@ -670,6 +681,7 @@ function pageIdOf(page: PageInfo): string {
  * under an already-held lock, so the self-locking path would self-deadlock.
  *
  * @param root - Absolute project root the writes are confined under.
+ * @param env - Environment naming the Stack this resolution reads candidates from.
  * @param changedSlugs - Slugs whose pages get outbound links re-resolved.
  * @param newSlugs - Newly-created slugs other pages get scanned for (inbound).
  * @param source - Row writer, or undefined to write files.
@@ -681,6 +693,7 @@ function pageIdOf(page: PageInfo): string {
  */
 export async function resolveAndApplyLinks(
   root: string,
+  env: NodeJS.ProcessEnv,
   changedSlugs: string[],
   newSlugs: string[],
   source?: ResolverPageSource,
@@ -692,7 +705,7 @@ export async function resolveAndApplyLinks(
 ): Promise<void> {
   await applyCompilePageWritesLocked(
     root,
-    await resolveLinks(root, changedSlugs, newSlugs, source, gate, curatedStore),
+    await resolveLinks(root, env, changedSlugs, newSlugs, source, gate, curatedStore),
     pageStoreOptions(sink, remover, transaction),
   );
 }

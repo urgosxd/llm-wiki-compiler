@@ -81,7 +81,15 @@ export async function planLintFixes(root: string, scope: PageScope = "wiki-wide"
   // info-level pending-target is not broken, and "cannot be repaired
   // automatically" would be wrong advice about a page that is merely awaiting
   // review. The two authorities must disagree about NO link.
-  const pending = await listLinkResolvablePendingSlugs(root);
+  //
+  // `process.env` is this plan's BOUNDARY rather than a nested ambient read: the only
+  // callers are the `lint --fix-preview` and `lint --fix-propose` CLI subcommands
+  // (`src/commands/lint.ts`, `src/commands/lint-fix-propose.ts`), which never obtain a
+  // distinct environment — the CLI's Stack boundary IS the ambient one, and where a
+  // `--stack` flag exists `applyStackOption` writes it INTO `process.env`. Nothing
+  // request-scoped reaches this function, so there is no second tenant to displace the
+  // read onto.
+  const pending = await listLinkResolvablePendingSlugs(root, process.env);
   const byTitle = pagesByTitleSlug(pages);
   const plans: LintFixPlanV1[] = [];
   for (const page of pages) {

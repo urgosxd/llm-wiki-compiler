@@ -37,11 +37,11 @@ async function projectWithPages(): Promise<string> {
 
 describe("the wiki dimension as a DimensionReader", () => {
   it("is named wiki, matching its write side", async () => {
-    expect(createWikiReader(await projectWithPages()).name).toBe("wiki");
+    expect(createWikiReader(await projectWithPages(), process.env).name).toBe("wiki");
   }, 30_000);
 
   it("lists compiled pages as entities whose kind is their directory", async () => {
-    const reader = createWikiReader(await projectWithPages());
+    const reader = createWikiReader(await projectWithPages(), process.env);
     const result = await reader.read({ limit: 50 });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -55,7 +55,7 @@ describe("the wiki dimension as a DimensionReader", () => {
   }, 30_000);
 
   it("reports no relationships and no confidence, because the wiki has neither", async () => {
-    const reader = createWikiReader(await projectWithPages());
+    const reader = createWikiReader(await projectWithPages(), process.env);
     const result = await reader.read({ limit: 50, depth: 2 });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -66,7 +66,7 @@ describe("the wiki dimension as a DimensionReader", () => {
   }, 30_000);
 
   it("narrows by kind, which is the page directory", async () => {
-    const reader = createWikiReader(await projectWithPages());
+    const reader = createWikiReader(await projectWithPages(), process.env);
     const result = await reader.read({ kinds: ["queries"], limit: 50 });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -74,14 +74,14 @@ describe("the wiki dimension as a DimensionReader", () => {
   }, 30_000);
 
   it("finds a page by title and reports not_found as a code", async () => {
-    const reader = createWikiReader(await projectWithPages());
+    const reader = createWikiReader(await projectWithPages(), process.env);
 
     // The same assertion the graph suite uses: one port, one failure contract.
     await expectNamedLookupContract(reader, "agents", "Agents");
   }, 30_000);
 
   it("answers a listing even when no embedding store exists", async () => {
-    const reader = createWikiReader(await projectWithPages());
+    const reader = createWikiReader(await projectWithPages(), process.env);
     // Text search needs vectors a hand-made project lacks; the listing must still
     // work, or a project without embeddings would appear to have no pages.
     const result = await reader.read({ limit: 50, text: "agents" });

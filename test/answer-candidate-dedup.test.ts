@@ -12,16 +12,16 @@ const root = useTempRoot();
 
 it.each([true, false])("isolates generic and answer identities with generic-first=%s", async (genericFirst) => {
   const { candidateKind: _kind, citationManifest: _manifest, ...generic } = answerDraft();
-  const first = genericFirst ? await writeCandidate(root.dir, generic) : undefined;
-  const answer = await writeCandidate(root.dir, answerDraft());
+  const first = genericFirst ? await writeCandidate(root.dir, process.env, generic) : undefined;
+  const answer = await writeCandidate(root.dir, process.env, answerDraft());
   const bytes = await readFile(candidateFile(root.dir, answer.id), "utf8");
-  const imported = await writeCandidate(root.dir, { ...generic, body: "Imported", reviewMode: "imported" });
+  const imported = await writeCandidate(root.dir, process.env, { ...generic, body: "Imported", reviewMode: "imported" });
   expect(imported.id).not.toBe(answer.id);
   if (first) expect(imported.id).toBe(first.id);
-  const repeated = await writeCandidate(root.dir, answerDraft());
+  const repeated = await writeCandidate(root.dir, process.env, answerDraft());
   expect(repeated.id).not.toBe(answer.id);
-  const extra = await writeFreshCandidate(root.dir, generic);
-  const canonical = await writeCandidate(root.dir, { ...generic, body: "Latest" });
+  const extra = await writeFreshCandidate(root.dir, process.env, generic);
+  const canonical = await writeCandidate(root.dir, process.env, { ...generic, body: "Latest" });
   expect(canonical.id).toBe(imported.id);
   expect(await readFile(candidateFile(root.dir, answer.id), "utf8")).toBe(bytes);
   await expect(readFile(candidateFile(root.dir, extra.id))).rejects.toMatchObject({ code: "ENOENT" });

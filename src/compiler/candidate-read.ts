@@ -88,12 +88,23 @@ export async function captureCandidateMutationStoreBinding(
   return binding;
 }
 
-/** Find the pending candidate for a slug, if one exists. */
+/**
+ * Find the pending candidate for a slug, if one exists.
+ *
+ * @param root - Project root directory.
+ * @param env - Environment naming the Stack whose queue is searched. REQUIRED, matching
+ *   its {@link readCandidate}/{@link listCandidates} siblings: the tenant is resolved
+ *   from THIS environment, so a caller answering about a NAMED Stack cannot silently
+ *   be answered from whichever Stack the process is bound to.
+ * @param slug - The candidate slug to look for.
+ * @returns The candidate, or `null` when this Stack holds none for that slug.
+ */
 export async function readCandidateBySlug(
   root: string,
+  env: NodeJS.ProcessEnv,
   slug: string,
 ): Promise<ReviewCandidate | null> {
-  const candidates = await listCandidates(root);
+  const candidates = await listCandidates(root, {}, env);
   return candidates.find((candidate) => candidate.slug === slug) ?? null;
 }
 
@@ -107,8 +118,12 @@ export async function readCandidateBySlug(
  * broken wikilink to an info-level "awaiting review" — hiding a link that
  * stays broken after approval.
  */
-export async function listLinkResolvablePendingSlugs(root: string, options: StrictIoOptions = {}): Promise<Set<string>> {
-  const candidates = await listCandidates(root, options);
+export async function listLinkResolvablePendingSlugs(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  options: StrictIoOptions = {},
+): Promise<Set<string>> {
+  const candidates = await listCandidates(root, options, env);
   return new Set(
     candidates.filter((candidate) => !candidate.targetEntityType).map((candidate) => candidate.slug),
   );
@@ -131,13 +146,16 @@ function failWithError(message: string): null {
  * missing so callers can early-return without re-implementing the same
  * error block in every review subcommand.
  * @param root - Project root directory.
+ * @param env - Environment naming the Stack the candidate is read from. Required, so a
+ *   caller answering about a NAMED Stack cannot silently read the bound one.
  * @param id - Candidate id to look up.
  */
 export async function loadCandidateOrFail(
   root: string,
+  env: NodeJS.ProcessEnv,
   id: string,
 ): Promise<ReviewCandidate | null> {
-  const candidate = await readTargetedCandidate(root, id);
+  const candidate = await readTargetedCandidate(root, env, id);
   if (candidate === undefined) return null;
   if (!candidate) return failWithError(`Candidate not found: ${id}`);
   return candidate;
@@ -151,14 +169,16 @@ export async function loadCandidateOrFail(
  * was acquired. Returning `null` signals the caller to abort without writing
  * any output artefact.
  * @param root - Project root directory.
+ * @param env - Environment naming the Stack the candidate is read from.
  * @param id - Candidate id to load.
  * @returns The candidate if still present, or `null` after setting exit code 1.
  */
 export async function loadCandidateUnderLockOrFail(
   root: string,
+  env: NodeJS.ProcessEnv,
   id: string,
 ): Promise<ReviewCandidate | null> {
-  const candidate = await readTargetedCandidate(root, id);
+  const candidate = await readTargetedCandidate(root, env, id);
   if (candidate === undefined) return null;
   if (!candidate) {
     return failWithError(`Candidate ${id} was removed by another process during review.`);
@@ -171,16 +191,24 @@ export async function loadCandidateUnderLockOrFail(
  * Structurally invalid files (unparseable JSON or missing required fields) are
  * skipped with a warning rather than throwing, so `review list`/`show` never
  * crash due to a hand-edited or truncated candidate file.
+ *
+ * @param root - Project root directory.
+ * @param env - Environment naming the Stack the candidate is read from. REQUIRED: the
+ *   tenant is resolved from THIS environment, so request-scoped code that named a
+ *   different Stack reads that Stack's queue instead of the bound deployment's.
+ * @param id - Candidate id to read.
+ * @param opts - Strict I/O and metadata admission.
  */
 export async function readCandidate(
   root: string,
+  env: NodeJS.ProcessEnv,
   id: string,
   opts: CandidateReadOptions = {},
 ): Promise<ReviewCandidate | null> {
   // Rows when a Stack is configured. A candidate is the review workflow's durable
   // state, so it must live where the rest of that Stack's state lives: two hosts
   // reviewing one Stack kept two file queues and neither saw the other's work.
-  const fromRows = await withCandidateSource(process.env, async (source) =>
+  const fromRows = await withCandidateSource(env, async (source) =>
     source === undefined ? undefined : (await source.get(id)) ?? null,
   );
   if (fromRows !== undefined) return fromRows ?? null;
@@ -188,8 +216,12 @@ export async function readCandidate(
 }
 
 /** Render typed admission failures without disguising them as missing files. */
-async function readTargetedCandidate(root: string, id: string): Promise<ReviewCandidate | null | undefined> {
-  try { return await readCandidate(root, id, { rejectInvalidMetadata: true }); }
+async function readTargetedCandidate(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  id: string,
+): Promise<ReviewCandidate | null | undefined> {
+  try { return await readCandidate(root, env, id, { rejectInvalidMetadata: true }); }
   catch (error) {
     if (!(error instanceof InvalidCandidateMetadataError)) throw error;
     failWithError(error.message);
@@ -394,10 +426,15 @@ async function pendingCandidateFileIds(root: string): Promise<string[]> {
 }
 
 /** Read and sanitize the named candidates, dropping the ones that fail to parse. */
-async function readCandidatesByIds(root: string, ids: string[], opts: StrictIoOptions = {}): Promise<ReviewCandidate[]> {
+async function readCandidatesByIds(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  ids: string[],
+  opts: StrictIoOptions = {},
+): Promise<ReviewCandidate[]> {
   const candidates: ReviewCandidate[] = [];
   for (const id of ids) {
-    const candidate = await readCandidate(root, id, opts);
+    const candidate = await readCandidate(root, env, id, opts);
     if (candidate) candidates.push(candidate);
   }
   return candidates;
@@ -426,7 +463,7 @@ export async function listCandidates(
   const fromRows = await withCandidateSource(env, async (source) =>
     source === undefined ? undefined : await source.list(),
   );
-  const candidates = fromRows ?? await readCandidatesByIds(root, await pendingCandidateFileIds(root), opts);
+  const candidates = fromRows ?? await readCandidatesByIds(root, env, await pendingCandidateFileIds(root), opts);
   // Plain sort on the timestamp string: the file path sorted the same way, so the
   // queue order does not change with the backend.
   candidates.sort((a, b) => a.generatedAt.localeCompare(b.generatedAt));
@@ -463,13 +500,19 @@ export interface CandidatePage {
  * inflates the total by one rather than being silently dropped.
  *
  * @param root - Project root directory.
+ * @param env - Environment naming the Stack whose queue is read. REQUIRED: a page of a
+ *   NAMED Stack's queue must not be answered from the bound deployment's.
  * @param limit - Maximum candidates to read and return.
  * @returns The bounded slice and the true pending total.
  */
-export async function listCandidatePage(root: string, limit: number): Promise<CandidatePage> {
+export async function listCandidatePage(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  limit: number,
+): Promise<CandidatePage> {
   // Rows answer the whole page in one query, so there is no slice to reconcile and
   // no malformed leaf to inflate the total: a row either parses or was never stored.
-  const fromRows = await withCandidateSource(process.env, async (source) => {
+  const fromRows = await withCandidateSource(env, async (source) => {
     if (source === undefined) return undefined;
     const all = await source.list();
     return { candidates: all.slice(0, limit), total: all.length };
@@ -480,7 +523,7 @@ export async function listCandidatePage(root: string, limit: number): Promise<Ca
   // every machine. `localeCompare` would make it depend on the host locale.
   const ids = (await pendingCandidateFileIds(root)).sort();
   const served = ids.slice(0, limit);
-  const candidates = await readCandidatesByIds(root, served);
+  const candidates = await readCandidatesByIds(root, env, served);
   const unreadableInSlice = served.length - candidates.length;
   return { candidates, total: ids.length - unreadableInSlice };
 }

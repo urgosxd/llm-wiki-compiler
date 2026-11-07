@@ -11,7 +11,7 @@ afterEach(async () => { process.chdir(cwd); if (dir) await rm(dir, { recursive: 
 describe("approve respects targetDirectory", () => {
   it("writes a queries candidate to wiki/queries/", async () => {
     dir = await mkdtemp(path.join(tmpdir(), "okf-approve-"));
-    await writeCandidate(dir, {
+    await writeCandidate(dir, process.env, {
       title: "Q", slug: "trends", summary: "s", sources: ["okf:b"],
       body: "---\ntitle: Q\nsummary: s\n---\n\nReal body content.\n",
       reviewMode: "imported", heldReasons: [{ code: "imported-okf" }],

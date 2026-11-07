@@ -14,7 +14,7 @@ describe("eval --candidates CLI", () => {
   /** Stage one source-backed draft without introducing any live page. */
   async function stage() {
     await env.writeSource("ref.md", "Evidence.");
-    return writeCandidate(env.dir, { title: "Pending", slug: "pending", summary: "", sources: ["ref.md"],
+    return writeCandidate(env.dir, process.env, { title: "Pending", slug: "pending", summary: "", sources: ["ref.md"],
       body: "This claim has evidence. ^[ref.md:1-1]" });
   }
 

@@ -80,7 +80,7 @@ async function approveUnderLock(
   id: string,
   options: ReviewApproveOptions,
 ): Promise<void> {
-  const candidate = await readCandidateUnderLock(root, id);
+  const candidate = await readCandidateUnderLock(root, process.env, id);
   if (!candidate) return;
   if (!connectorPinMatches(candidate, options.draftContentHash)) {
     output.status(
@@ -114,7 +114,7 @@ async function approveUnderLock(
     await persistCandidateSourceStates(root, candidate);
   }
   await refreshWikiAfterApproval(root, candidate);
-  await deleteCandidate(root, id);
+  await deleteCandidate(root, process.env, id);
   output.status("✓", output.dim(`Candidate ${id} cleared.`));
 }
 
@@ -394,10 +394,10 @@ async function refreshWikiAfterApproval(root: string, candidate: ReviewCandidate
       // compile path asks for them; a second construction here would let the two
       // verbs drift apart again. No run totals exist on this path, so no sink.
       await resolveAndApplyLinks(
-        root, [slug], [slug], seams.resolver, seams.sink, seams.remover, undefined,
+        root, process.env, [slug], [slug], seams.resolver, seams.sink, seams.remover, undefined,
         linkGateOptions(seams.content), seams.curatedLinks,
       );
-      await repairAndApplyLinks(root, seams.content, seams.scan, seams.sink, seams.remover);
+      await repairAndApplyLinks(root, process.env, seams.content, seams.scan, seams.sink, seams.remover);
     });
   }
   await regenerateIndices(root, process.env);

@@ -48,8 +48,36 @@ import {
  * by them could never be proven complete. Ordering is load-bearing: `lint`
  * flattens these in registry order and suites pin that output byte-for-byte.
  */
-const RULES_WITHOUT_SCHEMA: ReadonlyArray<{ rule: LintRule; tier: LintTierV1 }> = [
-  { rule: checkBrokenWikilinks, tier: "deterministic" },
+/**
+ * A registered plain rule that needs more of the run than the root: the request
+ * environment its tenant resolves from, and the page scope it claims.
+ *
+ * `checkBrokenWikilinks` is the only such rule today. It stays registered as the ATOMIC
+ * function rather than a pre-bound lambda because {@link declaredRuleTiers} reads the
+ * rule's own `name`, which a property-assigned closure would replace with `"rule"`. The
+ * run's `env` and `scope` exist only inside {@link collectGroupsInScope}, so that is
+ * where they are bound.
+ */
+type ScopedLintRule = (
+  root: string,
+  env: NodeJS.ProcessEnv,
+  scope: PageScope,
+) => Promise<LintResult[]>;
+
+/**
+ * One registry entry.
+ *
+ * The `scoped` tag is what tells the two shapes apart. It cannot be inferred from the
+ * signature: a one-parameter `LintRule` is structurally ASSIGNABLE to
+ * {@link ScopedLintRule} (it simply ignores the arguments it never declares), so a bare
+ * union of the two collapses to the wider type and the plain branch narrows to `never`.
+ */
+type RegisteredPlainRule =
+  | { readonly rule: LintRule; readonly tier: LintTierV1; readonly scoped?: false }
+  | { readonly rule: ScopedLintRule; readonly tier: LintTierV1; readonly scoped: true };
+
+const RULES_WITHOUT_SCHEMA: ReadonlyArray<RegisteredPlainRule> = [
+  { rule: checkBrokenWikilinks, tier: "deterministic", scoped: true },
   { rule: checkOrphanedPages, tier: "deterministic" },
   { rule: checkMissingSummaries, tier: "deterministic" },
   { rule: checkDuplicateConcepts, tier: "deterministic" },
@@ -168,8 +196,8 @@ async function resolveLintCorpus(
 
 async function collectTieredGroups(
   root: string,
-  scope: PageScope = "generic",
-  env: NodeJS.ProcessEnv = process.env,
+  scope: PageScope,
+  env: NodeJS.ProcessEnv,
 ): Promise<TieredResultGroupV1[]> {
   const corpus = await resolveLintCorpus(root, scope, env);
   return await withLintCorpus(corpus, () => collectGroupsInScope(root, scope, env));
@@ -194,7 +222,7 @@ async function collectGroupsInScope(
   const [plain, schemaGroups, freshnessGroups] = await Promise.all([
     Promise.all(RULES_WITHOUT_SCHEMA.map(async (entry) => ({
       tier: entry.tier,
-      results: await (entry.rule === checkBrokenWikilinks ? checkBrokenWikilinks(root, scope) : entry.rule(root)),
+      results: await (entry.scoped === true ? entry.rule(root, env, scope) : entry.rule(root)),
     }))),
     Promise.all(RULES_WITH_SCHEMA.map(async (entry) => ({ tier: entry.tier, results: await entry.rule(root, schema) }))),
     Promise.all(RULES_WITH_FRESHNESS.map(async (entry) => ({ tier: entry.tier, results: await entry.rule(root, freshness) }))),

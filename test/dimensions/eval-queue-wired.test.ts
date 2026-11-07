@@ -21,7 +21,7 @@ describe("eval sees the Stack queue", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ev-"));
     try {
       await withStackEnv("ev", async () => {
-        await writeCandidate(dir, {
+        await writeCandidate(dir, process.env, {
           title: "Pending", slug: "same", summary: "D", sources: ["s.md"],
           body: "---\ntitle: P\n---\n\nbody\n",
         } as never);

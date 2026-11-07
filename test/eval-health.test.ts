@@ -90,7 +90,7 @@ describe("evaluateHealth", () => {
   });
 
   it("surfaces pending-review count without penalising health score", async () => {
-    await writeCandidate(env.dir, {
+    await writeCandidate(env.dir, process.env, {
       title: "Pending Concept",
       slug: "pending-concept",
       summary: "Pending.",

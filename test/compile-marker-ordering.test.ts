@@ -34,9 +34,9 @@ vi.mock("../src/compiler/resolver.js", async (importActual) => {
   const actual = await importActual<typeof import("../src/compiler/resolver.js")>();
   return {
     ...actual,
-    resolveAndApplyLinks: async (root: string, changed: string[], created: string[]) => {
+    resolveAndApplyLinks: async (root: string, env: NodeJS.ProcessEnv, changed: string[], created: string[]) => {
       if (resolve.shouldThrow) throw new Error("injected resolution failure");
-      return actual.resolveAndApplyLinks(root, changed, created);
+      return actual.resolveAndApplyLinks(root, env, changed, created);
     },
   };
 });

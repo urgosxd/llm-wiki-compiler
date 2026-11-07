@@ -56,7 +56,7 @@ async function plantLegacyCandidate(id: string): Promise<void> {
 
 /** Assert a draft refusal is typed and creates no candidate-store directory. */
 async function expectDraftRefusal(slug: string): Promise<void> {
-  await expect(writeCandidate(root.dir, draftFor(slug))).rejects.toBeInstanceOf(
+  await expect(writeCandidate(root.dir, process.env, draftFor(slug))).rejects.toBeInstanceOf(
     UnsafeCandidateIdError,
   );
   expect(existsSync(path.join(root.dir, CANDIDATES_DIR))).toBe(false);
@@ -73,7 +73,7 @@ describe("candidate physical identity ceilings", () => {
   });
 
   it.each([219, 220])("accepts a %i-byte ASCII draft slug", async (bytes) => {
-    const created = await writeCandidate(root.dir, draftFor("a".repeat(bytes)));
+    const created = await writeCandidate(root.dir, process.env, draftFor("a".repeat(bytes)));
 
     expect(Buffer.byteLength(created.slug, "utf8")).toBe(bytes);
     expect(Buffer.byteLength(created.id, "utf8")).toBe(bytes + 9);
@@ -87,8 +87,8 @@ describe("candidate physical identity ceilings", () => {
     const accepted = "é".repeat(110);
     const rejected = `${accepted}a`;
 
-    await expect(writeCandidate(root.dir, draftFor(accepted))).resolves.toMatchObject({ slug: accepted });
-    await expect(writeCandidate(root.dir, draftFor(rejected))).rejects.toBeInstanceOf(UnsafeCandidateIdError);
+    await expect(writeCandidate(root.dir, process.env, draftFor(accepted))).resolves.toMatchObject({ slug: accepted });
+    await expect(writeCandidate(root.dir, process.env, draftFor(rejected))).rejects.toBeInstanceOf(UnsafeCandidateIdError);
   });
 
   it.each([228, 229, 230, 250])("accepts a direct %i-byte candidate id", async (bytes) => {
@@ -118,7 +118,7 @@ describe("candidate physical identity ceilings", () => {
     const slug = `${"a".repeat(10_000)}${SECRET_SENTINEL}`;
     let caught: unknown;
 
-    try { await writeCandidate(root.dir, draftFor(slug)); } catch (error) { caught = error; }
+    try { await writeCandidate(root.dir, process.env, draftFor(slug)); } catch (error) { caught = error; }
 
     expect(caught).toBeInstanceOf(UnsafeCandidateIdError);
     expect((caught as Error).message).not.toContain(SECRET_SENTINEL);
@@ -130,7 +130,7 @@ describe("candidate physical identity ceilings", () => {
     await plantLegacyCandidate(id);
     const before = await snapshotCandidateQueue(root.dir);
 
-    await expect(writeCandidate(root.dir, draftFor("legacy-over-cap")))
+    await expect(writeCandidate(root.dir, process.env, draftFor("legacy-over-cap")))
       .rejects.toBeInstanceOf(UnsafeCandidateIdError);
 
     expect(await snapshotCandidateQueue(root.dir)).toEqual(before);
@@ -139,7 +139,7 @@ describe("candidate physical identity ceilings", () => {
   it("reads and archives a valid legacy filename without needing write-temp headroom", async () => {
     const id = "a".repeat(250);
     await plantLegacyCandidate(id);
-    expect((await readCandidate(root.dir, id))?.id).toBe(id);
+    expect((await readCandidate(root.dir, process.env, id))?.id).toBe(id);
     expect(await archiveCandidate(root.dir, id)).toBe(true);
     expect(existsSync(await candidatePath(root.dir, id))).toBe(false);
     expect(existsSync(await archivePath(root.dir, id))).toBe(true);

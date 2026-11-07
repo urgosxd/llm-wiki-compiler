@@ -25,10 +25,16 @@ interface DeletionTestHooks {
   afterCandidateDeleteForTest?: (fileId: string, index: number) => Promise<void>;
 }
 
-type DeleteWithHooks = (root: string, id: string, hooks?: DeletionTestHooks) => Promise<boolean>;
-type DeleteSlugWithHooks = (root: string, slug: string, hooks?: DeletionTestHooks) => Promise<boolean>;
+type DeleteWithHooks = (root: string, env: NodeJS.ProcessEnv, id: string, hooks?: DeletionTestHooks) => Promise<boolean>;
+type DeleteSlugWithHooks = (
+  root: string,
+  env: NodeJS.ProcessEnv,
+  slug: string,
+  hooks?: DeletionTestHooks,
+) => Promise<boolean>;
 type WriteWithHooks = (
   root: string,
+  env: NodeJS.ProcessEnv,
   draft: CandidateDraft,
   options?: FreshCandidateWriteOptions & DeletionTestHooks,
 ) => ReturnType<typeof writeCandidate>;
@@ -66,14 +72,14 @@ describe("Decision 20 direct candidate deletion authority", () => {
     const leaf = await plant("direct-alias", 0);
     await symlink(".", path.join(root.dir, ".llmwiki", "candidates", "archive"));
 
-    await expect(deleteCandidate(root.dir, "direct-alias"))
+    await expect(deleteCandidate(root.dir, process.env, "direct-alias"))
       .rejects.toBeInstanceOf(CandidateCustodyUnavailableError);
     expect(await readFile(leaf, "utf8")).toContain("direct-alias");
   });
 
   it("direct deletion refuses a replacement installed after custody capture", async () => {
     const leaf = await plant("direct-replaced", 0);
-    const deleting = (deleteCandidate as DeleteWithHooks)(root.dir, "direct-replaced", {
+    const deleting = (deleteCandidate as DeleteWithHooks)(root.dir, process.env, "direct-replaced", {
       afterCustodyForTest: async () => replaceSelected(leaf),
     });
 
@@ -86,7 +92,7 @@ describe("Decision 20 selected candidate deletion authority", () => {
   it("slug deletion preserves a later replacement after an earlier unlink", async () => {
     const first = await plant("slug-first", 0);
     const last = await plant("slug-last", 1);
-    const deleting = (deleteCandidateBySlug as DeleteSlugWithHooks)(root.dir, "shared", {
+    const deleting = (deleteCandidateBySlug as DeleteSlugWithHooks)(root.dir, process.env, "shared", {
       afterCandidateDeleteForTest: async (_id, index) => {
         if (index === 0) await replaceSelected(last);
       },
@@ -101,7 +107,7 @@ describe("Decision 20 selected candidate deletion authority", () => {
     const canonical = await plant("canonical", 0);
     const firstDuplicate = await plant("duplicate-first", 1);
     const lastDuplicate = await plant("duplicate-last", 2);
-    const writing = (writeCandidate as WriteWithHooks)(root.dir, revisionDraft(), {
+    const writing = (writeCandidate as WriteWithHooks)(root.dir, process.env, revisionDraft(), {
       afterCandidateDeleteForTest: async (_id, index) => {
         if (index === 0) await replaceSelected(lastDuplicate);
       },

@@ -61,7 +61,7 @@ function totalOf(body: unknown): number {
  */
 async function seedQueue(root: string, count: number): Promise<void> {
   for (let i = 0; i < count; i++) {
-    await writeFreshCandidate(root, {
+    await writeFreshCandidate(root, process.env, {
       title: `Candidate ${i}`,
       slug: `candidate-${String(i).padStart(4, "0")}`,
       summary: `Summary ${i}`,
@@ -74,7 +74,7 @@ async function seedQueue(root: string, count: number): Promise<void> {
 /** Seed one pending candidate through the project's own writer, so the on-disk
  *  format cannot drift from what the compile pipeline actually produces. */
 function seedCandidate(root: string, overrides: Partial<CandidateDraft> = {}) {
-  return writeCandidate(root, {
+  return writeCandidate(root, process.env, {
     title: "Transformer attention",
     slug: "transformer-attention",
     summary: "Every token is weighted against every other token.",

@@ -53,7 +53,7 @@ describe("interlink resolution preserves $ sequences in prose", () => {
     ["$' (suffix)", "Use $' in sed.\n\nSee Shell Quoting Rules for more.\n"],
   ])("keeps %s exactly as written", async (_label, body) => {
     const { root, pagePath } = projectWithBody(body);
-    await resolveAndApplyLinks(root, ["pid-tricks"], []);
+    await resolveAndApplyLinks(root, process.env, ["pid-tricks"], []);
     const after = readFileSync(pagePath, "utf-8");
 
     // EXACT equality, not containment. `$&` re-inserts the match, which

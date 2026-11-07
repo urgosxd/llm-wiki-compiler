@@ -121,7 +121,7 @@ describe("HIGH-A: floor-skipped page absent from committed set", () => {
     expect(result.errors.some((e) => /floor:/.test(e))).toBe(true);
     expect(existsSync(path.join(ctx.dir, CONCEPTS_DIR, "alpha.md"))).toBe(false);
 
-    const resolvedSlugs = resolveSpy.mock.calls.flatMap((c) => c[1] as string[]);
+    const resolvedSlugs = resolveSpy.mock.calls.flatMap((c) => c[2] as string[]);
     expect(resolvedSlugs).not.toContain("alpha");
     expect(resolvedSlugs).not.toContain("beta");
 
