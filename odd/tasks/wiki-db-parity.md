@@ -30,7 +30,7 @@ S8 — REACHABILITY: every new stage or store must be shown reachable from the c
 | T4 | S5 | `attributionGaps` persist through the page-row seam and are marked, counted and named in the row-backed run output. | worker | `e1a2cd49c88c97d4b0e7c2842ebb03bfdd40f554` |
 | T5 | S3 | Curated links persist in `wiki.curated_links` behind the store seam; the overlay re-validates the anchor on every render and a lost anchor drops the link AND reports it. | worker | `15c5cda964906b07246c01f7bfdc0728d3317c98`, refactor-only prerequisite in `df804c6ba6dc1fe7e270b8c3c8baa27e3bcf4e4d` (the `CuratedLinkStorePort` and the file backend behind it; behaviour-preserving, type-checked on its own) |
 | T6 | S4 | Categories persist in `wiki.categories` + `wiki.category_members`; identity minted once, membership stored as evidence, category and concept of the same name stay two objects. | worker | `7e6e9fc5f8f266efabab075cacb6a5a94518fa1a` (the `CategoryStorePort` and the file backend behind it; behaviour-preserving), `43dab47f0c9a01ad1d4238ab4ee89e3587e54a17` (the row store, the seam selection and the suites) |
-| T7 | S7 | Parity test: one input ingested through the file-backed path and the row-backed path, equivalent observable output for all four artifacts. ACCEPTANCE. | worker | `3c09f3d1f5ba2eb700a57a6f9ddc7c6bac95c05f` |
+| T7 | S7 | Parity test: one input ingested through the file-backed path and the row-backed path, equivalent observable output for all four artifacts. ACCEPTANCE. | worker | `3c09f3d1f5ba2eb700a57a6f9ddc7c6bac95c05f`, temp-root teardown in `396f982545f095178477253190dc2416142bdc6b` |
 | T8 | S8 | Reachability proof for every new stage and store: `file:line` call chain plus `git grep`, and RED observed by unwiring the stage. | worker | |
 | T9 | S6, S7 | Documentation: the DB path's behaviour and the exact migration command. | worker | |
 | T10 | S1-S8 | Full gate run and delivery report. | lead | |
@@ -248,3 +248,9 @@ doing the work. For T9: the CLI read commands `category` and `categories-here` s
 than imply the taxonomy is fully row-aware outside the compile path. Also for T9: T7
 confirms `--recompile` writes no categories in EITHER path, which is scope parity, not a
 gap; documenting it as a gap would be wrong.
+
+T7 CLOSURE. `396f982` adds the teardown the suite was missing: it provisions ONE temp root
+for both backends' compiles (eight full compiles writing real page, source and category
+files) and removed nothing, so a run left that tree in `/tmp`. The probe Stack was already
+torn down in `afterAll`; the filesystem teardown now sits beside it, and a run leaves no
+`/tmp/store-parity-*` behind.
