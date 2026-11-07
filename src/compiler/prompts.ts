@@ -58,6 +58,9 @@ function sourcesSectionLines(): string[] {
  * mention that already exists on an EARLIER page. It writes no prose and takes no
  * part in page generation, so no compiled page changes shape under it; it is
  * versioned because the answers it produces are part of what a run judged.
+ * v9: the page prompt requires PER-SOURCE ATTRIBUTION of a merged article: several
+ * sources become ONE article, and every contributing source is cited somewhere in it.
+ * The v8 rule said how to write one citation; this says what a merge owes each source.
  *
  * NOT bumped by the CATEGORY-ASSIGNMENT prompt (`buildCategoryAssignmentPrompt`).
  * That prompt never writes a byte of a page: it proposes categories, which are their
@@ -66,7 +69,7 @@ function sourcesSectionLines(): string[] {
  * here would claim every page in the wiki was regenerated under a new wording when
  * nothing about page generation changed.
  */
-export const PROMPT_VERSION = "v8";
+export const PROMPT_VERSION = "v9";
 
 /**
  * The caller's system policy as prompt lines, or nothing when none is set.
@@ -241,6 +244,28 @@ const PAGE_ATTRIBUTION_LINES: readonly string[] = [
 ];
 
 /**
+ * The page prompt's MULTI-SOURCE rule: what a merged article owes its sources (S2, S7).
+ *
+ * WHY IT IS SEPARATE FROM {@link PAGE_ATTRIBUTION_LINES}. That block says HOW to write a
+ * citation marker; this one says what a page with several contributing sources must do
+ * with them. Without it a model handed two sources can cite one and silently drop the
+ * other, which is concatenation with an attribution hole rather than synthesis: the page
+ * still LISTS both sources in its frontmatter while no claim is traceable to the second.
+ *
+ * It names the same `--- SOURCE: filename ---` headers and the same `^[file.md:lines]`
+ * convention the citation block and the normalizer already use, so "attributed" means
+ * something the pipeline can read rather than a request the model answers on its honour.
+ * The rendering census (`page-renderer.ts` `censusSourceAttribution`) counts what came
+ * back, because a rule only a model can enforce is a rule nobody verifies.
+ */
+const PAGE_MULTI_SOURCE_LINES: readonly string[] = [
+  "When more than one source contributes to this page, merge what they say into ONE article.",
+  "Do not write one section per source, and do not join their texts without attribution.",
+  "Attribute every contributing source: each --- SOURCE: filename --- block above must be cited",
+  "somewhere in the page, and a claim taken from one source never appears without naming that source.",
+];
+
+/**
  * The page prompt's contextual-link instruction.
  *
  * Static text, so it belongs to the prefix every page prompt shares. It states
@@ -299,6 +324,7 @@ export function buildPagePrompt(
     ),
     "",
     ...PAGE_ATTRIBUTION_LINES,
+    ...PAGE_MULTI_SOURCE_LINES,
     ...systemPolicyLines(),
     "\n\n--- SOURCE MATERIAL ---\n\n",
     sourceContent,

@@ -19,9 +19,11 @@ import { readdir } from "fs/promises";
 import path from "path";
 import {
   buildFrontmatter,
+  extractClaimCitations,
   parseFrontmatter,
   slugify,
 } from "../utils/markdown.js";
+import * as output from "../utils/output.js";
 import { readWikiPageFrom } from "./confined-wiki-read.js";
 import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
 import { callClaude } from "../utils/llm.js";
@@ -122,10 +124,80 @@ export async function renderMergedPageContent(
     entry.combinedContent,
     entry.rebuild === true,
   );
+  reportAttributionGap(entry.concept.concept, censusSourceAttribution(pageBody, entry.sourceFiles));
 
   const frontmatter = buildMergedFrontmatter(entry, existingPage, schema);
   reportContradictionWarnings(entry.concept.concept, entry.concept);
   return `${frontmatter}\n\n${pageBody}\n`;
+}
+
+/** Which of a page's contributing sources its prose actually attributes, and which not. */
+interface AttributionCensus {
+  /** Contributing sources at least one citation marker names, in source-list order. */
+  attributed: string[];
+  /** Contributing sources no citation marker names. */
+  unattributed: string[];
+}
+
+/**
+ * Count which of a page's contributing sources its body attributes (S2, S7).
+ *
+ * WHY THIS EXISTS. `mergeExtractions` collects every contributing source and the
+ * frontmatter lists them, which proves the page KNOWS its sources -- never that its prose
+ * attributes a claim to each of them. A merged article that cites one source and silently
+ * absorbs the other is the "concatenation without attribution" S2 rejects, and nothing
+ * before this read the rendered body to notice.
+ *
+ * The reading uses the repository's own citation convention, `extractClaimCitations`, so
+ * "attributed" means exactly what the viewer, the citation lint and the source-utilization
+ * report already mean by it: a `^[file.md:lines]` entry naming that source file. No
+ * heuristic, no fuzzy title match, no score.
+ *
+ * @param body - The rendered page body, frontmatter excluded.
+ * @param sourceFiles - Every source that contributed to this page.
+ * @returns The sources the body attributes and the sources it does not.
+ */
+function censusSourceAttribution(
+  body: string,
+  sourceFiles: readonly string[],
+): AttributionCensus {
+  const cited = new Set<string>();
+  for (const citation of extractClaimCitations(body)) {
+    for (const span of citation.spans) {
+      if (span.file.length > 0) cited.add(span.file);
+    }
+  }
+  return {
+    attributed: sourceFiles.filter((file) => cited.has(file)),
+    unattributed: sourceFiles.filter((file) => !cited.has(file)),
+  };
+}
+
+/**
+ * Report a MERGED article that leaves one of its contributing sources unattributed.
+ *
+ * WHAT THIS IS, AND IS NOT. It is the observable half of the prompt rule: the prompt asks
+ * the model to attribute every contributing source, and this states, per page, whether it
+ * did -- naming each source nobody can trace a claim to. It is not a gate: rewriting or
+ * holding back a page over a missing marker would destroy content nobody asked to lose,
+ * and provenance hygiene for a SINGLE-source page is already the citation lint's job, so
+ * this stays silent below two contributing sources and reports the merge case S2 is about.
+ *
+ * It prints on the compile's own output beside the link and category lines, for the same
+ * reason they do: a source whose contribution vanished into an unattributed paragraph is
+ * exactly the silent partial result S12 forbids.
+ *
+ * @param concept - The page's title, as the frontmatter records it.
+ * @param census - What the rendered body attributed.
+ */
+function reportAttributionGap(concept: string, census: AttributionCensus): void {
+  if (census.unattributed.length === 0) return;
+  const total = census.attributed.length + census.unattributed.length;
+  if (total < 2) return;
+  output.status("!", output.warn(
+    `Page "${concept}" merges ${total} source(s) but attributes ${census.attributed.length}: ` +
+    `no statement is attributed to ${census.unattributed.join(", ")}.`,
+  ));
 }
 
 /**
