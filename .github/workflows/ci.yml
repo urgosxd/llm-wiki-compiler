@@ -99,6 +99,19 @@ jobs:
       # facade, its exact workspace dependencies, and consumer declarations.
       - run: npm run test:pack
 
+  # Scope note, verified: this workflow never passes `--changed-since`. The
+  # pinned `fallow-rs/fallow` wrapper (the `uses:` below) declares an
+  # `auto-changed-since` input defaulting to `true`, and on
+  # `pull_request`/`pull_request_target` events it injects
+  # `--changed-since "$PR_BASE_SHA"`, so PR runs analyze the diff only. A push
+  # to `main` has no PR context, so this same job runs full-tree there.
+  # Base-SHA resolution can fail (shallow checkouts walk a fallback chain);
+  # when it does the wrapper drops the flag and the run degrades to full-tree,
+  # not to an error.
+  # Verification depth: the absence of `--changed-since` is checked against
+  # this file; the injection mechanism was read from the action wrapper's
+  # source at the pinned commit, not from anything in this repository.
+  # Re-verify upstream at the pin before changing the inputs below.
   codebase-health:
     runs-on: ubuntu-latest
     steps:

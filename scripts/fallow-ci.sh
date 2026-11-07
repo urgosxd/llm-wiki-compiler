@@ -14,8 +14,8 @@
 #
 # Fork-aware base resolution:
 #   - Prefer `upstream/main` when an `upstream` remote is configured (the
-#     fork-and-PR workflow described in CONTRIBUTING.md, where `origin`
-#     points at the contributor's fork and `upstream` at atomicmemory/*).
+#     fork-and-PR workflow, where `origin` points at the contributor's fork
+#     and `upstream` at atomicmemory/*).
 #   - Fall back to `origin/main` for direct clones.
 #   - When neither remote tracks main, fall back to running fallow without
 #     `--changed-since` (full-tree analysis).
