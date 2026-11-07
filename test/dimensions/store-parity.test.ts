@@ -70,7 +70,10 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import categoryCommand from "../../src/commands/category.js";
+import categoriesHereCommand from "../../src/commands/categories-here.js";
 import { createProbeSuite } from "../fixtures/probe-stack-suite.js";
+import { captureProcessIo } from "../fixtures/process-io.js";
 import { parityRoots, withoutStack } from "../fixtures/category-rows.js";
 import { CATEGORY_CRITERION, CATEGORY_DESCRIPTION, CATEGORY_REASON, SISTEMAS_TITLE } from "../fixtures/category-scenario.js";
 import {
@@ -95,6 +98,40 @@ const ANCHOR_AFTER = `. ^[sistemas.md:1-1]\n`;
 const DATABASE_CONTEXT =
   "test/dimensions/store-parity.test.ts (the file-backed/row-backed parity suite)";
 
+/** A connection string no server answers on, for the no-fallback case. */
+const UNREACHABLE_DATABASE_URL = "postgresql://aks:aks@127.0.0.1:1/aks";
+
+/** What the two category read verbs printed, each as its `--json` envelope. */
+interface CliReads {
+  readonly category: string;
+  readonly categoriesHere: string;
+}
+
+/**
+ * Run both category read verbs through the CLI surface in `root`.
+ *
+ * Through the VERBS, not through the store port: the claim is that the commands a user
+ * types read the Stack, and a port assertion would prove the port only. The backend is
+ * whichever one the environment addresses at the time of the call, which is what makes
+ * the two halves comparable.
+ *
+ * @param root - Project root the verbs resolve `process.cwd()` from.
+ * @returns Both envelopes, exactly as the commands printed them.
+ */
+async function readCategorySurface(root: string): Promise<CliReads> {
+  const cwd = process.cwd();
+  process.chdir(root);
+  try {
+    const categoryIo = captureProcessIo();
+    await categoryCommand(SISTEMAS_SLUG, { json: true });
+    const hereIo = captureProcessIo();
+    await categoriesHereCommand(`concepts/${SISTEMAS_SLUG}`, { json: true });
+    return { category: categoryIo.out(), categoriesHere: hereIo.out() };
+  } finally {
+    process.chdir(cwd);
+  }
+}
+
 const suite = await createProbeSuite({
   label: "store-parity",
   databaseContext: DATABASE_CONTEXT,
@@ -107,6 +144,8 @@ const { probeStack, runSuite } = suite;
 runSuite(suite.suiteTitle, () => {
   let files: ParityEvidence;
   let rows: ParityEvidence;
+  let filesCli: CliReads;
+  let rowsCli: CliReads;
   let projectRoot = "";
   let saved: NodeJS.ProcessEnv = { ...process.env };
 
@@ -117,9 +156,14 @@ runSuite(suite.suiteTitle, () => {
     const { filesRoot, rowsRoot } = await parityRoots(root);
     // The file-backed half runs with NO Stack, so every seam resolves to the on-disk
     // backend; the row-backed half runs with the probe's Stack installed.
-    files = await withoutStack(() => runParityCorpus(filesRoot));
+    files = await withoutStack(async () => {
+      const evidence = await runParityCorpus(filesRoot);
+      filesCli = await readCategorySurface(filesRoot);
+      return evidence;
+    });
     Object.assign(process.env, probeStack().env());
     rows = await runParityCorpus(rowsRoot, probeStack().harness);
+    rowsCli = await readCategorySurface(rowsRoot);
   });
 
   // The temp root holds two real compiles' worth of page files and the probe Stack owns a
@@ -219,6 +263,56 @@ runSuite(suite.suiteTitle, () => {
     expect(files.cleanGaps).toEqual([]);
     expect(rows.cleanGaps).toEqual([]);
     expect(rows.restoreReport).not.toContain(TARGET_TITLE);
+  });
+
+  it("answers `category` from rows with the envelope the file-backed wiki answers", () => {
+    expect(filesCli.category.length).toBeGreaterThan(0);
+    expect(rowsCli.category.length).toBeGreaterThan(0);
+    expect(rowsCli.category).toBe(filesCli.category);
+    const envelope = JSON.parse(rowsCli.category) as Record<string, unknown>;
+    expect(envelope.resolved).toBe(true);
+    expect(envelope.version).toBe(1);
+    expect(envelope.objectId).toBe(`categories/${SISTEMAS_SLUG}`);
+    expect(envelope.canonicalName).toBe(SISTEMAS_TITLE);
+    expect(envelope.members).toEqual([
+      {
+        pageId: `concepts/${SISTEMAS_SLUG}`,
+        reason: CATEGORY_REASON,
+        evidenceKey: "consenso-distribuido",
+      },
+    ]);
+  });
+
+  it("answers `categories-here` from rows with the envelope the file-backed wiki answers", () => {
+    expect(filesCli.categoriesHere.length).toBeGreaterThan(0);
+    expect(rowsCli.categoriesHere.length).toBeGreaterThan(0);
+    expect(rowsCli.categoriesHere).toBe(filesCli.categoriesHere);
+    const envelope = JSON.parse(rowsCli.categoriesHere) as Record<string, unknown>;
+    expect(envelope.pageId).toBe(`concepts/${SISTEMAS_SLUG}`);
+    expect(envelope.categoryCount).toBe(1);
+    expect(envelope.categories).toEqual([
+      {
+        categoryId: SISTEMAS_SLUG,
+        objectId: `categories/${SISTEMAS_SLUG}`,
+        canonicalName: SISTEMAS_TITLE,
+        description: CATEGORY_DESCRIPTION,
+      },
+    ]);
+  });
+
+  it("fails instead of answering from files when the addressed Stack is unreachable", async () => {
+    const savedUrl = process.env.AKS_DATABASE_URL;
+    process.env.AKS_DATABASE_URL = UNREACHABLE_DATABASE_URL;
+    const io = captureProcessIo();
+    try {
+      // A Stack IS addressed, so the file backend is not an answer: it is the silent
+      // fallback this whole feature exists to remove.
+      await expect(categoryCommand(SISTEMAS_SLUG, { json: true })).rejects.toThrow();
+    } finally {
+      if (savedUrl === undefined) delete process.env.AKS_DATABASE_URL;
+      else process.env.AKS_DATABASE_URL = savedUrl;
+    }
+    expect(io.out()).toBe("");
   });
 
   it("prints the same acceptance and refusal counts for all four artifacts", () => {
