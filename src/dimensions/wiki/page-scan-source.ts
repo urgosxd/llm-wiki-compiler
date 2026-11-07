@@ -217,6 +217,7 @@ function renderPageMarkdown(page: Page): string {
   if (page.orphaned) lines.push("orphaned: true");
   if (page.archived) lines.push("archived: true");
   emitList(lines, "aliases", page.aliases ?? []);
+  emitList(lines, "attributionGaps", page.attributionGaps ?? []);
   return `---\n${lines.join("\n")}\n---\n\n${page.body ?? ""}`;
 }
 

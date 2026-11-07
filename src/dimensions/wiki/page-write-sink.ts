@@ -117,6 +117,7 @@ export function toPage(request: PageWriteRequest): Page {
   return {
     ...page,
     aliases: stringList(meta.aliases),
+    attributionGaps: stringList(meta.attributionGaps),
   };
 }
 

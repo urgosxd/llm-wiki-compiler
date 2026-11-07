@@ -87,6 +87,7 @@ interface WikiPageRow extends Record<string, unknown> {
   readonly created_at: string | null;
   readonly updated_at: string | null;
   readonly aliases: unknown;
+  readonly attribution_gaps: unknown;
 }
 
 /**
@@ -132,6 +133,7 @@ function toPage(row: WikiPageRow): Page | undefined {
     // through these columns answers with the same aliases and attribution gaps the
     // file path reads out of its frontmatter (S2, S5).
     aliases: stringList(row.aliases),
+    attributionGaps: stringList(row.attribution_gaps),
     ...(row.body === null ? {} : { body: row.body }),
     ...(row.created_at === null ? {} : { createdAt: row.created_at }),
     ...(row.updated_at === null ? {} : { updatedAt: row.updated_at }),
@@ -209,7 +211,7 @@ function toJsonbLiteral(values: readonly string[] | undefined): string {
  */
 const PAGE_LISTING_COLUMNS = sql`
   page_directory, slug, title, summary, tags, links,
-  orphaned, archived, aliases, created_at, updated_at
+  orphaned, archived, aliases, attribution_gaps, created_at, updated_at
 `;
 
 /**
@@ -259,7 +261,7 @@ export async function listStoredPagesUnfiltered(
   return withTenant(db, stackId, async (tx) => {
     const rows = await tx.execute<WikiPageRow>(sql`
       select page_directory, slug, title, summary, tags, links,
-             orphaned, archived, body, aliases, created_at, updated_at
+             orphaned, archived, body, aliases, attribution_gaps, created_at, updated_at
       from wiki.pages
       where stack_id = ${stackId}
       order by updated_at desc
@@ -286,7 +288,7 @@ export async function getStoredPage(
   return withTenant(db, stackId, async (tx) => {
     const rows = await tx.execute<WikiPageRow>(sql`
       select page_directory, slug, title, summary, tags, links, body,
-             orphaned, archived, aliases, created_at, updated_at
+             orphaned, archived, aliases, attribution_gaps, created_at, updated_at
       from wiki.pages
       where stack_id = ${stackId}
         and page_directory = ${pageDirectory} and slug = ${slug}
@@ -343,7 +345,7 @@ export async function getStoredPagesByKey(
   const rows = await withTenant(db, stackId, async (tx) =>
     tx.execute<WikiPageRow>(sql`
       select page_directory, slug, title, summary, tags, links, body,
-             orphaned, archived, aliases, created_at, updated_at
+             orphaned, archived, aliases, attribution_gaps, created_at, updated_at
       from wiki.pages
       where stack_id = ${stackId}
         and (page_directory, slug) in (
@@ -392,13 +394,13 @@ export async function upsertStoredPage(
     await tx.execute(sql`
       insert into wiki.pages
         (stack_id, page_directory, slug, title, summary, tags, links, body, orphaned, archived,
-         aliases)
+         aliases, attribution_gaps)
       values (
         ${stackId}, ${page.pageDirectory}, ${page.slug}, ${page.title},
         ${page.summary}, ${toArrayLiteral(page.tags)}::text[],
         ${toArrayLiteral(page.links)}::text[], ${page.body ?? ""},
         ${page.orphaned}, ${page.archived},
-        ${toJsonbLiteral(page.aliases)}::jsonb
+        ${toJsonbLiteral(page.aliases)}::jsonb, ${toJsonbLiteral(page.attributionGaps)}::jsonb
       )
       on conflict (stack_id, page_directory, slug) do update set
         title = excluded.title,
@@ -412,6 +414,7 @@ export async function upsertStoredPage(
         -- page written without these fields is a page that no longer declares them --
         -- exactly what rewriting a file without them does on the file path.
         aliases = excluded.aliases,
+        attribution_gaps = excluded.attribution_gaps,
         updated_at = now()
     `);
   }, callerTx);

@@ -63,6 +63,13 @@ export interface Page {
    * an empty list from the row store rather than `undefined`.
    */
   aliases?: string[];
+  /**
+   * Sources this page draws on and does not cite, when the backend records them.
+   *
+   * The row twin of the file path's `attributionGaps` frontmatter field: empty for a
+   * fully attributed page, so a page is never presented as attributed when it is not.
+   */
+  attributionGaps?: string[];
   /** Full markdown body, present only when `includeBody` is true or via `getPage`. */
   body?: string;
 }
