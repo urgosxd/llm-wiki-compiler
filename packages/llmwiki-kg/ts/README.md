@@ -7,7 +7,23 @@ This package is first-party code of the llm-wiki-compiler project: it is maintai
 edited in this repository, and the compiler consumes it in process. The Python service it
 was derived from is provenance only — it is not a contract oracle, nothing here is
 validated by diffing against it, and it is neither maintained nor re-synced from here.
-There is no upstream sync for this package.
+There is no upstream sync for the code in this package.
+
+## Two upstreams, two policies
+
+The code in this directory and the specification copy under `ts/oracle/` are two different
+artifacts and are not governed the same way.
+
+The **code** is first-party code of the llm-wiki-compiler project, as stated above: it is
+maintained and edited here, and there is no upstream sync for it.
+
+The **specification** at `ts/oracle/aks-specification-v0.1.0/` is not first-party. It is a
+verbatim, unmodified copy of the external AKS specification, upstream
+`https://github.com/Agent-Knowledge-Standard/AKS-Specification`, commit
+`bc823073bcf3c1e47ffc6754cdc02967d9874c63`, specification version `0.1.0`. That copy is
+never edited in place: if the upstream changes it is re-vendored at a new commit and its
+provenance table updated, and patching it in place is not allowed. Nothing under
+`ts/oracle/` may be described as first-party.
 
 ## Status
 
