@@ -98,6 +98,7 @@ Interpretation (non-negotiable): embedding retrieval is legitimate for FINDING c
 | T19 | Close-out of the L17 audit: drop the pinned `maxTokens` from the link review so `LLMWIKI_MAX_TOKENS` governs it and widen the budget test until it reaches that request; deliver T11 (delete the dead alias module, remove the retired `auto`/`review` tiers, keep and prove the identity guard); document the user-visible identity, link, review, curated-link and attribution rules and their four report lines | S6, S8, S9, S12, S14 | worker | 4c80e969292b0db14d42c009fceb6b6a7716ce71 (token budget), 28b17e1de4830fc473e04e90e13f29826425d3d8 (T11), f0597843e69ace5d644ecc601e3265c576977306 (docs) |
 | T20 | Attribution made OBSERVABLE, not silent and not a hold-back: ONE census feeds three surfaces -- the page's own `attributionGaps` frontmatter naming the sources its prose never attributes (omitted when the page is fully attributed), ONE counted `Attribution:` line aggregated across the run's pages, and a summary mention under the completion banner -- and the page is still WRITTEN | S2, S7, S12 | worker | 209922b453e502ddb14b09509a8a78041eb8e08e (code), 16dd8202dac41fd0e7383c51709145c4ee9bccc1 (record; corrected in L20 — this row cited only the code commit) |
 | T21 | Declare `attributionGaps` on `WikiFrontmatter` — the type gap L19 §2/§10.4 disclosed — as an optional `string[]`, DECLARATION ONLY: `buildMergedFrontmatter` still omits the key entirely for a fully attributed page, so no rendered byte and no stdout line changes | S2, S7, S12 (typed only, no behaviour change) | worker | 3a65fc09542eaf5c3088480b87ca9db9fbddc7d7 (a commit cannot cite its own SHA; this record commit is the second half) |
+| T22 | The exhaustive suite as the GATE OF RECORD at the tip, and the T20 red characterized instead of labelled: `npm test` run ONCE at the confirmed HEAD with its exact counts recorded, and the earlier `pages-pages` failure traced to its real cause with the original error text and `file:line` evidence — RECORD ONLY, no source or test file touched | S1-S14 (gate of record only; no spec behaviour changed) | worker | this record commit (a commit cannot cite its own SHA) |
 
 ## Log
 
@@ -927,6 +928,7 @@ Node v24.21.0, `$HOME/.nvm/versions/node/v24.21.0/bin` first on `PATH`, every co
 - `npm run build` — **exit 0**: ESM (`dist/cli.js` 501.47 KB) + DTS (`dist/index.d.ts` 6.67 KB), viewer assets copied.
 - `npm run test:affected` — **exit 0**: `Test Files 807 passed | 3 skipped (810)`, `Tests 6153 passed | 4 skipped (6157)`, full output `/tmp/t20-gates/test-affected-2.log`, zero `×`/`FAIL` lines, so no failing test to name and nothing to re-run.
 - `npm test` (the FULL suite, required because this changes the page writer) — **FIRST run exit 1**, one failure, NAMED here: `packages/llmwiki-kg/ts/src/routes/pages-pages.test.ts > pages endpoints (LLM stubbed) > writes the page to entity_pages, upserting on repeat generation` (`AssertionError: expected [] to have a length of 1 but got +0`), in a package this diff does not touch (no file under `packages/` is modified; `.fallowrc.json` excludes it). Re-ran that file ALONE: **exit 0, 13 tests passed**, i.e. it does not reproduce. Re-ran the whole gate: **exit 0** — `Test Files 890 passed | 3 skipped (893)`, `Tests 6678 passed | 7 skipped (6685)`, 323.90 s, `/tmp/t20-gates/npm-test-3.log`, zero `×`/`FAIL` lines. Recorded as a FLAKE of the same family L16 already recorded once (`db.test.ts > withRequestTransaction`), NOT as coverage and NOT as a blocker; nothing was changed to make it pass.
+  - **ANNOTATION (T22, see L21) — the word "FLAKE" in the bullet above is SUPERSEDED, not erased, and the "does not reproduce" observation keeps its value as evidence.** "Flake" is a label, not a cause, and it hid a real, still-open defect. The condition that produced this red is the PRE-EXISTING commit-after-response visibility race (gap 2): `createRequestTransactionWrapper` (`packages/llmwiki-kg/ts/src/db.ts:341-358`) runs the handler inside `database.transaction(...)` and the handler sends the HTTP response, so the commit lands AFTER the client already has its answer and a follow-up statement on another pooled connection legally sees pre-commit state. It is NOT the `23503`/foreign-key/stack-deletion shape and NOT a shared fixture registry: that log contains zero `23503` and zero `stack_documents_stack_id_fkey`, and the failing file's harness has its own per-run database. Full verbatim error, disprovals and `file:line` evidence in L21 §2-§5.
 - `./node_modules/.bin/fallow` — **exit 0**: "✗ 0 above threshold · 16956 analyzed · maintainability 91.1 (good)", dead files 0.0%, dead exports 0.0%, duplication = the four PRE-EXISTING test clone groups.
 - `npx vitest run` on every touched test file — **exit 0**: `attribution-marking.test.ts` + `synthesis-provenance.test.ts` 2 files / 13 tests; with the renderer suites (`page-renderer-aliases`, `page-renderer-related-pages`, `page-renderer-contextual-links`) 5 files / 22 tests.
 - `npx vitest related --run` per changed src file, all **exit 0**: `src/compiler/page-renderer.ts` 100 files / 478 tests; `src/compiler/compile-report.ts` 95 / 464; `src/compiler/index.ts` 93 / 440; `src/compiler/types.ts` maps NO test file and exits 0 with none run.
@@ -1022,3 +1024,99 @@ No scratch directory was created inside the worktree. One gate log lives OUTSIDE
 
 RISK: **none.** The diff is one optional member on an interface plus its JSDoc and this record. It changes no executable statement — `git diff` on the code commit is exactly 2 added lines in `src/utils/types.ts`, both erased at compile time — so it cannot alter a rendered page, a stored byte, a counter or a stdout line, and the pinned absence tests (T2, T3) plus the `dist` sizes and the 6153-test affected run are the evidence that it did not. Item 3 is therefore not claimed: nothing shared consumes this member, because no consumer reads it at all.
 
+
+L21 (T22 — the exhaustive suite at the tip recorded as the GATE OF RECORD, and the T20 red characterized with evidence instead of labelled a "flake"; RECORD ONLY, no source and no test file touched):
+
+### 1. The gate of record, exact
+
+Preconditions checked BEFORE the run, both required and both observed:
+
+- `git rev-parse HEAD` = `91b483e02c3a99575dae4a297cb023d15fb4a7ff` — the tip this record is about.
+- `git status --porcelain | wc -l` = `0` — a clean tree, so the run cannot be attributed to uncommitted work.
+- Node `v24.21.0`, with `$HOME/.nvm/versions/node/v24.21.0/bin` first on `PATH`. `node_modules` was already installed; `npm ci` was NOT run.
+
+Then `npm test` ran **ONCE**, foreground, full output captured OUTSIDE the worktree at `/tmp/t22/npm-test.log`:
+
+- **Exit code: `0`.**
+- `Test Files  890 passed | 3 skipped (893)` — 893 files total, 890 passed, 3 skipped.
+- `Tests  6678 passed | 7 skipped (6685)` — 6685 tests total, 6678 passed, 7 skipped.
+- `Duration  315.16s (transform 16.60s, setup 11.25s, collect 968.63s, tests 1176.85s, environment 275ms, prepare 93.05s)`, start `22:20:27`.
+- `grep -cE "^ FAIL |Failed Tests" /tmp/t22/npm-test.log` = **0**; `grep -cE "×"` = **0**. There is no `Failed Tests` block in the transcript at all.
+
+**Failing tests: NONE.** No test failed, so there is no failure name and no error text to report for this run, and no re-run was made or needed.
+
+The 3 skipped files are the live-gateway opt-ins, skipped by their own `AKS_TEST_GATEWAY !== "1"` guard and unrelated to this feature: `packages/llmwiki-kg/ts/src/routes/ingest-gateway.test.ts` (1 test | 1 skipped), `aks-gateway.test.ts` (1 | 1), `pages-gateway.test.ts` (2 | 2). The remaining 3 of the 7 skipped tests are skipped individually elsewhere in the suite.
+
+**THE EXHAUSTIVE SUITE AT `91b483e` IS GREEN.** That is the gate of record for this feature document.
+
+### 2. The T20 failure, quoted verbatim
+
+The red came from `/tmp/t20-gates/npm-test-2.log`, the only red of the three T20 full-suite runs, on the same counts as the two green ones (`Test Files  1 failed | 889 passed | 3 skipped (893)`, `Tests  1 failed | 6677 passed | 7 skipped (6685)`, 318.33 s).
+
+The per-test line, `npm-test-2.log:3841` (ANSI escapes stripped, otherwise verbatim):
+
+```text
+   × pages endpoints (LLM stubbed) > writes the page to entity_pages, upserting on repeat generation 44ms
+```
+
+The failure block, `npm-test-2.log:5707-5727` (ANSI colour codes stripped, otherwise verbatim):
+
+```text
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/llmwiki-kg/ts/src/routes/pages-pages.test.ts > pages endpoints (LLM stubbed) > writes the page to entity_pages, upserting on repeat generation
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ packages/llmwiki-kg/ts/src/routes/pages-pages.test.ts:246:18
+    244|       where entity_id = ${fixture.entityIds.billing}
+    245|     `);
+    246|     expect(rows).toHaveLength(1);
+       |                  ^
+    247|     expect(rows[0]?.entity_name).toBe("Billing Service");
+    248|     expect(rows[0]?.source_type).toBe("compiled");
+```
+
+The failing file's own summary line in that transcript: `❯ packages/llmwiki-kg/ts/src/routes/pages-pages.test.ts (13 tests | 1 failed) 788ms`.
+
+**That is the ENTIRE error.** It is an `AssertionError` on a row-count expectation returned by a `SELECT`. It is not a database error, not a driver error, and not a teardown error.
+
+### 3. Verdict
+
+**UNRELATED: `expected [] to have a length of 1 but got +0` because it is not a foreign-key violation, not a stack deletion and not a fixture-registry collision — the quoted error contains no `23503`, no `stack_documents_stack_id_fkey` and no database error of any kind; its cause is the PRE-EXISTING commit-after-response visibility race (gap 2, already on file at `odd/tasks/reach-test.md:389-398`), which is still OPEN and is not this feature's.**
+
+It is NOT the harness fixture-registry defect described in the handoff, and recording it as such would be false. It is equally NOT "flake, not coverage": it is a named, still-open pre-existing defect with a mechanism, recorded here as such.
+
+### 4. Why it cannot be the harness defect (four independent disproofs)
+
+1. **No FK signature, by grep, not by reading.** `grep -nE "23503|stack_documents_stack_id_fkey|foreign key|violates" /tmp/t20-gates/npm-test-2.log` returns exactly one line, and it is an unrelated test NAME containing the word "violates" (`confidence metadata — CLI lint integration > surfaces all three new rule messages when a page violates all constraints`). Zero occurrences of `23503`, zero of `stack_documents_stack_id_fkey`, zero `SQLSTATE` errors anywhere in the 400 KB transcript. A `23503` would be an `error` object surfaced as text; this failure has no error text beyond the assertion.
+2. **The failing file never imports `ingest-harness.ts`.** `packages/llmwiki-kg/ts/src/routes/pages-pages.test.ts:9` imports `./pages-harness.js`. The imports of `packages/llmwiki-kg/ts/src/routes/pages-harness.ts:17-30` are `../auth.js`, `../config.js`, `../db.js`, `../server.js`, `../testing/no-database.js`, `../testing/per-run-database.js` and `./fixture-tenant.js` — `ingest-harness.ts` is not among them, so the `fixtureStacks` set at `ingest-harness.ts:157` cannot be reached from this test file at all.
+3. **The pages harness's registry is not shared between files.** `pages-harness.ts:196` is a per-module-instance `const fixtureStacks = new FixtureStacks()`, and `deleteFixtureRows()` (`pages-harness.ts:136-142`) deletes only the ids that instance tracked, one tenant-bound transaction per Stack (`fixture-tenant.ts:97-104`) — never by prefix and never by another file's ids.
+4. **Each `pages-*` file has its own DATABASE, so no file's cleanup can reach another's rows.** `pages-harness.ts:46` calls `perRunDatabase(TEST_SERVER_URL)`, whose memo is per module instance (`packages/llmwiki-kg/ts/src/testing/per-run-database.ts:589-610`, rationale at `:41-46`), and `vitest.config.ts` sets no `isolate: false`, so every test file gets a fresh module registry and therefore a fresh per-run database. This is the property `odd/tasks/reach-test.md:379-385` records as pinned by `src/routes/harness-database-isolation.test.ts`.
+
+For completeness on direction of effect: even the 23503 shape that `odd/tasks/reach-test.md:392-394` DID observe lives at `ingest-harness.ts:250`, in the `ingest-*` family — not in the file that failed here.
+
+### 5. What it actually was (the mechanism, from code)
+
+`createRequestTransactionWrapper` (`packages/llmwiki-kg/ts/src/db.ts:341-358`) runs the whole handler inside `database.transaction(async (tx) => handler(req, res, tx))`, and the handler is what sends the HTTP response. In the failing test the handler is `getEntityPage` (`packages/llmwiki-kg/ts/src/routes/pages/one-page.ts:130-146`): it writes the page on `tx` through `getOrGeneratePage(tx, entity.id)` (`:130`), which upserts `entity_pages` in `storePage` (`packages/llmwiki-kg/ts/src/core/page/cache.ts:98-119`), and then calls `res.json(...)` (`:139`) — still inside the transaction. The COMMIT therefore lands AFTER the response reaches supertest.
+
+The test then reads the row through a DIFFERENT pooled connection, unbound to that transaction: `database().execute(sql\`select ... from entity_pages where entity_id = ...\`)` at `pages-pages.test.ts:239-246`. Under `READ COMMITTED`, a statement on another connection cannot see an uncommitted insert, so it legally returns `[]` — which is exactly the observed `expected [] to have a length of 1 but got +0`, with no error to print. Two details confirm the read raced the commit rather than the write never happening: the `await request(app).get(...).expect(200)` above it PASSED (so generation and the upsert ran), and the failing instance took `44ms`, the fastest of the sibling tests in that file (57-160 ms), i.e. it got to the assertion sooner, not later.
+
+This is why it passes alone and under light load: the window is the interval between `res.json` and the transaction's COMMIT, and heavy concurrent load widens it. `odd/tasks/reach-test.md:389-398` already records this wrapper as the cause of a family of "row not yet visible to the next statement" failures, names `23503` as ONE of its shapes (not a separate registry bug), and `:683-687` records sibling visibility assertions of exactly this shape with `zero 23503`.
+
+### 6. What this record does NOT claim
+
+- It does NOT fix gap 2. Neither `db.ts` nor `one-page.ts` nor `pages-pages.test.ts` was modified by T22; the entire diff is this document.
+- It does NOT call the T20 red a flake. L19's "FLAKE" wording is annotated in place and left readable, per the annotation added to that bullet.
+- It does NOT claim the red reproduced at the tip. It did not: `npm test` at `91b483e` is green (L21 §1). A green gate does not disprove a race whose window is load-dependent, and the mechanism in §5 stands on code, not on a rate.
+
+### 7. Scratch and risk
+
+Created OUTSIDE the worktree and left for the parent to remove: `/tmp/t22/` (this run's full transcript, `npm-test.log`). No scratch was created inside the worktree; `git status --short` on the delivered tree shows this document only.
+
+RISK: **none.** The diff is documentation: one task row, one annotation, and this log entry. It changes no executable statement, no test, no stored byte and no stdout line, so it cannot alter a rendered page or a counter, and it leaves every spec `S1-S14` behaviour exactly as T21 delivered it.
