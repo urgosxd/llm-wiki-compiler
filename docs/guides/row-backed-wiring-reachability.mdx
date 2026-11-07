@@ -41,8 +41,8 @@ src/compiler/index.ts:374     → runCompilePipeline(root, options, dimensionsDb
 src/compiler/index.ts:1107    runCompilePipeline()
 src/compiler/index.ts:1132    → resolvePageSeams(db, env)
 src/dimensions/wiki/page-source-seam.ts:395  resolvePageSeams()
-src/dimensions/wiki/page-source-seam.ts:408  → curatedLinks: createRowCuratedLinkStore(...)
-src/dimensions/wiki/page-source-seam.ts:409  → categories:   createRowCategoryStore(...)
+src/dimensions/wiki/page-source-seam.ts:409  → curatedLinks: createRowCuratedLinkStore(...)
+src/dimensions/wiki/page-source-seam.ts:410  → categories:   createRowCategoryStore(...)
 ```
 
 `resolvePageSeams` returns an empty bundle when the run has no Stack, and that empty
@@ -70,7 +70,7 @@ those incumbents are read through the run's own page source.
 
 | Direction | Call chain | `git grep` | Hits |
 | --- | --- | --- | --- |
-| selection | `page-source-seam.ts:408` → `index.ts:1010 input.seams.curatedLinks` → `index.ts:583 overlayCuratedPageWrites(..., curatedStore)` | `git grep -n 'curatedLinks: createRowCuratedLinkStore' -- src/` | 1 (`page-source-seam.ts`) |
+| selection | `page-source-seam.ts:409` → `index.ts:1010 input.seams.curatedLinks` → `index.ts:583 overlayCuratedPageWrites(..., curatedStore)` | `git grep -n 'curatedLinks: createRowCuratedLinkStore' -- src/` | 1 (`page-source-seam.ts`) |
 | overlay | `curated-links-apply.ts:107 overlayCuratedPageWrites` → `curated-links-apply.ts:69 applyCuratedOverlay` → `curated-links-overlay.ts:105 overlayCuratedLinks` (re-anchors on every render) → `curated-links-apply.ts:76 backend = store ?? createFileCuratedLinkStore(root)` | `git grep -n 'input.seams.curatedLinks' -- src/compiler/index.ts` | 1 |
 | storage | record path → `curated-links-row-store.ts:157 insert into wiki.curated_links`; load → `:100 from wiki.curated_links`; drop → `:196 delete from wiki.curated_links` | `git grep -n 'insert into wiki.curated_links' -- src/` | 1 |
 
@@ -114,7 +114,7 @@ round trip is pinned by `test/dimensions/row-page-round-trip.test.ts`.
 ## The degradation that makes an unwired store invisible
 
 Measured on the curated-link store, and true of the pattern rather than of that store
-alone. Remove line `page-source-seam.ts:408` — the `curatedLinks:` entry of the seam
+alone. Remove line `page-source-seam.ts:409` — the `curatedLinks:` entry of the seam
 bundle — and:
 
 - the curated link **still works**. The overlay falls back to
@@ -133,9 +133,28 @@ Two tests exist because of that measurement:
 - `test/dimensions/row-page-curated-links.test.ts` — *"keeps a row-backed Stack's records
   out of the project's curated-links file"* asserts the file is absent after a row-backed
   run AND that the same scenario file-backed does create it, so the assertion cannot pass
-  vacuously. Unwiring `page-source-seam.ts:408` turns exactly this case red.
+  vacuously. Unwiring `page-source-seam.ts:409` turns exactly this case red.
 - `test/dimensions/store-parity.test.ts` — the four-artifact parity acceptance suite, which
   compares the RECORDS field for field rather than comparing restored bodies alone.
+
+### The rule this produced
+
+**A fallback makes an unwire look like a success.** Therefore any unwire probe must ALSO
+assert that the fallback path left nothing behind — for a row-backed run, no
+`wiki/concepts/*.md`, no `wiki/categories/*`, and no `.llmwiki/curated-links.json`. Asserting
+that the artifact came back is the one assertion a fallback always satisfies.
+
+Two measured examples, the same failure class:
+
+- **The curated-link store.** Remove `page-source-seam.ts:409` and the overlay re-anchors
+  the link out of `.llmwiki/curated-links.json` (`curated-links-apply.ts:76`).
+- **The categories seam.** Remove `page-source-seam.ts:410` and a row-backed compile writes
+  category files instead (`categories/assign.ts:232`), so `llmwiki category` and
+  `llmwiki categories-here` still answer, and still agree with each other; only the
+  rows-versus-files comparison notices.
+
+`test/dimensions/row-store-of-record.test.ts` pins the rule: after a real row-backed compile
+it asserts the four artifacts are in rows AND that none of those three paths exists on disk.
 
 ## Check it yourself
 
@@ -158,7 +177,7 @@ git grep -n 'attributionGaps: stringList' -- src/
 git grep -n 'emitList(lines, "attributionGaps"' -- src/
 
 # 4. The behaviour, through the entry point a user runs.
-npx vitest run test/dimensions/store-parity.test.ts test/dimensions/row-page-curated-links.test.ts
+npx vitest run test/dimensions/store-parity.test.ts test/dimensions/row-page-curated-links.test.ts test/dimensions/row-store-of-record.test.ts
 ```
 
 Step 4 needs a reachable Postgres. `LLMWIKI_TEST_DATABASE_URL` points at one;
