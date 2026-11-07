@@ -29,15 +29,15 @@
  *    -- and compares the records, the restored body and the drop report. Equivalent
  *    observable behaviour is the requirement; byte-identical storage is not.
  *
- * ## What the comparison folds, and why that is not a weakened assertion
+ * ## Why the comparison is EXACT
  *
- * The anchor's two prose SIDES are compared with outer whitespace folded. A row-backed
- * page read back through `renderPageMarkdown` yields a body with one blank line more at
- * its start than the same page read from disk, so the prose window `anchorAround` slices
- * differs by leading newlines. The overlay never reads those sides -- it re-anchors on
- * `anchor.text` alone, which is compared EXACTLY -- and the difference predates this
- * store: it is a rendering artifact of the row reader, recorded here so T7's broader
- * parity work meets it with its cause already named.
+ * It used to fold the anchor's two prose sides, because a row-backed page read back
+ * through `renderPageMarkdown` yielded a body with one blank line more at its start than
+ * the same page read from disk. That was not a formatting detail: the renderer re-added
+ * the separator `parseFrontmatter` had already stripped, so the resolver's write-back
+ * added one leading newline on every rewrite. It is fixed at the source and pinned by
+ * `row-page-round-trip.test.ts`, which is why nothing here trims any more: an extra byte
+ * in these windows is a regression and has to fail.
  *
  * Every case goes through `compileAndReport` on a real Stack with the real document
  * store: a store that only works when a test calls it directly proves nothing about the
@@ -268,9 +268,9 @@ async function alphaBodyText(
 /**
  * The prose around the mention, as both backends must agree on it.
  *
- * The outer whitespace is folded because the row reader's rendered body carries one
- * blank line more at its start than a file does; see the file header. The anchor TEXT is
- * compared exactly, and it is the only part the overlay re-anchors on.
+ * Compared byte for byte, including the newlines at either end: those come from the
+ * body the record was sliced out of, and the two backends are required to hold the same
+ * body. See the file header for the renderer defect this used to force it to fold.
  *
  * @param record - A stored record from either backend.
  * @returns The fields the two stores are required to agree on.
@@ -280,11 +280,7 @@ function comparable(record: StoredCuratedLink): Record<string, unknown> {
     stableKey: record.stableKey,
     sourcePageId: record.sourcePageId,
     targetPageId: record.targetPageId,
-    anchor: {
-      text: record.anchor.text,
-      before: record.anchor.before.trim(),
-      after: record.anchor.after.trim(),
-    },
+    anchor: record.anchor,
     provenance: record.provenance,
   };
 }
@@ -352,10 +348,12 @@ describe("curated links through the row seam", () => {
       expect(record.sourcePageId).toBe(`concepts/${ALPHA_SLUG}`);
       expect(record.targetPageId).toBe(`concepts/${TARGET_SLUG}`);
       expect(record.provenance).toBe("model-verdict");
-      // The anchor is what makes the record re-anchorable: text plus both prose sides.
+      // The anchor is what makes the record re-anchorable: text plus both prose sides,
+      // byte for byte. The leading newline is the blank line that separates frontmatter
+      // from prose, which the file path's body carries too (`row-page-round-trip`).
       expect(record.anchor.text).toBe(TARGET_ALIAS);
-      expect(record.anchor.before.trim()).toBe("Alpha Topic stores vectors in a");
-      expect(record.anchor.after.trim()).toBe(". ^[alpha.md:1-1]");
+      expect(record.anchor.before).toBe(`\nAlpha Topic stores vectors in a `);
+      expect(record.anchor.after).toBe(`. ^[alpha.md:1-1]\n`);
       // A timestamp that reads back as itself proves it survived `timestamptz`.
       expect(new Date(record.createdAt).toISOString()).toBe(record.createdAt);
       expect(record.stableKey).toHaveLength(16);

@@ -207,6 +207,17 @@ export function createResolverPageSource(
  * the key rather than writing `[]`, and `buildMergedFrontmatter` writes
  * `attributionGaps` only for a page that is not fully attributed.
  *
+ * THE SEPARATOR IS THE PARSER'S, NOT THE RENDERER'S. This function is the exact inverse
+ * of `parseFrontmatter` (`src/utils/markdown.ts`), which strips the closing fence AND the
+ * single newline that terminates it. The stored body already BEGINS with one newline: the
+ * compiler writes `${frontmatter}\n\n${prose}\n` (`page-renderer.ts`), so stripping the
+ * block leaves the blank line in the body, and the file path parses its own bytes the
+ * same way. Emitting a `\n\n` separator here therefore handed the parser one newline more
+ * than it wrote, and the resolver stores the rendered markdown back whenever it adds a
+ * link: a row-backed page gained one leading blank line per rewrite, forever. Emitting
+ * exactly one newline after the fence makes the trip idempotent for ANY stored body, and
+ * makes the rendered markdown carry the same framing a page file has.
+ *
  * @param page - A page from the row store.
  * @returns Frontmatter plus the page's body.
  */
@@ -218,7 +229,7 @@ function renderPageMarkdown(page: Page): string {
   if (page.archived) lines.push("archived: true");
   emitList(lines, "aliases", page.aliases ?? []);
   emitList(lines, "attributionGaps", page.attributionGaps ?? []);
-  return `---\n${lines.join("\n")}\n---\n\n${page.body ?? ""}`;
+  return `---\n${lines.join("\n")}\n---\n${page.body ?? ""}`;
 }
 
 /**
