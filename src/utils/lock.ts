@@ -27,6 +27,33 @@
  * to both hold the reclaim lock. The outer retry loop in acquireLock handles
  * convergence: first pass cleans up the stale reclaim lock, second pass
  * publishes it cleanly.
+ *
+ * ## Observability
+ *
+ * A lock nobody observes is indistinguishable from no lock, so every acquisition
+ * says which identity it contends for and under which key: `lock: acquired …` and
+ * `lock: busy, held elsewhere: …` under `--verbose`, and — always visible —
+ * `lock: waited <N>ms for …` for an acquire that won only after retrying and
+ * `lock: gave up after <N>ms waiting for …` for one that exhausted its bound. See
+ * {@link lockLine} for the one shared shape and {@link announceWaited} for why a
+ * wait survives the per-call `quiet` option.
+ *
+ * A give-up does not stop at `gave up`: the reason is printed beside it. Reporting
+ * only the elapsed time made an unreachable lock database and a genuinely held lock
+ * indistinguishable — the one question the observation exists to answer — so
+ * {@link pollForLock} spends one final, LOUD attempt on the give-up path.
+ *
+ * ## What a file-backed project does NOT get
+ *
+ * The advisory lock is keyed on the Stack id, so it is the SAME key on every host and two
+ * hosts serving one Stack exclude each other. The file lock cannot be: it is a file inside
+ * the checkout, keyed by its resolved path, because for a project with no Stack there is
+ * nothing better available. That is a REAL limitation and not a detail -- two hosts
+ * serving the same file-backed project lock their OWN disk, both acquire, and compile
+ * concurrently. The Stack-id lock does NOT cover them: only a Stack with a database
+ * configured gets cross-host exclusion. The observation lines say which lock a run is
+ * under -- `stack <id>` versus `path <abs>` -- so that question is answerable from the
+ * log rather than guessed from the environment.
  */
 
 import { realpath, unlink } from "fs/promises";
@@ -101,6 +128,71 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
+ * The ONE shape of a lock observation: `lock: <headline> <identity> (key=<key>)`.
+ *
+ * Every observation is built here so a reader learns one grep instead of four. The
+ * key is printed beside the identity because they answer different questions: the
+ * identity is the human-readable label (`stack <id>` / `path <abs>`) and the key is
+ * the value the lock was actually taken under.
+ */
+function lockLine(headline: string, identity: string, key: string): string {
+  return `lock: ${headline} ${identity} (key=${key})`;
+}
+
+/** The checkout path a file-backed lock is keyed by; `lockKeyFor`'s path fallback. */
+async function checkoutPathKey(root: string): Promise<string> {
+  return realpath(root).catch(() => path.resolve(root));
+}
+
+/**
+ * Which lock an acquisition really contends for, labelled for the observation lines.
+ *
+ * {@link lockKeyFor} alone is not enough to LABEL a lock: it returns the Stack id
+ * whenever the environment names one, but {@link databaseUrlFor} refuses a Stack with
+ * no DSN, and that run locks a FILE. Reporting the file lock under the Stack's key
+ * would name a key nobody took, so the label follows the gate.
+ */
+async function lockTargetFor(
+  root: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ identity: string; key: string }> {
+  const stackId = stackIdOf(env);
+  if (stackId !== undefined && databaseUrlFor(env) !== undefined) {
+    return { identity: `stack ${stackId}`, key: stackId };
+  }
+  const key = await checkoutPathKey(root);
+  return { identity: `path ${key}`, key };
+}
+
+/**
+ * Report that a BLOCKING acquisition waited `waitedMs` before it won the lock.
+ *
+ * VISIBLE BY DESIGN, and deliberately not gated on the per-call `quiet` option:
+ * that option exists to silence the per-attempt "Another compilation is running."
+ * spam a by-design poller would otherwise repeat every interval, not the observation
+ * of the wait itself. The wait is the one fact a caller cannot recover after the run
+ * finishes -- "was a lock the reason this compile waited" is unanswerable without
+ * it -- and a lock nobody observed is indistinguishable from no lock. The GLOBAL
+ * `--quiet` (`output.isQuiet()`, which `output.status` consults) still silences it,
+ * because that is the user asking for silence.
+ */
+async function announceWaited(root: string, env: NodeJS.ProcessEnv, waitedMs: number): Promise<void> {
+  const { identity, key } = await lockTargetFor(root, env);
+  output.status("i", output.dim(lockLine(`waited ${waitedMs}ms for`, identity, key)));
+}
+
+/**
+ * Report that a BLOCKING acquisition exhausted its bound `waitedMs` after it began.
+ *
+ * Same visibility rule as {@link announceWaited}: it survives the per-call `quiet`
+ * option and is silenced only by the global `--quiet`.
+ */
+async function announceGaveUp(root: string, env: NodeJS.ProcessEnv, waitedMs: number): Promise<void> {
+  const { identity, key } = await lockTargetFor(root, env);
+  output.status("!", output.warn(lockLine(`gave up after ${waitedMs}ms waiting for`, identity, key)));
+}
+
+/**
  * Acquire the project lock through a process-local FIFO, then RETRY with a short
  * poll until it succeeds or `timeoutMs` elapses without progress (then throwing
  * {@link LockBusyError}). The FIFO prevents a same-process burst from starting
@@ -131,14 +223,41 @@ export async function acquireLockBlocking(root: string, options: BlockingLockOpt
 async function pollForLock(root: string, options: BlockingLockOptions): Promise<void> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_BLOCKING_TIMEOUT_MS;
   const intervalMs = options.intervalMs ?? DEFAULT_BLOCKING_INTERVAL_MS;
-  const deadline = Date.now() + timeoutMs;
+  const env = options.env ?? process.env;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let failedAttempts = 0;
   for (;;) {
     // Intermediate retries acquire QUIETLY: a held lock is the EXPECTED steady
     // state while we poll, so the per-attempt "Another compilation is running."
     // warning would spam SDK/MCP callers that retry by design. The final
-    // LockBusyError is the clear signal on timeout.
-    if (await acquireLock(root, { quiet: true, env: options.env })) return;
-    if (Date.now() >= deadline) throw new LockBusyError(timeoutMs);
+    // LockBusyError is the clear signal on timeout. Only the give-up below buys
+    // its diagnosis with one loud attempt.
+    if (await acquireLock(root, { quiet: true, env: options.env })) {
+      // A lock that was FREE on the first attempt was not waited for; only a failed
+      // attempt turns the elapsed time into a wait worth reporting. This is also why
+      // the measurement lives here and not in either backend: both paths poll through
+      // this loop, so neither can report a differently-measured wait.
+      if (failedAttempts > 0) await announceWaited(root, env, Date.now() - startedAt);
+      return;
+    }
+    if (Date.now() >= deadline) {
+      // ONE last attempt with `quiet` UNSET. Every retry above is quiet, and quiet
+      // also suppresses `Could not reach the lock database.` — so a give-up built
+      // from them alone reported the identical line for an unreachable database and
+      // for a genuinely held lock, and an investigator could not tell "I waited on
+      // another compile" from "I waited on a database that was never there". This
+      // attempt is an ordinary acquire: if it wins, the wait is announced and the
+      // acquisition simply succeeded; if it loses, the non-quiet path prints the
+      // REAL cause immediately before the give-up line and the throw.
+      if (await acquireLock(root, { env: options.env })) {
+        await announceWaited(root, env, Date.now() - startedAt);
+        return;
+      }
+      await announceGaveUp(root, env, Date.now() - startedAt);
+      throw new LockBusyError(timeoutMs);
+    }
+    failedAttempts += 1;
     await delay(intervalMs);
   }
 }
@@ -162,6 +281,8 @@ async function acquireDatabaseLock(
   const dsn = databaseUrlFor(env);
   if (dsn === undefined) return undefined;
   const lockKey = await lockKeyFor(root, env);
+  // `databaseUrlFor` refuses a DSN without a Stack, so the key here IS the Stack id.
+  const identity = `stack ${lockKey}`;
   let held: HeldPostgresLock | null;
   try {
     held = await tryAcquirePostgresLock(dsn, lockKey);
@@ -173,9 +294,11 @@ async function acquireDatabaseLock(
   }
   if (held === null) {
     if (!options.quiet) output.status("!", output.warn("Another compilation is running."));
+    output.verbose(lockLine("busy, held elsewhere:", identity, lockKey));
     return false;
   }
   lockRegistry.set(lockKey, held);
+  output.verbose(lockLine("acquired", identity, lockKey));
   return true;
 }
 
@@ -277,22 +400,34 @@ export async function acquireLock(root: string, options: AcquireLockOptions = {}
     return false;
   }
   const lockPath = lockFileIn(privateDir);
+  // A file-backed lock is keyed by the checkout path and nothing better is available:
+  // two hosts serving one Stack each lock their OWN disk (see the module header). The
+  // label says `path` so a reader never mistakes it for the cross-host Stack lock.
+  const fileKey = await checkoutPathKey(root);
+  const fileIdentity = `path ${fileKey}`;
 
   for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
     // Try create-only publication — fails if the name is already taken
     const created = await tryCreateLock(lockPath, options.hooks);
-    if (created) return true;
+    if (created) {
+      output.verbose(lockLine("acquired", fileIdentity, fileKey));
+      return true;
+    }
 
     // Lock exists. Check if the holding process is dead.
     const stale = await isLockStale(lockPath);
     if (!stale) {
       if (!options.quiet) output.status("!", output.warn("Another compilation is running."));
+      output.verbose(lockLine("busy, held elsewhere:", fileIdentity, fileKey));
       return false;
     }
 
     // Stale lock — serialize reclamation via a second lock.
     const reclaimed = await reclaimStaleLock(root, lockPath);
-    if (reclaimed) return true;
+    if (reclaimed) {
+      output.verbose(lockLine("acquired", fileIdentity, fileKey));
+      return true;
+    }
 
     // Reclamation failed (e.g. cleaned up stale reclaim lock). Retry.
   }

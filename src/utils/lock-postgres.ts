@@ -23,6 +23,28 @@
  * Visibility across machines. Two hosts sharing one Stack each held "the" lock on
  * their own disk and could compile the same corpus concurrently; an advisory lock is
  * one row of shared state they both contend for.
+ *
+ * ## What a collision costs
+ *
+ * The second key is the 32-bit `hashtext` of the identity inside the fixed
+ * {@link LOCK_NAMESPACE}, so two different Stacks CAN hash to the same key. Two Stacks
+ * that collide queue behind each other: over-serialisation, never corruption. Exclusion
+ * is decided by the key and the colliding pair holds exactly ONE key between them, so a
+ * false collision can only make an unrelated compile WAIT -- it can never let two
+ * writers into one Stack.
+ *
+ * The inverse half is the one the guarantee rests on, and it is the more important one:
+ * two DIFFERENT keys never share ONE Stack's lock, because a Stack's key is a function of
+ * its id and nothing else -- not of the host, not of the checkout path, not of the
+ * session. A collision therefore cannot weaken the property this lock exists for; the
+ * worst case it can produce is throughput, not correctness. The two-int form is kept
+ * deliberately: the namespace int is what keeps unrelated tooling sharing the database
+ * out of this key space, and a 64-bit derivation would trade that guard and a rewrite of
+ * the key at every site for a collision probability an operator can already live with.
+ *
+ * All of this is about STACK-backed Stacks. A project with no Stack, or a Stack with no
+ * database configured, never reaches this module at all: its lock is a file keyed by the
+ * checkout path and it is NOT protected across hosts. See the `lock.ts` module header.
  */
 
 import { createClient } from "llmwiki-kg";
