@@ -84,16 +84,16 @@ ancestor of it.
 
 | ID | What | Specs | Commit |
 | --- | --- | --- | --- |
-| T1 | Feature document | — | 30514f8 |
-| T2 | Enumerate every path through the wrapper with `path:line` evidence | S4 | ed4b94a |
-| T3 | Design the boundary move and its commit-failure error semantics | S3, S5, S6, S7 | ed4b94a |
-| T4 | RED tests: post-200 independent visibility, commit failure, preserved rollback | S9 | ed4b94a |
-| T5 | Implement the transactional boundary move | S3, S5, S6, S8 | ed4b94a |
-| T6 | Document the behaviour change | S5 | ed4b94a |
-| T7 | Differential check against `fea6291` in a `mktemp -d` scratch copy | S8, S9(d) | ed4b94a |
-| T8 | Gates: root tsc 0; KG tsc 0; typecheck:tests 0 (baseline NOT regenerated); typecheck:kg 0; focused 16/16 at dbdbf87; test:affected escalated to the full unit tier because package-lock.json differs from origin/main — 822 files, 6219 tests, 0 failed, run twice with identical counts; npm test 906 files (903 passed, 3 skipped), 6750 tests (6743 passed, 7 skipped), exit 0. fallow is NOT VERIFIED as coverage — .fallowrc.json ignores packages/llmwiki-kg/** — though the pre-commit hook ran it on every commit | S11 | dbdbf87 |
+| T1 | Feature document | — | ee0f3a6 |
+| T2 | Enumerate every path through the wrapper with `path:line` evidence | S4 | 305d325 |
+| T3 | Design the boundary move and its commit-failure error semantics | S3, S5, S6, S7 | 305d325 |
+| T4 | RED tests: post-200 independent visibility, commit failure, preserved rollback | S9 | 305d325 |
+| T5 | Implement the transactional boundary move | S3, S5, S6, S8 | 305d325 |
+| T6 | Document the behaviour change | S5 | 305d325 |
+| T7 | Differential check against `fea6291` in a `mktemp -d` scratch copy | S8, S9(d) | 305d325 |
+| T8 | Gates: root tsc 0; KG tsc 0; typecheck:tests 0 (baseline NOT regenerated); typecheck:kg 0; focused 16/16 at dbdbf87; test:affected escalated to the full unit tier because package-lock.json differs from origin/main — 822 files, 6219 tests, 0 failed, run twice with identical counts; npm test 906 files (903 passed, 3 skipped), 6750 tests (6743 passed, 7 skipped), exit 0. fallow is NOT VERIFIED as coverage — .fallowrc.json ignores packages/llmwiki-kg/** — though the pre-commit hook ran it on every commit | S11 | 97caf6a |
 | T9 | Contention AFTER: NOT RUN and NOT RUNNABLE — the BEFORE was never measured (one attempt produced zero evidence, the second was cancelled for container coordination), so an AFTER would be decoration rather than a comparison | S2, S9 | not run |
-| T10 | Ingest success path: answer only after the third transaction commits (authorized option (a)) | S3, S5, S9 | c40b098 |
+| T10 | Ingest success path: answer only after the third transaction commits (authorized option (a)) | S3, S5, S9 | f8a4d0d |
 | T11 | Ingest early-exit responses (`:532`, 404/415) still written inside a read transaction — NOT authorized, reported only | S2, S7 | not implemented |
 | T12 | Pre-existing S44 violations, tracked and UNOWNED — not remediated here: POST /aks/v1/context (aks.ts:68 -> context.ts:363, :382, response :435) and POST /stacks/:stackId/synthesize-descriptions (synthesize/router.ts:52 -> description.ts:227, write :237 on the same tx); pre-existing at fea6291 | S7 | not implemented |
 | T13 | documents/delete.ts:78 unlinks the file inside the transaction: pre-existing data-consistency gap, NOT introduced by this change, made VISIBLE by it — a failed COMMIT now answers 500 while the bytes are already gone and the row rolls back; before, the client saw a success and the file was equally gone (silent inconsistency) | S5, S6 | not implemented |
@@ -274,3 +274,20 @@ attempt produced zero evidence and the second was cancelled for container coordi
 comparison to draw. The evidence for this change is the construction argument (a client cannot observe a
 success before the COMMIT), the two inverse-edit bite proofs, and the 50-record differential with its
 base-vs-base control.
+
+L14 — Replayed onto main, and why every SHA above differs. The branch was rebased from `fea6291` onto
+`9fad205` (current main) at the Manager's direction. The rebase was clean: no conflicts, no manual
+resolution, and the branch's seven changed paths are byte-identical before and after
+(`git diff 8790bae c508894 -- <those paths>` is empty). Main changed 127 files; the intersection with
+this branch's paths is empty, and main did NOT touch `db.ts` or `routes/ingest/pipeline.ts`, so the
+anticipated `lock_timeout` collision is not present in `9fad205`.
+
+Because a rebase recreates commits, all five SHAs changed: `30514f8`->`ee0f3a6`, `ed4b94a`->`305d325`,
+`c40b098`->`f8a4d0d`, `dbdbf87`->`97caf6a`, `8790bae`->`c508894`; new tip `c508894`. Any SHA quoted in
+L1-L13 of this document is a PRE-REPLAY SHA and is superseded by this table. The old tip is preserved as
+`backup/pre-replay-8790bae` (`8790bae`) and must not be deleted until the replay is accepted.
+
+The evidence recorded in L11-L13 was measured on the pre-replay tree. It does NOT transfer to the
+replayed tip: a different base under a transaction-boundary change is a different tree, so the gates are
+re-run on `c508894` (and any result recorded here after this entry refers to the replayed tip).
+`git rebase` runs no pre-commit hook, so NO gate validated the replay itself.
