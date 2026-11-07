@@ -123,3 +123,8 @@ Baselines: `dead-code` 12,977 bytes / 239 entries; `health` 2,285 bytes /
   gate test is ever wanted, put it at `test/fallow/kg-gate.test.ts` against the
   whole-tree `fallow dead-code --baseline …` form, which needs no git base ref and
   was already verified to exit 0 clean / 1 on a single introduced unused export.
+- L8 (follow-up, repo-wide defect, not KG-specific): `scripts/check-fallow-report.mjs:17`
+  counts `dupes.stats.clone_groups` into `total` and `:26` fails on `total > 0`, so
+  `npm run fallow:ci` exits **1 on `main` with no changes** (20 pre-existing clone groups,
+  all below fallow's own threshold): AGENTS.md pre-commit gate 5 is unsatisfiable on any
+  branch, and CI's `fail-on-issues: true` disagrees. Deliberately not baselined here; own delivery.
