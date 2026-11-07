@@ -1,6 +1,7 @@
 /**
  * @file packages/llmwiki-kg/ts/src/core-index.ts
- * @description Library entry point for the vendored AKS knowledge-graph core.
+ * @description Library entry point for the AKS knowledge-graph core (first-party code
+ * of this project).
  *
  * The upstream `index.ts` in this package is the standalone HTTP server's
  * startup module: it reads `process.env`, binds a port, and validates provider
@@ -11,8 +12,9 @@
  * `kg` dimension needs — chunking, embedding, extraction, and consolidation —
  * so the compiler can consume the KG in process without starting a server.
  *
- * Nothing here is authored logic: every export is re-exported from upstream
- * `core/` modules. The barrel exists to draw the consumption boundary.
+ * Every export here is re-exported from the sibling `core/` modules inside THIS
+ * package. The barrel exists to draw the consumption boundary between that core
+ * and the compiler.
  */
 
 export {

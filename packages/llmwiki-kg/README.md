@@ -6,6 +6,24 @@ This server is for people who read the spec and want to see what those words act
 
 The code is intentionally small and well-commented. Each major component is isolated to one file (LlamaIndex lives in `extraction.py`, only). Forking, extending, and replacing pieces is meant to be straightforward.
 
+## Provenance and ownership
+
+This directory is part of the llm-wiki-compiler project. It is maintained and edited
+here, in this repository, as first-party code — not as a third-party copy.
+
+Its history entered this repository through `git subtree add` as commit
+`2a74a2196cdf096cc49e9b0ff12b0a524dbaddc8`, taken from the AKS Reference Server at
+local path `/home/urgosxd/Desktop/aks/AKS-Reference-Server` (recorded split commit
+`41b595d0f1da9202fd3ff0fd20045c05884febcd`). That path was configured as the `aks` git
+remote while the subtree relationship was active.
+
+That relationship is discontinued: the `aks` remote has been removed, there is no
+re-sync, and upstream changes are no longer merged in here. The body below is the
+upstream README, kept for provenance; it describes the original AKS Reference Server
+and its Python service, not how this directory is maintained now.
+
+Licensed under the Apache License 2.0; see [`LICENSE.md`](LICENSE.md) in this directory.
+
 ## Table of contents
 
 - [Quick start](#quick-start)
@@ -919,7 +937,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE).
+Apache 2.0. See [LICENSE.md](LICENSE.md).
 
 The AKS spec itself is also Apache 2.0, governed by an open community process. See the [spec repository](https://github.com/Agent-Knowledge-Standard/AKS-Specification) for governance details.
 

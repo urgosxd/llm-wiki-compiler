@@ -1,8 +1,13 @@
 # AKS Reference Server — TypeScript
 
 TypeScript port of the AKS Reference Server, derived from the Python/FastAPI
-implementation in `../app/`. That Python service is provenance only: it is not a
-contract oracle, and nothing here is validated by diffing against it.
+implementation in `../app/`.
+
+This package is first-party code of the llm-wiki-compiler project: it is maintained and
+edited in this repository, and the compiler consumes it in process. The Python service it
+was derived from is provenance only — it is not a contract oracle, nothing here is
+validated by diffing against it, and it is neither maintained nor re-synced from here.
+There is no upstream sync for this package.
 
 ## Status
 

@@ -1,3 +1,9 @@
+> **Status: the vendor relationship described here is discontinued.** The `git subtree`
+> setup below was retired by `odd/tasks/adopt-kg-first-party.md`: `packages/llmwiki-kg` is
+> now first-party code of this project, edited here, with no re-sync from the AKS
+> Reference Server and no upstream merge path. The rows that describe the original
+> `git subtree add` are retained as historical record of what was done at the time.
+
 # Feature: Two-dimensional ingest (wiki + knowledge graph)
 
 ## Goal
@@ -10,8 +16,9 @@ inside one transaction with rollback semantics:
   repository from `AKS-Reference-Server` and consumed **in process** (direct
   module import, not HTTP).
 
-The KG implementation is not authored here; it is vendored from upstream and
-wired so the compiler can call it.
+The KG implementation lives in this repository and is edited here as first-party code
+of this project, wired so the compiler can call it. It was brought in from
+`AKS-Reference-Server` by `git subtree add`; that vendor relationship is now historical.
 
 ## Decisions (user-selected)
 
@@ -46,7 +53,8 @@ These were measured, not assumed:
 
 - No new CLI surface. `ingest` keeps its current shape.
 - No HTTP client. The vendored KG is called as a library.
-- No change to upstream `AKS-Reference-Server`; this is a downstream copy.
+- No re-sync with `AKS-Reference-Server`: the `git subtree` relationship is
+  historical, so changes are made here and neither pulled in nor merged back.
 
 ---
 
