@@ -25,7 +25,7 @@ S8 — REACHABILITY: every new stage or store must be shown reachable from the c
 | ID | Specs | Task | Route | Commit |
 |----|-------|------|-------|--------|
 | T1 | S1, S2 | Record the adopt-or-reject decision for the dead `wiki.concept_aliases` table and the full task breakdown (this document). | worker | `afea095647ef3ae3617879ec794cd05ca78adab1` |
-| T2 | S6 | Migration `src/dimensions/wiki/migration_wiki_db_parity.sql`: add `wiki.pages.aliases` and `wiki.pages.attribution_gaps`; create `wiki.curated_links`, `wiki.categories`, `wiki.category_members`. Non-destructive, idempotent. Mirror into `src/dimensions/wiki/schema.sql`, append to `scripts/apply-schemas.sh`, prove by pre-migration-vs-schema.sql database diff. HIGH RISK — own commit. | worker | `c0559fc59eb63a263fffc09e8c06f3d8f242ff63` |
+| T2 | S6 | Migration `src/dimensions/wiki/migration_wiki_db_parity.sql`: add `wiki.pages.aliases` and `wiki.pages.attribution_gaps`; create `wiki.curated_links`, `wiki.categories`, `wiki.category_members`. Non-destructive, idempotent. Mirror into `src/dimensions/wiki/schema.sql`, append to `scripts/apply-schemas.sh`, prove by pre-migration-vs-schema.sql database diff. HIGH RISK — own commit. | worker | `c0559fc59eb63a263fffc09e8c06f3d8f242ff63`, review closures in `d66612fb36557116e4169975f05b79a195a74517` (frozen pre-migration fixture, grants/non-destructiveness/data pinned, D4 claim corrected — see L5) |
 | T3 | S2 | Aliases persist through the page-row seam and are read back across runs, so the identity tier folds identically in both paths. | worker | |
 | T4 | S5 | `attributionGaps` persist through the page-row seam and are marked, counted and named in the row-backed run output. | worker | |
 | T5 | S3 | Curated links persist in `wiki.curated_links` behind the store seam; the overlay re-validates the anchor on every render and a lost anchor drops the link AND reports it. | worker | |
@@ -75,3 +75,25 @@ D4. CATEGORIES get `wiki.categories` (identity, canonical name, description, inc
 D5. STORE SELECTION reuses the existing seam convention rather than a new flag: `src/dimensions/wiki/` already contains DB twins of file stores (`page-source-seam.ts`, `project-config-seam.ts`, `derived-artifact-source.ts`, `derived-artifact-store.ts`, `marker-store.ts`, `compile-config-store.ts`). Curated links and categories follow that pattern, selected by the same `rowBacked`/`db` signal the compile pipeline already carries, so there is no second notion of "is this database-backed".
 
 D6. MIGRATION placement and proof: `src/dimensions/wiki/migration_wiki_db_parity.sql`, mirrored into `src/dimensions/wiki/schema.sql`, appended to `scripts/apply-schemas.sh`. Non-destructive, idempotent, unique indexes only after collision analysis, no merge of distinct objects to satisfy a constraint. Proved by building a real pre-migration database, applying the migration, and diffing its schema against a database built from `schema.sql` alone.
+
+### L5 — Correction: case-variant category identity
+
+D4 asserted that "two case-variant names remain two objects, matching the file path where they are distinct files". That assertion was FALSE, and it stayed false in the migration's comments until a review caught it. Measured:
+
+- `categoryIdForName` (`src/categories/identity.ts:42-51`) returns `slugify(canonicalName)`, and `slugify` (`src/utils/markdown.ts:69-77`) begins with `.toLowerCase()`.
+- So `Foo` and `foo` mint the SAME category id in the file path, and both therefore resolve to the same `wiki/categories/<categoryId>.md`. That is ONE object, not two files.
+- `wiki.categories` is keyed on `(stack_id, category_id)`, so the same collapse happens in the row-backed path.
+
+The truth the comments and this entry now state:
+
+- Object identity is derived from the lowercased slug in BOTH paths, so case-variant names collapse to one object in BOTH.
+- This migration introduces NO name-unique index (there is no unique constraint on `canonical_name`), so it neither creates nor worsens that collapse.
+- Parity is preserved because the behaviour is shared: the DB path reuses the same `categoryIdForName`, so both paths agree on what one object is.
+- Nothing in the identity behaviour was "fixed" and no SQL statement was changed: S4's rule that a category and a CONCEPT sharing a name stay two objects is about two different object kinds and is unaffected. D4 is left as written; this entry supersedes it.
+
+Review closures delivered with commit `d66612fb36557116e4169975f05b79a195a74517`:
+
+1. The false claim is corrected in three places in `migration_wiki_db_parity.sql` (mirror/test description, the categories shape bullet, and the `wiki.categories` section) and here.
+2. Database A no longer derives from the current `schema.sql`. It is built from `test/fixtures/wiki-schema-pre-db-parity.sql`, a frozen copy of `schema.sql` at `a40fc3f` with a header saying it must never be regenerated, and only the fresh install follows `schema.sql`. Measured teeth: changing the pre-migration portion of `schema.sql` (`body text` -> `varchar(1024)`) fails the new suite and PASSES the previous one, which is exactly the drift the old arrangement could not see.
+3. Grants, non-destructiveness and data survival are assertions now, not comments: the migration text is scanned for `drop table`, `drop column`, `truncate`, `delete from`, `insert into` and `update ... set`; `wiki.concept_aliases` must still exist; `llmwiki_app` must hold SELECT/INSERT/UPDATE/DELETE on `wiki.pages`, `wiki.curated_links`, `wiki.categories` and `wiki.category_members` identically in the migrated and the fresh database (they agree — no mirror defect found); and an `md5` digest of every pre-existing `wiki.pages` column is unchanged across two applies.
+4. `src/dimensions/wiki/schema.sql` was NOT edited by this slice, and its `wiki-db-parity-mirror` markers are documentation only now: the suite no longer strips them.
