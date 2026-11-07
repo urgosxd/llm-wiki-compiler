@@ -56,31 +56,35 @@ iterating.
 Never claim a task complete on the strength of a partial run without saying which
 scope you ran. Report the scope and the result together.
 
-**`npm run test:integration`** is the remaining tier: it runs only the tests that
-spawn a CLI subprocess (`node dist/cli.js`), so it covers the built command
-surface end to end rather than behaviour reached in process. `test:unit` and
-`test:integration` partition the suite between them and `npm test` runs both, so
-a change to a file that spawns a CLI subprocess is covered only by the
-integration tier.
+**`npm run test:integration`** is the remaining tier: `scripts/test-partition.ts`
+classifies a test as integration when it spawns a child process — `runCLI(`,
+`spawnSync(`, `spawn(`, `execFileSync(`, `execFile(`, `execSync(`, `npm pack`,
+`fixtures/cli-runner` — so it covers the built command surface end to end rather
+than behaviour reached in process. `test:unit` takes everything that does not
+spawn, and `npm test` is plain `vitest run`, which collects both tiers.
+`test/sdk/packaging.test.ts` spawns too but `vitest.config.ts` excludes it from
+that collection; it runs only via `npm run test:pack`.
 
 Tests must not depend on timing or external services.
 
 **`test:unit` is not the `test/` directory.** It covers every test tree in the
 repository — `test/`, `packages/`, `src/` and `scripts/` — minus the files that
-spawn a CLI subprocess, so the `packages/llmwiki-kg` suites are part of it, along
+spawn a child process, so the `packages/llmwiki-kg` suites are part of it, along
 with the three `src/dimensions/kg/` suites and `scripts/output-contracts.test.ts`.
 Those `llmwiki-kg` suites are database-backed, so without Docker or
 `LLMWIKI_TEST_DATABASE_URL` they fail — they do not skip. `LLMWIKI_TEST_ALLOW_NO_DATABASE=1`
-is the only escape hatch, and it converts those hard database failures into
-silent skips, so a run that sets it verifies nothing about them. It exists for
-local debugging: **CI must never set `LLMWIKI_TEST_ALLOW_NO_DATABASE=1`**, because
-a green run there would then prove nothing about the database-backed suites.
+is the only escape hatch, and it downgrades those hard database failures to
+skips that still report their reason, so a run that sets it verifies nothing
+about them. It exists for local debugging: **CI must never set
+`LLMWIKI_TEST_ALLOW_NO_DATABASE=1`**, because a green run there would then
+prove nothing about the database-backed suites.
 
-**The build in `test/global-setup.ts` is cached.** A content hash of `src/`,
-`packages/` and the tsup configs is recorded in `.llmwiki/build-stamp.json`, so
-when nothing feeds that hash a run skips the ~42 s tsup rebuild and a single-file
-run drops from ~48 s to under a second. To force the rebuild anyway — after a
-suspicious `dist/`, for example — set `LLMWIKI_TEST_FORCE_BUILD=1`.
+**The build in `test/global-setup.ts` is cached.** A content hash of the `src/`,
+`packages/` and `scripts/` trees plus `tsup.config.ts`, `tsconfig.json` and
+`package.json` is recorded in `.llmwiki/build-stamp.json`, so when nothing feeds
+that hash a run skips the ~42 s tsup rebuild and a single-file run drops from
+~48 s to under a second. To force the rebuild anyway — after a suspicious
+`dist/`, for example — set `LLMWIKI_TEST_FORCE_BUILD=1`.
 
 ### Pre-Commit Checks
 
