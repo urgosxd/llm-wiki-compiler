@@ -48,6 +48,7 @@ For every user-facing feature PR:
    npm run build
    npm test
    npm run fallow:ci
+   npm run fallow:kg   # the llmwiki-kg package has its own gate; see ../docs/fallow-gates.md
    ```
 
 ## Release checklist

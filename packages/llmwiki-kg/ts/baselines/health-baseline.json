@@ -1,0 +1,100 @@
+{
+  "finding_counts": {
+    "src/core/candidates/parse.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/core/chunking.ts": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/core/extraction-harness.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/core/open-admission.ts": {
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "src/core/page/json-dumps.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/core/tokenizer.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/http-contract.ts": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/index.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/pydantic/mapper.ts": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/pydantic/primitives.ts": {
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "src/routes/aks/context.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/routes/ingest/classification-log.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/testing/per-run-database.ts": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    }
+  },
+  "runtime_coverage_findings": [],
+  "target_keys": [
+    "src/routes/aks/context.ts:dead code",
+    "src/core/eval/main.ts:dead code",
+    "src/routes/reclassify/router.ts:dead code",
+    "src/routes/pages/one-page.ts:dead code",
+    "src/core/page/json-dumps.ts:dead code",
+    "src/core/llm/complete.ts:dead code",
+    "src/routes/aks/traverse.ts:dead code",
+    "src/mcp/server.ts:dead code",
+    "src/routes/ingest/router.ts:dead code",
+    "src/core/candidates/contract.ts:dead code",
+    "src/core/stack_graph.ts:dead code",
+    "src/routes/stack_graph.ts:dead code",
+    "src/routes/ingest/pipeline.ts:dead code",
+    "src/routes/synthesize/description.ts:dead code",
+    "src/core/aks_serializers.ts:circular dependency",
+    "src/core/graph_read.ts:circular dependency"
+  ]
+}

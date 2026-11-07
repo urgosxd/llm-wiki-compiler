@@ -1,0 +1,4 @@
+{
+  "$schema": "https://fallow.tools/schema.json",
+  "extends": ["../../../.fallowrc.json"]
+}
