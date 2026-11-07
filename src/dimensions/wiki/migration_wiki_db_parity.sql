@@ -17,12 +17,15 @@
 -- `migration_page_embeddings.sql`): there is no migration runner in the application,
 -- so `schema.sql` must be self-sufficient for a clean install while a live database
 -- still needs this file applied. The mirror in `schema.sql` is delimited by the
--- comments `wiki-db-parity-mirror:begin` and `wiki-db-parity-mirror:end`, which is
--- what lets `test/dimensions/db-parity-migration.test.ts` rebuild the PRE-migration
--- schema without keeping a third copy of this DDL: the test strips the delimited
--- region from `schema.sql`, builds a database from that, applies THIS file to it, and
--- compares the result against a database built from the mirrored `schema.sql`. The two
--- copies are therefore kept honest by a real Postgres instead of by review.
+-- comments `wiki-db-parity-mirror:begin` and `wiki-db-parity-mirror:end` for a reader's
+-- benefit; `test/dimensions/db-parity-migration.test.ts` does NOT read them. It builds
+-- the pre-migration database from the frozen snapshot
+-- `test/fixtures/wiki-schema-pre-db-parity.sql`, applies THIS file to it, and compares
+-- the result against a fresh install built from the mirrored `schema.sql`. The snapshot
+-- is frozen because deriving the pre-migration side from the current `schema.sql` would
+-- compare one file against itself: drift in its pre-migration portion would move both
+-- sides by the same amount and stay invisible. The two copies are therefore kept honest
+-- by a real Postgres instead of by review.
 --
 -- ## What was missing, and why each shape is the one the file path uses
 --
@@ -50,10 +53,14 @@
 --   categories, category_members
 --                               one row per category, keyed by the identity minted
 --                               ONCE from the canonical name, plus one row per
---                               membership carrying the reason and evidence key. No
---                               unique constraint is placed on `canonical_name`: two
---                               case-variant names are two objects in the file path
---                               (two files) and stay two objects here (D4).
+--                               membership carrying the reason and evidence key. The
+--                               identity comes from the lowercased slug in BOTH paths
+--                               (`categoryIdForName` -> `slugify`), so `Foo` and `foo`
+--                               are already ONE object in the file path and are one
+--                               object here too. No unique index is added on
+--                               `canonical_name`, so this migration neither creates nor
+--                               worsens that collapse, and parity holds because the
+--                               behaviour is shared (D4, corrected in L5).
 --
 -- ## Non-destructive and idempotent by construction
 --
@@ -128,10 +135,14 @@ create index if not exists idx_wiki_curated_links_target
 -- ------------------------------------------------------------
 -- `category_id` is the identity minted once from the canonical name and never
 -- recomputed: renaming a category patches `canonical_name` and leaves the primary key
--- alone, so links and memberships survive a rename. There is deliberately NO unique
--- constraint on `canonical_name` -- in the file path two case-variant names are two
--- different files, and merging them to satisfy a constraint would be the collision
--- resolution this assignment forbids.
+-- alone, so links and memberships survive a rename. The identity is the lowercased slug
+-- (`categoryIdForName` -> `slugify`, `src/categories/identity.ts` and
+-- `src/utils/markdown.ts`), so case-variant names such as `Foo` and `foo` mint the SAME
+-- id and are ONE object here -- exactly as they are one object in the file path, where
+-- both resolve to `wiki/categories/<categoryId>.md`. There is deliberately NO unique
+-- constraint on `canonical_name`: the migration introduces no name-level uniqueness, so
+-- it neither creates nor worsens that collapse, and merging two distinct ids to satisfy
+-- a constraint would be the collision resolution this assignment forbids.
 create table if not exists wiki.categories (
     stack_id            uuid        not null references public.stacks(id) on delete cascade,
     category_id         text        not null,

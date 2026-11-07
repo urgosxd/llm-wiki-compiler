@@ -15,15 +15,23 @@
  * appears months later as "works on a new stack, not on production" -- the hardest class
  * of bug to attribute. So the two copies are compared by a database, not by a reviewer.
  *
- * ## How the pre-migration database is obtained without a third copy
+ * ## How the pre-migration database is obtained without deriving it from the mirror
  *
- * `schema.sql` delimits the mirrored region with `wiki-db-parity-mirror:begin` and
- * `wiki-db-parity-mirror:end`. Database A is built by applying every file
- * `scripts/apply-schemas.sh` lists, in that script's order, with the migration EXCLUDED
- * and those delimited regions STRIPPED from the wiki schema. That is a genuine
- * pre-migration database: it has no `aliases` column, no `attribution_gaps` column and
- * none of the three new tables. Database B is A plus the migration file. Database C is
- * the mirror, unlmodified. B must equal C.
+ * Database A is built by applying every file `scripts/apply-schemas.sh` lists, in that
+ * script's order, with the migration EXCLUDED and the wiki schema of record REPLACED by
+ * `test/fixtures/wiki-schema-pre-db-parity.sql`, a frozen copy of `schema.sql` taken
+ * before this migration existed. That is a genuine pre-migration database: it has no
+ * `aliases` column, no `attribution_gaps` column and none of the three new tables.
+ * Database B is A plus the migration file. Database C is a fresh install from the
+ * CURRENT `schema.sql`, mirror included. B must equal C.
+ *
+ * An earlier version of this suite built A by stripping the `wiki-db-parity-mirror`
+ * delimited regions out of the current `schema.sql`. That made the actual state and the
+ * expected state one file: a drift in the pre-migration portion of `schema.sql` moved
+ * BOTH sides of the comparison by the same amount, and the comparison could not see it.
+ * The fixture is frozen precisely so that only C follows the schema of record while A
+ * stays the database an operator really has. The mirror markers remain in `schema.sql`
+ * as documentation; this suite no longer reads them.
  *
  * The order of files is PARSED from `scripts/apply-schemas.sh`, exactly as
  * `packages/llmwiki-kg/ts/src/testing/per-run-database.ts` does, so this suite cannot
@@ -48,12 +56,16 @@
  * unreachable server: `beforeAll` throws, the file fails, and the message carries the
  * connection error.
  *
- * ## What it does NOT cover
+ * ## What is compared, and what is not
  *
- * Column ORDER is not compared (lines are sorted), and neither are grants or sequence
- * state: a mirror that names the same columns in a different order is equivalent here,
- * and `grant ... to llmwiki_app` is checked by `scripts/apply-schemas.sh --check`
- * instead. This suite owns structure and data survival.
+ * Column ORDER is not compared (lines are sorted), nor sequence state: a mirror naming
+ * the same columns in a different order is equivalent here. Everything else that
+ * "non-destructive" and "reachable by the application" claim IS checked: grants
+ * (`has_table_privilege` for `llmwiki_app` on every table this migration touches, in
+ * both databases), data survival (a digest of every pre-existing `wiki.pages` column,
+ * taken before the first apply and after the second), the absence of `drop table`,
+ * `drop column`, `truncate`, `delete from`, `insert into` and `update ... set` in the
+ * migration text, and the survival of `wiki.concept_aliases`.
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -75,15 +87,42 @@ const MIGRATION = "src/dimensions/wiki/migration_wiki_db_parity.sql";
 /** The wiki schema of record, which carries the mirror. */
 const WIKI_SCHEMA = "src/dimensions/wiki/schema.sql";
 
-/** Delimiters of a mirrored region in {@link WIKI_SCHEMA}. */
-const MARKER_BEGIN = "wiki-db-parity-mirror:begin";
-const MARKER_END = "wiki-db-parity-mirror:end";
+/**
+ * A frozen copy of {@link WIKI_SCHEMA} from before this migration existed.
+ *
+ * It must never be regenerated. It stands for the database an operator really has,
+ * and it is the only thing keeping the comparison honest once `schema.sql` moves on.
+ */
+const PRE_MIGRATION_FIXTURE = "test/fixtures/wiki-schema-pre-db-parity.sql";
 
 /** Tables the migration is supposed to create, and nothing else. */
 const PARITY_TABLES = ["wiki.categories", "wiki.category_members", "wiki.curated_links"];
 
 /** Columns the migration is supposed to add to a table that already existed. */
 const PARITY_PAGE_COLUMNS = ["wiki.pages.aliases", "wiki.pages.attribution_gaps"];
+
+/** The application role every wiki table is granted to by `schema.sql`. */
+const APP_ROLE = "llmwiki_app";
+
+/** Tables whose grants this suite compares between the migrated and the fresh database. */
+const GRANTED_TABLES = ["wiki.pages", ...PARITY_TABLES];
+
+/** Privileges the application role must hold on each of {@link GRANTED_TABLES}. */
+const GRANTED_PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE"];
+
+/**
+ * Statements a non-destructive migration must never contain.
+ *
+ * Matched against the migration with its `--` comments removed, so the file's own prose
+ * about what it does not do cannot trip the scan.
+ */
+const FORBIDDEN_STATEMENTS: readonly RegExp[] = [
+  /\bdrop\s+(table|column)\b/i,
+  /\btruncate\b/i,
+  /\bdelete\s+from\b/i,
+  /\binsert\s+into\b/i,
+  /\bupdate\s+\w+\s+set\b/i,
+];
 
 /** The dimensions a schema snapshot compares, in reporting order. */
 const DIMENSIONS = ["tables", "columns", "indexes", "constraints", "rls", "policies"] as const;
@@ -190,47 +229,28 @@ async function schemaFiles(): Promise<string[]> {
   return listed;
 }
 
-/**
- * Remove every `wiki-db-parity-mirror` region from a SQL file.
- *
- * Reconstructs the PRE-mirror text, which is what a database built before this change
- * looked like. The markers must be on their own lines and the delimited region must be a
- * whole statement or a whole column list, so the remainder still parses; if the markers
- * are missing this throws rather than quietly returning the mirrored text, because that
- * would make the whole suite compare a database against itself.
- */
-function stripMirrorRegions(sql: string): string {
-  const lines = sql.split("\n");
-  const kept: string[] = [];
-  let inside = false;
-  for (const line of lines) {
-    if (line.includes(MARKER_BEGIN)) {
-      inside = true;
-      continue;
-    }
-    if (line.includes(MARKER_END)) {
-      inside = false;
-      continue;
-    }
-    if (!inside) kept.push(line);
-  }
-  if (kept.length === lines.length) {
-    throw new Error(`${WIKI_SCHEMA} carries no ${MARKER_BEGIN} region to strip`);
-  }
-  return kept.join("\n");
-}
-
-/** Apply one SQL file to `client`, stripped when it is the wiki schema of record. */
-async function applyOne(client: Sql, file: string, strip: boolean): Promise<void> {
+/** Apply one SQL file to `client`, read from the repository so the caller's cwd cannot matter. */
+async function applyOne(client: Sql, file: string): Promise<void> {
   const body = await readFile(path.join(REPO_ROOT, file), "utf-8");
-  await client.unsafe(strip && file === WIKI_SCHEMA ? stripMirrorRegions(body) : body);
+  await client.unsafe(body);
 }
 
-/** Apply a file list in order, optionally stripping the mirror from the wiki schema. */
-async function applyFiles(client: Sql, files: readonly string[], strip: boolean): Promise<void> {
+/** Apply a file list in order. */
+async function applyFiles(client: Sql, files: readonly string[]): Promise<void> {
   for (const file of files) {
-    await applyOne(client, file, strip);
+    await applyOne(client, file);
   }
+}
+
+/**
+ * The runner's file list with the wiki schema of record swapped for the frozen fixture.
+ *
+ * Only the fresh install may follow the current `schema.sql`. A database meant to
+ * predate the migration has to come from the snapshot, or the comparison proves nothing
+ * about a database an operator already has.
+ */
+function preMigrationFiles(files: readonly string[]): string[] {
+  return files.map((file) => (file === WIKI_SCHEMA ? PRE_MIGRATION_FIXTURE : file));
 }
 
 /** One catalogue row, before normalisation. */
@@ -355,6 +375,49 @@ function expectSameSchema(left: SchemaSnapshot, right: SchemaSnapshot, label: st
   }
 }
 
+/** Strip `--` comments from SQL text, so prose about a statement is not read as one. */
+function withoutSqlComments(sql: string): string {
+  return sql
+    .split("\n")
+    .map((line) => line.replace(/--.*$/, ""))
+    .join("\n");
+}
+
+/** `table | privilege | granted` for {@link APP_ROLE} on every table the migration touches. */
+async function privilegeLines(client: Sql): Promise<string[]> {
+  const rows = await client<{ tbl: string; priv: string; granted: boolean }[]>`
+    select t.tbl, p.priv, has_table_privilege(${APP_ROLE}, t.tbl, p.priv) as granted
+    from unnest(${GRANTED_TABLES}::text[]) as t(tbl)
+    cross join unnest(${GRANTED_PRIVILEGES}::text[]) as p(priv)
+    order by t.tbl, p.priv
+  `;
+  return rows.map((row) => `${row.tbl} | ${row.priv} | ${row.granted}`);
+}
+
+/**
+ * One digest over every value `wiki.pages` held BEFORE this migration, for {@link stackId}.
+ *
+ * Every column that existed then is included in a stable order and the two columns the
+ * migration adds are excluded by name, so an `update` that rewrote an existing value
+ * would change this digest even while the schema still matched.
+ */
+async function preMigrationPageDigest(client: Sql): Promise<string> {
+  const rows = await client<{ digest: string | null }[]>`
+    select md5(string_agg(line, E'\n' order by line)) as digest
+    from (
+      select concat_ws('|',
+        stack_id::text, page_directory, slug, title, coalesce(source_identity, '<null>'),
+        summary, array_to_string(tags, ','), array_to_string(links, ','), body,
+        orphaned::text, archived::text,
+        extract(epoch from created_at)::text, extract(epoch from updated_at)::text
+      ) as line
+      from wiki.pages
+      where stack_id = ${stackId}
+    ) as page_lines
+  `;
+  return rows[0]?.digest ?? "";
+}
+
 /** The table a column line names (`schema.table` out of `schema.table.column | …`). */
 function tableOfColumnLine(line: string): string {
   const name = columnNameOfLine(line);
@@ -377,39 +440,46 @@ let after: SchemaSnapshot;
 let afterSecondApply: SchemaSnapshot;
 let fresh: SchemaSnapshot;
 let freshAfterMigration: SchemaSnapshot;
+let pageDigestBefore: string;
+let pageDigestAfterSecond: string;
 
 /** Apply the migration to the pre-migration database, twice, snapshotting around it. */
 async function migrateInPlace(client: Sql): Promise<void> {
   before = await snapshot(client);
-  await applyOne(client, MIGRATION, false);
+  pageDigestBefore = await preMigrationPageDigest(client);
+  await applyOne(client, MIGRATION);
   after = await snapshot(client);
-  await applyOne(client, MIGRATION, false);
+  await applyOne(client, MIGRATION);
   afterSecondApply = await snapshot(client);
+  pageDigestAfterSecond = await preMigrationPageDigest(client);
 }
 
-/** Seed one Stack and one page row BEFORE the migration, so survival is observable. */
+/** Seed one Stack and one fully populated page row BEFORE the migration, so survival shows. */
 async function seedPageRow(client: Sql): Promise<void> {
   await client`select set_config('app.stack_id', ${stackId}, false)`;
   await client`insert into public.stacks (id, name, domain)
     values (${stackId}, 'db-parity-migration', 'db-parity-migration')`;
-  await client`insert into wiki.pages (stack_id, page_directory, slug, title)
-    values (${stackId}, 'concepts', 'alpha-topic', 'Alpha Topic')`;
+  await client`insert into wiki.pages
+      (stack_id, page_directory, slug, title, source_identity, summary, tags, links, body, orphaned)
+    values (${stackId}, 'concepts', 'alpha-topic', 'Alpha Topic', 'sources/alpha.md',
+      'Seeded before the migration.', array['alpha'], array['concepts/beta'],
+      'Seeded body that must survive.', true)`;
 }
 
 beforeAll(async () => {
   const base = testDatabaseUrl();
-  const files = await schemaFiles();
+  const files = (await schemaFiles()).filter((file) => file !== MIGRATION);
   preMigrationDb = await createScratch(base, "pre-migration");
   freshInstallDb = await createScratch(base, "fresh-install");
   await withDb(preMigrationDb, async (client) => {
-    await applyFiles(client, files.filter((file) => file !== MIGRATION), true);
+    await applyFiles(client, preMigrationFiles(files));
     await seedPageRow(client);
     await migrateInPlace(client);
   });
   await withDb(freshInstallDb, async (client) => {
-    await applyFiles(client, files.filter((file) => file !== MIGRATION), false);
+    await applyFiles(client, files);
     fresh = await snapshot(client);
-    await applyOne(client, MIGRATION, false);
+    await applyOne(client, MIGRATION);
     freshAfterMigration = await snapshot(client);
   });
 }, 180_000);
@@ -449,6 +519,45 @@ describe("wiki DB parity migration", () => {
         removed: [],
       });
     }
+  });
+
+  it("comes from the frozen fixture, not from the mirrored schema of record", () => {
+    const preColumns = before.columns.map(columnNameOfLine);
+    const freshColumns = fresh.columns.map(columnNameOfLine);
+    for (const table of PARITY_TABLES) {
+      expect({ table, pre: before.tables.includes(table), fresh: fresh.tables.includes(table) })
+        .toEqual({ table, pre: false, fresh: true });
+    }
+    for (const column of PARITY_PAGE_COLUMNS) {
+      expect({ column, pre: preColumns.includes(column), fresh: freshColumns.includes(column) })
+        .toEqual({ column, pre: false, fresh: true });
+    }
+  });
+
+  it("carries no destructive or data-writing statement and leaves concept_aliases alone", async () => {
+    const sql = withoutSqlComments(await readFile(path.join(REPO_ROOT, MIGRATION), "utf-8"));
+    expect(FORBIDDEN_STATEMENTS.flatMap((pattern) => sql.match(pattern) ?? [])).toEqual([]);
+    const rows = await withDb(preMigrationDb, (client) =>
+      client<{ found: number }[]>`
+        select count(*)::int as found
+        from pg_class c join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'wiki' and c.relname = 'concept_aliases' and c.relkind = 'r'
+      `,
+    );
+    expect(rows[0]?.found).toBe(1);
+  });
+
+  it("grants the application role what a fresh install grants it", async () => {
+    const migrated = await withDb(preMigrationDb, privilegeLines);
+    const installed = await withDb(freshInstallDb, privilegeLines);
+    expect(migrated).toHaveLength(GRANTED_TABLES.length * GRANTED_PRIVILEGES.length);
+    expect(migrated.filter((line) => line.endsWith("| false"))).toEqual([]);
+    expect(migrated).toEqual(installed);
+  });
+
+  it("rewrites no value an existing page row already held", () => {
+    expect(pageDigestBefore).toMatch(/^[0-9a-f]{32}$/);
+    expect(pageDigestAfterSecond).toBe(pageDigestBefore);
   });
 
   it("keeps an existing page row and defaults the new columns to an empty array", async () => {
