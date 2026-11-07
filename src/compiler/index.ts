@@ -76,6 +76,14 @@ import {
   type CategoryAssignmentArticle,
 } from "../categories/assign.js";
 import { repairAndApplyLinks } from "./link-repair.js";
+import {
+  describeRecompileRefusal,
+  planRecompile,
+  readVersionSplit,
+  scopeChangesToRecompile,
+  type RecompilePlan,
+} from "./version-report.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { qualifiedPageId } from "../utils/page-id.js";
 import { refreshEmbeddingsDrainingPending } from "../utils/embeddings-refresh.js";
 import { listCandidates } from "./candidates.js";
@@ -106,6 +114,7 @@ import {
   printChangesSummary,
   reportFrozenSlugs,
   reportSchemaStatus,
+  reportVersionSplit,
   summarizeCompile,
 } from "./compile-report.js";
 import type {
@@ -170,6 +179,92 @@ import { regenerateIndices, resolvePageSeams, type PageSeams } from "../dimensio
 import { createWikiStateRowsBackend } from "../dimensions/wiki/wiki-state-source.js";
 import type { WikiStateRowsBackend } from "./compile-state-draft.js";
 
+/**
+ * The pages a SCOPED regeneration was asked for, for the run in the current async tree.
+ *
+ * `llmwiki compile --recompile <page>` asks for a regeneration that is not driven by a
+ * source change: the bytes of the owning sources are identical to the ones already
+ * recorded, so change detection would classify them as `unchanged` and the run would
+ * short-circuit at "Nothing to compile". The request therefore has to travel beside the
+ * change set rather than inside it.
+ *
+ * `AsyncLocalStorage` rather than a `CompileOptions` field or a module variable, for the
+ * reasons `prompt-modifiers.ts` records for its policy scope: `CompileOptions` lives in a
+ * shared types module whose surface this feature does not own, and a module variable
+ * cannot survive two overlapping runs in one process (the compile lock is per ROOT, and
+ * the SDK documents concurrent calls). Omitting the scope leaves every existing caller
+ * byte-identical: `getStore()` is `undefined` and the pipeline takes no branch.
+ */
+const recompileScope = new AsyncLocalStorage<readonly string[]>();
+
+/** The pages this run was asked to regenerate, or `undefined` for an ordinary compile. */
+function recompileRequest(): readonly string[] | undefined {
+  return recompileScope.getStore();
+}
+
+/** The result of a refused regeneration: every refusal named, and nothing written. */
+function recompileRefused(plan: RecompilePlan): CompileResult {
+  return { ...emptyCompileResult(), errors: plan.refused.map(describeRecompileRefusal) };
+}
+
+/** What a run acts on: the changes to process, plus the scoped plan when there is one. */
+interface RunScope {
+  readonly changes: SourceChange[];
+  readonly recompilePlan: RecompilePlan | null;
+}
+
+/** True when the resolved scope is a run to perform rather than a refusal. */
+function isRunScope(value: RunScope | CompileResult): value is RunScope {
+  return "changes" in value;
+}
+
+/**
+ * Decide what this run processes: the ordinary change set, or a scoped regeneration.
+ *
+ * Extracted from the pipeline because the decision is the one place where a
+ * `--recompile` request can be REFUSED, and a refusal must return from the pipeline before
+ * any read that could write. Keeping it here also keeps the pipeline's own branching
+ * inside its complexity ceiling.
+ *
+ * @param root - Project root the reads are confined under.
+ * @param state - The run's state, i.e. recorded source ownership.
+ * @param detected - The full change detection result.
+ * @param options - The compile options the run carries.
+ * @param seams - The run's page seams.
+ * @returns The scope to run, or the refusal result when the request cannot be honoured.
+ */
+async function resolveRunScope(
+  root: string,
+  state: WikiState,
+  detected: SourceChange[],
+  options: CompileOptions,
+  seams: PageSeams,
+): Promise<RunScope | CompileResult> {
+  const requested = recompileRequest();
+  if (requested === undefined) {
+    return {
+      changes: promoteForPromptModifiers(applyChangeFilter(detected, options.changeFilter), state),
+      recompilePlan: null,
+    };
+  }
+  const plan = await planRecompile(root, state, requested, seams.content);
+  if (plan.refused.length > 0) return recompileRefused(plan);
+  return { changes: scopeChangesToRecompile(detected, plan), recompilePlan: plan };
+}
+
+/** The pages a scoped regeneration must write, or `undefined` for an ordinary run. */
+function slugsToRegenerate(plan: RecompilePlan | null): ReadonlySet<string> | undefined {
+  return plan === null ? undefined : new Set(plan.slugs);
+}
+
+/** Ownership to retain for a scoped regeneration, or `undefined` for an ordinary run. */
+function retainedForScope(
+  plan: RecompilePlan | null,
+  extractions: ExtractionResult[],
+): ReadonlySet<string> | undefined {
+  return plan === null ? undefined : extractedConceptSlugs(extractions);
+}
+
 /** Empty CompileResult used when no pipeline work runs (e.g. lock contention). */
 function emptyCompileResult(): CompileResult {
   return { compiled: 0, skipped: 0, deleted: 0, concepts: [], pages: [], errors: [] };
@@ -184,6 +279,36 @@ function emptyCompileResult(): CompileResult {
  */
 export async function compile(root: string, options: CompileOptions = {}): Promise<void> {
   await compileAndReport(root, options);
+}
+
+/**
+ * Regenerate the named pages at the CURRENT synthesis version, and nothing else.
+ *
+ * THE LEVER the version report points at. A prompt bump does not invalidate a page, so a
+ * page compiled under an older prompt keeps that wording until its own source changes for
+ * an unrelated reason — and the operator who just read `3 page(s) compiled at v7` needs a
+ * way to act on it. This runs the ordinary pipeline as a SCOPED regeneration: the sources
+ * that own the named pages are re-extracted, only those pages are generated, and
+ * seed-page regeneration, the review of earlier pages and category assignment are skipped,
+ * so a regeneration cannot rewrite the wiki around the page it was asked about.
+ *
+ * Ownership survives it. Every concept those sources produced is RETAINED in `state.json`
+ * even though only one page was written — dropping the rest would leave pages the wiki
+ * still serves with no recorded owner, which the next compile would read as orphaned.
+ *
+ * `["all"]` means every page the wiki stores. Anything else is a page id (`concepts/foo`)
+ * or a bare slug. A name that no stored page matches, or a page no source owns (a seed
+ * page, an approved candidate), is REFUSED with an error and no writes at all.
+ *
+ * @param root - Project root to compile.
+ * @param pages - Page ids, bare slugs, or the literal `all`.
+ * @returns The compile result; `errors` carries any refusal, one message per reason.
+ */
+export async function compileRecompiling(
+  root: string,
+  pages: readonly string[],
+): Promise<CompileResult> {
+  return await recompileScope.run(pages, () => compileAndReport(root, { skipSeedPages: true }));
 }
 
 /**
@@ -467,6 +592,25 @@ async function persistExtractionStates(
   }
 }
 
+/**
+ * Every concept slug this run's extractions produced, in the shape `state.json` records.
+ *
+ * The ownership a scoped regeneration must keep: it re-extracts the sources that answer
+ * for the pages it regenerates, and a full compile of those same sources would have
+ * recorded ALL of their concepts as owned. Only one page is written here, so the rest are
+ * handed to the state writer as retained rather than dropped.
+ *
+ * @param extractions - This run's canonical extractions.
+ * @returns The owned slugs.
+ */
+function extractedConceptSlugs(extractions: ExtractionResult[]): Set<string> {
+  const slugs = new Set<string>();
+  for (const result of extractions) {
+    for (const concept of result.concepts) slugs.add(slugify(concept.concept));
+  }
+  return slugs;
+}
+
 /** Build a map from source filename to the slugs written live this run. */
 function buildLiveSlugsForSource(writtenPages: MergedConcept[]): Map<string, string[]> {
   const map = new Map<string, string[]>();
@@ -559,6 +703,7 @@ function applyChangeFilter(
   return filter ? detected.filter(filter) : detected;
 }
 
+
 /**
  * Orphan and clear persisted frozen slugs that no source owns.
  * @returns True when the draft was mutated and must be flushed.
@@ -616,8 +761,13 @@ async function seedThenFinalize(
   totals?: RunReportTotals,
 ): Promise<void> {
   await maybeSeedPages(root, schema, generation, options, seams);
+  // A scoped regeneration rewrites exactly the pages it named, so it also must not record
+  // the prompt-modifier selection as true of the whole project (see the flush in
+  // `finalizeWiki`) and must not run the stages that edit other pages.
+  const regenerating = recompileRequest() !== undefined;
   await finalizeWiki(root, draft, generation.writtenPages, generation.seedSlugs, {
-    scoped: options.changeFilter !== undefined,
+    scoped: options.changeFilter !== undefined || regenerating,
+    regenerateOnly: regenerating,
     embeddings: options.embeddings !== false,
     embeddingStore,
     resolverSource,
@@ -673,6 +823,17 @@ interface LiveOutcomeInput {
   /** Mutable set: `persistFrozenSlugs` prunes it in place against this run. */
   readonly frozenSlugs: Set<string>;
   readonly reconciliationSlugs: ReadonlySet<string>;
+  /**
+   * Extra slugs whose ownership must survive this run although no page was written for
+   * them.
+   *
+   * Set by a SCOPED regeneration (`llmwiki compile --recompile`), which writes one page
+   * out of sources that produced several. The state writer otherwise records only what
+   * this run WROTE, so without this a single-page regeneration would leave every sibling
+   * page it did not touch with no recorded owner — and the next compile would read those
+   * pages as orphaned.
+   */
+  readonly retainSlugs?: ReadonlySet<string>;
 }
 
 /**
@@ -685,7 +846,7 @@ async function commitLiveOutcome(input: LiveOutcomeInput): Promise<void> {
   const { frozenSlugs, reconciliationSlugs } = input;
   const written = new Set(generation.writtenPages.map((entry) => entry.slug));
   const retained = new Set(
-    [...reconciliationSlugs, ...frozenSlugs].filter((slug) => !written.has(slug)),
+    [...reconciliationSlugs, ...frozenSlugs, ...(input.retainSlugs ?? [])].filter((slug) => !written.has(slug)),
   );
   await persistExtractionStates(draft, canonicalExtractions, generation.writtenPages, retained);
   // Retire the pages of concept names that folded into another concept. Runs after
@@ -721,6 +882,15 @@ interface GenerationStageInput {
   readonly concurrency: number;
   readonly seams: PageSeams;
   readonly compileReporter: CompileProgressReporter | undefined;
+  /**
+   * The pages a SCOPED regeneration was asked for, when the run has one.
+   *
+   * The merge produces every concept the re-extracted sources answer for, because that is
+   * what makes a page's content complete. A regeneration was asked for ONE page, so the
+   * merged set is narrowed to it here: writing the siblings too would rewrite pages the
+   * operator never asked about, which is exactly what the lever must not do.
+   */
+  readonly regenerateOnly?: ReadonlySet<string>;
 }
 
 /** What the generation stage hands back to the pipeline. */
@@ -769,13 +939,18 @@ async function runGenerationStage(
     mergeExtractions(canonicalExtractions, frozenSlugs, reconciliationSlugs),
     identity.aliasesBySlug,
   );
+  // A scoped regeneration narrows the merged set to the pages it was asked for. The merge
+  // itself stays whole, so the page that IS generated carries every contributing source.
+  const scopedMerged = input.regenerateOnly === undefined
+    ? mergedWithAliases
+    : mergedWithAliases.filter((entry) => input.regenerateOnly?.has(entry.slug) === true);
   // Read the sibling pages ONCE for the whole run: ranking cross-reference context
   // needs every sibling's text, and reading it per page would make one compile pay
   // pages x pages confined reads for context no reader ever sees. A run with nothing
   // to render reads nothing.
-  const merged = mergedWithAliases.length === 0
-    ? mergedWithAliases
-    : withRelatedPageIndex(mergedWithAliases, await buildRelatedPageIndex(root));
+  const merged = scopedMerged.length === 0
+    ? scopedMerged
+    : withRelatedPageIndex(scopedMerged, await buildRelatedPageIndex(root));
   const generation = await timeStage("compile.page-generation", () => generatePagesPhase(
     root,
     merged,
@@ -867,6 +1042,11 @@ async function finalizeNothingToCompile(
       categories: emptyCategoryAssignmentCounts(),
     },
   ));
+  // The version line is printed HERE rather than by `summarizeCompile`, because this
+  // branch never builds a result to carry it — and the rule is that the line appears on
+  // EVERY run, including one that changed nothing (a line that sometimes disappears is
+  // indistinguishable from a broken one).
+  reportVersionSplit(await readVersionSplit(root, seams.content));
   return {
     ...emptyCompileResult(),
     skipped: input.unchangedCount,
@@ -900,24 +1080,25 @@ async function runCompilePipeline(
   const stateRows = wikiStateRowsBackend(db, env);
   const draft = await CompileStateDraft.load(root, stateRows);
   const state = draft.read();
+  // Resolve every page seam ONCE, from one variable: a run that stores rows while
+  // repairing files -- or reads rows while writing `wiki/` -- would split the
+  // corpus in half and is the defect this migration kept re-introducing.
+  const seams = resolvePageSeams(db, env);
   const compileReporter = options.jobObserver?.compile;
   const detected = await timeStage("compile.detect-changes", () =>
     detectChanges(root, state, sourceChangeDetection(db, env), env),
     () => reportCompileStage(compileReporter, "compile.detect-changes"));
-  const changes = promoteForPromptModifiers(
-    applyChangeFilter(detected, options.changeFilter),
-    state,
-  );
+  // A `--recompile` request is resolved and VALIDATED before any work, so an unusable
+  // one is a refusal that wrote nothing rather than a run that silently did nothing.
+  const scope = await resolveRunScope(root, state, detected, options, seams);
+  if (!isRunScope(scope)) return scope;
+  const changes = scope.changes;
   await markUnchangedPendingSources(root, changes, sourceContentReading(db, env));
   const reusableSources = reusableSourceFiles(state, changes, detected, Boolean(options.review));
   augmentWithAffectedSources(changes, findAffectedSources(state, changes, detected));
   const reconciliationSlugs = findReconciliationSlugs(state, changes);
 
   const buckets = bucketChanges(changes);
-  // Resolve every page seam ONCE, from one variable: a run that stores rows while
-  // repairing files -- or reads rows while writing `wiki/` -- would split the
-  // corpus in half and is the defect this migration kept re-introducing.
-  const seams = resolvePageSeams(db, env);
   if (buckets.toCompile.length === 0 && buckets.deleted.length === 0) {
     return await finalizeNothingToCompile({
       root, options, db, env, schema, draft, seams, stateRows,
@@ -961,14 +1142,12 @@ async function runCompilePipeline(
         reportCompileProgress(compileReporter, completed, total),
     },
   ), () => reportCompileStage(compileReporter, "compile.extraction"));
-  if (!options.review) {
-    freezeFailedExtractions(draft, extractions, frozenSlugs);
-    reportFrozenSlugs(frozenSlugs);
-  }
+  recordExtractionFreezes(draft, extractions, frozenSlugs, options);
 
   const { identity, canonicalExtractions, generation, existingIds } = await runGenerationStage({
     root, extractions, frozenSlugs, reconciliationSlugs, schema, options,
     reviewPolicy, concurrency, seams, compileReporter,
+    regenerateOnly: slugsToRegenerate(scope.recompilePlan),
   });
 
 
@@ -976,6 +1155,11 @@ async function runCompilePipeline(
     await commitLiveOutcome({
       root, draft, seams, canonicalExtractions, generation, identity,
       frozenSlugs, reconciliationSlugs,
+      // A scoped regeneration writes ONE page out of the sources it re-extracted. Every
+      // other concept those sources produced is still owned by them, so ownership is
+      // retained explicitly: filtering the generated page set must never look, to the
+      // next compile, like a source that stopped producing what it still produces.
+      retainSlugs: retainedForScope(scope.recompilePlan, canonicalExtractions),
     });
     // The run's link totals are collected in place by the link gate, which runs in
     // the resolution seam below — after every page of the run exists, which is the
@@ -1008,13 +1192,46 @@ async function runCompilePipeline(
       linkReview: totals.linkReview,
       curatedLinks: totals.curatedLinks,
       categories: totals.categories,
+      // Read AFTER the run wrote its pages, so the split describes the wiki the operator
+      // now has rather than the one the run found.
+      versionSplit: await readVersionSplit(root, seams.content),
     };
     await logCompile(root, buckets, reportGeneration, existingIds, env);
     verbose(`compile finished in ${Date.now() - startMs} ms`);
     return summarizeCompile(buckets, reportGeneration, canonicalExtractions, options, forgetErrors);
   }
   verbose(`compile finished in ${Date.now() - startMs} ms`);
-  return summarizeCompile(buckets, generation, canonicalExtractions, options, forgetErrors);
+  return summarizeCompile(
+    buckets,
+    { ...generation, versionSplit: await readVersionSplit(root, seams.content) },
+    canonicalExtractions,
+    options,
+    forgetErrors,
+  );
+}
+
+/**
+ * Freeze the pages whose source extraction failed this run, and report them.
+ *
+ * Only extraction failures of THIS run freeze a page: deletion and persisted freezes are
+ * reconciliation work whose surviving owners rebuild cleanly. Review mode freezes nothing —
+ * a held-back run writes no page to freeze — which is the only branch here, kept in one
+ * place rather than inside the pipeline.
+ *
+ * @param draft - The run's state draft.
+ * @param extractions - This run's extraction results.
+ * @param frozenSlugs - Mutable set the freeze is recorded into.
+ * @param options - The compile options the run carries.
+ */
+function recordExtractionFreezes(
+  draft: CompileStateDraft,
+  extractions: ExtractionResult[],
+  frozenSlugs: Set<string>,
+  options: CompileOptions,
+): void {
+  if (options.review) return;
+  freezeFailedExtractions(draft, extractions, frozenSlugs);
+  reportFrozenSlugs(frozenSlugs);
 }
 
 /**
@@ -1232,6 +1449,11 @@ interface FinalizeFlags {
    */
   scoped?: boolean;
   /**
+   * The run regenerates NAMED pages only (`llmwiki compile --recompile`), so the stages
+   * that exist to change OTHER pages are skipped — see the call site below.
+   */
+  regenerateOnly?: boolean;
+  /**
    * Where the embedding store lives, when the caller holds a database handle.
    *
    * Omitted keeps the on-disk store, which is what every existing caller wants.
@@ -1429,7 +1651,7 @@ async function finalizeWiki(
 ): Promise<void> {
   const {
     scoped = false, embeddings = true, embeddingStore, resolverSource,
-    embeddingPageSource, seams = {}, stateRows, jobObserver, totals,
+    embeddingPageSource, seams = {}, stateRows, jobObserver, totals, regenerateOnly = false,
   } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
   const conceptNewSlugs = pages
@@ -1463,12 +1685,19 @@ async function finalizeWiki(
     //      skips it -- which is what stops the resolver and this stage from creating
     //      the same link twice. Running it before the resolver would also expose the
     //      edits to a body rewrite the resolver builds from its own earlier read.
-    await reviewEarlierPagesForRun(root, pages, flags);
-    // Categories come LAST because they are a different object type: a category file is
-    // read by nothing in this pipeline, so no later stage can discard the membership it
-    // records, and every page it describes is final by now. Guarded like the review: a
-    // run with no article makes no assignment call and writes no category file.
-    await assignCategoriesForRun(root, pages, flags);
+    // The reference review and category assignment are SKIPPED by a scoped regeneration
+    // (`llmwiki compile --recompile`), and that is the promise of the lever rather than an
+    // optimisation: both stages exist to change pages the run did NOT name — the review
+    // adds references to earlier pages and the taxonomy records memberships — so running
+    // them here would rewrite the wiki around the one page the operator asked for.
+    if (!regenerateOnly) {
+      await reviewEarlierPagesForRun(root, pages, flags);
+      // Categories come LAST because they are a different object type: a category file is
+      // read by nothing in this pipeline, so no later stage can discard the membership it
+      // records, and every page it describes is final by now. Guarded like the review: a
+      // run with no article makes no assignment call and writes no category file.
+      await assignCategoriesForRun(root, pages, flags);
+    }
   }
 
   // SINGLE durable state write of the whole compile: the buffered draft is

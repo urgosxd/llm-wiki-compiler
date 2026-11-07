@@ -164,6 +164,14 @@ addStackOption(
     "--concurrency <n>",
     "Max concurrent LLM calls during compile (or set LLMWIKI_COMPILE_CONCURRENCY; default 5)",
   )
+  .option(
+    "--recompile <pages...>",
+    "Regenerate these pages at the current synthesis version even though their sources " +
+      "did not change (page ids like 'concepts/foo', bare slugs, or 'all'). The compile's " +
+      "version line names a stale page; this is how you refresh it. Refuses, with exit 1, " +
+      "a name the wiki does not store or a page no source owns. Cannot be combined with " +
+      "--review.",
+  )
   .option("--verbose", "Print detailed progress (or set LLMWIKI_VERBOSE=1)")
   .action(async (options: ProviderOption & StackOption & {
     review?: boolean;
@@ -171,6 +179,7 @@ addStackOption(
     sourcesSection?: boolean;
     instructions?: string;
     concurrency?: string;
+    recompile?: string[];
     verbose?: boolean;
   }) => {
     try {
@@ -181,7 +190,11 @@ addStackOption(
       applySourcesSectionOption(options.sourcesSection);
       const systemPolicy = await readInstructions(options.instructions);
       requireCompileProvider();
-      await compileCommand({ review: options.review, concurrency: parseConcurrencyFlag(options.concurrency), systemPolicy });
+      const code = await compileCommand(
+        { review: options.review, concurrency: parseConcurrencyFlag(options.concurrency), systemPolicy },
+        options.recompile,
+      );
+      if (code !== 0) process.exit(code);
     } catch (err) {
       console.error(`\x1b[31mError:\x1b[0m ${err instanceof Error ? err.message : err}`);
       process.exit(1);

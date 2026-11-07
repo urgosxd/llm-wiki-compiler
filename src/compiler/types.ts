@@ -13,6 +13,7 @@ import type { ContextualLinkCounts } from "./link-anchoring.js";
 import type { CuratedLinkCounts } from "./curated-links.js";
 import type { CategoryAssignmentCounts } from "../categories/assign.js";
 import type { LinkReviewCounts } from "./link-review.js";
+import type { VersionSplit } from "./version-report.js";
 import type { RelatedPageIndex } from "./page-renderer.js";
 import type {
   ExtractedConcept,
@@ -117,6 +118,17 @@ export interface PageGenerationResult {
    * these counts describe files under `wiki/categories/`, never pages.
    */
   categories?: CategoryAssignmentCounts;
+  /**
+   * The synthesis-version split of the wiki this run left behind: how many stored pages
+   * sit at each recorded `promptVersion`, and how many are behind the current one.
+   *
+   * Optional only because a caller can build a result without asking for the scan; every
+   * compile path fills it, because a prompt bump that nobody can see is exactly the state
+   * this field exists to end. `compile-report` prints it as ONE line on every run -- the
+   * uniform case included, since a line that appears only sometimes is indistinguishable
+   * from a broken one.
+   */
+  versionSplit?: VersionSplit;
 }
 
 /**

@@ -15,6 +15,8 @@ import { describeLinkCounts } from "./link-anchoring.js";
 import { describeLinkReview, hasLinkReviewTruncation } from "./link-review.js";
 import { describeCuratedLinks } from "./curated-links.js";
 import { describeCategoryAssignment, hasCategoryAssignmentTruncation } from "../categories/assign.js";
+import { describeVersionSplit } from "./version-report.js";
+import type { VersionSplit } from "./version-report.js";
 import type { SchemaConfig } from "../schema/index.js";
 import type { ExtractionResult } from "./deps.js";
 import type {
@@ -75,6 +77,7 @@ export function summarizeCompile(
   reportLinkReview(generation);
   reportCuratedLinks(generation);
   reportCategoryAssignment(generation);
+  if (generation.versionSplit !== undefined) reportVersionSplit(generation.versionSplit);
   if (generation.candidates.length > 0) {
     output.status("?", output.info(
       reviewSummaryLine(generation),
@@ -197,6 +200,23 @@ function reportCategoryAssignment(generation: PageGenerationResult): void {
   const line = `Categories: ${summary}.`;
   const actionable = hasCategoryAssignmentTruncation(counts) || counts.writeFailed > 0;
   output.status("🏷", actionable ? output.warn(line) : output.info(line));
+}
+
+/**
+ * Print the ONE synthesis-version line of the run.
+ *
+ * It is printed on EVERY compile, not behind a verbose flag and not only when the wiki is
+ * mixed: `promptVersion` is stamped per page and nothing invalidated a page when the
+ * prompt changed, so without this line a corpus holding two prompt generations looked
+ * exactly like a uniform one. A page behind the current version is printed as a WARNING
+ * because it is the actionable case -- the line then names the lever that regenerates one
+ * page (`llmwiki compile --recompile <page-id>`).
+ *
+ * @param split - The counted split of the wiki this run left behind.
+ */
+export function reportVersionSplit(split: VersionSplit): void {
+  const line = describeVersionSplit(split);
+  output.status("i", split.stalePages > 0 ? output.warn(line) : output.info(line));
 }
 
 /** Human completion line for candidates created this run. */

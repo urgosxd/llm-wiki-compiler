@@ -27,6 +27,7 @@ Run from your project root. If `sources/` is empty or doesn't exist yet, compile
 | `--lang <code>` | Override the output language for this compile run (e.g. `zh-CN`, `Chinese`, `ja`, `Japanese`). Wins over the `LLMWIKI_OUTPUT_LANG` environment variable. Unset preserves the model's default behaviour. Changing it regenerates already-compiled pages — see [Prompt modifiers and recompilation](#prompt-modifiers-and-recompilation). |
 | `--no-sources-section` | Stop asking the model for a trailing `## Sources` section in generated pages. Provenance is unaffected: the `sources:` frontmatter and the inline `^[file.md:1-5]` citation markers are produced by the compiler and stay exactly as they are. Equivalent to setting `LLMWIKI_SOURCES_SECTION=off`. |
 | `--concurrency <n>` | Maximum LLM calls run in parallel during this compile, across both extraction and page generation. Wins over the `LLMWIKI_COMPILE_CONCURRENCY` environment variable; defaults to `5`. Values above `50` are clamped. |
+| `--recompile <pages...>` | Regenerate exactly these pages at the current synthesis version, even though their sources did not change (`all` means every page the wiki stores). Answers the `Synthesis version` line; see [Synthesis versions and regenerating a page](#synthesis-versions-and-regenerating-a-page). Cannot be combined with `--review`, and exits `1` for a name the wiki does not store or a page no source owns. |
 | `--verbose` | Print detailed per-step progress: source sizes, concept merge details, page char counts, embedding batch summary, and total compile time. Equivalent to setting `LLMWIKI_VERBOSE=1`. Quiet mode (`--json`) always wins over verbose. |
 
 `--stack <id>` is also accepted by `llmwiki refresh` and `llmwiki watch`, which
@@ -340,3 +341,41 @@ its content digest; changing or omitting `--instructions` also invalidates pages
 
 Each generated page also records the modifiers it was produced under in its
 `promptModifiers` frontmatter, which the JSON export surfaces per page.
+
+## Synthesis versions and regenerating a page
+
+Each generated page also records `promptVersion` in its frontmatter: the version of
+llmwiki's own prompt implementation that produced its current content. That value is
+**reported, never enforced**. A new llmwiki release that changes the prompt does not
+rewrite your corpus on the next compile: regeneration is a paid model call per page, and
+rewriting everything would also re-root every curated link the wiki has accumulated.
+
+What you get instead is one line on **every** compile run, aggregating the pages the wiki
+actually stores:
+
+```text
+1 page(s) compiled at v8 (the current version).
+1 page(s) compiled at v7, 2 page(s) compiled at v8 (the current version) — regenerate a stale page with `llmwiki compile --recompile <page-id>`.
+```
+
+Both counts and both versions are named whenever more than one generation is present, and
+the uniform case still prints the single version plainly — a line that disappears is
+indistinguishable from a line that broke. A page with no recorded version is counted, not
+hidden.
+
+To act on it, name the page (or every page) explicitly:
+
+```bash
+llmwiki compile --recompile concepts/sistemas-distribuidos   # one page
+llmwiki compile --recompile sistemas-distribuidos all        # one page, plus the whole wiki
+```
+
+A scoped regeneration re-extracts the sources that own the named page, regenerates only
+that page, and **skips** the stages that exist to change other pages — the review of
+earlier pages and category assignment. Every other page keeps its bytes. Ownership in
+`.llmwiki/state.json` is preserved for the concepts those sources still produce, so
+regenerating one page never leaves its siblings looking orphaned.
+
+It costs one extraction per owning source plus one page generation. A request that names a
+page the wiki does not store, or a page no source owns (a seed page, an approved candidate),
+is refused before anything is written, with exit code `1`.
