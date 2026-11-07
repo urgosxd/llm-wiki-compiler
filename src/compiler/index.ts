@@ -407,6 +407,7 @@ async function generatePagesPhase(
   pageSink: PageSink | undefined,
   pageRemover: PageRemover | undefined,
   transaction: PageBatchTransaction | undefined,
+  contentSource: PageContentSource | undefined,
   progressSink?: CompileProgressReporter,
 ): Promise<PageGenerationResult> {
   // Publish the denominator as soon as the stage owns it. Announcing the stage
@@ -439,7 +440,9 @@ async function generatePagesPhase(
   const outcomes = await Promise.all(
     renderable.map((entry) => limit(async () => {
       try {
-        const result = await generateMergedPage(root, entry, schema, options, sourceStates, policy);
+        const result = await generateMergedPage(
+          root, entry, schema, options, sourceStates, policy, contentSource,
+        );
         return { entry, result };
       } finally {
         settledPages += 1;
@@ -993,6 +996,7 @@ async function runGenerationStage(
     input.seams.sink,
     input.seams.remover,
     input.seams.transaction,
+    input.seams.content,
     input.compileReporter,
   ), () => reportCompileStage(input.compileReporter, "compile.page-generation"));
   reportCompileProgress(

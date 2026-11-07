@@ -54,6 +54,15 @@ export interface Page {
   orphaned: boolean;
   /** True when frontmatter contains `archived: true`. */
   archived: boolean;
+  /**
+   * Names this page also answers to, when the backend records them per page.
+   *
+   * Present on a row-backed page (`wiki.pages.aliases`); the on-disk scanner keeps
+   * aliases in frontmatter and leaves this unset, so the field is OPTIONAL and the
+   * `buildPage` path is unchanged for files. A backend that records neither reports
+   * an empty list from the row store rather than `undefined`.
+   */
+  aliases?: string[];
   /** Full markdown body, present only when `includeBody` is true or via `getPage`. */
   body?: string;
 }

@@ -58,6 +58,7 @@ import { sql } from "drizzle-orm";
 import type { Page, PageDirectory } from "../../pages/list.js";
 import type { Database } from "llmwiki-kg";
 import { toArrayLiteral } from "./sql-array.js";
+import { stringList } from "./page-string-list.js";
 
 /** The two page directories the schema's CHECK constraint allows. */
 const PAGE_DIRECTORIES: readonly PageDirectory[] = ["concepts", "queries"] as const;
@@ -85,6 +86,7 @@ interface WikiPageRow extends Record<string, unknown> {
   readonly archived: boolean | null;
   readonly created_at: string | null;
   readonly updated_at: string | null;
+  readonly aliases: unknown;
 }
 
 /**
@@ -126,6 +128,10 @@ function toPage(row: WikiPageRow): Page | undefined {
     links: row.links ?? [],
     orphaned: row.orphaned ?? false,
     archived: row.archived ?? false,
+    // A per-page fact stored as a `jsonb` array, so a page that survived a round trip
+    // through these columns answers with the same aliases and attribution gaps the
+    // file path reads out of its frontmatter (S2, S5).
+    aliases: stringList(row.aliases),
     ...(row.body === null ? {} : { body: row.body }),
     ...(row.created_at === null ? {} : { createdAt: row.created_at }),
     ...(row.updated_at === null ? {} : { updatedAt: row.updated_at }),
@@ -180,10 +186,30 @@ export async function withTenant<T>(
 }
 
 
-/** Columns a listing needs; `body` is excluded because a listing rarely shows it. */
+/**
+ * Render a per-page string list as the `jsonb` literal the column stores.
+ *
+ * One parameter holding JSON text rather than a drizzle array: drizzle expands a JS
+ * array into a ROW constructor, which is neither a `jsonb` value nor valid for more
+ * than one element (`sql-array.ts` documents the same defect for `text[]`).
+ *
+ * @param values - The list to store; absent means the empty list the column defaults to.
+ * @returns A JSON array literal, safe to cast to `jsonb`.
+ */
+function toJsonbLiteral(values: readonly string[] | undefined): string {
+  return JSON.stringify(values ?? []);
+}
+
+/**
+ * Columns a listing needs; `body` is excluded because a listing rarely shows it.
+ *
+ * `aliases` and `attribution_gaps` ARE included: they are page facts a reader of a
+ * listing must be able to answer for (an alias resolves to its page), and a projection
+ * that dropped them would make every listed page report as carrying none.
+ */
 const PAGE_LISTING_COLUMNS = sql`
   page_directory, slug, title, summary, tags, links,
-  orphaned, archived, created_at, updated_at
+  orphaned, archived, aliases, created_at, updated_at
 `;
 
 /**
@@ -233,7 +259,7 @@ export async function listStoredPagesUnfiltered(
   return withTenant(db, stackId, async (tx) => {
     const rows = await tx.execute<WikiPageRow>(sql`
       select page_directory, slug, title, summary, tags, links,
-             orphaned, archived, body, created_at, updated_at
+             orphaned, archived, body, aliases, created_at, updated_at
       from wiki.pages
       where stack_id = ${stackId}
       order by updated_at desc
@@ -260,7 +286,7 @@ export async function getStoredPage(
   return withTenant(db, stackId, async (tx) => {
     const rows = await tx.execute<WikiPageRow>(sql`
       select page_directory, slug, title, summary, tags, links, body,
-             orphaned, archived, created_at, updated_at
+             orphaned, archived, aliases, created_at, updated_at
       from wiki.pages
       where stack_id = ${stackId}
         and page_directory = ${pageDirectory} and slug = ${slug}
@@ -317,7 +343,7 @@ export async function getStoredPagesByKey(
   const rows = await withTenant(db, stackId, async (tx) =>
     tx.execute<WikiPageRow>(sql`
       select page_directory, slug, title, summary, tags, links, body,
-             orphaned, archived, created_at, updated_at
+             orphaned, archived, aliases, created_at, updated_at
       from wiki.pages
       where stack_id = ${stackId}
         and (page_directory, slug) in (
@@ -365,12 +391,14 @@ export async function upsertStoredPage(
   await withTenant(db, stackId, async (tx) => {
     await tx.execute(sql`
       insert into wiki.pages
-        (stack_id, page_directory, slug, title, summary, tags, links, body, orphaned, archived)
+        (stack_id, page_directory, slug, title, summary, tags, links, body, orphaned, archived,
+         aliases)
       values (
         ${stackId}, ${page.pageDirectory}, ${page.slug}, ${page.title},
         ${page.summary}, ${toArrayLiteral(page.tags)}::text[],
         ${toArrayLiteral(page.links)}::text[], ${page.body ?? ""},
-        ${page.orphaned}, ${page.archived}
+        ${page.orphaned}, ${page.archived},
+        ${toJsonbLiteral(page.aliases)}::jsonb
       )
       on conflict (stack_id, page_directory, slug) do update set
         title = excluded.title,
@@ -380,6 +408,10 @@ export async function upsertStoredPage(
         body = excluded.body,
         orphaned = excluded.orphaned,
         archived = excluded.archived,
+        -- Overwritten, not preserved: the row mirrors the page that was rendered, and a
+        -- page written without these fields is a page that no longer declares them --
+        -- exactly what rewriting a file without them does on the file path.
+        aliases = excluded.aliases,
         updated_at = now()
     `);
   }, callerTx);

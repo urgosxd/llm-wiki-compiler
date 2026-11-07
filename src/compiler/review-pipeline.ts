@@ -17,6 +17,7 @@ import {
 import { promptModifiersDigest } from "./prompt-modifiers.js";
 import { pickStatesForSources } from "./source-state.js";
 import { renderMergedPageContent } from "./page-renderer.js";
+import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
 import { deleteCandidateBySlug, writeCandidate } from "./candidates.js";
 import {
   checkPageBrokenCitations,
@@ -57,6 +58,14 @@ interface ReviewCandidateMeta {
  * and frontmatter records every source file. When `options.review` is set,
  * the rendered page is persisted as a review candidate instead of being
  * written into `wiki/`.
+ *
+ * `contentSource` is the run's page reader, and it is load-bearing rather than
+ * cosmetic: the renderer re-reads the page it is about to replace to carry forward
+ * the fields only that page knows (`createdAt` and the aliases it already answers to).
+ * Without it the read went to `wiki/concepts` on a corpus that lives in rows, found
+ * nothing, and every re-render silently dropped the aliases the previous run had
+ * already decided (S2). Absent keeps the on-disk read, so a file-backed run is
+ * unchanged.
  */
 export async function generateMergedPage(
   root: string,
@@ -65,8 +74,9 @@ export async function generateMergedPage(
   options: CompileOptions,
   sourceStates: SourceStateMap,
   policy: ReviewPolicy,
+  contentSource?: PageContentSource,
 ): Promise<MergedPageOutcome> {
-  const fullPage = await renderMergedPageContent(root, entry, schema);
+  const fullPage = await renderMergedPageContent(root, entry, schema, contentSource);
   const diagnostics = await collectReviewDiagnostics(root, entry, fullPage, schema);
   const signals = buildPolicySignals(fullPage, diagnostics);
   const reasons = evaluatePolicy(signals, policy);

@@ -190,9 +190,22 @@ export function createResolverPageSource(
 /**
  * Render a stored page back to the markdown a resolver expects.
  *
- * Only the fields link resolution acts on are emitted. A field the row does not hold
- * is omitted rather than written as an empty value, because `orphaned: false` and a
- * missing `orphaned` mean the same thing to the parser but render differently.
+ * Only the fields link resolution and identity actually act on are emitted, and a
+ * field the row does not hold is omitted rather than written as an empty value,
+ * because `orphaned: false` and a missing `orphaned` mean the same thing to the
+ * parser but render differently.
+ *
+ * `aliases` and `attributionGaps` are emitted from their columns for the same reason
+ * the other fields are emitted from theirs: this function is the ONLY way a row becomes
+ * markdown, and every reader that must agree with the file path goes through it --
+ * `snapshotIncumbentConcepts` (the identity tier), `readWikiPageFrom` (re-render, link
+ * repair, orphaning, seeding) and the resolver's read-modify-write. A page rebuilt
+ * without its aliases re-decides identity from scratch on every run, and a page rebuilt
+ * without its gaps reads as fully attributed when it is not (S2, S5).
+ *
+ * Both are omitted when empty, matching the file path: `applyDeclaredAliases` deletes
+ * the key rather than writing `[]`, and `buildMergedFrontmatter` writes
+ * `attributionGaps` only for a page that is not fully attributed.
  *
  * @param page - A page from the row store.
  * @returns Frontmatter plus the page's body.
@@ -200,10 +213,28 @@ export function createResolverPageSource(
 function renderPageMarkdown(page: Page): string {
   const lines = [`title: ${JSON.stringify(page.title)}`];
   if (page.summary !== "") lines.push(`summary: ${JSON.stringify(page.summary)}`);
-  if (page.tags.length > 0) lines.push(`tags:\n${page.tags.map((t) => `  - ${t}`).join("\n")}`);
+  emitList(lines, "tags", page.tags);
   if (page.orphaned) lines.push("orphaned: true");
   if (page.archived) lines.push("archived: true");
+  emitList(lines, "aliases", page.aliases ?? []);
   return `---\n${lines.join("\n")}\n---\n\n${page.body ?? ""}`;
+}
+
+/**
+ * Append one frontmatter list field, omitted entirely when it has no entries.
+ *
+ * One shape for all four list fields, because the omission rule is the part that has
+ * to match the file path: `applyDeclaredAliases` deletes the key rather than writing
+ * an empty array, and `buildMergedFrontmatter` writes `attributionGaps` only for a
+ * page that is not fully attributed.
+ *
+ * @param lines - Frontmatter lines to append to.
+ * @param field - Frontmatter key.
+ * @param values - Field values, in order.
+ */
+function emitList(lines: string[], field: string, values: readonly string[]): void {
+  if (values.length === 0) return;
+  lines.push(`${field}:\n${values.map((value) => `  - ${value}`).join("\n")}`);
 }
 
 /**

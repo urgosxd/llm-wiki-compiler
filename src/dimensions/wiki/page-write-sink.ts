@@ -28,6 +28,7 @@ import {
 } from "../../pages/list.js";
 import { parseFrontmatter } from "../../utils/markdown.js";
 import { deleteStoredPage, getStoredPage, listStoredPages, upsertStoredPage } from "./page-store.js";
+import { stringList } from "./page-string-list.js";
 import { activePageBatchTransaction } from "./page-batch-transaction.js";
 import type { PageRemover } from "../../trust/page-apply.js";
 
@@ -94,12 +95,18 @@ export function createPageRemoveSink(db: Database, stackId: string): PageRemover
  * Exported for the tests that pin the row/file parity: with the same `request` and
  * the same file bytes, both paths must produce the same object.
  *
+ * `aliases` and `attributionGaps` are carried over from the frontmatter here because
+ * `buildPage` -- deliberately -- does not know about them: it is the FILE path's
+ * builder and its output is public, so teaching it these fields would change what
+ * every on-disk `listPages` call reports. This is the row seam, so this is where the
+ * facts the file path keeps in frontmatter are handed to the columns (S2, S5).
+ *
  * @param request - Page identity and markdown.
  * @returns The parsed page, body included (a row always stores its body).
  */
 export function toPage(request: PageWriteRequest): Page {
   const { meta, body } = parseFrontmatter(request.body);
-  return buildPage(
+  const page = buildPage(
     // The directory is a wiki namespace, which is exactly what `PageDirectory` names.
     request.directory as PageDirectory,
     request.slug,
@@ -107,6 +114,10 @@ export function toPage(request: PageWriteRequest): Page {
     body,
     true,
   );
+  return {
+    ...page,
+    aliases: stringList(meta.aliases),
+  };
 }
 
 /**
