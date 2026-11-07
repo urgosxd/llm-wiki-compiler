@@ -96,7 +96,8 @@ Interpretation (non-negotiable): embedding retrieval is legitimate for FINDING c
 | T17 | Graph health from the existing traversal: `graph-health` reports the shortest-path depth distribution over ordered article pairs plus the unreachable count, bounded by a named sampled-pair cap that is always reported, with a `--json` envelope, registration, help text, docs page and nav entry | S11, S12 | worker | 7a4a80d041037e6e396ce2e6ea91727acf32ae1a |
 | T18 | Synthesis-version observability (REPORT-ONLY): the version split of the stored pages is printed on every compile run, `compile --recompile <pages...>` (or `all`) regenerates a named page at the current version, and the module JSDoc states the standing standard for any future version-shaped state | S12, S13 | worker | 840c0b5d83810e2ca563d7f8fd6c3effb5559160 |
 | T19 | Close-out of the L17 audit: drop the pinned `maxTokens` from the link review so `LLMWIKI_MAX_TOKENS` governs it and widen the budget test until it reaches that request; deliver T11 (delete the dead alias module, remove the retired `auto`/`review` tiers, keep and prove the identity guard); document the user-visible identity, link, review, curated-link and attribution rules and their four report lines | S6, S8, S9, S12, S14 | worker | 4c80e969292b0db14d42c009fceb6b6a7716ce71 (token budget), 28b17e1de4830fc473e04e90e13f29826425d3d8 (T11), f0597843e69ace5d644ecc601e3265c576977306 (docs) |
-| T20 | Attribution made OBSERVABLE, not silent and not a hold-back: ONE census feeds three surfaces -- the page's own `attributionGaps` frontmatter naming the sources its prose never attributes (omitted when the page is fully attributed), ONE counted `Attribution:` line aggregated across the run's pages, and a summary mention under the completion banner -- and the page is still WRITTEN | S2, S7, S12 | worker | 209922b453e502ddb14b09509a8a78041eb8e08e |
+| T20 | Attribution made OBSERVABLE, not silent and not a hold-back: ONE census feeds three surfaces -- the page's own `attributionGaps` frontmatter naming the sources its prose never attributes (omitted when the page is fully attributed), ONE counted `Attribution:` line aggregated across the run's pages, and a summary mention under the completion banner -- and the page is still WRITTEN | S2, S7, S12 | worker | 209922b453e502ddb14b09509a8a78041eb8e08e (code), 16dd8202dac41fd0e7383c51709145c4ee9bccc1 (record; corrected in L20 — this row cited only the code commit) |
+| T21 | Declare `attributionGaps` on `WikiFrontmatter` — the type gap L19 §2/§10.4 disclosed — as an optional `string[]`, DECLARATION ONLY: `buildMergedFrontmatter` still omits the key entirely for a fully attributed page, so no rendered byte and no stdout line changes | S2, S7, S12 (typed only, no behaviour change) | worker | 3a65fc09542eaf5c3088480b87ca9db9fbddc7d7 (a commit cannot cite its own SHA; this record commit is the second half) |
 
 ## Log
 
@@ -963,3 +964,61 @@ The third file's history, stated accurately rather than folded in with the first
 Created OUTSIDE the worktree and NOT removed, named here so the parent can remove them: `/tmp/t20-gates/` (RED/GREEN/inverse-edit and gate logs, the line-count script, and a copy of `page-renderer.ts` used to restore after the inverse edit), `/tmp/gplmiYqZ/tmp.qY0EhlDjwb/` (the differential's `base` and `change` trees plus the probe spec), and the compiled project roots the differential left under the OS temp dir (`/tmp/t20-diff-*`). `git status --short` on the delivered tree shows no scratch, cache or temporary path: its only entries are this document and, before the code commit, the files that commit contains.
 
 RISK: **item 3 is claimed, precisely.** This diff changes code every page of every project's compile runs: `buildMergedFrontmatter` is the ONE frontmatter builder for live writes AND review candidates, `renderMergedPageContent` is the shared renderer, and `summarizeCompile` prints a line on every run. Proof it did not change anything nobody asked for: the differential above (a fully attributed single-source compile is byte-identical with an identical stdout, an identical frontmatter key set and no new line), `npx vitest related --run` green on all three touched modules with assertions unmodified, `npm test` green after the flake refuted above, and the fact that every new surface returns before doing anything when the page is fully attributed. Items 1 and 2 are not claimed: nothing is deleted or rewritten, no stored data changes shape, and the addition is an optional frontmatter key plus two warning lines. Known consequences to state plainly: a merged page that misses a source now carries `attributionGaps` in its own bytes (so its file differs from what the previous version would have written for the same body), and a run with imperfect pages now prints two additional warning lines.
+
+L20 (T21 delivered as `3a65fc09542eaf5c3088480b87ca9db9fbddc7d7` `refactor(types): declare the attribution gap field on page frontmatter`, plus this record commit; closes the type gap L19 §2 and §10.4 disclosed, as a DECLARATION ONLY):
+
+### 1. The gap, stated exactly
+
+T20 made attribution observable on three surfaces, one of them being the page's own frontmatter: `src/compiler/page-renderer.ts:385` writes `frontmatterFields.attributionGaps` for a merged page that leaves a contributing source uncited. The field therefore travels in the page's stored bytes, and `WikiFrontmatter` (`src/utils/types.ts`) — the interface that documents what a page's frontmatter contains — did not declare it. L19 §10.4 recorded that as an open gap rather than a behaviour defect: the field was written and read as untyped data (`buildMergedFrontmatter` builds a `Record<string, unknown>` and `parseFrontmatter` returns one), so nothing needed the member at runtime, and the only cost was that the documented shape was wrong for every marked page.
+
+### 2. The declaration, and the three reasons nothing else had to change
+
+One optional member, added beside the neighbouring optional lists `tags?:` and `aliases?:`, with the file's one-line JSDoc convention:
+
+```ts
+  /** Source keys that contribute to the page but are not cited by its prose; omitted when fully attributed. */
+  attributionGaps?: string[];
+```
+
+Declaring a member on a TypeScript interface is ERASED at compile time, so the declaration cannot reach a byte of output. The three properties the Manager asked to be confirmed rather than assumed:
+
+1. **The key is still omitted entirely for a fully attributed page.** The producer is unchanged and still guarded — `page-renderer.ts:385` reads `if (gap !== null) frontmatterFields.attributionGaps = [...gap.missing];` — so no page gains an empty array and no page's key set grows because of this task. `grep -n "attributionGaps" src/compiler/page-renderer.ts` still returns exactly the JSDoc line (352) and that one conditional write (385).
+2. **No rendered output changed.** `dist/cli.js` after `npm run build` is `501.47 KB` and `dist/index.d.ts` `6.67 KB` — the same sizes L19 §7 recorded for the pre-change build; an `interface` member is not a runtime value and `dist/index.d.ts` does not grow from an optional member on an interface that is already exported.
+3. **Nothing else needed changing.** `WikiFrontmatter` has one literal constructor in `src/` (`src/compiler/seed-pages.ts:176`); the new member is optional, so that literal stays valid. No parser, no renderer, no schema list of allowed keys exists to keep in sync — `parseFrontmatter` returns a plain record and validates no key set.
+
+The absence rule is already pinned by test, not by this task: `test/compiler/attribution-marking.test.ts` T2 asserts that a fully attributed page's bytes do not contain `attributionGaps` and that its key set is unchanged; T3 pins the single-source page. Both still pass (below), which is the observed confirmation that the declaration did not disturb the omission.
+
+### 3. Test discipline: the stated exception
+
+This is a type-only declaration with NO runnable RED available: no runtime code path was added, removed or altered, so there is no observable behaviour for a behaviour-level test to assert and no intended failure to capture first. Inventing a test for it would assert TypeScript's own type checker. Proportionate structural verification was run instead, and it is the strongest available proof for this class of change: `npx tsc --noEmit` compiles the declaration, `npm run typecheck:tests` proves the 1731 checked test files still type-check against it, the two attribution suites (13 tests) still pass with their assertions untouched, and the whole affected graph (`npm run test:affected`, 6153 tests) is green. No TUI toggle or mode choice was involved.
+
+### 4. Gates (Node v24.21.0, `$HOME/.nvm/versions/node/v24.21.0/bin` first on `PATH`, every command foreground)
+
+- `npx tsc --noEmit` — **exit 0**, no diagnostics.
+- `npm run typecheck:tests` — **exit 0**: "Test type-check: 1731 files checked; 260 baseline diagnostics in 94 files; no regression."
+- `npm run build` — **exit 0**: ESM (`dist/cli.js` 501.47 KB, `dist/index.js` 443.46 KB) + DTS (`dist/index.d.ts` 6.67 KB), viewer assets copied.
+- `npm run test:affected` — **exit 0**: `Test Files 807 passed | 3 skipped (810)`, `Tests 6153 passed | 4 skipped (6157)`, 240.53 s, full output `/tmp/t21-gates-test-affected.log`; `grep -cE "^\s*(×|FAIL)"` over it returns **0**, so no failing test to name and nothing to re-run.
+- `./node_modules/.bin/fallow` — **exit 0**: "✗ 0 above threshold · 16956 analyzed · maintainability 91.1 (good)", dead files 0.0% and dead exports 0.0% (1451 files analyzed), duplication back to the 61 lines L19 recorded across 4 PRE-EXISTING clone groups in 6 test files. Coverage caveat unchanged: `.fallowrc.json` ignores `packages/llmwiki-kg/**`, so a clean `fallow` result is never coverage of that package.
+- `npx vitest run test/compiler/attribution-marking.test.ts test/compiler/synthesis-provenance.test.ts` — **exit 0**: 2 files / 13 tests passed.
+
+### 5. T20's SHAs, recovered and the row corrected
+
+T20 has TWO commits, and L19 recorded only the first in the tasks table:
+
+- `209922b453e502ddb14b09509a8a78041eb8e08e` — `feat(compiler): mark pages that are not fully attributed` (the code).
+- `16dd8202dac41fd0e7383c51709145c4ee9bccc1` — `docs(odd): record T20` (the record).
+
+The T20 row cited the code commit alone, so a reader following it landed on the code and never on the record that explains it. Both are now in that row, with the correction noted in the cell.
+
+### 6. Limitations of record
+
+1. This is a typed contract, not an enforced one: TypeScript checks the declaration at compile time and nothing validates a page's frontmatter at runtime against it. A hand-written or row-backed page can still carry an `attributionGaps` of the wrong shape.
+2. L19 §10.6 still stands unchanged — on a row-backed Stack the field survives only if `renderPageMarkdown` re-emits it, the same seam family that loses `aliases` and the recorded version. Declaring the member does not fix that seam and is not claimed to.
+3. The census granularity L19 §10.2 stands unchanged: a source counts as attributed when any citation marker in the body names it.
+
+### 7. Scratch and risk
+
+No scratch directory was created inside the worktree. One gate log lives OUTSIDE it and remains for the parent to remove: `/tmp/t21-gates-test-affected.log`. `git status --short` on the delivered tree showed no cache, scratch or temporary path at any point (the only entries across the two commits are `src/utils/types.ts` and this document).
+
+RISK: **none.** The diff is one optional member on an interface plus its JSDoc and this record. It changes no executable statement — `git diff` on the code commit is exactly 2 added lines in `src/utils/types.ts`, both erased at compile time — so it cannot alter a rendered page, a stored byte, a counter or a stdout line, and the pinned absence tests (T2, T3) plus the `dist` sizes and the 6153-test affected run are the evidence that it did not. Item 3 is therefore not claimed: nothing shared consumes this member, because no consumer reads it at all.
+
