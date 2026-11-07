@@ -30,7 +30,7 @@ S8 — REACHABILITY: every new stage or store must be shown reachable from the c
 | T4 | S5 | `attributionGaps` persist through the page-row seam and are marked, counted and named in the row-backed run output. | worker | `e1a2cd49c88c97d4b0e7c2842ebb03bfdd40f554` |
 | T5 | S3 | Curated links persist in `wiki.curated_links` behind the store seam; the overlay re-validates the anchor on every render and a lost anchor drops the link AND reports it. | worker | `15c5cda964906b07246c01f7bfdc0728d3317c98`, refactor-only prerequisite in `df804c6ba6dc1fe7e270b8c3c8baa27e3bcf4e4d` (the `CuratedLinkStorePort` and the file backend behind it; behaviour-preserving, type-checked on its own) |
 | T6 | S4 | Categories persist in `wiki.categories` + `wiki.category_members`; identity minted once, membership stored as evidence, category and concept of the same name stay two objects. | worker | `7e6e9fc5f8f266efabab075cacb6a5a94518fa1a` (the `CategoryStorePort` and the file backend behind it; behaviour-preserving), `43dab47f0c9a01ad1d4238ab4ee89e3587e54a17` (the row store, the seam selection and the suites) |
-| T7 | S7 | Parity test: one input ingested through the file-backed path and the row-backed path, equivalent observable output for all four artifacts. ACCEPTANCE. | worker | |
+| T7 | S7 | Parity test: one input ingested through the file-backed path and the row-backed path, equivalent observable output for all four artifacts. ACCEPTANCE. | worker | `3c09f3d1f5ba2eb700a57a6f9ddc7c6bac95c05f` |
 | T8 | S8 | Reachability proof for every new stage and store: `file:line` call chain plus `git grep`, and RED observed by unwiring the stage. | worker | |
 | T9 | S6, S7 | Documentation: the DB path's behaviour and the exact migration command. | worker | |
 | T10 | S1-S8 | Full gate run and delivery report. | lead | |
@@ -158,3 +158,93 @@ THE GATE, answered: `finalizeWiki` runs `assignCategoriesForRun` only inside `if
 Unwiring evidence, each restored by inverse edit with the suites green again: removing the `categories:` selection from `resolvePageSeams`, and separately removing `store: flags.seams?.categories` from `assignCategoriesForRun`, each turned all seven cases red (`expected [] to have a length of 1 but got +0`, `expected undefined to deeply equal {...}`), because the run fell back to the file store.
 
 Known limitation, deliberately not changed: the CLI surfaces (`category`, `categories-here`) still read categories from files. They are read-only commands outside the compile path, and pointing them at rows is a separate decision about which Stack they mean; T9 should say so in the docs rather than leave it implied.
+
+### L9 — T7 landed: PARITY REACHED, and one unwire per artifact
+
+`3c09f3d`. The acceptance test is `test/dimensions/store-parity.test.ts` (7 cases) over the
+shared corpus in `test/fixtures/store-parity-corpus.ts`. Split rationale: the corpus, the
+composite provider stub and the two-backend readers live in the fixture (247 non-comment
+lines); the seven comparisons live in the suite (121 non-comment lines). Both are under the
+400-line limit without touching a committed test file.
+
+WHAT THE CORPUS IS, and why one corpus and not four. `sistemas.md` + `consenso.md` are two
+accounts of ONE concept, so the merged page contributes two sources and cites one — the
+attribution gap — while its body quotes the category criterion's term and names the vector
+store by an ALIAS. `vectores.md` is the source whose extraction reports one concept under
+two spellings, which folds the alias onto the link TARGET page. Four full compiles per
+backend: create the marked page; create the target (the review curates the link into the
+earlier page, anchored on the alias); regenerate the marked page (the link can only come
+back by reading the record, and the gap must survive the write); regenerate it without the
+mention (the record must be dropped AND reported). The four artifacts interfere with each
+other, so four fixtures could each pass while the combination degrades.
+
+VERDICT, per artifact, both backends observed identical: PARITY REACHED for aliases,
+curated links with anchors, categories with membership evidence, and attribution gaps.
+
+MEASURED PARITY, values as observed (ANSI stripped):
+
+- aliases: `["vector-db", "Vector Database"]` on `concepts/vector-db`, title `Vector DB`,
+  no page for `vector-database`, concept slugs `[sistemas-distribuidos, vector-db]`.
+- curated link: `stableKey b98819d6e63186b1`, `concepts/sistemas-distribuidos` ->
+  `concepts/vector-db`, anchor `text "Vector Database"`, `before "\nDistribuidos: consenso
+  distribuido, vectores en un "`, `after ". ^[sistemas.md:1-1]\n"`, provenance
+  `model-verdict` — byte-identical, no trimming.
+- restored body: `Distribuidos: consenso distribuido, vectores en un
+  [[vector-db|Vector Database]]. ^[sistemas.md:1-1]` in both.
+- drop: `Curated links: 0 link(s) restored, 1 dropped (1 anchor-missing).` plus the
+  per-record line, records left `0`, body without the link — in both.
+- categories: `sistemas-distribuidos`, name `Sistemas distribuidos`, the criterion quoting
+  `"consenso distribuido"`, member `pageId concepts/sistemas-distribuidos`, reason,
+  `evidenceKey consenso-distribuido`; run 1 reports `1 page(s) assigned to 1 category(ies)
+  (1 new), 1 refused (1 unsupported)`, run 3 reports `0 page(s) assigned to 0 category(ies),
+  1 refused (1 unsupported)` — the same membership is reused, never re-minted.
+- attribution: `["consenso.md"]` on the merged page, `[]` on the target page, and the run
+  prints `Attribution: 1 page(s) not fully attributed (1 source reference(s) missing) —
+  Sistemas distribuidos is missing consenso.md`.
+
+UNWIRE RED, one per artifact, each restored by inverse edit with the suite green again. In
+every case exactly ONE case failed, and it was the case for the removed stage:
+
+1. aliases — removed `emitList(lines, "aliases", page.aliases ?? [])` in
+   `page-scan-source.ts:230`:
+   `× carries the same aliases, folded onto the same page, in both backends →
+   AssertionError: expected 0 to be greater than 0` (store-parity.test.ts:103).
+2. curated links — removed `curatedLinks: createRowCuratedLinkStore(db as never, stackId)`
+   in `page-source-seam.ts:408`:
+   `× keeps the same curated record, every anchor field included →
+   AssertionError: expected 0 to be greater than 0` (store-parity.test.ts:117).
+   NOTE: the "restores the link" case stayed GREEN under this unwire, because the run fell
+   back to the host's `.llmwiki/curated-links.json` and kept working from there. That is
+   exactly the degradation S2/S3 forbid, and only the RECORD comparison catches it.
+3. categories — removed `categories: createRowCategoryStore(db as never, stackId)` in
+   `page-source-seam.ts:409`:
+   `× stores the same category with the same membership evidence →
+   AssertionError: expected undefined to be defined` (store-parity.test.ts:154).
+4. attribution gaps — removed `attributionGaps: stringList(meta.attributionGaps)` in
+   `page-write-sink.ts:120`:
+   `× marks, counts and names the same attribution gap, and clears a full page →
+   AssertionError: expected 0 to be greater than 0` (store-parity.test.ts:174).
+
+T8 REACHABILITY TABLE, measured on this commit. Chain entry:
+`compile()` `src/compiler/index.ts:286` -> `compileAndReport` -> `runCompilePipeline`
+`index.ts:1107` -> `resolvePageSeams(db, env)` `index.ts:1132` ->
+`src/dimensions/wiki/page-source-seam.ts:402-409` (the Stack's seam bundle) -> both stages
+below. Hit counts are `git grep -c` over `src/`.
+
+| artifact | call chain (`file:line`) | grep command | hits |
+|---|---|---|---|
+| aliases (write) | `index.ts:974 applyConceptIdentity` -> `page-renderer.ts:403 applyDeclaredAliases` -> `page-write-sink.ts:119 aliases: stringList(meta.aliases)` -> `wiki.pages.aliases` | `git grep -c 'aliases: stringList' -- src/` | 3 files, 1 hit each (`page-write-sink.ts`, `page-store.ts`, `link-anchoring.ts`) |
+| aliases (read) | `identity-stage.ts:131 snapshotIncumbentConcepts` -> `page-scan-source.ts:357 createPageContentSource` -> `page-scan-source.ts:230 emitList(lines, "aliases", ...)` | `git grep -c 'emitList(lines, "aliases"' -- src/` | 1 (`page-scan-source.ts`) |
+| curated links | `page-source-seam.ts:408 curatedLinks: createRowCuratedLinkStore` -> `index.ts:583 overlayCuratedPageWrites(root, …, curatedStore)` -> `curated-links-apply.ts:92 applyCuratedOverlay` -> `curated-links-overlay.ts:104 overlayCuratedLinks` | `git grep -c 'curatedLinks: createRowCuratedLinkStore' -- src/` | 1 (`page-source-seam.ts`) |
+| categories | `index.ts:1629 assignCategoriesForRun` -> `index.ts:1643 store: flags.seams?.categories` -> `page-source-seam.ts:409 categories: createRowCategoryStore` -> `categories/assign.ts` -> `categories-row-store.ts` | `git grep -c 'seams?.categories' -- src/compiler/index.ts` | 1 |
+| attribution (write) | `page-renderer.ts:385 frontmatterFields.attributionGaps` -> `page-write-sink.ts:120 attributionGaps: stringList(meta.attributionGaps)` -> `wiki.pages.attribution_gaps` | `git grep -c 'frontmatterFields.attributionGaps' -- src/` | 1 (`page-renderer.ts`) |
+| attribution (read + report) | `page-scan-source.ts:231 emitList(lines, "attributionGaps", ...)`; `compile-report.ts:138 reportAttribution` | `git grep -c 'emitList(lines, "attributionGaps"' -- src/` | 1 (`page-scan-source.ts`) |
+
+FOR T8: the four unwire proofs above are the RED evidence, and they are stronger than a
+per-stage one — each removes the wiring a DIFFERENT artifact depends on and shows the other
+three cases staying green, so a single "the suite fails without my stage" claim is not
+doing the work. For T9: the CLI read commands `category` and `categories-here` still read
+`wiki/categories/*.md` (recorded in L8 and unchanged here) — the docs must say so rather
+than imply the taxonomy is fully row-aware outside the compile path. Also for T9: T7
+confirms `--recompile` writes no categories in EITHER path, which is scope parity, not a
+gap; documenting it as a gap would be wrong.
