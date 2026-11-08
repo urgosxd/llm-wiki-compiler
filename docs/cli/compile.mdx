@@ -22,7 +22,7 @@ Run from your project root. If `sources/` is empty or doesn't exist yet, compile
 |------|-------------|
 | `--stack <id>` | Compile into a named Stack instead of the one `AKS_STACK_ID` names. Wins over the environment variable, and an id no Stack row carries fails before any work runs. See [Stack resolution](/concepts/tenant-isolation#choosing-which-stack-a-command-uses). |
 | `--review` | Write generated pages to `.llmwiki/candidates/` instead of `wiki/`. Pages are held for human review and don't appear in the live wiki until you approve them with `llmwiki review approve <id>`. |
-| `--provider <name>` | Override `LLMWIKI_PROVIDER` for this compile only. Use `codex-agent` to delegate both compile phases to non-interactive `codex exec`. |
+| `--provider <name>` | Override `LLMWIKI_PROVIDER` for this compile only. |
 | `--instructions <path>` | Read an explicit UTF-8 instruction file (maximum 64 KiB) and append it to the built-in compile instructions. Changing or omitting the file option regenerates affected pages. |
 | `--lang <code>` | Override the output language for this compile run (e.g. `zh-CN`, `Chinese`, `ja`, `Japanese`). Wins over the `LLMWIKI_OUTPUT_LANG` environment variable. Unset preserves the model's default behaviour. Changing it regenerates already-compiled pages — see [Prompt modifiers and recompilation](#prompt-modifiers-and-recompilation). |
 | `--no-sources-section` | Stop asking the model for a trailing `## Sources` section in generated pages. Provenance is unaffected: the `sources:` frontmatter and the inline `^[file.md:1-5]` citation markers are produced by the compiler and stay exactly as they are. Equivalent to setting `LLMWIKI_SOURCES_SECTION=off`. |
@@ -288,8 +288,8 @@ LLMWIKI_MAX_TOKENS=8192 llmwiki compile
 The default is 4096 output tokens per call. Choose a limit supported by your
 model; higher limits can increase cost and latency. Invalid settings fail before
 an LLM request, and llmwiki does not automatically increase the budget or retry
-with a larger one. The `claude-agent` and `codex-agent` providers manage their
-own output limits and ignore this setting.
+with a larger one. The `claude-agent` provider manages its own output limits and
+ignores this setting.
 
 This is not an input-context limit. `LLMWIKI_PROMPT_BUDGET_CHARS` limits combined
 source text during page generation, not the complete source passed to concept
