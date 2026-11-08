@@ -35,6 +35,9 @@ const tree = (directory) => CODE_EXTENSIONS.map((extension) => `${directory}**/*
  *
  * - `wiki` is everything wiki. Today that is exactly the root `src/` tree, which
  *   is why the zone and the directory coincide; they are expected to diverge.
+ *   Root-side code outside the zone — `test/` and `scripts/` — consumes KG the
+ *   same way the zone does, so the wiki-side prohibition covers it too (see
+ *   `WIKI_SIDE`).
  * - `kg` is everything knowledge-graph, today `packages/llmwiki-kg/**` (its code
  *   lives under the package's `ts/` subdirectory).
  * - `api` is the joining package: the ONLY zone allowed to import both, so the
@@ -47,6 +50,25 @@ const tree = (directory) => CODE_EXTENSIONS.map((extension) => `${directory}**/*
 const WIKI_ZONE = tree("src/");
 const KG_ZONE = tree("packages/llmwiki-kg/");
 const API_ZONE = tree("api/");
+
+/**
+ * The trees on the wiki side of the boundary, which is the wiki zone plus the
+ * root-side consumers that live outside it.
+ *
+ * `test/**` and `scripts/**` are not zones, but they are root-side code, and a
+ * test or a script importing KG internals is a wiki-side consumer reaching into
+ * KG in exactly the direction the topology forbids. While they sat outside every
+ * zone those reaches were neither frozen nor constrained: they failed no rule,
+ * so they were invisible debt instead of counted debt. Naming them here puts
+ * them inside the prohibition, using the same two patterns, so the existing ones
+ * are frozen with a count and a new one fails.
+ *
+ * `scripts/` is included on evidence, not by symmetry: one script imports the
+ * package (`measure-graph-expansion.ts` reaching `llmwiki-kg`), and a single
+ * reach is still a reach. Only the wiki-side rule is widened — the kg-side rule
+ * is unchanged.
+ */
+const WIKI_SIDE = [...WIKI_ZONE, ...tree("test/"), ...tree("scripts/")];
 
 /**
  * The trees the house size rules cover: the zones, plus `test/`, `scripts/` and
@@ -140,7 +162,7 @@ export default tseslint.config(
     },
   },
   {
-    files: WIKI_ZONE,
+    files: WIKI_SIDE,
     rules: { "no-restricted-imports": ["error", WIKI_TO_KG] },
   },
   {

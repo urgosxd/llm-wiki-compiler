@@ -64,12 +64,23 @@ const HOUSE_RULES: readonly string[] = [
   "no-restricted-imports",
 ];
 
-/** The trees the house rules cover, matching the flat config's `files`. */
+/**
+ * The trees the house rules cover, matching the flat config's `CODE_FILES`.
+ *
+ * This list must stay in step with `CODE_FILES` in `eslint.config.mjs`, in the
+ * same order. The config decides which rules apply to a file; this list decides
+ * which files are read at all, and a tree the config exempts but no pattern
+ * reaches is never scanned — a zone the ratchet cannot see, so it can neither
+ * freeze nor fail on anything in it. That is why `api/**` is named here even
+ * though the directory does not exist yet: the moment it does, its files are in
+ * scope without anyone remembering to add them.
+ */
 const LINT_PATTERNS = [
   "src/**/*.{ts,tsx,js,mjs,cjs}",
   "packages/**/*.{ts,tsx,js,mjs,cjs}",
   "test/**/*.{ts,tsx,js,mjs,cjs}",
   "scripts/**/*.{ts,tsx,js,mjs,cjs}",
+  "api/**/*.{ts,tsx,js,mjs,cjs}",
 ];
 
 /** This ratchet's name for the shared stored document. */
@@ -180,7 +191,15 @@ export function configurationDigest(root: string): string {
  * @param root - Repository root the paths in the result are relative to.
  */
 export async function collectSnapshot(root: string): Promise<Snapshot> {
-  const eslint = new ESLint({ cwd: root });
+  /*
+   * `errorOnUnmatchedPattern` is off because a declared zone may be empty:
+   * `api/` does not exist yet, and ESLint treats a pattern that matches no file
+   * as an error rather than as an empty set. Turning it off keeps an empty zone
+   * from breaking the gate. It does not make a tree silently invisible: a file
+   * that appears under any pattern here is scanned and counted, which the probes
+   * for each zone check.
+   */
+  const eslint = new ESLint({ cwd: root, errorOnUnmatchedPattern: false });
   const results = await eslint.lintFiles([...LINT_PATTERNS]);
   const violations = sortViolations(results.flatMap((result) => houseViolations(root, result)));
   return {
