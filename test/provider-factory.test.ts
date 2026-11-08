@@ -129,6 +129,12 @@ describe("getProvider", () => {
     expect(() => getProvider()).toThrow('Unknown provider "gemini"');
   });
 
+  it("rejects codex-agent, which is no longer a supported provider", () => {
+    process.env.LLMWIKI_PROVIDER = "codex-agent";
+    expect(() => getProvider()).toThrow('Unknown provider "codex-agent"');
+    expect(() => getProvider()).not.toThrow(/Supported:.*codex-agent/);
+  });
+
   it("returns MiniMaxProvider when LLMWIKI_PROVIDER=minimax", () => {
     process.env.LLMWIKI_PROVIDER = "minimax";
     process.env.MINIMAX_API_KEY = "test-key";

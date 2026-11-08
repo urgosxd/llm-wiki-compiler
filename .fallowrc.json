@@ -33,7 +33,8 @@
     "@fontsource/nunito",
     "@fontsource/space-grotesk",
     "@fontsource/jetbrains-mono",
-    "picomatch"
+    "picomatch",
+    "ajv"
   ],
   "ignoreExports": [
     {

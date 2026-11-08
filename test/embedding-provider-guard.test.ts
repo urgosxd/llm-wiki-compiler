@@ -101,14 +101,8 @@ describe("ensureProviderAvailable — the default path stays soft", () => {
 });
 
 describe("ensureCompileProviderAvailable — disabled refreshes", () => {
-  it("accepts codex-agent without an embedding backend", () => {
-    setEnv({ LLMWIKI_PROVIDER: "codex-agent", LLMWIKI_EMBEDDINGS: "off" });
-    expect(() => ensureCompileProviderAvailable()).not.toThrow();
-    expect(() => ensureProviderAvailable()).toThrow(/LLMWIKI_EMBEDDING_PROVIDER/);
-  });
-
   it("honours a caller-level embeddings opt-out", () => {
-    setEnv({ LLMWIKI_PROVIDER: "codex-agent" });
+    setEnv({ LLMWIKI_PROVIDER: "ollama" });
     expect(() => ensureCompileProviderAvailable(false)).not.toThrow();
   });
 

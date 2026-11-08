@@ -219,7 +219,7 @@ describe("pending candidate evaluation", () => {
   it("does not persist never-reusable agent verdicts", async () => {
     await env.writeSource("ref.md", source);
     await stage();
-    vi.stubEnv("LLMWIKI_PROVIDER", "codex-agent");
+    vi.stubEnv("LLMWIKI_PROVIDER", "claude-agent");
     await evaluateCandidates(env.dir, "full");
     await evaluateCandidates(env.dir, "full");
     expect(callClaude).toHaveBeenCalledTimes(2);

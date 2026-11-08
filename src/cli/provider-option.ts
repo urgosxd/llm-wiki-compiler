@@ -8,7 +8,7 @@
 import type { Command } from "commander";
 
 const DESCRIPTION =
-  "Override LLMWIKI_PROVIDER for this run only (e.g. anthropic, codex-agent, openai, ollama)";
+  "Override LLMWIKI_PROVIDER for this run only (e.g. anthropic, openai, ollama)";
 
 /** Options shape contributed by {@link addProviderOption}. */
 export interface ProviderOption {

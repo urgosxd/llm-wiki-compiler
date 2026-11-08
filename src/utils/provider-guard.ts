@@ -26,7 +26,6 @@ import {
 import { resolveAnthropicAuthFromEnv } from "./claude-settings.js";
 import {
   findEmbeddingProviderProblem,
-  isEmbeddingProviderExplicit,
 } from "./embedding-provider.js";
 import { embeddingsDisabled } from "./embeddings-config.js";
 
@@ -58,7 +57,6 @@ const PROVIDER_KEY_VARS: Record<string, string | readonly string[] | null> = {
   offline: null,
   anthropic: "ANTHROPIC_API_KEY",
   "claude-agent": null,
-  "codex-agent": null,
   openai: "OPENAI_API_KEY",
   ollama: null,
   minimax: "MINIMAX_API_KEY",
@@ -113,15 +111,6 @@ export function ensureCompileProviderAvailable(refreshEmbeddings = true): void {
 function ensureRequiredProvidersAvailable(requireEmbeddings: boolean): void {
   if (requireEmbeddings) ensureEmbeddingProviderAvailable();
   const provider = normalizeProviderName(process.env.LLMWIKI_PROVIDER ?? DEFAULT_PROVIDER);
-
-  if (requireEmbeddings && provider === "codex-agent" && !isEmbeddingProviderExplicit()) {
-    throw new ProviderUnavailableError(
-      provider,
-      ["LLMWIKI_EMBEDDING_PROVIDER"],
-      `The "codex-agent" provider cannot serve embeddings and never degrades silently.\n` +
-        `  Set LLMWIKI_EMBEDDING_PROVIDER to an existing embedding backend such as "ollama" or "openai".`,
-    );
-  }
 
   ensureChatProviderAvailable(provider);
 }

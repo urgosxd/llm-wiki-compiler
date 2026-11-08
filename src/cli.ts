@@ -419,7 +419,7 @@ program
   .option("--no-open", "Skip the viewer handoff after a successful compile")
   .option(
     "--provider <name>",
-    "Override LLMWIKI_PROVIDER for this run only (e.g. anthropic, codex-agent, openai, ollama)",
+    "Override LLMWIKI_PROVIDER for this run only (e.g. anthropic, openai, ollama)",
   )
   .option(
     "--lang <code>",
