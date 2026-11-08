@@ -36,7 +36,8 @@ S15. Enforcement today is local-only and therefore advisory: the gates live in `
 
 ## Tasks
 
-T1. Create this feature document and its Engram mirror. Spec: S1-S15 (tracking artefact). commit: TBD
+T0. Repair the git hook dispatch layer and repoint the pre-commit fallow gate at the baselined run. Spec: S1, S15. commit: 63b9280
+T1. Create this feature document and its Engram mirror. Spec: S1-S15 (tracking artefact). commit: 63b9280 (same commit as T0 — see L7)
 T2. Add the missing gate steps to CI without renaming any job. Spec: S1, S2, S3. commit: TBD
 T3. Make `AGENTS.md` canonical: relocate any unique `CLAUDE.md` content, then delete `CLAUDE.md` in its own commit. Spec: S4, S5. commit: TBD
 T4. Correct the `README.md` gate list so it no longer advertises `fallow:ci` as a gate. Spec: S6. commit: TBD
@@ -91,3 +92,9 @@ L2 (Manager, on the additive devDependency reading): authorized, on three condit
 L3 (Manager, adopting the rephrased mechanism): the gates exist only as local hooks and a fresh checkout reproduces them on install; CI cannot see a violation that bypassed the hook. Two additions: even a correctly installed worktree has a partial hook set (no pre-commit test type-check, no pre-commit `test:affected`), and any `--no-verify` bypasses both — a local-only gate is advisory by construction; the CI step is what makes it a gate. Recorded as S15.
 
 L4 (Manager, constraint): the linter must land in CI as a step inside an existing job, never as a new job, because branch protection is keyed on job names. Recorded in S3 and S7.
+
+L5 (incident, recorded by the Lead after T1's first commit attempt). The Lead's environment probe ran `husky --version` to identify the binary. Husky v9's bin treats its first argument as the hook directory, so that call created a literal `--version/_` tree in the worktree and rewrote `core.hooksPath` from `.husky/_` to `--version/_` in the SHARED clone config — breaking `git commit` for every worktree of this clone for the duration (`sh: 0: Illegal option --`, dash exit 2) before any hook body ran. Repair: the artifact was relocated out of the tree to `/tmp/husky-version-artifact-1794100539` (not deleted) and `core.hooksPath` restored to `.husky/_`, verified from the primary checkout `/home/urgosxd/Desktop/ofk/llm-wiki-compiler` as well as from this worktree.
+
+L6 (fifth control-layer defect, found while diagnosing L5; the audit missed it). `.husky/pre-commit` ran bare `npx fallow`, which exits 1 on pre-existing debt (`Failed: dead-code (6 issues), dupes (20 clone groups)`). In any correctly installed worktree that blocked every commit and made every other gate bypassable with `--no-verify`: this is the mechanism — not merely a red gate — by which the rest of the gate list turned advisory. The hook now calls `npm run fallow:ci` (exit 0, `verdict: pass`, `--gate new-only` against the local `main` ref, all `*_introduced` and `*_inherited` attribution counts 0) with a comment recording why it must never be "simplified" back to `npx fallow`. The 6 dead-code issues and 20 clone groups are deliberately left in place: repairing them is out of scope and `.fallowrc.json` is prohibited.
+
+L7 (commit anomaly, accepted without rewrite). Commit `63b9280` carries both `.husky/pre-commit` and this document, because this document was already staged when the hook-repair commit ran and `git commit -m` commits the whole index; the message names only the hook fix. Separating them requires a history rewrite, which S14 prohibits, so the anomaly stands and T0/T1 share that SHA.
