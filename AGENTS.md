@@ -95,7 +95,7 @@ Before committing any work, and before considering any task complete, you must:
 3. `npm run build` — build succeeds
 4. `npm run test:affected` — tests for what you changed pass (use `npm test` when
    the change is cross-cutting or before opening a PR; see Test Execution Policy)
-5. `fallow` — run the fallow codebase health analyzer. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit until fallow reports no issues.
+5. `npm run fallow:ci` — the fallow codebase health analyzer with `--gate new-only`, and the command that actually gates. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit while it fails. `npx fallow` is the raw full-tree report and exits non-zero on inherited debt; it is not the gate.
 
 Never bypass these gates with `--no-verify`; fix the underlying issue instead.
 
@@ -205,6 +205,6 @@ paths you listed in `files_changed`, the report is refused. A verifying report i
 proof, so citing the commit is the only form that carries information.
 
 This does not weaken the Pre-Commit Checks above. `tsc`, `build`, `test:affected`, and
-`fallow` still gate a completed task. They are yours to run in your own checkout; none
+`fallow:ci` still gate a completed task. They are yours to run in your own checkout; none
 of them requires a peer's agreement, and none of them is a message.
 </pi-intercom>
