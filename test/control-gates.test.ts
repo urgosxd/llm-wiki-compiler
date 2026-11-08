@@ -160,7 +160,9 @@ describe("control gates — the ESLint ratchet", () => {
     ];
     expect(compareViolations(snapshotOf(violations), baseline)).toEqual([]);
   });
+});
 
+describe("control gates — the ratchet's failure messages", () => {
   it("fails when a baselined violation disappears, so an allowance cannot linger", () => {
     const errors = compareViolations(snapshotOf([]), { "src/probe.ts max-lines": 1 });
     expect(errors).toHaveLength(1);
@@ -172,5 +174,19 @@ describe("control gates — the ESLint ratchet", () => {
     const errors = compareViolations(snapshotOf(violations), { "src/probe.ts max-lines": 1 });
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("src/probe.ts:2");
+  });
+
+  it("names the missing allowance instead of calling a pre-existing file brand-new", () => {
+    const errors = compareViolations(snapshotOf([violationOf("src/index.ts", "@typescript-eslint/no-explicit-any")]), {});
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("no frozen allowance for @typescript-eslint/no-explicit-any in this file");
+    expect(errors[0]).not.toContain("brand-new");
+  });
+
+  it("still reports an exceeded allowance in a file the baseline knows", () => {
+    const violations = [violationOf("src/index.ts", "max-lines", 1), violationOf("src/index.ts", "max-lines", 2)];
+    const errors = compareViolations(snapshotOf(violations), { "src/index.ts max-lines": 1 });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("new violation in an existing file");
   });
 });

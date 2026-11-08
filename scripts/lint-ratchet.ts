@@ -220,9 +220,21 @@ function excessFor(violations: readonly HouseViolation[], key: string, allowed: 
   return violations.filter((violation) => violationKey(violation) === key).slice(allowed);
 }
 
-/** Say whether this is a new mistake in a known file or a file the baseline never saw. */
+/**
+ * Say what an excess actually means, without claiming anything about the filesystem.
+ *
+ * The previous wording called every file absent from the baseline "brand-new", but
+ * absence from the baseline is a statement about ALLOWANCES, not about provenance:
+ * a key is missing for every file the baseline never recorded a violation of, and
+ * that is most of the tracked tree. An engineer who adds an `any` to `src/index.ts`
+ * was told their existing file was new and went looking in the wrong place. So the
+ * message names the missing allowance instead, and keeps the one distinction a
+ * reader can act on: a file the baseline knows, where this is a new violation, or a
+ * file it holds nothing for at all.
+ */
 function classify(violation: HouseViolation, files: Set<string>): string {
-  return files.has(violation.file) ? "new violation in an existing file" : "violation in a brand-new file";
+  if (files.has(violation.file)) return "new violation in an existing file";
+  return `no frozen allowance for ${violation.ruleId} in this file`;
 }
 
 /** One failure line, naming the file, line, rule, count and the command that accepts it. */
