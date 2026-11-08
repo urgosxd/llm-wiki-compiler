@@ -205,36 +205,67 @@ runs `./node_modules/.bin/fallow --root . audit --format json --gate new-only -q
 and decides the exit code from the `attribution` block alone:
 `dead_code_introduced`, `complexity_introduced` and `duplication_introduced` must
 all be `0`, and `verdict` must not be `fail`. The `*_inherited` counters are
-printed and never counted, and a document that cannot prove new-only attribution
-(wrong `command`, no `verdict`, empty `base_ref`, `attribution.gate` other than
-`new-only`) exits 2 rather than passing unverifiably — a missing or bogus base ref
-is red, never silently green.
+printed and never counted. What keeps the gate quiet about the old noise is that
+rule together with the numbers in "The touched-file residual" below, not a
+promise. It is also what makes `AGENTS.md` pre-commit gate 5 satisfiable for the
+first time: while the local contract summed the raw `check.total_issues`,
+`dupes.stats.clone_groups` and `health.summary.functions_above_threshold`, it went
+red on a clean `main` with nothing but 20 below-threshold clone groups to blame,
+so the rule was effectively dead and readers learned to ignore it.
+
+### Where `audit` gets its base
 
 **"New" means "absent from the pre-existing state relative to the base ref the
-audit attributes against", which is its merge-base with the default branch
-(`main`)** — not "present in a file the diff touched", and not "written by this
-diff". `audit` resolves that base itself; the script deliberately does not pin
-`--changed-since` to a remote-tracking ref, because a fork's `origin/main` can lag
-local `main` by hundreds of commits and would drag unrelated history into the
-changeset. When the gate goes red for you, the finding is inside your changeset:
-fix it, or justify it in review. What makes it quiet about the old noise is the
-numbers, not a promise: at HEAD root scope has 0 dead-code findings, 0 complexity
-findings (`health.summary.functions_above_threshold = 0`) and 20 clone groups that
-fallow itself does not treat as above its duplication threshold
-(`duplicates.threshold` resolves to `0.0`, no limit, and `dupes --threshold` is
-inert in 2.82.0). Pre-existing debt of that shape no longer fails locally, where
-the old contract summed the raw `check.total_issues`, `dupes.stats.clone_groups`
-and `health.summary.functions_above_threshold` and went red on a clean tree with
-nothing but those 20 groups to blame. That is also why `AGENTS.md` pre-commit gate
-5 becomes satisfiable for the first time: while the local gate was permanently red
-on `main`, the rule was effectively dead and readers learned to ignore it.
+audit attributes against", and that base is the merge-base of the current branch
+and the local default branch (`main`)** — not "present in a file the diff
+touched", and not "written by this diff". So the gate's verdict depends on local
+`main` being the checkout's real reference, and that is deliberate: on this clone
+`origin/main` is `8203862`, roughly 250 commits behind local `main`, so a
+remote-based base attributes a quarter of a thousand commits of history to the
+current changeset and turns the gate red on an untouched tree for reasons nobody
+can fix (measured: pinning a base 249 commits back reports
+`duplication_introduced: 20` with no source change at all). If local `main` drifts,
+fix the checkout rather than the gate. When the gate goes red for you, the finding
+is inside your changeset: fix it, or justify it in review.
 
-The residual, named rather than hidden: root scope keeps no baselines, so a
-pre-existing finding **inside a file your diff touches** is still attributed
-`introduced`, exactly as at KG scope without baselines. Measured: pinning a base
-249 commits back attributes all 20 clone groups `introduced`
-(`duplication_introduced: 20`). Locally the base is the default branch, so this
-only bites when your own diff touches those files.
+Safety is measured, not promised. A missing, undetectable or bogus base ref makes
+`fallow` itself exit 2 — literal stdout,
+`{"error": true, "message": "could not determine changed files for base ref
+'refs/heads/definitely-not-a-branch'. Verify the ref exists in this git
+repository", "exit_code": 2}` — and `scripts/check-fallow-report.mjs` additionally
+fails closed with exit 2 when the document cannot prove new-only attribution: a
+wrong `command`, a missing `verdict`, an empty `base_ref`, or an
+`attribution.gate` other than `new-only`. The gate goes red on an unverifiable
+report, never silently green.
+
+### A developer-machine gate; CI is the pinned action
+
+`scripts/fallow-ci.sh` has no CI role: it is a developer-machine gate. The
+`codebase-health` job in `.github/workflows/ci.yml` runs the pinned
+`fallow-rs/fallow` action with `fail-on-issues: true` and never calls the script.
+Measured: `git grep -n 'fallow-ci\|fallow:ci' -- .github/ scripts/ package.json`
+returns no hit under `.github/`, and the only callers of
+`scripts/check-fallow-report.mjs` are `scripts/fallow-ci.sh` and
+`test/ci/fallow-report-gate.test.ts`. This is written down so nobody "restores CI
+parity" by reintroducing a path the script no longer needs — there is no CI role
+to keep parity with. One nuance, so the grep is not misread:
+`.github/workflows/ci.yml:90` does run `npm run fallow:kg`, but that is the
+different, KG-scoped gate with its own baselines (see "Baselines" above) and it
+shares no code with this one — "CI runs a `fallow:*` script" is true of the KG
+gate and false of the root gate.
+
+### The touched-file residual
+
+Root keeps **no** baselines, so a pre-existing finding **inside a file your diff
+touches** is attributed as introduced, the same way it would be at KG scope with
+its three baseline files removed — and with these numbers that residual is inert
+today and becomes noisy the moment root-scope debt appears: root's
+pre-existing surface is currently zero dead code (`check.total_issues = 0`), zero
+above-threshold complexity (`health.summary.functions_above_threshold = 0`) and 20
+dupe clone groups that fallow itself does not treat as above threshold
+(`fallow config -r .` → `duplicates.threshold: 0.0`), so a baseline set mirroring
+`packages/llmwiki-kg/ts/baselines/` is the separate delivery named in the
+out-of-scope list below.
 
 ## Explicitly out of scope, and named so they cannot be read as solved
 
