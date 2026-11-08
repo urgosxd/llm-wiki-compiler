@@ -36,9 +36,10 @@ A knowledge compiler CLI. Raw sources in, interlinked wiki out.
 
 ### Test Execution Policy
 
-The full suite takes ~9 minutes across 1300+ files and belongs to CI. Run the
-tests your change can actually affect; do not wait for the whole suite while
-iterating.
+The full suite takes ~9 minutes and belongs to CI. For its current size run
+`git ls-files '*.test.ts' | wc -l` — a baked count goes stale the moment someone
+adds a test, so this file does not carry one. Run the tests your change can
+actually affect; do not wait for the whole suite while iterating.
 
 1. **Iterating on code** — run the tests related to what you touched:
    `npx vitest related <changed-file>`. This selects only files that import it.
@@ -70,7 +71,7 @@ Tests must not depend on timing or external services.
 **`test:unit` is not the `test/` directory.** It covers every test tree in the
 repository — `test/`, `packages/`, `src/` and `scripts/` — minus the files that
 spawn a child process, so the `packages/llmwiki-kg` suites are part of it, along
-with the three `src/dimensions/kg/` suites and `scripts/output-contracts.test.ts`.
+with the `src/dimensions/kg/` suites and `scripts/output-contracts.test.ts`.
 Those `llmwiki-kg` suites are database-backed, so without Docker or
 `LLMWIKI_TEST_DATABASE_URL` they fail — they do not skip. `LLMWIKI_TEST_ALLOW_NO_DATABASE=1`
 is the only escape hatch, and it downgrades those hard database failures to

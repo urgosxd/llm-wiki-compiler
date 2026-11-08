@@ -1,33 +1,34 @@
 /**
  * @file Partition the test suite into a fast inner loop and an integration tier.
  *
- * Measured on the full suite: 131 files contain a spawn call site and consume
- * 54% of all file-time at an average of 13.7s each, while the other 1180 files
- * average 1.3s. The cost is `node dist/cli.js` cold start (~1.5s) repeated 544
- * times, not test logic. Splitting the two lets a developer run the 1180 cheap
- * files in seconds and leave the expensive ones to CI.
+ * A small minority of test files start a child process, and those files dominate
+ * the suite's wall time: most of the cost is `node dist/cli.js` cold start paid
+ * once per spawn, not test logic. Splitting the two lets a developer run the
+ * non-spawning majority in seconds and leave the spawning files to CI. Both tier
+ * sizes are one command away — `node scripts/test-partition.ts unit | wc -l` and
+ * `node scripts/test-partition.ts integration | wc -l` — as is the total they add
+ * up to, `git ls-files '*.test.ts' | wc -l`. Do not bake those into prose.
  *
- * CLASSIFICATION IS BY CONTENT, NOT FILENAME. 75 of the 131 spawning files do
- * not have `cli` in their name (`superset-proof-e2e-cli`, `research-workflow-*`,
+ * CLASSIFICATION IS BY CONTENT, NOT FILENAME. Most of the spawning files do not
+ * have `cli` in their name (`superset-proof-e2e-cli`, `research-workflow-*`,
  * `product-cli-apply`…), so a name glob would silently drop them into the fast
  * tier and make it a lie. The patterns below are the complete set of ways this
- * repo starts a child process, verified against every test file:
- * `runCLI(...)` (542 sites), `execFileSync` (32), `spawnSync` (13), `spawn` (5),
- * `execFile` (2), `npm pack` (6 files), plus `exec(...)` from the shared
- * `fixtures/cli-runner` helper.
+ * repo starts a child process, verified against every test file: `runCLI`,
+ * `execFileSync`, `spawnSync`, `spawn`, `execFile`, `execSync`, `npm pack`,
+ * plus `exec(...)` from the shared `fixtures/cli-runner` helper.
  *
  * A file that imports `cli-runner` is integration even without a direct spawn
  * call site of its own — the helper exists precisely to spawn the built CLI, and
- * three files (`cli.test.ts`, `claim-provenance-integration`, `rm-cli`) call
+ * files such as `cli.test.ts`, `claim-provenance-integration` and `rm-cli` call
  * `exec(...)` through it rather than naming a child-process API.
  *
  * WHICH DIRECTORIES ARE ENUMERATED IS A CORRECTNESS PROPERTY, NOT A CONVENIENCE.
  * The tiers are not only a developer convenience: `scripts/run-affected-tests.ts`
  * runs the unit tier verbatim when a change has suite-wide reach, so the unit
  * tier IS the escalation answer. While this walk covered `test/` alone, that
- * answer silently omitted the whole `packages/llmwiki-kg` dimension (86 files),
- * the three `src/dimensions/kg` suites and `scripts/output-contracts.test.ts` —
- * files the escalation reported as covered because it never looked at them. So
+ * answer silently omitted the whole `packages/llmwiki-kg` dimension, the
+ * `src/dimensions/kg` suites and `scripts/output-contracts.test.ts` — files the
+ * escalation reported as covered because it never looked at them. So
  * {@link TEST_ROOTS} is an explicit, named list of every directory `vitest run`
  * collects from, and the default enumeration is exhaustive over it. Widening is
  * safe precisely because classification stays by content: a new root brings

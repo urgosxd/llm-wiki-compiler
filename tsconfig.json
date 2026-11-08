@@ -18,14 +18,8 @@
       "@atomicstrata/llmwiki-core/compiler-sdk": [
         "./src/sdk/compiler-composition.ts"
       ],
-      "@atomicstrata/llmwiki-core/local-workflow-host": [
-        "./src/local-workflow-host/index.ts"
-      ],
       "@atomicstrata/llmwiki-core": [
         "./src/core-index.ts"
-      ],
-      "@atomicstrata/llmwiki-core/local-workflow-contracts": [
-        "./src/local-workflow-host/shared-contracts.ts"
       ],
       "llm-wiki-compiler": [
         "./src/index.ts"
