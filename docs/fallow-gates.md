@@ -220,13 +220,24 @@ audit attributes against", and that base is the merge-base of the current branch
 and the local default branch (`main`)** — not "present in a file the diff
 touched", and not "written by this diff". So the gate's verdict depends on local
 `main` being the checkout's real reference, and that is deliberate: on this clone
-`origin/main` is `8203862`, roughly 250 commits behind local `main`, so a
-remote-based base attributes a quarter of a thousand commits of history to the
-current changeset and turns the gate red on an untouched tree for reasons nobody
-can fix (measured: pinning a base 249 commits back reports
-`duplication_introduced: 20` with no source change at all). If local `main` drifts,
-fix the checkout rather than the gate. When the gate goes red for you, the finding
-is inside your changeset: fix it, or justify it in review.
+`origin/main` is `8203862`, 258 commits behind local `main`, so a remote-based
+base hands roughly 250 commits of history to the current changeset and turns the
+gate red on an untouched tree for reasons nobody can fix. Reproduce the numbers
+instead of trusting a remembered one — measured on an unmodified tree at this
+commit, with `dist/` built:
+
+```bash
+git rev-list --count 8203862..HEAD   # 252
+git rev-list --count 8203862..main   # 258
+./node_modules/.bin/fallow --root . audit --gate new-only --base 8203862 --format json -q
+# → {"changed_files_count": 659, "verdict": "warn", "duplication_introduced": 20}
+```
+
+Twenty introduced clone groups with no source change at all: that is the whole
+failure mode of a stale base, and it is why the base is the local default branch.
+If local `main` drifts, fix the checkout rather than the gate. When the gate goes
+red for you, the finding is inside your changeset: fix it, or justify it in
+review.
 
 Safety is measured, not promised. A missing, undetectable or bogus base ref makes
 `fallow` itself exit 2 — literal stdout,

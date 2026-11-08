@@ -6,6 +6,7 @@
  * boundary on stdin; no analyzer, no network, no git base ref.
  */
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /** Execute the report boundary without running the analyzer or fetching Git. */
@@ -69,6 +70,34 @@ describe("local Fallow report gate", () => {
     expect(gate(report).status).toBe(0);
   });
 
+  it("ignores the legacy combined-report totals the old checker summed", () => {
+    const report = withAttribution({}, {
+      changed_files_count: 1, verdict: "pass",
+      check: { total_issues: 7 },
+      dupes: { stats: { clone_groups: 20 } },
+      health: { summary: { functions_above_threshold: 5 } },
+    });
+    expect(gate(report).status).toBe(0);
+  });
+
+  it("fails on introduced findings even when the verdict is warn", () => {
+    const report = withAttribution({ duplication_introduced: 20 }, { verdict: "warn" });
+    expect(gate(report).status).toBe(1);
+  });
+
+  it("fails on a failing verdict with no introduced finding", () => {
+    expect(gate(withAttribution({}, { verdict: "fail" })).status).toBe(1);
+  });
+
+  it("sums every introduced category and prints each", () => {
+    const report = withAttribution({
+      dead_code_introduced: 1, complexity_introduced: 1, duplication_introduced: 1,
+    }, { verdict: "warn" });
+    const result = gate(report);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("1 dead-code, 1 complexity, 1 duplication introduced");
+  });
+
   it("fails closed on a missing report schema", () => {
     expect(gate({}).status).toBe(2);
   });
@@ -81,5 +110,21 @@ describe("local Fallow report gate", () => {
       withAttribution({}, { verdict: undefined }),
     ];
     expect(unattributable.map(report => gate(report).status)).toEqual([2, 2, 2, 2]);
+  });
+
+  it("fails closed on malformed counters and an unknown verdict", () => {
+    const malformed = [
+      withAttribution({ dead_code_introduced: -1 }),
+      withAttribution({ duplication_inherited: 1.5 }),
+      withAttribution({}, { verdict: "green" }),
+    ];
+    expect(malformed.map(report => gate(report).status)).toEqual([2, 2, 2]);
+  });
+
+  it("invokes the pinned audit gate only", () => {
+    const script = readFileSync("scripts/fallow-ci.sh", "utf8");
+    expect(script).toContain("audit --format json --gate new-only");
+    expect(script).not.toContain('--changed-since "$BASE_SHA"');
+    expect(script).not.toContain("npx fallow");
   });
 });
