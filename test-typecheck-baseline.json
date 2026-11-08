@@ -1,7 +1,7 @@
 {
   "version": 1,
   "typescript": "5.9.3",
-  "configuration": "f169a15ab93a31638364dc7fa23494c26aef911344302bebc0ed135d35ef1ac8",
+  "configuration": "ec98b385585b7eaf82930b73254b6b6d830ab3b9d2776e7133faca8773921cd2",
   "counts": {
     "test/chunked-retrieval-integration.test.ts": 4,
     "test/cli/default-stack-single-row.test.ts": 1,
