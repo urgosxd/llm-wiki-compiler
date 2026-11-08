@@ -102,8 +102,13 @@ describe("ensureProviderAvailable — the default path stays soft", () => {
 
 describe("ensureCompileProviderAvailable — disabled refreshes", () => {
   it("honours a caller-level embeddings opt-out", () => {
-    setEnv({ LLMWIKI_PROVIDER: "ollama" });
+    setEnv({
+      LLMWIKI_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "k",
+      LLMWIKI_EMBEDDING_PROVIDER: "minimax",
+    });
     expect(() => ensureCompileProviderAvailable(false)).not.toThrow();
+    expect(() => ensureCompileProviderAvailable()).toThrow(/LLMWIKI_EMBEDDING_PROVIDER/);
   });
 
   it("still validates the chat provider", () => {
