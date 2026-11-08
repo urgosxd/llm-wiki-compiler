@@ -68,6 +68,10 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
+      # `AGENTS.md` requires this gate and no CI step ran it: its only other
+      # home is `.husky/pre-commit`, which any `--no-verify` skips.
+      - name: Type-check the root project
+        run: npx tsc --noEmit
       - run: npm run release:check-docs
       - run: npm run build
       # The KG package carries its own tsconfig, and nothing else here reads it:
@@ -85,6 +89,11 @@ jobs:
         run: ./scripts/apply-schemas.sh
       - name: Verify tenant isolation is enforced
         run: CHECK_ONLY=true ./scripts/apply-schemas.sh
+      # `AGENTS.md` requires this too, and again no CI step ran it. It follows
+      # the schema steps because the affected selection can escalate to the full
+      # unit tier, which includes the database-backed suites.
+      - name: Run the tests affected by this change
+        run: npm run test:affected
       - run: npm test
       # Default tests exclude this fresh-install check. Exercise the shipped
       # facade, its exact workspace dependencies, and consumer declarations.
