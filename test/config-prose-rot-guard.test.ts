@@ -85,7 +85,7 @@ interface FallowConfig {
 
 /** The slice of a `tsconfig*.json` this guard reads. */
 interface TsConfigFile {
-  compilerOptions?: { paths?: Record<string, string[]> };
+  compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> };
 }
 
 /** The slice of `contract-cordination.json` this guard reads. */
@@ -134,15 +134,17 @@ function filesystemResolver(files: readonly string[]): Resolver {
 }
 
 /**
- * Re-base a config-declared target onto the directory of the config that
- * declares it, which is what the TypeScript compiler does. Resolving against the
+ * Re-base a config-declared target onto the directory the TypeScript compiler
+ * would use, which is the config's own directory unless it declares a
+ * `compilerOptions.baseUrl` — in which case `paths` are resolved against
+ * `baseUrl`, itself relative to the config file. Resolving against the
  * repository root instead would check a nested config such as
  * `packages/llmwiki-kg/ts/tsconfig.json` against paths it never meant, and a
  * root-level file with the same tail would make a dead alias look alive.
  */
-function resolveAgainst(configPath: string, target: string): string {
-  const directory = path.posix.dirname(configPath);
-  return directory === "." ? target : path.posix.join(directory, target);
+function resolveAgainst(configPath: string, baseUrl: string | undefined, target: string): string {
+  const origin = path.posix.join(path.posix.dirname(configPath), baseUrl ?? ".");
+  return origin === "." ? target : path.posix.join(origin, target);
 }
 
 /** Read and parse a repository JSON file. */
@@ -167,7 +169,7 @@ function findDeadIgnoreExports(config: FallowConfig, resolves: Resolver): string
 function findDeadAliasTargets(configPath: string, config: TsConfigFile, resolves: Resolver): string[] {
   return Object.entries(config.compilerOptions?.paths ?? {}).flatMap(([alias, targets]) =>
     targets
-      .filter((target) => !resolves(resolveAgainst(configPath, target)))
+      .filter((target) => !resolves(resolveAgainst(configPath, config.compilerOptions?.baseUrl, target)))
       .map((target) => `${configPath} compilerOptions.paths["${alias}"] target does not resolve: ${target}`),
   );
 }
@@ -244,6 +246,25 @@ describe("tsconfig alias target guard", () => {
     ]);
   });
 
+  it("the alias guard resolves a declared baseUrl instead of the config directory", () => {
+    // TypeScript resolves `paths` against `baseUrl` when a config declares one,
+    // so a guard that ignored it would report a live alias dead and invite
+    // somebody to "fix" the guard by weakening it. THE DISCRIMINATOR IS CHECKED
+    // AGAINST THE REAL TREE, NOT ASSERTED FROM MEMORY: the target must exist
+    // under `baseUrl` and must not exist relative to the config's directory, so
+    // the two resolutions disagree. If that ever stops being true this test
+    // fails loudly instead of decaying into a guard that proves nothing.
+    const configPath = "tsconfig.json";
+    const baseUrl = "./src/utils";
+    const target = "./output.ts";
+    expect(existsSync(path.join(REPO_ROOT, "src/utils/output.ts")), "discriminator lost: the target is not on disk under baseUrl").toBe(true);
+    expect(existsSync(path.join(REPO_ROOT, "output.ts")), "discriminator lost: the target now also exists relative to the config directory").toBe(false);
+    const config: TsConfigFile = { compilerOptions: { baseUrl, paths: { "from-base-url": [target], ghost: ["./does-not-exist.ts"] } } };
+    expect(findDeadAliasTargets(configPath, config, filesystemResolver(listRepositoryFiles()))).toEqual([
+      'tsconfig.json compilerOptions.paths["ghost"] target does not resolve: ./does-not-exist.ts',
+    ]);
+  });
+
 });
 
 describe("coordination sharedPaths guard", () => {
@@ -257,6 +278,23 @@ describe("coordination sharedPaths guard", () => {
     expect(findDeadSharedPaths(contract, filesystemResolver(listRepositoryFiles()))).toEqual([
       "contract-cordination.json sharedPaths entry does not exist: src/ghost/**",
     ]);
+  });
+
+});
+
+describe("guards are not silently vacuous", () => {
+  it("every config guard derives a non-empty collection from the real repository", () => {
+    // A finder that falls back to `?? []` passes forever if a future commit
+    // renames the key it reads: the guard stops checking and CI stays green.
+    // Derived, never baked: each assertion only asserts that the collection the
+    // guard walks is non-empty, with no path, alias or count written down here.
+    const discovered = listRepositoryFiles().filter((file) => TSCONFIG_NAME.test(path.posix.basename(file)));
+    const ignoreExports = readRepositoryJson<FallowConfig>(".fallowrc.json").ignoreExports ?? [];
+    expect(ignoreExports.length, ".fallowrc.json ignoreExports is empty: the ignoreExports guard would check nothing").toBeGreaterThan(0);
+    const sharedPaths = readRepositoryJson<CoordinationContract>("contract-cordination.json").sharedPaths ?? [];
+    expect(sharedPaths.length, "contract-cordination.json sharedPaths is empty: the sharedPaths guard would check nothing").toBeGreaterThan(0);
+    const declaringPaths = discovered.filter((file) => Object.keys(readRepositoryJson<TsConfigFile>(file).compilerOptions?.paths ?? {}).length > 0);
+    expect(declaringPaths.length, `no tsconfig*.json declares compilerOptions.paths: the alias guard would check nothing (discovered: ${discovered.join(", ")})`).toBeGreaterThan(0);
   });
 
 });
