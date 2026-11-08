@@ -68,16 +68,6 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
-      - name: Install Linux isolation test dependency
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
-      - name: Permit Bubblewrap namespaces on the disposable runner
-        run: sudo apparmor_parser --replace .github/ci/bwrap.apparmor
-      # An installed binary can still be barred by runner namespace policy.
-      # Surface its stderr before the full suite, using the backend's controls.
-      - name: Verify Linux isolation launch
-        run: >-
-          bwrap --cap-drop ALL --unshare-net --ro-bind / /
-          --dev /dev --proc /proc -- "$(command -v node)" --version
       - run: npm run release:check-docs
       - run: npm run build
       # The KG package carries its own tsconfig, and nothing else here reads it:

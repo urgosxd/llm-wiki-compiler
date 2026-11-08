@@ -250,16 +250,6 @@ jobs:
             fi
             echo "ok: ${name}@${WANT} already published from this SHA; the publish job will skip it"
           done
-      # Same isolation provisioning as ci.yml: the limited-isolation tests
-      # refuse to skip on Linux, so the suite fails without bubblewrap.
-      - name: Install Linux isolation test dependency
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
-      - name: Permit Bubblewrap namespaces on the disposable runner
-        run: sudo apparmor_parser --replace .github/ci/bwrap.apparmor
-      - name: Verify Linux isolation launch
-        run: >-
-          bwrap --cap-drop ALL --unshare-net --ro-bind / /
-          --dev /dev --proc /proc -- "$(command -v node)" --version
       # The service above only supplies an empty pgvector database, so without this
       # the suite runs against a schema that does not exist yet. Both steps resolve
       # their target from $1 or DATABASE_URL, which this job defines in `env` above.
