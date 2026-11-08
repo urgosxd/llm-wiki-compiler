@@ -35,6 +35,8 @@
     "typecheck:tests:update": "node scripts/typecheck-tests.ts --update",
     "typecheck:kg": "node scripts/kg-typecheck.ts",
     "typecheck:kg:update": "node scripts/kg-typecheck.ts --update",
+    "lint": "node scripts/lint-ratchet.ts",
+    "lint:update": "node scripts/lint-ratchet.ts --update",
     "fallow:ci": "bash scripts/fallow-ci.sh",
     "fallow:kg": "./node_modules/.bin/fallow --root packages/llmwiki-kg/ts -c packages/llmwiki-kg/ts/.fallowrc.json audit --format json --gate new-only --dead-code-baseline baselines/dead-code-baseline.json --health-baseline baselines/health-baseline.json --dupes-baseline baselines/dupes-baseline.json -q",
     "prepublishOnly": "npm run release:check-docs:current && npm run build && npm pack --dry-run --ignore-scripts",
@@ -105,6 +107,7 @@
     "@types/sanitize-html": "^2.16.1",
     "@types/turndown": "^5.0.0",
     "esbuild": "0.28.1",
+    "eslint": "9.39.5",
     "fallow": "2.82.0",
     "husky": "^9.1.7",
     "jszip": "^3.10.2",
@@ -113,6 +116,7 @@
     "postgres": "^3.4.9",
     "tsup": "^8.0.0",
     "typescript": "5.9.3",
+    "typescript-eslint": "8.61.1",
     "vitest": "^3.2.7"
   },
   "volta": {
