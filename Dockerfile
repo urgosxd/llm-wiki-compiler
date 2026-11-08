@@ -37,8 +37,6 @@ COPY package.json package-lock.json ./
 # down at `ts/` — and copying a path that does not exist fails the whole build.
 COPY packages/llmwiki-core/package.json packages/llmwiki-core/
 COPY packages/llmwiki-kg/ts/package.json packages/llmwiki-kg/ts/
-COPY packages/llmwiki-dev-backend/package.json packages/llmwiki-dev-backend/
-COPY packages/llmwiki-limited-isolation-backend/package.json packages/llmwiki-limited-isolation-backend/
 RUN npm ci
 
 COPY tsconfig.json tsup.config.ts ./

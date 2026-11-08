@@ -37,10 +37,6 @@ export default defineConfig({
       { find: /^llm-wiki-compiler$/, replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)) },
       { find: /^llmwiki-kg$/, replacement: fileURLToPath(new URL("./packages/llmwiki-kg/ts/src/core-index.ts", import.meta.url)) },
       { find: /^llmwiki-kg\/server$/, replacement: fileURLToPath(new URL("./packages/llmwiki-kg/ts/src/server.ts", import.meta.url)) },
-      ...["llmwiki-dev-backend", "llmwiki-limited-isolation-backend"].map(name => ({
-        find: new RegExp("^" + name + "$"),
-        replacement: fileURLToPath(new URL("./packages/" + name + "/src/index.ts", import.meta.url)),
-      })),
     ],
   },
   test: {

@@ -30,14 +30,8 @@
       "llm-wiki-compiler": [
         "./src/index.ts"
       ],
-      "llmwiki-dev-backend": [
-        "./packages/llmwiki-dev-backend/src/index.ts"
-      ],
       "llmwiki-kg": [
         "./packages/llmwiki-kg/ts/src/core-index.ts"
-      ],
-      "llmwiki-limited-isolation-backend": [
-        "./packages/llmwiki-limited-isolation-backend/src/index.ts"
       ],
       "llmwiki-kg/server": [
         "./packages/llmwiki-kg/ts/src/server.ts"

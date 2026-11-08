@@ -5,8 +5,6 @@
     "src/core-index.ts",
     "src/compiler-cli.ts",
     "src/sdk/compiler-composition.ts",
-    "packages/llmwiki-dev-backend/src/index.ts",
-    "packages/llmwiki-limited-isolation-backend/src/index.ts",
     "src/viewer/assets/viewer.js",
     "scripts/copy-viewer-assets.mjs",
     "scripts/measure-graph-expansion.ts",
