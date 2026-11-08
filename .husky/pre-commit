@@ -1,2 +1,6 @@
-npx fallow
+# The gate lives in `npm run fallow:ci`, NOT in `npx fallow`: the raw report
+# exits 1 on pre-existing debt (6 dead-code issues, 20 clone groups) and would
+# block every commit in a correctly installed worktree, which is how every other
+# gate gets bypassed with --no-verify. Do not "simplify" this back to npx fallow.
+npm run fallow:ci
 npx tsc --noEmit
