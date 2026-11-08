@@ -53,7 +53,7 @@ Measured facts at `6eef97c` (`git`-backed audit, `result:audit-seven-defects#1`)
 - [x] T7 (S12) — six gates plus independent re-measurement of S3-S9 and the S10 scope boundaries. Route: verify. Commit: none.
 - [x] T9 (S7) — `contract-cordination.json`: the remaining 12 dead `sharedPaths` entries removed, 73 → 61, dead count 0 by existence scan. Route: worker. Commit: C1.
 - [x] T10 (S4, S12) — `test-typecheck-baseline.json`: configuration digest re-anchored under the Manager's scope exception; one line changes, diagnostics unchanged at 260 in 94 files. Route: worker. Commit: C1.
-- [ ] T8 (S1, S12) — one work-unit commit C1 on `chore/dead-config-cleanup`. Route: worker. Commit: C1.
+- [x] T8 (S1, S12) — one work-unit commit C1 on `chore/dead-config-cleanup`. Route: worker. Commit: C1.
 
 ## Log
 
@@ -72,3 +72,5 @@ L6 — Independent verification found `npm run typecheck:tests` red at the deliv
 L7 — The Manager ratified three deviations. Extending item 5 from the one named entry to every dead `sharedPaths` entry is right because a half-cleaned file is the same defect with a smaller count; `eslint.config.js` is renamed rather than deleted because the config exists under `eslint.config.mjs`, so the intent survives; and the word "three" stays out of `AGENTS.md:74`, because a count in prose that nobody re-measures is the same rot class as "1300+ files".
 
 L8 — Verification first judged S7 FAIL against the spec's literal wording, because 12 dead entries survived the first pass. Completed rather than waived: `sharedPaths` 73 → 61 with a dead count of 0 by existence scan. Verification also confirmed no test in the repository reads the content of `.fallowrc.json` or `contract-cordination.json`, and that `test/control-gates.test.ts` still passes against the edited `AGENTS.md` gate list (13 tests).
+
+L9 — Delivery commit C1 = `a8ce9acf7639015aa5f50b65c13208a4e55b803f` on `chore/dead-config-cleanup`, parent `6eef97c4578e8cf92515d6cf8d6efdc9b94d539e`, 9 files changed (+116 / −1474; `package-lock.json` alone is −1339 and 0 insertions). Gates at that tree: `npx tsc --noEmit` 0; `npm run lint` 0 with the frozen counts still 650/498/526; `npm run fallow:ci` 0; `npm run typecheck:tests` 0 with 260 diagnostics in 94 files; `npx vitest run test/control-gates.test.ts` 0 (13 tests); `npm run build` 0; `npm run test:affected` 0 at the same code state, escalated to the full unit tier because `package.json` and `scripts/` changed (`Test Files 828 passed | 3 skipped`, `Tests 6252 passed | 4 skipped`). The pre-commit hook ran and passed. Nothing was pushed.
