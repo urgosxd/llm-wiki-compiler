@@ -34,11 +34,14 @@ S13. Report, verbatim: "The audit claim you verified or refuted for each item; t
 
 ## Tasks
 
-- T1 — this document, S1-S13. Route: worker. Commit: A (with T2).
-- T2 — S2, S3, S4, S5, S6, S7. Route: worker. Commit: A.
-- T3 — S8, S9, S10. Route: worker. Commit: B.
-- T4 — S12 independent verification. Route: gentle-ai-verify. Commit: none.
+- T1 — this document, S1-S13. Route: worker. Commit: A `0d12b3d`.
+- T2 — S2, S3, S4, S5, S6, S7. Route: worker. Commit: A `0d12b3d`.
+- T3 — S8, S9, S10. Route: worker. Commit: B `011b1ae`.
+- T4 — S12 independent verification. Route: gentle-ai-verify. Commit: none. Outcome: ACCEPT (S1-S13 confirmed; no blocking defects).
+- T5 — re-anchor `test-typecheck-baseline.json` after the authorized alias removal (`--rebaseline --confirm`; the ratchet digest derives from effective `tsconfig` options including `paths`, so removing the two aliases necessarily changes it; counts proven unchanged 260 -> 260 and every per-file count byte-identical). Route: worker. Commit: C `876eefe`. Surfaces expanded by L2.
 
 ## Log
 
 L1 — Manager assignment, verbatim: "AUTHORIZED DELETION, human-approved verbatim ("borralos"). Two packages are dead code that no longer compiles; remove them and every reference that would break or lie once they are gone. This is not a refactor and not a migration — nothing imports them and nothing builds them." Manager-scoped work: delete `packages/llmwiki-dev-backend` and `packages/llmwiki-limited-isolation-backend`; clean `Dockerfile:40-41`, `tsconfig.json:33-41`, `vitest.config.ts:40-43`, `.fallowrc.json:8-9`, `contract-cordination.json:21-23`, the bubblewrap install and bwrap launch verification in `.github/workflows/ci.yml`, and the false "limited-isolation tests refuse to skip on Linux" comment in `publish.yml`; sweep the whole repo for unlisted references.
+
+L2 — Lead decision expanding T5's surface, verbatim: "Option A, delivered as a THIRD commit (not an amend, not a squash, no rebase). Amending 0d12b3d or 011b1ae would be history rewriting, which this assignment prohibits — do not amend, reset, reorder, or rewrite anything. Authorization added: exactly one new path joins your allowed edit surfaces — test-typecheck-baseline.json." The re-anchor was produced by the repository's own --rebaseline migration under review, proven metadata-only: configuration f169a15a… -> ec98b385…, counts deep-equal, 94 files, total 260 -> 260, zero added/removed/increased/decreased.
