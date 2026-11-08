@@ -177,7 +177,7 @@ git grep -n 'attributionGaps: stringList' -- src/
 git grep -n 'emitList(lines, "attributionGaps"' -- src/
 
 # 4. The behaviour, through the entry point a user runs.
-npx vitest run test/dimensions/store-parity.test.ts test/dimensions/row-page-curated-links.test.ts test/dimensions/row-store-of-record.test.ts
+pnpm exec vitest run test/dimensions/store-parity.test.ts test/dimensions/row-page-curated-links.test.ts test/dimensions/row-store-of-record.test.ts
 ```
 
 Step 4 needs a reachable Postgres. `LLMWIKI_TEST_DATABASE_URL` points at one;

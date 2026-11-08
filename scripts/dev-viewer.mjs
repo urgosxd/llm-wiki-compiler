@@ -24,7 +24,7 @@ const WATCH_TARGETS = [
   "tsup.config.ts",
   "package.json",
 ];
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const viewerArgs = normalizeViewerArgs(process.argv.slice(2));
 
 let viewer = null;
@@ -65,7 +65,7 @@ function queueRebuild(reason) {
   }, DEBOUNCE_MS);
 }
 
-/** Run `npm run build`, then restart the viewer when it succeeds. */
+/** Run `pnpm run build`, then restart the viewer when it succeeds. */
 async function rebuildAndRestart(reason) {
   if (buildRunning) {
     rebuildQueued = true;
@@ -89,7 +89,7 @@ async function drainQueuedRebuild() {
 /** Execute the standard project build so dist/ and viewer assets stay in sync. */
 function runBuild() {
   return new Promise((resolve) => {
-    const child = spawn(npmCommand, ["run", "build"], { stdio: "inherit" });
+    const child = spawn(pnpmCommand, ["run", "build"], { stdio: "inherit" });
     child.on("exit", (code) => resolve(code === 0));
     child.on("error", (err) => {
       process.stderr.write(`[dev] build failed to start: ${err.message}\n`);

@@ -22,7 +22,7 @@
  * - a diagnostic that is IN the baseline but no longer occurs also fails, so an
  *   allowance cannot linger as slack for the next one.
  *
- * Both point at `npm run typecheck:kg:update`, which only ever rewrites the
+ * Both point at `pnpm run typecheck:kg:update`, which only ever rewrites the
  * baseline downward — the update path rejects an increase, exactly as a normal
  * run does.
  *
@@ -45,11 +45,11 @@ import type { RatchetBaseline } from "./ratchet-baseline.ts";
 /** Baseline file, relative to the repository root the command runs in. */
 const BASELINE_FILE = "kg-typecheck-baseline.json";
 
-/** The configuration this ratchet pins; the same one `npx tsc -p` is run on. */
+/** The configuration this ratchet pins; the same one `pnpm exec tsc -p` is run on. */
 const CONFIG_FILE = "packages/llmwiki-kg/ts/tsconfig.json";
 
 /** The one command that may change the baseline, quoted in every failure. */
-export const REFRESH_COMMAND = "npm run typecheck:kg:update";
+export const REFRESH_COMMAND = "pnpm run typecheck:kg:update";
 
 /** One error diagnostic, reduced to the fields a reader and the baseline need. */
 export interface KgDiagnostic {

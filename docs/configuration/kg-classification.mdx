@@ -453,13 +453,13 @@ The scanner is part of the `aks-reference-server` package:
 cd packages/llmwiki-kg/ts
 
 # Offline: the recorded double over the committed labeled set. No network, no credential.
-npm run eval:kg
+pnpm run eval:kg
 
 # Machine-readable report only.
-npm run eval:kg -- --json
+pnpm run eval:kg -- --json
 
 # The real evaluation. Requires TYPESAFE_API_KEY AND the explicit flag.
-npm run eval:kg -- --real
+pnpm run eval:kg -- --real
 ```
 
 The offline run needs nothing and cannot spend a credential, even when
@@ -470,7 +470,7 @@ branch. `--real` without a key exits `1` with:
 refusing the real JEV evaluation: TYPESAFE_API_KEY is not set. --real requires a real credential; run without --real for the offline evaluation.
 ```
 
-`npm test` never passes `--real`, so no automated test touches the network.
+`pnpm test` never passes `--real`, so no automated test touches the network.
 
 The report scores **four axes with four different denominators**, and never sums them
 into one number:
@@ -482,7 +482,7 @@ into one number:
 | `informationLoss` | Extracted work that never reached a decision, or was left free although a label existed |
 | `extractorCoverage` | Every labeled fact in the set, so a candidate the extractor omitted is counted — **JEV cannot recover a candidate the extractor never produced** |
 
-The shipped offline numbers, verbatim from `npm run eval:kg` (the command prints this
+The shipped offline numbers, verbatim from `pnpm run eval:kg` (the command prints this
 report and then the same numbers as JSON after a `--- json ---` marker):
 
 ```text

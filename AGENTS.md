@@ -6,11 +6,11 @@ A knowledge compiler CLI. Raw sources in, interlinked wiki out.
 
 ### Code Style & Standards
 
-- Code files (TypeScript, Python, JavaScript, shell, SQL) must be smaller than 400 lines excluding comments. Once 400 is exceeded, initiate a refactor. **Markdown and other prose/config files (`.md`, `.mdx`, `.yaml`, `.json`, `.toml`) are exempt** — long planning documents, roadmaps, and reference catalogs are allowed to grow as substance requires. Enforced by `npm run lint`, which runs in CI.
-- Functions must be smaller than 40 lines excluding comments and the catch/finally blocks of try/catch sections. If a function exceeds that, refactor it. Enforced by the same `npm run lint` rule.
-- test files must be smaller than 400 lines excluding comments. Once 400 is exceeded, split the tests into multiple files. Same 400-line limit, enforced by `npm run lint`.
-- tests must be smaller than 40 lines excluding comments and the catch/finally blocks of try/catch sections. If a test exceeds that, refactor it, or separate it into multiple tests. Same 40-line limit, enforced by `npm run lint`.
-- Use TypeScript with proper types — avoid `any`. Enforced by `npm run lint` in CI; today's occurrences are frozen in `eslint-baseline.json` and only new ones fail.
+- Code files (TypeScript, Python, JavaScript, shell, SQL) must be smaller than 400 lines excluding comments. Once 400 is exceeded, initiate a refactor. **Markdown and other prose/config files (`.md`, `.mdx`, `.yaml`, `.json`, `.toml`) are exempt** — long planning documents, roadmaps, and reference catalogs are allowed to grow as substance requires. Enforced by `pnpm run lint`, which runs in CI.
+- Functions must be smaller than 40 lines excluding comments and the catch/finally blocks of try/catch sections. If a function exceeds that, refactor it. Enforced by the same `pnpm run lint` rule.
+- test files must be smaller than 400 lines excluding comments. Once 400 is exceeded, split the tests into multiple files. Same 400-line limit, enforced by `pnpm run lint`.
+- tests must be smaller than 40 lines excluding comments and the catch/finally blocks of try/catch sections. If a test exceeds that, refactor it, or separate it into multiple tests. Same 40-line limit, enforced by `pnpm run lint`.
+- Use TypeScript with proper types — avoid `any`. Enforced by `pnpm run lint` in CI; today's occurrences are frozen in `eslint-baseline.json` and only new ones fail.
 
 
 ### clean code rules
@@ -42,14 +42,14 @@ adds a test, so this file does not carry one. Run the tests your change can
 actually affect; do not wait for the whole suite while iterating.
 
 1. **Iterating on code** — run the tests related to what you touched:
-   `npx vitest related <changed-file>`. This selects only files that import it.
-2. **Before considering a task complete** — run `npm run test:affected`. It diffs
+   `pnpm exec vitest related <changed-file>`. This selects only files that import it.
+2. **Before considering a task complete** — run `pnpm run test:affected`. It diffs
    against the merge-base and runs `vitest related` over your changes. It
    escalates to the full `test:unit` tier automatically when the change has
-   suite-wide reach (`package.json`, `package-lock.json`, `vitest.config.ts`,
+   suite-wide reach (`package.json`, `pnpm-lock.yaml`, `vitest.config.ts`,
    `tsconfig*.json`, or anything under `scripts/`), because narrowing there
    would be a false negative.
-3. **`npm test`** — the exhaustive run. Required only when your change is
+3. **`pnpm test`** — the exhaustive run. Required only when your change is
    cross-cutting, when you suspect a coupling the related-selection cannot see,
    or before opening a pull request. CI runs it on every push and pull request,
    and that is the gate of record.
@@ -57,14 +57,14 @@ actually affect; do not wait for the whole suite while iterating.
 Never claim a task complete on the strength of a partial run without saying which
 scope you ran. Report the scope and the result together.
 
-**`npm run test:integration`** is the remaining tier: `scripts/test-partition.ts`
+**`pnpm run test:integration`** is the remaining tier: `scripts/test-partition.ts`
 classifies a test as integration when it spawns a child process — `runCLI(`,
 `spawnSync(`, `spawn(`, `execFileSync(`, `execFile(`, `execSync(`, `npm pack`,
 `fixtures/cli-runner` — so it covers the built command surface end to end rather
 than behaviour reached in process. `test:unit` takes everything that does not
-spawn, and `npm test` is plain `vitest run`, which collects both tiers.
+spawn, and `pnpm test` is plain `vitest run`, which collects both tiers.
 `test/sdk/packaging.test.ts` spawns too but `vitest.config.ts` excludes it from
-that collection; it runs only via `npm run test:pack`.
+that collection; it runs only via `pnpm run test:pack`.
 
 Tests must not depend on timing or external services.
 
@@ -91,15 +91,15 @@ that hash a run skips the ~42 s tsup rebuild and a single-file run drops from
 
 Before committing any work, and before considering any task complete, you must:
 
-1. `npx tsc --noEmit` — type-check passes
-2. `npm run typecheck:tests` — the test type-check ratchet passes (no new test type errors)
-3. `npm run build` — build succeeds
-4. `npm run test:affected` — tests for what you changed pass (use `npm test` when
+1. `pnpm exec tsc --noEmit` — type-check passes
+2. `pnpm run typecheck:tests` — the test type-check ratchet passes (no new test type errors)
+3. `pnpm run build` — build succeeds
+4. `pnpm run test:affected` — tests for what you changed pass (use `pnpm test` when
    the change is cross-cutting or before opening a PR; see Test Execution Policy)
-5. `npm run fallow:ci` — the fallow codebase health analyzer with `--gate new-only`, and the command that actually gates. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit while it fails. `npx fallow` is the raw full-tree report and exits non-zero on inherited debt; it is not the gate.
-6. `npm run lint` — the house-rule ratchet: 400-line files, 40-line functions, no
+5. `pnpm run fallow:ci` — the fallow codebase health analyzer with `--gate new-only`, and the command that actually gates. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit while it fails. `pnpm exec fallow` is the raw full-tree report and exits non-zero on inherited debt; it is not the gate.
+6. `pnpm run lint` — the house-rule ratchet: 400-line files, 40-line functions, no
    `any`, and the `src/` <-> `packages/llmwiki-kg` import boundary. It passes on a
-   frozen baseline and fails only on newly introduced violations. `npm run lint:update`
+   frozen baseline and fails only on newly introduced violations. `pnpm run lint:update`
    rebaselines; using it to absorb a new violation defeats the gate.
 
 Never bypass these gates with `--no-verify`; fix the underlying issue instead.

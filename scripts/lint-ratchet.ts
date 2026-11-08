@@ -1,6 +1,6 @@
 /**
  * @file scripts/lint-ratchet.ts
- * @description Command entry for the ESLint house-rule ratchet (`npm run lint`).
+ * @description Command entry for the ESLint house-rule ratchet (`pnpm run lint`).
  *
  * ## Why a ratchet instead of a plain lint run
  *
@@ -20,7 +20,7 @@
  * - a baselined violation that no longer occurs ALSO fails, so an allowance
  *   cannot linger as slack for the next one.
  *
- * Both point at `npm run lint:update`.
+ * Both point at `pnpm run lint:update`.
  *
  * ## Keys carry the rule, never the line
  *
@@ -54,7 +54,7 @@ const BASELINE_FILE = "eslint-baseline.json";
 const CONFIG_FILE = "eslint.config.mjs";
 
 /** The one command that may change the baseline, quoted in every failure. */
-const REFRESH_COMMAND = "npm run lint:update";
+const REFRESH_COMMAND = "pnpm run lint:update";
 
 /** The only rule ids this ratchet collects; any other message is ignored. */
 const HOUSE_RULES: readonly string[] = [

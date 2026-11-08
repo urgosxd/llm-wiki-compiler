@@ -41,7 +41,7 @@ describe("the KG package diagnostic ratchet", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("routes/ingest.ts:42");
     expect(errors[0]).toContain("TS2322");
-    expect(errors[0]).toContain("npm run typecheck:kg:update");
+    expect(errors[0]).toContain("pnpm run typecheck:kg:update");
   });
 
   it("rejects a diagnostic added on top of a baselined one in the same file", () => {
@@ -55,7 +55,7 @@ describe("the KG package diagnostic ratchet", () => {
     const errors = compareKgDiagnostics([], ALLOWED);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("routes/aks/traverse.ts TS6133");
-    expect(errors[0]).toContain("npm run typecheck:kg:update");
+    expect(errors[0]).toContain("pnpm run typecheck:kg:update");
   });
 
   it("tolerates a decrease while updating the baseline, but never an increase", () => {

@@ -21,7 +21,7 @@
  *
  * The full suite is deliberately NOT one of these outcomes: CI runs it on every
  * push (`.github/workflows/ci.yml`), and duplicating it locally is the cost this
- * hook exists to remove. `npm test` still runs it on demand.
+ * hook exists to remove. `pnpm test` still runs it on demand.
  */
 
 import { spawnSync } from "node:child_process";
@@ -60,7 +60,7 @@ function spawnInherit(
  * @param argv - Full argv AFTER the `vitest` binary (`run …` or `related …`).
  */
 function runVitest(root: string, argv: readonly string[]): number {
-  return spawnInherit(root, "npx", ["vitest", ...argv], "vitest");
+  return spawnInherit(root, "pnpm", ["exec", "vitest", ...argv], "vitest");
 }
 
 /**
@@ -78,9 +78,9 @@ function runVitest(root: string, argv: readonly string[]): number {
 function ensureBuiltCli(root: string): number {
   if (OUTPUT_CONTRACT_TESTS.length === 0 || existsSync(path.join(root, "dist", "cli.js"))) return 0;
   process.stderr.write(
-    "test-affected: dist/cli.js is missing — running `npm run build` once for the output contracts\n",
+    "test-affected: dist/cli.js is missing — running `pnpm run build` once for the output contracts\n",
   );
-  return spawnInherit(root, "npm", ["run", "build"], "the build");
+  return spawnInherit(root, "pnpm", ["run", "build"], "the build");
 }
 
 /**

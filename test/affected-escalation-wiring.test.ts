@@ -64,7 +64,7 @@ const KG_ALIAS_CONSUMER = "src/dimensions/activation.ts";
 /** Inputs whose change reaches every file, so a narrow selection would be a lie. */
 const ESCALATION_INPUTS = [
   "package.json",
-  "package-lock.json",
+  "pnpm-lock.yaml",
   "vitest.config.ts",
   "tsconfig.json",
   "tsconfig.test.json",

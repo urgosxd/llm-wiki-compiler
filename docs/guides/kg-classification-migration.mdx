@@ -202,7 +202,7 @@ Expect `0` immediately after the migration. Before it, that query fails with
 the migration has not been applied to this database.
 
 The file itself pins the same expectations from the other side:
-`npx vitest run src/schema-open-classification.test.ts src/schema-identity-evidence.test.ts`
+`pnpm exec vitest run src/schema-open-classification.test.ts src/schema-identity-evidence.test.ts`
 in `packages/llmwiki-kg/ts` builds a pre-migration database, applies the migration and
 asserts the resulting columns, constraints, indexes and row values.
 

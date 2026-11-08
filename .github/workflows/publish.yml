@@ -182,11 +182,12 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.public_sha }}
           fetch-depth: 0
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
       - name: Verify package identities match payload and repository
         env:
           WANT: ${{ needs.resolve.outputs.version }}
@@ -260,11 +261,11 @@ jobs:
       - name: Install, validate docs, build, test, pack
         run: |
           set -euo pipefail
-          npm ci
-          npm run release:check-docs:current
-          npm run build
-          npm test
-          npm run test:pack
+          pnpm install --frozen-lockfile
+          pnpm run release:check-docs:current
+          pnpm run build
+          pnpm test
+          pnpm run test:pack
           for dir in ${PACKAGE_DIRS}; do
             (cd "${dir}" && npm pack --dry-run --ignore-scripts)
           done
@@ -285,12 +286,14 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.public_sha }}
           fetch-depth: 0
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org/"
-          cache: npm
+          cache: pnpm
       - name: Require npm >= 11.5.1 for Trusted Publishing
         run: |
           set -euo pipefail
@@ -299,8 +302,8 @@ jobs:
       - name: Install and build
         run: |
           set -euo pipefail
-          npm ci
-          npm run build
+          pnpm install --frozen-lockfile
+          pnpm run build
       - name: Publish dependencies first (OIDC, no token)
         env:
           WANT: ${{ needs.resolve.outputs.version }}

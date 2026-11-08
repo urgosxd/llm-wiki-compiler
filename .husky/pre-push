@@ -1,2 +1,2 @@
-npm run build
-npm run test:affected
+pnpm run build
+pnpm run test:affected

@@ -14,7 +14,7 @@
     "docs/**",
     "eslint.config.mjs",
     "examples/**",
-    "package-lock.json",
+    "pnpm-lock.yaml",
     "package.json",
     "packages/llmwiki-core/**",
     "packages/llmwiki-kg/db/**",

@@ -43,12 +43,12 @@ For every user-facing feature PR:
 9. Run the normal repo gates before the PR is considered done:
 
    ```bash
-   npx tsc --noEmit
-   npm run typecheck:tests
-   npm run build
-   npm test
-   npm run fallow:ci
-   npm run fallow:kg   # the llmwiki-kg package has its own gate; see ../docs/fallow-gates.md
+   pnpm exec tsc --noEmit
+   pnpm run typecheck:tests
+   pnpm run build
+   pnpm test
+   pnpm run fallow:ci
+   pnpm run fallow:kg   # the llmwiki-kg package has its own gate; see ../docs/fallow-gates.md
    ```
 
 ## Release checklist
@@ -61,7 +61,7 @@ During release prep:
 4. Run:
 
    ```bash
-   npm run release:check-docs:current
+   pnpm run release:check-docs:current
    ```
 
 5. Preview the docs site and spot-check the changed pages.

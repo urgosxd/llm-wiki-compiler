@@ -1,0 +1,63 @@
+# Workspace members. This is the pnpm-side statement of the root
+# `package.json` `workspaces` field, which pnpm does not read (npm still needs
+# that field for `npm publish --workspace`).
+packages:
+  - packages/llmwiki-core
+  - packages/llmwiki-kg/ts
+
+# Mirror of the root `package.json` `overrides` field, which pnpm ignores. This
+# is NOT a new pin: npm already forces esbuild 0.28.1 for this tree, and the
+# port must resolve the same version or it would be changing a dependency.
+overrides:
+  esbuild: 0.28.1
+
+# The three settings below are the LIVE values. This pnpm (11.5.0) does not apply
+# pnpm-specific settings from `.npmrc` — proven with `pnpm config get
+# node-linker` returning `undefined` while the `.npmrc` was on disk — so the
+# `.npmrc` equivalents are documentation only and these camelCase entries are
+# what actually bind. Verified with `pnpm config get <key>` before importing.
+
+# npm's layout is flat, and this delivery changes exactly one variable: the
+# package manager. pnpm's default strict layout would surface phantom
+# dependencies (imports that npm's flat `node_modules` satisfied implicitly) all
+# at once. Hoisting keeps the installed tree compatible; probing what it hides is
+# a follow-up, not this delivery.
+nodeLinker: hoisted
+
+# npm records `node_modules/@atomicstrata/llmwiki-core` as
+# {"resolved":"packages/llmwiki-core","link":true} in `package-lock.json`, and
+# the only version that satisfies the root's exact pin
+# (`1.4.0-dev.20260919`) is that local workspace folder — the version was never
+# published to the registry. Without this, pnpm consults the registry for the
+# facade and fails with ERR_PNPM_NO_MATCHING_VERSION.
+linkWorkspacePackages: true
+
+# Make the local workspace win over a registry version whenever both could
+# satisfy a range, so the collapsed single lockfile resolves the workspace
+# package the way npm's legacy dedupe did instead of installing a second copy.
+preferWorkspacePackages: true
+
+# pnpm refuses to run dependency install scripts unless they are ALLOWED, and
+# fails the install otherwise (`ERR_PNPM_IGNORED_BUILDS`). npm ran them all by
+# default, so allowing them restores npm's install behaviour — not a new
+# capability. `esbuild` needs its script to place the platform binary tsup and
+# vitest execute; the other three are native/optional bindings that npm also
+# built.
+#
+# `allowBuilds` below is the key that actually binds this pnpm: 11.5.0 does NOT
+# read `onlyBuiltDependencies` in any form (bare names and `name@version` both
+# still raised `ERR_PNPM_IGNORED_BUILDS`), and the boolean `true` per name under
+# `allowBuilds` is what makes `pnpm install --frozen-lockfile` exit 0.
+# `onlyBuiltDependencies` is kept because older pnpm honours it; on this version
+# it is inert, not a second gate.
+onlyBuiltDependencies:
+  - cpu-features
+  - esbuild
+  - protobufjs
+  - ssh2
+
+allowBuilds:
+  cpu-features: true
+  esbuild: true
+  protobufjs: true
+  ssh2: true

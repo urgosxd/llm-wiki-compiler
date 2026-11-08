@@ -20,7 +20,7 @@ collapse repo-wide entry-point discovery (see below).
 `packages/llmwiki-kg/ts/.fallowrc.json` and runs via:
 
 ```bash
-npm run fallow:kg
+pnpm run fallow:kg
 ```
 
 Clean tree → exit 0. A newly introduced finding inside the package → exit 1,
@@ -72,7 +72,7 @@ override. Measured at `--root packages/llmwiki-kg/ts`:
 - average maintainability 90.4
 - 142 entry points
 - **238 total issues with `dist/` built — the CI reality**, because
-  `npm run build` runs before this gate in the `build-and-test` job: 236 dead
+  `pnpm run build` runs before this gate in the `build-and-test` job: 236 dead
   code (199 unused exports, 32 unused types, 1 unused file, 4 duplicate exports),
   1 unlisted dependency, 1 circular dependency, **0 unresolved imports**
 - **239 total issues on an unbuilt tree**: the same findings plus **1 unresolved
@@ -121,7 +121,7 @@ root-relative.
 
 ## What this gate does and does not cover
 
-`npm run fallow:kg` is
+`pnpm run fallow:kg` is
 `fallow audit --gate new-only` scoped to the package, with the three baselines
 applied.
 
@@ -200,7 +200,7 @@ unchanged, `git diff --stat` and `git status --short` both empty).
 
 ## The repo-wide gate: what "new" means
 
-`npm run fallow:ci` (`scripts/fallow-ci.sh` into `scripts/check-fallow-report.mjs`)
+`pnpm run fallow:ci` (`scripts/fallow-ci.sh` into `scripts/check-fallow-report.mjs`)
 runs `./node_modules/.bin/fallow --root . audit --format json --gate new-only -q`
 and decides the exit code from the `attribution` block alone:
 `dead_code_introduced`, `complexity_introduced` and `duplication_introduced` must
@@ -268,7 +268,7 @@ returns no hit under `.github/`, and the only callers of
 `test/ci/fallow-report-gate.test.ts`. This is written down so nobody "restores CI
 parity" by reintroducing a path the script no longer needs — there is no CI role
 to keep parity with. One nuance, so the grep is not misread:
-`.github/workflows/ci.yml:90` does run `npm run fallow:kg`, but that is the
+`.github/workflows/ci.yml:90` does run `pnpm run fallow:kg`, but that is the
 different, KG-scoped gate with its own baselines (see "Baselines" above) and it
 shares no code with this one — "CI runs a `fallow:*` script" is true of the KG
 gate and false of the root gate.
@@ -298,7 +298,7 @@ out-of-scope list below.
   either.
 - The pre-existing repo-wide findings that come from unbuilt `dist/` imports are
   not this gate's concern any more, because it only counts findings it attributes
-  to the changeset; `npm run build` is still what removes them from a full-tree
+  to the changeset; `pnpm run build` is still what removes them from a full-tree
   run.
 - `.husky/pre-commit` does not run fallow, so nothing forces either gate locally
   before a commit.

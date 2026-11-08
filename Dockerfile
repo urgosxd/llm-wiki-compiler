@@ -29,15 +29,17 @@ FROM node:24-slim AS build
 WORKDIR /app
 
 # Manifests first, so the dependency layer caches independently of source edits.
-# The root manifest depends on workspace packages, so their manifests and lockfiles
-# are copied before `npm ci` or the install resolves against a partial tree.
-COPY package.json package-lock.json ./
+# The root manifest depends on workspace packages, so their manifests and the
+# single workspace lockfile are copied before `pnpm install` or the install
+# resolves against a partial tree — pnpm validates the whole workspace against
+# `pnpm-lock.yaml`, so every member manifest has to be here.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # Only the packages that actually declare a manifest. `llmwiki-local-workflows` and
 # `llmwiki-kg` have no root-level package.json — the KG manifest lives one level
 # down at `ts/` — and copying a path that does not exist fails the whole build.
 COPY packages/llmwiki-core/package.json packages/llmwiki-core/
 COPY packages/llmwiki-kg/ts/package.json packages/llmwiki-kg/ts/
-RUN npm ci
+RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.json tsup.config.ts ./
 COPY scripts ./scripts
@@ -46,10 +48,15 @@ COPY packages ./packages
 
 # `tsup` also builds the compiler dependency packages, so this single command
 # produces everything the runtime needs.
-RUN npm run build
+RUN pnpm run build
 
-# Production dependencies only, from the lockfile, for the runtime stage.
-RUN npm prune --omit=dev
+# Production dependencies only, for the runtime stage. `--ignore-scripts` is load
+# bearing: pruning also runs the root `prepare` hook, and `husky` is one of the dev
+# dependencies this step just removed, so the hook would fail the layer. The purge
+# confirmation is the other one: with the tree replaced wholesale, pnpm asks before
+# removing `node_modules` and aborts with
+# `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` in a build, which has no TTY.
+RUN pnpm prune --prod --ignore-scripts --config.confirm-modules-purge=false
 
 # ---- runtime -----------------------------------------------------------------
 FROM node:24-slim AS runtime
@@ -70,7 +77,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Copied whole from the build stage: `cli.js` externalizes runtime dependencies, so
-# pruning harder than `--omit=dev` breaks the image at its first import.
+# pruning harder than `--prod` breaks the image at its first import.
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json

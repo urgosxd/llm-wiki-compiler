@@ -17,7 +17,12 @@ services:
       retries: 5
 
   api:
-    build: .
+    # The KG image installs from the repository-root `pnpm-lock.yaml` and
+    # `pnpm-workspace.yaml`, so its build context must be the repo root; no COPY
+    # can reach above the context. Paths are relative to this compose file.
+    build:
+      context: ../..
+      dockerfile: packages/llmwiki-kg/Dockerfile
     ports:
       - "8000:8000"
     environment:

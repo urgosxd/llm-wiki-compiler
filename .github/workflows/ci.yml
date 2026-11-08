@@ -63,31 +63,32 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
-      - run: npm ci
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       # `AGENTS.md` requires this gate and no CI step ran it: its only other
       # home is `.husky/pre-commit`, which any `--no-verify` skips.
       - name: Type-check the root project
-        run: npx tsc --noEmit
+        run: pnpm exec tsc --noEmit
       # The house rules in `AGENTS.md` — 400-line files, 40-line functions, no
       # `any`, and the `src/` <-> `packages/llmwiki-kg` boundary — are enforced by
       # a ratchet: it passes on the frozen baseline and fails only on newly
       # introduced violations.
       - name: Lint the house rules against their frozen baseline
-        run: npm run lint
-      - run: npm run release:check-docs
-      - run: npm run build
+        run: pnpm run lint
+      - run: pnpm run release:check-docs
+      - run: pnpm run build
       # The KG package carries its own tsconfig, and nothing else here reads it:
       # root `tsc` includes only `src/**`, and `codebase-health` ignores
       # `packages/llmwiki-kg/**`. Without this step its diagnostics are invisible
       # to every gate. `typecheck:kg` fails on any diagnostic that is not in
       # `kg-typecheck-baseline.json`, and on a baselined one that disappeared.
       - name: Type-check the KG package against its diagnostic ratchet
-        run: npm run typecheck:kg
-      - run: npm run fallow:kg
+        run: pnpm run typecheck:kg
+      - run: pnpm run fallow:kg
       # Build the schema from the same runner operators use, before any test needs
       # it. If a migration is missing from the runner, this is where it shows up --
       # `--check` asserts every tenant table exists AND enforces row-level security.
@@ -99,11 +100,11 @@ jobs:
       # the schema steps because the affected selection can escalate to the full
       # unit tier, which includes the database-backed suites.
       - name: Run the tests affected by this change
-        run: npm run test:affected
-      - run: npm test
+        run: pnpm run test:affected
+      - run: pnpm test
       # Default tests exclude this fresh-install check. Exercise the shipped
       # facade, its exact workspace dependencies, and consumer declarations.
-      - run: npm run test:pack
+      - run: pnpm run test:pack
 
   # Scope note, verified: this workflow never passes `--changed-since`. The
   # pinned `fallow-rs/fallow` wrapper (the `uses:` below) declares an

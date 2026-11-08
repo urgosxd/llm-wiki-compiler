@@ -98,7 +98,7 @@ trusted-publisher configuration before the first registry release.
 ## Contributing across packages
 
 Use one repository and one PR, including for cross-package changes. Root-level
-`npm ci` links workspace packages; `npm run build` builds core, engine and facade
+`pnpm install --frozen-lockfile` links workspace packages; `pnpm run build` builds core, engine and facade
 in order. Local development requires no publishing. Source directory names are
 unchanged. No new public `core` subpath is introduced.
 
@@ -107,6 +107,6 @@ unchanged. No new public `core` subpath is introduced.
 - Public SDK composition belongs in `src/sdk/` and `src/index.ts`.
 - Shared engine contracts belong in `src/local-workflow-host/`.
 
-Run focused tests for behavior changes. After building, `npm run test:pack`
+Run focused tests for behavior changes. After building, `pnpm run test:pack`
 checks fresh installation and TypeScript consumption without workspace aliases.
 Package-boundary tests prevent the engine from embedding compiler implementation.

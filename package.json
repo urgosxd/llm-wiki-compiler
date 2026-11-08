@@ -1,6 +1,7 @@
 {
   "name": "llm-wiki-compiler",
   "version": "1.4.0-dev.20260919",
+  "packageManager": "pnpm@11.5.0",
   "description": "A knowledge compiler CLI \u2014 raw sources in, interlinked wiki out",
   "type": "module",
   "workspaces": [
@@ -39,7 +40,7 @@
     "lint:update": "node scripts/lint-ratchet.ts --update",
     "fallow:ci": "bash scripts/fallow-ci.sh",
     "fallow:kg": "./node_modules/.bin/fallow --root packages/llmwiki-kg/ts -c packages/llmwiki-kg/ts/.fallowrc.json audit --format json --gate new-only --dead-code-baseline baselines/dead-code-baseline.json --health-baseline baselines/health-baseline.json --dupes-baseline baselines/dupes-baseline.json -q",
-    "prepublishOnly": "npm run release:check-docs:current && npm run build && npm pack --dry-run --ignore-scripts",
+    "prepublishOnly": "pnpm run release:check-docs:current && pnpm run build && npm pack --dry-run --ignore-scripts",
     "prepare": "husky",
     "test:pack": "vitest run --config test/sdk/vitest.packaging.config.ts"
   },
