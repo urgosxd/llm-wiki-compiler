@@ -47,7 +47,7 @@ T7. Final gate sweep and delivery evidence. Spec: S11, S12. commit: none — ind
 T8. Encode the human-fixed wiki/kg/api zone topology in the boundary rule, so today's cross-zone imports are frozen as debt rather than permitted architecture. Spec: S7. commit: 1862402
 T9. Close the two zone-wiring gaps: scan the declared `api` zone from the ratchet, and put `test/**` and `scripts/**` KG reaches inside the wiki-side prohibition. Spec: S7, S9. commit: 5563666
 T10. Harden the ratchet: commit the control-layer regression pin, and fix the misleading "brand-new file" label for a file that merely has no frozen allowance. Spec: S8, S10, S11. commit: 7fceb31 (regression pin), fcd8d66 (label fix)
-T11. Amend S13/S14 to record the measured lockfile reality and the verification results. Spec: S13, S14 (bookkeeping). commit: pending
+T11. Amend S13/S14 to record the measured lockfile reality and the verification results. Spec: S13, S14 (bookkeeping). commit: 22f4510
 
 ## Log
 
