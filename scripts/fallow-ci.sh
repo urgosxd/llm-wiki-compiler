@@ -1,24 +1,23 @@
 #!/usr/bin/env bash
 # scripts/fallow-ci.sh
 #
-# Run fallow with the same flags GitHub Actions uses for the
-# `codebase-health` job, so issues that would block PR merge are
-# surfaced locally before pushing.
+# Run the same gate GitHub Actions uses for the `codebase-health` job, so
+# issues that would block PR merge surface locally before pushing.
 #
-# What this mirrors (from fallow-rs/fallow@v2 action.yml + analyze.sh):
-#   - bare command (runs dead-code, dupes, and health analyses together)
-#   - --root .
-#   - --format json and the action's explicit finding-count gate
-#   - --changed-since <merge-base with the canonical PR base branch>
-#       (CI uses the PR base SHA; merge-base is the closest local equivalent)
+# What this mirrors: `fallow audit --gate new-only`, the form the KG gate
+# (`npm run fallow:kg`) already uses and the form CI's pull_request runs get
+# from the action wrapper's `auto-changed-since` input. `audit` only analyzes
+# files in the changeset and fails on the findings it attributes to that
+# changeset, so pre-existing debt — 20 clone groups below fallow's own
+# duplication threshold on a clean tree — no longer fails the local gate the
+# way the old combined-report total did. See docs/fallow-gates.md.
 #
-# Fork-aware base resolution:
-#   - Prefer `upstream/main` when an `upstream` remote is configured (the
-#     fork-and-PR workflow, where `origin` points at the contributor's fork
-#     and `upstream` at atomicmemory/*).
-#   - Fall back to `origin/main` for direct clones.
-#   - When neither remote tracks main, fall back to running fallow without
-#     `--changed-since` (full-tree analysis).
+# Base ref: `audit` resolves the comparison base itself (its merge-base with
+# the default branch, `main`), exactly as `npm run fallow:kg` does. The script
+# still refreshes and reports the configured remote base below, because a fork
+# workflow points `origin` at the fork; but it does not pin the comparison to
+# that remote, whose `main` can lag local `main` by many commits and would drag
+# unrelated history into the changeset.
 #
 # IMPORTANT — known parity gap:
 #   fallow's clone-detection has empirical platform variation. The same
@@ -52,10 +51,18 @@ git fetch --quiet "$BASE_REMOTE" main || \
 # fallback below is reachable under `set -e`.
 BASE_SHA=$(git merge-base "$BASE_REF" HEAD 2>/dev/null || true)
 
+# One invocation for both paths: `audit` owns the base-ref resolution, and the
+# checker fails closed (exit 2) when the report proves no new-only attribution,
+# so a missing or bogus base is red rather than silently green.
+run_gate() {
+  ./node_modules/.bin/fallow --root . audit --format json --gate new-only -q \
+    | node scripts/check-fallow-report.mjs
+}
+
 if [ -z "$BASE_SHA" ]; then
-  echo "Could not determine merge-base with ${BASE_REF}; running fallow without --changed-since."
-  npx fallow --root . --format json | node scripts/check-fallow-report.mjs
+  echo "No merge-base with ${BASE_REF}, so there is no remote base to name; running the audit gate, which resolves its own base ref."
+  run_gate
 else
-  echo "Running fallow scoped to changes since $(git rev-parse --short "$BASE_SHA") (${BASE_REF})..."
-  npx fallow --root . --format json --changed-since "$BASE_SHA" | node scripts/check-fallow-report.mjs
+  echo "Running fallow audit --gate new-only against its own base ref (local main), not the ${BASE_REF} merge-base $(git rev-parse --short "$BASE_SHA")."
+  run_gate
 fi

@@ -198,13 +198,57 @@ and the one new finding still bites, alone.
 The temporary edit for runs 2-5 was restored byte-identically (`sha256sum`
 unchanged, `git diff --stat` and `git status --short` both empty).
 
+## The repo-wide gate: what "new" means
+
+`npm run fallow:ci` (`scripts/fallow-ci.sh` into `scripts/check-fallow-report.mjs`)
+runs `./node_modules/.bin/fallow --root . audit --format json --gate new-only -q`
+and decides the exit code from the `attribution` block alone:
+`dead_code_introduced`, `complexity_introduced` and `duplication_introduced` must
+all be `0`, and `verdict` must not be `fail`. The `*_inherited` counters are
+printed and never counted, and a document that cannot prove new-only attribution
+(wrong `command`, no `verdict`, empty `base_ref`, `attribution.gate` other than
+`new-only`) exits 2 rather than passing unverifiably — a missing or bogus base ref
+is red, never silently green.
+
+**"New" means "absent from the pre-existing state relative to the base ref the
+audit attributes against", which is its merge-base with the default branch
+(`main`)** — not "present in a file the diff touched", and not "written by this
+diff". `audit` resolves that base itself; the script deliberately does not pin
+`--changed-since` to a remote-tracking ref, because a fork's `origin/main` can lag
+local `main` by hundreds of commits and would drag unrelated history into the
+changeset. When the gate goes red for you, the finding is inside your changeset:
+fix it, or justify it in review. What makes it quiet about the old noise is the
+numbers, not a promise: at HEAD root scope has 0 dead-code findings, 0 complexity
+findings (`health.summary.functions_above_threshold = 0`) and 20 clone groups that
+fallow itself does not treat as above its duplication threshold
+(`duplicates.threshold` resolves to `0.0`, no limit, and `dupes --threshold` is
+inert in 2.82.0). Pre-existing debt of that shape no longer fails locally, where
+the old contract summed the raw `check.total_issues`, `dupes.stats.clone_groups`
+and `health.summary.functions_above_threshold` and went red on a clean tree with
+nothing but those 20 groups to blame. That is also why `AGENTS.md` pre-commit gate
+5 becomes satisfiable for the first time: while the local gate was permanently red
+on `main`, the rule was effectively dead and readers learned to ignore it.
+
+The residual, named rather than hidden: root scope keeps no baselines, so a
+pre-existing finding **inside a file your diff touches** is still attributed
+`introduced`, exactly as at KG scope without baselines. Measured: pinning a base
+249 commits back attributes all 20 clone groups `introduced`
+(`duplication_introduced: 20`). Locally the base is the default branch, so this
+only bites when your own diff touches those files.
+
 ## Explicitly out of scope, and named so they cannot be read as solved
 
-- `scripts/check-fallow-report.mjs:18` counts `functions_above_threshold`
-  without consulting any baseline, so the repo-wide report gate is
-  baseline-blind.
-- That same checker tolerates `coverage_unavailable`/`unknown` verdicts.
-- Six pre-existing repo-wide findings come from unbuilt `dist/` imports and are
-  not this gate's concern; `npm run build` makes them disappear.
+- The repo-wide gate reads `audit`'s attribution and nothing else, so root scope
+  still has no dead-code, health or dupes baseline of its own — see the residual
+  in the section above. Baselining the root scope is a separate delivery.
+- Coverage verdicts are no longer counted locally: the old checker read them from
+  the combined report's `health.runtime_coverage.findings`, which the `audit`
+  document does not carry. Runtime coverage is licence-gated and informational
+  (it does not change an exit code), and CI's `fail-on-issues` does not gate on it
+  either.
+- The pre-existing repo-wide findings that come from unbuilt `dist/` imports are
+  not this gate's concern any more, because it only counts findings it attributes
+  to the changeset; `npm run build` is still what removes them from a full-tree
+  run.
 - `.husky/pre-commit` does not run fallow, so nothing forces either gate locally
   before a commit.
