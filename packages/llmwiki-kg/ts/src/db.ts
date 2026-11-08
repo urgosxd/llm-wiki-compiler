@@ -2,9 +2,14 @@ import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import type { PostgresType, Sql } from "postgres";
+import type { Sql } from "postgres";
 
 import { config } from "./config.js";
+import {
+  TIMESTAMPTZ_OID,
+  TIMESTAMP_OID,
+  timestamptzType,
+} from "./db-timestamp.js";
 import { ResponseRecorder } from "./request-transaction-response.js";
 import * as schema from "./schema.js";
 
@@ -30,125 +35,21 @@ import * as schema from "./schema.js";
  *
  * ## Timestamps are carried as strings
  *
- * See `odd/findings/timestamp-precision.md`. Postgres `timestamptz` carries
- * microsecond precision; `Date.prototype.toISOString()` emits exactly three
- * fractional digits. Round-tripping through `Date` therefore destroys the last
- * three digits and mismatches the oracle on roughly 999 of every 1000 rows.
- *
- * The driver is therefore configured so OID 1184/1114 are never turned into
- * `Date` objects, and the raw microsecond text survives end to end. See
- * {@link normalizeTimestamptz} for the one transform applied to it.
+ * This module never turns a `timestamptz` into a `Date`: the driver is
+ * configured so OIDs 1184/1114 arrive as the raw text Postgres sent, and the
+ * microsecond digits survive end to end. That parser and its rationale live in
+ * `./db-timestamp.ts`, which this file only wires up — `createClient` registers
+ * it and `createDatabase` re-installs it after drizzle overwrites it — and whose
+ * `normalizeTimestamptz` is re-exported here. Background:
+ * `odd/findings/timestamp-precision.md`.
  */
 
 /**
- * OIDs of the temporal types whose text form we control.
- *
- * - 1184 `timestamptz`
- * - 1114 `timestamp`
- * - 1083 `time`   (present only to keep drizzle's own identity patch aligned)
- * - 1186 `interval` is deliberately NOT listed: it has no timestamp precision.
+ * Re-exported so the timestamp contract still arrives through this module and
+ * every existing `./db.js` import path keeps working unchanged. The
+ * implementation and its full rationale live in `./db-timestamp.ts`.
  */
-const TIMESTAMPTZ_OID = 1184;
-const TIMESTAMP_OID = 1114;
-
-/**
- * Matches Postgres' `DateStyle = ISO, MDY` text output, e.g.
- * `2026-10-21 03:16:59.138144+00`. Fractional seconds and the zone offset are
- * both optional because Postgres trims trailing zeros: `.100000` arrives as
- * `.1` and `.000000` arrives with no fraction at all.
- */
-const PG_TIMESTAMP_TEXT_RE =
-  /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(?:([+-]\d{2})(?::?(\d{2}))?|Z)?$/;
-
-/**
- * Rewrites Postgres' text timestamp into the exact form the Python oracle
- * emits, without ever constructing a `Date` from the value.
- *
- * Observed raw wire text (postgres-js, `TimeZone=UTC`):
- *   `2026-10-21 03:28:09.262117+00`
- *
- * Observed oracle output (FastAPI + Pydantic, `GET /stacks`):
- *   `2026-10-21T03:28:09.262117Z`
- *
- * The two differ in three ways — `T` vs space separator, `Z` vs `+00` suffix,
- * and Postgres' trailing-zero trimming vs Pydantic's fixed six digits. Naive
- * pass-through would satisfy "microseconds survive" but fail the response
- * contract, so the text is normalized here while it is still a string.
- *
- * This is *not* the anti-pattern the finding warns about. That warning is about
- * formatting a `Date` after precision is already lost. Here the microsecond
- * digits are carried as characters the whole way; nothing is parsed into a
- * millisecond-resolution type at any point.
- *
- * Non-UTC offsets are converted by applying the offset to the wall clock and
- * keeping the (already microsecond-precise) fractional digits verbatim. The
- * connection pins `TimeZone=UTC`, so this branch is a defensive path that
- * should never fire in practice.
- *
- * @throws {TypeError} if `raw` is not a timestamp string in the expected shape.
- *   Failing loudly is intentional: a silent fallback here would reintroduce the
- *   precision bug this module exists to prevent.
- */
-export function normalizeTimestamptz(raw: string): string {
-  const match = PG_TIMESTAMP_TEXT_RE.exec(raw);
-  if (match === null) {
-    throw new TypeError(
-      `Unrecognized Postgres timestamp text: ${JSON.stringify(raw)}`,
-    );
-  }
-
-  const [, date, time, fraction, offsetHours, offsetMinutes] = match;
-
-  // `date` and `time` are present whenever the regex matched, but
-  // noUncheckedIndexedAccess types them as optional, so narrow explicitly.
-  if (date === undefined || time === undefined) {
-    throw new TypeError(
-      `Unrecognized Postgres timestamp text: ${JSON.stringify(raw)}`,
-    );
-  }
-
-  // Postgres trimmed trailing zeros; Pydantic always emits six digits.
-  const microseconds = (fraction ?? "").padEnd(6, "0");
-
-  const isUtc =
-    offsetHours === undefined ||
-    offsetHours === "+00" ||
-    offsetHours === "-00";
-
-  if (isUtc) {
-    return `${date}T${time}.${microseconds}Z`;
-  }
-
-  // Defensive: shift a non-UTC wall clock into UTC. Integer offset arithmetic
-  // only; the sub-second digits are never touched.
-  const sign = offsetHours.startsWith("-") ? -1 : 1;
-  const hours = Number.parseInt(offsetHours.slice(1), 10);
-  const minutes =
-    offsetMinutes === undefined ? 0 : Number.parseInt(offsetMinutes, 10);
-  const shiftMs = sign * (hours * 60 + minutes) * 60_000;
-
-  const shifted = new Date(
-    Date.parse(`${date}T${time}Z`) - shiftMs,
-  ).toISOString();
-
-  return `${shifted.slice(0, 19)}.${microseconds}Z`;
-}
-
-/**
- * The `types` entry that makes postgres-js deliver temporals as normalized
- * strings.
- *
- * `serialize` is the identity function because every timestamp this app writes
- * is already an ISO-8601 string; postgres-js would otherwise wrap it in
- * `new Date(...)` and truncate it to milliseconds on the way *in*, which is the
- * same bug in the other direction.
- */
-const timestamptzType: PostgresType<string> = {
-  to: TIMESTAMPTZ_OID,
-  from: [TIMESTAMPTZ_OID, TIMESTAMP_OID],
-  serialize: (value: string): string => value,
-  parse: (raw: unknown): string => normalizeTimestamptz(String(raw)),
-};
+export { normalizeTimestamptz } from "./db-timestamp.js";
 
 /**
  * Builds a postgres-js client for `url`.
@@ -160,7 +61,7 @@ const timestamptzType: PostgresType<string> = {
  *
  * `TimeZone` is pinned to UTC so the text form is `+00` rather than a named
  * offset, and `DateStyle` is pinned to ISO so the date component is
- * unambiguous. {@link normalizeTimestamptz} depends on both.
+ * unambiguous. The parser in `./db-timestamp.ts` depends on both.
  *
  * @param url Postgres connection string.
  * @param connectTimeoutSeconds Fail-fast bound for the initial handshake.
