@@ -84,16 +84,16 @@ ancestor of it.
 
 | ID | What | Specs | Commit |
 | --- | --- | --- | --- |
-| T1 | Feature document | — | ee0f3a6 |
-| T2 | Enumerate every path through the wrapper with `path:line` evidence | S4 | 305d325 |
-| T3 | Design the boundary move and its commit-failure error semantics | S3, S5, S6, S7 | 305d325 |
-| T4 | RED tests: post-200 independent visibility, commit failure, preserved rollback | S9 | 305d325 |
-| T5 | Implement the transactional boundary move | S3, S5, S6, S8 | 305d325 |
-| T6 | Document the behaviour change | S5 | 305d325 |
-| T7 | Differential check against `fea6291` in a `mktemp -d` scratch copy | S8, S9(d) | 305d325 |
-| T8 | Gates: root tsc 0; KG tsc 0; typecheck:tests 0 (baseline NOT regenerated); typecheck:kg 0; focused 16/16 at dbdbf87; test:affected escalated to the full unit tier because package-lock.json differs from origin/main — 822 files, 6219 tests, 0 failed, run twice with identical counts; npm test 906 files (903 passed, 3 skipped), 6750 tests (6743 passed, 7 skipped), exit 0. fallow is NOT VERIFIED as coverage — .fallowrc.json ignores packages/llmwiki-kg/** — though the pre-commit hook ran it on every commit | S11 | 97caf6a |
+| T1 | Feature document | — | 9889f56 |
+| T2 | Enumerate every path through the wrapper with `path:line` evidence | S4 | f3cab00 |
+| T3 | Design the boundary move and its commit-failure error semantics | S3, S5, S6, S7 | f3cab00 |
+| T4 | RED tests: post-200 independent visibility, commit failure, preserved rollback | S9 | f3cab00 |
+| T5 | Implement the transactional boundary move | S3, S5, S6, S8 | f3cab00 |
+| T6 | Document the behaviour change | S5 | f3cab00 |
+| T7 | Differential check against `fea6291` in a `mktemp -d` scratch copy | S8, S9(d) | f3cab00 |
+| T8 | Gates: root tsc 0; KG tsc 0; typecheck:tests 0 (baseline NOT regenerated); typecheck:kg 0; focused 16/16 at dbdbf87; test:affected escalated to the full unit tier because package-lock.json differs from origin/main — 822 files, 6219 tests, 0 failed, run twice with identical counts; npm test 906 files (903 passed, 3 skipped), 6750 tests (6743 passed, 7 skipped), exit 0. fallow is NOT VERIFIED as coverage — .fallowrc.json ignores packages/llmwiki-kg/** — though the pre-commit hook ran it on every commit | S11 | 9ee0695 |
 | T9 | Contention AFTER: NOT RUN and NOT RUNNABLE — the BEFORE was never measured (one attempt produced zero evidence, the second was cancelled for container coordination), so an AFTER would be decoration rather than a comparison | S2, S9 | not run |
-| T10 | Ingest success path: answer only after the third transaction commits (authorized option (a)) | S3, S5, S9 | f8a4d0d |
+| T10 | Ingest success path: answer only after the third transaction commits (authorized option (a)) | S3, S5, S9 | 5c71d56 |
 | T11 | Ingest early-exit responses (`:532`, 404/415) still written inside a read transaction — NOT authorized, reported only | S2, S7 | not implemented |
 | T12 | Pre-existing S44 violations, tracked and UNOWNED — not remediated here: POST /aks/v1/context (aks.ts:68 -> context.ts:363, :382, response :435) and POST /stacks/:stackId/synthesize-descriptions (synthesize/router.ts:52 -> description.ts:227, write :237 on the same tx); pre-existing at fea6291 | S7 | not implemented |
 | T13 | documents/delete.ts:78 unlinks the file inside the transaction: pre-existing data-consistency gap, NOT introduced by this change, made VISIBLE by it — a failed COMMIT now answers 500 while the bytes are already gone and the row rolls back; before, the client saw a success and the file was equally gone (silent inconsistency) | S5, S6 | not implemented |
@@ -291,3 +291,22 @@ The evidence recorded in L11-L13 was measured on the pre-replay tree. It does NO
 replayed tip: a different base under a transaction-boundary change is a different tree, so the gates are
 re-run on `c508894` (and any result recorded here after this entry refers to the replayed tip).
 `git rebase` runs no pre-commit hook, so NO gate validated the replay itself.
+
+L15 — Third replay, and why there were three. `main` advanced twice after the first target was named, so
+the branch was replayed three times: `9fad205`, then `b241663` (after `chore/adopt-kg-first-party`
+landed), then `9ed1220` (after `fix/fallow-root-gate` integrated). All three replays were conflict-free
+and all three preserved this branch's seven paths byte-for-byte (`git diff --stat` empty over them).
+Main's advance to `9ed1220` touched only `docs/fallow-gates.md`, `odd/tasks/fallow-root-gate.md`,
+`scripts/check-fallow-report.mjs`, `scripts/fallow-ci.sh` and `test/ci/fallow-report-gate.test.ts` — zero
+overlap with this branch — and main has never touched `db.ts` or `routes/ingest/pipeline.ts` across any
+of the three replays.
+
+Current SHAs: `9889f56` feature document, `f3cab00` wrapper and recorder, `5c71d56` ingest success path,
+`4ed3f61` latency cost and gap record, `9ee0695` suite results, `f1fc696` replay record. Every SHA quoted
+in L1-L14 is superseded by this list; the three backup refs (`backup/pre-replay-8790bae`,
+`backup/pre-replay-2-367068f`, `backup/pre-replay-3-e60d6fd`) preserve the pre-replay tips.
+
+`git rebase` runs NO hook, so no lint, typecheck, test or fallow gate was observed during any replay.
+Hook output was absent throughout, and `core.hooksPath=.husky/_` is created by `prepare`/`npm ci`, so a
+fresh worktree legitimately shows no hook output: its absence is neither a bypass nor a pass. The gates
+are therefore re-run on the integrated tip and reported separately, not inherited from any earlier tree.
