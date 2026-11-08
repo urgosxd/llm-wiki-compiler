@@ -445,6 +445,7 @@ npm run build
 npm run test:affected
 npm test
 npm run fallow:ci
+npm run lint
 ```
 
 `npm run test:affected` covers the tests for what you changed; `npm test` runs the

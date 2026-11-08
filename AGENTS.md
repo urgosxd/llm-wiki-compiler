@@ -6,11 +6,11 @@ A knowledge compiler CLI. Raw sources in, interlinked wiki out.
 
 ### Code Style & Standards
 
-- Code files (TypeScript, Python, JavaScript, shell, SQL) must be smaller than 400 lines excluding comments. Once 400 is exceeded, initiate a refactor. **Markdown and other prose/config files (`.md`, `.mdx`, `.yaml`, `.json`, `.toml`) are exempt** — long planning documents, roadmaps, and reference catalogs are allowed to grow as substance requires.
-- Functions must be smaller than 40 lines excluding comments and the catch/finally blocks of try/catch sections. If a function exceeds that, refactor it.
-- test files must be smaller than 400 lines excluding comments. Once 400 is exceeded, split the tests into multiple files.
-- tests must be smaller than 40 lines excluding comments and the catch/finally blocks of try/catch sections. If a test exceeds that, refactor it, or separate it into multiple tests.
-- Use TypeScript with proper types — avoid `any`.
+- Code files (TypeScript, Python, JavaScript, shell, SQL) must be smaller than 400 lines excluding comments. Once 400 is exceeded, initiate a refactor. **Markdown and other prose/config files (`.md`, `.mdx`, `.yaml`, `.json`, `.toml`) are exempt** — long planning documents, roadmaps, and reference catalogs are allowed to grow as substance requires. Enforced by `npm run lint`, which runs in CI.
+- Functions must be smaller than 40 lines excluding comments and the catch/finally blocks of try/catch sections. If a function exceeds that, refactor it. Enforced by the same `npm run lint` rule.
+- test files must be smaller than 400 lines excluding comments. Once 400 is exceeded, split the tests into multiple files. Same 400-line limit, enforced by `npm run lint`.
+- tests must be smaller than 40 lines excluding comments and the catch/finally blocks of try/catch sections. If a test exceeds that, refactor it, or separate it into multiple tests. Same 40-line limit, enforced by `npm run lint`.
+- Use TypeScript with proper types — avoid `any`. Enforced by `npm run lint` in CI; today's occurrences are frozen in `eslint-baseline.json` and only new ones fail.
 
 
 ### clean code rules
@@ -96,6 +96,10 @@ Before committing any work, and before considering any task complete, you must:
 4. `npm run test:affected` — tests for what you changed pass (use `npm test` when
    the change is cross-cutting or before opening a PR; see Test Execution Policy)
 5. `npm run fallow:ci` — the fallow codebase health analyzer with `--gate new-only`, and the command that actually gates. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit while it fails. `npx fallow` is the raw full-tree report and exits non-zero on inherited debt; it is not the gate.
+6. `npm run lint` — the house-rule ratchet: 400-line files, 40-line functions, no
+   `any`, and the `src/` <-> `packages/llmwiki-kg` import boundary. It passes on a
+   frozen baseline and fails only on newly introduced violations. `npm run lint:update`
+   rebaselines; using it to absorb a new violation defeats the gate.
 
 Never bypass these gates with `--no-verify`; fix the underlying issue instead.
 
@@ -106,6 +110,11 @@ Never bypass these gates with `--no-verify`; fix the underlying issue instead.
 merging. Workflow changes must preserve the required check name or update branch
 protection in the same rollout: **renaming a CI job without updating branch
 protection silently un-gates `main`**.
+
+The lint ratchet runs as a **step inside `build-and-test`**, not as its own job:
+a step inherits that job's required check name, while a new job name has no
+branch-protection entry and its red result could be merged past. Renaming or
+splitting the lint step into a separate job would therefore silently un-gate it.
 
 ## General Rules
 

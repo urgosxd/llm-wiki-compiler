@@ -72,6 +72,12 @@ jobs:
       # home is `.husky/pre-commit`, which any `--no-verify` skips.
       - name: Type-check the root project
         run: npx tsc --noEmit
+      # The house rules in `AGENTS.md` — 400-line files, 40-line functions, no
+      # `any`, and the `src/` <-> `packages/llmwiki-kg` boundary — are enforced by
+      # a ratchet: it passes on the frozen baseline and fails only on newly
+      # introduced violations.
+      - name: Lint the house rules against their frozen baseline
+        run: npm run lint
       - run: npm run release:check-docs
       - run: npm run build
       # The KG package carries its own tsconfig, and nothing else here reads it:
