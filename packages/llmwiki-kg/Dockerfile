@@ -8,8 +8,11 @@
 # its build context, so nothing inside this directory can install from it: this
 # file used to `npm ci` a nested `ts/package-lock.json`, and that lockfile no
 # longer exists. Building with `packages/llmwiki-kg` as the context therefore
-# cannot work any more; it must be the repository root, which is NOT yet reflected
-# in `docker-compose.yml` (that wiring is a separate change).
+# cannot work any more; it must be the repository root. That root context IS
+# wired in the service that ships this image
+# (`packages/llmwiki-kg/docker-compose.yml`, `build.context: ../..`), and any
+# other caller must build it the same way:
+# `docker build -f packages/llmwiki-kg/Dockerfile .`
 #
 # Measured for this shape: install exits 0 with 596 packages, the filtered build
 # produces `packages/llmwiki-kg/ts/dist/index.js`, and the prune leaves 222
