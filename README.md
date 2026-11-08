@@ -440,10 +440,16 @@ Before committing code changes, run:
 
 ```bash
 npx tsc --noEmit
+npm run typecheck:tests
 npm run build
+npm run test:affected
 npm test
 npm run fallow:ci
 ```
+
+`npm run test:affected` covers the tests for what you changed; `npm test` runs the
+whole suite and is the one to use for cross-cutting changes or before opening a
+pull request. It does not replace `npm run test:affected`.
 
 A local run of the database-backed suites needs Docker: it starts its own pinned
 `pgvector/pgvector:pg16` container, where CI instead supplies the same image as a
