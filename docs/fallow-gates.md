@@ -220,17 +220,25 @@ audit attributes against", and that base is the merge-base of the current branch
 and the local default branch (`main`)** — not "present in a file the diff
 touched", and not "written by this diff". So the gate's verdict depends on local
 `main` being the checkout's real reference, and that is deliberate: on this clone
-`origin/main` is `8203862`, 258 commits behind local `main`, so a remote-based
-base hands roughly 250 commits of history to the current changeset and turns the
-gate red on an untouched tree for reasons nobody can fix. Reproduce the numbers
-instead of trusting a remembered one — measured on an unmodified tree at this
-commit, with `dist/` built:
+`origin/main` is `8203862`, a ref far behind local `main` (how far is itself a
+moving counter — measure it with the command below), so a remote-based base hands
+a long stretch of history to the current changeset and turns the gate red on an
+untouched tree for reasons nobody can fix.
+
+The commands below are reproducible; their countable output is not. Anything that
+counts commits (`8203862..HEAD`, `8203862..main`) or changed files
+(`changed_files_count`) grows every time a commit lands — writing a value here
+advances it, so any figure baked into this page is stale the moment it is
+committed. **Re-run the commands rather than trusting a number written here.** On
+an unmodified tree, with `dist/` built, what does hold is the pair of properties
+that are not counters: `duplication_introduced: 20` (the pre-existing clone
+groups) and `verdict: "warn"`.
 
 ```bash
-git rev-list --count 8203862..HEAD   # 252
-git rev-list --count 8203862..main   # 258
+git rev-list --count 8203862..HEAD   # moving counter — re-run it, never quote it
+git rev-list --count 8203862..main   # moving counter — re-run it, never quote it
 ./node_modules/.bin/fallow --root . audit --gate new-only --base 8203862 --format json -q
-# → {"changed_files_count": 659, "verdict": "warn", "duplication_introduced": 20}
+# → {"changed_files_count": <moves with every commit>, "verdict": "warn", "duplication_introduced": 20}
 ```
 
 Twenty introduced clone groups with no source change at all: that is the whole
