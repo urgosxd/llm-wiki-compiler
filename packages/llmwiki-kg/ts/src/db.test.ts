@@ -204,6 +204,35 @@ async function countPrecisionRows(): Promise<number> {
   return leftovers.length;
 }
 
+/**
+ * Non-UTC wire text Postgres may send, paired with the UTC instant it denotes.
+ *
+ * The wall clock is shifted by the offset: `+05:30` moves 10:15:30 back to
+ * 04:45:30, `-03:00` moves it forward to 13:15:30. Microsecond digits are
+ * carried as characters the whole way, never through a `Date`.
+ */
+const NON_UTC_OFFSETS = [
+  ["2024-03-05 10:15:30.123456+05:30", "2024-03-05T04:45:30.123456Z"],
+  ["2024-03-05 10:15:30.789012-03:00", "2024-03-05T13:15:30.789012Z"],
+];
+
+/**
+ * The exact text the rejection path produces for `not a timestamp`:
+ * `Unrecognized Postgres timestamp text: ${JSON.stringify(raw)}`.
+ */
+const REJECTION_MESSAGE =
+  'Unrecognized Postgres timestamp text: "not a timestamp"';
+
+/** Runs `call` and hands back whatever it threw, so a test can assert on it. */
+function captureThrow(call: () => unknown): unknown {
+  try {
+    call();
+  } catch (error) {
+    return error;
+  }
+  return undefined;
+}
+
 describe("normalizeTimestamptz", () => {
   // Pure functions: these run with or without Docker.
 
@@ -243,6 +272,16 @@ describe("normalizeTimestamptz", () => {
 
   it("throws on input it cannot represent instead of guessing", () => {
     expect(() => normalizeTimestamptz("not a timestamp")).toThrow(TypeError);
+  });
+
+  it.each(NON_UTC_OFFSETS)("shifts %s onto the UTC clock", (raw, utc) => {
+    expect(normalizeTimestamptz(raw)).toBe(utc);
+  });
+
+  it("reports the exact rejection message for unparseable input", () => {
+    const error = captureThrow(() => normalizeTimestamptz("not a timestamp"));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error).toHaveProperty("message", REJECTION_MESSAGE);
   });
 });
 
