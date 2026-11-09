@@ -99,7 +99,7 @@ Consequence: the work is plumbing that survives every CLI decision, and "no prod
 | T2 (done) — Piece 2, the MCP barrel decoupling (`packages/wiki/src/mcp/**`) | S5-S9 | worker | e00b838534bb6a3ed8a7e827399e6867ad3cd6c0 |
 | T3 (done) — Piece 1, `test/artifact/dist-specifiers.test.ts` | S1-S4 | worker | (this commit) |
 | T4 (done) — Piece 3, `test/artifact/entries-load.test.ts` | S10-S11 | worker | e5ef03da7b78d35de26a2ad5983646469fd11ff9 + fixup (this commit) |
-| T5 — independent verification of T2-T4 plus the full gate set | S12-S15 | verify | pending |
+| T5 (done) — independent verification of T2-T4 plus the full gate set | S12-S15 | verify | (no commit — verification) |
 | T6 (done) — hardening: guard fail-open closed, stale cycle comments corrected, barrel absence pinned | S1-S4, S5-S9, S13 | worker | (this commit) |
 
 T1 is done because this file is its deliverable. The commit column of T1 reads `(this commit)`
@@ -222,3 +222,54 @@ wrong in the same direction, overstating the module fan-out and understating its
 
 Post-rebuild evidence for the comment fix: `grep -ro '@repo/' dist packages/llmwiki-core/dist
 --include=*.js | wc -l` is still **2**, and the walked file counts are still **35** and **41**.
+
+L4 (T5 close-out — a decision and evidence record, not a quotation). Independent verification of
+T2-T4 plus the full gate set is complete and green. This entry closes T5 and records the evidence;
+it changes no `S#` and no task other than T5's own state.
+
+**Verified tree:** `69b1d10760a04c8805f5a84a77e15e7f764e40b5`. A verification task produces no
+commit of its own, so T5's commit cell reads `(no commit — verification)`.
+
+**Full suite, alone.** `pnpm test` alone returned `Test Files 929 passed | 3 skipped (932)` and
+`Tests 6888 passed | 7 skipped (6895)`, 0 failed, `Duration 513.05s`. `maxWorkers` stayed 4 —
+untouched, so the skips are the suite's own pre-existing skips and not a concurrency shortening.
+
+**Packaging.** `test:pack` passed 1 file / 1 test in 44.07s.
+
+**Lint.** `lint` exited 0 with the literal triple `643 / 466 / 496`, unchanged from the ceiling, and
+`git diff <base>..HEAD -- eslint-baseline.json` is empty: the baseline was never rebaselined to
+absorb this slice's changes.
+
+**Static gates.** `gates:static` passed all 6 in 24.2 s: `tsc --noEmit` 0, `typecheck:tests` 0
+(`1776 files checked; 260 baseline diagnostics in 94 files; no regression`), `fallow:ci` 0,
+`fallow:kg` 0, `build` 0.
+
+**Database was real, not stubbed.** A real pgvector container (`kind_kirch`) was adopted for the
+run, so the database-backed suites executed against a live database, and
+`LLMWIKI_TEST_ALLOW_NO_DATABASE` was never set. The suite's green is therefore not a
+no-database fast path.
+
+**Guard re-measured on the fresh build.** Total `/@repo\//` occurrences = **2**, both at
+`packages/llmwiki-core/dist/compiler-cli.js` lines 306 and 326 — the serialized
+`packages/wiki/package.json` dead data that L2 ruling pins deliberately. Import-position occurrences
+= **0**. Walked `.js` files per root = **35** and **41**, matching the L3 post-rebuild figures. The
+ratchet held at its pin: the guard saw nothing new because nothing new reached the bundle.
+
+**History and protected surface.** Six commits, linear, base `5bac26b2` an ancestor.
+`.github/`, `Dockerfile`, `docker/entry.sh`, `package.json`, `pnpm-lock.yaml` and `tsconfig.json`
+are untouched. `bin` is still `llmwiki: dist/cli.js`. No pre-existing test was modified: all three
+artifact tests read `A` (added), never `M`.
+
+**Residual gaps the final verification named.** These are accepted limits, not open failures, and
+none of them is closed by this slice: no argv, no exit codes, no stdout/stderr contract and no
+shebang coverage; runtime-assembled specifiers such as `"@re" + "po/kg"` are invisible to the static
+text guard (documented in the guard's own rationale, caught only in the literal-survives form by
+the total ratchet); the count pin is a ceiling and therefore evidence of *no increase*, not proof
+that the remaining two occurrences are intended; dynamic-`import()` reachability into
+`compiler-cli.ts` from the MCP process is witnessed only by static analysis and `fallow`, never
+observed at runtime; and the pre-existing `AKS_TEST_GATEWAY` and quickstart `it.skip` suites remain
+skipped exactly as they were at base.
+
+Decision recorded: T5 is closed as done. The gaps above stay named rather than converted into new
+tasks, because closing any of them requires the CLI-removal slice or a runtime probe outside this
+feature's envelope, and inventing tasks for them here would reopen scope S15 forbids.
