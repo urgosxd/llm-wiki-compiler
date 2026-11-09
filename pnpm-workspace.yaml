@@ -13,9 +13,11 @@ overrides:
 
 # The three settings below are the LIVE values. This pnpm (11.5.0) does not apply
 # pnpm-specific settings from `.npmrc` — proven with `pnpm config get
-# node-linker` returning `undefined` while the `.npmrc` was on disk — so the
-# `.npmrc` equivalents are documentation only and these camelCase entries are
-# what actually bind. Verified with `pnpm config get <key>` before importing.
+# node-linker` returning `undefined` while a `.npmrc` was on disk — so this file
+# is now their SOLE source: the root `.npmrc` is deleted on this branch (it held
+# only keys pnpm never read), and its full original contents are preserved as
+# record L3 in `odd/tasks/pnpm-phantom-deps.md`. Verified with
+# `pnpm config get <key>` before importing.
 
 # npm's layout is flat, and this delivery changes exactly one variable: the
 # package manager. pnpm's default strict layout would surface phantom
