@@ -244,10 +244,10 @@ claiming the guardrail covered it.
 
 ## Tasks
 
-- [x] T1 — this document · S1-S11 · Lead · commit: pending (filled by the bookkeeping commit that records this delivery's SHAs)
+- [x] T1 — this document · S1-S11 · Lead · commit: e4f3b8f1887d9ef4b03672099a91810279be323a
 - [x] T2 — `run-affected-tests.ts`: full-tier scope prints the line and exits 78 (see L5; L2's exit 0 is superseded), RED test first, including the extracted entry behind the invoked-directly guard, the injected `runner` seam so the test can count invocations, and the S11 guardrail — the four-way outcome, the three statuses (`0` / `69` / `78`), and the `unresolved`-is-not-`none` tests · S3a, S6, S11 · worker · commit: 405c5999f46a2e41e951790d8add09c21dac6f65
 - [x] T3 — remove `test:affected` from `.github/workflows/ci.yml` and `.husky/pre-push`, update the `test/control-gates.test.ts` CI-wiring assertions explicitly, and update the push-gate pins in `scripts/pnpm-invocation.test.ts` (the hook command list and the build-then-affected ordering assertions); grep for any other test pinning the deleted invocation · S3b, S3c, S9 · worker · commit: f658edffde9ac46a8c9195fb3449bdff6131dd70
-- [x] T4 — `vitest.config.ts` worker and integration caps derived from the S1 measurements · S1, S2 · worker · commit: pending (filled by the bookkeeping commit that records this task's SHA)
+- [x] T4 — `vitest.config.ts` worker and integration caps derived from the S1 measurements · S1, S2 · worker · commit: e4f3b8f1887d9ef4b03672099a91810279be323a
   Precondition: measure only when `pgrep -af vitest` is empty and no other campaign is
   running; each measurement point sequential and alone. The three measurement points are
   recorded by appending them to this document's `## Log`, with the worker count printed
