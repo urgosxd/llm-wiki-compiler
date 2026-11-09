@@ -3,10 +3,11 @@
  *
  * ## Why fixtures need this at all
  *
- * Every tenant-scoped table carries an RLS policy, and since
- * `db/migration_rls_write_policies.sql` those policies validate writes as well as
- * reads. A fixture that does a bare `insert into stacks ...` therefore fails as soon
- * as the suite runs against the unprivileged role:
+ * Every tenant-scoped table carries a `FOR ALL` RLS policy
+ * (`db/migration_rls_tenancy.sql`) whose omitted `WITH CHECK` falls back to `USING`
+ * (measured), so it validates writes as well as reads. A fixture that does a bare
+ * `insert into stacks ...` therefore fails as soon as the suite runs against the
+ * unprivileged role:
  *
  *   new row violates row-level security policy for table "stacks"
  *

@@ -128,11 +128,13 @@ export async function bindTenant(
  * ## Why this exists separately from {@link bindTenant}
  *
  * Creating a Stack is the one write where the row being written IS the tenant, so
- * there is no `stack_id` to bind — it is what the INSERT is about to produce. Under
- * the write policies in `db/migration_rls_write_policies.sql`, `stacks` therefore
- * validates against `app.stack_domain` instead of `app.stack_id`:
+ * there is no `stack_id` to bind — it is what the INSERT is about to produce. In the
+ * `FOR ALL` policy in `db/migration_rls_tenancy.sql` the `WITH CHECK` is omitted, and
+ * Postgres then validates the row being written against `USING` itself (measured), so
+ * the domain half is what has to be bound:
  *
- *   with check (domain = nullif(current_setting('app.stack_domain', true), '')::uuid)
+ *   using (id = nullif(current_setting('app.stack_id', true), '')::uuid
+ *          or domain = nullif(current_setting('app.stack_domain', true), ''))
  *
  * Without this call that predicate evaluates to NULL, the INSERT is refused, and
  * `POST /stacks` fails closed. Failing closed is the right behaviour; being unable

@@ -20,9 +20,10 @@
  *
  * ## Row-level security, and the route taken
  *
- * `stacks` carries a policy that validates BOTH halves —
- * `packages/llmwiki-kg/db/migration_rls_tenancy.sql` for reads and
- * `migration_rls_write_policies.sql` for writes:
+ * `stacks` carries ONE `FOR ALL` policy, in
+ * `packages/llmwiki-kg/db/migration_rls_tenancy.sql`, whose `WITH CHECK` is omitted —
+ * so Postgres validates writes against the same `USING` predicate (measured) and it
+ * governs reads AND writes:
  *
  *   using (id = nullif(current_setting('app.stack_id', true), '')::uuid
  *          or domain = nullif(current_setting('app.stack_domain', true), ''))
