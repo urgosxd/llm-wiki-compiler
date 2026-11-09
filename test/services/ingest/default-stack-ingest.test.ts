@@ -34,7 +34,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 
 import { DATABASE_URL, createKgPostgresHarness } from "../../fixtures/kg-postgres.js";
 import { DEFAULT_STACK_DOMAIN } from "../../../src/dimensions/stack-selection.js";
@@ -58,7 +58,7 @@ afterAll(() => harness.cleanup());
  * @param db - Handle to read through.
  * @returns The default Stack's id, or undefined when it was never materialized.
  */
-async function defaultStackId(db: Database): Promise<string | undefined> {
+async function defaultStackId(db: DatabaseHandle): Promise<string | undefined> {
   const rows = await db.execute<{ id: string }>(
     sql`select id from stacks where domain = ${DEFAULT_STACK_DOMAIN}`,
   );

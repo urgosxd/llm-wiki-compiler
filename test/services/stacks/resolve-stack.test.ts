@@ -22,7 +22,7 @@
 
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 
 import { createKgPostgresHarness } from "../../fixtures/kg-postgres.js";
 import { DEFAULT_STACK_DOMAIN } from "../../../src/dimensions/stack-selection.js";
@@ -42,7 +42,7 @@ class DiscardCase extends Error {}
  * @param tx - Handle to read through.
  * @returns The matching Stack ids.
  */
-async function defaultStackIds(tx: Database): Promise<readonly string[]> {
+async function defaultStackIds(tx: DatabaseHandle): Promise<readonly string[]> {
   const rows = await tx.execute<{ id: string }>(
     sql`select id from stacks where domain = ${DEFAULT_STACK_DOMAIN}`,
   );
@@ -60,14 +60,14 @@ async function defaultStackIds(tx: Database): Promise<readonly string[]> {
  * @param body - Work to run against the isolated handle.
  * @returns What `body` returned.
  */
-async function isolated<T>(body: (tx: Database) => Promise<T>): Promise<T> {
+async function isolated<T>(body: (tx: DatabaseHandle) => Promise<T>): Promise<T> {
   const observed: { value?: T } = {};
-  const run = async (tx: Database): Promise<void> => {
+  const run = async (tx: DatabaseHandle): Promise<void> => {
     await tx.execute(sql`delete from stacks where domain = ${DEFAULT_STACK_DOMAIN}`);
     observed.value = await body(tx);
     throw new DiscardCase("roll the case's work back");
   };
-  await db.transaction((tx) => run(tx as unknown as Database)).catch((error: unknown) => {
+  await db.transaction((tx) => run(tx as unknown as DatabaseHandle)).catch((error: unknown) => {
     if (error instanceof DiscardCase) return;
     throw error;
   });

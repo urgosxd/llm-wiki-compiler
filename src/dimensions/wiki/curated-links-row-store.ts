@@ -33,7 +33,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import {
   addCuratedLinks,
   CURATED_LINK_STORE_VERSION,
@@ -94,7 +94,7 @@ function recordOf(row: CuratedLinkRow): CuratedLinkRecord {
  * @param stackId - The Stack whose records to read.
  * @returns The records, empty when the Stack has none.
  */
-async function readRecords(tx: Database, stackId: string): Promise<CuratedLinkRecord[]> {
+async function readRecords(tx: DatabaseHandle, stackId: string): Promise<CuratedLinkRecord[]> {
   const rows = await tx.execute<CuratedLinkRow>(sql`
     select ${LINK_COLUMNS}
     from wiki.curated_links
@@ -111,12 +111,12 @@ async function readRecords(tx: Database, stackId: string): Promise<CuratedLinkRe
  * and never a failure for the caller. The overlay is an improvement to a page, never a
  * precondition for publishing one.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose records to read.
  * @returns The records, or an empty list.
  */
 async function loadCuratedLinksFromRows(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): Promise<readonly CuratedLinkRecord[]> {
   return await withTenant(db, stackId, async (tx) => await readRecords(tx, stackId));
@@ -131,13 +131,13 @@ async function loadCuratedLinksFromRows(
  * mention a no-op instead of an error, which keeps a repeated run from failing on the
  * primary key.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack that owns these records.
  * @param incoming - Records in the order the review accepted them.
  * @param tally - Counters to fill with what was stored and what a bound refused.
  */
 async function recordCuratedLinksInRows(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   incoming: readonly CuratedLinkRecord[],
   tally: CuratedLinkCounts,
@@ -180,13 +180,13 @@ async function recordCuratedLinksInRows(
  * A dead record that stayed behind would be re-dropped and re-reported on every later
  * run, so forgetting it is part of the round trip rather than a cleanup.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack that owns these records.
  * @param stableKeys - Keys of the dropped records.
  * @returns How many rows were removed.
  */
 async function dropCuratedLinksFromRows(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   stableKeys: readonly string[],
 ): Promise<number> {
@@ -209,12 +209,12 @@ async function dropCuratedLinksFromRows(
  * from the SAME Stack variable that decides the page seams, so a run cannot read its
  * records from the file while writing its pages to rows.
  *
- * @param db - Database handle of the run.
+ * @param db - DatabaseHandle handle of the run.
  * @param stackId - The Stack to read and write.
  * @returns The row-backed port.
  */
 export function createRowCuratedLinkStore(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): CuratedLinkStorePort {
   return {

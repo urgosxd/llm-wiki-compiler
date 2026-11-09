@@ -15,7 +15,7 @@
 import { appRoleExists, countAsAppRole } from "../fixtures/rls-probe.js";
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { writeCompileConfig } from "../../src/dimensions/wiki/compile-config-store.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 
@@ -35,11 +35,11 @@ afterAll(async () => {
 /**
  * Count rows mentioning this file's secret slug, with NO stack predicate.
  *
- * @param db - Database handle to run on.
+ * @param db - DatabaseHandle handle to run on.
  * @param boundStackId - Stack to bind, or `null` for an unbound session.
  * @returns How many rows the statement could see.
  */
-async function countSecretAsApp(db: Database, boundStackId: string | null): Promise<number> {
+async function countSecretAsApp(db: DatabaseHandle, boundStackId: string | null): Promise<number> {
   return countAsAppRole(db, boundStackId, async (tx) => {
     const rows = await tx.execute<{ n: number }>(
       sql`select count(*)::int as n from wiki.compile_config where ${SECRET_SLUG} = any(frozen_slugs)`,

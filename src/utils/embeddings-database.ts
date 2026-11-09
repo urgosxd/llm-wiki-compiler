@@ -32,7 +32,7 @@
  * compiled page are different subjects with different lifecycles.
  */
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { rankChunksInSql } from "./embeddings-rank-sql.js";
 import { bindStack, splitPageId } from "./embeddings-tenant.js";
 import type { PageId } from "./page-id.js";
@@ -88,14 +88,14 @@ function joinPageId(pageDirectory: string, slug: string): PageId {
  * treat the wiki as un-embedded, while an unreadable header must degrade retrieval
  * with a warning instead of silently rebuilding over paid vectors.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack whose header to read.
  * @returns The header, or null when this Stack has none.
  */
 export async function readEmbeddingMeta(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
-  callerTx?: Database,
+  callerTx?: DatabaseHandle,
 ): Promise<{
   model: string;
   dimensions: number;
@@ -109,7 +109,7 @@ export async function readEmbeddingMeta(
   // connection whose role is not BYPASSRLS. Measured against `llmwiki_app`: 0 rows
   // unbound, 1 bound.
   if (callerTx !== undefined) return readMetaInScope(callerTx, stackId);
-  return db.transaction((tx) => readMetaInScope(tx as unknown as Database, stackId));
+  return db.transaction((tx) => readMetaInScope(tx as unknown as DatabaseHandle, stackId));
 }
 
 /**
@@ -123,7 +123,7 @@ export async function readEmbeddingMeta(
  * @returns The header, or null when this Stack has none.
  */
 async function readMetaInScope(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
 ): Promise<{
   model: string;
@@ -156,12 +156,12 @@ async function readMetaInScope(
  * rather than failing the read: the file loader's contract was that one malformed
  * identity must not make the corpus unavailable.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack whose store to read.
  * @returns The reassembled store, or null when this Stack has none.
  */
 export async function readEmbeddingStoreFromDb(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): Promise<EmbeddingStoreV3 | null> {
   // One transaction for the header AND the vectors: the binding is
@@ -169,7 +169,7 @@ export async function readEmbeddingStoreFromDb(
   // another would leave the second read unbound and return zero rows for a Stack
   // that has vectors.
   return db.transaction(async (tx) => {
-    const scoped = tx as unknown as Database;
+    const scoped = tx as unknown as DatabaseHandle;
     const meta = await readMetaInScope(scoped, stackId);
     if (meta === null) return null;
 
@@ -295,11 +295,11 @@ function toIsoString(value: Date | string): string {
  * missing header would make every first query on a fresh Stack emit a warning that
  * looks like a fault.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack whose store to read.
  * @returns A source the loaders can gate.
  */
-export function databaseEmbeddingSource(db: Database, stackId: string): EmbeddingStoreSource {
+export function databaseEmbeddingSource(db: DatabaseHandle, stackId: string): EmbeddingStoreSource {
   return {
     // Rows can rank without materializing the store, which is the whole point of
     // the row store: the file path must read every vector to score anything.
@@ -365,11 +365,11 @@ function describeReadFailure(err: unknown): string {
  * vector describe one page while sitting under another's identity. The writer only
  * ever produces v3, so a non-v3 here means a caller bypassed the migration core.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack that owns these vectors.
  * @returns A sink the writer can persist through.
  */
-export function databaseEmbeddingSink(db: Database, stackId: string): EmbeddingStoreSink {
+export function databaseEmbeddingSink(db: DatabaseHandle, stackId: string): EmbeddingStoreSink {
   return {
     write: async (store): Promise<void> => {
       if (store.version !== 3) {
@@ -391,11 +391,11 @@ export function databaseEmbeddingSink(db: Database, stackId: string): EmbeddingS
  * and write the file, updating a store nothing consults. Returning the pair from
  * one function makes that mismatch unrepresentable.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack that owns these vectors.
  * @returns A location the writer and reader both accept.
  */
-export function databaseEmbeddingLocation(db: Database, stackId: string): EmbeddingStoreLocation {
+export function databaseEmbeddingLocation(db: DatabaseHandle, stackId: string): EmbeddingStoreLocation {
   return {
     source: databaseEmbeddingSource(db, stackId),
     sink: databaseEmbeddingSink(db, stackId),

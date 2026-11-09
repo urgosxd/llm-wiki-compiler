@@ -79,7 +79,7 @@ import type {
 } from "../types.js";
 import { wikiIdempotencyKey } from "./idempotency.js";
 import { withTenant } from "./page-store.js";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 
 /** Directory compiled concept pages live in. */
 const CONCEPTS_DIRECTORY = "concepts";
@@ -104,13 +104,13 @@ interface ExistingPage {
  * title there may be compile's rather than the source's. `wiki.source_documents`
  * is written only by `saveSourceDocument`, which only ingest calls.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The tenant.
  * @param source - Source identity.
  * @returns The stored title, or `undefined` when this source has no document row.
  */
 async function findIngestedTitle(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   source: string,
 ): Promise<string | undefined> {
@@ -153,13 +153,13 @@ function requireSlug(title: string): string {
  * `page-store.ts` documents: RLS is inert under a bypassing role, so the explicit
  * predicate is the guarantee.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The tenant.
  * @param source - Source identity.
  * @returns The existing page, or `undefined`.
  */
 async function findPageBySource(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   source: string,
 ): Promise<ExistingPage | undefined> {
@@ -182,14 +182,14 @@ async function findPageBySource(
  * the only existing holder is the same source, which is what keeps a re-ingest
  * under a changed title updating in place rather than forking.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The tenant.
  * @param slug - The desired slug.
  * @param source - The source asking for it.
  * @returns A collision-free slug.
  */
 async function resolveFreeSlug(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   slug: string,
   source: string,
@@ -219,8 +219,8 @@ async function resolveFreeSlug(
 export interface WikiStoreDimensionOptions {
   /** The tenant whose pages this dimension writes. */
   readonly stackId: string;
-  /** Database handle; the pooled one in production, a test's own in tests. */
-  readonly db: Database;
+  /** DatabaseHandle handle; the pooled one in production, a test's own in tests. */
+  readonly db: DatabaseHandle;
   /**
    * Project root whose `sources/` the raw markdown is ALSO written to.
    *
@@ -300,7 +300,7 @@ async function prepareWikiWrite(
 async function commitSourceDocument(
   options: WikiStoreDimensionOptions,
   handle: StoredWikiWrite,
-  tx: Database | undefined,
+  tx: DatabaseHandle | undefined,
 ): Promise<void> {
   await saveSourceDocument(
     options.db,
@@ -324,7 +324,7 @@ async function commitSourceDocument(
 async function commitPageRow(
   options: WikiStoreDimensionOptions,
   handle: StoredWikiWrite,
-  tx: Database | undefined,
+  tx: DatabaseHandle | undefined,
 ): Promise<void> {
   // Reporting `unchanged` is what tells the coordinator this dimension did no work,
   // so an unchanged ingest writes no page row at all.
@@ -366,7 +366,7 @@ export function createWikiStoreDimension(options: WikiStoreDimensionOptions): Di
 
     async commit(prepared: PreparedWrite, scope?: CommitScope): Promise<CommittedWrite> {
       const handle = prepared.handle as StoredWikiWrite;
-      const tx = scope?.tx as Database | undefined;
+      const tx = scope?.tx as DatabaseHandle | undefined;
 
       // THE ROWS, inside the coordinator's transaction when it supplied one. Order
       // between the two statements is free now: the transaction makes both

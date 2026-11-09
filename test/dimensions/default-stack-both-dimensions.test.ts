@@ -50,7 +50,7 @@ import { resolveDimensions } from "../../src/dimensions/index.js";
 import { DEFAULT_STACK_DOMAIN } from "../../src/dimensions/stack-selection.js";
 import type { KgDimensionOptions } from "../../src/dimensions/kg/index.js";
 import type { WikiStoreDimensionOptions } from "../../src/dimensions/wiki/database.js";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { resolveStackForCommand } from "../../src/services/stacks/resolve-stack.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
@@ -110,7 +110,7 @@ function bareCheckoutEnv(): NodeJS.ProcessEnv {
  * @param handle - Handle to read through.
  * @returns The default Stack's id, or undefined when no row carries the domain.
  */
-async function defaultStackRowId(handle: Database): Promise<string | undefined> {
+async function defaultStackRowId(handle: DatabaseHandle): Promise<string | undefined> {
   const rows = await handle.execute<{ id: string }>(
     sql`select id from stacks where domain = ${DEFAULT_STACK_DOMAIN}`,
   );

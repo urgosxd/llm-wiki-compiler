@@ -42,7 +42,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { DEFAULT_STACK_DOMAIN, DEFAULT_STACK_NAME } from "../../dimensions/stack-selection.js";
 
 /** Narrow a caught value to a message worth appending to ours. */
@@ -66,7 +66,7 @@ class DefaultStackProvisionError extends Error {
  * @throws {DefaultStackProvisionError} when the domain is unreadable or unwritable,
  *   including a row-level-security refusal.
  */
-export async function ensureDefaultStack(db: Database): Promise<string> {
+export async function ensureDefaultStack(db: DatabaseHandle): Promise<string> {
   try {
     return await db.transaction(async (tx) => {
       await tx.execute(

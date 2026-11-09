@@ -27,12 +27,12 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 
 import { APP_ROLE } from "./rls-probe.js";
 
 /** The minimal shape this fixture needs from a database handle. */
-type AnyDb = Database & {
+type AnyDb = DatabaseHandle & {
   execute: (query: unknown) => Promise<unknown>;
   transaction: (work: (tx: unknown) => Promise<unknown>) => Promise<unknown>;
 };
@@ -43,7 +43,7 @@ type AnyDb = Database & {
  * @param db - Real handle, connected as the superuser harness role.
  * @returns A handle that behaves like `db` but every scope is policied.
  */
-export function roleScopedDb(db: Database): Database {
+export function roleScopedDb(db: DatabaseHandle): DatabaseHandle {
   const wrapped = {
     transaction: async (work: (tx: unknown) => Promise<unknown>) =>
       (db as unknown as AnyDb).transaction(async (tx: unknown) => {
@@ -58,5 +58,5 @@ export function roleScopedDb(db: Database): Database {
         return (tx as AnyDb).execute(query);
       }),
   };
-  return wrapped as unknown as Database;
+  return wrapped as unknown as DatabaseHandle;
 }

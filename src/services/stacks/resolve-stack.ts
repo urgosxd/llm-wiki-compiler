@@ -42,7 +42,7 @@
  * The flag is the caller-level override; the resolution stays here, once.
  */
 
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { selectStack } from "../../dimensions/stack-selection.js";
 import { DIMENSIONS_ENV_VAR } from "../../dimensions/activation.js";
 import type { DimensionName } from "../../dimensions/types.js";
@@ -82,7 +82,7 @@ function enabledDimensionNames(env: NodeJS.ProcessEnv): readonly string[] {
  *   `ensureDefaultStack`.
  */
 export async function resolveStackForCommand(
-  db: Database,
+  db: DatabaseHandle,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string> {
   const selection = selectStack({ env });
@@ -114,7 +114,7 @@ export async function resolveStackForCommand(
  *   `ensureDefaultStack`.
  */
 export async function resolveStackForDimensions(
-  db: Database,
+  db: DatabaseHandle,
   env: NodeJS.ProcessEnv,
   dimensions: readonly DimensionName[],
 ): Promise<string | undefined> {

@@ -22,7 +22,7 @@
  * table describes exactly the store that was passed in.
  */
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { bindStack, splitPageId } from "./embeddings-tenant.js";
 import type { ChunkEmbeddingV3, EmbeddingStoreV3, PageEmbeddingV3 } from "./embeddings-store.js";
 import { EMBEDDING_MODELS } from "./constants.js";
@@ -36,7 +36,7 @@ import { getActiveEmbeddingProviderName } from "./embedding-provider.js";
 const EMBEDDING_COLUMN_WIDTH = 768;
 
 export async function writeEmbeddingStoreToDb(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   store: EmbeddingStoreV3,
 ): Promise<void> {
@@ -51,7 +51,7 @@ export async function writeEmbeddingStoreToDb(
 }
 
 /** Upsert the header row for this Stack. */
-async function upsertMeta(tx: Database, stackId: string, store: EmbeddingStoreV3): Promise<void> {
+async function upsertMeta(tx: DatabaseHandle, stackId: string, store: EmbeddingStoreV3): Promise<void> {
   await tx.execute(sql`
     insert into wiki.embedding_store_meta
       (stack_id, model, dimensions, fingerprint, min_similarity, updated_at)
@@ -76,7 +76,7 @@ async function upsertMeta(tx: Database, stackId: string, store: EmbeddingStoreV3
  * than left behind.
  */
 async function upsertPageVectors(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   entries: readonly PageEmbeddingV3[],
 ): Promise<void> {
@@ -112,7 +112,7 @@ async function upsertPageVectors(
 
 /** Upsert chunk vectors, skipping any whose page identity does not parse. */
 async function upsertChunkVectors(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   chunks: readonly ChunkEmbeddingV3[],
 ): Promise<void> {
@@ -146,7 +146,7 @@ async function upsertChunkVectors(
  * may itself contain characters that make a string-built predicate ambiguous.
  */
 async function deleteAbsentPageVectors(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   entries: readonly PageEmbeddingV3[],
 ): Promise<void> {
@@ -176,7 +176,7 @@ async function deleteAbsentPageVectors(
  * column of the row value: chunk identity is the triple, never a delimited string.
  */
 async function deleteAbsentChunkVectors(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   keptChunks: readonly ChunkEmbeddingV3[],
 ): Promise<void> {

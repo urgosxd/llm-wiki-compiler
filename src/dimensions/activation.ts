@@ -42,7 +42,8 @@
  * must refuse keep refusing.
  */
 
-import { createClient, createDatabase, kgConfig, type Database } from "@repo/kg";
+import { createClient, createDatabase, kgConfig } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { createKgDimension } from "./kg/index.js";
 import { createWikiStoreDimension } from "./wiki/database.js";
 import type { Dimension, DimensionName } from "./types.js";
@@ -109,7 +110,7 @@ function isKnownDimension(name: string): name is DimensionName {
  */
 export interface DimensionsDatabase {
   /** Drizzle handle the dimensions are bound to. */
-  readonly db: Database;
+  readonly db: DatabaseHandle;
   /** Drain the pool. Safe to call once per handle. */
   close(): Promise<void>;
 }
@@ -160,7 +161,7 @@ export interface ResolveDimensionsOptions {
    */
   readonly stackId?: string;
   /**
-   * Database handle to bind the wiki dimension to.
+   * DatabaseHandle handle to bind the wiki dimension to.
    *
    * REQUIRED, and deliberately not optional. Every dimension is Postgres-backed
    * now, so a caller without a handle cannot build one. It is a required
@@ -170,7 +171,7 @@ export interface ResolveDimensionsOptions {
    * far from the line that forgot to pass it. Making it required turns each of
    * those into a compile error at the call site instead.
    */
-  readonly db: Database;
+  readonly db: DatabaseHandle;
   /**
    * Restrict resolution to these dimensions, intersected with the switch.
    *

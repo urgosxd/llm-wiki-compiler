@@ -36,6 +36,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "@repo/foundation": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "express": "^5.3.0",
     "postgres": "^3.4.9",

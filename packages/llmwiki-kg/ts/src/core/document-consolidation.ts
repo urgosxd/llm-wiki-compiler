@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 
+import type { DatabaseHandle } from "@repo/foundation";
 import type { Database } from "../db.js";
 import { bindCallerStack } from "./stack_resolver.js";
 import { extractionModel } from "./llm/endpoints.js";
@@ -88,7 +89,7 @@ const DOCUMENT_PIPELINE = "llamaindex-schema-extraction";
  *   not resolve identities behaves exactly as before.
  */
 async function findExistingEntity(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   entity: ConsolidationEntity,
 ): Promise<EntityLookupRow | undefined> {
@@ -116,7 +117,7 @@ async function findExistingEntity(
  * oracle.
  */
 async function updateEntity(
-  tx: Database,
+  tx: DatabaseHandle,
   entity: ExtractedEntity,
   existing: EntityLookupRow,
 ): Promise<string> {
@@ -154,7 +155,7 @@ async function updateEntity(
  * NULL `classification_state` means "no decision was recorded".
  */
 async function insertEntity(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   entity: ConsolidationEntity,
 ): Promise<string> {
@@ -198,7 +199,7 @@ async function insertEntity(
  * @returns `true` when a contribution row was actually inserted.
  */
 async function recordContribution(
-  tx: Database,
+  tx: DatabaseHandle,
   entityId: string,
   documentId: string,
   stackId: string,
@@ -238,7 +239,7 @@ async function recordContribution(
  *   {@link consolidateRelationshipRows}.
  */
 export async function consolidateEntityRows(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   documentId: string,
   extracted: readonly ConsolidationEntity[],
@@ -292,7 +293,7 @@ export async function consolidateEntityRows(
  *   from the second run was a new edge.
  */
 export async function consolidateRelationshipRows(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   extracted: readonly ConsolidationRelationship[],
   nameToId: ReadonlyMap<string, string>,
@@ -366,7 +367,7 @@ function incomingIdentityKey(relationship: ConsolidationRelationship): string {
  * @returns The stored identity key and predicate, or `undefined` when the slot is free.
  */
 async function existingEdge(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   edge: { readonly fromId: string; readonly toId: string; readonly type: string },
 ): Promise<{ identity_key: string; predicate: string | null } | undefined> {
@@ -391,7 +392,7 @@ async function existingEdge(
  * @returns The attempt count and one record per absorbed assertion.
  */
 export async function consolidateRelationshipRowsDetailed(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   extracted: readonly ConsolidationRelationship[],
   nameToId: ReadonlyMap<string, string>,
@@ -507,7 +508,7 @@ export interface DocumentRegistration {
  * @returns The document row's id.
  */
 export async function registerDocumentRow(
-  tx: Database,
+  tx: DatabaseHandle,
   registration: DocumentRegistration,
 ): Promise<string> {
   // Before the insert, for the same reason the consolidation functions do it:

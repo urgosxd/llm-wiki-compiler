@@ -37,7 +37,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 
 import type { ChunkRanking, RankedChunk, RankScope } from "./embeddings-load.js";
 import { toVectorLiteral } from "./embeddings-database-write.js";
@@ -60,7 +60,7 @@ interface RankedChunkRow extends Record<string, unknown> {
  * "ranked, and found nothing" from "could not rank": an empty array reads as "no
  * relevant pages", which is a different claim from "the index is unusable".
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The tenant whose chunks to rank.
  * @param queryVec - Embedded query; the caller has already checked its dimensions.
  * @param k - Maximum hits to return.
@@ -68,7 +68,7 @@ interface RankedChunkRow extends Record<string, unknown> {
  * @returns `ranked` with hits (possibly none), or `degraded` with a warning code.
  */
 export async function rankChunksInSql(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   queryVec: readonly number[],
   k: number,
@@ -126,7 +126,7 @@ export async function rankChunksInSql(
  * @returns A degraded result when the store cannot be ranked, else null.
  */
 async function assertStoreIntegrityInSql(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
 ): Promise<ChunkRanking | null> {
   const rows = await tx.execute<IntegrityRow>(sql`

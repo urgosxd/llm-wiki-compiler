@@ -15,7 +15,7 @@
  * dependency a line instead of a loop.
  */
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { parseQualifiedPageId, type PageId } from "./page-id.js";
 
 /**
@@ -30,7 +30,7 @@ import { parseQualifiedPageId, type PageId } from "./page-id.js";
  * @param db - Connection about to run a tenanted statement.
  * @param stackId - Stack whose rows are being read or written.
  */
-export async function bindStack(db: Database, stackId: string): Promise<void> {
+export async function bindStack(db: DatabaseHandle, stackId: string): Promise<void> {
   await db.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
 }
 

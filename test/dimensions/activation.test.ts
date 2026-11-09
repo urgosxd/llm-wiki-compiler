@@ -12,7 +12,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createDatabase, createClient, type Database } from "@repo/kg";
+import { createDatabase, createClient } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import {
   AKS_STACK_ID_ENV_VAR,
   DIMENSIONS_ENV_VAR,
@@ -26,12 +27,12 @@ import {
  * Resolution only BUILDS dimensions; it opens no connection, so a lazy client
  * proves the wiring without requiring a live Postgres for the pure switch cases.
  */
-function lazyDatabase(): Database {
+function lazyDatabase(): DatabaseHandle {
   return createDatabase(createClient("postgresql://unused:unused@localhost:1/unused", 1));
 }
 
 /** Resolve with a synthetic environment and a usable handle. */
-function resolve(env: NodeJS.ProcessEnv, db: Database = lazyDatabase()) {
+function resolve(env: NodeJS.ProcessEnv, db: DatabaseHandle = lazyDatabase()) {
   return resolveDimensions({ root: "/tmp/project", env, kgDryRun: true, db });
 }
 

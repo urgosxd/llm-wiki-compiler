@@ -39,7 +39,7 @@ import { sql } from "drizzle-orm";
 
 import { createWikiStoreDimension } from "../../src/dimensions/wiki/store-dimension.js";
 import type { DimensionInput } from "../../src/dimensions/types.js";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -78,11 +78,11 @@ function inputOf(title: string, source: string): DimensionInput {
  * The absence of a `where stack_id` is the point: it asks what the database
  * itself enforces, not what a query author remembered to write.
  *
- * @param db - Database handle to run on.
+ * @param db - DatabaseHandle handle to run on.
  * @param boundStackId - Stack to bind, or `null` for an unbound session.
  * @returns How many rows the statement could see.
  */
-async function countSecretAsApp(db: Database, boundStackId: string | null): Promise<number> {
+async function countSecretAsApp(db: DatabaseHandle, boundStackId: string | null): Promise<number> {
   return countAsAppRole(db, boundStackId, async (tx) => {
     const rows = await tx.execute<{ n: number }>(
       sql`select count(*)::int as n from wiki.pages where title = ${SECRET_TITLE}`,

@@ -46,7 +46,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { buildCategoryRecord, mergeCategoryPatch } from "../../categories/model.js";
 import { categoryObjectId, requireCategoryId } from "../../categories/identity.js";
 import { sortMembers } from "../../categories/members.js";
@@ -122,7 +122,7 @@ function recordOf(row: CategoryRow, members: readonly CategoryMember[]): Categor
  * @returns The member entries, unsorted (the caller applies the shared order).
  */
 async function readMemberRows(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   categoryId: string,
 ): Promise<CategoryMember[]> {
@@ -154,7 +154,7 @@ function memberOf(row: MemberRow): CategoryMember {
  * @throws {CategoryValidationError} When the id is not a safe filename component.
  */
 async function readOneTx(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   categoryId: string,
 ): Promise<CategoryRecord | null> {
@@ -181,7 +181,7 @@ async function readOneTx(
  * @param stackId - The Stack whose categories to read.
  * @returns The records, empty when the Stack has no categories.
  */
-async function readAllTx(tx: Database, stackId: string): Promise<CategoryRecord[]> {
+async function readAllTx(tx: DatabaseHandle, stackId: string): Promise<CategoryRecord[]> {
   const categories = await tx.execute<CategoryRow>(sql`
     select ${CATEGORY_COLUMNS} from wiki.categories where stack_id = ${stackId}
   `);
@@ -216,7 +216,7 @@ function compareIds(left: string, right: string): number {
  * @param stackId - The Stack that will own the row.
  * @param record - The complete record to store.
  */
-async function insertCategoryTx(tx: Database, stackId: string, record: CategoryRecord): Promise<void> {
+async function insertCategoryTx(tx: DatabaseHandle, stackId: string, record: CategoryRecord): Promise<void> {
   await tx.execute(sql`
     insert into wiki.categories
       (stack_id, category_id, canonical_name, description, inclusion_criterion, created_at, updated_at)
@@ -237,7 +237,7 @@ async function insertCategoryTx(tx: Database, stackId: string, record: CategoryR
  * @param stackId - The Stack that owns the row.
  * @param record - The record carrying the new values.
  */
-async function patchCategoryTx(tx: Database, stackId: string, record: CategoryRecord): Promise<void> {
+async function patchCategoryTx(tx: DatabaseHandle, stackId: string, record: CategoryRecord): Promise<void> {
   await tx.execute(sql`
     update wiki.categories
        set canonical_name = ${record.canonicalName},
@@ -260,7 +260,7 @@ async function patchCategoryTx(tx: Database, stackId: string, record: CategoryRe
  * @param stackId - The Stack that owns the rows.
  * @param record - The record whose member set is authoritative.
  */
-async function replaceMembersTx(tx: Database, stackId: string, record: CategoryRecord): Promise<void> {
+async function replaceMembersTx(tx: DatabaseHandle, stackId: string, record: CategoryRecord): Promise<void> {
   const stored = await readMemberRows(tx, stackId, record.categoryId);
   const keep = new Set(record.members.map((member) => member.pageId));
   for (const member of stored) {
@@ -292,7 +292,7 @@ function outcomeOf(record: CategoryRecord): CategoryStoreOutcome {
  * colliding path and this refuses a taken primary key, with the SAME error and the same
  * decision string, so a caller cannot tell which backend answered a collision.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack that will own the category.
  * @param draft - The category to create.
  * @returns The stored record and its object id.
@@ -300,7 +300,7 @@ function outcomeOf(record: CategoryRecord): CategoryStoreOutcome {
  * @throws {CategoryWriteRefusedError} When the identity is already taken.
  */
 async function createInRows(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   draft: CategoryDraft,
 ): Promise<CategoryStoreOutcome> {
@@ -318,7 +318,7 @@ async function createInRows(
 /**
  * Apply a partial change to one stored category, preserving its identity.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack that owns the category.
  * @param categoryId - The identity to update.
  * @param patch - The fields to change; omitted fields keep their stored value.
@@ -327,7 +327,7 @@ async function createInRows(
  * @throws {CategoryValidationError} When a supplied field is blank or not a string.
  */
 async function updateInRows(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   categoryId: string,
   patch: CategoryPatch,
@@ -353,11 +353,11 @@ async function updateInRows(
  * backend can reuse the already-held project lock, and rows have no project lock -- the
  * transaction opened here is the unit.
  *
- * @param db - Database handle of the run.
+ * @param db - DatabaseHandle handle of the run.
  * @param stackId - The Stack to read and write.
  * @returns The row-backed port.
  */
-export function createRowCategoryStore(db: Database, stackId: string): CategoryStorePort {
+export function createRowCategoryStore(db: DatabaseHandle, stackId: string): CategoryStorePort {
   return {
     create: async (draft) => await createInRows(db, stackId, draft),
     read: async (categoryId) =>

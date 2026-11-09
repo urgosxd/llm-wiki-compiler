@@ -28,7 +28,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { ulid } from "../../utils/ulid.js";
 import { eventChecksum, type EventChecksumInput } from "../../events/store-record.js";
 import { eventPrevHash } from "../../events/event-digest.js";
@@ -81,11 +81,11 @@ function toEventRecord(row: EventRow): EventRecord & { seq: number } {
  * Ordered by `seq` because that IS the chain: a reader that reordered these rows
  * would report every link as broken.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose log to read.
  * @returns The records, oldest first; empty for a Stack that logged nothing.
  */
-export async function readEventLog(db: Database, stackId: string): Promise<Array<EventRecord & { seq: number }>> {
+export async function readEventLog(db: DatabaseHandle, stackId: string): Promise<Array<EventRecord & { seq: number }>> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
     const rows = await tx.execute<EventRow>(sql`
@@ -117,13 +117,13 @@ export async function readEventLog(db: Database, stackId: string): Promise<Array
  * Reading the tail's checksum inside the lock is one indexed lookup and cannot be
  * stale.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack to append to.
  * @param content - The event content, without `id`, `prevHash` or `checksum`.
  * @returns The appended record, with its allocated `seq`.
  */
 export async function appendEventRow(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   content: Omit<EventContent, "id" | "at"> & { at?: string },
 ): Promise<EventRecord & { seq: number }> {

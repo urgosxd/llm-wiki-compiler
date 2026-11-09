@@ -5,6 +5,7 @@
   "description": "A knowledge compiler CLI \u2014 raw sources in, interlinked wiki out",
   "type": "module",
   "workspaces": [
+    "packages/foundation",
     "packages/llmwiki-core",
     "packages/llmwiki-kg/ts"
   ],
@@ -74,6 +75,7 @@
   },
   "dependencies": {
     "@atomicstrata/llmwiki-core": "1.4.0-dev.20260919",
+    "@repo/foundation": "workspace:*",
     "@repo/kg": "workspace:*",
     "@anthropic-ai/claude-agent-sdk": "^0.3.163",
     "@anthropic-ai/sdk": "^0.101.0",

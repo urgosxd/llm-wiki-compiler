@@ -19,7 +19,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 
 import { createKgPostgresHarness } from "../../fixtures/kg-postgres.js";
 import {
@@ -50,7 +50,7 @@ class Rollback extends Error {}
  * @param tx - Handle to read through.
  * @returns Every row claiming the default domain.
  */
-async function defaultRows(tx: Database): Promise<readonly DefaultRow[]> {
+async function defaultRows(tx: DatabaseHandle): Promise<readonly DefaultRow[]> {
   return tx.execute<DefaultRow>(sql`
     select id, name, domain, description from stacks where domain = ${DEFAULT_STACK_DOMAIN}
   `);
@@ -62,12 +62,12 @@ async function defaultRows(tx: Database): Promise<readonly DefaultRow[]> {
  * @param body - Work to run against the isolated handle.
  * @returns What `body` returned.
  */
-async function isolated<T>(body: (tx: Database) => Promise<T>): Promise<T> {
+async function isolated<T>(body: (tx: DatabaseHandle) => Promise<T>): Promise<T> {
   let produced: T | undefined;
   await db
     .transaction(async (tx) => {
       await tx.execute(sql`delete from stacks where domain = ${DEFAULT_STACK_DOMAIN}`);
-      produced = await body(tx as unknown as Database);
+      produced = await body(tx as unknown as DatabaseHandle);
       throw new Rollback("abandon the case's transaction");
     })
     .catch((error: unknown) => {

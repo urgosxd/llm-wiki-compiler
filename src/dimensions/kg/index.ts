@@ -77,7 +77,8 @@ import {
   type ExtractedRelationship,
 } from "@repo/kg";
 import { defaultOntology, loadStoredOntology } from "@repo/kg";
-import type { Database, ExtractionResult, Ontology } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
+import type { ExtractionResult, Ontology } from "@repo/kg";
 
 import { getEmbeddingProvider } from "../../utils/embedding-provider.js";
 import { getProvider } from "../../utils/provider.js";
@@ -372,7 +373,7 @@ function summaryFor(kind: SummaryKind, handle: KgHandle): string {
 async function writeGraph(
   options: KgDimensionOptions,
   handle: KgHandle,
-  callerTx?: Database,
+  callerTx?: DatabaseHandle,
 ): Promise<void> {
   // JOINING IS THE WHOLE POINT. A commit that received a scope and opened its own
   // connection instead would commit the graph separately from the wiki, and a
@@ -390,7 +391,7 @@ async function writeGraph(
   try {
     const db = createDatabase(client);
     await db.transaction(async (tx) => {
-      await writeGraphRows(tx as unknown as Database, options, handle);
+      await writeGraphRows(tx, options, handle);
     });
   } finally {
     await client.end({ timeout: DB_CONNECT_TIMEOUT_SECONDS });
@@ -410,7 +411,7 @@ async function writeGraph(
  * @param handle - Prepared chunks and extraction; gains the assigned document id.
  */
 async function writeGraphRows(
-  tx: Database,
+  tx: DatabaseHandle,
   options: KgDimensionOptions,
   handle: KgHandle,
 ): Promise<void> {
@@ -704,7 +705,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       // point leaves today's env-derived path in place.
       const writeRun = resolveChatBackendRun(options);
       await withChatBackend(writeRun.backend, () =>
-        writeGraph(options, handle, scope?.tx as Database | undefined),
+        writeGraph(options, handle, scope?.tx as DatabaseHandle | undefined),
       );
       return {
         // Keyed on the real row id, so the outbox replay targets the same document

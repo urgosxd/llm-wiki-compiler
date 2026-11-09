@@ -56,7 +56,7 @@
 import { sql } from "drizzle-orm";
 
 import type { Page, PageDirectory } from "../../pages/list.js";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { toArrayLiteral } from "./sql-array.js";
 import { stringList } from "./page-string-list.js";
 
@@ -165,17 +165,17 @@ function toPage(row: WikiPageRow): Page | undefined {
  *
  * With no handle the behaviour is unchanged -- `db.transaction` opens the scope.
  *
- * @param db - Database handle (the pooled one, or a test's own).
+ * @param db - DatabaseHandle handle (the pooled one, or a test's own).
  * @param stackId - The tenant to bind.
  * @param work - Statements to run under that binding.
  * @param callerTx - Ambient transaction to join, when the coordinator owns one.
  * @returns Whatever `work` produced.
  */
 export async function withTenant<T>(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
-  work: (tx: Database) => Promise<T>,
-  callerTx?: Database,
+  work: (tx: DatabaseHandle) => Promise<T>,
+  callerTx?: DatabaseHandle,
 ): Promise<T> {
   if (callerTx !== undefined) {
     await callerTx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
@@ -183,7 +183,7 @@ export async function withTenant<T>(
   }
   return db.transaction(async (tx) => {
     await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
-    return work(tx as unknown as Database);
+    return work(tx as unknown as DatabaseHandle);
   });
 }
 
@@ -220,13 +220,13 @@ const PAGE_LISTING_COLUMNS = sql`
  * The filters mirror the defaults `listPages` applies to the filesystem today, so
  * switching this in does not silently widen what a caller sees.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The tenant whose pages to list.
  * @param limit - Maximum rows to return.
  * @returns The pages, in `updated_at DESC` order.
  */
 export async function listStoredPages(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   limit: number,
 ): Promise<Page[]> {
@@ -250,12 +250,12 @@ export async function listStoredPages(
  * filter on `parseStatus.orphaned` themselves -- needs to see them, and re-filtering
  * after the fact cannot recover a row the query never returned.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The tenant that owns the pages.
  * @returns All pages, body included, newest first.
  */
 export async function listStoredPagesUnfiltered(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): Promise<Page[]> {
   return withTenant(db, stackId, async (tx) => {
@@ -273,14 +273,14 @@ export async function listStoredPagesUnfiltered(
 /**
  * One page of one tenant by directory and slug, body included.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The tenant that owns the page.
  * @param pageDirectory - `concepts` or `queries`.
  * @param slug - The page's slug.
  * @returns The page, or `undefined` when this tenant has no such page.
  */
 export async function getStoredPage(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   pageDirectory: PageDirectory,
   slug: string,
@@ -327,13 +327,13 @@ export interface StoredPageKey {
  * rows that exist": the callers that exclude those apply their own rule, and a
  * pre-filtered batch could not recover a row it never returned.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The tenant that owns the pages.
  * @param keys - Identities to fetch; duplicates collapse to one row each.
  * @returns A map from `directory/slug` to page, for the identities that exist.
  */
 export async function getStoredPagesByKey(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   keys: readonly StoredPageKey[],
 ): Promise<Map<string, Page>> {
@@ -379,16 +379,16 @@ export async function getStoredPagesByKey(
  * `activePageBatchTransaction()` supplying the handle
  * (`src/dimensions/wiki/page-write-sink.ts:60-66`).
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The tenant that owns the page.
  * @param page - The page to store; its `pageDirectory` and `slug` are its identity.
  * @param callerTx - Batch transaction to join, when the caller owns one.
  */
 export async function upsertStoredPage(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   page: Page,
-  callerTx?: Database,
+  callerTx?: DatabaseHandle,
 ): Promise<void> {
   await withTenant(db, stackId, async (tx) => {
     await tx.execute(sql`
@@ -427,18 +427,18 @@ export async function upsertStoredPage(
  * state is "not present", and something else reaching it first does not make this a
  * failure. Refusing would strand a retry after a partial apply.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The tenant that owns the page.
  * @param pageDirectory - `concepts` or `queries`.
  * @param slug - The page's slug.
  * @param callerTx - Batch transaction to join, when the caller owns one.
  */
 export async function deleteStoredPage(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   pageDirectory: PageDirectory,
   slug: string,
-  callerTx?: Database,
+  callerTx?: DatabaseHandle,
 ): Promise<void> {
   await withTenant(db, stackId, async (tx) => {
     await tx.execute(sql`

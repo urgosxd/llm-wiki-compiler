@@ -55,7 +55,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { missingTestDatabase } from "./test-database-handoff.js";
 
 /** The role the application is meant to run as, once the DSN is switched. */
@@ -69,14 +69,14 @@ function describe(error: unknown): string {
 /**
  * Decide whether a failed probe means "absent" or "no database at all".
  *
- * @param db - Database handle whose probe failed.
+ * @param db - DatabaseHandle handle whose probe failed.
  * @param context - Which probe failed, phrased for whoever reads the failure.
  * @param cause - The probe's own error.
  * @returns `false` when the server answered and the object is genuinely absent.
  * @throws When the server does not answer, unless the documented opt-out is set.
  */
 async function absentOrUnreachable(
-  db: Database,
+  db: DatabaseHandle,
   context: string,
   cause: unknown,
 ): Promise<boolean> {
@@ -102,11 +102,11 @@ async function absentOrUnreachable(
  * Without it the only available role is the superuser, every policy is inert, and
  * every isolation assertion would pass vacuously.
  *
- * @param db - Database handle to ask.
+ * @param db - DatabaseHandle handle to ask.
  * @returns True when `llmwiki_app` exists.
  * @throws When the database cannot be obtained at all, unless the opt-out is set.
  */
-export async function appRoleExists(db: Database): Promise<boolean> {
+export async function appRoleExists(db: DatabaseHandle): Promise<boolean> {
   try {
     const rows = await db.execute<{ n: number }>(
       `select count(*)::int as n from pg_roles where rolname = '${APP_ROLE}'`,
@@ -129,15 +129,15 @@ export async function appRoleExists(db: Database): Promise<boolean> {
  * `set local role`, and the probe would silently answer from the superuser session
  * -- which is exactly the vacuous pass it exists to prevent.
  *
- * @param db - Database handle to open the probe transaction on.
+ * @param db - DatabaseHandle handle to open the probe transaction on.
  * @param boundStackId - Stack to bind, or `null` for an unbound session.
  * @param count - Statement answering how many rows the bound session can see.
  * @returns What `count` returned inside the app-role transaction.
  */
 export async function countAsAppRole(
-  db: Database,
+  db: DatabaseHandle,
   boundStackId: string | null,
-  count: (tx: Database) => Promise<number>,
+  count: (tx: DatabaseHandle) => Promise<number>,
 ): Promise<number> {
   return db.transaction(async (tx) => {
     // `SET LOCAL ROLE` takes no bind parameters, so it is raw SQL; the role name is
@@ -149,7 +149,7 @@ export async function countAsAppRole(
     if (boundStackId !== null) {
       await tx.execute(sql`select set_config('app.stack_id', ${boundStackId}, true)`);
     }
-    return count(tx as unknown as Database);
+    return count(tx as unknown as DatabaseHandle);
   });
 }
 
@@ -163,13 +163,13 @@ export async function countAsAppRole(
  * and disabled a whole suite -- and a skip is SILENT, so nothing pointed at the cause.
  * Asking for the specific tables a suite uses cannot be invalidated by unrelated work.
  *
- * @param db - Database handle to ask.
+ * @param db - DatabaseHandle handle to ask.
  * @param tables - Table names the suite cannot run without.
  * @returns True when every named table exists.
  * @throws When the database cannot be obtained at all, unless the opt-out is set.
  */
 export async function wikiTablesPresent(
-  db: Database,
+  db: DatabaseHandle,
   tables: readonly string[],
 ): Promise<boolean> {
   try {

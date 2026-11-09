@@ -31,9 +31,9 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 
-const transactionScope = new AsyncLocalStorage<Database>();
+const transactionScope = new AsyncLocalStorage<DatabaseHandle>();
 
 /**
  * Run `fn` with `tx` as the ambient batch transaction.
@@ -46,7 +46,7 @@ const transactionScope = new AsyncLocalStorage<Database>();
  * @returns Whatever `fn` returns.
  */
 export async function withPageBatchTransaction<T>(
-  tx: Database,
+  tx: DatabaseHandle,
   fn: () => Promise<T>,
 ): Promise<T> {
   return await transactionScope.run(tx, fn);
@@ -62,6 +62,6 @@ export async function withPageBatchTransaction<T>(
  *
  * @returns The active transaction, if any.
  */
-export function activePageBatchTransaction(): Database | undefined {
+export function activePageBatchTransaction(): DatabaseHandle | undefined {
   return transactionScope.getStore();
 }

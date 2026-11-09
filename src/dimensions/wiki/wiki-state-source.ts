@@ -35,7 +35,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import type { WikiState, SourceState } from "../../utils/types.js";
 import { KNOWN_STATE_VERSION, type StateStatus } from "../../utils/state.js";
 import { readCompileConfig, writeCompileConfig } from "./compile-config-store.js";
@@ -75,11 +75,11 @@ function toIsoString(value: string | Date): string {
  * a missing `state.json`, and keeping the same answer means no caller needs a new
  * branch.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose state to read.
  * @returns The reassembled state.
  */
-export async function readWikiStateFromRows(db: Database, stackId: string): Promise<WikiState> {
+export async function readWikiStateFromRows(db: DatabaseHandle, stackId: string): Promise<WikiState> {
   const [config, rows] = await Promise.all([
     readCompileConfig(db, stackId),
     readCompileStateRows(db, stackId),
@@ -108,11 +108,11 @@ export async function readWikiStateFromRows(db: Database, stackId: string): Prom
  * `page-store.ts`: under a superuser owner the policy is inert, so a query relying
  * on RLS alone would return every Stack's rows.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose rows to read.
  * @returns The rows, ordered by identity for a stable result.
  */
-async function readCompileStateRows(db: Database, stackId: string): Promise<CompileStateRow[]> {
+async function readCompileStateRows(db: DatabaseHandle, stackId: string): Promise<CompileStateRow[]> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
     return tx.execute<CompileStateRow>(sql`
@@ -157,12 +157,12 @@ function toSourceState(row: CompileStateRow): SourceState {
  * compile record behind, or the next run would consider a document that no longer
  * exists to be already compiled.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack that owns this state.
  * @param state - The state to persist.
  */
 export async function writeWikiStateToRows(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   state: WikiState,
 ): Promise<void> {
@@ -212,12 +212,12 @@ export async function writeWikiStateToRows(
  * type: the draft lives on the compile path, which must stay usable with no database
  * at all.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose state this is.
  * @returns A reader and a writer for that Stack's state.
  */
 export function createWikiStateRowsBackend(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): { read(): Promise<WikiState>; write(state: WikiState): Promise<void> } {
   return {
@@ -248,12 +248,12 @@ export function createWikiStateRowsBackend(
  *     because a Stack's rows are always migrated with the deployment that wrote them.
  *     Kept in the union so callers written against the file path stay valid.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose state to classify.
  * @returns The status plus the carried state, matching `ClassifiedState`.
  */
 export async function readStateClassifiedFromRows(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): Promise<{ status: StateStatus; state: WikiState }> {
   let state: WikiState;

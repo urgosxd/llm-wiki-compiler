@@ -35,7 +35,7 @@
  * rather than by refusal.
  */
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { createHash } from "node:crypto";
 import { slugify } from "../../utils/markdown.js";
 import { stableContent } from "../../utils/source-writer.js";
@@ -79,12 +79,12 @@ interface SourceDocumentRow extends Record<string, unknown> {
  * @returns Whatever `work` produced.
  */
 async function runInScope<T>(
-  db: Database,
-  callerTx: Database | undefined,
-  work: (tx: Database) => Promise<T>,
+  db: DatabaseHandle,
+  callerTx: DatabaseHandle | undefined,
+  work: (tx: DatabaseHandle) => Promise<T>,
 ): Promise<T> {
   if (callerTx !== undefined) return work(callerTx);
-  return db.transaction(async (tx) => work(tx as unknown as Database));
+  return db.transaction(async (tx) => work(tx as unknown as DatabaseHandle));
 }
 
 /**
@@ -161,7 +161,7 @@ export function sourceFilename(title: string): string {
  * @returns The candidate, or a hash-suffixed variant already free.
  */
 async function uniqueFilename(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string,
   candidate: string,
   sourceIdentity: string,
@@ -191,17 +191,17 @@ async function uniqueFilename(
  * state atomic ingest removes. The tenant is still bound here, for the reason
  * {@link bindStack} documents.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack that owns this document.
  * @param document - Title, full markdown (frontmatter + body), and source identity.
  * @param callerTx - Ambient transaction to join, when the coordinator owns one.
  * @returns The stored filename and whether anything changed.
  */
 export async function saveSourceDocument(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   document: { title: string; document: string; source: string },
-  callerTx?: Database,
+  callerTx?: DatabaseHandle,
 ): Promise<{ filename: string; writeStatus: SourceWriteStatus }> {
   const baseFilename = sourceFilename(document.title);
   const contentHash = hashSourceContent(stableSourceContent(document.document));
@@ -247,7 +247,7 @@ export async function saveSourceDocument(
  * This is the replacement for `readdir` over `sources/`: same set, same order, but
  * the answer comes from rows.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack whose corpus to read.
  * @returns Documents ordered by filename.
  */
@@ -258,13 +258,13 @@ export async function saveSourceDocument(
  * content by a key it just discovered, and a document deleted between detection and
  * extraction is a race the caller can report as a finding, not a crash.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack the document belongs to.
  * @param sourceIdentity - Unique identity of the document.
  * @returns The document, or undefined when the Stack no longer holds it.
  */
 async function readSourceDocument(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   sourceIdentity: string,
 ): Promise<StoredSourceDocument | undefined> {
@@ -293,7 +293,7 @@ async function readSourceDocument(
   };
 }
 
-export async function listSourceDocuments(db: Database, stackId: string): Promise<StoredSourceDocument[]> {
+export async function listSourceDocuments(db: DatabaseHandle, stackId: string): Promise<StoredSourceDocument[]> {
   // Both the binding and an explicit predicate: under a superuser owner the policy
   // is inert, so a query relying on it alone would return every Stack's corpus.
   // The binding must run inside the transaction; see {@link readSourceDocument}.
@@ -323,12 +323,12 @@ export async function listSourceDocuments(db: Database, stackId: string): Promis
  * identities would force the compiler to re-read every document to hash it -- which
  * is the `readdir` cost this migration exists to remove.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack whose corpus to scan.
  * @returns A source the compiler can diff against its previous state.
  */
 export function sourceDocumentsChangeSource(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): ChangeDetectionSource {
   return {
@@ -350,12 +350,12 @@ export function sourceDocumentsChangeSource(
  * every hash on every run, while content is read only for the documents that
  * actually get extracted.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack whose corpus to read.
  * @returns A reader the compiler can use instead of `readFile`.
  */
 export function sourceDocumentsContentSource(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): SourceContentSource {
   return {
@@ -375,11 +375,11 @@ export function sourceDocumentsContentSource(
  * listed documents from one place and read them from another would ask for keys the
  * reader never had.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack whose corpus to extract from.
  * @returns The paired corpus source.
  */
-export function sourceDocumentsRuleCorpus(db: Database, stackId: string): RuleCorpus {
+export function sourceDocumentsRuleCorpus(db: DatabaseHandle, stackId: string): RuleCorpus {
   return {
     detection: sourceDocumentsChangeSource(db, stackId),
     content: sourceDocumentsContentSource(db, stackId),

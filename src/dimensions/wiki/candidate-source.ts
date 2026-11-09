@@ -25,7 +25,7 @@
  */
 
 import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import {
   deleteStoredCandidate,
   getStoredCandidate,
@@ -60,11 +60,11 @@ function candidateStackId(env: NodeJS.ProcessEnv = process.env): string | undefi
 /**
  * Build the row source for an open handle.
  *
- * @param db - Database handle, already scoped by the caller.
+ * @param db - DatabaseHandle handle, already scoped by the caller.
  * @param stackId - The Stack whose queue this source answers for.
  * @returns A source the read and write modules can use interchangeably.
  */
-function candidateRowsSource(db: Database, stackId: string): CandidateRowsSource {
+function candidateRowsSource(db: DatabaseHandle, stackId: string): CandidateRowsSource {
   return {
     list: () => listStoredCandidates(db, stackId),
     get: (candidateId) => getStoredCandidate(db, stackId, candidateId),

@@ -32,7 +32,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { toArrayLiteral } from "./sql-array.js";
 
 /** One journal entry, in the shape both backends render from. */
@@ -58,13 +58,13 @@ interface JournalRow extends Record<string, unknown> {
 /**
  * Append one entry to a Stack's journal.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack this entry belongs to.
  * @param entry - The operation, description, details and timestamp.
  * @returns The `seq` the entry was allocated.
  */
 export async function appendJournalEntry(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   entry: JournalEntry,
 ): Promise<number> {
@@ -94,12 +94,12 @@ export async function appendJournalEntry(
  * two entries can share a rendered timestamp. A caller that sorts by date would
  * reorder history the moment two operations landed in the same second.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose journal to read.
  * @returns Every entry in the order it was appended.
  */
 export async function readJournalEntries(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): Promise<JournalEntry[]> {
   return db.transaction(async (tx) => {

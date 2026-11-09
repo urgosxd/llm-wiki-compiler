@@ -26,7 +26,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 
 /** Which derived artifact a row holds. */
 export type DerivedArtifactKind = "index" | "moc";
@@ -38,13 +38,13 @@ export type DerivedArtifactKind = "index" | "moc";
  * artifact is a FUNCTION of the registry, so writing it twice with the same input
  * must leave one row and not fail.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack this artifact belongs to.
  * @param kind - Which artifact is being stored.
  * @param content - Exactly what the renderer emitted.
  */
 export async function saveDerivedArtifact(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   kind: DerivedArtifactKind,
   content: string,
@@ -67,13 +67,13 @@ export async function saveDerivedArtifact(
  * Undefined is distinct from empty: a Stack that never compiled has no index, while a
  * Stack that compiled an empty corpus has a valid empty one.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose artifact to read.
  * @param kind - Which artifact to read.
  * @returns The rendered content, or undefined when absent.
  */
 export async function readDerivedArtifact(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   kind: DerivedArtifactKind,
 ): Promise<string | undefined> {

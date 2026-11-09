@@ -19,7 +19,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { toArrayLiteral } from "./sql-array.js";
 
 /** Where a marker entry stands. `pending` is retried; `quarantined` is only reported. */
@@ -58,13 +58,13 @@ export interface StoredLintCache {
 /**
  * Read the embedding-refresh markers of one Stack in one state.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose markers to read.
  * @param state - Which list to read: retried or quarantined.
  * @returns The entries, in a stable order so a rewrite is deterministic.
  */
 export async function readRefreshMarkers(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   state: MarkerState,
 ): Promise<RefreshMarkerEntry[]> {
@@ -93,13 +93,13 @@ export async function readRefreshMarkers(
  * Both statements run in ONE transaction so a crash cannot leave the marker listing
  * an id in neither list.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack that owns these markers.
  * @param state - Which list is being replaced.
  * @param entries - The complete set for that state.
  */
 export async function replaceRefreshMarkers(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   state: MarkerState,
   entries: readonly RefreshMarkerEntry[],
@@ -132,12 +132,12 @@ export async function replaceRefreshMarkers(
  * already exports as the backend-aware entry point. Two exports with one name is how
  * a caller imports the wrong one and never notices.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose cache to read.
  * @returns The cached result, or undefined.
  */
 export async function readCachedLintResult(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): Promise<StoredLintCache | undefined> {
   return db.transaction(async (tx) => {
@@ -161,12 +161,12 @@ export async function readCachedLintResult(
 /**
  * Store one Stack's lint result, replacing any previous one.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack that owns the cache.
  * @param cache - The result to store.
  */
 export async function writeCachedLintResult(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   cache: StoredLintCache,
 ): Promise<void> {
@@ -192,12 +192,12 @@ export async function writeCachedLintResult(
 /**
  * Read one Stack's rule-extractor state, or undefined when it never ran.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose state to read.
  * @returns The stored snapshot, or undefined.
  */
 export async function readRuleExtractorState(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): Promise<unknown | undefined> {
   return db.transaction(async (tx) => {
@@ -216,10 +216,10 @@ export async function readRuleExtractorState(
  * other markers: the cursor is the only thing that decides "unchanged". Absent a
  * row the reader already answers empty, so this is idempotent.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose cursor is cleared.
  */
-export async function clearRuleExtractorState(db: Database, stackId: string): Promise<void> {
+export async function clearRuleExtractorState(db: DatabaseHandle, stackId: string): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.execute(sql`select set_config('app.stack_id', ${stackId}, true)`);
     await tx.execute(sql`delete from wiki.rule_extractor_state where stack_id = ${stackId}`);
@@ -229,12 +229,12 @@ export async function clearRuleExtractorState(db: Database, stackId: string): Pr
 /**
  * Store one Stack's rule-extractor state, replacing any previous snapshot.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack that owns the snapshot.
  * @param state - The snapshot to store.
  */
 export async function writeRuleExtractorState(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   state: unknown,
 ): Promise<void> {

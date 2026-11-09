@@ -32,7 +32,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { withTenant } from "./page-store.js";
 import { toArrayLiteral } from "./sql-array.js";
 
@@ -70,12 +70,12 @@ interface CompileConfigRow extends Record<string, unknown> {
  * caller forced to handle `undefined` here would end up inventing an empty value
  * at every site, which is how one of them eventually invents a different one.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack whose config to read.
  * @returns The stored config, or the empty one when no compile has run.
  */
 export async function readCompileConfig(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): Promise<StoredCompileConfig> {
   return withTenant(db, stackId, async (tx) => {
@@ -102,12 +102,12 @@ export async function readCompileConfig(
  * would leave a window where the row exists with defaults that were never the
  * intent.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - The Stack that owns this config.
  * @param config - The state to persist.
  */
 export async function writeCompileConfig(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   config: StoredCompileConfig,
 ): Promise<void> {

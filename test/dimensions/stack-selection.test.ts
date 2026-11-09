@@ -10,7 +10,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createDatabase, createClient, type Database } from "@repo/kg";
+import { createDatabase, createClient } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import {
   AKS_STACK_ID_ENV_VAR,
   DIMENSIONS_ENV_VAR,
@@ -33,7 +34,7 @@ const SUPPLIED_STACK = "22222222-2222-2222-2222-222222222222";
  * Resolution only BUILDS dimensions, so a lazy client proves the wiring without a
  * live Postgres — the same device `activation.test.ts` uses.
  */
-function lazyDatabase(): Database {
+function lazyDatabase(): DatabaseHandle {
   return createDatabase(createClient("postgresql://unused:unused@localhost:1/unused", 1));
 }
 

@@ -70,7 +70,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import type { AfterCommitEffect, CommittedWrite, Dimension, DimensionInput, PreparedWrite } from "./types.js";
 import type { AttemptReporter } from "../services/ingest/jobs/types.js";
 
@@ -174,7 +174,7 @@ async function discardPreparedWrites(
  * @throws When any dimension fails; the transaction rolls back as a unit.
  */
 async function commitInOneTransaction(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   runs: readonly DimensionRun[],
 ): Promise<void> {
@@ -203,7 +203,7 @@ async function commitInOneTransaction(
  * @throws The LAST attempt's error, after every attempt rolled back.
  */
 async function attemptWithRetry(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   runs: readonly DimensionRun[],
   attempts: AttemptReporter | undefined,
@@ -344,7 +344,7 @@ async function prepareEveryDimension(
  * @throws The last attempt's error, wrapped with the attempt count.
  */
 async function commitOrReport(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   runs: readonly DimensionRun[],
   input: DimensionInput,
@@ -398,7 +398,7 @@ function summariesOf(runs: readonly DimensionRun[]): Map<string, string> {
  * each other.
  */
 export async function ingestDimensions(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
   input: DimensionInput,
   dimensions: readonly Dimension[],

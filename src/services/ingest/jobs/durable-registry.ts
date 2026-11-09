@@ -33,12 +33,12 @@
 import type { JobRegistry } from "./registry.js";
 import type { IngestJob } from "./types.js";
 import { saveIngestJob } from "./job-store.js";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 
 /** What the wrapper needs beyond the registry it wraps. */
 export interface DurableRegistryOptions {
   /** Handle used for the mirror. */
-  readonly db: Database;
+  readonly db: DatabaseHandle;
   /**
    * The Stack a job belongs to, when the caller names one.
    *
@@ -61,7 +61,7 @@ export interface DurableRegistryOptions {
  * Wrap a registry so its transitions are also durable.
  *
  * @param inner - The live registry the host already owns.
- * @param options - Database, tenant, and the error sink.
+ * @param options - DatabaseHandle, tenant, and the error sink.
  * @returns A registry with the same contract and an added mirror.
  */
 export function createDurableJobRegistry(

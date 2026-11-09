@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 
+import type { DatabaseHandle } from "@repo/foundation";
 import type { Database } from "../db.js";
 import { apiError } from "../errors.js";
 import type { ApiError } from "../errors.js";
@@ -197,7 +198,7 @@ export type StackResolution =
  * @param domain - Domain slug the caller supplied, or `null`.
  */
 export async function bindCallerStack(
-  tx: Database,
+  tx: DatabaseHandle,
   stackId: string | null,
   domain: string | null,
 ): Promise<void> {

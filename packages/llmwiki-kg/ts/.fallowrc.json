@@ -1,4 +1,5 @@
 {
   "$schema": "https://fallow.tools/schema.json",
-  "extends": ["../../../.fallowrc.json"]
+  "extends": ["../../../.fallowrc.json"],
+  "ignoreDependencies": ["@repo/foundation"]
 }

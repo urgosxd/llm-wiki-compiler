@@ -35,7 +35,7 @@
  * "nothing matched", so a text-only query reports `unavailable` instead.
  */
 
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import type {
   DimensionAnswer,
   DimensionQuery,
@@ -54,8 +54,8 @@ import { listStoredPages } from "./page-store.js";
 export interface WikiPageReaderOptions {
   /** The tenant whose pages this reader answers for. */
   readonly stackId: string;
-  /** Database handle; the pooled one in production, a test's own in tests. */
-  readonly db: Database;
+  /** DatabaseHandle handle; the pooled one in production, a test's own in tests. */
+  readonly db: DatabaseHandle;
 }
 
 /**

@@ -23,7 +23,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import { withTenant } from "./page-store.js";
 
 /** The config envelope a Stack holds, or `undefined` when it holds none. */
@@ -52,12 +52,12 @@ class ProjectConfigVersionMismatch extends Error {
 /**
  * Read one Stack's config document.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack whose config to read.
  * @returns The stored document, or `undefined` when the Stack has none.
  */
 export async function readProjectConfig(
-  db: Database,
+  db: DatabaseHandle,
   stackId: string,
 ): Promise<StoredProjectConfig | undefined> {
   return await withTenant(db, stackId, async (tx) => {

@@ -19,7 +19,7 @@
  * guarantee behind it.
  */
 
-import type { Database } from "@repo/kg";
+import type { DatabaseHandle } from "@repo/foundation";
 import {
   buildPage,
   type Page,
@@ -54,11 +54,11 @@ export interface PageWriteRequest {
 /**
  * Build a row-writing sink for one Stack.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack that owns these pages.
  * @returns A sink the executor can call instead of writing a file.
  */
-export function createPageWriteSink(db: Database, stackId: string): PageWriteSink {
+export function createPageWriteSink(db: DatabaseHandle, stackId: string): PageWriteSink {
   return async (request) => {
     // Join the ambient batch transaction when one is open, so a page batch commits
     // as ONE unit. `undefined` means "no batch": open your own, which keeps every
@@ -76,11 +76,11 @@ export function createPageWriteSink(db: Database, stackId: string): PageWriteSin
  * mutation reach the row instead of unlink-ing a file that does not exist, which is
  * a complete no-op in a Stack-backed project.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack that owns these pages.
  * @returns A remover the executor can call instead of unlinking a file.
  */
-export function createPageRemoveSink(db: Database, stackId: string): PageRemover {
+export function createPageRemoveSink(db: DatabaseHandle, stackId: string): PageRemover {
   return async (request) => {
     await deleteStoredPage(
       db, stackId, request.directory as PageDirectory, request.slug,
@@ -128,11 +128,11 @@ export function toPage(request: PageWriteRequest): Page {
  * `page_directory` (a profile entity type, for instance) is not a wiki page and is
  * excluded here rather than surfacing as an unknown directory.
  *
- * @param db - Database handle.
+ * @param db - DatabaseHandle handle.
  * @param stackId - Stack whose pages to read.
  * @returns A listing source for {@link listPages} and {@link getPage}.
  */
-export function createPageListingSource(db: Database, stackId: string): PageListingSource {
+export function createPageListingSource(db: DatabaseHandle, stackId: string): PageListingSource {
   return {
     list: async () => {
       // No limit: `listPages` owns pagination, and a source that truncated would
