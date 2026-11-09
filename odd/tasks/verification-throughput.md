@@ -263,7 +263,7 @@ claiming the guardrail covered it.
   six-gate numbered list (`AGENTS.md:94-100`). `CONTRIBUTING.md` does not exist at the
   repository root (only under `packages/llmwiki-kg/`), and `docs/**` has no
   `test:affected` reference.
-- [ ] T7 — independent verification per `S#`, exercising all three exit paths through the seam (`0` true negative, `69` uncomputable base, `78` full-tier decline) and asserting that `unresolved` never reports as `none`, then the full `pnpm test` alone under the new limits · S1-S11 · verifier · commit: pending
+- [x] T7 — independent verification per `S#`, exercising all three exit paths through the seam (`0` true negative, `69` uncomputable base, `78` full-tier decline) and asserting that `unresolved` never reports as `none`, then the full `pnpm test` alone under the new limits · S1-S11 · verifier · commit: 8545c146727ce78810b5b4aa6a78a231a13ad1a2
 
 `Build` stays in `.husky/pre-push` and in CI; only the `test:affected` invocation is
 removed from both, so the hook keeps a real gate and the pipeline keeps `pnpm test` as
@@ -547,3 +547,83 @@ Corrected in the same pass while the document was open: the note under `## Tasks
 pipeline keeps `pnpm test` as its "only test verdict", which is false —
 `.github/workflows/ci.yml` also runs `pnpm run test:pack` and the two schema-apply steps. It now
 reads "its only full-suite verdict" (defect F11 from the same audit).
+
+**L10 — independent verification (T7).**
+
+An independent verifier read the delivered tree, exercised all three exit paths through the
+injected seam, and ran the full suite alone under the pinned limits. What follows is that
+verifier's evidence, not a claim by the writer of the code it verifies.
+
+**Verdict per `S#`: S1–S11 all satisfied.** Two limits are recorded rather than hidden:
+
+- `S6`'s RED checkpoints are **historical**. A verifier judges the pin, not the checkpoint:
+  the RED runs happened in the writing tasks' own turns and are not re-observable by anyone
+  reading the tree now.
+- `S11`'s `diff against <ref> failed` branch is pinned as a **reason string**, not exercised
+  end-to-end. No synthetic repository can be built that makes the three `git diff` /
+  `ls-files` calls fail while `merge-base` still succeeds, so the branch is covered at the
+  reason-list level and by code reading, not by a live failure.
+
+**The gates, each exit 0** (Node 24, `corepack pnpm`): `tsc --noEmit` **0** ·
+`typecheck:tests` **0** · `lint` **0** · `build` **0** · `fallow:ci` **0**. The lint triple,
+literally:
+
+```text
+ESLint ratchet: 1830 files scanned; 643 baseline violations in 466 files across 496 rule/file entries; no regression.
+```
+
+That is the **pre-existing ceiling** — the same 643/466/496 the base commit printed — so no
+rebaselining happened: the gate absorbed nothing, and the delivery added no violation it then
+forgave itself for.
+
+**`gates:static`** — exit **0**, **25.7 s wall / 25.1 s internal / 2140 MB peak / zero swap
+pages added**, six contiguous labelled blocks (`tsc`, `typecheck:kg`, `typecheck:tests`,
+`fallow:ci`, `fallow:kg`, `lint`), closing on `static gates: all 6 passed in 25.1 s`. Its
+failure behaviour was demonstrated in a scratch copy rather than assumed: a mutated runner
+exited **1** with `static gates: 3 of 6 failed — fallow:ci, fallow:kg, lint`, so the verdict
+names what failed instead of reporting a generic red.
+
+**The full suite, twice, under `maxWorkers: 4`, each run alone** (`pgrep -af vitest` empty
+before launch; peak RSS from the run's cgroup `memory.peak`, which counts every descendant,
+including each spawned `node dist/cli.js` child):
+
+| point | wall s | peak RSS MB | swap | exit | files p/f/s | tests p/f/s |
+|---|---|---|---|---|---|---|
+| `d997a0b` | 534.6 | 4001 | — | 0 | 919/0/3 | 6852/0/7 |
+| `8545c14` (delivered HEAD) | **508.5** | **3498** | `pswpout` **+0 pages**; `SwapFree` freed **1.9 MB** | **0** | **919/0/3** | **6856/0/7** |
+
+The **+4 tests are exactly the new pins** (one `UNRESOLVED_REASONS` row and three static-gate
+verdict cases): all 6852 previously-passing tests are still inside the 6856, and the skipped
+counts are unchanged. The two points differ by **~8 % wall for the same resident load** — and
+that spread is the reason the cap is **4** and not 6: a schedule whose point-to-point noise is
+~8 % cannot justify a higher worker count chosen for speed when the cost of that count is paid
+in swap.
+
+**The three exit paths, measured, verbatim.**
+
+- `78` — full unit tier resolved and declined: stderr
+  ``affected: scope resolves to the full unit tier; run `pnpm test` instead``, `cmp`-clean
+  against the mandated bytes, stdout **0 bytes**, **zero** child processes spawned.
+- `69` — change set not computable, both reasons on stderr:
+  `test-affected: could not compute the changed file set — no canonical base ref (upstream/main or origin/main) could be resolved`
+  and `test-affected: could not compute the changed file set — merge-base against origin/main failed`.
+- `0` — true negative, computation succeeded and found nothing:
+  `test-affected: nothing to run — no changed file can select a test`.
+
+None of the `69` cases printed `none` wording, so `unresolved` never reports as `none`.
+
+**Known residues — limits, not defects.**
+
+- `gates:static`'s **timeout path was never observed firing**. It is correct by construction
+  and its reporting is unit-pinned, but the 300 s path is not reachable on this host inside a
+  delivery.
+- The **gate-list pin fails a one-sided deletion** (a gate dropped from the runner, or from
+  `AGENTS.md`) but **not** a coordinated deletion from both. Two surfaces agreeing
+  on the same lie is outside what a text pin can catch.
+- Two **non-Log ledger lines were rewritten** during the delivery: `commit: pending` → SHA,
+  and the "only full-suite verdict" wording. Both were narrated in `L9` and `33f2445` under an
+  `append-only` declaration, so the rewrite is on the record even though it edited the document
+  in place.
+
+**The delivered HEAD is the fully-verified tree** — the code that shipped is the code the full
+suite ran on.
