@@ -7,7 +7,12 @@
  * from a CDN. Vendoring through @fontsource (rather than hand-downloading)
  * keeps the operation reproducible and pins the upstream version in
  * package.json. All four families are SIL OFL 1.1; their notices live in
- * src/viewer/assets/THIRD_PARTY_NOTICES.txt.
+ * packages/wiki/src/viewer/assets/THIRD_PARTY_NOTICES.txt.
+ *
+ * The target must be the tree the build copies from, not merely a directory
+ * named `fonts`: after the sources moved under `packages/wiki/`, a root `src`
+ * literal still made this script succeed while writing where nothing reads.
+ * `test/vendor-fonts-target.test.ts` pins the literal for that reason.
  *
  * Run via `npm run vendor:fonts` after changing either package version.
  */
@@ -18,7 +23,7 @@ import url from "node:url";
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, "..");
-const target = path.join(projectRoot, "src/viewer/assets/fonts");
+const target = path.join(projectRoot, "packages/wiki/src/viewer/assets/fonts");
 
 /** Families to vendor and the weights used by the built-in themes. */
 const FAMILIES = [

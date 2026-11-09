@@ -155,3 +155,104 @@ The four instances observed today: the `llmwiki-kg` → `@repo/kg` package renam
 **Census and bite proof for the gate commit.** The census was re-derived through the ratchet's own collector, before and after the change: **79 sites / 41 files** both times, identical to the last row — `no-restricted-imports` 43 static, `local/dimension-boundary` 30 literal + 6 non-literal, `kg → wiki` **0**. A re-point that changed the census would have meant the old zone was reachable code; an unchanged census here is the claim that the zone was already live and the change closes a hole that had not yet opened. The bite proof: throwaway probes in both zones carrying one forbidden reach per direction drove the census to **89 sites / 43 files** (static 49 + literal 34 + non-literal 6; `kg → wiki` 2, `kg → api` 2, `wiki → kg` 78, `wiki → api` 1) and the ratchet to **653 / 468 / 500** with 10 rule messages — all four directions and all three invisible forms (`import()`, `typeof import()`, `vi.mock`) firing — and deleting the probes returned the census to **79 / 41** with a clean `git status`.
 
 **Gates of record for the gate commit.** `tsc --noEmit`, `typecheck:tests`, `typecheck:kg`, `lint` (643/466/496), `build`, `node dist/cli.js --version` → `1.4.0-dev.20260919` exit 0, `grep -o '@repo/[a-z-]*' dist/*.js` empty, `fallow:ci` and `fallow:kg` — every exit 0. The full suite was deliberately **not** run in this commit; the independent verifier runs it once, alone, afterwards.
+
+L14 (corrective for the `@repo/wiki` relocation: the residue the relocation left behind).
+
+**The verifier's verdict, quoted as the reason this commit exists.** The delivery of `61cee9c` +
+`8d3d4a4` is **not green**: the full suite is RED and an existing command still points at the deleted
+`src/`. Both are the same class — a path literal whose target moved — and both survived every fast
+gate. Six gates were green (`tsc`, both typechecks, `lint` at 643/466/496, `build`, `fallow:ci`,
+`fallow:kg`) while the tree was broken.
+
+**Blocker 1 — `test/test-partition.test.ts` was inherited green and shipped red.** `git diff --stat
+ca075d41..HEAD -- test/test-partition.test.ts` is **empty**: the relocation did not touch the file,
+and the file names `src` in the oracle it builds to check the classifier. Observed red, verbatim:
+`Error: ENOENT: no such file or directory, scandir '…/src'` at `test/test-partition.test.ts:54:7`.
+The same literal existed in `scripts/test-partition.ts`'s `TEST_ROOTS`, where `collectTestFiles`
+guards every root with `existsSync` — so **one literal produced two opposite failures at once**: loud
+in the test, whose oracle walks each root unguarded, and *silent* in the product, whose tier then
+reported success over a tree it never read. `test/test-partition-coverage.test.ts` could not catch it
+either, and that is worth stating: it compares file SETS found by two independent walks, and a
+phantom root contributes no files, so set equality holds while the root itself is the defect.
+`TEST_ROOTS` is now `["test","packages","scripts"]`, and the durable pin is
+`test-partition.test.ts` → `classifyTests > names only roots that exist on disk`, which reads
+`TEST_ROOTS` from the implementation and fails with `suite roots absent from the tree: src`.
+**The verifier's proposed pin was adapted, and the reason matters:** its literal
+`["test","packages","src","scripts"]` list can never pass on the repaired tree, because the whole
+point of the fix is that `src` must NOT exist — it would ship a permanently red assertion. Reading
+the constant is the version that is red before the fix and green after, so that is what shipped.
+
+**Blocker 2 — `scripts/vendor-fonts.mjs:21` wrote into the deleted directory.**
+`path.join(projectRoot, "src/viewer/assets/fonts")` plus `mkdir(..., {recursive:true})` meant
+`pnpm run vendor:fonts` **succeeded** while writing where the build never reads. The live bundle is
+`packages/wiki/src/viewer/assets/fonts` — 13 woff2, confirmed present in `dist/viewer/assets/fonts`
+by the build of this commit. Retargeted, and pinned by the new
+`test/vendor-fonts-target.test.ts`, which reads the script text plus both existence facts instead of
+running it: a pin that mutates the checkout to prove a path is not a pin a fast gate can run. The
+script was **not executed** in this commit, on purpose.
+
+**Advisory 1 — `scripts/test-typecheck-program.ts` silently narrowed.** `listCheckedSources` walked
+`["src","test"]` with a per-name `existsSync` guard, so after the move the independent on-disk
+cross-check against `tsconfig.test.json` covered `test/` alone **while the gate stayed green**. That
+is the worst shape in this document's running list: a check that still runs, still passes, and now
+reads less. It is `["packages/wiki/src","test"]`, and the measured proof that the repaired oracle
+covers the moved tree is `typecheck:tests` reporting **1770 files checked; 260 baseline diagnostics
+in 94 files; no regression** — unchanged counts, because the program never changed; only the
+completeness check did. `test-typecheck-baseline.json` was therefore **not touched**. Pinned by the
+new `test/wiring-src-literals.test.ts`.
+
+**Advisory 2 and the `drizzle-orm` gap.** `packages/wiki/src` imports `drizzle-orm` **23 times across
+26 files** and `packages/wiki/package.json` did not declare it; it resolved only because
+`nodeLinker: hoisted` leaks the root copy. Declared at the root manifest's exact range `^0.45.4`,
+whose resolution `0.45.4(postgres@3.4.9)` already pre-existed in `snapshots` — so the lockfile edge
+is **3 added lines and zero version movement**, the same property `test/declared-dependencies-wiring.test.ts`
+pins for the earlier declarations. Two further undeclared imports of the same shape exist in that
+tree and are **reported, not added**: `@repo/kg`, **13 imports in 10 files**, which is the *forbidden*
+`wiki → kg` edge and declaring it would be blessing a boundary violation the lint ratchet counts as
+inherited debt; and `vitest`, **2 imports in the package's own 2 test files**, a test-only specifier
+whose owner is the root devDependency list, not a runtime manifest.
+
+**The three durable pins, and what each is worth.** `test-partition.test.ts`'s root-existence pin
+(a root the tree does not have fails by name); `test/vendor-fonts-target.test.ts` (the vendor target
+is literally the directory that exists and that the build copies); `test/wiring-src-literals.test.ts`
+(the typecheck oracle's literals still name every checked source tree). Each was written first and
+observed red before its fix: `suite roots absent from the tree: src`, `expected '…' to contain
+'path.join(projectRoot, "packages/wiki/…'`, `expected '…' to contain '["packages/wiki/src", "test"]'`.
+
+**Class-wide sweep, every surviving root-`src` assumption with its disposition.** Fixed: the three
+above. Dead-but-harmless, left with reason: `scripts/build-stamp.ts` `INPUT_DIRS = ["src","packages","scripts"]`
+— the verifier's reading is correct and confirmed here, `hashDir` swallows ENOENT so the dead entry
+contributes nothing while `packages` still feeds the hash, and three pinned tests in
+`test/build-stamp.test.ts` depend on the current entry list; `scripts/test-partition.ts` and
+`test/test-partition.test.ts`'s `^(test|packages|src|scripts)\/` allowlist patterns (a prefix that
+cannot occur is not a hole, and `test/test-partition-cli.test.ts` carries the same pattern outside
+this commit's enumeration); `eslint.config.mjs` `TYPESCRIPT_FILES`'s `api/**/*.ts`, since
+`packages/**/*.ts` already reaches that tree — it belongs to the next commit that touches that file.
+Prose only, left: `.github/workflows/ci.yml:21,77,85`, `Dockerfile:9` (its `COPY` line 98 is already
+`packages/wiki/src`), `scripts/kg-typecheck.ts:8`, `scripts/lint-ratchet.ts:238`,
+`scripts/test-keyless.sh:7`, and the JSDoc module paths throughout `test/**`, which name logical
+modules rather than resolving anything. False positives, verified self-contained:
+`test/build-stamp.test.ts` and `test/test-affected-scope.test.ts` seed a scratch `src/` inside their
+own `mkdtemp` roots; `test/fixtures/test-typecheck-project.ts` writes a synthetic project whose
+`include` is its own `src/`; `test/citation-normalize.test.ts`, `claim-provenance*`,
+`source-projection` and the wiki/dimensions row suites use `src.md` and `src://` as *source identities*,
+not paths. One finding this commit could NOT close because `test/fixtures/` is outside its allowed
+edit surfaces: **`test/fixtures/src-tree.ts` exports `SRC_DIR = …/../../src`**, a real path walker
+aimed at the deleted directory. It is dead code — `git grep src-tree` finds only the file itself —
+so nothing fails today, which is exactly the shape L13 recorded for `core-tree-fingerprint.ts`: a
+false green waiting to be wired, not a live one. It needs its own commit.
+
+**The sentence that outlives this commit.** The fast gates are structurally blind to "a test walks a
+directory that moved": `tsc` type-checks the import graph, `lint` reads file globs, `build` copies
+what its config enumerates, and `fallow` attributes by path — none of them *executes* a walk, and the
+classifier's own `existsSync` guard converts the one place that would complain into silence. Only the
+full suite covers it, which is why the delivery shipped red behind six green gates, and why the
+verifier ran it once, alone, after the commit.
+
+**Gates of record for this commit.** `tsc --noEmit` 0; `typecheck:tests` 0 (1770 files, 260/94
+baseline, no regression); `typecheck:kg` 0 (357 files); `lint` 0 at the literal triple
+**643 / 466 / 496**; `build` 0; `node dist/cli.js --version` → `1.4.0-dev.20260919` exit 0;
+`grep -o '@repo/[a-z-]*' dist/*.js` empty; `fallow:ci` 0 (0 dead-code, 0 complexity, 0 duplication
+introduced); `fallow:kg` 0; and the three new/touched test files 22/22 green together with
+`test-partition-coverage.test.ts`. The full suite was deliberately **not** run here — the independent
+verifier runs it once, alone, after this commit.

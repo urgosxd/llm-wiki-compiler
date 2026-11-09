@@ -22,7 +22,12 @@ function rejectDiagnostics(diagnostics: readonly ts.Diagnostic[]): void {
 function listCheckedSources(root: string): string[] {
   const extensions = [".ts", ".tsx", ".mts", ".cts"];
   const files: string[] = [];
-  for (const name of ["src", "test"]) {
+  // Every tree this list names must EXIST. Each absent name is skipped silently,
+  // so a stale path narrows the cross-check against `tsconfig.test.json` while
+  // the gate still reports green — which is what a root `src` literal did once
+  // the sources moved under `packages/wiki/`. `test/wiring-src-literals.test.ts`
+  // pins the literal for exactly that reason.
+  for (const name of ["packages/wiki/src", "test"]) {
     const directory = path.join(root, name);
     if (!existsSync(directory)) continue;
     for (const entry of readdirSync(directory, { recursive: true, withFileTypes: true })) {

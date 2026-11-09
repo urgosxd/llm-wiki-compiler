@@ -49,10 +49,16 @@ const TEST_SUFFIX = ".test.ts";
  *
  * Must stay a superset of what `vitest run` collects, because a file missing
  * from here is missing from the escalation tier too. `packages` carries the
- * `llmwiki-kg` dimension, `src` carries the root dimension's own suites, and
- * `scripts` carries `output-contracts.test.ts`.
+ * `llmwiki-kg` suites, the `@repo/wiki` dimension's own suites and the
+ * `dimensions/kg` ones, and `scripts` carries `output-contracts.test.ts`.
+ *
+ * EVERY ENTRY MUST NAME A DIRECTORY THAT EXISTS. The walk skips an absent root
+ * without a word — that guard is there for a caller's `--root` on a partial
+ * checkout — so a root left behind by a relocation contributes nothing and the
+ * tier reports success over files it never read. `test/test-partition.test.ts`
+ * pins that property by name: a root the tree does not have fails there.
  */
-export const TEST_ROOTS: readonly string[] = ["test", "packages", "src", "scripts"];
+export const TEST_ROOTS: readonly string[] = ["test", "packages", "scripts"];
 
 /**
  * Directory names the walk never descends into. `node_modules` is mandatory:

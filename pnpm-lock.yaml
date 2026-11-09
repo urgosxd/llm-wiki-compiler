@@ -310,6 +310,9 @@ importers:
       dotenv:
         specifier: ^17.4.0
         version: 17.4.2
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(postgres@3.4.9)
       js-yaml:
         specifier: ^4.3.0
         version: 4.3.2

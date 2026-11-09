@@ -11,8 +11,8 @@
 
 import { describe, expect, it } from "vitest";
 import path from "node:path";
-import { readdirSync } from "node:fs";
-import { classifyTests, partition, spawnsChildProcess } from "../scripts/test-partition.js";
+import { existsSync, readdirSync } from "node:fs";
+import { TEST_ROOTS, classifyTests, partition, spawnsChildProcess } from "../scripts/test-partition.js";
 
 const ROOT = path.resolve(".");
 
@@ -48,7 +48,7 @@ describe("classifyTests", () => {
     // later must fail here by name instead of being silently agreed with. The
     // root list and skip list are duplicated on purpose: an oracle that imports
     // the constant it checks cannot catch a missing entry in it.
-    const suiteRoots = ["test", "packages", "src", "scripts"];
+    const suiteRoots = ["test", "packages", "scripts"];
     const skipped = new Set(["node_modules", "dist", ".worktrees", ".claude", ".git", ".llmwiki"]);
     const onDisk = suiteRoots.flatMap((dir) =>
       readdirSync(path.join(ROOT, dir), { recursive: true })
@@ -62,6 +62,17 @@ describe("classifyTests", () => {
     expect(unclassified, `on disk but not classified: ${unclassified.join(", ")}`).toEqual([]);
     expect(fabricated, `classified but not on disk: ${fabricated.join(", ")}`).toEqual([]);
     expect(classified.length, "classified files vs files on disk").toBe(onDisk.length);
+  });
+
+  it("names only roots that exist on disk", () => {
+    // The roots are read from the implementation rather than restated here on
+    // purpose: this pin exists to catch a PHANTOM entry, and a phantom entry is
+    // invisible to an oracle that keeps its own copy of the list. A root that
+    // points at a directory the tree does not have contributes no files, so the
+    // walk below returns fewer paths and the tier reports success over a tree it
+    // never read — exactly what a source relocation leaves behind.
+    const missing = TEST_ROOTS.filter((dir) => !existsSync(path.join(ROOT, dir)));
+    expect(missing, `suite roots absent from the tree: ${missing.join(", ")}`).toEqual([]);
   });
 
   it("splits the suite with no file lost and no file duplicated", () => {
