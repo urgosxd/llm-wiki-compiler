@@ -96,11 +96,11 @@ jobs:
         run: ./scripts/apply-schemas.sh
       - name: Verify tenant isolation is enforced
         run: CHECK_ONLY=true ./scripts/apply-schemas.sh
-      # `AGENTS.md` requires this too, and again no CI step ran it. It follows
-      # the schema steps because the affected selection can escalate to the full
-      # unit tier, which includes the database-backed suites.
-      - name: Run the tests affected by this change
-        run: pnpm run test:affected
+      # The one test verdict in CI. `test:affected` is local-iteration tooling and
+      # is deliberately absent: in this job it ran a SUBSET of the suite below and
+      # was then superseded by it, so it never contributed a verdict the full run
+      # would not have produced. It follows the schema steps because the suite
+      # includes the database-backed suites.
       - run: pnpm test
       # Default tests exclude this fresh-install check. Exercise the shipped
       # facade, its exact workspace dependencies, and consumer declarations.

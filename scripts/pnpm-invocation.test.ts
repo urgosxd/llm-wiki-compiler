@@ -204,26 +204,23 @@ describe("pnpm-invocation — the failure message is the contract", () => {
 describe("pnpm-invocation — the push gate routes through the resolver", () => {
   it("keeps the push gate order and never invokes a bare pnpm program", () => {
     const commands = hookCommands(readFileSync(PRE_PUSH, "utf8"));
-    expect(commands).toEqual([
-      "node scripts/pnpm-invocation.ts run build",
-      "node scripts/pnpm-invocation.ts run test:affected",
-    ]);
+    expect(commands).toEqual(["node scripts/pnpm-invocation.ts run build"]);
     for (const line of commands) expect(line).not.toMatch(BARE_PNPM);
   });
 
-  it("drives both push gates in order through one resolved pnpm", () => {
+  it("drives the push build gate through one resolved pnpm", () => {
     // Candidates 1-2 are poisoned; the workspace-local one is the working pnpm.
     const { root, env } = prePushRoot(ARGV_ECHO_FAKE);
 
     const hook = spawnSync("sh", ["-e", ".husky/pre-push"], { cwd: root, env, encoding: "utf8" });
 
     // The probe's echo is captured by the resolver and never inherited, so only
-    // the two gate invocations can reach this stdout.
+    // the gate invocation can reach this stdout.
     expect(hook.status).toBe(0);
     expect(hook.stdout).toContain("ARGV=run build");
-    expect(hook.stdout).toContain("ARGV=run test:affected");
-    // Order is the contract: the build gate must clear before the suite starts.
-    expect(hook.stdout.indexOf("ARGV=run build")).toBeLessThan(hook.stdout.indexOf("ARGV=run test:affected"));
+    // `test:affected` is local-iteration tooling: it must not be a push gate,
+    // because when the scope resolves to the full tier it declines to run it.
+    expect(hook.stdout).not.toContain("ARGV=run test:affected");
   });
 
   it("fails loudly instead of reaching the gates when nothing resolves", () => {

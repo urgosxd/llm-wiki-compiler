@@ -96,21 +96,26 @@ describe("control gates — CI wiring", () => {
     expect(Object.keys(readWorkflow(".github/workflows/typecheck-tests.yml").jobs)).toEqual(["test-typecheck"]);
   });
 
-  it("runs the type-check, the lint ratchet and the affected tests inside build-and-test", () => {
+  it("runs the type-check, the lint ratchet and the full suite inside build-and-test", () => {
     const workflow = readWorkflow(".github/workflows/ci.yml");
     expect(jobCommands(workflow, "build-and-test")).toEqual(
-      expect.arrayContaining(["pnpm exec tsc --noEmit", "pnpm run lint", "pnpm run test:affected"]),
+      expect.arrayContaining(["pnpm exec tsc --noEmit", "pnpm run lint", "pnpm test"]),
     );
   });
 
-  it("keeps the order: root type-check before the build, affected tests before the full suite", () => {
+  it("leaves test:affected out of CI, so `pnpm test` stays the only test verdict", () => {
+    const workflow = readWorkflow(".github/workflows/ci.yml");
+    expect(jobCommands(workflow, "build-and-test")).not.toContain("pnpm run test:affected");
+    expect(stepLabels(workflow, "build-and-test")).not.toContain("Run the tests affected by this change");
+  });
+
+  it("keeps the order: root type-check before the build, the suite after the schema steps", () => {
     const labels = stepLabels(readWorkflow(".github/workflows/ci.yml"), "build-and-test");
     const index = (label: string) => labels.indexOf(label);
     expect(index("Type-check the root project")).toBeGreaterThan(index("pnpm install --frozen-lockfile"));
     expect(index("Type-check the root project")).toBeLessThan(index("pnpm run build"));
     expect(index("Lint the house rules against their frozen baseline")).toBeLessThan(index("pnpm run build"));
-    expect(index("Run the tests affected by this change")).toBeGreaterThan(index("Verify tenant isolation is enforced"));
-    expect(index("Run the tests affected by this change")).toBeLessThan(index("pnpm test"));
+    expect(index("pnpm test")).toBeGreaterThan(index("Verify tenant isolation is enforced"));
   });
 });
 

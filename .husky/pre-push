@@ -1,8 +1,11 @@
-# Both lines go through `scripts/pnpm-invocation.ts` instead of the bare name
-# `pnpm`, for the same reason as the commit gate: here the launcher RESOLVES and
-# then exits 127, so the bare name turns every push into a hand-built PATH shim.
-# No `set -e` here either: husky's shim already runs this file as `sh -e`
+# The push gate goes through `scripts/pnpm-invocation.ts` instead of the bare
+# name `pnpm`, for the same reason as the commit gate: here the launcher RESOLVES
+# and then exits 127, so the bare name turns every push into a hand-built PATH
+# shim. No `set -e` here either: husky's shim already runs this file as `sh -e`
 # (see `.husky/_/h`), and the resolver exits non-zero on its own, so the build
-# gate fails by itself and `test:affected` never runs after it.
+# gate fails by itself.
+#
+# `test:affected` is deliberately NOT here. When the scope resolves to the full
+# unit tier it declines to run it and exits non-zero, so a push gate built on it
+# could decide to gate nothing. `pnpm test` in CI is the one full-suite verdict.
 node scripts/pnpm-invocation.ts run build
-node scripts/pnpm-invocation.ts run test:affected
