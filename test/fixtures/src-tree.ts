@@ -9,8 +9,8 @@ import { readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** The absolute path of the repository's src/ directory. */
-export const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src");
+/** The absolute path of the wiki package's src/ directory, where the source tree lives. */
+export const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../packages/wiki/src");
 
 /** Every TypeScript or JavaScript file under src/, as src-relative slash paths. */
 export function srcTsFiles(dir = SRC_DIR, prefix = ""): string[] {
