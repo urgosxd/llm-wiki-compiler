@@ -1,5 +1,5 @@
 /**
- * @file src/dimensions/kg/embedding-model-bridge.test.ts
+ * @file packages/llmwiki-kg/ts/src/embedding-model-bridge.test.ts
  * @description Proves the kg dimension's embedding MODEL reaches it from the
  * wiki side, and that a model nobody chose is refused before any request.
  *
@@ -14,11 +14,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { parseConfig } from "@repo/kg/config";
+import { parseConfig } from "./config.js";
 import {
   bridgeEnvWithWikiCredentials,
   findEmbeddingModelProblem,
-} from "@repo/kg/wiki-credential-fallback";
+} from "./wiki-credential-fallback.js";
 
 /** The wiki-side embedding model, 768-wide on the host that serves it. */
 const WIKI_MODEL = "hf:nomic-ai/nomic-embed-text-v1.5";

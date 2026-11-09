@@ -1,5 +1,5 @@
 /**
- * @file src/dimensions/kg/ontology-store.ts
+ * @file packages/llmwiki-kg/ts/src/ontology-store.ts
  * @description Reading a Stack's stored ontology declaration out of Postgres.
  *
  * ## Why this is a database concern and not the dimension's own
@@ -27,7 +27,8 @@
 
 import { sql } from "drizzle-orm";
 
-import { createClient, createDatabase, kgConfig } from "@repo/kg";
+import { config as kgConfig } from "./config.js";
+import { createClient, createDatabase } from "./db.js";
 
 /** Seconds to wait for the graph database before giving up. */
 const DB_CONNECT_TIMEOUT_SECONDS = 10;

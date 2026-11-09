@@ -64,6 +64,14 @@ export type {
 export { readStackOntology, toStoredOntology } from "./core/stack_ontology.js";
 export type { StoredOntology } from "./core/stack_ontology.js";
 
+// The reader that hands `readStackOntology` the value it parses.
+//
+// Exported through this barrel because the compiler's `kg` dimension is the one
+// consumer that fetches the column: it owns the query, and forcing that consumer
+// to name a storage-shaped subpath would put an implementation detail on the
+// package's public face for a symbol the face already describes.
+export { loadStoredOntology } from "./ontology-store.js";
+
 // The ontology an unconfigured Stack is enforced against (contract
 // core-index.ts@2).
 //

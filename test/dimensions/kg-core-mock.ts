@@ -37,6 +37,10 @@ export function prepareCoreExports(core: CoreModule, databaseUrl: string) {
       GATEWAY_API_KEY: "",
     } as const,
     readStackOntology: core.readStackOntology,
+    // The reader that supplies it. Forwarded because the dimension reaches it
+    // through the BARREL: a factory that omitted it would hand the dimension an
+    // undefined function and fail at runtime, not at the type level.
+    loadStoredOntology: core.loadStoredOntology,
     defaultOntology: core.defaultOntology,
     // The credential and width doors are the SHIPPED ones: a suite that replaces
     // the provider layer must not also replace the rules that refuse a

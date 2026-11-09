@@ -30,6 +30,22 @@ const createDatabase = vi.fn(() => ({
   transaction: async (run: (tx: unknown) => Promise<void>) => run({}),
 }));
 
+/**
+ * The stub a case installs for the barrel's stored-ontology read.
+ *
+ * The dimension reaches that read through `@repo/kg`, so the seam belongs in the
+ * barrel factory below and not in a `vi.doMock` on the module behind it: a
+ * module-level stub there is invisible from inside a hoisted factory, and the
+ * real read would reach Postgres instead. Held mutably and consulted per CALL,
+ * because a factory-time read would freeze the first case's stub into every
+ * case after it.
+ */
+const storedOntologyStub = vi.hoisted(() => ({
+  current: undefined as
+    | undefined
+    | ((stackId: string, databaseUrl?: string) => Promise<unknown>),
+}));
+
 // `readStackOntology` is deliberately the REAL implementation, not a stub: the
 // property under test is that a stored declaration is validated and a malformed
 // one fails the run, and a stub could only assert that the dimension called
@@ -48,6 +64,13 @@ vi.mock("@repo/kg", async () => {
     createDatabase,
     OntologyError: core.OntologyError,
     ...prepareCoreExports(core, "postgres://invalid/none"),
+    // The default source `resolveOntology` falls back to. Wrapped rather than
+    // spread through: a case stubs it by setting the holder, and this reads the
+    // holder when the dimension CALLS the read.
+    loadStoredOntology: (stackId: string, databaseUrl?: string) =>
+      storedOntologyStub.current
+        ? storedOntologyStub.current(stackId, databaseUrl)
+        : core.loadStoredOntology(stackId, databaseUrl),
   };
 });
 
@@ -108,6 +131,8 @@ beforeEach(() => {
   createDatabase.mockReturnValue({
     transaction: async (run: (tx: unknown) => Promise<void>) => run({}),
   });
+  // No case may inherit another's stored-ontology stub.
+  storedOntologyStub.current = undefined;
   stubCore();
 });
 
@@ -187,15 +212,12 @@ describe("kg dimension default ontology source", () => {
     // this asserts the DEFAULT source is reachable, not that wiring happens to
     // be present at one call site.
     const loadStoredOntology = vi.fn(async () => DECLARATION);
-    vi.doMock("../../src/dimensions/kg/ontology-store.js", () => ({ loadStoredOntology }));
-    vi.resetModules();
-
-    const { createKgDimension: freshCreate } = await import(
-      "../../src/dimensions/kg/index.js"
-    );
+    // Installed on the BARREL seam the dimension actually reads through, and
+    // read per call, so no second module graph is needed.
+    storedOntologyStub.current = loadStoredOntology;
     stubCore();
 
-    await freshCreate({ stackId: "s", stackName: "demo", dryRun: true }).prepare(INPUT);
+    await createKgDimension({ stackId: "s", stackName: "demo", dryRun: true }).prepare(INPUT);
 
     expect(loadStoredOntology).toHaveBeenCalledWith("s", undefined);
     expect(extractGraphFromChunks).toHaveBeenCalledWith(
@@ -203,8 +225,5 @@ describe("kg dimension default ontology source", () => {
       "demo",
       expect.objectContaining({ entityTypes: ["COMPANY"] }),
     );
-
-    vi.doUnmock("../../src/dimensions/kg/ontology-store.js");
-    vi.resetModules();
   });
 });

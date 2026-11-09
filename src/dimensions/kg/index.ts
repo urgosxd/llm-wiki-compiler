@@ -76,12 +76,11 @@ import {
   type ExtractedEntity,
   type ExtractedRelationship,
 } from "@repo/kg";
-import { defaultOntology } from "@repo/kg";
+import { defaultOntology, loadStoredOntology } from "@repo/kg";
 import type { Database, ExtractionResult, Ontology } from "@repo/kg";
 
 import { getEmbeddingProvider } from "../../utils/embedding-provider.js";
 import { getProvider } from "../../utils/provider.js";
-import { loadStoredOntology } from "./ontology-store.js";
 import type {
   CommittedWrite,
   CommitScope,
