@@ -27,7 +27,7 @@
 import type { ServerResponse } from "node:http";
 import { writeJson, writeJsonError } from "./respond.js";
 import type { JobRegistry } from "../services/ingest/jobs/registry.js";
-import { stackIdProblem } from "../utils/stack-id.js";
+import { stackIdProblem } from "@repo/foundation";
 
 /** How many jobs a durable listing returns. Matches the MCP tool default. */
 const DURABLE_LIST_LIMIT = 50;
@@ -53,9 +53,9 @@ export function isIngestJobsPath(pathname: string): boolean {
  *
  * Injection is about the pool, not about keeping the KG package out — this module is
  * already inside its import graph. It imports `stackIdProblem` from
- * `../utils/stack-id.js`, and that validator reaches the `llmwiki-kg` barrel, whose
- * closure is core, DB and config modules. Measured, the viewer bundle was unchanged
- * by that edge: it already carried those modules through other importers.
+ * `@repo/foundation`, which is the pure Stack-id rule and imports nothing at all, so
+ * the `llmwiki-kg` barrel is no longer on this path. Measured, the viewer bundle was
+ * unchanged by the move: it already carried those modules through other importers.
  *
  * The boundary that does matter is the MCP SDK — nothing on the viewer side may link
  * `@modelcontextprotocol/sdk`. The barrel's closure contains none of it, which is

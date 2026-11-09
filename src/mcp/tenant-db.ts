@@ -34,7 +34,7 @@ import {
   createDimensionsDatabase,
   resolveStackId,
 } from "../dimensions/activation.js";
-import { stackIdProblem } from "../utils/stack-id.js";
+import { stackIdProblem } from "@repo/foundation";
 import { stackExists } from "../services/stacks/stack-store.js";
 
 /**

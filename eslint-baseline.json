@@ -163,7 +163,6 @@
     "src/utils/lock-postgres.ts no-restricted-imports": 1,
     "src/utils/lock.ts max-lines-per-function": 1,
     "src/utils/source-writer.ts max-lines-per-function": 1,
-    "src/utils/stack-id.ts no-restricted-imports": 1,
     "src/viewer/render.ts max-lines-per-function": 1,
     "test/aimock-smoke.test.ts max-lines-per-function": 2,
     "test/answer-wikilink-tokens.test.ts max-lines-per-function": 1,

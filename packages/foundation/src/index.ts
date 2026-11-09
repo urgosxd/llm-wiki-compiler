@@ -4,6 +4,20 @@
  * `@repo/wiki`, `@repo/kg` and `@repo/api` are all allowed to import, and the
  * only one that may not import any of them.
  *
+ * ## What this package exports
+ *
+ * Three things, each in its own module and each re-exported here so a consumer
+ * writes one specifier — `@repo/foundation` — wherever it stands in the topology:
+ *
+ * - {@link DatabaseHandle}, the seam below, declared in this file because it is the
+ *   one the wiki side holds everywhere;
+ * - the Stack-id rule in `stack-id.ts`, which is pure and imports nothing at all;
+ * - the two injection seams in `providers.ts` — an advisory lock and one Stack's
+ *   config — implemented by `@repo/api` and received by the owning dimension.
+ *
+ * None of them names a wiki, KG or api type, which is what keeps this file the
+ * bottom layer rather than the first step back up it.
+ *
  * ## The edge this package replaces
  *
  * The target topology permits `api → wiki`, `api → kg` and `{wiki,kg,api} →
@@ -125,3 +139,18 @@ export interface DatabaseHandle {
    */
   transaction<T>(run: (tx: DatabaseHandle) => Promise<T>): Promise<T>;
 }
+
+/**
+ * The Stack-id rule both dimensions validate against.
+ *
+ * Re-exported rather than restated: the implementation lives in `stack-id.ts` with
+ * the documentation that says why the canonical 8-4-4-4-12 form is the contract and
+ * why the three permissive UUID shapes are refused.
+ */
+export { STACK_ID_PATTERN, isStackId, stackIdProblem } from "./stack-id.js";
+
+/**
+ * The two provider seams. Interfaces only — the implementation is `@repo/api`'s, and
+ * the receiving dimension takes it by injection; see `providers.ts`.
+ */
+export type { AdvisoryLock, AdvisoryLockProvider, ProjectConfigProvider } from "./providers.js";

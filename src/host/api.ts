@@ -53,7 +53,7 @@ import type { JobRegistry } from "../services/ingest/jobs/registry.js";
 import { runIngestJob } from "../services/ingest/jobs/run.js";
 import type { IngestJobAccepted } from "../services/ingest/jobs/types.js";
 import type { CompileResult, IngestResult } from "../utils/types.js";
-import { stackIdProblem } from "../utils/stack-id.js";
+import { stackIdProblem } from "@repo/foundation";
 import { buildIngestEnv } from "./ingest-env.js";
 import { AKS_DATABASE_URL_ENV_VAR, createDimensionsDatabase } from "../dimensions/activation.js";
 import { stackExists } from "../services/stacks/stack-store.js";
