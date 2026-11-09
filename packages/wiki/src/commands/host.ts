@@ -75,8 +75,15 @@ export default async function hostCommand(options: HostCommandOptions = {}): Pro
     // `package.json` inside the host, which the bundle does not sit beside.
     version: (require("../../package.json") as { version: string }).version,
     // INJECTED by the caller. This command is re-exported by the `compiler-cli`
-    // barrel, so importing `../mcp/**` here closes a cycle
+    // barrel, so importing `../mcp/**` here CLOSED a cycle
     // (`host.ts -> mcp/server.ts -> mcp/tools.ts -> compiler-cli.ts -> host.ts`).
+    // That cycle was real, and it is why the factory is injected rather than
+    // imported. The edge that formed it has since been removed: the MCP modules
+    // now import their symbols from the DEFINING modules, so `mcp/tools.ts` no
+    // longer reaches `compiler-cli.ts` at all. The injection stays anyway. It is
+    // what keeps this command from growing an import of its own into `mcp/**`
+    // the next time someone wants a tool helper here, it costs one optional
+    // parameter, and it is pinned by a test — belt as well as braces.
     // The CLI entry imports the barrel and is imported by nothing, so the factory
     // can only be built there.
     ...(options.mcpServerFactory === undefined ? {} : { mcpServerFactory: options.mcpServerFactory }),

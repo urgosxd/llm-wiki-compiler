@@ -42,6 +42,33 @@
  * the root and `corepack pnpm run build`, so an unrun build is never mistaken for
  * a clean artifact.
  *
+ * The empty list is also the ONLY way a root may fail quietly, and it is reserved
+ * for a root that does not exist. An unreadable subdirectory — a permission
+ * failure, a path that is not a directory, anything else a read can throw — fails
+ * the guard and names itself, because an under-collected scan that passes is this
+ * file's own failure mode wearing its badge. What a text guard cannot see at all is
+ * a specifier assembled at runtime; see the limits section below.
+ *
+ * ## What a static text guard cannot see
+ *
+ * This guard reads bundle TEXT, so it sees only specifiers that survive into the
+ * file as contiguous text. Two assembled shapes have to be told apart, because only
+ * one of them is caught here at all:
+ *
+ * - `"@repo/" + "kg"` — the literal `@repo/` survives in the bundle, so this is
+ *   caught by the TOTAL ratchet below, as a rise in the count. The import-position
+ *   assertion sees no import, which is exactly why the ratchet exists.
+ * - `"@re" + "po/kg"` — assembled so that no contiguous `@repo/` ever appears in
+ *   the file. NEITHER assertion can see it. A static text guard cannot, by
+ *   construction, and no amount of care in this file changes that.
+ *
+ * That residue is covered at RUNTIME instead: `test/artifact/entries-load.test.ts`
+ * imports all four published entries and evaluates their whole static chunk graph,
+ * so a specifier that ever resolved to raw TypeScript the consumer does not have
+ * fails there even when this file's text says nothing. The two guards complement
+ * each other; neither replaces the shipped-bundle spawn guard at
+ * `test/cli.test.ts:58-62`.
+ *
  * ## Both assertions are proven to bite, from inside this file
  *
  * A guard that passes because it found nothing, or because its detector stopped
@@ -55,7 +82,7 @@
 
 import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { appendFile, copyFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -78,6 +105,12 @@ const ASSET_SEGMENT = "/viewer/assets/";
 /** Scratch-directory prefix, distinctive so a leaked one is traceable to this file. */
 const SCRATCH_PREFIX = "llmwiki-dist-guard-";
 
+/** Mode that withdraws read and traverse permission, for the unreadable-directory probe. */
+const READ_PERMISSION_REVOKED = 0o000;
+
+/** Mode restored in a `finally`, so a failed probe never leaves an unreadable directory behind. */
+const READ_PERMISSION_RESTORED = 0o755;
+
 /** A private-package reference, counted anywhere in one bundle's text. */
 const PRIVATE_REFERENCE = /@repo\//g;
 
@@ -85,22 +118,28 @@ const PRIVATE_REFERENCE = /@repo\//g;
  * Private-package specifiers in IMPORT POSITION: the only form Node resolves at
  * runtime, and so the only form that can break a consumer's install. The shapes
  * below are written with the concrete `@repo/kg`, which stands in for any private
- * workspace package, and they are exactly five:
+ * workspace package, and they are exactly seven:
  *
  * - `import … from "@repo/kg"` — a static import's `from` clause;
  * - `export … from "@repo/kg"` — the same clause, re-exporting;
  * - `import "@repo/kg"` — a side-effect import, which has no `from` clause at all
- *   and would slip past a detector that only knew the four `from`/`(` forms;
+ *   and would slip past a detector that only knew the `from`/`(` forms;
  * - `import("@repo/kg")` — a dynamic import;
- * - `require("@repo/kg")` — a CommonJS require, which a bundle may leave in place.
+ * - `require("@repo/kg")` — a CommonJS require, which a bundle may leave in place;
+ * - `require.resolve("@repo/kg")` — the same require reached through its resolver.
+ *   It needs its own alternative: the `require` form requires a parenthesis right
+ *   after the callee, and a `.` is not one, so `require` alone never matched it;
+ * - any of the above with a BACKTICK for the quote — the template-literal form —
+ *   which is why the quote class admits `"`, `'` and a backtick on both sides.
  *
  * The whitespace before the quote is load-bearing: esbuild emits `from"…"` with no
  * space at all. The `\b` keeps `from` from matching the tail of a longer
  * identifier, such as `transform`, and the optional `\(` covers the call forms
  * without letting `import {x} from …` report twice: the `{` after `import` fails
- * `\s*\(?\s*["']`, so only the `from` clause matches.
+ * `\s*\(?\s*["'`]`, so only the `from` clause matches.
  */
-const IMPORT_POSITION_PRIVATE_SPECIFIER = /(?:\bfrom|\bimport\b|\brequire\b)\s*\(?\s*["'](@repo\/[^"']*)["']/g;
+const IMPORT_POSITION_PRIVATE_SPECIFIER =
+  /(?:\bfrom|\bimport\b|\brequire\.resolve\b|\brequire\b)\s*\(?\s*["'`](@repo\/[^"'`]*)["'`]/g;
 
 /**
  * What the bite self-test appends to its scratch copy, and the specifier that must
@@ -166,22 +205,68 @@ function sha256(bytes: Buffer): string {
 /**
  * Every `.js` file under one directory, walked recursively.
  *
- * A missing or unreadable directory yields an empty list instead of throwing: the
- * fail-closed assertion in {@link assertRootHasBundles} owns the message, so an
- * unrun build is reported as an unrun build rather than as a read error.
+ * ANY read failure is fatal and propagates with the directory it names. A walk that
+ * silently shrinks its own scope is this file's failure mode reproduced inside the
+ * thing meant to prevent it, so an empty list here can only mean "this directory
+ * holds no bundle", never "something could not be read".
  *
  * @param directory - Absolute directory to walk.
  * @returns Absolute paths of every collected file, unsorted by contract.
  */
 async function collectJavaScriptFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
   const found: string[] = [];
-  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
     const absolutePath = path.join(directory, entry.name);
     if (entry.isDirectory()) found.push(...(await collectJavaScriptFiles(absolutePath)));
     else if (entry.isFile() && entry.name.endsWith(BUNDLE_EXTENSION)) found.push(absolutePath);
   }
   return found;
+}
+
+/** The two fields of a filesystem error this file decides on. */
+interface DirectoryReadFailure {
+  /** `ENOENT`, `EACCES`, `ENOTDIR`, … when Node supplies one. */
+  readonly code?: string;
+  /** The path the failing call was given, which is what tells root from descendant. */
+  readonly path?: string;
+}
+
+/**
+ * True when a read failed because the directory ITSELF is absent, rather than
+ * because something inside it could not be read.
+ *
+ * Both halves are required. `ENOENT` alone would also swallow a subdirectory that
+ * vanished mid-walk, and `path` alone would swallow a permission failure on the
+ * root, which must fail loudly.
+ *
+ * @param error - What a directory read threw.
+ * @param directory - The directory that read was given.
+ * @returns Whether the root, specifically, does not exist.
+ */
+function isAbsentDirectory(error: unknown, directory: string): boolean {
+  const failure = error as DirectoryReadFailure;
+  return failure.code === "ENOENT" && failure.path === directory;
+}
+
+/**
+ * Collect one BUILD ROOT's bundles, where a wholly absent root is legitimate: it is
+ * the "the build has not run" case, and {@link assertRootHasBundles} reports it with
+ * a message naming the build command instead of an `ENOENT` stack.
+ *
+ * Only the root's own absence is swallowed. An unreadable SUBDIRECTORY throws, with
+ * the directory named, so the scan can never under-collect and still pass.
+ *
+ * @param directory - Absolute build root to walk.
+ * @returns Absolute paths of every collected file, empty only when the root is absent.
+ */
+async function collectBundleFilesUnder(directory: string): Promise<string[]> {
+  try {
+    return await collectJavaScriptFiles(directory);
+  } catch (error) {
+    if (isAbsentDirectory(error, directory)) return [];
+    throw error;
+  }
 }
 
 /** Every private specifier in import position in one source text. */
@@ -211,7 +296,7 @@ async function importPositionViolation(
  * @returns What the walk collected, including the two counts the assertions use.
  */
 async function scanBuildRoot(root: string): Promise<BuildRootScan> {
-  const files = await collectJavaScriptFiles(path.join(REPO_ROOT, root));
+  const files = await collectBundleFilesUnder(path.join(REPO_ROOT, root));
   const sources = await Promise.all(files.map((file) => readFile(file, "utf8")));
   let privateOccurrences = 0;
   const violations: ImportPositionViolation[] = [];
@@ -300,6 +385,63 @@ it("pins the total private-package occurrence count at the measured baseline", a
     total,
     `the total @repo/ count moved; a rise means new private data reached the bundle, a fall means the pin must be lowered (to 0 once commands/host.ts leaves)`,
   ).toBe(PINNED_TOTAL_PRIVATE_OCCURRENCES);
+});
+
+it("yields an empty list only for an absent root, which then fails closed", async () => {
+  const scratch = await mkdtemp(path.join(tmpdir(), SCRATCH_PREFIX));
+  const absent = path.join(scratch, "never-created");
+  try {
+    const emptyRoot = await collectBundleFilesUnder(absent);
+    expect(emptyRoot, "an absent root is the one case that may yield nothing to scan").toEqual([]);
+    const scan: BuildRootScan = { root: absent, files: emptyRoot, privateOccurrences: 0, violations: [] };
+    const run = () => assertRootHasBundles(scan);
+    expect(run, "an absent root must then trip the fail-closed assertion, never pass").toThrow(absent);
+    expect(run, "the fail-closed failure must still state the build precondition").toThrow(BUILD_COMMAND);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+it("fails naming the path it could not read as a directory, never shrinking the scan", async () => {
+  const scratch = await mkdtemp(path.join(tmpdir(), SCRATCH_PREFIX));
+  const regularFile = path.join(scratch, "not-a-directory.js");
+  try {
+    await writeFile(regularFile, "export const x = 1;\n");
+    await expect(collectBundleFilesUnder(regularFile), "a path that exists but is not readable as a directory must fail").rejects.toThrow(
+      regularFile,
+    );
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+it.skipIf(typeof process.getuid === "function" && process.getuid() === 0)(
+  "fails naming a permission-locked directory instead of returning it as empty",
+  async () => {
+    const scratch = await mkdtemp(path.join(tmpdir(), SCRATCH_PREFIX));
+    const locked = path.join(scratch, "locked");
+    try {
+      await mkdir(path.join(locked, "nested"), { recursive: true });
+      await chmod(locked, READ_PERMISSION_REVOKED);
+      try {
+        await expect(collectBundleFilesUnder(locked), "an unreadable subdirectory must fail, naming itself").rejects.toThrow(
+          locked,
+        );
+      } finally {
+        await chmod(locked, READ_PERMISSION_RESTORED);
+      }
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+    }
+  },
+);
+
+it("detects every quote form of a private specifier, including require.resolve", () => {
+  const forms = ['require.resolve("@repo/kg")', "import(`@repo/kg`)", "from `@repo/kg`", "from '@repo/kg'"];
+  expect(
+    forms.map((form) => importPositionSpecifiers(form)),
+    "the detector must see the require.resolve callee and a template-literal quote as well as ' and \"",
+  ).toEqual(forms.map(() => [INJECTED_SPECIFIER]));
 });
 
 it("bites an injected private specifier in a scratch copy, never writing dist/", async () => {

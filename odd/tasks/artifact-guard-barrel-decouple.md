@@ -100,6 +100,7 @@ Consequence: the work is plumbing that survives every CLI decision, and "no prod
 | T3 (done) — Piece 1, `test/artifact/dist-specifiers.test.ts` | S1-S4 | worker | (this commit) |
 | T4 (done) — Piece 3, `test/artifact/entries-load.test.ts` | S10-S11 | worker | e5ef03da7b78d35de26a2ad5983646469fd11ff9 + fixup (this commit) |
 | T5 — independent verification of T2-T4 plus the full gate set | S12-S15 | verify | pending |
+| T6 (done) — hardening: guard fail-open closed, stale cycle comments corrected, barrel absence pinned | S1-S4, S5-S9, S13 | worker | (this commit) |
 
 T1 is done because this file is its deliverable. The commit column of T1 reads `(this commit)`
 because a commit cannot contain its own hash; T4 carries its original SHA plus the fixup commit that
@@ -165,3 +166,59 @@ Your diagnosis is right and it separates two classes the brief conflated. A lite
 
 Corrected figure for the record: `compiler-cli.ts` is 102 lines but its export statements span ~90 module specifiers, not the brief's rough "133 symbols from ~50 modules".
 ```
+
+L3 (follow-up hardening — a decision and evidence record, not a quotation). This unit hardens T2-T4
+with four approved fixes, all of which are consequences of the work above rather than new scope. The
+three advisories raised against T2-T4 were ACCEPTED, none disputed:
+
+1. **The fail-open path inside the fail-closed guard.** `test/artifact/dist-specifiers.test.ts`
+   collected with `readdir(...).catch(() => [])`, so an unreadable subdirectory silently
+   under-collected and only a wholly empty root tripped the assertion — the exact failure S2 exists to
+   prevent, reproduced inside the thing meant to prevent it.
+2. **Stale cycle comments.** Piece 2 removed the `mcp/tools.ts -> compiler-cli.ts` edge, and two
+   comments still described it in the present tense (`commands/host.ts:78-82`,
+   `host/mcp-http.ts:22-31`), which is change-caused doc drift: an explanation that is half-corrected
+   is worse than neither.
+3. **The static text guard's own blind spot.** No rationale stated that a specifier assembled at
+   runtime is invisible to a text scan, and the detector also missed `require.resolve("@repo/kg")`
+   and the backtick-quoted form.
+
+The four fixes, each with its evidence:
+
+- **Both comments corrected together, comment text only.** Zero code, import or export change in
+  either file, confirmed by a `git diff` in which every added and removed line is a `//` or ` *`
+  line; neither file contains the literal `@repo/`, and after the rebuild the total pin is still 2, so
+  nothing reached the bundle. The history is preserved rather than denied: the cycle WAS real, it is
+  why the factory is injected, the edge was removed when the MCP modules moved to defining-module
+  imports, and the injected-factory decision still stands with belt as well as braces.
+- **The fail-open path closed.** Only a genuinely absent ROOT yields an empty list (`ENOENT` whose
+  `path` is that root, both halves required); every other read failure throws and names the directory.
+  Proven by three probes: an absent root yields `[]` and the fail-closed assertion then throws naming
+  the root and the build command; a path that exists but is not a directory fails naming itself
+  (`ENOTDIR`, portable, works as uid 0); a `chmod 000` directory fails naming itself (`EACCES`, run
+  as uid 1000 here, skipped under uid 0 where the mode bits do not bind).
+- **The limit documented, and the detector widened where it is cheap.** The file's rationale now
+  states that a static text guard cannot see an assembled specifier such as `"@re" + "po/kg"`, that
+  the total ratchet catches `"@repo/" + "kg"` because the literal survives, that the split form is
+  caught by neither assertion, and that the runtime consequence is covered by
+  `test/artifact/entries-load.test.ts`. The detector gained `require.resolve` (one alternation) and a
+  backtick quote class; nothing else about it changed.
+- **The barrel's absence pinned absolutely.** New `test/artifact/mcp-import-surface.test.ts`: zero
+  `compiler-cli` import/export specifiers under `packages/wiki/src/mcp/`, recursively, fail-closed on
+  an empty walk. The matcher PARSES specifiers and is not line-anchored, because the pre-rewrite
+  barrel imports were multi-line and the specifier sat on a continuation line that `/^\s*import\b/`
+  never matched — a naive draft was written first, observed to return `[]` for a synthetic multi-line
+  barrel import and to miss the side-effect form, and replaced by the parse-based collector (shared
+  from `test/fixtures/module-imports.ts`, not re-implemented). Parsing also makes the three
+  explanatory prose mentions (`job-tools.ts:33,37`, `stack-tools.ts:27`) structurally invisible, so
+  comments keep passing.
+
+Measured-figure correction for the record, replacing two earlier figures quoted in the brief and in
+L2's tail: `packages/wiki/src/compiler-cli.ts` is **102 lines** holding **77 `export … from` clauses
+over 64 distinct modules**. The brief's "133 symbols from ~50 modules" was a SYMBOL count with a low
+module count, and L2's "~90 module specifiers" was a grep of barrel *references across the tree*
+(`grep -rn 'compiler-cli'`), not specifiers inside the file. Neither changes any decision; both were
+wrong in the same direction, overstating the module fan-out and understating its uniformity.
+
+Post-rebuild evidence for the comment fix: `grep -ro '@repo/' dist packages/llmwiki-core/dist
+--include=*.js | wc -l` is still **2**, and the walked file counts are still **35** and **41**.

@@ -18,17 +18,27 @@
  *
  * ## Why the server factory is INJECTED
  *
- * This module deliberately has NO import of `../mcp/**`. A static edge closes a
- * cycle: `host/server.ts -> mcp-http.ts -> mcp/server.ts -> mcp/tools.ts ->
- * compiler-cli.ts -> commands/host.ts -> host/server.ts`. The chain runs through
- * `compiler-cli.ts`, a public barrel that re-exports `hostCommand`, so any import
- * path from the host into the MCP tools re-enters the host module. `fallow` reported
- * exactly those three cycles (one per tools barrel: tools, okf-tools, resources) the
- * moment the static import existed, and a dynamic `import()` did not help because the
- * cycle is still visible to static analysis.
+ * This module deliberately has NO import of `../mcp/**`, and that holds whatever
+ * the MCP modules themselves import: the host builds the server and hands the
+ * factory in, so this module only ever speaks HTTP to it.
  *
- * Injecting the factory removes the edge entirely: the host builds the server, this
- * module only speaks HTTP to it.
+ * The rule comes from a cycle that was REAL, and it is still why the factory is
+ * injected. A static edge closed one: `host/server.ts -> mcp-http.ts ->
+ * mcp/server.ts -> mcp/tools.ts -> compiler-cli.ts -> commands/host.ts ->
+ * host/server.ts`. The chain ran through `compiler-cli.ts`, a public barrel that
+ * re-exports `hostCommand`, so any import path from the host into the MCP tools
+ * re-entered the host module. `fallow` reported exactly those three cycles (one
+ * per tools barrel: tools, okf-tools, resources) the moment the static import
+ * existed, and a dynamic `import()` did not help because the cycle is still visible
+ * to static analysis.
+ *
+ * That edge has since been removed: the MCP modules now import their symbols from
+ * the DEFINING modules instead of through the barrel, so `mcp/tools.ts` no longer
+ * reaches `compiler-cli.ts` and the chain above is broken at its barrel link. The
+ * injected factory stays all the same — it is the reason this module can never gain
+ * the edge back, it costs one parameter, and `test/artifact/mcp-import-surface.test.ts`
+ * now pins the barrel's absence from `src/mcp/**`, so a reintroduction fails a test
+ * instead of waiting for `fallow` to notice a cycle. Belt as well as braces.
  *
  * ## Why stateless
  *
