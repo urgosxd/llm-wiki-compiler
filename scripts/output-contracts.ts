@@ -93,7 +93,13 @@ export function planAffectedInvocations(
   scope: AffectedScope,
   unitFiles: readonly string[],
 ): VitestInvocation[] {
-  if (scope.kind === "none") return [];
+  // An `unresolved` scope plans nothing: the change set was never computed, so
+  // there is nothing to plan. The branch is behaviour-neutral rather than dead:
+  // `scripts/run-affected-tests.ts` exits with its own status (69) before
+  // planning, so production never reaches here with `unresolved` — the case
+  // exists so the union stays exhaustive and no member can fall through into the
+  // `files` path and plan a `related` run for a computation that never happened.
+  if (scope.kind === "none" || scope.kind === "unresolved") return [];
   if (scope.kind === "global") {
     const { files, added } = mergeOutputContracts(unitFiles);
     return [{ argv: ["run", ...files], addedContracts: added }];

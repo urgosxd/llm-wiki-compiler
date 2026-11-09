@@ -5,23 +5,34 @@
  * function while this module owns the one impure step: spawning vitest. The
  * split also keeps each file under the size budget.
  *
- * Three outcomes, matching {@link AffectedScope}:
+ * FOUR outcomes, matching {@link AffectedScope}. The difference between them is
+ * the whole point of this module, so none of them may borrow another's wording:
  *
- *   - `files`  → `vitest related <changed files>`, which runs only tests that
- *                import them.
- *   - `global` → the whole `test:unit` tier, because a build/test-config change
- *                can reach any file and a narrow selection would be a lie.
- *   - `none`   → exit 0 without running anything.
+ *   - `files`      → `vitest related <changed files>`, which runs only tests
+ *                    that import them.
+ *   - `global`     → DECLINED. A build/test-config change CAN reach any file, so
+ *                    the scope resolved and the escalation decision stands, but
+ *                    the full unit tier is a subset of `pnpm test` and running it
+ *                    here pays for the same files twice. This prints
+ *                    {@link FULL_TIER_LINE} and exits {@link EXIT_FULL_TIER_DECLINED}.
+ *   - `unresolved` → the changed set could not be computed at all (no base ref,
+ *                    or a failed merge-base/diff). Not an escalation and not a
+ *                    `none`: it prints which step failed and exits
+ *                    {@link EXIT_SCOPE_UNRESOLVED}.
+ *   - `none`       → exit 0 without running anything, and reachable ONLY by a
+ *                    computation that succeeded and found nothing relevant.
  *
- * EVERY outcome also runs the output contracts listed in
+ * EVERY `files` outcome also runs the output contracts listed in
  * {@link OUTPUT_CONTRACT_TESTS}; `scripts/output-contracts.ts` explains why that
  * list exists and how to justify an entry. Which invocations that produces is
  * decided by the pure `planAffectedInvocations`, so the coverage is asserted by
  * `scripts/output-contracts.test.ts` without spawning anything.
  *
- * The full suite is deliberately NOT one of these outcomes: CI runs it on every
- * push (`.github/workflows/ci.yml`), and duplicating it locally is the cost this
- * hook exists to remove. `pnpm test` still runs it on demand.
+ * IMPORTING THIS MODULE RUNS NOTHING. The entry is {@link runAffectedTests}, and
+ * it takes the scope decision and the runner as injected dependencies, so the
+ * three statuses are assertable without a child process
+ * (`test/run-affected-tests-outcomes.test.ts`). The top-level call sits behind the
+ * invoked-directly guard this repository's scripts use.
  *
  * pnpm is RESOLVED, not assumed: every child below is spawned through the
  * invocation `scripts/pnpm-invocation.ts` proved working, because the bare name
@@ -35,8 +46,47 @@ import path from "node:path";
 import { readRoot } from "./cli-root.ts";
 import { OUTPUT_CONTRACT_TESTS, planAffectedInvocations, type VitestInvocation } from "./output-contracts.ts";
 import { resolvePnpm, type PnpmCandidate } from "./pnpm-invocation.ts";
-import { classifyTests, partition } from "./test-partition.ts";
 import { resolveAffectedScope, type AffectedScope } from "./test-affected.ts";
+
+/**
+ * The resolved full unit tier was declined rather than run: EX_CONFIG (78).
+ *
+ * A dedicated non-zero status, not 0, because this command ran ZERO tests. A
+ * note plus a green exit would read as "verified" to a script, a hook, or an
+ * agent under time pressure, which is the silent-green shape to refuse.
+ */
+export const EXIT_FULL_TIER_DECLINED = 78;
+
+/**
+ * The changed set could not be computed: EX_UNAVAILABLE (69).
+ *
+ * Deliberately distinct from {@link EXIT_FULL_TIER_DECLINED}: nothing was
+ * resolved here, so claiming "the full tier applies" would be false, and
+ * borrowing the `none` wording would be a clean run over a set nobody read.
+ */
+export const EXIT_SCOPE_UNRESOLVED = 69;
+
+/**
+ * What the full-tier refusal prints, byte for byte, on stderr.
+ *
+ * The `affected:` prefix is NOT this module's `test-affected:` convention and
+ * must not be normalised to it: the mandated contract is asserted byte-exactly.
+ */
+const FULL_TIER_LINE = 'affected: scope resolves to the full unit tier; run `pnpm test` instead\n';
+
+/** Runs a plan; the seam a test replaces so it can count invocations without spawning. */
+export type AffectedRunner = (plan: readonly VitestInvocation[]) => number;
+
+/** Dependencies a caller may inject; absent fields fall back to the real implementations. */
+export interface AffectedRunDeps {
+  /** The resolved scope decision, instead of resolving it from git. */
+  scope?: AffectedScope;
+  /** The invocation runner, instead of spawning vitest. */
+  runner?: AffectedRunner;
+}
+
+/** The `files` outcome, which is the only one that plans invocations. */
+type FilesScope = Extract<AffectedScope, { kind: "files" }>;
 
 /**
  * Spawn a command, inheriting stdio so the hook shows real progress.
@@ -46,12 +96,7 @@ import { resolveAffectedScope, type AffectedScope } from "./test-affected.ts";
  * @param label - Human name for the command, used in the failure message.
  * @returns The child's exit status, or 1 when it could not be started.
  */
-function spawnInherit(
-  root: string,
-  command: string,
-  args: readonly string[],
-  label: string,
-): number {
+function spawnInherit(root: string, command: string, args: readonly string[], label: string): number {
   const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
   if (result.error) {
     process.stderr.write(`test-affected: could not start ${label} — ${result.error.message}\n`);
@@ -107,27 +152,11 @@ function ensureBuiltCli(root: string, pnpm: PnpmCandidate): number {
 }
 
 /**
- * Report the tier the scope selected.
- *
- * @param root - Repository root.
- * @param scope - The resolved scope; `none` is handled by the caller.
- * @returns The unit tier's files for a `global` scope, otherwise an empty list.
+ * Say what the selection covers, so the log explains the run it is about to pay for.
+ * @param scope - The `files` selection being run.
  */
-function announceTier(root: string, scope: AffectedScope): string[] {
-  if (scope.kind === "global") {
-    // No root argument: the classification default enumerates every test tree,
-    // so the escalation tier cannot silently narrow to `test/` again.
-    const unitFiles = partition(classifyTests(root)).unit;
-    process.stderr.write(`test-affected: full unit tier — ${scope.reason}\n`);
-    process.stderr.write(`test-affected: ${unitFiles.length} unit file(s)\n`);
-    return unitFiles;
-  }
-  if (scope.kind === "files") {
-    process.stderr.write(
-      `test-affected: ${scope.files.length} changed file(s); running related tests only\n`,
-    );
-  }
-  return [];
+function announceTier(scope: FilesScope): void {
+  process.stderr.write(`test-affected: ${scope.files.length} changed file(s); running related tests only\n`);
 }
 
 /** Say which output contracts the run adds, so the extra work is auditable. */
@@ -169,25 +198,61 @@ function resolveOrReport(root: string): PnpmCandidate | null {
   return resolution.invocation;
 }
 
-/** Entry point: resolve pnpm and the scope, then run exactly what the scope selects. */
-function main(argv: readonly string[]): number {
-  const root = readRoot(argv);
+/**
+ * The real runner: resolve pnpm, ensure the contracts have a build, then spawn vitest.
+ * @param root - Repository root.
+ * @returns The runner, or null after the failure message was written.
+ */
+function createDefaultRunner(root: string): AffectedRunner | null {
   const pnpm = resolveOrReport(root);
-  if (pnpm === null) return 1;
+  if (pnpm === null) return null;
+  return (plan) => {
+    const buildStatus = ensureBuiltCli(root, pnpm);
+    if (buildStatus !== 0) return buildStatus;
+    return runPlan(root, pnpm, plan);
+  };
+}
 
-  const scope = resolveAffectedScope(root);
+/**
+ * Plan and run the `files` selection.
+ * @param root - Repository root.
+ * @param scope - The selection to run.
+ * @param deps - Injected dependencies; the real runner is built when none is given.
+ * @returns The status this run reports.
+ */
+function runFilesScope(root: string, scope: FilesScope, deps: AffectedRunDeps): number {
+  const plan = planAffectedInvocations(scope, []);
+  announceTier(scope);
+  announceContracts(plan);
+  const runner = deps.runner ?? createDefaultRunner(root);
+  if (runner === null) return 1;
+  return runner(plan);
+}
+
+/**
+ * Report the outcome the scope selected, and run only what still needs running.
+ * @param argv - Process argv after the script name; `--root` is honoured.
+ * @param deps - Injected scope decision and runner; both default to the real ones.
+ * @returns The exit status this run reports.
+ */
+export function runAffectedTests(argv: readonly string[], deps: AffectedRunDeps = {}): number {
+  const root = readRoot(argv);
+  const scope = deps.scope ?? resolveAffectedScope(root);
   if (scope.kind === "none") {
     process.stderr.write(`test-affected: nothing to run — ${scope.reason}\n`);
     return 0;
   }
-
-  const plan = planAffectedInvocations(scope, announceTier(root, scope));
-  announceContracts(plan);
-
-  const buildStatus = ensureBuiltCli(root, pnpm);
-  if (buildStatus !== 0) return buildStatus;
-
-  return runPlan(root, pnpm, plan);
+  if (scope.kind === "unresolved") {
+    process.stderr.write(`test-affected: could not compute the changed file set — ${scope.reason}\n`);
+    return EXIT_SCOPE_UNRESOLVED;
+  }
+  if (scope.kind === "global") {
+    process.stderr.write(FULL_TIER_LINE);
+    return EXIT_FULL_TIER_DECLINED;
+  }
+  return runFilesScope(root, scope, deps);
 }
 
-process.exitCode = main(process.argv.slice(2));
+if (process.argv[1] && import.meta.url === `file://${path.resolve(process.argv[1])}`) {
+  process.exitCode = runAffectedTests(process.argv.slice(2));
+}

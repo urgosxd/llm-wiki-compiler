@@ -8,12 +8,56 @@
  * the narrowing path, and the "nothing to run" path.
  */
 
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   isGlobalScope,
   resolveAffectedScope,
   selectableFiles,
+  type AffectedScope,
 } from "../scripts/test-affected.js";
+
+/** A throwaway repository, and the two operations a fixture needs to shape it. */
+interface FixtureRepo {
+  /** Run git here and return its trimmed stdout. */
+  run: (args: readonly string[]) => string;
+  /** Write a file, creating its parent directory. */
+  write: (file: string, contents: string) => void;
+}
+
+/**
+ * Build a synthetic repository, let a fixture fill it in, and resolve a scope from it.
+ *
+ * These cases run real `git`, so `scripts/test-partition.ts` classifies this file
+ * into the integration tier by content. That is correct: the property under test IS
+ * what git reports, and a stub of `merge-base` would pin the stub.
+ *
+ * @param build - Creates the history and remotes the case needs.
+ * @returns The scope resolved in that repository.
+ */
+function inSyntheticRepo(build: (repo: FixtureRepo) => void): AffectedScope {
+  const dir = mkdtempSync(path.join(tmpdir(), "scope-"));
+  const run = (args: readonly string[]): string =>
+    execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  try {
+    run(["init", "-q", "-b", "main", "."]);
+    run(["config", "user.email", "t@t"]);
+    run(["config", "user.name", "t"]);
+    build({
+      run,
+      write: (file, contents) => {
+        mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+        writeFileSync(path.join(dir, file), contents);
+      },
+    });
+    return resolveAffectedScope(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 describe("isGlobalScope", () => {
   it.each([
@@ -55,7 +99,7 @@ describe("selectableFiles", () => {
 describe("resolveAffectedScope", () => {
   it("returns a scope object with a recognised kind", () => {
     const scope = resolveAffectedScope(process.cwd());
-    expect(["global", "files", "none"]).toContain(scope.kind);
+    expect(["global", "files", "none", "unresolved"]).toContain(scope.kind);
   });
 
   it("never returns an empty file selection", () => {
@@ -96,5 +140,40 @@ describe("resolveAffectedScope in a synthetic repository", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  /**
+   * A failed computation is a refusal, never a true negative.
+   *
+   * `none` means "the computation succeeded and nothing relevant changed". When the
+   * base ref cannot be resolved, or the history is unrelated so `merge-base`
+   * fails, nothing was computed at all — and reporting that as `none` would be a
+   * clean green run over a change set nobody ever looked at.
+   */
+  it("reports `unresolved`, and not `none`, when no canonical base ref exists", () => {
+    const scope = inSyntheticRepo((repo) => {
+      repo.write("src/kept.ts", "export const a = 1;\n");
+      repo.run(["add", "-A"]);
+      repo.run(["commit", "-qm", "base"]);
+      // No remote at all: neither origin/main nor upstream/main can be resolved.
+    });
+    expect(scope.kind, "an absent base ref must not degrade to a clean run").not.toBe("none");
+    expect(scope.kind).toBe("unresolved");
+  });
+
+  it("reports `unresolved` when the base ref exists but the histories are unrelated", () => {
+    const scope = inSyntheticRepo((repo) => {
+      repo.write("src/kept.ts", "export const a = 1;\n");
+      repo.run(["add", "-A"]);
+      repo.run(["commit", "-qm", "base"]);
+      // An orphan branch shares no ancestor with the base commit, so merge-base fails.
+      repo.run(["checkout", "-q", "--orphan", "unrelated"]);
+      repo.run(["commit", "-qm", "unrelated"]);
+      repo.run(["update-ref", "refs/remotes/origin/main", repo.run(["rev-parse", "HEAD"])]);
+      repo.run(["remote", "add", "origin", "."]);
+      repo.run(["checkout", "-q", "main"]);
+    });
+    expect(scope.kind, "an unresolvable merge-base must not degrade to a clean run").not.toBe("none");
+    expect(scope.kind).toBe("unresolved");
   });
 });

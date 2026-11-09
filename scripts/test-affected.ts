@@ -11,13 +11,19 @@
  * That selection is honest by construction: if an integration test imports the
  * changed code, it runs. The hook avoids IRRELEVANT work, never RELEVANT work.
  *
- * Two fallbacks protect against false negatives:
+ * Two fallbacks protect against false negatives, and they are NOT the same outcome:
  *
  *   - A change to build/test configuration (`package.json`,
  *     `vitest.config.ts`, `tsconfig*.json`, `scripts/`) can affect any file, so
- *     it degrades to the whole `test:unit` tier rather than guessing.
- *   - When no base can be resolved (shallow clone, no upstream), it also runs
- *     the unit tier instead of silently testing nothing.
+ *     the scope resolves to the whole `test:unit` tier rather than guessing. The
+ *     DECISION stays here; EXECUTING that tier no longer does, because the tier is
+ *     a subset of `pnpm test`, and `scripts/run-affected-tests.ts` declines it with
+ *     its own status instead of re-running work the full suite already covers.
+ *   - When no base can be resolved (shallow clone, no upstream), or the
+ *     merge-base/diff fails, nothing could be computed at all. That is
+ *     `unresolved`: a refusal carrying its own non-zero status and its own message.
+ *     It is NEVER `none`, because a true negative is only true when the computation
+ *     that produced it succeeded.
  */
 
 import { execFileSync } from "node:child_process";
@@ -46,7 +52,17 @@ const SELECTABLE_SUFFIXES: readonly string[] = [".ts", ".mts", ".cts", ".tsx", "
 export type AffectedScope =
   | { kind: "global"; reason: string }
   | { kind: "files"; files: string[] }
-  | { kind: "none"; reason: string };
+  | { kind: "none"; reason: string }
+  /** The change set could not be computed, so there is no scope to speak of yet. */
+  | { kind: "unresolved"; reason: string };
+
+/** The step that failed to produce the changed set, named so the message can say which. */
+type ChangedStep = "merge-base" | "diff";
+
+/** The changed paths, or the step that failed to compute them. */
+type ChangedPaths =
+  | { kind: "ok"; paths: string[] }
+  | { kind: "failed"; step: ChangedStep };
 
 /** Run git and return trimmed stdout, or `null` when the command fails. */
 function git(root: string, args: readonly string[]): string | null {
@@ -101,43 +117,50 @@ function parseNameOnly(output: string): string[] {
  * and UNTRACKED files. The last matters most — a new source or test file is
  * untracked until staged, `git diff --name-only HEAD` reports nothing for it, and
  * a hook that skipped it would let an entirely new test file push untested.
+ *
+ * @param root - Repository root.
+ * @param baseRef - The canonical base ref to diff against.
+ * @returns The paths, or the step that failed to compute them.
  */
-function changedPaths(root: string, baseRef: string): string[] | null {
+function changedPaths(root: string, baseRef: string): ChangedPaths {
   const mergeBase = git(root, ["merge-base", baseRef, "HEAD"]);
-  if (!mergeBase) return null;
+  if (!mergeBase) return { kind: "failed", step: "merge-base" };
   const committed = git(root, ["diff", "--name-only", "-z", `${mergeBase}...HEAD`]);
   const working = git(root, ["diff", "--name-only", "-z", "HEAD"]);
   const untracked = git(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
-  if (committed === null || working === null || untracked === null) return null;
-  return [
-    ...parseNameOnly(committed),
-    ...parseNameOnly(working),
-    ...parseNameOnly(untracked),
-  ];
+  if (committed === null || working === null || untracked === null) return { kind: "failed", step: "diff" };
+  return {
+    kind: "ok",
+    paths: [...parseNameOnly(committed), ...parseNameOnly(working), ...parseNameOnly(untracked)],
+  };
 }
 
 /**
  * Resolve what to run for the current push.
+ *
+ * A failed computation returns {@link AffectedScope}'s `unresolved`, never `none`:
+ * a refusal wearing the word "none" would be a clean run over a set nobody looked at.
  * @param root - Repository root.
- * @returns A global fallback, a concrete file selection, or "nothing to do".
+ * @returns The escalated tier, a concrete file selection, a true negative, or a refusal.
  */
 export function resolveAffectedScope(root: string): AffectedScope {
   const baseRef = resolveBaseRef(root);
   if (baseRef === null) {
-    return { kind: "global", reason: "no canonical base ref (upstream/main or origin/main) could be resolved" };
+    return { kind: "unresolved", reason: "no canonical base ref (upstream/main or origin/main) could be resolved" };
   }
   const changed = changedPaths(root, baseRef);
-  if (changed === null) {
-    return { kind: "global", reason: `could not diff against ${baseRef}` };
+  if (changed.kind === "failed") {
+    return { kind: "unresolved", reason: `${changed.step} against ${baseRef} failed` };
   }
-  if (changed.length === 0) {
+  const paths = changed.paths;
+  if (paths.length === 0) {
     return { kind: "none", reason: `no changes since ${baseRef}` };
   }
-  const global = changed.find(isGlobalScope);
+  const global = paths.find(isGlobalScope);
   if (global !== undefined) {
     return { kind: "global", reason: `${global} affects the whole suite` };
   }
-  const files = selectableFiles(changed);
+  const files = selectableFiles(paths);
   if (files.length === 0) {
     return { kind: "none", reason: "no changed file can select a test" };
   }
@@ -150,10 +173,12 @@ function readRoot(argv: readonly string[]): string {
   return flag === -1 ? process.cwd() : path.resolve(argv[flag + 1] ?? process.cwd());
 }
 
-/** Print the decision so the hook's log explains why it ran what it ran. */
+/** Print the decision so the log explains why it ran what it ran. */
 function report(scope: AffectedScope): void {
   if (scope.kind === "global") {
     process.stderr.write(`test-affected: running the full unit tier — ${scope.reason}\n`);
+  } else if (scope.kind === "unresolved") {
+    process.stderr.write(`test-affected: could not compute the changed file set — ${scope.reason}\n`);
   } else if (scope.kind === "none") {
     process.stderr.write(`test-affected: nothing to run — ${scope.reason}\n`);
   } else {
