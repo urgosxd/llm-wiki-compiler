@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { isUnknownStack, withTenantDatabase } from "../../packages/wiki/src/mcp/tenant-db.js";
 // These two moved out of `tenant-db` into shared homes so the viewport route can use
 // them without importing from `src/mcp/**`; the import here follows them.
-import { stackIdProblem } from "../../packages/wiki/src/utils/stack-id.js";
+import { stackIdProblem } from "@repo/foundation";
 import { stackExists } from "../../packages/wiki/src/services/stacks/stack-store.js";
 
 describe("stackId guard", () => {
