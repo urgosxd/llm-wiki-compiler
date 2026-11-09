@@ -211,13 +211,23 @@ describe("pnpm-invocation — the push gate routes through the resolver", () => 
     for (const line of commands) expect(line).not.toMatch(BARE_PNPM);
   });
 
+  it("drives both push gates in order through one resolved pnpm", () => {
+    // Candidates 1-2 are poisoned; the workspace-local one is the working pnpm.
+    const { root, env } = prePushRoot(ARGV_ECHO_FAKE);
+
+    const hook = spawnSync("sh", ["-e", ".husky/pre-push"], { cwd: root, env, encoding: "utf8" });
+
+    // The probe's echo is captured by the resolver and never inherited, so only
+    // the two gate invocations can reach this stdout.
+    expect(hook.status).toBe(0);
+    expect(hook.stdout).toContain("ARGV=run build");
+    expect(hook.stdout).toContain("ARGV=run test:affected");
+    // Order is the contract: the build gate must clear before the suite starts.
+    expect(hook.stdout.indexOf("ARGV=run build")).toBeLessThan(hook.stdout.indexOf("ARGV=run test:affected"));
+  });
+
   it("fails loudly instead of reaching the gates when nothing resolves", () => {
-    const root = makeRoot();
-    const env = hostileEnv(root);
-    // An inapplicable candidate is not tried, so candidate 1 is absent here.
-    delete env.npm_execpath;
-    copyIntoRoot(root, { hook: PRE_PUSH, name: "pre-push" });
-    writeFake(path.join(root, "node_modules", ".bin", "pnpm"), EXIT_127);
+    const { root, env } = prePushRoot(EXIT_127);
 
     const hook = spawnSync("sh", ["-e", ".husky/pre-push"], { cwd: root, env, encoding: "utf8" });
 
@@ -267,6 +277,20 @@ describe("pnpm-invocation — the hook routes through the resolver", () => {
     expect(hook.stdout).not.toContain("fallow");
   });
 });
+
+/**
+ * A scratch root carrying the push gate and one chosen pnpm behind the poison.
+ * @param pnpmBody - Body of the fake installed as `node_modules/.bin/pnpm`.
+ */
+function prePushRoot(pnpmBody: string): { root: string; env: NodeJS.ProcessEnv } {
+  const root = makeRoot();
+  const env = hostileEnv(root);
+  // An inapplicable candidate is not tried, so candidate 1 is absent here.
+  delete env.npm_execpath;
+  copyIntoRoot(root, { hook: PRE_PUSH, name: "pre-push" });
+  writeFake(path.join(root, "node_modules", ".bin", "pnpm"), pnpmBody);
+  return { root, env };
+}
 
 /** The hook's executable lines, with comments and blank lines dropped. */
 function hookCommands(text: string): string[] {
