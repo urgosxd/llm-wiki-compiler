@@ -20,9 +20,22 @@ S2. FAIL CLOSED. "**Fail closed**: assert the collected file set is non-empty fi
 
 Consequence: the non-empty assertion on the collected file set is the first assertion in the test, and it fails the test rather than skipping it.
 
-S3. ZERO PRIVATE SPECIFIERS. "Assert zero matches for `/@repo\//`."
+S3. ZERO PRIVATE SPECIFIERS IN IMPORT POSITION, PLUS A TOTAL RATCHET. "Assert zero matches for `/@repo\//`."
 
-Consequence: the pattern is `/@repo\//` exactly, matched over the recursively collected file set, and the assertion is zero matches.
+Ruled form (Manager ruling, recorded verbatim as L2): assert zero `/@repo\//` occurrences in **import
+position** across `dist/**/*.js` **and** `packages/llmwiki-core/dist/**/*.js`, fail-closed on an empty
+file set; ratchet the total `/@repo\//` occurrence count at the measured baseline, failing on any
+increase. The reason for the pin is a comment on the pin itself, naming
+`packages/wiki/src/commands/host.ts:76`, and stating that the pin must be lowered to 0 when that file
+leaves with the CLI removal.
+
+Consequence: the pattern is `/@repo\//`, matched over the recursively collected file set of both roots.
+A literal zero-match over the whole text is RED at base for a class this guard was never about —
+`commands/host.ts:76`'s `require("../../package.json")` makes esbuild inline the private `@repo/wiki`
+manifest as dead data, which never touches module resolution. The guard exists for
+`import … from "@repo/kg"`, a specifier Node resolves to raw TypeScript at runtime. Import position is
+therefore asserted at zero and the total is pinned, which keeps literal coverage and makes the
+inlined-manifest class visible instead of excluded.
 
 S4. THE GUARD MUST BITE, AND THE BUILD IS ITS PRECONDITION. "Prove it **bites**: on a scratch copy, inject `import "@repo/kg"` into one collected bundle file and show the test failing with a message naming the file and specifier; restore and prove byte-identity by sha256. If `dist/` is absent in your first run, build it — but say in the report that the guard's own precondition is "the build has run", and make the test state that in its failure message rather than passing."
 
@@ -84,7 +97,7 @@ Consequence: the work is plumbing that survives every CLI decision, and "no prod
 | --- | --- | --- | --- |
 | T1 (done) — this feature document | none | worker | (this commit) |
 | T2 (done) — Piece 2, the MCP barrel decoupling (`packages/wiki/src/mcp/**`) | S5-S9 | worker | e00b838534bb6a3ed8a7e827399e6867ad3cd6c0 |
-| T3 — Piece 1, `test/artifact/dist-specifiers.test.ts` | S1-S4 | worker | pending |
+| T3 (done) — Piece 1, `test/artifact/dist-specifiers.test.ts` | S1-S4 | worker | (this commit) |
 | T4 (done) — Piece 3, `test/artifact/entries-load.test.ts` | S10-S11 | worker | e5ef03da7b78d35de26a2ad5983646469fd11ff9 + fixup (this commit) |
 | T5 — independent verification of T2-T4 plus the full gate set | S12-S15 | verify | pending |
 
@@ -135,4 +148,20 @@ No deleting the CLI, no `bin` change, no Dockerfile or `docker/entry.sh` change,
 
 ## Report
 The recursive scope and the fail-closed assertion; the bite proof with its message and sha256; the symbol→module re-verification for the four MCP files and their before/after import counts; what the in-process proof does not cover; every gate exit with the literal lint triple; full-suite counts and duration; commit SHAs as **full 40 characters**; `git status --short`; and a `Risk:` line using item 1 data/irreversible, 2 security, 3 contracts others consume, 4 concurrency, 5 delivery/environment, 6 no test would catch a regression — or `Risk: none`. This slice exists to reduce item 6, so say how it does.
+```
+
+L2 (Manager ruling on S3, verbatim — narrows S3 and keeps every other `S#` unchanged):
+
+```
+A, with one addition: the count ratchet must be lowered by the removal slice, and say so in the test's own comment.
+
+Your diagnosis is right and it separates two classes the brief conflated. A literal zero-match is RED at base for a class the guard was never about: `commands/host.ts:76`'s `require("../../package.json")` makes esbuild inline the private `@repo/wiki` manifest as **dead data**, which never touches module resolution. The guard exists for `import … from "@repo/kg"` — a specifier Node resolves to raw TypeScript at runtime. Ratcheting the total while asserting zero **in import position** keeps literal coverage, makes the inlined-manifest class visible instead of excluded, and is idiomatic for this repo, which ratchets everywhere else.
+
+**Rejected B, and for a reason specific to the schedule:** `packages/wiki/src/commands/host.ts` is **group A — slated for deletion** in the CLI-removal slice, and its `host` entry moves into `@repo/api`. Fixing its inlining now is work on a file that is about to move or die, and it touches how the published host reports its version — a consumer-visible value — which is exactly outside the envelope I set. So:
+
+- Assert zero `@repo/` in **import position** across `dist/**/*.js` **and** `packages/llmwiki-core/dist/**/*.js`, fail-closed on an empty file set.
+- Ratchet the total `@repo/` occurrence count at the measured baseline, failing on any increase.
+- **Put the reason in a comment on the pin itself**: the current count exists because `commands/host.ts` inlines `packages/wiki/package.json`; when that file leaves with the CLI, the pin must be **lowered to 0**, and a future reader should learn that from the test rather than from an archaeology session. A frozen count with no explanation is how a ratchet becomes permanent.
+
+Corrected figure for the record: `compiler-cli.ts` is 102 lines but its export statements span ~90 module specifiers, not the brief's rough "133 symbols from ~50 modules".
 ```
