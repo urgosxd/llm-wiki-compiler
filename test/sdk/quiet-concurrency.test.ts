@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { withQuiet, isQuiet, getQuiet } from "../../src/utils/output.js";
+import { withQuiet, isQuiet, getQuiet } from "../../packages/wiki/src/utils/output.js";
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 

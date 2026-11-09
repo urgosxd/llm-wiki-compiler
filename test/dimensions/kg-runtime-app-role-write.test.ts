@@ -115,7 +115,7 @@ describe("the kg write path under the application role", () => {
   );
 
   it.skipIf(!appRoleAvailable)("lets the whole dimension commit its entities and edges", async () => {
-    const { createKgDimension } = await import("../../src/dimensions/kg/index.js");
+    const { createKgDimension } = await import("../../packages/wiki/src/dimensions/kg/index.js");
     setToolResponse([EXTRACTION]);
 
     // The real path an operator runs, dropping to the app role for the commit

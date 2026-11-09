@@ -17,12 +17,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { writeFile, rm } from "fs/promises";
 import path from "path";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { makeCompileProjectRoot } from "./fixtures/compile-project.js";
 import { readPersistedState } from "./fixtures/state-json.js";
 
-vi.mock("../src/utils/state.js", async (importActual) => {
-  const actual = await importActual<typeof import("../src/utils/state.js")>();
+vi.mock("../packages/wiki/src/utils/state.js", async (importActual) => {
+  const actual = await importActual<typeof import("../packages/wiki/src/utils/state.js")>();
   return {
     ...actual,
     updateSourceState: vi.fn(() => {
@@ -72,8 +72,8 @@ afterEach(async () => {
 
 describe("(M5) compile routes all incremental state through the draft", () => {
   it("compiles new sources without calling updateSourceState/removeSourceState", async () => {
-    const state = await import("../src/utils/state.js");
-    const { compileAndReport } = await import("../src/compiler/index.js");
+    const state = await import("../packages/wiki/src/utils/state.js");
+    const { compileAndReport } = await import("../packages/wiki/src/compiler/index.js");
 
     const result = await compileAndReport(dir);
 
@@ -84,8 +84,8 @@ describe("(M5) compile routes all incremental state through the draft", () => {
   });
 
   it("handles a deleted source (orphan-remove path) without the throwing helpers", async () => {
-    const state = await import("../src/utils/state.js");
-    const { compileAndReport } = await import("../src/compiler/index.js");
+    const state = await import("../packages/wiki/src/utils/state.js");
+    const { compileAndReport } = await import("../packages/wiki/src/compiler/index.js");
 
     await compileAndReport(dir);
     // Delete a source so the next compile runs markOrphaned → draft.removeSource.

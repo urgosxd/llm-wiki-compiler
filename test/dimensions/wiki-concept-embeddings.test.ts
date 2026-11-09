@@ -12,7 +12,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   conceptEmbeddingPortOrUndefined,
   createConceptEmbeddingPort,
-} from "../../src/dimensions/wiki/concept-embeddings.js";
+} from "../../packages/wiki/src/dimensions/wiki/concept-embeddings.js";
 
 /** Restore every stubbed environment variable after each test. */
 afterEach(() => {

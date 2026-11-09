@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildOkfIndex, buildOkfLog, parseLlmwikiLog } from "../src/export/okf/index-log.js";
-import type { ExportPage } from "../src/export/types.js";
+import { buildOkfIndex, buildOkfLog, parseLlmwikiLog } from "../packages/wiki/src/export/okf/index-log.js";
+import type { ExportPage } from "../packages/wiki/src/export/types.js";
 
 const pages = [
   { title: "RAG", slug: "rag", pageDirectory: "concepts", summary: "Grounded." },

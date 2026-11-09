@@ -29,14 +29,14 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 
-import { ingestDimensions } from "../../src/dimensions/coordinator.js";
+import { ingestDimensions } from "../../packages/wiki/src/dimensions/coordinator.js";
 import type {
   CommittedWrite,
   Dimension,
   DimensionInput,
   DimensionName,
   PreparedWrite,
-} from "../../src/dimensions/types.js";
+} from "../../packages/wiki/src/dimensions/types.js";
 
 /** Input shared by every case. */
 const INPUT: DimensionInput = {

@@ -20,9 +20,9 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdir, readFile, readdir, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import { createCategory, listCategories, readCategory } from "../../src/categories/index.js";
-import { readPageRecord } from "../../src/pages/read.js";
-import { parseFrontmatter } from "../../src/utils/markdown.js";
+import { createCategory, listCategories, readCategory } from "../../packages/wiki/src/categories/index.js";
+import { readPageRecord } from "../../packages/wiki/src/pages/read.js";
+import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 import { categoryTempRoots } from "../fixtures/category-root.js";
 import { categoryMember } from "../fixtures/category-record.js";
 

@@ -46,8 +46,8 @@ import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
-import { ingestDimensions } from "../../src/dimensions/coordinator.js";
-import type { Dimension, DimensionInput } from "../../src/dimensions/types.js";
+import { ingestDimensions } from "../../packages/wiki/src/dimensions/coordinator.js";
+import type { Dimension, DimensionInput } from "../../packages/wiki/src/dimensions/types.js";
 
 /** One document, as an ingest would hand it to the coordinator. */
 const INPUT: DimensionInput = { source: "https://example.test/a", title: "A", document: "# A\nbody", body: "body" };

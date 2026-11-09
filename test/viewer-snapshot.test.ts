@@ -13,7 +13,7 @@ import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
 import { makeOutsideDir } from "./fixtures/outside-dir.js";
-import { buildViewerSnapshot } from "../src/viewer/snapshot.js";
+import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
 
 /** Build the snapshot for `root` and assert the index renders as unavailable. */
 async function expectIndexUnavailable(root: string): Promise<void> {

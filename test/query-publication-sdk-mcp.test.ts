@@ -14,11 +14,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createWiki, ProviderUnavailableError, type QueryResult } from "../src/index.js";
-import queryCommand, { generateAnswer } from "../src/commands/query.js";
-import { saveStoredCandidate } from "../src/dimensions/wiki/candidate-store.js";
+import { createWiki, ProviderUnavailableError, type QueryResult } from "../packages/wiki/src/index.js";
+import queryCommand, { generateAnswer } from "../packages/wiki/src/commands/query.js";
+import { saveStoredCandidate } from "../packages/wiki/src/dimensions/wiki/candidate-store.js";
 import { journalEntries, seedConceptPage } from "./fixtures/mcp-stack-rows.js";
-import { callClaude } from "../src/utils/llm.js";
+import { callClaude } from "../packages/wiki/src/utils/llm.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { stageCitationWorkspace, citationWorkspaceBytes } from "./fixtures/query-answer-citations.js";
 import { SAMPLE_PROFILE } from "./fixtures/profile-fixtures.js";
@@ -26,7 +26,7 @@ import { buildServer } from "./fixtures/mcp-test-env.js";
 import { createProbeStack } from "./dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "./dimensions/harness-lifecycle.js";
 
-vi.mock("../src/utils/llm.js", () => ({ callClaude: vi.fn() }));
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({ callClaude: vi.fn() }));
 const ctx = useTempRoot();
 
 let stack: ProbeStack;

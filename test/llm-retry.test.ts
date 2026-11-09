@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockComplete = vi.hoisted(() => vi.fn());
 
-vi.mock("../src/utils/provider.js", () => ({
+vi.mock("../packages/wiki/src/utils/provider.js", () => ({
   getProvider: () => ({
     complete: mockComplete,
     stream: mockComplete,
@@ -18,8 +18,8 @@ vi.mock("../src/utils/provider.js", () => ({
   }),
 }));
 
-import { callClaude, computeBackoffMs } from "../src/utils/llm.js";
-import { RETRY_BASE_MS, RETRY_MULTIPLIER } from "../src/utils/constants.js";
+import { callClaude, computeBackoffMs } from "../packages/wiki/src/utils/llm.js";
+import { RETRY_BASE_MS, RETRY_MULTIPLIER } from "../packages/wiki/src/utils/constants.js";
 
 const BASE_OPTIONS = {
   system: "s",

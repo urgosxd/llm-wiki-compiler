@@ -15,7 +15,7 @@
  */
 
 import { expect } from "vitest";
-import type { DimensionReader, GraphReadResult } from "../../src/dimensions/read-types.js";
+import type { DimensionReader, GraphReadResult } from "../../packages/wiki/src/dimensions/read-types.js";
 
 /**
  * Assert that a lookup of a name nobody has produced the `not_found` CODE.

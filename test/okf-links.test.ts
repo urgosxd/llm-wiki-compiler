@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { wikilinksToOkf, okfLinksToWikilinks } from "../src/export/okf/mapping.js";
+import { wikilinksToOkf, okfLinksToWikilinks } from "../packages/wiki/src/export/okf/mapping.js";
 
 const resolve = (slug: string) =>
   slug === "rag" ? { path: "concepts/rag.md", title: "RAG" } : null;

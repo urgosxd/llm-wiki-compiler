@@ -15,11 +15,11 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdtemp, mkdir, writeFile } from "fs/promises";
 import path from "path";
 import os from "os";
-import { refreshChunkEmbeddings } from "../src/utils/embeddings-chunks.js";
-import { readEmbeddingStore, writeEmbeddingStore, type EmbeddingStore } from "../src/utils/embeddings-store.js";
-import type { PageEmbeddingV3, ChunkEmbeddingV3, EmbeddingStoreV3 } from "../src/utils/embeddings-store.js";
-import type { PageRecord } from "../src/utils/embeddings-pages.js";
-import * as providerMod from "../src/utils/provider.js";
+import { refreshChunkEmbeddings } from "../packages/wiki/src/utils/embeddings-chunks.js";
+import { readEmbeddingStore, writeEmbeddingStore, type EmbeddingStore } from "../packages/wiki/src/utils/embeddings-store.js";
+import type { PageEmbeddingV3, ChunkEmbeddingV3, EmbeddingStoreV3 } from "../packages/wiki/src/utils/embeddings-store.js";
+import type { PageRecord } from "../packages/wiki/src/utils/embeddings-pages.js";
+import * as providerMod from "../packages/wiki/src/utils/provider.js";
 
 async function makeRoot(): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), "llmwiki-v3shape-"));

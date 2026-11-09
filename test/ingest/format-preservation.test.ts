@@ -26,7 +26,7 @@
 
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
-import ingestFile from "../../src/ingest/file.js";
+import ingestFile from "../../packages/wiki/src/ingest/file.js";
 import { fixture } from "./document-fixtures.js";
 
 describe("the file adapter preserves content it already handled", () => {

@@ -7,7 +7,7 @@ import { chmod, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { mockClaudeEnv, useAimockLifecycle, type MockClaudeHandle } from "./fixtures/aimock-helper.js";
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
-import { listCandidates } from "../src/compiler/candidate-read.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidate-read.js";
 import { CITED_ANSWER, stageCitationWorkspace, citationWorkspaceBytes } from "./fixtures/query-answer-citations.js";
 
 const aimock = useAimockLifecycle("query-answer-citations");

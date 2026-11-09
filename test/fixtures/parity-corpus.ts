@@ -33,15 +33,15 @@
 
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
-import { buildFrontmatter } from "../../src/utils/markdown.js";
-import { hashFile } from "../../src/compiler/hasher.js";
+import { buildFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
+import { hashFile } from "../../packages/wiki/src/compiler/hasher.js";
 import {
   CONCEPTS_DIR,
   QUERIES_DIR,
   SOURCES_DIR,
   STATE_FILE,
   INDEX_FILE,
-} from "../../src/utils/constants.js";
+} from "../../packages/wiki/src/utils/constants.js";
 
 /** Pinned timestamps so every timestamped surface is stable run-to-run. */
 const CREATED_AT = "2024-01-01T00:00:00.000Z";

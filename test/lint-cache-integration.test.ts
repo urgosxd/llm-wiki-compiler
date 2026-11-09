@@ -12,8 +12,8 @@ import path from "path";
 import { runCLI, expectCLIExit, expectCLIFailure } from "./fixtures/run-cli.js";
 import { makeLintTempRoot } from "./fixtures/lint-temp-root.js";
 import type { LintTempRoot } from "./fixtures/lint-temp-root.js";
-import { LAST_LINT_FILE } from "../src/utils/constants.js";
-import { LINT_CACHE_TIMESTAMP_PATTERN } from "../src/linter/cache.js";
+import { LAST_LINT_FILE } from "../packages/wiki/src/utils/constants.js";
+import { LINT_CACHE_TIMESTAMP_PATTERN } from "../packages/wiki/src/linter/cache.js";
 
 let fx: LintTempRoot;
 

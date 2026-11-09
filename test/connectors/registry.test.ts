@@ -3,7 +3,7 @@
  * @description Product-discovery boundaries for compiled-in connectors.
  */
 import { describe, expect, it } from "vitest";
-import { allConnectors, discoverableConnectors } from "../../src/connectors/registry.js";
+import { allConnectors, discoverableConnectors } from "../../packages/wiki/src/connectors/registry.js";
 
 describe("connector registry", () => {
   it("keeps test connectors registered without exposing them to users", () => {

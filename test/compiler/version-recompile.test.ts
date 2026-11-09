@@ -21,10 +21,10 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
-import compileCommand from "../../src/commands/compile.js";
-import { compileAndReport, compileRecompiling } from "../../src/compiler/index.js";
-import { PROMPT_VERSION } from "../../src/compiler/prompts.js";
-import { buildFrontmatter, parseFrontmatter } from "../../src/utils/markdown.js";
+import compileCommand from "../../packages/wiki/src/commands/compile.js";
+import { compileAndReport, compileRecompiling } from "../../packages/wiki/src/compiler/index.js";
+import { PROMPT_VERSION } from "../../packages/wiki/src/compiler/prompts.js";
+import { buildFrontmatter, parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 import { useCompileProject } from "../fixtures/compile-project.js";
 import { stubCompileProvider } from "../fixtures/compile-provider.js";
 import { readConceptPage } from "../fixtures/concept-page.js";

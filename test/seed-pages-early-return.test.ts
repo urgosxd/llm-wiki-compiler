@@ -19,15 +19,15 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdir, writeFile, readFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import { compileAndReport } from "../src/compiler/index.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot(["sources"]);
 
 /** Stub callClaude so seed-page body generation never hits the network. */
 async function stubLLMForSeedPage(seedTitle: string): Promise<void> {
-  const llm = await import("../src/utils/llm.js");
+  const llm = await import("../packages/wiki/src/utils/llm.js");
   vi.spyOn(llm, "callClaude").mockImplementation(async ({ tools }) => {
     if (tools && tools.length > 0) {
       // Extraction call — return zero concepts (no source to extract from)
@@ -111,7 +111,7 @@ describe("seed pages generated when no source files changed", () => {
   it("propagates seed-page validation errors into CompileResult on the early-return path", async () => {
     // Force validateWikiPage to reject the seed page so an error is recorded.
     // Spy is set BEFORE compile runs so the validation rejection takes effect.
-    const markdownUtils = await import("../src/utils/markdown.js");
+    const markdownUtils = await import("../packages/wiki/src/utils/markdown.js");
     vi.spyOn(markdownUtils, "validateWikiPage").mockReturnValue(false);
 
     const result = await runSeedPageCompile("Broken Overview");

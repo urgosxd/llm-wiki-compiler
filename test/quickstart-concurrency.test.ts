@@ -27,12 +27,12 @@ import path from "path";
 import { useStackEnv } from "./fixtures/stack-env.js";
 
 const compileSpy = vi.hoisted(() => vi.fn());
-vi.mock("../src/compiler/index.js", async (importActual) => ({
-  ...(await importActual<typeof import("../src/compiler/index.js")>()),
+vi.mock("../packages/wiki/src/compiler/index.js", async (importActual) => ({
+  ...(await importActual<typeof import("../packages/wiki/src/compiler/index.js")>()),
   compileAndReport: compileSpy,
 }));
 
-import quickstartCommand from "../src/commands/quickstart.js";
+import quickstartCommand from "../packages/wiki/src/commands/quickstart.js";
 
 // The ingest step cannot run without a Stack; see the file header.
 useStackEnv("quickstart-concurrency");

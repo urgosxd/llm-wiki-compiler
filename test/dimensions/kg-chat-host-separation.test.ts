@@ -72,8 +72,8 @@ const TOOL = { name: TOOL_NAME, description: "extraction", parameters: {} };
 function loadModules() {
   vi.resetModules();
   return Promise.all([
-    import("../../src/utils/provider.js"),
-    import("../../src/utils/embedding-provider.js"),
+    import("../../packages/wiki/src/utils/provider.js"),
+    import("../../packages/wiki/src/utils/embedding-provider.js"),
     import("@repo/kg/core/llm/embeddings"),
     import("@repo/kg/core/llm/tool-call"),
     import("@repo/kg/embedding-backend"),

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { collectStatus, type WikiStatus } from "../../src/status/collect.js";
+import { collectStatus, type WikiStatus } from "../../packages/wiki/src/status/collect.js";
 
 describe("collectStatus", () => {
   it("returns a typed status snapshot for an empty project root", async () => {

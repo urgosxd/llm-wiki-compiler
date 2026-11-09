@@ -11,7 +11,7 @@ import { JSDOM } from "jsdom";
 import { readFile } from "fs/promises";
 import path from "path";
 
-const MODULE_PATH = path.resolve("src/viewer/assets/viewer-format.js");
+const MODULE_PATH = path.resolve("packages/wiki/src/viewer/assets/viewer-format.js");
 
 interface Format {
   relativeAge(iso: unknown): string;

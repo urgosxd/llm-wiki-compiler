@@ -24,8 +24,8 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
-import { lockRegistry } from "../src/utils/lock-postgres.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
+import { lockRegistry } from "../packages/wiki/src/utils/lock-postgres.js";
 import { perRunDatabase } from "./fixtures/per-run-database.js";
 
 /** This process's own database; provisioning fails loudly rather than skipping. */

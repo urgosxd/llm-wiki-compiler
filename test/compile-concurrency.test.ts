@@ -14,12 +14,12 @@ import { rm, writeFile, readFile, readdir } from "fs/promises";
 import path from "path";
 import { makeCompileProjectRoot } from "./fixtures/compile-project.js";
 import { trackToolCallConcurrency } from "./fixtures/concurrency-probe.js";
-import { resolveCompileConcurrency, parseConcurrencyFlag } from "../src/compiler/concurrency.js";
+import { resolveCompileConcurrency, parseConcurrencyFlag } from "../packages/wiki/src/compiler/concurrency.js";
 import {
   COMPILE_CONCURRENCY,
   COMPILE_CONCURRENCY_MAX,
   ENV_COMPILE_CONCURRENCY,
-} from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/constants.js";
 
 /** Run fn while capturing console.log (output.status writes there) and return the joined text. */
 function captureStatus(fn: () => void): string {
@@ -34,9 +34,9 @@ function captureStatus(fn: () => void): string {
   }
   return logs.join("\n");
 }
-import { compileAndReport } from "../src/compiler/index.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { parseFrontmatter } from "../src/utils/markdown.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
 
 // ---------------------------------------------------------------------------
 // resolveCompileConcurrency

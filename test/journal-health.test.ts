@@ -18,8 +18,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { readFile, rm, mkdtemp, readdir } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { journalHealth } from "../src/trust/journal-health.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+import { journalHealth } from "../packages/wiki/src/trust/journal-health.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import { WIKI, makeTrustRoot, cleanupTrustRoot } from "./trust/fixture.js";
 import {
   journalDir,

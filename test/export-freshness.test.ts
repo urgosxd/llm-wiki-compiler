@@ -10,7 +10,7 @@ import path from "path";
 import { writePage } from "./fixtures/write-page.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { sha256Hex, writeSourceFile, writeSourceState } from "./fixtures/state-json.js";
-import { collectExportPages } from "../src/export/collect.js";
+import { collectExportPages } from "../packages/wiki/src/export/collect.js";
 
 describe("export freshness fields", () => {
   it("marks a page stale when its source changed since compile", async () => {

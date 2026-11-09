@@ -3,8 +3,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, mkdir, rm, readFile, writeFile, stat } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { runOkfImport } from "../src/import/run.js";
-import { listCandidates } from "../src/compiler/candidates.js";
+import { runOkfImport } from "../packages/wiki/src/import/run.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 import { assertNoOutput } from "./fixtures/no-output.js";
 import { writeOneDocBundle as bundle } from "./fixtures/okf-bundle-fixture.js";
 

@@ -20,9 +20,9 @@ import {
   analyzeGraphHealth,
   resolveGraphHealthPairCap,
   DEFAULT_GRAPH_HEALTH_PAIR_CAP,
-} from "../../src/context/graph-health.js";
+} from "../../packages/wiki/src/context/graph-health.js";
 import { syntheticGraph } from "../fixtures/graph-data.js";
-import type { GraphData, PageId } from "../../src/viewer/types.js";
+import type { GraphData, PageId } from "../../packages/wiki/src/viewer/types.js";
 
 const A = "concepts/alpha" as PageId;
 const B = "concepts/beta" as PageId;

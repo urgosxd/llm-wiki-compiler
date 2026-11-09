@@ -17,7 +17,7 @@
  */
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { toPosixPath } from "../src/utils/path-confine.js";
+import { toPosixPath } from "../packages/wiki/src/utils/path-confine.js";
 
 const WIN_SEP = "\\";
 

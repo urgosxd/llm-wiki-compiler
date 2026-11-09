@@ -12,9 +12,9 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   applySourcesSectionOption,
   sourcesSectionEnabled,
-} from "../src/utils/sources-section.js";
-import { buildPagePrompt } from "../src/compiler/prompts.js";
-import { activePromptModifiers, promptModifiersDigest } from "../src/compiler/prompt-modifiers.js";
+} from "../packages/wiki/src/utils/sources-section.js";
+import { buildPagePrompt } from "../packages/wiki/src/compiler/prompts.js";
+import { activePromptModifiers, promptModifiersDigest } from "../packages/wiki/src/compiler/prompt-modifiers.js";
 
 const ENV_KEY = "LLMWIKI_SOURCES_SECTION";
 const SECTION_REQUEST = "Include a ## Sources section";

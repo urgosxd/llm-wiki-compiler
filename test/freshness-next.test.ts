@@ -15,9 +15,9 @@ import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { touchMarkdown, runNextJson, useNextTempDir } from "./fixtures/next-test-helpers.js";
 import { writeCorruptTestStateJson } from "./fixtures/state-json.js";
-import { writeLintCache } from "../src/linter/cache.js";
-import { CONCEPTS_DIR, LLMWIKI_DIR, SOURCES_DIR } from "../src/utils/constants.js";
-import type { LintResult } from "../src/linter/types.js";
+import { writeLintCache } from "../packages/wiki/src/linter/cache.js";
+import { CONCEPTS_DIR, LLMWIKI_DIR, SOURCES_DIR } from "../packages/wiki/src/utils/constants.js";
+import type { LintResult } from "../packages/wiki/src/linter/types.js";
 
 const env = useNextTempDir("freshness-next");
 

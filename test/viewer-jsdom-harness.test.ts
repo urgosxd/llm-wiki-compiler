@@ -74,7 +74,7 @@ describe("viewer JSDOM harness", () => {
 // directory scan, so this is the only way to pin its behaviour against a
 // module it did not already know about — and delete them in `afterEach` so
 // a failed assertion can never leave a stray file poisoning later runs.
-const ASSETS_DIR = path.resolve("src/viewer/assets");
+const ASSETS_DIR = path.resolve("packages/wiki/src/viewer/assets");
 const SUPPORTED_FIXTURE = path.join(ASSETS_DIR, "viewer-export-form-check.js");
 const UNSUPPORTED_FIXTURE = path.join(ASSETS_DIR, "viewer-export-default-check.js");
 

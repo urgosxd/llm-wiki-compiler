@@ -8,7 +8,8 @@
     "packages/api",
     "packages/foundation",
     "packages/llmwiki-core",
-    "packages/llmwiki-kg/ts"
+    "packages/llmwiki-kg/ts",
+    "packages/wiki"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,7 +25,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "dev": "tsup --watch src --watch scripts --watch tsconfig.json --watch \"packages/*/package.json\" --watch \"packages/*/tsup.config.ts\"",
+    "dev": "tsup --watch packages/wiki/src --watch scripts --watch tsconfig.json --watch \"packages/*/package.json\" --watch \"packages/*/tsup.config.ts\"",
     "dev:view": "node scripts/dev-viewer.mjs",
     "vendor:fonts": "node scripts/vendor-fonts.mjs",
     "release:check-docs": "node scripts/check-release-docs.mjs",
@@ -108,6 +109,7 @@
     "@repo/api": "workspace:*",
     "@repo/foundation": "workspace:*",
     "@repo/kg": "workspace:*",
+    "@repo/wiki": "workspace:*",
     "@testcontainers/postgresql": "12.2.1",
     "@types/js-yaml": "^4.0.9",
     "@types/jsdom": "^21.1.0",

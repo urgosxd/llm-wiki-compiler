@@ -4,7 +4,7 @@
  */
 import path from "node:path";
 import { expect, it } from "vitest";
-import { journalSavedPath } from "../src/commands/ingest.js";
+import { journalSavedPath } from "../packages/wiki/src/commands/ingest.js";
 
 it.each([
   { platform: "Windows", pathApi: path.win32, savedPath: "C:\\project\\sources\\a.md" },

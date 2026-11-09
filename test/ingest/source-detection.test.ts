@@ -25,7 +25,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { detectSourceType } from "../../src/services/ingest/source-detection.js";
+import { detectSourceType } from "../../packages/wiki/src/services/ingest/source-detection.js";
 import { fixture } from "./document-fixtures.js";
 
 describe("detectSourceType", () => {

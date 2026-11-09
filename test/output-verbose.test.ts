@@ -15,7 +15,7 @@ import {
   withVerbose,
   withQuiet,
   isVerbose,
-} from "../src/utils/output.js";
+} from "../packages/wiki/src/utils/output.js";
 
 /** Reset both flags to off between tests to avoid state leakage. */
 beforeEach(() => {

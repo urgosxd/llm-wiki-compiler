@@ -17,8 +17,8 @@ import {
   listLinkResolvablePendingSlugs,
   readCandidateBySlug,
   writeCandidate,
-} from "../src/compiler/candidates.js";
-import { listCandidateFileIds } from "../src/utils/candidate-store.js";
+} from "../packages/wiki/src/compiler/candidates.js";
+import { listCandidateFileIds } from "../packages/wiki/src/utils/candidate-store.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

@@ -31,9 +31,9 @@ import { existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { withProjectRoot, withStackEnv } from "../fixtures/stack-env.js";
-import { applyApprovedMutationsLocked } from "../../src/trust/executor.js";
-import { applyPageMutationLocked } from "../../src/trust/page-apply.js";
-import type { PageSink } from "../../src/trust/page-apply.js";
+import { applyApprovedMutationsLocked } from "../../packages/wiki/src/trust/executor.js";
+import { applyPageMutationLocked } from "../../packages/wiki/src/trust/page-apply.js";
+import type { PageSink } from "../../packages/wiki/src/trust/page-apply.js";
 
 /** A sink that records what it was asked to store and writes nothing. */
 function recordingSink(): { sink: PageSink; stored: string[] } {

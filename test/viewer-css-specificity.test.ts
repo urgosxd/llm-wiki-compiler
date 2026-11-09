@@ -22,7 +22,7 @@ import { describe, expect, it } from "vitest";
 import { readFile } from "fs/promises";
 import path from "path";
 
-const ASSETS = path.resolve("src/viewer/assets");
+const ASSETS = path.resolve("packages/wiki/src/viewer/assets");
 
 /**
  * Pairs where `winner` must out-rank `loser` for the declared look to survive.

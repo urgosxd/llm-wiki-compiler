@@ -74,6 +74,7 @@ describe("pnpm migration wiring: one graph", () => {
       "packages/foundation",
       "packages/llmwiki-core",
       "packages/llmwiki-kg/ts",
+      "packages/wiki",
     ]);
   });
 

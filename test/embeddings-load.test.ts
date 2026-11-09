@@ -15,17 +15,17 @@ import { mkdir, writeFile, readFile } from "fs/promises";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
-import * as providerMod from "../src/utils/provider.js";
-import { resolveEmbeddingModel, type EmbeddingStoreV3 } from "../src/utils/embeddings-store.js";
-import { hashChunkText, splitIntoChunks } from "../src/utils/retrieval.js";
-import { buildEmbeddingText } from "../src/utils/embeddings-pages.js";
+import * as providerMod from "../packages/wiki/src/utils/provider.js";
+import { resolveEmbeddingModel, type EmbeddingStoreV3 } from "../packages/wiki/src/utils/embeddings-store.js";
+import { hashChunkText, splitIntoChunks } from "../packages/wiki/src/utils/retrieval.js";
+import { buildEmbeddingText } from "../packages/wiki/src/utils/embeddings-pages.js";
 import {
   loadEmbeddingsForSearch,
   loadEmbeddingsForContext,
   findRelevantPagesV3,
   findRelevantChunksV3,
-} from "../src/utils/embeddings-load.js";
-import type { LoadedProfile } from "../src/profile/types.js";
+} from "../packages/wiki/src/utils/embeddings-load.js";
+import type { LoadedProfile } from "../packages/wiki/src/profile/types.js";
 
 const EMB_FILE = ".llmwiki/embeddings.json";
 

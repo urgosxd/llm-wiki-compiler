@@ -27,9 +27,9 @@
  *   uncalibrated provider.
  */
 import { describe, it, expect, vi } from "vitest";
-import { findRelevantPagesV3 } from "../../src/utils/embeddings-load.js";
-import type { EmbeddingStoreV3, PageEmbeddingV3 } from "../../src/utils/embeddings-store.js";
-import type { RegistryPageSource } from "../../src/utils/page-registry.js";
+import { findRelevantPagesV3 } from "../../packages/wiki/src/utils/embeddings-load.js";
+import type { EmbeddingStoreV3, PageEmbeddingV3 } from "../../packages/wiki/src/utils/embeddings-store.js";
+import type { RegistryPageSource } from "../../packages/wiki/src/utils/page-registry.js";
 
 /**
  * Stub ONLY the embedding provider, returning the query vector `[1, 0]`.
@@ -39,8 +39,8 @@ import type { RegistryPageSource } from "../../src/utils/page-registry.js";
  * `resolveEmbeddingEndpoint`, and a mock that omits them throws, is swallowed, and
  * makes every store read as stale for a reason unrelated to this suite.
  */
-vi.mock("../../src/utils/embedding-provider.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/utils/embedding-provider.js")>();
+vi.mock("../../packages/wiki/src/utils/embedding-provider.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../packages/wiki/src/utils/embedding-provider.js")>();
   return {
     ...actual,
     getEmbeddingProvider: () => ({

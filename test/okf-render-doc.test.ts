@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "crypto";
-import { renderOkfDoc } from "../src/export/okf/render-doc.js";
-import { parseFrontmatter } from "../src/utils/markdown.js";
-import { canonicalBody } from "../src/export/okf/mapping.js";
-import type { ExportPage } from "../src/export/types.js";
+import { renderOkfDoc } from "../packages/wiki/src/export/okf/render-doc.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import { canonicalBody } from "../packages/wiki/src/export/okf/mapping.js";
+import type { ExportPage } from "../packages/wiki/src/export/types.js";
 
 const page = {
   title: "RAG", slug: "rag", pageDirectory: "concepts", path: "wiki/concepts/rag.md",

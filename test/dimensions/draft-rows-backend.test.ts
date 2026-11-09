@@ -17,9 +17,9 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CompileStateDraft } from "../../src/compiler/compile-state-draft.js";
-import { createWikiStateRowsBackend } from "../../src/dimensions/wiki/wiki-state-source.js";
-import { saveSourceDocument } from "../../src/dimensions/wiki/source-documents-store.js";
+import { CompileStateDraft } from "../../packages/wiki/src/compiler/compile-state-draft.js";
+import { createWikiStateRowsBackend } from "../../packages/wiki/src/dimensions/wiki/wiki-state-source.js";
+import { saveSourceDocument } from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 const IDENTITY = "src://draft";

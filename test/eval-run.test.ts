@@ -7,7 +7,7 @@
 
 import { existsSync } from "fs";
 import path from "path";
-import { runEval } from "../src/eval/index.js";
+import { runEval } from "../packages/wiki/src/eval/index.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
 describe("runEval record flag", () => {

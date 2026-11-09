@@ -16,9 +16,9 @@
  *      added them would imply the bar counts chunks.
  */
 import { describe, expect, it } from "vitest";
-import { createJobRegistry } from "../src/services/ingest/jobs/registry.js";
-import { queuedIngestState, queuedCompileState } from "../src/services/ingest/jobs/types.js";
-import { reportCompileStage } from "../src/services/ingest/jobs/compile-observer.js";
+import { createJobRegistry } from "../packages/wiki/src/services/ingest/jobs/registry.js";
+import { queuedIngestState, queuedCompileState } from "../packages/wiki/src/services/ingest/jobs/types.js";
+import { reportCompileStage } from "../packages/wiki/src/services/ingest/jobs/compile-observer.js";
 
 const NOW = new Date("2026-10-29T00:00:00.000Z");
 

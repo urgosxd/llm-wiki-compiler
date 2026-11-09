@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { readProvenanceState } from "../src/export/collect.js";
-import { parseProvenanceMetadata } from "../src/utils/markdown.js";
+import { readProvenanceState } from "../packages/wiki/src/export/collect.js";
+import { parseProvenanceMetadata } from "../packages/wiki/src/utils/markdown.js";
 
 describe("provenanceState: imported", () => {
   it("readProvenanceState accepts imported, rejects junk", () => {

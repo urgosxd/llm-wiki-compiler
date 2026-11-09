@@ -40,7 +40,7 @@ import { readFile } from "fs/promises";
 import path from "path";
 import { contrast } from "./fixtures/color-contrast.js";
 
-const TOKENS = path.resolve("src/viewer/assets/themes/nebula.css");
+const TOKENS = path.resolve("packages/wiki/src/viewer/assets/themes/nebula.css");
 
 /** Read a token's value from a given theme block in the tokens stylesheet. */
 async function token(name: string, theme: "dark" | "light"): Promise<string> {

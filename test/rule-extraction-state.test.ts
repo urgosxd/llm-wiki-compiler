@@ -10,13 +10,13 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { rm } from "fs/promises";
 import path from "path";
-import { extractRuleCandidates } from "../src/compiler/rule-extractor.js";
+import { extractRuleCandidates } from "../packages/wiki/src/compiler/rule-extractor.js";
 import {
   listRuleCandidates,
   setRuleCandidateStatus,
-} from "../src/compiler/rule-candidates.js";
-import { candidateFileId } from "../src/utils/candidate-store.js";
-import { RULE_STATE_FILE } from "../src/utils/constants.js";
+} from "../packages/wiki/src/compiler/rule-candidates.js";
+import { candidateFileId } from "../packages/wiki/src/utils/candidate-store.js";
+import { RULE_STATE_FILE } from "../packages/wiki/src/utils/constants.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { withStackEnv } from "./fixtures/stack-env.js";
 import {
@@ -69,8 +69,8 @@ describe("approval preservation", () => {
     // Force re-extraction by clearing the cursor. It is a ROW now, so this deletes
     // the row -- unlinking a file would be a no-op and the assertion would prove
     // nothing. The Stack is the one this test provisioned, so the clear is scoped.
-    const { createDimensionsDatabase } = await import("../src/dimensions/activation.js");
-    const { clearRuleExtractorState } = await import("../src/dimensions/wiki/marker-store.js");
+    const { createDimensionsDatabase } = await import("../packages/wiki/src/dimensions/activation.js");
+    const { clearRuleExtractorState } = await import("../packages/wiki/src/dimensions/wiki/marker-store.js");
     const stackId = process.env.AKS_STACK_ID!;
     const handle = createDimensionsDatabase();
     try {

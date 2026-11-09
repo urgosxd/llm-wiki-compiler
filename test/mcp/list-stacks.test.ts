@@ -22,7 +22,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { stackHarnessRunner } from "../fixtures/stack-harness.js";
-import { listStacks } from "../../src/services/stacks/stack-store.js";
+import { listStacks } from "../../packages/wiki/src/services/stacks/stack-store.js";
 
 const withHarness = stackHarnessRunner("list-stacks");
 

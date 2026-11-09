@@ -16,10 +16,10 @@ import {
   writeLintCache,
   readLintCache,
   LINT_CACHE_TIMESTAMP_PATTERN,
-} from "../src/linter/cache.js";
-import type { LintCacheEntry } from "../src/linter/cache.js";
-import { LAST_LINT_FILE, LLMWIKI_DIR } from "../src/utils/constants.js";
-import type { LintSummary } from "../src/linter/types.js";
+} from "../packages/wiki/src/linter/cache.js";
+import type { LintCacheEntry } from "../packages/wiki/src/linter/cache.js";
+import { LAST_LINT_FILE, LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
+import type { LintSummary } from "../packages/wiki/src/linter/types.js";
 
 let tmpDir: string;
 

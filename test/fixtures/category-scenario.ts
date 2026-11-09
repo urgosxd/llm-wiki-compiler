@@ -20,8 +20,8 @@
 
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { parseCategory } from "../../src/categories/markdown.js";
-import type { CategoryRecord } from "../../src/categories/types.js";
+import { parseCategory } from "../../packages/wiki/src/categories/markdown.js";
+import type { CategoryRecord } from "../../packages/wiki/src/categories/types.js";
 
 /** The source whose article is titled {@link SISTEMAS_TITLE}. */
 export const SISTEMAS_SOURCE = "sistemas.md";

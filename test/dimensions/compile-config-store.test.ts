@@ -15,7 +15,7 @@ import {
   EMPTY_COMPILE_CONFIG,
   readCompileConfig,
   writeCompileConfig,
-} from "../../src/dimensions/wiki/compile-config-store.js";
+} from "../../packages/wiki/src/dimensions/wiki/compile-config-store.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { createProbeStack } from "./harness-lifecycle.js";
 

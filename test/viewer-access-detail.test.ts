@@ -1,7 +1,7 @@
 /** The access UI preserves physical source lines and never treats artifact text as HTML. */
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { useViewerDocument } from "./fixtures/viewer-document.js";
-import { renderSourceDetail, decorateArtifactRefs } from "../src/viewer/assets/viewer-access-detail.js";
+import { renderSourceDetail, decorateArtifactRefs } from "../packages/wiki/src/viewer/assets/viewer-access-detail.js";
 
 describe("access detail UI", () => {
   let main: HTMLElement;

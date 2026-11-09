@@ -15,7 +15,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import os from "os";
 import path from "path";
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 
 /** Marker emitted by verbose() calls — must never appear in JSON stdout. */
 const VERBOSE_MARKER = "  · ";

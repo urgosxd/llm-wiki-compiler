@@ -13,8 +13,8 @@ import {
   writeCandidate,
   type CandidateDraft,
   type FreshCandidateWriteOptions,
-} from "../src/compiler/candidates.js";
-import { CandidateCustodyUnavailableError } from "../src/compiler/candidate-custody.js";
+} from "../packages/wiki/src/compiler/candidates.js";
+import { CandidateCustodyUnavailableError } from "../packages/wiki/src/compiler/candidate-custody.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

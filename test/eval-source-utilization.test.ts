@@ -4,7 +4,7 @@
  * citation collection across concept and query pages.
  */
 
-import { evaluateSourceUtilization } from "../src/eval/source-utilization.js";
+import { evaluateSourceUtilization } from "../packages/wiki/src/eval/source-utilization.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
 /** Frontmatter boilerplate shared by most test pages. */

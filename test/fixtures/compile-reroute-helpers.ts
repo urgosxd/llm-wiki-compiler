@@ -12,8 +12,8 @@ import { existsSync } from "fs";
 import { readdir, writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { vi } from "vitest";
-import { AnthropicProvider } from "../../src/providers/anthropic.js";
-import { LLMWIKI_DIR } from "../../src/utils/constants.js";
+import { AnthropicProvider } from "../../packages/wiki/src/providers/anthropic.js";
+import { LLMWIKI_DIR } from "../../packages/wiki/src/utils/constants.js";
 
 /** Count `.json` files directly under `<root>/.llmwiki/journal/` (commit-pruned). */
 export async function journalFileCount(root: string): Promise<number> {

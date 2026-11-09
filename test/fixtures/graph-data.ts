@@ -7,7 +7,7 @@
  * lives here once.
  */
 
-import type { GraphData, GraphNode, PageId } from "../../src/viewer/types.js";
+import type { GraphData, GraphNode, PageId } from "../../packages/wiki/src/viewer/types.js";
 
 /** Build a real (navigable) graph node for `id`. */
 export function realNode(id: PageId): GraphNode {

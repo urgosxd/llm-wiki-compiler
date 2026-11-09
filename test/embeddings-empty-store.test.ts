@@ -20,9 +20,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
-import * as providerMod from "../src/utils/provider.js";
-import { resolveEmbeddingModel } from "../src/utils/embeddings-store.js";
-import { loadEmbeddingsForSearch, findRelevantPagesV3, findRelevantChunksV3 } from "../src/utils/embeddings-load.js";
+import * as providerMod from "../packages/wiki/src/utils/provider.js";
+import { resolveEmbeddingModel } from "../packages/wiki/src/utils/embeddings-store.js";
+import { loadEmbeddingsForSearch, findRelevantPagesV3, findRelevantChunksV3 } from "../packages/wiki/src/utils/embeddings-load.js";
 
 let root: string;
 let embedCalls: number;

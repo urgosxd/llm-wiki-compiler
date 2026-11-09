@@ -27,7 +27,7 @@ import {
   commitBatch,
   replayJournal,
   type JournalBatch,
-} from "../src/trust/journal.js";
+} from "../packages/wiki/src/trust/journal.js";
 import { WIKI, makeTrustRoot, cleanupTrustRoot, existsUnder, expectRevertedToPreState } from "./trust/fixture.js";
 
 let root: string;

@@ -24,8 +24,8 @@ import {
   partitionConcepts,
   type RemovalPlan,
   type RemovalPlanInput,
-} from "../../src/sources/removal-plan.js";
-import type { WikiState, ReviewCandidate } from "../../src/utils/types.js";
+} from "../../packages/wiki/src/sources/removal-plan.js";
+import type { WikiState, ReviewCandidate } from "../../packages/wiki/src/utils/types.js";
 
 /** A v1 state where `bad.md` owns `junk` + `shared`, and `good.md` also owns `shared`. */
 function twoSourceState(): WikiState {

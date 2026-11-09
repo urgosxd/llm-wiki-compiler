@@ -11,7 +11,7 @@
  * BOTH dimensions have settled.
  */
 import { describe, expect, it } from "vitest";
-import { createJobRegistry, MAX_JOBS } from "../../src/services/ingest/jobs/registry.js";
+import { createJobRegistry, MAX_JOBS } from "../../packages/wiki/src/services/ingest/jobs/registry.js";
 
 /**
  * A registry filled with `count` settled jobs, created one second apart.

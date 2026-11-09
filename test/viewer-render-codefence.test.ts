@@ -11,12 +11,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { renderPageHtml } from "../src/viewer/render.js";
+import { renderPageHtml } from "../packages/wiki/src/viewer/render.js";
 import type {
   PageId,
   ViewerPage,
   ViewerSnapshot,
-} from "../src/viewer/types.js";
+} from "../packages/wiki/src/viewer/types.js";
 
 const ALPHA: ViewerPage = {
   id: "concepts/alpha" as PageId,

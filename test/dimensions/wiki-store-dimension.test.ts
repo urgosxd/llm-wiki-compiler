@@ -19,10 +19,10 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { createWikiStoreDimension } from "../../src/dimensions/wiki/database.js";
-import { listStoredPages } from "../../src/dimensions/wiki/page-store.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import type { DimensionInput } from "../../src/dimensions/types.js";
+import { createWikiStoreDimension } from "../../packages/wiki/src/dimensions/wiki/database.js";
+import { listStoredPages } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import type { DimensionInput } from "../../packages/wiki/src/dimensions/types.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 /**

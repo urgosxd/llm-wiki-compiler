@@ -14,8 +14,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildExtractionPrompt } from "../src/compiler/prompts.js";
-import { MAX_CONCEPTS_PER_SOURCE } from "../src/utils/constants.js";
+import { buildExtractionPrompt } from "../packages/wiki/src/compiler/prompts.js";
+import { MAX_CONCEPTS_PER_SOURCE } from "../packages/wiki/src/utils/constants.js";
 
 /** The extraction prompt with no dedup index, for wording assertions. */
 function prompt(): string {

@@ -7,15 +7,15 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { AtlasCloudProvider } from "../src/providers/atlascloud.js";
-import { ClaudeAgentProvider } from "../src/providers/claude-agent.js";
-import { CopilotProvider } from "../src/providers/copilot.js";
-import { MiniMaxProvider } from "../src/providers/minimax.js";
-import { OpenAIProvider } from "../src/providers/openai.js";
-import { OllamaProvider } from "../src/providers/ollama.js";
-import { ensureProviderAvailable } from "../src/utils/provider-guard.js";
-import { getProvider } from "../src/utils/provider.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { AtlasCloudProvider } from "../packages/wiki/src/providers/atlascloud.js";
+import { ClaudeAgentProvider } from "../packages/wiki/src/providers/claude-agent.js";
+import { CopilotProvider } from "../packages/wiki/src/providers/copilot.js";
+import { MiniMaxProvider } from "../packages/wiki/src/providers/minimax.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
+import { OllamaProvider } from "../packages/wiki/src/providers/ollama.js";
+import { ensureProviderAvailable } from "../packages/wiki/src/utils/provider-guard.js";
+import { getProvider } from "../packages/wiki/src/utils/provider.js";
 
 const originalEnv = { ...process.env };
 afterEach(() => { process.env = { ...originalEnv }; });

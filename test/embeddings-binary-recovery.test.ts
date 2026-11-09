@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
-import * as provider from "../src/utils/embedding-provider.js";
-import { updateEmbeddings } from "../src/utils/embeddings.js";
-import { readStoreForUpdate } from "../src/utils/embeddings-store.js";
+import * as provider from "../packages/wiki/src/utils/embedding-provider.js";
+import { updateEmbeddings } from "../packages/wiki/src/utils/embeddings.js";
+import { readStoreForUpdate } from "../packages/wiki/src/utils/embeddings-store.js";
 
 const ctx = useConfinementRoots("binary-recovery");
 let embeddedTexts = 0;

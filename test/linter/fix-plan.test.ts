@@ -16,7 +16,7 @@
 import { mkdir, writeFile, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { planLintFixes } from "../../src/linter/fix-plan.js";
+import { planLintFixes } from "../../packages/wiki/src/linter/fix-plan.js";
 import { tempRootTracker } from "../temp-roots.js";
 
 const tracker = tempRootTracker();
@@ -106,7 +106,7 @@ describe("the planner and the linter agree", () => {
     const root = await wiki({
       alpha: { title: "Alpha", body: "See [[alpha]] and [[Alpha]]." },
     });
-    const { lint } = await import("../../src/linter/index.js");
+    const { lint } = await import("../../packages/wiki/src/linter/index.js");
     const broken = (await lint(root)).results.filter((r) => r.rule === "broken-wikilink");
     expect(broken).toEqual([]);
     expect(await planLintFixes(root)).toEqual([]);
@@ -117,7 +117,7 @@ describe("the planner and the linter agree", () => {
       "source-0": { title: "Alpha effects", body: "The paper." },
       index: { title: "Index", body: "See [[Alpha effects]] and [[Nothing Here]]." },
     });
-    const { lint } = await import("../../src/linter/index.js");
+    const { lint } = await import("../../packages/wiki/src/linter/index.js");
     const broken = (await lint(root)).results.filter((r) => r.rule === "broken-wikilink");
     // Two broken links, two plans: one fixable, one recommendation. A count
     // mismatch means the two walks disagree about what is broken.
@@ -132,13 +132,13 @@ describe("pending targets are the linter's to report, not the planner's", () => 
     // candidate to info-level pending-target, so the planner advising that the
     // same link "cannot be repaired automatically" would contradict it.
     const root = await wiki({ index: { title: "Index", body: "See [[Pending Page]]." } });
-    const { writeCandidate } = await import("../../src/compiler/candidates.js");
+    const { writeCandidate } = await import("../../packages/wiki/src/compiler/candidates.js");
     await writeCandidate(root, process.env, {
       title: "Pending Page", slug: "pending-page", summary: "Pending.",
       sources: [], body: "pending body", reviewMode: "policy",
       heldReasons: [{ code: "low-confidence" }],
     });
-    const { lint } = await import("../../src/linter/index.js");
+    const { lint } = await import("../../packages/wiki/src/linter/index.js");
     const rules = (await lint(root)).results.map((result) => result.rule);
     expect(rules).toContain("pending-target");
     expect(rules).not.toContain("broken-wikilink");

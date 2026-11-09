@@ -36,7 +36,7 @@ import path from "node:path";
 import { expectCLIExit, expectCLIFailure, runCLI } from "../fixtures/run-cli.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
-import { listSourceDocuments } from "../../src/dimensions/wiki/source-documents-store.js";
+import { listSourceDocuments } from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
 
 /** A value that is not a uuid, kept obvious so a failure reads as itself. */
 const MALFORMED_STACK = "not-a-uuid";

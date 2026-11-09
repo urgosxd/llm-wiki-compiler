@@ -12,14 +12,14 @@ import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { collectStatus } from "../src/status/collect.js";
-import { writePendingEmbeddings } from "../src/utils/pending-embeddings.js";
+import { collectStatus } from "../packages/wiki/src/status/collect.js";
+import { writePendingEmbeddings } from "../packages/wiki/src/utils/pending-embeddings.js";
 import {
   PENDING_EMBEDDINGS_PENDING_CODE,
   PENDING_EMBEDDINGS_UNAVAILABLE_CODE,
-} from "../src/trust/pending-embeddings-warning.js";
-import { INCOMPLETE_COMPILE_CODE } from "../src/trust/journal-health-warning.js";
-import { LLMWIKI_DIR, PENDING_EMBEDDINGS_FILE } from "../src/utils/constants.js";
+} from "../packages/wiki/src/trust/pending-embeddings-warning.js";
+import { INCOMPLETE_COMPILE_CODE } from "../packages/wiki/src/trust/journal-health-warning.js";
+import { LLMWIKI_DIR, PENDING_EMBEDDINGS_FILE } from "../packages/wiki/src/utils/constants.js";
 import { plantPendingTwoTargetBatch } from "./trust/journal-fixture.js";
 
 let root = "";

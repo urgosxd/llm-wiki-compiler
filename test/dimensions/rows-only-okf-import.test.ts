@@ -23,8 +23,8 @@ import { describe, it, expect } from "vitest";
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { getStoredPage } from "../../src/dimensions/wiki/page-store.js";
-import { runOkfImport } from "../../src/import/run.js";
+import { getStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
+import { runOkfImport } from "../../packages/wiki/src/import/run.js";
 import { withRowsStack } from "../fixtures/rows-only-stack.js";
 
 const SLUG = "imported-by-rows";

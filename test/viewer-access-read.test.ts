@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { writeFile } from "fs/promises";
 import path from "path";
 import { useTempRoot } from "./fixtures/temp-root.js";
-import { openConfinedLeaf, readWithinCapOrElse } from "../src/utils/confined-read.js";
+import { openConfinedLeaf, readWithinCapOrElse } from "../packages/wiki/src/utils/confined-read.js";
 
 describe("bounded content snapshot", () => {
   const ctx = useTempRoot(["sources"]);

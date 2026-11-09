@@ -16,7 +16,7 @@ function lightToken(css: string, name: string): string {
 
 describe("Minimal light link contrast", () => {
   it.each(["surface-recessed", "surface-raised", "surface-muted"])("clears 4.5:1 on %s", async (surface) => {
-    const css = await readFile("src/viewer/assets/themes/minimal.css", "utf8");
+    const css = await readFile("packages/wiki/src/viewer/assets/themes/minimal.css", "utf8");
     expect(contrast(lightToken(css, "text-interactive"), lightToken(css, surface))).toBeGreaterThanOrEqual(4.5);
   });
 });

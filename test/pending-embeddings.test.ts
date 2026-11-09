@@ -22,14 +22,14 @@ import {
   PENDING_EMBEDDINGS_FILE,
   MAX_PENDING_EMBEDDINGS_BYTES,
   MAX_PENDING_EMBEDDING_IDS,
-} from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/constants.js";
 import {
   loadPendingEmbeddings,
   writePendingEmbeddings,
   clearPendingEmbeddings,
   type PendingEmbedding,
-} from "../src/utils/pending-embeddings.js";
-import * as output from "../src/utils/output.js";
+} from "../packages/wiki/src/utils/pending-embeddings.js";
+import * as output from "../packages/wiki/src/utils/output.js";
 import {
   makeRootWithOutside,
   cleanupRootWithOutside,

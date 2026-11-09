@@ -24,8 +24,8 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import * as seam from "../src/dimensions/wiki/page-source-seam.js";
-import { buildProjectFreshnessSnapshot } from "../src/freshness/index.js";
+import * as seam from "../packages/wiki/src/dimensions/wiki/page-source-seam.js";
+import { buildProjectFreshnessSnapshot } from "../packages/wiki/src/freshness/index.js";
 
 let dir: string;
 

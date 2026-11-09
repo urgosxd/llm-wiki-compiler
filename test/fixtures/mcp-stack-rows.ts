@@ -34,10 +34,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { createDimensionsDatabase } from "../../src/dimensions/activation.js";
-import { readJournalEntries } from "../../src/dimensions/wiki/activity-log-store.js";
-import type { JournalEntry } from "../../src/dimensions/wiki/activity-log-store.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
+import { createDimensionsDatabase } from "../../packages/wiki/src/dimensions/activation.js";
+import { readJournalEntries } from "../../packages/wiki/src/dimensions/wiki/activity-log-store.js";
+import type { JournalEntry } from "../../packages/wiki/src/dimensions/wiki/activity-log-store.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
 import type { KgPostgresHarness } from "./kg-postgres.js";
 
 /** One tool call that omits the required Stack argument. */

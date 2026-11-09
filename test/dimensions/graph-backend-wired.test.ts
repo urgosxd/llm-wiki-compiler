@@ -25,8 +25,8 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readEvents } from "../../src/events/store-read.js";
-import { appendEventLocked } from "../../src/events/store.js";
+import { readEvents } from "../../packages/wiki/src/events/store-read.js";
+import { appendEventLocked } from "../../packages/wiki/src/events/store.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
 

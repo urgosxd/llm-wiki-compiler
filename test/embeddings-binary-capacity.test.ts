@@ -8,8 +8,8 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { binaryFixture } from "./fixtures/binary-embedding-store.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
-import { writeEmbeddingStore, EmbeddingStoreFullError, type EmbeddingStoreV3 } from "../src/utils/embeddings-store.js";
-import { encodeBinaryStore, decodeBinaryStore } from "../src/utils/embeddings-binary.js";
+import { writeEmbeddingStore, EmbeddingStoreFullError, type EmbeddingStoreV3 } from "../packages/wiki/src/utils/embeddings-store.js";
+import { encodeBinaryStore, decodeBinaryStore } from "../packages/wiki/src/utils/embeddings-binary.js";
 
 const ctx = useConfinementRoots("binary-capacity");
 afterEach(() => vi.unstubAllEnvs());

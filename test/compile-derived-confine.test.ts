@@ -33,9 +33,9 @@ import { describe, it, expect } from "vitest";
 import { mkdir, symlink, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { generateIndex } from "../src/compiler/indexgen.js";
-import { generateMOC } from "../src/compiler/obsidian.js";
-import { INDEX_FILE, MOC_FILE } from "../src/utils/constants.js";
+import { generateIndex } from "../packages/wiki/src/compiler/indexgen.js";
+import { generateMOC } from "../packages/wiki/src/compiler/obsidian.js";
+import { INDEX_FILE, MOC_FILE } from "../packages/wiki/src/utils/constants.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 
 const ctx = useConfinementRoots("derived-confine");

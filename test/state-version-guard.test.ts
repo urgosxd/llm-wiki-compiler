@@ -16,9 +16,9 @@ import {
   readState,
   StateTooNewError,
   KNOWN_STATE_VERSION,
-} from "../src/utils/state.js";
-import { collectStatus } from "../src/status/collect.js";
-import { STATE_FILE } from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/state.js";
+import { collectStatus } from "../packages/wiki/src/status/collect.js";
+import { STATE_FILE } from "../packages/wiki/src/utils/constants.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 import {
   writeRawTestStateJson,

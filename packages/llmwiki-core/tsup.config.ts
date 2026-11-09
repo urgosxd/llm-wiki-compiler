@@ -8,9 +8,9 @@ import { execFileSync } from "node:child_process";
 
 export default defineConfig({
   entry: {
-    index: "../../src/core-index.ts",
-    "compiler-cli": "../../src/compiler-cli.ts",
-    "compiler-sdk": "../../src/sdk/compiler-composition.ts",
+    index: "../../packages/wiki/src/core-index.ts",
+    "compiler-cli": "../../packages/wiki/src/compiler-cli.ts",
+    "compiler-sdk": "../../packages/wiki/src/sdk/compiler-composition.ts",
   },
   outDir: "dist",
   format: ["esm"],
@@ -56,7 +56,7 @@ export default defineConfig({
   splitting: true,
   sourcemap: true,
   clean: true,
-  dts: { compilerOptions: { rootDir: path.resolve("../../src") } },
+  dts: { compilerOptions: { rootDir: path.resolve("../../packages/wiki/src") } },
   tsconfig: "../../tsconfig.json",
   onSuccess: async () => {
     execFileSync(process.execPath, [path.resolve("../../scripts/copy-viewer-assets.mjs"), "packages/llmwiki-core/dist"]);

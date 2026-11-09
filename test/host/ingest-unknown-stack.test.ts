@@ -26,9 +26,9 @@
  * deleted. `withStackEnv` provisions one, and the absent case is a well-formed UUID.
  */
 import { describe, it, expect } from "vitest";
-import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
-import { startHost } from "../../src/host/server.js";
-import { createJobRegistry } from "../../src/services/ingest/jobs/registry.js";
+import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
+import { startHost } from "../../packages/wiki/src/host/server.js";
+import { createJobRegistry } from "../../packages/wiki/src/services/ingest/jobs/registry.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 import { withStackEnv } from "../fixtures/stack-env.js";
 

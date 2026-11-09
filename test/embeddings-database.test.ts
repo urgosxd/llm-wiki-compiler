@@ -26,18 +26,18 @@ import {
   readEmbeddingStoreFromDb,
   readEmbeddingMeta,
   splitPageId,
-} from "../src/utils/embeddings-database.js";
-import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
-import { collectStats } from "../src/eval/stats.js";
+} from "../packages/wiki/src/utils/embeddings-database.js";
+import { loadEmbeddingsForSearch } from "../packages/wiki/src/utils/embeddings-load.js";
+import { collectStats } from "../packages/wiki/src/eval/stats.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { resolveEmbeddingModel } from "../src/utils/embeddings-store.js";
+import { resolveEmbeddingModel } from "../packages/wiki/src/utils/embeddings-store.js";
 import {
   toVectorLiteral,
   writeEmbeddingStoreToDb,
-} from "../src/utils/embeddings-database-write.js";
-import type { ChunkEmbeddingV3, EmbeddingStoreV3, PageEmbeddingV3 } from "../src/utils/embeddings-store.js";
+} from "../packages/wiki/src/utils/embeddings-database-write.js";
+import type { ChunkEmbeddingV3, EmbeddingStoreV3, PageEmbeddingV3 } from "../packages/wiki/src/utils/embeddings-store.js";
 
 /** Probe whether the vector extension and the embedding tables are both present. */
 const harnessReachable = await (async (): Promise<boolean> => {

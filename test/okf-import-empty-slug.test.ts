@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { isWritable } from "../src/commands/import.js";
-import type { MappedOkfPage } from "../src/import/types.js";
+import { isWritable } from "../packages/wiki/src/commands/import.js";
+import type { MappedOkfPage } from "../packages/wiki/src/import/types.js";
 
 const VALID_BODY = "---\ntitle: A\n---\n\nBody.\n";
 

@@ -14,8 +14,8 @@ import {
   checkDuplicateConcepts,
   checkEmptyPages,
   checkBrokenCitations,
-} from "../src/linter/rules.js";
-import { lint } from "../src/linter/index.js";
+} from "../packages/wiki/src/linter/rules.js";
+import { lint } from "../packages/wiki/src/linter/index.js";
 import { makeLintTempRoot } from "./fixtures/lint-temp-root.js";
 
 let tmpDir: string;

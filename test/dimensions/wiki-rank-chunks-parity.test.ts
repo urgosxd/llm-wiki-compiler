@@ -54,14 +54,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { databaseEmbeddingSource, readEmbeddingStoreFromDb } from "../../src/utils/embeddings-database.js";
-import { resolveEmbeddingModel, resolveEmbeddingFingerprint } from "../../src/utils/embeddings-store.js";
-import { writeEmbeddingStoreToDb } from "../../src/utils/embeddings-database-write.js";
-import { cosineSimilarity } from "../../src/utils/embeddings-search.js";
-import { createRegistryPageSource } from "../../src/dimensions/wiki/page-registry-source.js";
-import { findRelevantChunksV3 } from "../../src/utils/embeddings-load.js";
-import * as providerMod from "../../src/utils/provider.js";
-import type { ChunkEmbeddingV3, EmbeddingStoreV3 } from "../../src/utils/embeddings-store.js";
+import { databaseEmbeddingSource, readEmbeddingStoreFromDb } from "../../packages/wiki/src/utils/embeddings-database.js";
+import { resolveEmbeddingModel, resolveEmbeddingFingerprint } from "../../packages/wiki/src/utils/embeddings-store.js";
+import { writeEmbeddingStoreToDb } from "../../packages/wiki/src/utils/embeddings-database-write.js";
+import { cosineSimilarity } from "../../packages/wiki/src/utils/embeddings-search.js";
+import { createRegistryPageSource } from "../../packages/wiki/src/dimensions/wiki/page-registry-source.js";
+import { findRelevantChunksV3 } from "../../packages/wiki/src/utils/embeddings-load.js";
+import * as providerMod from "../../packages/wiki/src/utils/provider.js";
+import type { ChunkEmbeddingV3, EmbeddingStoreV3 } from "../../packages/wiki/src/utils/embeddings-store.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { provisionStack } from "../fixtures/stack-harness.js";
 

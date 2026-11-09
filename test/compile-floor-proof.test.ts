@@ -25,13 +25,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { writeFile } from "fs/promises";
 import path from "path";
-import { compileAndReport } from "../src/compiler/index.js";
-import { CONCEPTS_DIR, MAX_SOURCE_CHARS, GENERATED_PAGE_MAX_CHARS } from "../src/utils/constants.js";
-import { buildFrontmatter } from "../src/utils/markdown.js";
-import * as compileWrite from "../src/compiler/compile-write.js";
-import type { CompilePageWrite } from "../src/compiler/compile-write.js";
-import { runMandatoryPageChecks, resourceCapForOrigin, COMPILE_ORIGIN } from "../src/trust/checks.js";
-import { composeTrustDecision } from "../src/trust/decision.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { CONCEPTS_DIR, MAX_SOURCE_CHARS, GENERATED_PAGE_MAX_CHARS } from "../packages/wiki/src/utils/constants.js";
+import { buildFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import * as compileWrite from "../packages/wiki/src/compiler/compile-write.js";
+import type { CompilePageWrite } from "../packages/wiki/src/compiler/compile-write.js";
+import { runMandatoryPageChecks, resourceCapForOrigin, COMPILE_ORIGIN } from "../packages/wiki/src/trust/checks.js";
+import { composeTrustDecision } from "../packages/wiki/src/trust/decision.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 import {
   stubExtractionAndBody,

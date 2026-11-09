@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { filterCollisions } from "../src/import/okf-collision.js";
-import type { MappedOkfPage } from "../src/import/types.js";
+import { filterCollisions } from "../packages/wiki/src/import/okf-collision.js";
+import type { MappedOkfPage } from "../packages/wiki/src/import/types.js";
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });

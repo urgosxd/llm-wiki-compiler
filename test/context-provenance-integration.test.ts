@@ -21,7 +21,7 @@ import {
   LAST_LINT_FILE,
   CANDIDATES_DIR,
   SOURCES_DIR,
-} from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/constants.js";
 
 let tmpDir: string;
 

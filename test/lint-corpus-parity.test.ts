@@ -28,7 +28,7 @@ import { rm } from "node:fs/promises";
 import {
   METADATA_NOT_STORED_IN_ROWS,
   RULES_UNAVAILABLE_ON_ROWS,
-} from "../src/linter/corpus.js";
+} from "../packages/wiki/src/linter/corpus.js";
 import {
   lintRowCorpus,
   rawPage,

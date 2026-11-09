@@ -13,21 +13,21 @@
     "forceConsistentCasingInFileNames": true,
     "paths": {
       "@atomicstrata/llmwiki-core/compiler-cli": [
-        "./src/compiler-cli.ts"
+        "./packages/wiki/src/compiler-cli.ts"
       ],
       "@atomicstrata/llmwiki-core/compiler-sdk": [
-        "./src/sdk/compiler-composition.ts"
+        "./packages/wiki/src/sdk/compiler-composition.ts"
       ],
       "@atomicstrata/llmwiki-core": [
-        "./src/core-index.ts"
+        "./packages/wiki/src/core-index.ts"
       ],
       "llm-wiki-compiler": [
-        "./src/index.ts"
+        "./packages/wiki/src/index.ts"
       ]
     }
   },
   "include": [
-    "src/**/*",
+    "packages/wiki/src/**/*",
     "packages/api/src/**/*.ts",
     "packages/foundation/src/**/*.ts"
   ],

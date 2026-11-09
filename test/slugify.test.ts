@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { slugify } from "../src/utils/markdown.js";
+import { slugify } from "../packages/wiki/src/utils/markdown.js";
 
 describe("slugify", () => {
   it("converts titles to lowercase hyphenated slugs", () => {

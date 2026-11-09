@@ -9,8 +9,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createCategory } from "../../src/categories/index.js";
-import categoryCommand from "../../src/commands/category.js";
+import { createCategory } from "../../packages/wiki/src/categories/index.js";
+import categoryCommand from "../../packages/wiki/src/commands/category.js";
 import { useTempRoot } from "../fixtures/temp-root.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
 

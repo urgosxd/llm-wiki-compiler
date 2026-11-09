@@ -5,12 +5,12 @@
 import { expect, it, vi } from "vitest";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import approve from "../src/commands/review-approve.js";
+import approve from "../packages/wiki/src/commands/review-approve.js";
 import { usePublicationRoot, generic, candidateBytes, retained, expectApprovalRefused } from "./fixtures/publication-review.js";
-import { writeCandidate } from "../src/compiler/candidates.js";
+import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import { candidateFile } from "./fixtures/answer-candidate.js";
 import { SAMPLE_PROFILE } from "./fixtures/profile-fixtures.js";
-import * as planner from "../src/trust/planner.js";
+import * as planner from "../packages/wiki/src/trust/planner.js";
 
 const root = usePublicationRoot();
 it("imported generic query citing pending candidate approves with byte-identical content", async () => {

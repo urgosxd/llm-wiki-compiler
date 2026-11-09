@@ -22,8 +22,8 @@
 import { describe, expect, it } from "vitest";
 import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { compileAndReport } from "../src/compiler/index.js";
-import type { JobProgress } from "../src/services/ingest/jobs/types.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import type { JobProgress } from "../packages/wiki/src/services/ingest/jobs/types.js";
 import { mockReconciliationProvider, useReconciliationProject } from "./fixtures/reconciliation-project.js";
 
 const ctx = useReconciliationProject({

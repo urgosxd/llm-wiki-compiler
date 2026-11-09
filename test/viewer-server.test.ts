@@ -11,7 +11,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdir, rm, symlink, writeFile } from "fs/promises";
 import path from "path";
-import { LINT_CACHE_TIMESTAMP_PATTERN } from "../src/linter/cache.js";
+import { LINT_CACHE_TIMESTAMP_PATTERN } from "../packages/wiki/src/linter/cache.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
 import { makeOutsideDir } from "./fixtures/outside-dir.js";

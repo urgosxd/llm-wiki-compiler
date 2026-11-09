@@ -16,13 +16,13 @@ import {
   AKS_STACK_ID_ENV_VAR,
   DIMENSIONS_ENV_VAR,
   resolveDimensions,
-} from "../../src/dimensions/activation.js";
+} from "../../packages/wiki/src/dimensions/activation.js";
 import {
   DEFAULT_STACK_DOMAIN,
   DEFAULT_STACK_NAME,
   describeStackSelection,
   selectStack,
-} from "../../src/dimensions/stack-selection.js";
+} from "../../packages/wiki/src/dimensions/stack-selection.js";
 
 const FLAG_STACK = "11111111-1111-1111-1111-111111111111";
 const ENV_STACK = "33333333-3333-3333-3333-333333333333";

@@ -30,9 +30,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { testDotenvEnv } from "./test-dotenv.js";
-import { registerWikiTools } from "../../src/mcp/tools.js";
-import { registerOkfTools } from "../../src/mcp/okf-tools.js";
-import { registerWikiResources } from "../../src/mcp/resources.js";
+import { registerWikiTools } from "../../packages/wiki/src/mcp/tools.js";
+import { registerOkfTools } from "../../packages/wiki/src/mcp/okf-tools.js";
+import { registerWikiResources } from "../../packages/wiki/src/mcp/resources.js";
 import { CLI } from "./run-cli.js";
 
 /** Live container for the current test's temp root path. */

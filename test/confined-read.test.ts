@@ -12,7 +12,7 @@ import { writeFile, symlink, rename, realpath, chmod } from "fs/promises";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { makeOutsideDir } from "./fixtures/outside-dir.js";
-import { readConfinedPage, readConfinedPageOutcome } from "../src/utils/confined-read.js";
+import { readConfinedPage, readConfinedPageOutcome } from "../packages/wiki/src/utils/confined-read.js";
 
 /** Resolve the canonical concepts dir + a captured realpath for one entry. */
 async function captured(root: string, file: string) {

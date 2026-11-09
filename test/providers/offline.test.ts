@@ -5,10 +5,10 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CONCEPT_EXTRACTION_TOOL } from "../../src/compiler/prompts.js";
+import { CONCEPT_EXTRACTION_TOOL } from "../../packages/wiki/src/compiler/prompts.js";
 import {
   OFFLINE_EMBEDDING_DIMENSIONS, OfflineProvider, OfflineProviderError, bagOfWordsVector, schemaEmptyValue,
-} from "../../src/providers/offline.js";
+} from "../../packages/wiki/src/providers/offline.js";
 
 const provider = new OfflineProvider();
 const norm = (v: number[]): number => Math.sqrt(v.reduce((s, x) => s + x * x, 0));

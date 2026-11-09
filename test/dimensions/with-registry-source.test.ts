@@ -16,9 +16,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildLiveIdSet, buildNamespaceDirs } from "../../src/utils/page-registry.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { withRegistrySource } from "../../src/dimensions/wiki/page-source-seam.js";
+import { buildLiveIdSet, buildNamespaceDirs } from "../../packages/wiki/src/utils/page-registry.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { withRegistrySource } from "../../packages/wiki/src/dimensions/wiki/page-source-seam.js";
 import { DATABASE_URL, createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 /** The two variables the seam reads: the tenant and the database it lives in. */

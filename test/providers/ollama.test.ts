@@ -3,8 +3,8 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CONCEPT_EXTRACTION_TOOL } from "../../src/compiler/prompts.js";
-import { OllamaProvider, resolveOllamaNativeHost } from "../../src/providers/ollama.js";
+import { CONCEPT_EXTRACTION_TOOL } from "../../packages/wiki/src/compiler/prompts.js";
+import { OllamaProvider, resolveOllamaNativeHost } from "../../packages/wiki/src/providers/ollama.js";
 
 const TOOL_MESSAGES = [{ role: "user" as const, content: "extract" }];
 const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1";

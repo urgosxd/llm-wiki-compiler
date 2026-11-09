@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildPagePrompt } from "../src/compiler/prompts.js";
+import { buildPagePrompt } from "../packages/wiki/src/compiler/prompts.js";
 
 const SOURCE = "--- SOURCE: notes.md ---\n\n1 | Shared source text about caching.";
 const SOURCE_MARKER = "--- SOURCE MATERIAL ---";

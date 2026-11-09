@@ -35,9 +35,9 @@
  *    `eligibleLivePages`.
  */
 import { describe, it, expect } from "vitest";
-import { migrateEmbeddingStore } from "../src/utils/embeddings-migrate.js";
-import type { EligibleLivePage } from "../src/utils/embeddings-migrate.js";
-import type { ParsedStore, PageEmbeddingV3, ChunkEmbeddingV3 } from "../src/utils/embeddings-store.js";
+import { migrateEmbeddingStore } from "../packages/wiki/src/utils/embeddings-migrate.js";
+import type { EligibleLivePage } from "../packages/wiki/src/utils/embeddings-migrate.js";
+import type { ParsedStore, PageEmbeddingV3, ChunkEmbeddingV3 } from "../packages/wiki/src/utils/embeddings-store.js";
 
 const MODEL = "voyage-3";
 

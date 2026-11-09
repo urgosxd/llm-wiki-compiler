@@ -19,20 +19,20 @@
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { vi } from "vitest";
-import * as providerMod from "../../src/utils/provider.js";
+import * as providerMod from "../../packages/wiki/src/utils/provider.js";
 import {
   writeEmbeddingStore,
   resetStaleEmbeddingWarnings,
   updateEmbeddings,
   type EmbeddingStore,
-} from "../../src/utils/embeddings.js";
-import { buildEmbeddingText } from "../../src/utils/embeddings-pages.js";
-import { hashChunkText } from "../../src/utils/retrieval.js";
-import { cosineSimilarity } from "../../src/utils/embeddings-search.js";
-import { pickSearchSlugs } from "../../src/search/retrieval.js";
-import { retrieveSemanticChunks } from "../../src/context/retrieval.js";
-import { rankPages } from "../../src/context/ranking.js";
-import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
+} from "../../packages/wiki/src/utils/embeddings.js";
+import { buildEmbeddingText } from "../../packages/wiki/src/utils/embeddings-pages.js";
+import { hashChunkText } from "../../packages/wiki/src/utils/retrieval.js";
+import { cosineSimilarity } from "../../packages/wiki/src/utils/embeddings-search.js";
+import { pickSearchSlugs } from "../../packages/wiki/src/search/retrieval.js";
+import { retrieveSemanticChunks } from "../../packages/wiki/src/context/retrieval.js";
+import { rankPages } from "../../packages/wiki/src/context/ranking.js";
+import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
 import {
   CONCEPTS_DIR,
   QUERIES_DIR,
@@ -41,7 +41,7 @@ import {
   SOURCES_DIR,
   CHUNK_TOP_K,
   EMBEDDING_TOP_K,
-} from "../../src/utils/constants.js";
+} from "../../packages/wiki/src/utils/constants.js";
 
 /** The fixed query string used to drive all four ranking sections. */
 export const BASELINE_QUERY = "alpha core concepts";

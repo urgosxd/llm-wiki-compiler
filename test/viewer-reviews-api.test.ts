@@ -20,9 +20,9 @@
 import { describe, it, expect } from "vitest";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
-import { writeCandidate, writeFreshCandidate } from "../src/compiler/candidates.js";
-import type { CandidateDraft } from "../src/compiler/candidates.js";
-import { REVIEW_LIST_LIMIT } from "../src/viewer/reviews.js";
+import { writeCandidate, writeFreshCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import type { CandidateDraft } from "../packages/wiki/src/compiler/candidates.js";
+import { REVIEW_LIST_LIMIT } from "../packages/wiki/src/viewer/reviews.js";
 import { useViewerProcessLifecycle } from "./fixtures/run-cli-server.js";
 import { fetchJson } from "./fixtures/viewer-fetch.js";
 

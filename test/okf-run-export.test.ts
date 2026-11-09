@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, stat } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { runOkfExport } from "../src/export/okf/run.js";
+import { runOkfExport } from "../packages/wiki/src/export/okf/run.js";
 import { assertNoOutput } from "./fixtures/no-output.js";
 
 let dir: string;

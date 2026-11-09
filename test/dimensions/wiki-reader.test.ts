@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createWikiReader } from "../../src/dimensions/wiki/reader.js";
+import { createWikiReader } from "../../packages/wiki/src/dimensions/wiki/reader.js";
 import { expectNamedLookupContract } from "../fixtures/reader-assertions.js";
 
 /** A project with three compiled concept pages and one query page. */

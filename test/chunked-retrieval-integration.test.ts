@@ -34,12 +34,12 @@ import {
   writeEmbeddingStore,
   type ChunkEmbeddingV3,
   type EmbeddingStoreV3,
-} from "../src/utils/embeddings.js";
-import { cosineSimilarity } from "../src/utils/embeddings-search.js";
-import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
-import { rerankWithBm25 } from "../src/utils/retrieval.js";
+} from "../packages/wiki/src/utils/embeddings.js";
+import { cosineSimilarity } from "../packages/wiki/src/utils/embeddings-search.js";
+import { loadEmbeddingsForSearch } from "../packages/wiki/src/utils/embeddings-load.js";
+import { rerankWithBm25 } from "../packages/wiki/src/utils/retrieval.js";
 import { readV3Store, conceptId } from "./fixtures/v3-store.js";
-import { OpenAIProvider } from "../src/providers/openai.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
 import { runCLI, expectCLIExit, expectCLIFailure } from "./fixtures/run-cli.js";
 
 // ---------------------------------------------------------------------------

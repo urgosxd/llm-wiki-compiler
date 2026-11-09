@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { saveSource } from "../../src/utils/source-writer.js";
+import { saveSource } from "../../packages/wiki/src/utils/source-writer.js";
 
 describe("saveSource re-ingest is not blocked by an in-tree symlink alias", () => {
   it("updates the real file even when an alias sorts first", async () => {

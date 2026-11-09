@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { listSources, getSource, deleteSource } from "../../src/sources/store.js";
+import { listSources, getSource, deleteSource } from "../../packages/wiki/src/sources/store.js";
 
 async function seedAlias() {
   const root = await mkdtemp(path.join(tmpdir(), "src-alias-"));

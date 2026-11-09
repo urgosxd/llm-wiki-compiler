@@ -11,9 +11,9 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveLinks } from "../../src/compiler/resolver.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { createResolverPageSource } from "../../src/dimensions/wiki/page-scan-source.js";
+import { resolveLinks } from "../../packages/wiki/src/compiler/resolver.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { createResolverPageSource } from "../../packages/wiki/src/dimensions/wiki/page-scan-source.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { provisionStack } from "../fixtures/stack-harness.js";
 

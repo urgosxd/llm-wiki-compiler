@@ -10,9 +10,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { findInboundLinks } from "../src/context/links-here.js";
+import { findInboundLinks } from "../packages/wiki/src/context/links-here.js";
 import { syntheticGraph } from "./fixtures/graph-data.js";
-import type { PageId } from "../src/viewer/types.js";
+import type { PageId } from "../packages/wiki/src/viewer/types.js";
 
 /** Compose synthetic graph data from real ids, directed edges, and ghosts. */
 function graph(realIds: PageId[], edges: [PageId, PageId][], ghostIds: PageId[] = []) {

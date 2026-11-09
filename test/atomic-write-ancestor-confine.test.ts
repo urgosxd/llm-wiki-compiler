@@ -13,7 +13,7 @@ import { describe, it, expect } from "vitest";
 import { symlink, mkdir, readFile, readdir, rename } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import { atomicWrite } from "../src/utils/markdown.js";
+import { atomicWrite } from "../packages/wiki/src/utils/markdown.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 
 const ctx = useConfinementRoots("ancestor-confine");

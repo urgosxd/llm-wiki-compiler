@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateWikiPage } from "../src/utils/markdown.js";
+import { validateWikiPage } from "../packages/wiki/src/utils/markdown.js";
 
 describe("validateWikiPage", () => {
   it("accepts a valid page with frontmatter and body", () => {

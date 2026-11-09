@@ -1,7 +1,7 @@
 /** Gateway body extensions must reach chat requests without replacing compile's contract. */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { OpenAIProvider } from "../src/providers/openai.js";
-import { OpenAIRequestConfigError } from "../src/providers/openai-request.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
+import { OpenAIRequestConfigError } from "../packages/wiki/src/providers/openai-request.js";
 
 beforeEach(() => {
   vi.stubEnv("LLMWIKI_OPENAI_TOKEN_PARAM", undefined);

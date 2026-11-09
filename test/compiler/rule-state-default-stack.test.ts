@@ -33,8 +33,8 @@ import path from "node:path";
 import { sql } from "drizzle-orm";
 
 import { DATABASE_URL, createKgPostgresHarness } from "../fixtures/kg-postgres.js";
-import { DEFAULT_STACK_DOMAIN } from "../../src/dimensions/stack-selection.js";
-import { readRuleState, updateRuleSourceState } from "../../src/compiler/rule-state.js";
+import { DEFAULT_STACK_DOMAIN } from "../../packages/wiki/src/dimensions/stack-selection.js";
+import { readRuleState, updateRuleSourceState } from "../../packages/wiki/src/compiler/rule-state.js";
 
 /** The environment a bare checkout has: a connection, and no Stack id. */
 const BARE_ENV: NodeJS.ProcessEnv = { AKS_DATABASE_URL: DATABASE_URL };

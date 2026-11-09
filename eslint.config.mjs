@@ -42,8 +42,9 @@ const tree = (directory) => CODE_EXTENSIONS.map((extension) => `${directory}**/*
  * The three zones of the target topology, named so the rules below read as the
  * architecture and not as a snapshot of today's directories.
  *
- * - `wiki` is everything wiki. Today that is exactly the root `src/` tree, which
- *   is why the zone and the directory coincide; they are expected to diverge.
+ * - `wiki` is everything wiki. Today that is exactly the `packages/wiki/` tree —
+ *   the source of the `@repo/wiki` package — which is why the zone and the
+ *   directory coincide; they are expected to diverge.
  *   Root-side code outside the zone — `test/` and `scripts/` — consumes KG the
  *   same way the zone does, so the wiki-side prohibition covers it too (see
  *   `WIKI_SIDE`).
@@ -57,7 +58,7 @@ const tree = (directory) => CODE_EXTENSIONS.map((extension) => `${directory}**/*
  * `api/` does not exist yet. It is declared and linted anyway: a zone that is
  * only a comment cannot be scanned, and an empty zone costs nothing.
  */
-const WIKI_ZONE = tree("src/");
+const WIKI_ZONE = tree("packages/wiki/");
 const KG_ZONE = tree("packages/llmwiki-kg/");
 const API_ZONE = tree("api/");
 
@@ -93,7 +94,7 @@ const CODE_FILES = [
 ];
 
 /** The subset a TypeScript parser has to handle. */
-const TYPESCRIPT_FILES = ["src/**/*.ts", "packages/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "api/**/*.ts"];
+const TYPESCRIPT_FILES = ["packages/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "api/**/*.ts"];
 
 /**
  * Both boundary messages name the zones and the direction in one clause, so a
@@ -147,16 +148,20 @@ const WIKI_TO_KG = {
 /**
  * kg → wiki is forbidden for the same reason, in the same two shapes.
  *
- * A file in `packages/llmwiki-kg/ts/src/` reaches root `src/` with at least four
- * `../` segments (one per directory between it and the repository root), deeper
- * files with more, so `{4,}` covers every real escape without flagging the
- * package's own relative imports. The two aliases `tsconfig.json` resolves into
- * root `src/` — `llm-wiki-compiler` and `@atomicstrata/llmwiki-core` — are the
- * second shape, so an alias cannot be used to slip past the first.
+ * A file in `packages/llmwiki-kg/ts/src/` reaches the wiki tree — now
+ * `packages/wiki/src/` — with at least four `../` segments (one per directory
+ * between it and the repository root), deeper files with more, so `{4,}` covers
+ * every real escape without flagging the package's own relative imports. The
+ * target spelling moved with the `@repo/wiki` carve: the pattern names
+ * `packages/wiki/src` because that is what a live walk resolves to, and a
+ * pattern still anchored on root `src` would match nothing while reporting
+ * zero violations. The two aliases `tsconfig.json` resolves into the wiki
+ * tree — `llm-wiki-compiler` and `@atomicstrata/llmwiki-core` — are the second
+ * shape, so an alias cannot be used to slip past the first.
  */
 const KG_TO_WIKI = {
   patterns: [
-    { regex: "^(\\.\\./){4,}src(/|$)", message: NO_KG_WIKI_IMPORT },
+    { regex: "^(\\.\\./){4,}packages/wiki/src(/|$)", message: NO_KG_WIKI_IMPORT },
     { regex: "^(llm-wiki-compiler|@atomicstrata/llmwiki-core)(/|$)", message: NO_KG_WIKI_IMPORT },
   ],
 };

@@ -87,7 +87,7 @@ describe("viewer theme selection", () => {
   });
 
   it("loads the non-module bootstrap before stylesheets", async () => {
-    const html = await readFile("src/viewer/assets/index.html", "utf8");
+    const html = await readFile("packages/wiki/src/viewer/assets/index.html", "utf8");
     const script = '<script src="/assets/viewer-theme-boot.js"></script>';
     expect(html).toContain(script);
     expect(html.indexOf(script)).toBeLessThan(html.indexOf('rel="stylesheet"'));

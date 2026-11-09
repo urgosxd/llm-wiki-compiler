@@ -10,13 +10,13 @@ import {
   enrichEmbedError,
   shouldRethrowEmbeddingFailure,
   makeCountingProvider,
-} from "../src/utils/embeddings-batch.js";
-import type { LLMProvider } from "../src/utils/provider.js";
+} from "../packages/wiki/src/utils/embeddings-batch.js";
+import type { LLMProvider } from "../packages/wiki/src/utils/provider.js";
 import {
   assertVectorValid,
   assertEveryVectorValid,
   normalizeEmbeddingData,
-} from "../src/utils/embeddings-validate.js";
+} from "../packages/wiki/src/utils/embeddings-validate.js";
 
 const withStatus = (status: number, message = "") => Object.assign(new Error(message), { status });
 

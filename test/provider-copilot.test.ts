@@ -4,9 +4,9 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { CopilotProvider } from "../src/providers/copilot.js";
-import { getProvider } from "../src/utils/provider.js";
-import { COPILOT_BASE_URL, PROVIDER_MODELS } from "../src/utils/constants.js";
+import { CopilotProvider } from "../packages/wiki/src/providers/copilot.js";
+import { getProvider } from "../packages/wiki/src/utils/provider.js";
+import { COPILOT_BASE_URL, PROVIDER_MODELS } from "../packages/wiki/src/utils/constants.js";
 
 describe("CopilotProvider", () => {
   it("constructs without throwing when given a token and model", () => {

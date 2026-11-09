@@ -15,7 +15,7 @@ import {
   mountViewerDom,
   type FetchResponder,
 } from "./fixtures/viewer-jsdom.js";
-import type { ViewerPage } from "../src/viewer/types.js";
+import type { ViewerPage } from "../packages/wiki/src/viewer/types.js";
 
 const PAGES_BASE = {
   project: { title: "demo", rootName: "demo" },

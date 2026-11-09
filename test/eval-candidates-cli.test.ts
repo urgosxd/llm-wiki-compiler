@@ -4,7 +4,7 @@
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { writeCandidate } from "../src/compiler/candidates.js";
+import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
 

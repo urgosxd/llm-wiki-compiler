@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import { createHash } from "crypto";
-import { wikilinksToOkf, okfLinksToWikilinks, canonicalBody } from "../src/export/okf/mapping.js";
+import { wikilinksToOkf, okfLinksToWikilinks, canonicalBody } from "../packages/wiki/src/export/okf/mapping.js";
 
 describe("export-side round-trip invariant", () => {
   it("reverse(forward(body)) == canonical body, and contentHash is stable", () => {

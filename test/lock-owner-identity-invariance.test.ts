@@ -31,8 +31,8 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import {
   classifyIdentityComparability, isOwnerStale, readProcessStartTime,
-} from "../src/utils/lock-owner.js";
-import type { IdentityComparabilityV1 } from "../src/utils/lock-owner.js";
+} from "../packages/wiki/src/utils/lock-owner.js";
+import type { IdentityComparabilityV1 } from "../packages/wiki/src/utils/lock-owner.js";
 
 /** A pid no host assigns, so the signal probe reports it gone. */
 const DEAD_PID = 999999;

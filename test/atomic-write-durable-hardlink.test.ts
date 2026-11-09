@@ -8,7 +8,7 @@
 import { link, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { atomicWriteNoReplaceDurable } from "../src/utils/atomic-write.js";
+import { atomicWriteNoReplaceDurable } from "../packages/wiki/src/utils/atomic-write.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

@@ -21,9 +21,9 @@
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { sql } from "drizzle-orm";
-import { createRowCategoryStore } from "../../src/dimensions/wiki/categories-row-store.js";
-import { saveSourceDocument } from "../../src/dimensions/wiki/source-documents-store.js";
-import type { CategoryStorePort } from "../../src/categories/types.js";
+import { createRowCategoryStore } from "../../packages/wiki/src/dimensions/wiki/categories-row-store.js";
+import { saveSourceDocument } from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import type { CategoryStorePort } from "../../packages/wiki/src/categories/types.js";
 import { stubCompileProvider } from "./compile-provider.js";
 import type { KgPostgresHarness } from "./kg-postgres.js";
 import {

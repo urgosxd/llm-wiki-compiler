@@ -13,9 +13,9 @@
 import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { mkdir, writeFile, readFile, rm } from "fs/promises";
 import path from "path";
-import { acquireLock, acquireLockBlocking, releaseLock, LockBusyError } from "../src/utils/lock.js";
-import { parseOwner, readProcessStartTime } from "../src/utils/lock-owner.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+import { acquireLock, acquireLockBlocking, releaseLock, LockBusyError } from "../packages/wiki/src/utils/lock.js";
+import { parseOwner, readProcessStartTime } from "../packages/wiki/src/utils/lock-owner.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import { makeRootWithOutside, cleanupRootWithOutside, existsUnder } from "./trust/fixture.js";
 
 const LOCK_REL = `${LLMWIKI_DIR}/lock`;

@@ -13,12 +13,12 @@ import {
   splitIntoChunks,
   hashChunkText,
   rerankWithBm25,
-} from "../src/utils/retrieval.js";
+} from "../packages/wiki/src/utils/retrieval.js";
 import {
   CHUNK_MAX_CHARS,
   CHUNK_MIN_CHARS,
   CHUNK_TARGET_CHARS,
-} from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/constants.js";
 
 function makeParagraph(seed: string, length: number): string {
   let out = seed;

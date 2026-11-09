@@ -16,7 +16,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, symlink } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { MAX_SOURCE_CHARS, GENERATED_PAGE_MAX_CHARS } from "../src/utils/constants.js";
+import { MAX_SOURCE_CHARS, GENERATED_PAGE_MAX_CHARS } from "../packages/wiki/src/utils/constants.js";
 import {
   checkPathConfinement,
   checkTargetCollision,
@@ -27,7 +27,7 @@ import {
   resourceCapForOrigin,
   COMPILE_ORIGIN,
   type PageWriteContext,
-} from "../src/trust/checks.js";
+} from "../packages/wiki/src/trust/checks.js";
 
 let root: string;
 const WIKI = "wiki/concepts";

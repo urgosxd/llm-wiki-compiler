@@ -4,8 +4,8 @@
  */
 import { writeFile } from "fs/promises";
 import path from "path";
-import { sha256Text } from "../../src/connectors/hash.js";
-import type { CandidateDraft } from "../../src/compiler/candidates.js";
+import { sha256Text } from "../../packages/wiki/src/connectors/hash.js";
+import type { CandidateDraft } from "../../packages/wiki/src/compiler/candidates.js";
 
 /** Build an answer proposal without invoking generation or publication. */
 export function answerDraft() {

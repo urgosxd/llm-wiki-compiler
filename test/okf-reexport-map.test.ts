@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { mapPageToOkfFrontmatter } from "../src/export/okf/mapping.js";
-import type { ExportPage } from "../src/export/types.js";
+import { mapPageToOkfFrontmatter } from "../packages/wiki/src/export/okf/mapping.js";
+import type { ExportPage } from "../packages/wiki/src/export/types.js";
 
 function page(overrides: Partial<ExportPage> = {}): ExportPage {
   return {

@@ -3,9 +3,9 @@
  * order. Pending proposals never override retained pages or contribute aliases.
  */
 import { describe, expect, it } from "vitest";
-import { classifyAnswerCitations } from "../src/citations/answer-report.js";
-import type { AnswerCitationIndex, RetainedCitationTarget } from "../src/citations/answer-types.js";
-import { resolveBareSlug } from "../src/viewer/collect.js";
+import { classifyAnswerCitations } from "../packages/wiki/src/citations/answer-report.js";
+import type { AnswerCitationIndex, RetainedCitationTarget } from "../packages/wiki/src/citations/answer-types.js";
+import { resolveBareSlug } from "../packages/wiki/src/viewer/collect.js";
 
 const retained: RetainedCitationTarget[] = [
   { id: "queries/alpha", pageDirectory: "queries", slug: "alpha" },

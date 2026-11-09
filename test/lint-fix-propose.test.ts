@@ -14,9 +14,9 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { useCommandProject } from "./fixtures/command-project.js";
-import { lintFixProposeCommand } from "../src/commands/lint-fix-propose.js";
-import reviewApproveCommand from "../src/commands/review-approve.js";
-import { listCandidates } from "../src/compiler/candidates.js";
+import { lintFixProposeCommand } from "../packages/wiki/src/commands/lint-fix-propose.js";
+import reviewApproveCommand from "../packages/wiki/src/commands/review-approve.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 
 let root = "";
 const project = useCommandProject("fix-propose-");

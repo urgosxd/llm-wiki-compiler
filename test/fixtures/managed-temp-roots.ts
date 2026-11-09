@@ -6,7 +6,7 @@
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { expect } from "vitest";
-import { PROFILE_FILE } from "../../src/utils/constants.js";
+import { PROFILE_FILE } from "../../packages/wiki/src/utils/constants.js";
 import { makeTempRoot } from "./temp-root.js";
 
 /** Create temp projects with one cleanup operation for test hooks. */

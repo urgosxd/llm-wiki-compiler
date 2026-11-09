@@ -15,17 +15,17 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, readFile, writeFile, appendFile, symlink } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { EVENTS_FILE, EVENTS_HEAD_FILE } from "../src/utils/constants.js";
-import { appendEvent, recordEvent } from "../src/events/store.js";
-import { readEvents, readEventsStrict, verifyEventChain, verifyHeadAnchor } from "../src/events/store-read.js";
-import { eventPrevHash } from "../src/events/event-digest.js";
+import { EVENTS_FILE, EVENTS_HEAD_FILE } from "../packages/wiki/src/utils/constants.js";
+import { appendEvent, recordEvent } from "../packages/wiki/src/events/store.js";
+import { readEvents, readEventsStrict, verifyEventChain, verifyHeadAnchor } from "../packages/wiki/src/events/store-read.js";
+import { eventPrevHash } from "../packages/wiki/src/events/event-digest.js";
 import {
   EventStoreTooNewError,
   EventStoreSymlinkError,
   EventStoreCorruptError,
   EventStoreChainError,
   GENESIS_PREV_HASH,
-} from "../src/events/types.js";
+} from "../packages/wiki/src/events/types.js";
 
 let root = "";
 beforeEach(async () => { root = await mkdtemp(path.join(os.tmpdir(), "evt-store-")); });

@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdir, writeFile, stat } from "fs/promises";
 import path from "path";
-import importCommand from "../src/commands/import.js";
-import { listCandidates } from "../src/compiler/candidates.js";
+import importCommand from "../packages/wiki/src/commands/import.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 import { useOkfTempDir } from "./fixtures/okf-temp-dir.js";
 
 const { make } = useOkfTempDir();

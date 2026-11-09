@@ -16,11 +16,11 @@ import {
   writeEmbeddingStore,
   type EmbeddingStore,
   type EmbeddingEntry,
-} from "../src/utils/embeddings.js";
-import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
+} from "../packages/wiki/src/utils/embeddings.js";
+import { loadEmbeddingsForSearch } from "../packages/wiki/src/utils/embeddings-load.js";
 import { expectDegradedStore } from "./fixtures/embeddings-degrade.js";
-import { OpenAIProvider } from "../src/providers/openai.js";
-import { EMBEDDING_MODELS } from "../src/utils/constants.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
+import { EMBEDDING_MODELS } from "../packages/wiki/src/utils/constants.js";
 
 const STORE_PATH = ".llmwiki/embeddings.json";
 

@@ -10,11 +10,11 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildGraphData } from "../src/viewer/graph.js";
-import type { EntityPageNode, RelationEdge } from "../src/viewer/graph.js";
-import { expandGraphNeighborhood } from "../src/context/graph.js";
-import type { GraphNodeId } from "../src/viewer/types.js";
-import type { EntityId } from "../src/profile/types.js";
+import { buildGraphData } from "../packages/wiki/src/viewer/graph.js";
+import type { EntityPageNode, RelationEdge } from "../packages/wiki/src/viewer/graph.js";
+import { expandGraphNeighborhood } from "../packages/wiki/src/context/graph.js";
+import type { GraphNodeId } from "../packages/wiki/src/viewer/types.js";
+import type { EntityId } from "../packages/wiki/src/profile/types.js";
 
 /** A typed entity-page node keyed by its `<type>/<slug>` EntityId. */
 function entity(slug: string): EntityPageNode {

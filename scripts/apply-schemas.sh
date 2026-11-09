@@ -73,23 +73,23 @@ readonly SCHEMA_FILES=(
   # Its `public` grants still work here: `schema.sql` above already created
   # `stacks`, which is the table they need.
   "packages/llmwiki-kg/db/migration_rls_tenancy.sql"
-  "src/dimensions/wiki/schema.sql"
-  "src/dimensions/wiki/migration_wiki_sources.sql"
-  "src/dimensions/wiki/migration_wiki_compile_config.sql"
-  "src/dimensions/wiki/migration_wiki_graph.sql"
-  "src/dimensions/wiki/migration_wiki_candidates.sql"
-  "src/dimensions/wiki/migration_wiki_small_markers.sql"
-  "src/dimensions/wiki/migration_wiki_log.sql"
-  "src/dimensions/wiki/migration_wiki_derived.sql"
-  "src/dimensions/wiki/migration_wiki_project_config.sql"
-  "src/dimensions/wiki/migration_page_embeddings.sql"
-  "src/dimensions/wiki/migration_wiki_jobs.sql"
+  "packages/wiki/src/dimensions/wiki/schema.sql"
+  "packages/wiki/src/dimensions/wiki/migration_wiki_sources.sql"
+  "packages/wiki/src/dimensions/wiki/migration_wiki_compile_config.sql"
+  "packages/wiki/src/dimensions/wiki/migration_wiki_graph.sql"
+  "packages/wiki/src/dimensions/wiki/migration_wiki_candidates.sql"
+  "packages/wiki/src/dimensions/wiki/migration_wiki_small_markers.sql"
+  "packages/wiki/src/dimensions/wiki/migration_wiki_log.sql"
+  "packages/wiki/src/dimensions/wiki/migration_wiki_derived.sql"
+  "packages/wiki/src/dimensions/wiki/migration_wiki_project_config.sql"
+  "packages/wiki/src/dimensions/wiki/migration_page_embeddings.sql"
+  "packages/wiki/src/dimensions/wiki/migration_wiki_jobs.sql"
   # Last on purpose. It alters `wiki.pages` and creates three tables whose foreign keys
   # reach `public.stacks`, so it needs both the KG schema (first in this list) and
   # `wiki/schema.sql` to have run. Nothing after it depends on it, and its `if not exists`
   # statements make the mirror in `wiki/schema.sql` a no-op on a fresh database instead
   # of a conflict.
-  "src/dimensions/wiki/migration_wiki_db_parity.sql"
+  "packages/wiki/src/dimensions/wiki/migration_wiki_db_parity.sql"
 )
 
 # Tenant-isolated relations a complete database must expose. Used by --check to

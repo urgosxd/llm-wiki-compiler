@@ -12,17 +12,17 @@
 import { describe, it, expect } from "vitest";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
-import { extractRuleCandidates } from "../src/compiler/rule-extractor.js";
+import { extractRuleCandidates } from "../packages/wiki/src/compiler/rule-extractor.js";
 import {
   listRuleCandidates,
   setRuleCandidateStatus,
   validateRuleCandidate,
-} from "../src/compiler/rule-candidates.js";
+} from "../packages/wiki/src/compiler/rule-candidates.js";
 import {
   buildRuleCandidatesJson,
   collectRuleCandidatesForExport,
-} from "../src/export/rule-candidates-json.js";
-import { candidateFileId } from "../src/utils/candidate-store.js";
+} from "../packages/wiki/src/export/rule-candidates-json.js";
+import { candidateFileId } from "../packages/wiki/src/utils/candidate-store.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { useStackEnv } from "./fixtures/stack-env.js";
 import {
@@ -30,7 +30,7 @@ import {
   seedRuleSource as seedSource,
   stubRuleExtraction,
 } from "./fixtures/rule-extraction.js";
-import type { RuleCandidate } from "../src/utils/rule-types.js";
+import type { RuleCandidate } from "../packages/wiki/src/utils/rule-types.js";
 
 const FIXED_NOW = "2026-05-31T00:00:00.000Z";
 

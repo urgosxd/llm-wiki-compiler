@@ -11,14 +11,14 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { existsSync } from "fs";
-import { compileAndReport } from "../src/compiler/index.js";
-import { listCandidates } from "../src/compiler/candidates.js";
-import reviewApproveCommand from "../src/commands/review-approve.js";
-import reviewRejectCommand from "../src/commands/review-reject.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import reviewApproveCommand from "../packages/wiki/src/commands/review-approve.js";
+import reviewRejectCommand from "../packages/wiki/src/commands/review-reject.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { EMPTY_CATEGORY_ANSWER, extractionCalls, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
-import { readStateClassified } from "../src/utils/state.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
+import { readStateClassified } from "../packages/wiki/src/utils/state.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 
 const ctx = useCompileProject({
@@ -281,7 +281,7 @@ describe("seed pages bypass review policy", () => {
   it("writes seed pages directly even when low-confidence policy is active", async () => {
     await writeSchemaWithSeedPage(seedCtx.dir);
     await writeLowConfidencePolicy(seedCtx.dir);
-    const llm = await import("../src/utils/llm.js");
+    const llm = await import("../packages/wiki/src/utils/llm.js");
     vi.spyOn(llm, "callClaude").mockImplementation(async ({ tools }) => {
       if (tools && tools.length > 0) return JSON.stringify({ concepts: [] });
       return "## My Overview\n\nThis is a seed page body.\n";

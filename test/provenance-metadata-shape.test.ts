@@ -25,7 +25,7 @@ import type {
   ExtractedConcept,
   ProvenanceMetadata,
   WikiFrontmatter,
-} from "../src/utils/types.js";
+} from "../packages/wiki/src/utils/types.js";
 
 // Type-level assertions — fail to compile if ExtractedConcept or
 // WikiFrontmatter no longer carry every key from ProvenanceMetadata.

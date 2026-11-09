@@ -10,7 +10,7 @@ import path from "node:path";
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 
-const SCRIPT = path.resolve("src/viewer/assets/viewer-stage-facts.js");
+const SCRIPT = path.resolve("packages/wiki/src/viewer/assets/viewer-stage-facts.js");
 
 /** Load the browser module into JSDOM and return its exported fact builder. */
 async function loadBuilder(): Promise<{

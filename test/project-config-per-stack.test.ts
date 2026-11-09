@@ -21,10 +21,10 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import * as store from "../src/dimensions/wiki/project-config-store.js";
-import { loadProjectConfig } from "../src/project/config.js";
-import { loadReviewPolicy } from "../src/review/config.js";
-import { loadSourceSelection } from "../src/sources/selection.js";
+import * as store from "../packages/wiki/src/dimensions/wiki/project-config-store.js";
+import { loadProjectConfig } from "../packages/wiki/src/project/config.js";
+import { loadReviewPolicy } from "../packages/wiki/src/review/config.js";
+import { loadSourceSelection } from "../packages/wiki/src/sources/selection.js";
 
 let dir: string;
 afterEach(async () => {

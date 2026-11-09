@@ -11,12 +11,12 @@ import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect } from "vitest";
-import { EVENTS_FILE } from "../../src/utils/constants.js";
-import { appendEvent, type AppendEventInput } from "../../src/events/store.js";
-import { readEvents, readEventsStrict } from "../../src/events/store-read.js";
-import { EventStoreChainError } from "../../src/events/types.js";
-import { serializeEventRecord } from "../../src/events/store-record.js";
-import { eventPrevHash } from "../../src/events/event-digest.js";
+import { EVENTS_FILE } from "../../packages/wiki/src/utils/constants.js";
+import { appendEvent, type AppendEventInput } from "../../packages/wiki/src/events/store.js";
+import { readEvents, readEventsStrict } from "../../packages/wiki/src/events/store-read.js";
+import { EventStoreChainError } from "../../packages/wiki/src/events/types.js";
+import { serializeEventRecord } from "../../packages/wiki/src/events/store-record.js";
+import { eventPrevHash } from "../../packages/wiki/src/events/event-digest.js";
 
 /** A partial (newline-less) JSON fragment so the store's trailing line is torn. */
 export const TORN_FRAGMENT = '{"id":"evt_torn","type":"rel';

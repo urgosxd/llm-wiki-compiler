@@ -2,7 +2,7 @@
  * Tests for src/eval/page-health-distribution.ts.
  */
 
-import { evaluatePageHealthDistribution } from "../src/eval/page-health-distribution.js";
+import { evaluatePageHealthDistribution } from "../packages/wiki/src/eval/page-health-distribution.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 import { sha256Hex, writeSourceState, writeSourceFile } from "./fixtures/state-json.js";
 
@@ -132,7 +132,7 @@ describe("evaluatePageHealthDistribution", () => {
         `This page was compiled from a source that has since been modified.^[src.md]
 `);
 
-      var evaluateHealth = (await import("../src/eval/health.js")).evaluateHealth;
+      var evaluateHealth = (await import("../packages/wiki/src/eval/health.js")).evaluateHealth;
       var result = await evaluateHealth(env.dir);
       var staleRule = result.rules.find(function(r) { return r.rule === "stale-page"; });
       expect(staleRule).toBeDefined();
@@ -143,7 +143,7 @@ describe("evaluatePageHealthDistribution", () => {
 describe("deductionFor handles stale pages", () => {
   it("deducts 1 point per stale-page (not classified as error)", async () => {
     // Import deductionFor directly — same function used by page-health scoring
-    const { deductionFor } = await import("../src/eval/health.js");
+    const { deductionFor } = await import("../packages/wiki/src/eval/health.js");
     const result = deductionFor({
       rule: "stale-page",
       severity: "warning",

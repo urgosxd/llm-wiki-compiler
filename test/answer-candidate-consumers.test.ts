@@ -5,11 +5,11 @@
 import { expect, it } from "vitest";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
-import { runOkfImport } from "../src/import/run.js";
-import { evaluateCandidates } from "../src/eval/candidates.js";
-import { writeFreshCandidate, listCandidates } from "../src/compiler/candidates.js";
-import reviewReject from "../src/commands/review-reject.js";
-import { reportAnswerCitations } from "../src/citations/answer-report.js";
+import { runOkfImport } from "../packages/wiki/src/import/run.js";
+import { evaluateCandidates } from "../packages/wiki/src/eval/candidates.js";
+import { writeFreshCandidate, listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import reviewReject from "../packages/wiki/src/commands/review-reject.js";
+import { reportAnswerCitations } from "../packages/wiki/src/citations/answer-report.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { answerDraft, candidateFile, replaceCandidate } from "./fixtures/answer-candidate.js";
 

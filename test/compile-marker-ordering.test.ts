@@ -21,17 +21,17 @@ import { existsSync } from "fs";
 import { readFile, mkdtemp, writeFile, mkdir, symlink, readdir } from "fs/promises";
 import os from "os";
 import path from "path";
-import { STATE_FILE, LLMWIKI_DIR, CONCEPTS_DIR } from "../src/utils/constants.js";
-import { JournalUnsafeError } from "../src/trust/journal-recovery.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { STATE_FILE, LLMWIKI_DIR, CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
+import { JournalUnsafeError } from "../packages/wiki/src/trust/journal-recovery.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { makeCompileProjectRoot } from "./fixtures/compile-project.js";
 import { readPersistedState } from "./fixtures/state-json.js";
 
 /** Flag the mocked resolution seam to decide whether to throw. */
 const resolve = { shouldThrow: false };
 
-vi.mock("../src/compiler/resolver.js", async (importActual) => {
-  const actual = await importActual<typeof import("../src/compiler/resolver.js")>();
+vi.mock("../packages/wiki/src/compiler/resolver.js", async (importActual) => {
+  const actual = await importActual<typeof import("../packages/wiki/src/compiler/resolver.js")>();
   return {
     ...actual,
     resolveAndApplyLinks: async (root: string, env: NodeJS.ProcessEnv, changed: string[], created: string[]) => {
@@ -76,7 +76,7 @@ afterEach(async () => {
 
 describe("compile marker ordering — draft flush after resolution", () => {
   it("a throw at resolution leaves no compiled marker; a follow-up compile completes it", async () => {
-    const { compileAndReport } = await import("../src/compiler/index.js");
+    const { compileAndReport } = await import("../packages/wiki/src/compiler/index.js");
 
     resolve.shouldThrow = true;
     await expect(compileAndReport(dir)).rejects.toThrow("injected resolution failure");
@@ -94,7 +94,7 @@ describe("compile marker ordering — draft flush after resolution", () => {
   });
 
   it("a normal compile flushes once and records the compiled source", async () => {
-    const { compileAndReport } = await import("../src/compiler/index.js");
+    const { compileAndReport } = await import("../packages/wiki/src/compiler/index.js");
 
     const result = await compileAndReport(dir);
     expect(result.compiled).toBe(1);
@@ -106,7 +106,7 @@ describe("compile marker ordering — draft flush after resolution", () => {
   });
 
   it("an unsafe (symlink-escaping) journal aborts compile, touching no pages or state", async () => {
-    const { compileAndReport } = await import("../src/compiler/index.js");
+    const { compileAndReport } = await import("../packages/wiki/src/compiler/index.js");
 
     // Symlink `.llmwiki/journal` to an outside dir so strict pre-compile
     // recovery classifies it `unsafe` and the compile fails closed.

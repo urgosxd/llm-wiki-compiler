@@ -13,8 +13,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import { buildFrontmatter, parseFrontmatter } from "../../src/utils/markdown.js";
-import { CONCEPTS_DIR } from "../../src/utils/constants.js";
+import { buildFrontmatter, parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
+import { CONCEPTS_DIR } from "../../packages/wiki/src/utils/constants.js";
+import { useTempRoot, type TempRootCtx } from "./temp-root.js";
+import { writePage } from "./write-page.js";
 
 /**
  * The full markdown of one concept page, frontmatter included.
@@ -60,4 +62,31 @@ export async function declareAlias(root: string, slug: string, alias: string): P
     `${buildFrontmatter(fields)}\n\n${body}\n`,
     "utf-8",
   );
+}
+
+/** A suite's throwaway root plus a writer bound to it. */
+export interface ConceptPageSuite {
+  /** Throwaway wiki root, filled in by the registered hooks. */
+  ctx: TempRootCtx;
+  /** Write one concept page into the throwaway wiki. */
+  page: (slug: string, title: string, body: string) => Promise<void>;
+}
+
+/**
+ * Bind a throwaway wiki root and a concept-page writer to the calling suite.
+ *
+ * Three command/context suites carried this pair copied verbatim. `useTempRoot` is
+ * a composable that registers the calling suite's `beforeEach`/`afterEach` at
+ * collection time, so it is called from here at that same moment and every
+ * importing suite keeps its OWN temp root and lifecycle: the returned instance is
+ * per-suite, never shared, and `page` closes over the live `ctx` object whose
+ * `dir` the hook fills in.
+ *
+ * @returns The suite's root context and its page writer.
+ */
+export function useConceptPage(): ConceptPageSuite {
+  const ctx = useTempRoot();
+  const page = (slug: string, title: string, body: string): Promise<void> =>
+    writePage(path.join(ctx.dir, "wiki/concepts"), slug, { title }, body);
+  return { ctx, page };
 }

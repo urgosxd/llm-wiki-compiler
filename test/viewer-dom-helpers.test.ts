@@ -10,7 +10,7 @@ import { JSDOM } from "jsdom";
 import { readFile } from "fs/promises";
 import path from "path";
 
-const MODULE_PATH = path.resolve("src/viewer/assets/viewer-dom.js");
+const MODULE_PATH = path.resolve("packages/wiki/src/viewer/assets/viewer-dom.js");
 
 interface DomHelpers {
   el(tag: string, className?: string, text?: string): HTMLElement;

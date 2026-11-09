@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acquireKeyedFifo } from "../../src/utils/keyed-fifo.js";
+import { acquireKeyedFifo } from "../../packages/wiki/src/utils/keyed-fifo.js";
 
 const timeoutError = (): Error => new Error("queue stalled");
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

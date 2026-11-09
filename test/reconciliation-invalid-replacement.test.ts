@@ -23,8 +23,8 @@
 import { describe, expect, it } from "vitest";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { compileAndReport } from "../src/compiler/index.js";
-import { readState } from "../src/utils/state.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { readState } from "../packages/wiki/src/utils/state.js";
 import { mockReconciliationProvider, useReconciliationProject } from "./fixtures/reconciliation-project.js";
 
 const EXTRACTION = JSON.stringify({

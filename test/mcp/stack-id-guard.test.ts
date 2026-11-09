@@ -1,10 +1,10 @@
 /** Pin that a caller-named Stack that does not exist is an ERROR, not an empty list. */
 import { describe, it, expect } from "vitest";
-import { isUnknownStack, withTenantDatabase } from "../../src/mcp/tenant-db.js";
+import { isUnknownStack, withTenantDatabase } from "../../packages/wiki/src/mcp/tenant-db.js";
 // These two moved out of `tenant-db` into shared homes so the viewport route can use
 // them without importing from `src/mcp/**`; the import here follows them.
-import { stackIdProblem } from "../../src/utils/stack-id.js";
-import { stackExists } from "../../src/services/stacks/stack-store.js";
+import { stackIdProblem } from "../../packages/wiki/src/utils/stack-id.js";
+import { stackExists } from "../../packages/wiki/src/services/stacks/stack-store.js";
 
 describe("stackId guard", () => {
   it("rejects a malformed id before it reaches Postgres", () => {
@@ -34,7 +34,7 @@ describe("stackId guard", () => {
   });
 
   it("reports an unknown id as unknown, not as an empty result", async () => {
-    const { createDimensionsDatabase } = await import("../../src/dimensions/activation.js");
+    const { createDimensionsDatabase } = await import("../../packages/wiki/src/dimensions/activation.js");
     const h = createDimensionsDatabase(process.env);
     let dropFixture: (() => Promise<void>) | undefined;
     try {

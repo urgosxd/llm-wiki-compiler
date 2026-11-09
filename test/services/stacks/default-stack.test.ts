@@ -25,8 +25,8 @@ import { createKgPostgresHarness } from "../../fixtures/kg-postgres.js";
 import {
   DEFAULT_STACK_DOMAIN,
   DEFAULT_STACK_NAME,
-} from "../../../src/dimensions/stack-selection.js";
-import { ensureDefaultStack } from "../../../src/services/stacks/default-stack.js";
+} from "../../../packages/wiki/src/dimensions/stack-selection.js";
+import { ensureDefaultStack } from "../../../packages/wiki/src/services/stacks/default-stack.js";
 
 /** One row at the default domain, as the cases read it back. */
 interface DefaultRow {

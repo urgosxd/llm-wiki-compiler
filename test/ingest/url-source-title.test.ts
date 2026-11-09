@@ -27,7 +27,7 @@
  * is the fallback for a MISSING title, never a replacement for a real one.
  */
 import { describe, it, expect } from "vitest";
-import { titleFromUrlPathForTest } from "../../src/ingest/web.js";
+import { titleFromUrlPathForTest } from "../../packages/wiki/src/ingest/web.js";
 
 describe("title from a URL path", () => {
   it.each([

@@ -4,10 +4,10 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { createWiki } from "../src/sdk/wiki.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import * as embeddings from "../src/utils/embeddings.js";
-import * as providerGuard from "../src/utils/provider-guard.js";
+import { createWiki } from "../packages/wiki/src/sdk/wiki.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import * as embeddings from "../packages/wiki/src/utils/embeddings.js";
+import * as providerGuard from "../packages/wiki/src/utils/provider-guard.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 
 const EXTRACTION = JSON.stringify({

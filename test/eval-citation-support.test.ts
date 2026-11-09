@@ -10,10 +10,10 @@ import {
   extractCitationPairs,
   selectDeterministicSample,
   evaluateCitationSupport,
-} from "../src/eval/citation-support.js";
+} from "../packages/wiki/src/eval/citation-support.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
-vi.mock("../src/utils/llm.js", () => ({
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({
   callClaude: vi.fn().mockResolvedValue(
     JSON.stringify({ score: 2, reason: "Source fully supports the claim." }),
   ),
@@ -157,7 +157,7 @@ describe("evaluateCitationSupport", () => {
   });
 
   it("records judgeErrors when some but not all judge calls fail", async () => {
-    const { callClaude } = await import("../src/utils/llm.js");
+    const { callClaude } = await import("../packages/wiki/src/utils/llm.js");
     const spy = vi.mocked(callClaude);
     spy.mockClear();
     spy.mockRejectedValueOnce(new Error("temporary timeout"));
@@ -175,7 +175,7 @@ describe("evaluateCitationSupport", () => {
   });
 
   it("throws when every judge call fails and nothing is cached", async () => {
-    const { callClaude } = await import("../src/utils/llm.js");
+    const { callClaude } = await import("../packages/wiki/src/utils/llm.js");
     const spy = vi.mocked(callClaude);
     spy.mockClear();
     spy.mockRejectedValueOnce(new Error("ANTHROPIC_API_KEY not set"));
@@ -190,7 +190,7 @@ describe("evaluateCitationSupport", () => {
   });
 
   it("throws when every new judge call fails even if the cache has entries", async () => {
-    const { callClaude } = await import("../src/utils/llm.js");
+    const { callClaude } = await import("../packages/wiki/src/utils/llm.js");
     const spy = vi.mocked(callClaude);
 
     await env.writeSource("src.md", "Line 1\nLine 2\n");
@@ -229,7 +229,7 @@ describe("evaluateCitationSupport", () => {
   });
 
   it("does not reuse cached judgement when the model changes", async () => {
-    const { callClaude } = await import("../src/utils/llm.js");
+    const { callClaude } = await import("../packages/wiki/src/utils/llm.js");
     const spy = vi.mocked(callClaude);
     spy.mockClear();
 
@@ -253,7 +253,7 @@ describe("evaluateCitationSupport", () => {
   });
 
   it("skips already-cached pairs and does not call judge again", async () => {
-    const { callClaude } = await import("../src/utils/llm.js");
+    const { callClaude } = await import("../packages/wiki/src/utils/llm.js");
     const spy = vi.mocked(callClaude);
     spy.mockClear();
 

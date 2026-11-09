@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { rm } from "node:fs/promises";
-import { lint } from "../src/linter/index.js";
+import { lint } from "../packages/wiki/src/linter/index.js";
 import {
   lintRowCorpus,
   rawPage,

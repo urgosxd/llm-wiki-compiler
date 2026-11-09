@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { translateToolToOpenAI } from "../src/providers/openai.js";
-import type { LLMTool } from "../src/utils/provider.js";
+import { translateToolToOpenAI } from "../packages/wiki/src/providers/openai.js";
+import type { LLMTool } from "../packages/wiki/src/utils/provider.js";
 
 describe("translateToolToOpenAI", () => {
   it("translates input_schema to parameters", () => {

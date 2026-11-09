@@ -2,7 +2,7 @@
  * Tests for src/eval/graph-health.ts.
  */
 
-import { evaluateGraphHealth } from "../src/eval/graph-health.js";
+import { evaluateGraphHealth } from "../packages/wiki/src/eval/graph-health.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
 function fm(title: string, extra = ""): string {

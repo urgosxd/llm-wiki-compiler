@@ -44,7 +44,7 @@ import {
   plantPendingEscapingTargetBatch,
   plantSymlinkedJournalDir,
 } from "./trust/journal-fixture.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 
 const aimock = useAimockLifecycle("reroute-cli");
 const COMPILE_TIMEOUT = 90_000;

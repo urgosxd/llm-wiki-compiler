@@ -6,9 +6,9 @@
 import { describe, it, expect } from "vitest";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
-import { checkSchemaCrossLinks, checkPageCrossLinks } from "../src/linter/rules.js";
-import { lint } from "../src/linter/index.js";
-import { buildDefaultSchema } from "../src/schema/index.js";
+import { checkSchemaCrossLinks, checkPageCrossLinks } from "../packages/wiki/src/linter/rules.js";
+import { lint } from "../packages/wiki/src/linter/index.js";
+import { buildDefaultSchema } from "../packages/wiki/src/schema/index.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
 const env = useLintTempRoot("schema-lint-test");

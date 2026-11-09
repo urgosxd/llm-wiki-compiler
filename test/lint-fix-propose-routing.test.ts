@@ -13,8 +13,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { lintFixProposeCommand } from "../src/commands/lint-fix-propose.js";
-import { listCandidates } from "../src/compiler/candidates.js";
+import { lintFixProposeCommand } from "../packages/wiki/src/commands/lint-fix-propose.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 
 let root = "";
 let originalCwd = "";

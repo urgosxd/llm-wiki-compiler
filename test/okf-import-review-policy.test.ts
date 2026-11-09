@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { writeCandidate, listCandidates } from "../src/compiler/candidates.js";
+import { writeCandidate, listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });

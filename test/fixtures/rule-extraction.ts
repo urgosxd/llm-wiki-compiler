@@ -38,7 +38,7 @@ export function restoreProviderEnvAfterEach(): void {
  *   value to exercise out-of-bounds span dropping).
  */
 export async function stubRuleExtraction(category = "Process", evidenceLineEnd = 2): Promise<void> {
-  const llm = await import("../../src/utils/llm.js");
+  const llm = await import("../../packages/wiki/src/utils/llm.js");
   vi.spyOn(llm, "callClaude").mockImplementation(async ({ tools }) => {
     if (!tools || tools.length === 0) return "";
     return JSON.stringify({

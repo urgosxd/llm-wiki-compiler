@@ -15,7 +15,7 @@
  * env shows up as a failure.
  */
 import { describe, it, expect } from "vitest";
-import { buildIngestEnv } from "../../src/host/ingest-env.js";
+import { buildIngestEnv } from "../../packages/wiki/src/host/ingest-env.js";
 
 const STACK_A = "11111111-1111-4111-8111-111111111111";
 const STACK_B = "22222222-2222-4222-8222-222222222222";

@@ -9,8 +9,8 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { getPage, listPages } from "../../src/pages/list.js";
-import { PathSafetyError } from "../../src/viewer/path-safety.js";
+import { getPage, listPages } from "../../packages/wiki/src/pages/list.js";
+import { PathSafetyError } from "../../packages/wiki/src/viewer/path-safety.js";
 
 async function writeConcept(root: string, slug: string, content: string) {
   await mkdir(path.join(root, "wiki/concepts"), { recursive: true });

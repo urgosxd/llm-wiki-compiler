@@ -17,13 +17,13 @@ import { mkdtemp, rm, mkdir, writeFile, symlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { loadProfile } from "../src/profile/load.js";
-import { readEvents } from "../src/events/store-read.js";
-import { collectStatus } from "../src/status/collect.js";
-import { lint } from "../src/linter/index.js";
-import { exportJson } from "../src/commands/export.js";
-import { LLMWIKI_DIR, PROFILE_FILE } from "../src/utils/constants.js";
-import { PrivateDirConfinementError } from "../src/utils/private-dir.js";
+import { loadProfile } from "../packages/wiki/src/profile/load.js";
+import { readEvents } from "../packages/wiki/src/events/store-read.js";
+import { collectStatus } from "../packages/wiki/src/status/collect.js";
+import { lint } from "../packages/wiki/src/linter/index.js";
+import { exportJson } from "../packages/wiki/src/commands/export.js";
+import { LLMWIKI_DIR, PROFILE_FILE } from "../packages/wiki/src/utils/constants.js";
+import { PrivateDirConfinementError } from "../packages/wiki/src/utils/private-dir.js";
 
 let root = "";
 

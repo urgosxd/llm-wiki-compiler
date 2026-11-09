@@ -12,11 +12,11 @@ import { expect, it } from "vitest";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { usePublicationRoot, retained, propose, approvePage, candidateBytes, expectApprovedAndCleared } from "./fixtures/publication-review.js";
-import { maybeSaveQueryPage } from "../src/commands/query-publication.js";
-import { stageQueryProposal } from "../src/commands/query-proposal.js";
-import { buildQueryDocument } from "../src/commands/query-document.js";
-import { readCandidate } from "../src/compiler/candidates.js";
-import approve from "../src/commands/review-approve.js";
+import { maybeSaveQueryPage } from "../packages/wiki/src/commands/query-publication.js";
+import { stageQueryProposal } from "../packages/wiki/src/commands/query-proposal.js";
+import { buildQueryDocument } from "../packages/wiki/src/commands/query-document.js";
+import { readCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import approve from "../packages/wiki/src/commands/review-approve.js";
 
 const root = usePublicationRoot();
 const PRIOR = "---\ntitle: Prior answer\naliases: [old-evidence]\n---\nPrior evidence.\n";

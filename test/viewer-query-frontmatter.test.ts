@@ -16,8 +16,8 @@ import { describe, it, expect } from "vitest";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
-import { buildViewerSnapshot } from "../src/viewer/snapshot.js";
-import { pageTimestamp, resolvePageKind } from "../src/viewer/page-fields.js";
+import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
+import { pageTimestamp, resolvePageKind } from "../packages/wiki/src/viewer/page-fields.js";
 import { useViewerProcessLifecycle } from "./fixtures/run-cli-server.js";
 import { fetchJson } from "./fixtures/viewer-fetch.js";
 

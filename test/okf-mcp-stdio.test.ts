@@ -25,8 +25,8 @@ import { describe, it, expect, afterAll } from "vitest";
 import { stat, writeFile, mkdir, readdir } from "fs/promises";
 import path from "path";
 import { useMcpRoot, connectMcpClient } from "./fixtures/mcp-test-env.js";
-import { listCandidates } from "../src/compiler/candidates.js";
-import { createPageWriteSink } from "../src/dimensions/wiki/page-write-sink.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import { createPageWriteSink } from "../packages/wiki/src/dimensions/wiki/page-write-sink.js";
 import { createProbeStack } from "./dimensions/harness-lifecycle.js";
 
 /** The Stack every call in this file names explicitly. */

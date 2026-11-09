@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { readOkfBundle } from "../src/import/okf-read.js";
+import { readOkfBundle } from "../packages/wiki/src/import/okf-read.js";
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });

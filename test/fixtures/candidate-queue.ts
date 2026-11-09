@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { CANDIDATES_DIR } from "../../src/utils/constants.js";
+import { CANDIDATES_DIR } from "../../packages/wiki/src/utils/constants.js";
 
 /** Return pending candidate JSON bytes keyed by physical filename. */
 export async function snapshotCandidateQueue(root: string): Promise<Record<string, string>> {

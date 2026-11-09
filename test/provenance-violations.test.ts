@@ -24,11 +24,11 @@ import { writeFile, mkdir } from "fs/promises";
 import {
   checkPageMalformedCitations,
   checkPageBrokenCitations,
-} from "../src/linter/rules.js";
-import { writeCandidate, readCandidate } from "../src/compiler/candidates.js";
+} from "../packages/wiki/src/linter/rules.js";
+import { writeCandidate, readCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { captureShowOutput } from "./fixtures/review-show-helpers.js";
-import type { LintResult } from "../src/linter/types.js";
+import type { LintResult } from "../packages/wiki/src/linter/types.js";
 
 const root = useTempRoot(["sources"]);
 

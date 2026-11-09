@@ -7,7 +7,7 @@
  * supplies, so each suite states only what its own case is about.
  */
 
-import type { CategoryMemberDraft } from "../../src/categories/index.js";
+import type { CategoryMemberDraft } from "../../packages/wiki/src/categories/index.js";
 
 /**
  * Build one member entry.

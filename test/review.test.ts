@@ -15,20 +15,20 @@ import {
   listCandidates,
   readCandidate,
   writeCandidate,
-} from "../src/compiler/candidates.js";
-import reviewApproveCommand from "../src/commands/review-approve.js";
-import reviewRejectCommand from "../src/commands/review-reject.js";
-import reviewListCommand from "../src/commands/review-list.js";
-import reviewShowCommand from "../src/commands/review-show.js";
-import { compileAndReport } from "../src/compiler/index.js";
+} from "../packages/wiki/src/compiler/candidates.js";
+import reviewApproveCommand from "../packages/wiki/src/commands/review-approve.js";
+import reviewRejectCommand from "../packages/wiki/src/commands/review-reject.js";
+import reviewListCommand from "../packages/wiki/src/commands/review-list.js";
+import reviewShowCommand from "../packages/wiki/src/commands/review-show.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
 import {
   CANDIDATES_ARCHIVE_DIR,
   CANDIDATES_DIR,
   CONCEPTS_DIR,
   STATE_FILE,
-} from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/constants.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
-import type { WikiState } from "../src/utils/types.js";
+import type { WikiState } from "../packages/wiki/src/utils/types.js";
 
 const VALID_BODY = [
   "---",
@@ -206,7 +206,7 @@ describe("compile --review pipeline integration", () => {
       "# Topic\nA brief article about a single topic.",
     );
 
-    const llm = await import("../src/utils/llm.js");
+    const llm = await import("../packages/wiki/src/utils/llm.js");
     const callSpy = vi.spyOn(llm, "callClaude").mockImplementation(async ({ tools }) => {
       if (tools && tools.length > 0) {
         return JSON.stringify({
@@ -246,7 +246,7 @@ describe("compile --review pipeline integration", () => {
       "# Topic\nA brief article about a single topic.",
     );
 
-    const llm = await import("../src/utils/llm.js");
+    const llm = await import("../packages/wiki/src/utils/llm.js");
     vi.spyOn(llm, "callClaude").mockImplementation(async ({ tools }) => {
       if (tools && tools.length > 0) {
         return JSON.stringify({
@@ -338,7 +338,7 @@ async function readSourceState(
 
 /** Stub the LLM so a single source extracts to TWO concepts (one body each). */
 async function stubMultiConceptLLM(): Promise<void> {
-  const llm = await import("../src/utils/llm.js");
+  const llm = await import("../packages/wiki/src/utils/llm.js");
   let bodyCallCount = 0;
   vi.spyOn(llm, "callClaude").mockImplementation(async ({ tools }) => {
     if (tools && tools.length > 0) {

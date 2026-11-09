@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { qualifiedPageId, parseQualifiedPageId, pageDirectoryFromPageId, slugFromPageId, isReservedNamespace } from "../src/utils/page-id.js";
+import { qualifiedPageId, parseQualifiedPageId, pageDirectoryFromPageId, slugFromPageId, isReservedNamespace } from "../packages/wiki/src/utils/page-id.js";
 
 describe("page-id grammar", () => {
   it("builds + round-trips", () => {

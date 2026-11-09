@@ -18,16 +18,16 @@
  * shared container's advisory keys outlive the run that leaked them.
  */
 
-import { mkdir, mkdtemp, realpath, rm, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { acquireLockBlocking, releaseLock, type BlockingLockOptions } from "../src/utils/lock.js";
-import { lockRegistry, tryAcquirePostgresLock, type HeldPostgresLock } from "../src/utils/lock-postgres.js";
-import { setVerbose } from "../src/utils/output.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+import { describe, expect, it, vi } from "vitest";
+import { acquireLockBlocking, releaseLock, type BlockingLockOptions } from "../packages/wiki/src/utils/lock.js";
+import { tryAcquirePostgresLock, type HeldPostgresLock } from "../packages/wiki/src/utils/lock-postgres.js";
+import { setVerbose } from "../packages/wiki/src/utils/output.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import { perRunDatabase } from "./fixtures/per-run-database.js";
+import { useLockObservabilitySuite } from "./fixtures/lock-observability-suite.js";
 
 /** Option shape a caller uses when it asks for quiet about contention. */
 type QuietCallerOptions = BlockingLockOptions & { quiet: boolean };
@@ -42,26 +42,11 @@ const SEQUENCE_MS = 3_000;
 const INTERVAL_MS = 10;
 
 let root = "";
-let log: ReturnType<typeof vi.spyOn>;
 
-beforeEach(async () => {
-  vi.spyOn(console, "warn").mockImplementation(() => {});
-  log = vi.spyOn(console, "log").mockImplementation(() => {});
-  setVerbose(false);
-  root = await realpath(await mkdtemp(path.join(tmpdir(), "lock-quiet-")));
+/** Shared harness: this suite's own temp root, its mock restore and its stdout capture. */
+const { lines } = useLockObservabilitySuite("lock-quiet-", (assigned) => {
+  root = assigned;
 });
-
-afterEach(async () => {
-  lockRegistry.clear();
-  setVerbose(false);
-  vi.restoreAllMocks();
-  await rm(root, { recursive: true, force: true });
-});
-
-/** Every stdout line emitted so far, joined per `console.log` call. */
-function lines(): string[] {
-  return log.mock.calls.map((args: unknown[]) => args.join(" "));
-}
 
 /** The lines matching `needle`, in emission order. */
 function emitted(needle: string): string[] {

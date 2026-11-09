@@ -55,8 +55,8 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { PROFILE_FILE } from "../../src/utils/constants.js";
-import type { ProfilePack } from "../../src/profile/types.js";
+import { PROFILE_FILE } from "../../packages/wiki/src/utils/constants.js";
+import type { ProfilePack } from "../../packages/wiki/src/profile/types.js";
 import { SEED_PAGES, SEED_RELATIONS } from "./research-seeds.js";
 import { writeSeedPage } from "./seed-page.js";
 import { autosciArtifacts, autosciEntities, autosciRelations, autosciWorkflowActions, autosciWorkflows, newsroomEntities, newsroomRelations, newsroomWorkflowActions, newsroomWorkflows } from "./builtin-profile-data.js";

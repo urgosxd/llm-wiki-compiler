@@ -7,8 +7,8 @@ import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readResolutionFrontmatter } from "../src/citations/frontmatter-reader.js";
-import { parseFrontmatterStatus } from "../src/utils/markdown.js";
+import { readResolutionFrontmatter } from "../packages/wiki/src/citations/frontmatter-reader.js";
+import { parseFrontmatterStatus } from "../packages/wiki/src/utils/markdown.js";
 
 let root: string;
 beforeEach(async () => { root = await mkdtemp(path.join(os.tmpdir(), "answer-reader-")); });

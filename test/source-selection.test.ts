@@ -2,9 +2,9 @@
 import { expect, it, vi } from "vitest";
 import { mkdir, readFile, unlink, writeFile, symlink } from "node:fs/promises";
 import path from "node:path";
-import { detectChanges, hashFile } from "../src/compiler/hasher.js";
-import { printChangesSummary } from "../src/compiler/compile-report.js";
-import type { WikiState } from "../src/utils/types.js";
+import { detectChanges, hashFile } from "../packages/wiki/src/compiler/hasher.js";
+import { printChangesSummary } from "../packages/wiki/src/compiler/compile-report.js";
+import type { WikiState } from "../packages/wiki/src/utils/types.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot(["sources", ".llmwiki"]);

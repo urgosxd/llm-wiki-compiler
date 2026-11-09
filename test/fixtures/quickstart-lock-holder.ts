@@ -35,7 +35,7 @@
  */
 
 import { createClient } from "@repo/kg";
-import { tryAcquirePostgresLock } from "../../src/utils/lock-postgres.js";
+import { tryAcquirePostgresLock } from "../../packages/wiki/src/utils/lock-postgres.js";
 
 /** The driver handle the package's factory returns; named structurally, not re-imported. */
 type LockClient = ReturnType<typeof createClient>;

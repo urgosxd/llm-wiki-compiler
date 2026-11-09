@@ -21,10 +21,10 @@
  */
 
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { AnthropicProvider } from "../../src/providers/anthropic.js";
-import { assignCategories, type CategoryAssignmentArticle } from "../../src/categories/assign.js";
-import { parseCategory } from "../../src/categories/markdown.js";
-import type { CategoryRecord } from "../../src/categories/types.js";
+import { AnthropicProvider } from "../../packages/wiki/src/providers/anthropic.js";
+import { assignCategories, type CategoryAssignmentArticle } from "../../packages/wiki/src/categories/assign.js";
+import { parseCategory } from "../../packages/wiki/src/categories/markdown.js";
+import type { CategoryRecord } from "../../packages/wiki/src/categories/types.js";
 import { useManagedTempRoots } from "../fixtures/temp-root.js";
 import { stubCompileProvider } from "../fixtures/compile-provider.js";
 import {

@@ -15,7 +15,7 @@ import { describe, it, beforeEach, afterEach, expect, vi } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { scanEntityDir } from "../src/wiki/collect.js";
+import { scanEntityDir } from "../packages/wiki/src/wiki/collect.js";
 
 /**
  * Spy that wraps `fs/promises.open` and tallies the bytes returned by each

@@ -12,7 +12,7 @@ import { writeFile } from "fs/promises";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
-import { collectViewerPages, resolveBareSlug } from "../src/viewer/collect.js";
+import { collectViewerPages, resolveBareSlug } from "../packages/wiki/src/viewer/collect.js";
 
 describe("collectViewerPages — IDs and metadata", () => {
   it("assigns namespaced IDs for concept and query pages", async () => {

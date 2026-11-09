@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { setQuiet, getQuiet, note } from "../../src/utils/output.js";
+import { setQuiet, getQuiet, note } from "../../packages/wiki/src/utils/output.js";
 
 describe("output.note respects quiet flag", () => {
   afterEach(() => setQuiet(false));

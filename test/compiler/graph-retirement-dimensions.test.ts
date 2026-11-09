@@ -39,9 +39,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { sql } from "drizzle-orm";
 
-import { resolveStackForDimensions } from "../../src/services/stacks/resolve-stack.js";
-import { resolveDimensions } from "../../src/dimensions/activation.js";
-import { DEFAULT_STACK_DOMAIN } from "../../src/dimensions/stack-selection.js";
+import { resolveStackForDimensions } from "../../packages/wiki/src/services/stacks/resolve-stack.js";
+import { resolveDimensions } from "../../packages/wiki/src/dimensions/activation.js";
+import { DEFAULT_STACK_DOMAIN } from "../../packages/wiki/src/dimensions/stack-selection.js";
 import { DATABASE_URL, createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 /** The dimensions compile retires from — the graph alone. */

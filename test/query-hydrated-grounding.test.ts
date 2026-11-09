@@ -15,7 +15,7 @@ import { useAlphaPageFixture } from "./fixtures/alpha-page.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
 import { chunkOf, mockQueryVector, writeChunkStore } from "./fixtures/typed-grounding.js";
-import { generateAnswer } from "../src/commands/query.js";
+import { generateAnswer } from "../packages/wiki/src/commands/query.js";
 
 // The page-selection call (tools present) answers with the configured picks
 // AFTER running the configured side effect — which deletes a page, seeding the
@@ -26,7 +26,7 @@ const state = vi.hoisted(() => ({
   selection: [] as string[],
   onSelect: undefined as (() => Promise<void>) | undefined,
 }));
-vi.mock("../src/utils/llm.js", () => ({
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({
   callClaude: vi.fn(async (opts: { tools?: unknown[]; messages: Array<{ content: string }> }) => {
     if (opts.tools) {
       await state.onSelect?.();

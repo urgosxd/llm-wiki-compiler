@@ -23,8 +23,8 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect } from "vitest";
-import { PROFILE_FILE } from "../../src/utils/constants.js";
-import type { EntityId, ProfilePack, EntityPageView } from "../../src/profile/types.js";
+import { PROFILE_FILE } from "../../packages/wiki/src/utils/constants.js";
+import type { EntityId, ProfilePack, EntityPageView } from "../../packages/wiki/src/profile/types.js";
 
 
 /**

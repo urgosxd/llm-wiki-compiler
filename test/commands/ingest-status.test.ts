@@ -2,11 +2,11 @@ import { describe, it, expect, afterAll } from "vitest";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ingestSource, ingestTextSource } from "../../src/commands/ingest.js";
-import { LOG_FILE } from "../../src/utils/constants.js";
+import { ingestSource, ingestTextSource } from "../../packages/wiki/src/commands/ingest.js";
+import { LOG_FILE } from "../../packages/wiki/src/utils/constants.js";
 import { useStackEnv } from "../fixtures/stack-env.js";
-import { withJournalSource } from "../../src/dimensions/wiki/activity-log-source.js";
-import { renderJournal } from "../../src/utils/activity-log.js";
+import { withJournalSource } from "../../packages/wiki/src/dimensions/wiki/activity-log-source.js";
+import { renderJournal } from "../../packages/wiki/src/utils/activity-log.js";
 
 /**
  * Read the activity log through the ACTIVE backend.

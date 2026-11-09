@@ -10,8 +10,8 @@ import {
   type ConfinedFetchSeams,
   type ConfinedHttpRequest,
   type ConfinedHttpResponse,
-} from "../../src/connectors/confined-fetch.js";
-import { isPrivateAddress } from "../../src/connectors/private-address.js";
+} from "../../packages/wiki/src/connectors/confined-fetch.js";
+import { isPrivateAddress } from "../../packages/wiki/src/connectors/private-address.js";
 
 const LIMITS = { timeoutMs: 100, maxBytes: 64, maxRedirects: 1, contentTypes: ["application/json"] };
 const PUBLIC_IP = "93.184.216.34";

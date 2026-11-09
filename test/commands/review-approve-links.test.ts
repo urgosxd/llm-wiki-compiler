@@ -32,13 +32,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { writeCandidate } from "../../src/compiler/candidates.js";
-import { getStoredPage, upsertStoredPage } from "../../src/dimensions/wiki/page-store.js";
-import { CONCEPTS_DIR } from "../../src/utils/constants.js";
+import { writeCandidate } from "../../packages/wiki/src/compiler/candidates.js";
+import { getStoredPage, upsertStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
+import { CONCEPTS_DIR } from "../../packages/wiki/src/utils/constants.js";
 import { useCommandProject } from "../fixtures/command-project.js";
 import { withStack } from "../fixtures/stack-harness.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
-import type { Page } from "../../src/pages/list.js";
+import type { Page } from "../../packages/wiki/src/pages/list.js";
 import { writePage } from "../fixtures/write-page.js";
 
 const project = useCommandProject("approve-links-");
@@ -117,7 +117,7 @@ async function approveOnStack(body: string): Promise<Page | undefined> {
       });
       // Imported here rather than at module scope so the command graph binds to the
       // environment this Stack installs, exactly as the rows-only approve suite does.
-      const { default: reviewApproveCommand } = await import("../../src/commands/review-approve.js");
+      const { default: reviewApproveCommand } = await import("../../packages/wiki/src/commands/review-approve.js");
       await reviewApproveCommand(candidate.id);
       // Precondition asserted by the caller: an approval that bailed out early
       // satisfies no-link claims for a reason unrelated to the page set.
@@ -176,7 +176,7 @@ describe("review approve — the file-backed behaviour is unchanged", () => {
     const candidate = await writeCandidate(project.root, process.env, {
       title: TITLE, slug: SLUG, summary: "", sources: [], body,
     });
-    const { default: reviewApproveCommand } = await import("../../src/commands/review-approve.js");
+    const { default: reviewApproveCommand } = await import("../../packages/wiki/src/commands/review-approve.js");
 
     await reviewApproveCommand(candidate.id);
 

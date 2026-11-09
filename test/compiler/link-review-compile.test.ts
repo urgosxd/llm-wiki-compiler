@@ -25,7 +25,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
-import { compileAndReport } from "../../src/compiler/index.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
 import { useCompileProject } from "../fixtures/compile-project.js";
 import { declareAlias, readConceptPage } from "../fixtures/concept-page.js";
 import { stubCompileProvider } from "../fixtures/compile-provider.js";

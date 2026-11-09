@@ -3,8 +3,8 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { deleteSource } from "../../src/sources/store.js";
-import { PathSafetyError } from "../../src/viewer/path-safety.js";
+import { deleteSource } from "../../packages/wiki/src/sources/store.js";
+import { PathSafetyError } from "../../packages/wiki/src/viewer/path-safety.js";
 
 describe("deleteSource", () => {
   it("true when removed, false when absent, throws on unsafe id", async () => {

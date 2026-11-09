@@ -2,14 +2,14 @@
 import { beforeEach, expect, it } from "vitest";
 import { writeFile, symlink } from "node:fs/promises";
 import path from "node:path";
-import { collectStatus } from "../src/status/collect.js";
-import { resolveStaleRefresh } from "../src/compiler/refresh-plan.js";
-import { collectStats } from "../src/eval/stats.js";
-import { collectProjectState } from "../src/project/state.js";
+import { collectStatus } from "../packages/wiki/src/status/collect.js";
+import { resolveStaleRefresh } from "../packages/wiki/src/compiler/refresh-plan.js";
+import { collectStats } from "../packages/wiki/src/eval/stats.js";
+import { collectProjectState } from "../packages/wiki/src/project/state.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { sha256Hex, writeSourceState } from "./fixtures/state-json.js";
 import { connectMcpClient } from "./fixtures/mcp-test-env.js";
-import { evaluateSourceUtilization } from "../src/eval/source-utilization.js";
+import { evaluateSourceUtilization } from "../packages/wiki/src/eval/source-utilization.js";
 import { writePage } from "./fixtures/write-page.js";
 
 const root = useTempRoot(["sources/records", "sources/inbox", ".llmwiki"]);

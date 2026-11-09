@@ -23,7 +23,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { collectStatus } from "../src/status/collect.js";
+import { collectStatus } from "../packages/wiki/src/status/collect.js";
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });

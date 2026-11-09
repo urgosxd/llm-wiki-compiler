@@ -17,8 +17,8 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readStateClassifiedFor, writeStateFor } from "../../src/dimensions/wiki/page-source-seam.js";
-import { readWikiStateFromRows } from "../../src/dimensions/wiki/wiki-state-source.js";
+import { readStateClassifiedFor, writeStateFor } from "../../packages/wiki/src/dimensions/wiki/page-source-seam.js";
+import { readWikiStateFromRows } from "../../packages/wiki/src/dimensions/wiki/wiki-state-source.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
 

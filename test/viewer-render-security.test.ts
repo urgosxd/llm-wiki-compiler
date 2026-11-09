@@ -10,8 +10,8 @@
 
 import { describe, it, expect } from "vitest";
 import sanitizeHtml from "sanitize-html";
-import { buildSanitizerPolicy, renderPageHtml } from "../src/viewer/render.js";
-import type { ViewerSnapshot } from "../src/viewer/types.js";
+import { buildSanitizerPolicy, renderPageHtml } from "../packages/wiki/src/viewer/render.js";
+import type { ViewerSnapshot } from "../packages/wiki/src/viewer/types.js";
 
 const SNAPSHOT: ViewerSnapshot = {
   root: "/tmp/wiki",

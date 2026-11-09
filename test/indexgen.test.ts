@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { writeFile } from "fs/promises";
 import path from "path";
-import { buildFrontmatter } from "../src/utils/markdown.js";
+import { buildFrontmatter } from "../packages/wiki/src/utils/markdown.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
 import { generateAndReadIndex } from "./fixtures/generate-and-read-index.js";

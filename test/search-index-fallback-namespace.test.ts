@@ -18,7 +18,7 @@ import { writePage } from "./fixtures/write-page.js";
 import { stubSelectPages, seedFallbackProject } from "./fixtures/fallback-stub.js";
 
 // Stub out the LLM so callClaude returns deterministic pageId selections.
-vi.mock("../src/utils/llm.js", () => ({
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({
   callClaude: vi.fn(),
 }));
 
@@ -28,11 +28,11 @@ function seedProject(conceptSlug: string, querySlug: string, typedSlug: string):
 }
 
 describe("pickSearchRefs — fallback namespace resolution (F3)", () => {
-  let pickSearchRefs: typeof import("../src/search/retrieval.js").pickSearchRefs;
+  let pickSearchRefs: typeof import("../packages/wiki/src/search/retrieval.js").pickSearchRefs;
 
   beforeEach(async () => {
     vi.resetModules();
-    ({ pickSearchRefs } = await import("../src/search/retrieval.js"));
+    ({ pickSearchRefs } = await import("../packages/wiki/src/search/retrieval.js"));
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -73,12 +73,12 @@ describe("pickSearchRefs — fallback namespace resolution (F3)", () => {
 });
 
 describe("loadSelectedRefs — fallback refs hydrate the correct page (F3)", () => {
-  let pickSearchRefs: typeof import("../src/search/retrieval.js").pickSearchRefs;
-  let loadSelectedRefs: typeof import("../src/search/retrieval.js").loadSelectedRefs;
+  let pickSearchRefs: typeof import("../packages/wiki/src/search/retrieval.js").pickSearchRefs;
+  let loadSelectedRefs: typeof import("../packages/wiki/src/search/retrieval.js").loadSelectedRefs;
 
   beforeEach(async () => {
     vi.resetModules();
-    ({ pickSearchRefs, loadSelectedRefs } = await import("../src/search/retrieval.js"));
+    ({ pickSearchRefs, loadSelectedRefs } = await import("../packages/wiki/src/search/retrieval.js"));
   });
   afterEach(() => vi.restoreAllMocks());
 

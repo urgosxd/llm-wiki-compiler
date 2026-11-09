@@ -19,9 +19,9 @@ import {
   RACE_MAX_DEPTH_CEILING,
   findRacePath,
   resolveRaceMaxDepth,
-} from "../../src/context/race-path.js";
+} from "../../packages/wiki/src/context/race-path.js";
 import { syntheticGraph } from "../fixtures/graph-data.js";
-import type { GraphData, PageId } from "../../src/viewer/types.js";
+import type { GraphData, PageId } from "../../packages/wiki/src/viewer/types.js";
 
 const A = "concepts/alpha" as PageId;
 const B = "concepts/beta" as PageId;

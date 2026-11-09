@@ -16,7 +16,7 @@
  */
 
 import { vi } from "vitest";
-import { AnthropicProvider } from "../../src/providers/anthropic.js";
+import { AnthropicProvider } from "../../packages/wiki/src/providers/anthropic.js";
 
 /** The answers one compile-path case gives the provider. */
 export interface CompileProviderAnswers {

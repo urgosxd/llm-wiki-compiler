@@ -17,9 +17,9 @@
 import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { mkdir, rm, symlink, readdir, writeFile } from "fs/promises";
 import path from "path";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
-import { applyApprovedMutations } from "../src/trust/executor.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
+import { applyApprovedMutations } from "../packages/wiki/src/trust/executor.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import {
   makeRootWithOutside,
   cleanupRootWithOutside,
@@ -27,7 +27,7 @@ import {
   exists,
   expectLockAcquireRelease,
 } from "./trust/fixture.js";
-import type { PlannedMutation, RawPageRef } from "../src/trust/planner.js";
+import type { PlannedMutation, RawPageRef } from "../packages/wiki/src/trust/planner.js";
 
 const GOOD_BODY = "---\ntitle: Ok\n---\n\nbody\n";
 
@@ -85,7 +85,7 @@ describe("FIX F1 — acquireLock confines the private .llmwiki dir", () => {
     // Replace the real dir with an escaping symlink, holding the (now-orphaned) lock.
     await rm(realPrivate, { recursive: true, force: true });
     await plantPrivateDirSymlink();
-    const { openBatch } = await import("../src/trust/journal.js");
+    const { openBatch } = await import("../packages/wiki/src/trust/journal.js");
     await expect(openBatch(root)).rejects.toThrow(/escapes project root/);
     expect(await exists(path.join(outsideDir, "journal"))).toBe(false);
   });

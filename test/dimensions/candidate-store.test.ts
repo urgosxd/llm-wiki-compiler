@@ -15,8 +15,8 @@ import {
   getStoredCandidate,
   listStoredCandidates,
   saveStoredCandidate,
-} from "../../src/dimensions/wiki/candidate-store.js";
-import type { ReviewCandidate } from "../../src/utils/types.js";
+} from "../../packages/wiki/src/dimensions/wiki/candidate-store.js";
+import type { ReviewCandidate } from "../../packages/wiki/src/utils/types.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { createProbeStack } from "./harness-lifecycle.js";
 

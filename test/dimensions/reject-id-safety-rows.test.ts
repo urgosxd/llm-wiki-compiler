@@ -16,8 +16,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import reviewRejectCommand from "../../src/commands/review-reject.js";
-import { listCandidates, writeCandidate } from "../../src/compiler/candidates.js";
+import reviewRejectCommand from "../../packages/wiki/src/commands/review-reject.js";
+import { listCandidates, writeCandidate } from "../../packages/wiki/src/compiler/candidates.js";
 import { withStackEnv } from "../fixtures/stack-env.js";
 
 const REPO_ROOT = process.cwd();

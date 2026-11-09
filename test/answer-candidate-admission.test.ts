@@ -5,10 +5,10 @@
 import { expect, it, vi } from "vitest";
 import { readFile } from "fs/promises";
 import { writeCandidate, writeFreshCandidate, readCandidate, listCandidates,
-countCandidates, listCandidatePage, loadCandidateOrFail } from "../src/compiler/candidates.js";
-import { readCandidateSnapshot } from "../src/compiler/candidate-read.js";
-import { InvalidCandidateMetadataError } from "../src/citations/answer-manifest.js";
-import * as output from "../src/utils/output.js";
+countCandidates, listCandidatePage, loadCandidateOrFail } from "../packages/wiki/src/compiler/candidates.js";
+import { readCandidateSnapshot } from "../packages/wiki/src/compiler/candidate-read.js";
+import { InvalidCandidateMetadataError } from "../packages/wiki/src/citations/answer-manifest.js";
+import * as output from "../packages/wiki/src/utils/output.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { answerDraft, candidateFile, replaceCandidate } from "./fixtures/answer-candidate.js";
 

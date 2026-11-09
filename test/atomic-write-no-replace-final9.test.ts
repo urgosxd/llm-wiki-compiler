@@ -12,7 +12,7 @@ import {
   atomicWriteNoReplace,
   AtomicWriteCommittedCleanupError,
   AtomicWriteNoReplaceDurabilityUnsupportedError,
-} from "../src/utils/atomic-write.js";
+} from "../packages/wiki/src/utils/atomic-write.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

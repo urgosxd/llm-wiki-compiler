@@ -2,8 +2,8 @@
  * Tests for src/eval/delta.ts — regression detection between eval runs.
  */
 
-import { computeDelta } from "../src/eval/delta.js";
-import type { EvalReport } from "../src/eval/types.js";
+import { computeDelta } from "../packages/wiki/src/eval/delta.js";
+import type { EvalReport } from "../packages/wiki/src/eval/types.js";
 
 function makeReport(overrides: Partial<EvalReport> = {}): EvalReport {
   return {

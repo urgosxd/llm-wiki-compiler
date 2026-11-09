@@ -18,9 +18,9 @@
 
 import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
-import { expandGraphNeighborhood } from "../src/context/graph.js";
+import { expandGraphNeighborhood } from "../packages/wiki/src/context/graph.js";
 import { realNode, syntheticGraph } from "./fixtures/graph-data.js";
-import type { PageId, ViewerPage } from "../src/viewer/types.js";
+import type { PageId, ViewerPage } from "../packages/wiki/src/viewer/types.js";
 
 /** Build a minimal ViewerPage shell good enough for gap attribution. */
 function pageShell(
@@ -405,7 +405,7 @@ describe("src/context/graph.ts — NUL-byte regression", () => {
     // fallow treat the source as binary and silently broke text
     // tooling. This test reads the file as bytes so any future
     // regression that smuggles a NUL back in fails loudly.
-    const raw = readFileSync("src/context/graph.ts");
+    const raw = readFileSync("packages/wiki/src/context/graph.ts");
     expect(raw.includes(0)).toBe(false);
   });
 });

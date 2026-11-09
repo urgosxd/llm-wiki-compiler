@@ -14,12 +14,12 @@
  */
 
 import { describe, it, beforeEach, afterEach, expect, vi } from "vitest";
-import { writePendingEmbeddings, loadPendingEmbeddings } from "../src/utils/pending-embeddings.js";
-import { refreshEmbeddingsDrainingPending } from "../src/utils/embeddings-refresh.js";
-import { MAX_PENDING_EMBEDDING_IDS } from "../src/utils/constants.js";
-import * as embeddings from "../src/utils/embeddings.js";
-import * as output from "../src/utils/output.js";
-import type { PageId } from "../src/utils/page-id.js";
+import { writePendingEmbeddings, loadPendingEmbeddings } from "../packages/wiki/src/utils/pending-embeddings.js";
+import { refreshEmbeddingsDrainingPending } from "../packages/wiki/src/utils/embeddings-refresh.js";
+import { MAX_PENDING_EMBEDDING_IDS } from "../packages/wiki/src/utils/constants.js";
+import * as embeddings from "../packages/wiki/src/utils/embeddings.js";
+import * as output from "../packages/wiki/src/utils/output.js";
+import type { PageId } from "../packages/wiki/src/utils/page-id.js";
 import { makeRootWithOutside, cleanupRootWithOutside } from "./trust/fixture.js";
 
 let root = "";

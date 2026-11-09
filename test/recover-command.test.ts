@@ -19,8 +19,8 @@ import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { rm, writeFile, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { runCLI } from "./fixtures/run-cli.js";
-import { journalHealth } from "../src/trust/journal-health.js";
-import { LOCK_FILE } from "../src/utils/constants.js";
+import { journalHealth } from "../packages/wiki/src/trust/journal-health.js";
+import { LOCK_FILE } from "../packages/wiki/src/utils/constants.js";
 import { WIKI, makeTrustRoot, cleanupTrustRoot } from "./trust/fixture.js";
 import {
   journalFile,

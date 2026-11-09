@@ -3,10 +3,10 @@
  * @description Connector-origin bytes are nonce fenced on every read surface.
  */
 import { describe, expect, it } from "vitest";
-import { fenceUntrustedConnectorText, readConnectorBlock } from "../../src/connectors/fence.js";
-import type { ContextPack } from "../../src/context/types.js";
-import type { ProfilePack } from "../../src/profile/types.js";
-import type { ViewerSnapshot } from "../../src/viewer/types.js";
+import { fenceUntrustedConnectorText, readConnectorBlock } from "../../packages/wiki/src/connectors/fence.js";
+import type { ContextPack } from "../../packages/wiki/src/context/types.js";
+import type { ProfilePack } from "../../packages/wiki/src/profile/types.js";
+import type { ViewerSnapshot } from "../../packages/wiki/src/viewer/types.js";
 
 const BLOCK = {
   connectorId: "fixture",

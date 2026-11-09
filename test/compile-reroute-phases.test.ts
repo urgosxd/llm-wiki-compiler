@@ -23,12 +23,12 @@ import { describe, it, expect, vi } from "vitest";
 import { existsSync } from "fs";
 import { readFile, writeFile, mkdir, rm } from "fs/promises";
 import path from "path";
-import { compileAndReport } from "../src/compiler/index.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
-import { buildFrontmatter } from "../src/utils/markdown.js";
-import * as journal from "../src/trust/journal.js";
-import * as compileWrite from "../src/compiler/compile-write.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
+import { buildFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import * as journal from "../packages/wiki/src/trust/journal.js";
+import * as compileWrite from "../packages/wiki/src/compiler/compile-write.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 
 const ctx = useCompileProject({

@@ -11,7 +11,7 @@ import { existsSync } from "fs";
 import { rm } from "fs/promises";
 import path from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { collectStatus, MAX_STATUS_LIST } from "../src/status/collect.js";
+import { collectStatus, MAX_STATUS_LIST } from "../packages/wiki/src/status/collect.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
 import {
@@ -20,7 +20,7 @@ import {
   sha256Hex,
   writeCorruptTestStateJson,
 } from "./fixtures/state-json.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 import { buildServer } from "./fixtures/mcp-test-env.js";
 
 type ResourceMap = Record<string, { readCallback: (uri: URL) => Promise<{ contents: Array<{ text: string }> }> }>;

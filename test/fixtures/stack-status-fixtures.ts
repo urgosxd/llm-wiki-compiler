@@ -48,8 +48,8 @@
  */
 
 import { afterEach, beforeEach } from "vitest";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { saveStoredCandidate } from "../../src/dimensions/wiki/candidate-store.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { saveStoredCandidate } from "../../packages/wiki/src/dimensions/wiki/candidate-store.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";
 

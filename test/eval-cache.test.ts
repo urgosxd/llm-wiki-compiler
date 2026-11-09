@@ -5,9 +5,9 @@
 import { mkdir, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import { clearCitationCache, loadCitationCache, summarizeCitationCache } from "../src/eval/cache.js";
+import { clearCitationCache, loadCitationCache, summarizeCitationCache } from "../packages/wiki/src/eval/cache.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
-import type { CitationJudgement } from "../src/eval/types.js";
+import type { CitationJudgement } from "../packages/wiki/src/eval/types.js";
 
 function makeJudgement(overrides: Partial<CitationJudgement> = {}): CitationJudgement {
   return {

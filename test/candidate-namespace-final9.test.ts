@@ -14,16 +14,16 @@ import {
   readCandidate,
   writeCandidate,
   type CandidateDraft,
-} from "../src/compiler/candidates.js";
+} from "../packages/wiki/src/compiler/candidates.js";
 import {
   resolveConfinedCandidatesDir,
   UnsafeCandidateDirError,
-} from "../src/compiler/candidate-store-paths.js";
-import { CANDIDATES_ARCHIVE_DIR } from "../src/utils/constants.js";
-import { CandidateCustodyUnavailableError } from "../src/compiler/candidate-custody.js";
-import { readCandidateEntryForMutation } from "../src/compiler/candidate-read.js";
+} from "../packages/wiki/src/compiler/candidate-store-paths.js";
+import { CANDIDATES_ARCHIVE_DIR } from "../packages/wiki/src/utils/constants.js";
+import { CandidateCustodyUnavailableError } from "../packages/wiki/src/compiler/candidate-custody.js";
+import { readCandidateEntryForMutation } from "../packages/wiki/src/compiler/candidate-read.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
-import { CandidatePublicationUnavailableError } from "../src/compiler/candidate-publication.js";
+import { CandidatePublicationUnavailableError } from "../packages/wiki/src/compiler/candidate-publication.js";
 
 const root = useTempRoot();
 

@@ -8,8 +8,8 @@
  */
 import { mkdir, readFile } from "fs/promises";
 import path from "path";
-import { buildOkfBundle } from "../../src/export/okf/bundle.js";
-import type { ExportPage } from "../../src/export/types.js";
+import { buildOkfBundle } from "../../packages/wiki/src/export/okf/bundle.js";
+import type { ExportPage } from "../../packages/wiki/src/export/types.js";
 
 /** A single "RAG" concept page for a default-profile OKF export. */
 export function defaultConceptPage(): ExportPage {

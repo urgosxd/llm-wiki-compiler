@@ -15,11 +15,11 @@ import {
   getEmbeddingProvider,
   getActiveEmbeddingProviderName,
   isEmbeddingProviderExplicit,
-} from "../src/utils/embedding-provider.js";
-import { getProvider } from "../src/utils/provider.js";
-import { OpenAIProvider } from "../src/providers/openai.js";
-import { OllamaProvider } from "../src/providers/ollama.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
+} from "../packages/wiki/src/utils/embedding-provider.js";
+import { getProvider } from "../packages/wiki/src/utils/provider.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
+import { OllamaProvider } from "../packages/wiki/src/providers/ollama.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { createEnvSnapshot } from "./fixtures/env-snapshot.js";
 
 const { setEnv, restore } = createEnvSnapshot([

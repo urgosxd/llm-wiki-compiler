@@ -10,8 +10,8 @@ import { describe, it, expect } from "vitest";
 import {
   normalizeCitationsInBody,
   normalizeCitations,
-} from "../src/compiler/citation-normalize.js";
-import { checkPageMalformedCitations } from "../src/linter/rules-citations.js";
+} from "../packages/wiki/src/compiler/citation-normalize.js";
+import { checkPageMalformedCitations } from "../packages/wiki/src/linter/rules-citations.js";
 import { makeNumberedContent } from "./fixtures/citation-content.js";
 
 // Alias for brevity in this test file.

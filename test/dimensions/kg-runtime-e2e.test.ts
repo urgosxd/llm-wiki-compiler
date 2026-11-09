@@ -49,8 +49,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import "./kg-runtime-provider-env.js";
 
 // The dimension, the reader and Postgres are imported UNMOCKED, on purpose.
-import { createKgDimension } from "../../src/dimensions/kg/index.js";
-import { createKgReader } from "../../src/dimensions/kg/reader.js";
+import { createKgDimension } from "../../packages/wiki/src/dimensions/kg/index.js";
+import { createKgReader } from "../../packages/wiki/src/dimensions/kg/reader.js";
 import { setToolFailure, setToolResponse, toolCalls } from "@repo/kg/core/extraction-harness";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";

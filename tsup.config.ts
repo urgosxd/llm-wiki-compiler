@@ -22,11 +22,11 @@ export default defineConfig(async (options) => {
   return [
   {
     ...shared,
-    entry: ["src/cli.ts"],
+    entry: ["packages/wiki/src/cli.ts"],
     // External packages are outside esbuild's import graph. Watch their source
     // explicitly and rebuild them before announcing a successful facade build.
     ...(options.watch ? {
-      watch: ["src", "scripts", "packages/*/package.json", "packages/*/tsup.config.ts", "tsconfig.json"],
+      watch: ["packages/wiki/src", "scripts", "packages/*/package.json", "packages/*/tsup.config.ts", "tsconfig.json"],
       esbuildPlugins: [{
         name: "rebuild-compiler-dependencies",
         setup(build) {
@@ -53,7 +53,7 @@ export default defineConfig(async (options) => {
   },
   {
     ...shared,
-    entry: ["src/index.ts"],
+    entry: ["packages/wiki/src/index.ts"],
     // Per-entry targeted clean: only this bundle's own outputs, never the CLI's.
     clean: ["dist/index.js", "dist/index.js.map", "dist/index.d.ts"],
     dts: true,

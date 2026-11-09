@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, afterAll } from "vitest";
 import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ingestSource } from "../../src/commands/ingest.js";
+import { ingestSource } from "../../packages/wiki/src/commands/ingest.js";
 import { provisionEnvStack } from "../fixtures/env-stack.js";
 
 // Ingest writes a wiki page row, so it needs a real Stack. Provisioned per FILE,

@@ -19,8 +19,8 @@ import {
   listStoredPages,
   upsertStoredPage,
   withTenant,
-} from "../../src/dimensions/wiki/page-store.js";
-import type { Page } from "../../src/pages/list.js";
+} from "../../packages/wiki/src/dimensions/wiki/page-store.js";
+import type { Page } from "../../packages/wiki/src/pages/list.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { wikiTablesPresent } from "../fixtures/rls-probe.js";
 
@@ -121,7 +121,7 @@ describe("the store contract T2 depends on", () => {
     // frontmatter + prose. Page wants those split. This pins that the split is
     // representable, so T2 does not discover it needs a schema change mid-task.
     const full = `---\ntitle: Split Me\nsummary: from frontmatter\n---\n\nThe prose.`;
-    const { parseFrontmatter } = await import("../../src/utils/markdown.js");
+    const { parseFrontmatter } = await import("../../packages/wiki/src/utils/markdown.js");
     const { meta, body } = parseFrontmatter(full);
     await upsertStoredPage(harness.db, harness.stackId, {
       slug: "split-me",

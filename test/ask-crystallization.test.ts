@@ -16,15 +16,15 @@ import { rm, readFile, mkdtemp, mkdir, writeFile, readdir } from "node:fs/promis
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import reviewApproveCommand from "../src/commands/review-approve.js";
-import { maybeSaveQueryPage } from "../src/commands/query-publication.js";
-import { listCandidates } from "../src/compiler/candidates.js";
-import { slugify } from "../src/utils/markdown.js";
-import { QUERIES_DIR } from "../src/utils/constants.js";
+import reviewApproveCommand from "../packages/wiki/src/commands/review-approve.js";
+import { maybeSaveQueryPage } from "../packages/wiki/src/commands/query-publication.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import { slugify } from "../packages/wiki/src/utils/markdown.js";
+import { QUERIES_DIR } from "../packages/wiki/src/utils/constants.js";
 import { buildCollidingProject, echoCallClaudeModule, mockQueryVector } from "./fixtures/typed-grounding.js";
 
-vi.mock("../src/utils/llm.js", () => echoCallClaudeModule());
-vi.mock("../src/utils/provider-guard.js", () => ({ ensureProviderAvailable: () => {} }));
+vi.mock("../packages/wiki/src/utils/llm.js", () => echoCallClaudeModule());
+vi.mock("../packages/wiki/src/utils/provider-guard.js", () => ({ ensureProviderAvailable: () => {} }));
 
 const QUESTION = "scaling?";
 let root = "";
@@ -47,7 +47,7 @@ const queryPage = (): string => path.join(root, QUERIES_DIR, `${slugify(QUESTION
 
 describe("query --save --review proposes a durable candidate, applied to write the page", () => {
   it("stages a proposal and writes NO page until review approve lands it", async () => {
-    const { generateAnswer } = await import("../src/commands/query.js");
+    const { generateAnswer } = await import("../packages/wiki/src/commands/query.js");
     await generateAnswer(root, QUESTION, { save: true, review: true });
     // A durable proposal exists; nothing is live under wiki/queries/ yet.
     const proposed = await listCandidates(root);

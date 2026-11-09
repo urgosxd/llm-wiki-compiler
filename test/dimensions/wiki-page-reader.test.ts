@@ -16,9 +16,9 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { createWikiPageReader } from "../../src/dimensions/wiki/database.js";
-import { upsertStoredPage } from "../../src/dimensions/wiki/page-store.js";
-import type { Page } from "../../src/pages/list.js";
+import { createWikiPageReader } from "../../packages/wiki/src/dimensions/wiki/database.js";
+import { upsertStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
+import type { Page } from "../../packages/wiki/src/pages/list.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { expectNotFoundCode } from "../fixtures/reader-assertions.js";
 import { wikiTablesPresent } from "../fixtures/rls-probe.js";

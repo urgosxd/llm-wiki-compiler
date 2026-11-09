@@ -37,11 +37,11 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { compileAndReport } from "../../src/compiler/index.js";
-import { getStoredPage } from "../../src/dimensions/wiki/page-store.js";
-import { createPageContentSource } from "../../src/dimensions/wiki/page-scan-source.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { saveSourceDocument } from "../../src/dimensions/wiki/source-documents-store.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import { getStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
+import { createPageContentSource } from "../../packages/wiki/src/dimensions/wiki/page-scan-source.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { saveSourceDocument } from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
 import { extractionAnswer, stubCompileProvider } from "../fixtures/compile-provider.js";
 import { writeSource } from "../fixtures/curated-scenario.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";

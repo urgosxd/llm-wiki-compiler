@@ -14,12 +14,12 @@ import {
   formatLogEntry,
   formatList,
   formatWikilinkList,
-} from "../src/utils/activity-log.js";
+} from "../packages/wiki/src/utils/activity-log.js";
 import {
   LOG_FILE,
   LOG_DESCRIPTION_MAX_CHARS,
   LOG_MAX_PAGE_LINKS,
-} from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/constants.js";
 
 const DAY = new Date("2026-04-02T13:00:00Z");
 let tmpDir: string;

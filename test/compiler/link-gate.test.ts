@@ -18,31 +18,24 @@
  * post-generation rule, never a property of the model.
  */
 
-import { vi, describe, it, expect, afterEach } from "vitest";
+import { vi, describe, it, expect } from "vitest";
 import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
-import { callClaude } from "../../src/utils/llm.js";
-import { renderMergedPageContent } from "../../src/compiler/page-renderer.js";
-import { resolveAndApplyLinks } from "../../src/compiler/resolver.js";
-import { summarizeCompile } from "../../src/compiler/compile-report.js";
-import { parseFrontmatter } from "../../src/utils/markdown.js";
-import { MAX_CONTEXTUAL_LINKS_PER_PAGE } from "../../src/utils/constants.js";
-import { useManagedTempRoots } from "../fixtures/temp-root.js";
+import { callClaude } from "../../packages/wiki/src/utils/llm.js";
+import { renderMergedPageContent } from "../../packages/wiki/src/compiler/page-renderer.js";
+import { resolveAndApplyLinks } from "../../packages/wiki/src/compiler/resolver.js";
+import { summarizeCompile } from "../../packages/wiki/src/compiler/compile-report.js";
+import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
+import { MAX_CONTEXTUAL_LINKS_PER_PAGE } from "../../packages/wiki/src/utils/constants.js";
+import { STUB_SCHEMA, usePageRendererSuite } from "../fixtures/page-renderer-suite.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
 import { writePage } from "../fixtures/write-page.js";
-import type { CompileOptions } from "../../src/utils/types.js";
+import type { CompileOptions } from "../../packages/wiki/src/utils/types.js";
 
-vi.mock("../../src/utils/llm.js", () => ({ callClaude: vi.fn() }));
+vi.mock("../../packages/wiki/src/utils/llm.js", () => ({ callClaude: vi.fn() }));
 
-/** Minimal SchemaConfig stub matching the shape page-renderer needs. */
-const STUB_SCHEMA = { defaultKind: "concept" } as Parameters<typeof renderMergedPageContent>[2];
-
-/** Throwaway wiki roots, one per case, removed after each test. */
-const { tempRoot } = useManagedTempRoots();
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
+/** Throwaway wiki roots, one per case, plus the per-test mock restore. */
+const { tempRoot } = usePageRendererSuite();
 
 /** Absolute `wiki/concepts` directory of an isolated project root. */
 function conceptsDir(root: string): string {

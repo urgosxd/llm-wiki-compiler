@@ -47,10 +47,10 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { compileAndReport } from "../src/compiler/index.js";
-import { saveSourceDocument } from "../src/dimensions/wiki/source-documents-store.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { tryAcquirePostgresLock } from "../src/utils/lock-postgres.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { saveSourceDocument } from "../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { tryAcquirePostgresLock } from "../packages/wiki/src/utils/lock-postgres.js";
 import { REQUEST_STACK_DSN, useRequestStacks } from "./fixtures/request-stack.js";
 
 /** The one source the compile extracts into a page. */

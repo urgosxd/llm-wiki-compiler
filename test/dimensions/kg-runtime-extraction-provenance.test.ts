@@ -188,13 +188,13 @@ function jsonResponse(body: unknown, status = 200): Response {
 async function loadDimension(
   env: Record<string, string | undefined>,
 ): Promise<{
-  createKgDimension: typeof import("../../src/dimensions/kg/index.js").createKgDimension;
+  createKgDimension: typeof import("../../packages/wiki/src/dimensions/kg/index.js").createKgDimension;
   config: typeof import("@repo/kg/config").config;
 }> {
   vi.resetModules();
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
   const [dimension, configModule] = await Promise.all([
-    import("../../src/dimensions/kg/index.js"),
+    import("../../packages/wiki/src/dimensions/kg/index.js"),
     import("@repo/kg/config"),
   ]);
   return { createKgDimension: dimension.createKgDimension, config: configModule.config };

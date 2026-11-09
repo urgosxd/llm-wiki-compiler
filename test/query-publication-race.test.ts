@@ -6,14 +6,14 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { generateAnswer } from "../src/commands/query.js";
-import { setQuerySaveTestHookForTest } from "../src/commands/query-publication.js";
-import { callClaude } from "../src/utils/llm.js";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
+import { generateAnswer } from "../packages/wiki/src/commands/query.js";
+import { setQuerySaveTestHookForTest } from "../packages/wiki/src/commands/query-publication.js";
+import { callClaude } from "../packages/wiki/src/utils/llm.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { stageCitationWorkspace, citationWorkspaceBytes } from "./fixtures/query-answer-citations.js";
 
-vi.mock("../src/utils/llm.js", () => ({ callClaude: vi.fn() }));
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({ callClaude: vi.fn() }));
 const ctx = useTempRoot();
 const ANSWER = "The answer cites [[Target]].";
 beforeEach(async () => {

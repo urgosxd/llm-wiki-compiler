@@ -11,10 +11,10 @@
 import { describe, it, expect } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { readEmbeddingStore, writeEmbeddingStore, type EmbeddingStore, type EmbeddingEntry, type ChunkEmbeddingEntry, type EmbeddingStoreV3 } from "../src/utils/embeddings-store.js";
-import { EMBEDDINGS_FILE, LLMWIKI_DIR, MAX_EMBEDDING_FIELD_CHARS } from "../src/utils/constants.js";
+import { readEmbeddingStore, writeEmbeddingStore, type EmbeddingStore, type EmbeddingEntry, type ChunkEmbeddingEntry, type EmbeddingStoreV3 } from "../packages/wiki/src/utils/embeddings-store.js";
+import { EMBEDDINGS_FILE, LLMWIKI_DIR, MAX_EMBEDDING_FIELD_CHARS } from "../packages/wiki/src/utils/constants.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
-import { cosineSimilarity } from "../src/utils/embeddings-search.js";
+import { cosineSimilarity } from "../packages/wiki/src/utils/embeddings-search.js";
 
 const ctx = useConfinementRoots("embed-caps");
 

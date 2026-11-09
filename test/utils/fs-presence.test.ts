@@ -10,7 +10,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { useTempRoot } from "../fixtures/temp-root.js";
-import { lstatLeaf, readDirectoryNames } from "../../src/utils/fs-presence.js";
+import { lstatLeaf, readDirectoryNames } from "../../packages/wiki/src/utils/fs-presence.js";
 
 describe("filesystem presence classification", () => {
   const root = useTempRoot();

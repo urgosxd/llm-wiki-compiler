@@ -3,7 +3,7 @@
  * oversized candidates before one giant vector string is constructed.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { serializeEmbeddingJson } from "../src/utils/embeddings-json.js";
+import { serializeEmbeddingJson } from "../packages/wiki/src/utils/embeddings-json.js";
 import { binaryFixture } from "./fixtures/binary-embedding-store.js";
 
 afterEach(() => vi.restoreAllMocks());

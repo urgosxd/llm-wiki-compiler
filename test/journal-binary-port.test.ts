@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chmod, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import * as journal from "../src/trust/journal.js";
+import * as journal from "../packages/wiki/src/trust/journal.js";
 import { WIKI, makeTrustRoot, cleanupTrustRoot } from "./trust/fixture.js";
 import { journalFile, quarantineFile, writeJournal, pathExists } from "./trust/journal-fixture.js";
 

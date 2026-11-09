@@ -3,9 +3,9 @@
  * Exercises the real provider through the shared LLM entry point in all modes.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { callClaude } from "../src/utils/llm.js";
-import { OpenAIProvider } from "../src/providers/openai.js";
-import { OpenAIRequestConfigError } from "../src/providers/openai-request.js";
+import { callClaude } from "../packages/wiki/src/utils/llm.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
+import { OpenAIRequestConfigError } from "../packages/wiki/src/providers/openai-request.js";
 
 describe("OpenAI request configuration failures", () => {
   beforeEach(() => {

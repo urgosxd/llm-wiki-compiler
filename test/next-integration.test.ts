@@ -30,7 +30,7 @@ import {
   LLMWIKI_DIR,
   LAST_LINT_FILE,
   CANDIDATES_DIR,
-} from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/constants.js";
 
 const env = useNextTempDir("next-cli");
 

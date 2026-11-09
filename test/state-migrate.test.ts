@@ -15,8 +15,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { migrateStateToV2 } from "../src/state/migrate.js";
-import type { WikiState } from "../src/utils/types.js";
+import { migrateStateToV2 } from "../packages/wiki/src/state/migrate.js";
+import type { WikiState } from "../packages/wiki/src/utils/types.js";
 
 /** A minimal, valid v1 state used as the base fixture for the suite. */
 function v1Fixture(): WikiState {

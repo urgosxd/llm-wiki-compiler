@@ -40,7 +40,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../fixtures/mcp-test-env.js";
-import { createWikiMcpServer } from "../../src/mcp/server.js";
+import { createWikiMcpServer } from "../../packages/wiki/src/mcp/server.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 
 /** The ten tools that must carry a REQUIRED Stack: the whole Stack-scoped surface. */

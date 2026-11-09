@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { evaluatePolicy, isPolicyOff, type PolicySignals, type ReviewPolicy } from "../src/review/policy.js";
-import type { LintResult } from "../src/linter/types.js";
+import { evaluatePolicy, isPolicyOff, type PolicySignals, type ReviewPolicy } from "../packages/wiki/src/review/policy.js";
+import type { LintResult } from "../packages/wiki/src/linter/types.js";
 
 const CLEAN_SIGNALS: PolicySignals = {
   confidence: 0.9,

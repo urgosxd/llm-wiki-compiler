@@ -11,8 +11,8 @@
 
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { LLMWIKI_DIR, PROFILE_FILE } from "../../src/utils/constants.js";
-import type { ProfilePack } from "../../src/profile/types.js";
+import { LLMWIKI_DIR, PROFILE_FILE } from "../../packages/wiki/src/utils/constants.js";
+import type { ProfilePack } from "../../packages/wiki/src/profile/types.js";
 
 /**
  * Install `profile`, then escape `.llmwiki/workflows` to `<outside>` so the runs

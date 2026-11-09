@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createWiki } from "../../src/sdk/wiki.js";
+import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
 import { useStackEnv } from "../fixtures/stack-env.js";
 
 describe("Wiki source API", () => {

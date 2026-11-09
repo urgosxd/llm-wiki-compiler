@@ -7,7 +7,7 @@
  * tsc rather than silently at runtime.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { registerOkfTools } from "../../src/mcp/okf-tools.js";
+import { registerOkfTools } from "../../packages/wiki/src/mcp/okf-tools.js";
 
 /** A registered tool handler's call signature — drift in the result envelope fails at tsc. */
 export type ToolHandler = (

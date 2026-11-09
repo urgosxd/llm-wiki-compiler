@@ -4,7 +4,7 @@
  *
  * The packaged `llmwiki view` process freezes a wiki snapshot and caches the
  * HTML shell template for predictable runtime behavior. During viewer UI work
- * that cache is inconvenient: changes under `src/viewer/assets/` need a rebuild
+ * that cache is inconvenient: changes under `packages/wiki/src/viewer/assets/` need a rebuild
  * and a fresh server process before the browser can see them. This runner uses
  * the normal build pipeline, watches source/static files, and restarts
  * `node dist/cli.js view` after each successful rebuild.
@@ -17,9 +17,9 @@ import process from "node:process";
 const DEFAULT_PORT = "55374";
 const DEBOUNCE_MS = 150;
 const WATCH_TARGETS = [
-  "src/viewer",
-  "src/commands/view.ts",
-  "src/cli.ts",
+  "packages/wiki/src/viewer",
+  "packages/wiki/src/commands/view.ts",
+  "packages/wiki/src/cli.ts",
   "scripts/copy-viewer-assets.mjs",
   "tsup.config.ts",
   "package.json",

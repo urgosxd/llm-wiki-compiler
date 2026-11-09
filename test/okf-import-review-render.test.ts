@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { writeCandidate, listCandidates } from "../src/compiler/candidates.js";
-import reviewShowCommand from "../src/commands/review-show.js";
+import { writeCandidate, listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import reviewShowCommand from "../packages/wiki/src/commands/review-show.js";
 
 let dir: string; const cwd = process.cwd();
 afterEach(async () => { process.chdir(cwd); vi.restoreAllMocks(); if (dir) await rm(dir, { recursive: true, force: true }); });

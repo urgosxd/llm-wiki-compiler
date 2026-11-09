@@ -8,8 +8,8 @@ import {
   AtlasCloudProvider,
   resolveAtlasCloudApiKeyFromEnv,
   resolveAtlasCloudBaseURLFromEnv,
-} from "../src/providers/atlascloud.js";
-import { ATLASCLOUD_BASE_URL } from "../src/utils/constants.js";
+} from "../packages/wiki/src/providers/atlascloud.js";
+import { ATLASCLOUD_BASE_URL } from "../packages/wiki/src/utils/constants.js";
 
 describe("AtlasCloudProvider", () => {
   afterEach(() => {

@@ -18,14 +18,14 @@ import {
   PENDING_EMBEDDINGS_PENDING_CODE,
   PENDING_EMBEDDINGS_UNAVAILABLE_CODE,
   pendingEmbeddingsWarning,
-} from "../src/trust/pending-embeddings-warning.js";
-import { checkPendingEmbeddings } from "../src/linter/pending-embeddings-rule.js";
-import { writePendingEmbeddings } from "../src/utils/pending-embeddings.js";
+} from "../packages/wiki/src/trust/pending-embeddings-warning.js";
+import { checkPendingEmbeddings } from "../packages/wiki/src/linter/pending-embeddings-rule.js";
+import { writePendingEmbeddings } from "../packages/wiki/src/utils/pending-embeddings.js";
 import {
   LLMWIKI_DIR,
   PENDING_EMBEDDINGS_FILE,
   MAX_PENDING_EMBEDDINGS_BYTES,
-} from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/constants.js";
 import {
   makeRootWithOutside,
   cleanupRootWithOutside,

@@ -11,8 +11,8 @@ import { mkdtemp, rm, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect } from "vitest";
-import { EVENTS_FILE, RELATIONS_FILE, WIKI_GRAPH_DIR } from "../../src/utils/constants.js";
-import type { ProfileSummaryBlock } from "../../src/profile/block.js";
+import { EVENTS_FILE, RELATIONS_FILE, WIKI_GRAPH_DIR } from "../../packages/wiki/src/utils/constants.js";
+import type { ProfileSummaryBlock } from "../../packages/wiki/src/profile/block.js";
 import { buildResearchLiteRelationsProject } from "./profile-fixtures.js";
 
 /** A research-lite root plus a paired out-of-tree directory, with teardown. */

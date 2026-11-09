@@ -11,7 +11,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdir, writeFile, rm } from "fs/promises";
 import path from "path";
-import { snapshotIncumbentConcepts } from "../../src/compiler/identity-stage.js";
+import { snapshotIncumbentConcepts } from "../../packages/wiki/src/compiler/identity-stage.js";
 import { makeTempRoot } from "../fixtures/temp-root.js";
 
 /** Write one raw page file under a temp root's concepts directory. */

@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import fixture from "../fixtures/crossref-work.json" with { type: "json" };
-import { crossrefConnector } from "../../src/connectors/impl/crossref.js";
+import { crossrefConnector } from "../../packages/wiki/src/connectors/impl/crossref.js";
 
 describe("crossref connector", () => {
   it("builds an escaped DOI works URL", () => {

@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, stat } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import importCommand from "../src/commands/import.js";
-import { listCandidates } from "../src/compiler/candidates.js";
+import importCommand from "../packages/wiki/src/commands/import.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 
 let dir: string;
 afterEach(async () => { process.exitCode = 0; if (dir) await rm(dir, { recursive: true, force: true }); });

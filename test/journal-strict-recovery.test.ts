@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { readFile, rm, mkdtemp } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { recoverJournalBeforeCompile, JournalUnsafeError } from "../src/trust/journal-recovery.js";
+import { recoverJournalBeforeCompile, JournalUnsafeError } from "../packages/wiki/src/trust/journal-recovery.js";
 import { WIKI, makeTrustRoot, cleanupTrustRoot, existsUnder } from "./trust/fixture.js";
 import {
   journalFile,

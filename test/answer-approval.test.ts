@@ -3,12 +3,12 @@
  * retained targets and profile eligibility, regardless of proposal observations.
  */
 import { expect, it, vi } from "vitest";
-import * as planner from "../src/trust/planner.js";
+import * as planner from "../packages/wiki/src/trust/planner.js";
 import { chmod, unlink } from "node:fs/promises";
 import path from "node:path";
-import approve from "../src/commands/review-approve.js";
-import { parseFrontmatter } from "../src/utils/markdown.js";
-import { sha256Text } from "../src/connectors/hash.js";
+import approve from "../packages/wiki/src/commands/review-approve.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import { sha256Text } from "../packages/wiki/src/connectors/hash.js";
 import { replaceCandidate } from "./fixtures/answer-candidate.js";
 import { buildResearchLiteProject } from "./fixtures/profile-fixtures.js";
 import { usePublicationRoot, propose, candidateBytes, retained, generic, expectApprovalRefused, approvePage, expectApprovedAndCleared } from "./fixtures/publication-review.js";

@@ -2,7 +2,7 @@
  * Shared factory for EvalReport test fixtures used across eval test files.
  */
 
-import type { EvalReport } from "../../src/eval/types.js";
+import type { EvalReport } from "../../packages/wiki/src/eval/types.js";
 
 export function makeEvalReport(overrides: Partial<EvalReport> = {}): EvalReport {
   return {

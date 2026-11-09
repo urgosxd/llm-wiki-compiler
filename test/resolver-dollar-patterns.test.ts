@@ -20,7 +20,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { resolveAndApplyLinks } from "../src/compiler/resolver.js";
+import { resolveAndApplyLinks } from "../packages/wiki/src/compiler/resolver.js";
 
 const roots: string[] = [];
 afterEach(() => {

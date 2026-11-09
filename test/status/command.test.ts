@@ -12,9 +12,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import statusCommand from "../../src/commands/status.js";
-import { setVerbose } from "../../src/utils/output.js";
-import { stableContent } from "../../src/utils/source-writer.js";
+import statusCommand from "../../packages/wiki/src/commands/status.js";
+import { setVerbose } from "../../packages/wiki/src/utils/output.js";
+import { stableContent } from "../../packages/wiki/src/utils/source-writer.js";
 
 /** Seed a minimal compiled project: one source, one concept page, valid state. */
 async function seedProject(root: string): Promise<void> {

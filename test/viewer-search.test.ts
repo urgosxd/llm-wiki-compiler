@@ -8,12 +8,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { searchPages } from "../src/viewer/search.js";
+import { searchPages } from "../packages/wiki/src/viewer/search.js";
 import type {
   PageId,
   ViewerPage,
   ViewerSnapshot,
-} from "../src/viewer/types.js";
+} from "../packages/wiki/src/viewer/types.js";
 
 function buildPage(
   slug: string,

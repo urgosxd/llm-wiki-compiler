@@ -4,8 +4,8 @@
  * a transitive chain whose tail should remain untouched.
  */
 import { describe, expect, it } from "vitest";
-import { mergeExtractions } from "../src/compiler/extraction-merge.js";
-import type { ExtractionResult } from "../src/compiler/deps.js";
+import { mergeExtractions } from "../packages/wiki/src/compiler/extraction-merge.js";
+import type { ExtractionResult } from "../packages/wiki/src/compiler/deps.js";
 
 /** Small source record with predictable metadata and evidence. */
 function source(file: string, names: string[], reused?: true): ExtractionResult {

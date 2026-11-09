@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { rm, writeFile } from "fs/promises";
 import path from "path";
-import { loadShellTemplate, resetShellTemplateCache } from "../src/viewer/shell.js";
+import { loadShellTemplate, resetShellTemplateCache } from "../packages/wiki/src/viewer/shell.js";
 import { makeOutsideDir } from "./fixtures/outside-dir.js";
 
 const TEMPLATE_SHELL = `<html><body><main data-main-pane></main></body></html>`;

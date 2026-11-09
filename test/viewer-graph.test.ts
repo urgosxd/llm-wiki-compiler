@@ -7,10 +7,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildGraphData } from "../src/viewer/graph.js";
-import type { EntityPageNode, RelationEdge } from "../src/viewer/graph.js";
-import type { PageId, ViewerPage } from "../src/viewer/types.js";
-import type { EntityId } from "../src/profile/types.js";
+import { buildGraphData } from "../packages/wiki/src/viewer/graph.js";
+import type { EntityPageNode, RelationEdge } from "../packages/wiki/src/viewer/graph.js";
+import type { PageId, ViewerPage } from "../packages/wiki/src/viewer/types.js";
+import type { EntityId } from "../packages/wiki/src/profile/types.js";
 
 /** Build a typed entity-page node input keyed by its `<type>/<slug>` EntityId. */
 function entityNode(entityType: string, slug: string): EntityPageNode {

@@ -24,7 +24,7 @@ import {
 // The universal `:focus-visible` rule lives in viewer-tokens.css (the
 // global reset/token sheet), not a per-surface stylesheet — viewer.css,
 // which used to own it, has since been deleted.
-const STYLESHEET_PATH = path.resolve("src/viewer/assets/viewer-tokens.css");
+const STYLESHEET_PATH = path.resolve("packages/wiki/src/viewer/assets/viewer-tokens.css");
 
 interface SearchResultRow {
   id: string;

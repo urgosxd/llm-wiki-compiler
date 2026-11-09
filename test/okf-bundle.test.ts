@@ -10,9 +10,9 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, readFile, readdir, access } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { buildOkfBundle } from "../src/export/okf/bundle.js";
-import { safeRefName } from "../src/export/okf/mapping.js";
-import type { ExportPage } from "../src/export/types.js";
+import { buildOkfBundle } from "../packages/wiki/src/export/okf/bundle.js";
+import { safeRefName } from "../packages/wiki/src/export/okf/mapping.js";
+import type { ExportPage } from "../packages/wiki/src/export/types.js";
 
 let root: string;
 beforeEach(async () => {

@@ -2,12 +2,12 @@ import { describe, it, expect } from "vitest";
 import { mkdir, writeFile, symlink } from "fs/promises";
 import path from "path";
 import { createHash } from "node:crypto";
-import { computeFreshness, buildFreshnessSnapshot } from "../src/freshness/index.js";
-import type { FreshnessSnapshot } from "../src/freshness/types.js";
+import { computeFreshness, buildFreshnessSnapshot } from "../packages/wiki/src/freshness/index.js";
+import type { FreshnessSnapshot } from "../packages/wiki/src/freshness/types.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 import { writeTestStateJson, writeSourceState, writeSourceFile, sha256Hex } from "./fixtures/state-json.js";
-import { readStateClassified } from "../src/utils/state.js";
-import { stableContent } from "../src/utils/source-writer.js";
+import { readStateClassified } from "../packages/wiki/src/utils/state.js";
+import { stableContent } from "../packages/wiki/src/utils/source-writer.js";
 
 function snapshot(sources: FreshnessSnapshot["sources"], stateStatus: FreshnessSnapshot["stateStatus"] = "ok"): FreshnessSnapshot {
   return { stateStatus, sources };

@@ -16,7 +16,7 @@ import { appRoleExists, countAsAppRole } from "../fixtures/rls-probe.js";
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import type { DatabaseHandle } from "@repo/foundation";
-import { writeCompileConfig } from "../../src/dimensions/wiki/compile-config-store.js";
+import { writeCompileConfig } from "../../packages/wiki/src/dimensions/wiki/compile-config-store.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 const stackA = await createKgPostgresHarness("cfg-iso-a");

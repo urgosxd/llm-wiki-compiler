@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { acquireLockBlocking, releaseLock } from "../src/utils/lock.js";
-import { acquireKeyedFifo } from "../src/utils/keyed-fifo.js";
-import * as fifo from "../src/utils/keyed-fifo.js";
+import { acquireLockBlocking, releaseLock } from "../packages/wiki/src/utils/lock.js";
+import { acquireKeyedFifo } from "../packages/wiki/src/utils/keyed-fifo.js";
+import * as fifo from "../packages/wiki/src/utils/keyed-fifo.js";
 
 describe("blocking lock process-local FIFO", () => {
   let parent = "";

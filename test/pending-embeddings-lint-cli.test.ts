@@ -13,8 +13,8 @@ import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
-import { writePendingEmbeddings } from "../src/utils/pending-embeddings.js";
-import { CONCEPTS_DIR, LLMWIKI_DIR, PENDING_EMBEDDINGS_FILE } from "../src/utils/constants.js";
+import { writePendingEmbeddings } from "../packages/wiki/src/utils/pending-embeddings.js";
+import { CONCEPTS_DIR, LLMWIKI_DIR, PENDING_EMBEDDINGS_FILE } from "../packages/wiki/src/utils/constants.js";
 
 let root = "";
 

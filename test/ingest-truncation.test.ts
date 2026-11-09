@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseFrontmatter } from "../src/utils/markdown.js";
-import { enforceCharLimit, buildDocument } from "../src/commands/ingest.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import { enforceCharLimit, buildDocument } from "../packages/wiki/src/commands/ingest.js";
 
 /**
  * Tests that the ingest command preserves truncation metadata in frontmatter.

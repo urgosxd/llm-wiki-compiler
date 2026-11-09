@@ -14,8 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
-import { lockRegistry } from "../src/utils/lock-postgres.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
+import { lockRegistry } from "../packages/wiki/src/utils/lock-postgres.js";
 import { perRunDatabase } from "./fixtures/per-run-database.js";
 import { expectPerRunDatabase } from "./fixtures/per-run-database-assertions.js";
 

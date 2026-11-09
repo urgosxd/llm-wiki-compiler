@@ -4,7 +4,7 @@ import {
   parseFrontmatter,
   parseFrontmatterStatus,
   extractCitations,
-} from "../src/utils/markdown.js";
+} from "../packages/wiki/src/utils/markdown.js";
 
 function expectValidFrontmatter(content: string, expectedBody: string): void {
   const status = parseFrontmatterStatus(content);

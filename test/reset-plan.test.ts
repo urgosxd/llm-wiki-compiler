@@ -22,7 +22,7 @@ import { mkdir, writeFile, symlink, readdir, rm, rename, readFile } from "node:f
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { executeReset, planReset, RESET_SCOPES } from "../src/commands/reset-plan.js";
+import { executeReset, planReset, RESET_SCOPES } from "../packages/wiki/src/commands/reset-plan.js";
 import { tempRootTracker } from "./temp-roots.js";
 
 const tracker = tempRootTracker();

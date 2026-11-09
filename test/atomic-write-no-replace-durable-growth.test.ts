@@ -12,7 +12,7 @@ import {
   AtomicWriteCollisionError,
   AtomicWriteCommittedCleanupError,
   atomicWriteNoReplaceDurable,
-} from "../src/utils/atomic-write.js";
+} from "../packages/wiki/src/utils/atomic-write.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 let growAfterStat: (() => Promise<void>) | undefined;

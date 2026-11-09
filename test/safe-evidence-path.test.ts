@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { isSafeRelativeEvidencePath } from "../src/utils/evidence-path.js";
+import { isSafeRelativeEvidencePath } from "../packages/wiki/src/utils/evidence-path.js";
 
 describe("isSafeRelativeEvidencePath — rejected paths", () => {
   it.each([

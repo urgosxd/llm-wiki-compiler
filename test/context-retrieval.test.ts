@@ -12,16 +12,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import { defaultProfileLoad } from "./fixtures/profile-fixtures.js";
 
-vi.mock("../src/utils/embeddings-load.js", () => ({
+vi.mock("../packages/wiki/src/utils/embeddings-load.js", () => ({
   loadEmbeddingsForContext: vi.fn(),
   findRelevantChunksV3: vi.fn(),
 }));
-vi.mock("../src/profile/load.js", () => ({
+vi.mock("../packages/wiki/src/profile/load.js", () => ({
   loadProfile: vi.fn(async () => defaultProfileLoad()),
 }));
 
-import { loadEmbeddingsForContext, findRelevantChunksV3 } from "../src/utils/embeddings-load.js";
-import { retrieveSemanticChunks } from "../src/context/retrieval.js";
+import { loadEmbeddingsForContext, findRelevantChunksV3 } from "../packages/wiki/src/utils/embeddings-load.js";
+import { retrieveSemanticChunks } from "../packages/wiki/src/context/retrieval.js";
 
 const mockedLoad = loadEmbeddingsForContext as unknown as Mock;
 const mockedFindChunks = findRelevantChunksV3 as unknown as Mock;

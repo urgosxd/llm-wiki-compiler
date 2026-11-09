@@ -7,8 +7,8 @@
 
 import { vi } from "vitest";
 import { EMPTY_CATEGORY_ANSWER, isCategoryAssignmentCall } from "./provider-calls.js";
-import { AnthropicProvider } from "../../src/providers/anthropic.js";
-import * as embeddings from "../../src/utils/embeddings.js";
+import { AnthropicProvider } from "../../packages/wiki/src/providers/anthropic.js";
+import * as embeddings from "../../packages/wiki/src/utils/embeddings.js";
 
 /** Build a provider-compatible extraction response. */
 export function conceptResponse(...names: string[]): string {

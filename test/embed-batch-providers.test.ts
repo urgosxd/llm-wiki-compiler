@@ -7,10 +7,10 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { OpenAIProvider } from "../src/providers/openai.js";
-import { voyageEmbed, voyageEmbedBatch } from "../src/providers/voyage-embed.js";
-import { CopilotProvider } from "../src/providers/copilot.js";
-import { MiniMaxProvider } from "../src/providers/minimax.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
+import { voyageEmbed, voyageEmbedBatch } from "../packages/wiki/src/providers/voyage-embed.js";
+import { CopilotProvider } from "../packages/wiki/src/providers/copilot.js";
+import { MiniMaxProvider } from "../packages/wiki/src/providers/minimax.js";
 
 // Build a provider and stub its embeddingsClient.embeddings.create.
 function providerWithEmbeddings(create: (args: unknown) => unknown): OpenAIProvider {

@@ -18,10 +18,10 @@ import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { EVENTS_FILE, EVENTS_HEAD_FILE } from "../src/utils/constants.js";
-import { appendEvent } from "../src/events/store.js";
-import { readEvents, readEventsStrict } from "../src/events/store-read.js";
-import { EventStoreChainError } from "../src/events/types.js";
+import { EVENTS_FILE, EVENTS_HEAD_FILE } from "../packages/wiki/src/utils/constants.js";
+import { appendEvent } from "../packages/wiki/src/events/store.js";
+import { readEvents, readEventsStrict } from "../packages/wiki/src/events/store-read.js";
+import { EventStoreChainError } from "../packages/wiki/src/events/types.js";
 import { eventInput, seedEvents, expectEmptyEventsProblem } from "./fixtures/event-store-probe.js";
 
 let root = "";

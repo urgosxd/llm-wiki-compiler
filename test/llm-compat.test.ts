@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { callClaude } from "../src/utils/llm.js";
+import { callClaude } from "../packages/wiki/src/utils/llm.js";
 
 describe("callClaude backward compatibility", () => {
   it("is exported as a function from llm.ts", () => {

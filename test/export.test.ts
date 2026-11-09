@@ -10,15 +10,15 @@ import { readFile } from "fs/promises";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
-import { runExport } from "../src/commands/export.js";
-import type { ExportOptions, ExportResult } from "../src/commands/export.js";
-import { extractWikilinkSlugs } from "../src/export/collect.js";
-import { buildLlmsTxt, buildLlmsFullTxt } from "../src/export/llms-txt.js";
-import { buildJsonExport } from "../src/export/json-export.js";
-import { buildJsonLd } from "../src/export/json-ld.js";
-import { buildGraphml } from "../src/export/graphml.js";
-import { buildMarp } from "../src/export/marp.js";
-import type { ExportPage } from "../src/export/types.js";
+import { runExport } from "../packages/wiki/src/commands/export.js";
+import type { ExportOptions, ExportResult } from "../packages/wiki/src/commands/export.js";
+import { extractWikilinkSlugs } from "../packages/wiki/src/export/collect.js";
+import { buildLlmsTxt, buildLlmsFullTxt } from "../packages/wiki/src/export/llms-txt.js";
+import { buildJsonExport } from "../packages/wiki/src/export/json-export.js";
+import { buildJsonLd } from "../packages/wiki/src/export/json-ld.js";
+import { buildGraphml } from "../packages/wiki/src/export/graphml.js";
+import { buildMarp } from "../packages/wiki/src/export/marp.js";
+import type { ExportPage } from "../packages/wiki/src/export/types.js";
 
 // ---------------------------------------------------------------------------
 // Shared fixture helpers

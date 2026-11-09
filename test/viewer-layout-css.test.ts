@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const ASSETS = path.resolve("src/viewer/assets");
+const ASSETS = path.resolve("packages/wiki/src/viewer/assets");
 
 /** Read the real asset selected by the shipping shell. */
 function asset(name: string): Promise<string> {

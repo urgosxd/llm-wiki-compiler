@@ -12,8 +12,8 @@ import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { generateMOC } from "../../src/compiler/obsidian.js";
-import { withDerivedSource } from "../../src/dimensions/wiki/derived-artifact-source.js";
+import { generateMOC } from "../../packages/wiki/src/compiler/obsidian.js";
+import { withDerivedSource } from "../../packages/wiki/src/dimensions/wiki/derived-artifact-source.js";
 import { withStackEnv } from "../fixtures/stack-env.js";
 
 /** Provision a project root with a concepts directory and a Stack. */

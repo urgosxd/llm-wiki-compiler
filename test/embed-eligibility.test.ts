@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { pageEmbedSurfaces } from "../src/utils/embed-eligibility.js";
-import type { RetrievalDef } from "../src/profile/types.js";
+import { pageEmbedSurfaces } from "../packages/wiki/src/utils/embed-eligibility.js";
+import type { RetrievalDef } from "../packages/wiki/src/profile/types.js";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 

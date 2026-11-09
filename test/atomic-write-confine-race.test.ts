@@ -19,8 +19,8 @@ import { mkdtemp, rm, mkdir, rename, symlink, readdir } from "fs/promises";
 import { existsSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
-import { confineUnderRoot } from "../src/utils/path-confine.js";
-import { atomicWrite } from "../src/utils/markdown.js";
+import { confineUnderRoot } from "../packages/wiki/src/utils/path-confine.js";
+import { atomicWrite } from "../packages/wiki/src/utils/markdown.js";
 
 let root = "";
 let outside = "";

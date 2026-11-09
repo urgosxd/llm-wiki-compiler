@@ -19,14 +19,14 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { planRemoval, applyRemovalLocked } from "../../src/sources/removal.js";
+import { planRemoval, applyRemovalLocked } from "../../packages/wiki/src/sources/removal.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
-import { createDimensionsDatabase } from "../../src/dimensions/activation.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { getStoredPage } from "../../src/dimensions/wiki/page-store.js";
-import { writeStateFor } from "../../src/dimensions/wiki/page-source-seam.js";
-import { saveSourceDocument } from "../../src/dimensions/wiki/source-documents-store.js";
-import type { WikiState } from "../../src/utils/types.js";
+import { createDimensionsDatabase } from "../../packages/wiki/src/dimensions/activation.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { getStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
+import { writeStateFor } from "../../packages/wiki/src/dimensions/wiki/page-source-seam.js";
+import { saveSourceDocument } from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import type { WikiState } from "../../packages/wiki/src/utils/types.js";
 
 /** The row-store directory value, which is NOT the `wiki/concepts` path. */
 const CONCEPT_DIRECTORY = "concepts";

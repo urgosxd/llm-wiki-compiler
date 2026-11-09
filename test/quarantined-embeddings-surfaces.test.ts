@@ -2,10 +2,10 @@
 import { readFile, writeFile, symlink } from "node:fs/promises";
 import path from "node:path";
 import { expect, it } from "vitest";
-import { collectStatus } from "../src/status/collect.js";
-import { lint } from "../src/linter/index.js";
-import { writePendingEmbeddings } from "../src/utils/pending-embeddings.js";
-import { QUARANTINED_EMBEDDINGS_FILE, PENDING_EMBEDDINGS_FILE } from "../src/utils/constants.js";
+import { collectStatus } from "../packages/wiki/src/status/collect.js";
+import { lint } from "../packages/wiki/src/linter/index.js";
+import { writePendingEmbeddings } from "../packages/wiki/src/utils/pending-embeddings.js";
+import { QUARANTINED_EMBEDDINGS_FILE, PENDING_EMBEDDINGS_FILE } from "../packages/wiki/src/utils/constants.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
 

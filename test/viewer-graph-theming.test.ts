@@ -12,8 +12,8 @@ import { describe, expect, it } from "vitest";
 import { readFile } from "fs/promises";
 import path from "path";
 
-const GRAPH_MODULE = path.resolve("src/viewer/assets/viewer-graph.js");
-const GRAPH_STYLES = path.resolve("src/viewer/assets/viewer-graph.css");
+const GRAPH_MODULE = path.resolve("packages/wiki/src/viewer/assets/viewer-graph.js");
+const GRAPH_STYLES = path.resolve("packages/wiki/src/viewer/assets/viewer-graph.css");
 
 /** Hex colour literals that must no longer appear in the module. */
 const HEX_PATTERN = /#[0-9a-fA-F]{3,8}\b/g;

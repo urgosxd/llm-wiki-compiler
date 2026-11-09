@@ -27,7 +27,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { withDerivedSource } from "../../src/dimensions/wiki/derived-artifact-source.js";
+import { withDerivedSource } from "../../packages/wiki/src/dimensions/wiki/derived-artifact-source.js";
 import { journalDescriptions, rowOnlyProviderModule, seedConceptPage } from "../fixtures/mcp-stack-rows.js";
 import { buildServer, callTool } from "../fixtures/mcp-test-env.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
@@ -52,7 +52,7 @@ const QUESTION = "what does the journal isolate?";
  * Retrieval, the registry seam, the tenant bind, the journal write and the row reads
  * stay production code, because they are what this file measures.
  */
-vi.mock("../../src/utils/llm.js", () => rowOnlyProviderModule(SELECTED_PAGE_ID));
+vi.mock("../../packages/wiki/src/utils/llm.js", () => rowOnlyProviderModule(SELECTED_PAGE_ID));
 
 describe("tool journal isolation", () => {
   let named: ProbeStack;

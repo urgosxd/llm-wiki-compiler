@@ -10,14 +10,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import os from "os";
 import path from "path";
-import { buildContextPack } from "../src/context/build.js";
-import { expandGraphNeighborhood } from "../src/context/graph.js";
-import { retrieveSemanticChunks } from "../src/context/retrieval.js";
-import { MAX_TOP_CHUNKS, MAX_TOP_PAGES } from "../src/context/types.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
-import type { GraphData, PageId, ViewerPage } from "../src/viewer/types.js";
+import { buildContextPack } from "../packages/wiki/src/context/build.js";
+import { expandGraphNeighborhood } from "../packages/wiki/src/context/graph.js";
+import { retrieveSemanticChunks } from "../packages/wiki/src/context/retrieval.js";
+import { MAX_TOP_CHUNKS, MAX_TOP_PAGES } from "../packages/wiki/src/context/types.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
+import type { GraphData, PageId, ViewerPage } from "../packages/wiki/src/viewer/types.js";
 
-vi.mock("../src/context/retrieval.js", () => ({
+vi.mock("../packages/wiki/src/context/retrieval.js", () => ({
   retrieveSemanticChunks: vi.fn(async () => ({ hits: [], warning: null })),
 }));
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { okfDocToPage } from "../src/import/okf-map.js";
-import { parseFrontmatter } from "../src/utils/markdown.js";
+import { okfDocToPage } from "../packages/wiki/src/import/okf-map.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
 
 const ctx = { bundleId: "demo", titleOf: (s: string) => (s === "rag" ? "RAG" : null) };
 

@@ -11,7 +11,7 @@ import {
   FreshCandidateIdExhaustedError,
   writeFreshCandidate,
   type CandidateDraft,
-} from "../src/compiler/candidates.js";
+} from "../packages/wiki/src/compiler/candidates.js";
 import { snapshotCandidateQueue } from "./fixtures/candidate-queue.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 

@@ -7,7 +7,7 @@ import {
   resolveAnthropicAuthFromEnv,
   resolveAnthropicBaseURLFromEnv,
   resolveAnthropicModelFromEnv,
-} from "../src/utils/claude-settings.js";
+} from "../packages/wiki/src/utils/claude-settings.js";
 
 const TEST_SETTINGS_PATH_ENV = "LLMWIKI_CLAUDE_SETTINGS_PATH";
 const tempDirs: string[] = [];

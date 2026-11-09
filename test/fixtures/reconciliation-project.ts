@@ -5,8 +5,8 @@
  * suite controls its own extraction and page-generation responses.
  */
 import { beforeEach, vi } from "vitest";
-import { AnthropicProvider } from "../../src/providers/anthropic.js";
-import * as embeddings from "../../src/utils/embeddings.js";
+import { AnthropicProvider } from "../../packages/wiki/src/providers/anthropic.js";
+import * as embeddings from "../../packages/wiki/src/utils/embeddings.js";
 import { useCompileProject, type CompileProjectCtx, type CompileProjectOptions } from "./compile-project.js";
 
 /** Register the standard project lifecycle and isolate unrelated side effects. */

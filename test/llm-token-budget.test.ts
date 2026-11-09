@@ -3,7 +3,7 @@
  * must reach text, structured and streaming requests without changing defaults.
  */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { callClaude } from "../src/utils/llm.js";
+import { callClaude } from "../packages/wiki/src/utils/llm.js";
 
 beforeEach(() => {
   vi.stubEnv("LLMWIKI_PROVIDER", "openai");

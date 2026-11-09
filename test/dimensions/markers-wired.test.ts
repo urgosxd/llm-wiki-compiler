@@ -17,9 +17,9 @@ import {
   clearPendingEmbeddings,
   loadPendingEmbeddings,
   writePendingEmbeddings,
-} from "../../src/utils/pending-embeddings.js";
-import { readRuleState, updateRuleSourceState } from "../../src/compiler/rule-state.js";
-import { readLintCache, writeLintCache } from "../../src/linter/cache.js";
+} from "../../packages/wiki/src/utils/pending-embeddings.js";
+import { readRuleState, updateRuleSourceState } from "../../packages/wiki/src/compiler/rule-state.js";
+import { readLintCache, writeLintCache } from "../../packages/wiki/src/linter/cache.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
 import { createProbeStack } from "./harness-lifecycle.js";

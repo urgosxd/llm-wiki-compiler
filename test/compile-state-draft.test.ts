@@ -18,16 +18,16 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, readFile } from "fs/promises";
 import os from "os";
 import path from "path";
-import { CompileStateDraft } from "../src/compiler/compile-state-draft.js";
+import { CompileStateDraft } from "../packages/wiki/src/compiler/compile-state-draft.js";
 import {
   writeState,
   readState,
   updateSourceState,
   removeSourceState,
-} from "../src/utils/state.js";
-import { STATE_FILE } from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/state.js";
+import { STATE_FILE } from "../packages/wiki/src/utils/constants.js";
 import { readPersistedState } from "./fixtures/state-json.js";
-import type { SourceState, WikiState } from "../src/utils/types.js";
+import type { SourceState, WikiState } from "../packages/wiki/src/utils/types.js";
 
 let root: string;
 

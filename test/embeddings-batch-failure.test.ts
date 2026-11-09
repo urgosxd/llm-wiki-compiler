@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { embedTextBatch, EmbeddingIntegrityError } from "../src/utils/embeddings-batch.js";
-import type { LLMProvider } from "../src/utils/provider.js";
+import { embedTextBatch, EmbeddingIntegrityError } from "../packages/wiki/src/utils/embeddings-batch.js";
+import type { LLMProvider } from "../packages/wiki/src/utils/provider.js";
 
 const VEC = [0.1, 0.2];
 const withStatus = (s: number, m = "") => Object.assign(new Error(m), { status: s });

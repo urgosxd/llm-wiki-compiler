@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
-import { addObsidianMeta, generateMOC } from "../src/compiler/obsidian.js";
-import { buildFrontmatter } from "../src/utils/markdown.js";
+import { addObsidianMeta, generateMOC } from "../packages/wiki/src/compiler/obsidian.js";
+import { buildFrontmatter } from "../packages/wiki/src/utils/markdown.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 
 /** Write a concept page with optional tags. */

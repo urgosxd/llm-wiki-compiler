@@ -18,8 +18,8 @@ import {
   OpenAIRequestConfigError,
   reasoningParams,
   tokenLimitParams,
-} from "../src/providers/openai-request.js";
-import { OpenAIProvider } from "../src/providers/openai.js";
+} from "../packages/wiki/src/providers/openai-request.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
 import { createEnvSnapshot } from "./fixtures/env-snapshot.js";
 
 const TOKEN_PARAM_ENV = "LLMWIKI_OPENAI_TOKEN_PARAM";

@@ -41,7 +41,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import ingestFile from "../../src/ingest/file.js";
+import ingestFile from "../../packages/wiki/src/ingest/file.js";
 import { fixture } from "./document-fixtures.js";
 
 /** Return the rejection message of a refused ingest, failing if it resolved. */

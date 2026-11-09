@@ -29,14 +29,14 @@
  */
 import { describe, expect, it } from "vitest";
 
-import * as databaseEntry from "../../src/dimensions/wiki/database.js";
+import * as databaseEntry from "../../packages/wiki/src/dimensions/wiki/database.js";
 import type {
   WikiPageReaderOptions,
   WikiStoreDimensionOptions,
-} from "../../src/dimensions/wiki/database.js";
-import * as dimensionBarrel from "../../src/dimensions/index.js";
-import type { Dimension } from "../../src/dimensions/types.js";
-import type { DimensionReader } from "../../src/dimensions/read-types.js";
+} from "../../packages/wiki/src/dimensions/wiki/database.js";
+import * as dimensionBarrel from "../../packages/wiki/src/dimensions/index.js";
+import type { Dimension } from "../../packages/wiki/src/dimensions/types.js";
+import type { DimensionReader } from "../../packages/wiki/src/dimensions/read-types.js";
 
 /** A database handle is never touched by construction, so a cast is honest here. */
 const unusedDatabase = {} as WikiStoreDimensionOptions["db"];

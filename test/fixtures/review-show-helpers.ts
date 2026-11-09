@@ -7,7 +7,7 @@
  */
 
 import { vi } from "vitest";
-import reviewShowCommand from "../../src/commands/review-show.js";
+import reviewShowCommand from "../../packages/wiki/src/commands/review-show.js";
 
 /**
  * Run `reviewShowCommand` for a single candidate id and return all the

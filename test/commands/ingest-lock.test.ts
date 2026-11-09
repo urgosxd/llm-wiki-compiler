@@ -16,9 +16,9 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { acquireLock, releaseLock, LockBusyError } from "../../src/utils/lock.js";
-import { ingestTextSource } from "../../src/commands/ingest.js";
-import { tryWithOrdinaryMutationLock } from "../../src/utils/mutation-lock.js";
+import { acquireLock, releaseLock, LockBusyError } from "../../packages/wiki/src/utils/lock.js";
+import { ingestTextSource } from "../../packages/wiki/src/commands/ingest.js";
+import { tryWithOrdinaryMutationLock } from "../../packages/wiki/src/utils/mutation-lock.js";
 
 /** A scratch project root the lock can live under. */
 async function projectRoot(): Promise<string> {

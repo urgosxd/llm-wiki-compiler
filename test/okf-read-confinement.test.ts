@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, symlink, realpath } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { confinedInside } from "../src/import/okf-read.js";
+import { confinedInside } from "../packages/wiki/src/import/okf-read.js";
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });

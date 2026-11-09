@@ -19,7 +19,7 @@
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { WikiState } from "../../src/utils/types.js";
+import type { WikiState } from "../../packages/wiki/src/utils/types.js";
 import { writeProfileFile, SAMPLE_PROFILE } from "./profile-fixtures.js";
 
 /**

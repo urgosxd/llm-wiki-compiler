@@ -54,9 +54,9 @@ import { describe, it, expect } from "vitest";
 import { writeFile, readFile, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { planRemoval, applyRemovalLocked, regenerateDerivedLocked } from "../src/sources/removal.js";
+import { planRemoval, applyRemovalLocked, regenerateDerivedLocked } from "../packages/wiki/src/sources/removal.js";
 import { twoSourceRmProject, makeEmptyRmProject } from "./fixtures/rm-project.js";
-import type { WikiState } from "../src/utils/types.js";
+import type { WikiState } from "../packages/wiki/src/utils/types.js";
 
 /**
  * Same shape as {@link twoSourceRmProject}, but `bad.md` exclusively owns a

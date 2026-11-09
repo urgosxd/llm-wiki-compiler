@@ -15,10 +15,10 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { generateSeedPages } from "../src/compiler/seed-pages.js";
-import * as compileWrite from "../src/compiler/compile-write.js";
-import { buildDefaultSchema } from "../src/schema/defaults.js";
-import type { SchemaConfig } from "../src/schema/index.js";
+import { generateSeedPages } from "../packages/wiki/src/compiler/seed-pages.js";
+import * as compileWrite from "../packages/wiki/src/compiler/compile-write.js";
+import { buildDefaultSchema } from "../packages/wiki/src/schema/defaults.js";
+import type { SchemaConfig } from "../packages/wiki/src/schema/index.js";
 import { useSeedPagesRoot, emptyGeneration } from "./fixtures/seed-pages-harness.js";
 
 const ctx = useSeedPagesRoot("seed-committed-");

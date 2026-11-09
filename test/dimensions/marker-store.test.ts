@@ -20,7 +20,7 @@ import {
   replaceRefreshMarkers,
   writeCachedLintResult,
   writeRuleExtractorState,
-} from "../../src/dimensions/wiki/marker-store.js";
+} from "../../packages/wiki/src/dimensions/wiki/marker-store.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { createProbeStack } from "./harness-lifecycle.js";
 

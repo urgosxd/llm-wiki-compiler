@@ -29,10 +29,10 @@ import {
   createCategory,
   listCategories,
   readCategory,
-} from "../../src/categories/index.js";
-import type { CategoryMemberDraft } from "../../src/categories/index.js";
-import { MAX_CATEGORY_MEMBERS_LISTED } from "../../src/utils/constants.js";
-import { parseFrontmatter } from "../../src/utils/markdown.js";
+} from "../../packages/wiki/src/categories/index.js";
+import type { CategoryMemberDraft } from "../../packages/wiki/src/categories/index.js";
+import { MAX_CATEGORY_MEMBERS_LISTED } from "../../packages/wiki/src/utils/constants.js";
+import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 import { categoryTempRoots } from "../fixtures/category-root.js";
 import { categoryMember } from "../fixtures/category-record.js";
 

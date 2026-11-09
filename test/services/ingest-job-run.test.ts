@@ -18,10 +18,10 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createJobRegistry, MAX_JOBS } from "../../src/services/ingest/jobs/registry.js";
-import { runIngestJob } from "../../src/services/ingest/jobs/run.js";
-import { FAILURE_LOG_FILE, failureRecordOf } from "../../src/services/ingest/jobs/failure-log.js";
-import { queuedCompileState, queuedIngestState } from "../../src/services/ingest/jobs/types.js";
+import { createJobRegistry, MAX_JOBS } from "../../packages/wiki/src/services/ingest/jobs/registry.js";
+import { runIngestJob } from "../../packages/wiki/src/services/ingest/jobs/run.js";
+import { FAILURE_LOG_FILE, failureRecordOf } from "../../packages/wiki/src/services/ingest/jobs/failure-log.js";
+import { queuedCompileState, queuedIngestState } from "../../packages/wiki/src/services/ingest/jobs/types.js";
 
 /** A scratch project root; the failure log lands under `<root>/.llmwiki/`. */
 async function projectRoot(): Promise<string> {

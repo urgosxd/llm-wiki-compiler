@@ -21,9 +21,9 @@ import {
   planPageMutation,
   type PlannedMutation,
   type RawPageRef,
-} from "../src/trust/planner.js";
-import { applyApprovedMutations, applyApprovedMutationsLocked } from "../src/trust/executor.js";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
+} from "../packages/wiki/src/trust/planner.js";
+import { applyApprovedMutations, applyApprovedMutationsLocked } from "../packages/wiki/src/trust/executor.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
 import { makeTrustRoot, cleanupTrustRoot, existsUnder } from "./trust/fixture.js";
 
 let root: string;

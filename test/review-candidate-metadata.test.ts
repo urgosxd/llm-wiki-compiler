@@ -7,10 +7,10 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { writeCandidate, readCandidate } from "../src/compiler/candidates.js";
-import type { CandidateDraft } from "../src/compiler/candidates.js";
-import reviewListCommand from "../src/commands/review-list.js";
-import reviewShowCommand from "../src/commands/review-show.js";
+import { writeCandidate, readCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import type { CandidateDraft } from "../packages/wiki/src/compiler/candidates.js";
+import reviewListCommand from "../packages/wiki/src/commands/review-list.js";
+import reviewShowCommand from "../packages/wiki/src/commands/review-show.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

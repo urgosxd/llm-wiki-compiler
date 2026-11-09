@@ -209,7 +209,7 @@ describe("viewer research-journey timeline", () => {
 
 const PDF_PATH = "/api/workflows/build/runs/r1/pdf";
 const PDF_REF = { artifactType: "paper-build", slug: "m1", sha256: `sha256:${"a".repeat(64)}`, member: "main.pdf" };
-const JOURNEY_CSS = path.resolve("src/viewer/assets/viewer-journey.css");
+const JOURNEY_CSS = path.resolve("packages/wiki/src/viewer/assets/viewer-journey.css");
 
 /** Mount the journey route WITH the journey stylesheet, so computed visibility is real. */
 async function mountStyledJourney(body: unknown): Promise<{ dom: import("jsdom").JSDOM; main: HTMLElement; css: string }> {

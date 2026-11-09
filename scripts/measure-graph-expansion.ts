@@ -25,11 +25,11 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createClient, createDatabase } from "@repo/kg";
-import { databaseEmbeddingSource } from "../src/utils/embeddings-database.js";
-import { findRelevantChunksV3 } from "../src/utils/embeddings-load.js";
-import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
-import { createRegistryPageSource } from "../src/dimensions/wiki/page-registry-source.js";
-import { CHUNK_TOP_K } from "../src/utils/constants.js";
+import { databaseEmbeddingSource } from "../packages/wiki/src/utils/embeddings-database.js";
+import { findRelevantChunksV3 } from "../packages/wiki/src/utils/embeddings-load.js";
+import { loadEmbeddingsForSearch } from "../packages/wiki/src/utils/embeddings-load.js";
+import { createRegistryPageSource } from "../packages/wiki/src/dimensions/wiki/page-registry-source.js";
+import { CHUNK_TOP_K } from "../packages/wiki/src/utils/constants.js";
 
 /** The stack measured: 28 graph-algorithm pages, 94.6% of links resolve. */
 const DEFAULT_STACK = "7f1b3b36-540a-4f8d-ae40-8f2ede8ef92c";

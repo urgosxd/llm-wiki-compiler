@@ -34,6 +34,15 @@ const STAMP_VERSION = 1;
 /**
  * Directories whose file CONTENTS decide the build output. Ordered for a stable
  * hash; the walk sorts each level.
+ *
+ * `packages` is what covers the wiki source: the `@repo/wiki` tree lives at
+ * `packages/wiki/src`, and `src` at the repository root no longer exists, so its
+ * walk contributes nothing there. The entry stays because
+ * `test/build-stamp.test.ts` seeds a scratch `src/` as its input fixture and
+ * asserts the hash moves when it changes — dropping the entry would silently
+ * stop the cache from invalidating on the tree that fixture describes. A missing
+ * directory hashes as absent (see {@link hashDir}), so keeping it costs no hash
+ * input and no second walk of the moved tree.
  */
 const INPUT_DIRS = ["src", "packages", "scripts"];
 

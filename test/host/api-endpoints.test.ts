@@ -17,9 +17,9 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
-import { startHost } from "../../src/host/server.js";
-import { acquireLock, releaseLock } from "../../src/utils/lock.js";
+import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
+import { startHost } from "../../packages/wiki/src/host/server.js";
+import { acquireLock, releaseLock } from "../../packages/wiki/src/utils/lock.js";
 import { useStackEnv } from "../fixtures/stack-env.js";
 
 /** A scratch project with the sources/ directory the services expect. */

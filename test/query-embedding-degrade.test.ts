@@ -8,11 +8,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { useAlphaPageFixture, mockEmbeddingFailure } from "./fixtures/alpha-page.js";
-import { generateAnswer } from "../src/commands/query.js";
+import { generateAnswer } from "../packages/wiki/src/commands/query.js";
 
 // Selection call (tools present) picks the seeded concept; answer call echoes
 // its grounding prompt — neither needs an embedder, which is the point.
-vi.mock("../src/utils/llm.js", () => ({
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({
   callClaude: vi.fn(async (opts: { tools?: unknown[]; messages: Array<{ content: string }> }) =>
     opts.tools ? JSON.stringify({ pages: ["concepts/alpha"], reasoning: "r" }) : opts.messages[0].content),
 }));

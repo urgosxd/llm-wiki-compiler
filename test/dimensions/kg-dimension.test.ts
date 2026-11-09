@@ -51,7 +51,7 @@ vi.mock("@repo/kg", async () => {
   };
 });
 
-const { createKgDimension } = await import("../../src/dimensions/kg/index.js");
+const { createKgDimension } = await import("../../packages/wiki/src/dimensions/kg/index.js");
 
 /** Build the dimension under test with a stable stack binding. */
 function dimension(options: { dryRun?: boolean; databaseUrl?: string } = {}) {

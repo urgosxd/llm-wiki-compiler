@@ -14,9 +14,9 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyApprovedMutationsLocked } from "../../src/trust/executor.js";
-import { getStoredPage } from "../../src/dimensions/wiki/page-store.js";
-import { createPageRemoveSink, createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
+import { applyApprovedMutationsLocked } from "../../packages/wiki/src/trust/executor.js";
+import { getStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
+import { createPageRemoveSink, createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 const BODY = "---\ntitle: Doomed\n---\n\nbody\n";

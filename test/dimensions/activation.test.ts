@@ -19,7 +19,7 @@ import {
   DIMENSIONS_ENV_VAR,
   DimensionActivationError,
   resolveDimensions,
-} from "../../src/dimensions/activation.js";
+} from "../../packages/wiki/src/dimensions/activation.js";
 
 /**
  * A database handle that is never connected to.

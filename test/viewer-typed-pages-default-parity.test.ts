@@ -20,8 +20,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { buildViewerSnapshot } from "../src/viewer/snapshot.js";
-import { startViewerServer } from "../src/viewer/server.js";
+import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
+import { startViewerServer } from "../packages/wiki/src/viewer/server.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 
 /** Envelope top-level keys, in the order the pre-change server emitted them. */

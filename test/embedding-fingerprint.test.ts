@@ -19,7 +19,7 @@ import {
   resolveEmbeddingFingerprint,
   resolveEmbeddingModel,
   storeMatchesActiveEmbedding,
-} from "../src/utils/embeddings-store.js";
+} from "../packages/wiki/src/utils/embeddings-store.js";
 import { createEnvSnapshot } from "./fixtures/env-snapshot.js";
 
 const { setEnv, restore } = createEnvSnapshot([

@@ -19,7 +19,7 @@ import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import { mockClaudeEnv, stubCannedCompile, useAimockLifecycle } from "../fixtures/aimock-helper.js";
 import { runCLI } from "../fixtures/run-cli.js";
-import { readState } from "../../src/utils/state.js";
+import { readState } from "../../packages/wiki/src/utils/state.js";
 
 const aimock = useAimockLifecycle("compile-forget");
 

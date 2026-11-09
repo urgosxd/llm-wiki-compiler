@@ -45,7 +45,7 @@ vi.mock("@repo/kg", async () => {
   };
 });
 
-const { createKgDimension } = await import("../../src/dimensions/kg/index.js");
+const { createKgDimension } = await import("../../packages/wiki/src/dimensions/kg/index.js");
 
 /** The declaration under test. */
 const ONTOLOGY = validateOntology({

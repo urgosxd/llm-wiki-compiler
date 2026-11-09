@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Copy the viewer's static assets from src/viewer/assets/ into
+ * Copy the viewer's static assets from packages/wiki/src/viewer/assets/ into
  * dist/viewer/assets/ so the published npm package ships the shell
  * template, stylesheet, and client script alongside the compiled CLI.
  *
@@ -15,7 +15,7 @@ import url from "node:url";
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, "..");
-const source = path.join(projectRoot, "src/viewer/assets");
+const source = path.join(projectRoot, "packages/wiki/src/viewer/assets");
 const target = path.resolve(projectRoot, process.argv[2] ?? "dist", "viewer/assets");
 
 await mkdir(target, { recursive: true });

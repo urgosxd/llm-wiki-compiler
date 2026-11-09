@@ -14,9 +14,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import os from "os";
 import path from "path";
-import { collectProjectState } from "../src/project/state.js";
-import { recommendNextAction } from "../src/project/recommendations.js";
-import { writeLintCache } from "../src/linter/cache.js";
+import { collectProjectState } from "../packages/wiki/src/project/state.js";
+import { recommendNextAction } from "../packages/wiki/src/project/recommendations.js";
+import { writeLintCache } from "../packages/wiki/src/linter/cache.js";
 import {
   SOURCES_DIR,
   CONCEPTS_DIR,
@@ -25,7 +25,7 @@ import {
   LAST_LINT_FILE,
   CANDIDATES_DIR,
   INDEX_FILE,
-} from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/constants.js";
 import { expectFreshDirUnchanged } from "./fixtures/project-state-helpers.js";
 
 let tmpDir: string;

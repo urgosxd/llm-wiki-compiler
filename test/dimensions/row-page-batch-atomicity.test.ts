@@ -35,11 +35,11 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyApprovedMutationsLocked } from "../../src/trust/executor.js";
-import { pageStoreOptions, type PageSink } from "../../src/trust/page-apply.js";
-import { getStoredPage } from "../../src/dimensions/wiki/page-store.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { resolvePageSeams, type PageSeams } from "../../src/dimensions/wiki/page-source-seam.js";
+import { applyApprovedMutationsLocked } from "../../packages/wiki/src/trust/executor.js";
+import { pageStoreOptions, type PageSink } from "../../packages/wiki/src/trust/page-apply.js";
+import { getStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { resolvePageSeams, type PageSeams } from "../../packages/wiki/src/dimensions/wiki/page-source-seam.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 /** One page-create mutation, in the shape the executor plans. */

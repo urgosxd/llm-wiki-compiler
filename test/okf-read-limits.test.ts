@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdir, writeFile, symlink } from "fs/promises";
 import path from "path";
-import { readOkfBundle } from "../src/import/okf-read.js";
+import { readOkfBundle } from "../packages/wiki/src/import/okf-read.js";
 import { useOkfTempDir } from "./fixtures/okf-temp-dir.js";
 
 const { ctx, make } = useOkfTempDir();

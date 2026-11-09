@@ -17,9 +17,9 @@ import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, readFile, appendFile, symlink } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { lint } from "../src/linter/index.js";
-import { appendEvent } from "../src/events/store.js";
-import { EVENTS_FILE, CONCEPTS_DIR } from "../src/utils/constants.js";
+import { lint } from "../packages/wiki/src/linter/index.js";
+import { appendEvent } from "../packages/wiki/src/events/store.js";
+import { EVENTS_FILE, CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 import { buildResearchLiteProject, buildResearchLiteRelationsProject } from "./fixtures/profile-fixtures.js";
 
 let root = "";

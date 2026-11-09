@@ -7,11 +7,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { compileAndReport } from "../src/compiler/index.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { buildFrontmatter, parseFrontmatter } from "../src/utils/markdown.js";
-import { readState, writeState } from "../src/utils/state.js";
-import * as embeddings from "../src/utils/embeddings.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { buildFrontmatter, parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import { readState, writeState } from "../packages/wiki/src/utils/state.js";
+import * as embeddings from "../packages/wiki/src/utils/embeddings.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 import { EMPTY_CATEGORY_ANSWER, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
 

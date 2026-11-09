@@ -25,8 +25,8 @@ import { sql } from "drizzle-orm";
 import type { DatabaseHandle } from "@repo/foundation";
 
 import { createKgPostgresHarness } from "../../fixtures/kg-postgres.js";
-import { DEFAULT_STACK_DOMAIN } from "../../../src/dimensions/stack-selection.js";
-import { resolveStackForCommand } from "../../../src/services/stacks/resolve-stack.js";
+import { DEFAULT_STACK_DOMAIN } from "../../../packages/wiki/src/dimensions/stack-selection.js";
+import { resolveStackForCommand } from "../../../packages/wiki/src/services/stacks/resolve-stack.js";
 
 const harness = await createKgPostgresHarness("resolve-stack");
 const { db, reachable } = harness;

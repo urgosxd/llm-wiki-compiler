@@ -51,9 +51,9 @@ import { rm } from "node:fs/promises";
 import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, expect, vi } from "vitest";
 
-import type { CandidateDraft } from "../../src/compiler/candidates.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { lockRegistry } from "../../src/utils/lock-postgres.js";
+import type { CandidateDraft } from "../../packages/wiki/src/compiler/candidates.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { lockRegistry } from "../../packages/wiki/src/utils/lock-postgres.js";
 import { scratchProjectRoot } from "./host-scratch.js";
 import type { KgPostgresHarness } from "./kg-postgres.js";
 import { perRunDatabase } from "./per-run-database.js";

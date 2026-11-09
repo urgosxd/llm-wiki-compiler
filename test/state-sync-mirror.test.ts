@@ -12,9 +12,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, readFile } from "fs/promises";
 import os from "os";
 import path from "path";
-import { writeState, syncEntityMirror } from "../src/utils/state.js";
-import { STATE_FILE } from "../src/utils/constants.js";
-import type { WikiState } from "../src/utils/types.js";
+import { writeState, syncEntityMirror } from "../packages/wiki/src/utils/state.js";
+import { STATE_FILE } from "../packages/wiki/src/utils/constants.js";
+import type { WikiState } from "../packages/wiki/src/utils/types.js";
 
 let root: string;
 

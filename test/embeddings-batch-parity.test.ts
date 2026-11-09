@@ -7,9 +7,9 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { refreshChunkEmbeddings } from "../src/utils/embeddings-chunks.js";
-import * as providerMod from "../src/utils/provider.js";
-import type { PageRecord } from "../src/utils/embeddings-pages.js";
+import { refreshChunkEmbeddings } from "../packages/wiki/src/utils/embeddings-chunks.js";
+import * as providerMod from "../packages/wiki/src/utils/provider.js";
+import type { PageRecord } from "../packages/wiki/src/utils/embeddings-pages.js";
 
 const records: PageRecord[] = [
   { slug: "a", title: "A", summary: "", body: "alpha one.\n\nalpha two." },

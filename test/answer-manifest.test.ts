@@ -3,7 +3,7 @@
  * Audit metadata is structural here; fresh resolution belongs to publication.
  */
 import { expect, it } from "vitest";
-import { readCandidate, writeFreshCandidate } from "../src/compiler/candidates.js";
+import { readCandidate, writeFreshCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { answerDraft, replaceCandidate } from "./fixtures/answer-candidate.js";
 

@@ -15,10 +15,10 @@
  */
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { createDimensionsDatabase } from "../../src/dimensions/activation.js";
+import { createDimensionsDatabase } from "../../packages/wiki/src/dimensions/activation.js";
 import { perRunDatabase } from "./per-run-database.js";
-import { listSourceDocuments } from "../../src/dimensions/wiki/source-documents-store.js";
-import { listStoredPagesUnfiltered } from "../../src/dimensions/wiki/page-store.js";
+import { listSourceDocuments } from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import { listStoredPagesUnfiltered } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
 
 /** The Stack this process is bound to, or undefined on a filesystem project. */
 function activeStackId(env: NodeJS.ProcessEnv): string | undefined {

@@ -20,13 +20,13 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { deleteWikiPagesLocked } from "../../src/wiki/delete-page.js";
-import { createPageWriteSink, createPageRemoveSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { getStoredPage } from "../../src/dimensions/wiki/page-store.js";
+import { deleteWikiPagesLocked } from "../../packages/wiki/src/wiki/delete-page.js";
+import { createPageWriteSink, createPageRemoveSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { getStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
 import { withStackEnv } from "../fixtures/stack-env.js";
-import { withPageRemover } from "../../src/dimensions/wiki/page-source-seam.js";
+import { withPageRemover } from "../../packages/wiki/src/dimensions/wiki/page-source-seam.js";
 
 const BODY = "---\ntitle: Doomed\n---\n\nbody\n";
 

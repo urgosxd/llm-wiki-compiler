@@ -36,11 +36,11 @@ import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
-import { lockRegistry } from "../src/utils/lock-postgres.js";
-import { acquireMutationLock, acquireMutationLockBlocking } from "../src/utils/mutation-lock.js";
-import { JournalUnsafeError } from "../src/trust/journal-recovery.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
+import { lockRegistry } from "../packages/wiki/src/utils/lock-postgres.js";
+import { acquireMutationLock, acquireMutationLockBlocking } from "../packages/wiki/src/utils/mutation-lock.js";
+import { JournalUnsafeError } from "../packages/wiki/src/trust/journal-recovery.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import { perRunDatabase } from "./fixtures/per-run-database.js";
 
 /** This process's own database; provisioning fails loudly rather than skipping. */

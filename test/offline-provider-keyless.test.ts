@@ -12,8 +12,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chmod, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createWiki } from "../src/index.js";
-import { loadPendingEmbeddings, mergeFreshAttempts, writePendingEmbeddings } from "../src/utils/pending-embeddings.js";
+import { createWiki } from "../packages/wiki/src/index.js";
+import { loadPendingEmbeddings, mergeFreshAttempts, writePendingEmbeddings } from "../packages/wiki/src/utils/pending-embeddings.js";
 
 const CREDENTIAL_VARS = /_API_KEY$|_AUTH_TOKEN$|^GITHUB_TOKEN$/;
 const PAGE_IDS = ["concepts/sparse-attention", "concepts/sourdough-bread"] as const;

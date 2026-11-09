@@ -14,7 +14,7 @@ import path from "path";
 import { runCLI } from "./fixtures/run-cli.js";
 import { useNextTempDir } from "./fixtures/next-test-helpers.js";
 import { sha256Hex, writeSourceState } from "./fixtures/state-json.js";
-import { CONCEPTS_DIR, SOURCES_DIR } from "../src/utils/constants.js";
+import { CONCEPTS_DIR, SOURCES_DIR } from "../packages/wiki/src/utils/constants.js";
 
 const env = useNextTempDir("freshness-e2e");
 

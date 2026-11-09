@@ -20,14 +20,14 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { buildCollidingProject, echoCallClaudeModule, mockQueryVector } from "./fixtures/typed-grounding.js";
 
-vi.mock("../src/utils/llm.js", () => echoCallClaudeModule());
-vi.mock("../src/utils/provider-guard.js", () => ({ ensureProviderAvailable: () => {} }));
+vi.mock("../packages/wiki/src/utils/llm.js", () => echoCallClaudeModule());
+vi.mock("../packages/wiki/src/utils/provider-guard.js", () => ({ ensureProviderAvailable: () => {} }));
 
 describe("§4.5 ask grounds its answer in resolvable, visible sources", () => {
   it("every GROUNDING pageId resolves to a retained wiki page", async () => {
     const root = await buildCollidingProject("ask-cite", [1, 0], [0, 1]);
     mockQueryVector([1, 1]);
-    const { generateAnswer } = await import("../src/commands/query.js");
+    const { generateAnswer } = await import("../packages/wiki/src/commands/query.js");
     const result = await generateAnswer(root, "scaling?");
     // Non-vacuous: an empty grounding list would make resolution trivially true.
     expect(result.pageIds.length).toBeGreaterThan(0);
@@ -39,7 +39,7 @@ describe("§4.5 ask grounds its answer in resolvable, visible sources", () => {
   it("the grounding context NAMES its excerpt sources, and they resolve too", async () => {
     const root = await buildCollidingProject("ask-prov", [1, 0], [0, 1]);
     mockQueryVector([1, 1]);
-    const { generateAnswer } = await import("../src/commands/query.js");
+    const { generateAnswer } = await import("../packages/wiki/src/commands/query.js");
     const result = await generateAnswer(root, "scaling?");
     // The echoed prompt IS the context the model saw: the provenance section
     // must be present and must label each excerpt with the page it came from.

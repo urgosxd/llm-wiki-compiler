@@ -11,10 +11,10 @@
 import { describe, it, expect } from "vitest";
 import { mkdir, symlink, readFile, writeFile } from "fs/promises";
 import path from "path";
-import { writeState, readState } from "../src/utils/state.js";
-import { updateRuleSourceState, readRuleState } from "../src/compiler/rule-state.js";
-import { openBatch, recordPreState } from "../src/trust/journal.js";
-import { STATE_FILE, RULE_STATE_FILE, LLMWIKI_DIR } from "../src/utils/constants.js";
+import { writeState, readState } from "../packages/wiki/src/utils/state.js";
+import { updateRuleSourceState, readRuleState } from "../packages/wiki/src/compiler/rule-state.js";
+import { openBatch, recordPreState } from "../packages/wiki/src/trust/journal.js";
+import { STATE_FILE, RULE_STATE_FILE, LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 import { withStackEnv } from "./fixtures/stack-env.js";
 

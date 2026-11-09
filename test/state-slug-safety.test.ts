@@ -15,10 +15,10 @@ import { describe, it, expect } from "vitest";
 import { symlink, writeFile, mkdir, readdir } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import { readStateClassified } from "../src/utils/state.js";
-import { orphanUnownedFrozenPages } from "../src/compiler/orphan.js";
-import { CompileStateDraft } from "../src/compiler/compile-state-draft.js";
-import { STATE_FILE, LLMWIKI_DIR } from "../src/utils/constants.js";
+import { readStateClassified } from "../packages/wiki/src/utils/state.js";
+import { orphanUnownedFrozenPages } from "../packages/wiki/src/compiler/orphan.js";
+import { CompileStateDraft } from "../packages/wiki/src/compiler/compile-state-draft.js";
+import { STATE_FILE, LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import { writeRawTestStateJson } from "./fixtures/state-json.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 

@@ -6,9 +6,9 @@
 import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
 import { describe, expect, it } from "vitest";
-import { registerWikilink } from "../src/viewer/wikilink-rule.js";
-import type { ViewerPage } from "../src/viewer/types.js";
-import * as shared from "../src/wiki/wikilink-tokens.js";
+import { registerWikilink } from "../packages/wiki/src/viewer/wikilink-rule.js";
+import type { ViewerPage } from "../packages/wiki/src/viewer/types.js";
+import * as shared from "../packages/wiki/src/wiki/wikilink-tokens.js";
 
 /** Flatten parsed tokens, including nested image/inline children. */
 function wikilinks(tokens: Token[]): Token[] {

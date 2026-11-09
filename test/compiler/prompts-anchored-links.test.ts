@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { buildPagePrompt, PROMPT_VERSION } from "../../src/compiler/prompts.js";
+import { buildPagePrompt, PROMPT_VERSION } from "../../packages/wiki/src/compiler/prompts.js";
 
 const ENV_KEY = "LLMWIKI_OUTPUT_LANG";
 

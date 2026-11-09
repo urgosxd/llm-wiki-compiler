@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { EmbeddingStoreV3 } from "../src/utils/embeddings-store.js";
+import type { EmbeddingStoreV3 } from "../packages/wiki/src/utils/embeddings-store.js";
 import {
   chunkOf,
   echoCallClaudeModule,
@@ -24,13 +24,13 @@ import {
   pageEntryOf,
 } from "./fixtures/typed-grounding.js";
 
-vi.mock("../src/utils/llm.js", () => echoCallClaudeModule());
+vi.mock("../packages/wiki/src/utils/llm.js", () => echoCallClaudeModule());
 
 const BODY = "FOO_BODY about transformer scaling.";
 
 /** Codes surfaced on a `generateAnswer` result over the seeded project. */
 async function warningCodes(root: string): Promise<string[]> {
-  const { generateAnswer } = await import("../src/commands/query.js");
+  const { generateAnswer } = await import("../packages/wiki/src/commands/query.js");
   const result = await generateAnswer(root, "scaling?");
   return (result.warnings ?? []).map((w) => w.code);
 }

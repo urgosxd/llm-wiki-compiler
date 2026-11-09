@@ -2,11 +2,11 @@
 import { beforeEach, expect, it } from "vitest";
 import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { listSources, getSource, deleteSource, sourceFileMissing } from "../../src/sources/store.js";
-import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
-import { readViewerSource } from "../../src/viewer/source-access.js";
-import { startViewerServer } from "../../src/viewer/server.js";
-import { saveSource } from "../../src/utils/source-writer.js";
+import { listSources, getSource, deleteSource, sourceFileMissing } from "../../packages/wiki/src/sources/store.js";
+import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
+import { readViewerSource } from "../../packages/wiki/src/viewer/source-access.js";
+import { startViewerServer } from "../../packages/wiki/src/viewer/server.js";
+import { saveSource } from "../../packages/wiki/src/utils/source-writer.js";
 import { useTempRoot } from "../fixtures/temp-root.js";
 import { runCLI, expectCLIExit } from "../fixtures/run-cli.js";
 

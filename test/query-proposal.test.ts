@@ -5,16 +5,16 @@
 import { expect, it, vi } from "vitest";
 import { chmod, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { maybeSaveQueryPage } from "../src/commands/query-publication.js";
-import { generateAnswer } from "../src/commands/query.js";
-import { updateEmbeddingsLockedCore } from "../src/utils/embeddings.js";
-import { parseFrontmatter } from "../src/utils/markdown.js";
-import { sha256Text } from "../src/connectors/hash.js";
+import { maybeSaveQueryPage } from "../packages/wiki/src/commands/query-publication.js";
+import { generateAnswer } from "../packages/wiki/src/commands/query.js";
+import { updateEmbeddingsLockedCore } from "../packages/wiki/src/utils/embeddings.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import { sha256Text } from "../packages/wiki/src/connectors/hash.js";
 import { usePublicationRoot, propose, candidateBytes } from "./fixtures/publication-review.js";
 import { buildResearchLiteProject } from "./fixtures/profile-fixtures.js";
-import { callClaude } from "../src/utils/llm.js";
+import { callClaude } from "../packages/wiki/src/utils/llm.js";
 
-vi.mock("../src/utils/llm.js", () => ({ callClaude: vi.fn() }));
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({ callClaude: vi.fn() }));
 
 const root = usePublicationRoot();
 it("returns a candidate ID and preserved answer through generation without extra provider work", async () => {

@@ -17,7 +17,7 @@ import {
   resolvePageKind,
   serializeSchemaToYaml,
   PAGE_KINDS,
-} from "../src/schema/index.js";
+} from "../packages/wiki/src/schema/index.js";
 
 let tmpDir: string;
 

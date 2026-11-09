@@ -28,8 +28,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { withProjectRoot, withStackEnv } from "../fixtures/stack-env.js";
-import { appendEventLocked } from "../../src/events/store.js";
-import { readEvents, verifyEventChain } from "../../src/events/store-read.js";
+import { appendEventLocked } from "../../packages/wiki/src/events/store.js";
+import { readEvents, verifyEventChain } from "../../packages/wiki/src/events/store-read.js";
 
 /** A timestamp with MICROSECOND precision, which is what Postgres preserves. */
 const MICRO_AT = "2026-10-26T17:49:11.123456Z";

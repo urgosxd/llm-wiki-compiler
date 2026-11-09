@@ -10,8 +10,8 @@ import { useAimockLifecycle, mockClaudeEnv, type MockClaudeHandle } from "./fixt
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
 import { stageCitationWorkspace, citationWorkspaceBytes } from "./fixtures/query-answer-citations.js";
 import { SAMPLE_PROFILE } from "./fixtures/profile-fixtures.js";
-import { listCandidates } from "../src/compiler/candidate-read.js";
-import { buildQueryDocument } from "../src/commands/query-document.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidate-read.js";
+import { buildQueryDocument } from "../packages/wiki/src/commands/query-document.js";
 
 const aimock = useAimockLifecycle("query-publication-cli");
 

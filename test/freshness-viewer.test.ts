@@ -20,8 +20,8 @@ import {
   writeSourceState,
   writeCorruptTestStateJson,
 } from "./fixtures/state-json.js";
-import { buildViewerSnapshot } from "../src/viewer/snapshot.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
+import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 
 let root: string;
 

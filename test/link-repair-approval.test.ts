@@ -6,10 +6,10 @@
 import { expect, it, vi } from "vitest";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { writeCandidate } from "../src/compiler/candidates.js";
-import { repairLinks } from "../src/compiler/link-repair.js";
-import reviewApproveCommand from "../src/commands/review-approve.js";
-import * as embeddings from "../src/utils/embeddings.js";
+import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import { repairLinks } from "../packages/wiki/src/compiler/link-repair.js";
+import reviewApproveCommand from "../packages/wiki/src/commands/review-approve.js";
+import * as embeddings from "../packages/wiki/src/utils/embeddings.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const ctx = useTempRoot();

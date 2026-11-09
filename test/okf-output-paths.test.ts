@@ -1,8 +1,8 @@
 /** Portable OKF identifiers are resolved beneath a native absolute output root. */
 import path from "node:path";
 import { describe, it, expect } from "vitest";
-import { resolveOutputPaths, isSafeOkfPath } from "../src/export/okf/output-paths.js";
-import type { ExportPage } from "../src/export/types.js";
+import { resolveOutputPaths, isSafeOkfPath } from "../packages/wiki/src/export/okf/output-paths.js";
+import type { ExportPage } from "../packages/wiki/src/export/types.js";
 
 const OUTPUT_ROOT = path.resolve("out");
 

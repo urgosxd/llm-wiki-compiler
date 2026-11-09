@@ -21,8 +21,8 @@ import {
   settleAfterFailure,
   type PendingEmbedding,
   type SettleResult,
-} from "../src/utils/pending-embeddings.js";
-import { MAX_PENDING_EMBEDDING_ATTEMPTS } from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/pending-embeddings.js";
+import { MAX_PENDING_EMBEDDING_ATTEMPTS } from "../packages/wiki/src/utils/constants.js";
 
 describe("mergeFreshAttempts", () => {
   it("adds new ids at attempts:0 and PRESERVES existing attempt counts", () => {

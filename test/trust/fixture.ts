@@ -11,9 +11,9 @@ import { mkdtemp, rm, mkdir, access, readFile, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import { expect } from "vitest";
-import { acquireLock, releaseLock } from "../../src/utils/lock.js";
-import { LLMWIKI_DIR } from "../../src/utils/constants.js";
-import type { WriteOne } from "../../src/trust/executor.js";
+import { acquireLock, releaseLock } from "../../packages/wiki/src/utils/lock.js";
+import { LLMWIKI_DIR } from "../../packages/wiki/src/utils/constants.js";
+import type { WriteOne } from "../../packages/wiki/src/trust/executor.js";
 
 /**
  * A fault-injecting {@link WriteOne} that throws on the `nth` (1-based) call and

@@ -13,12 +13,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync } from "fs";
 import { rm } from "fs/promises";
 import path from "path";
-import { collectStatus } from "../src/status/collect.js";
-import { buildViewerSnapshot } from "../src/viewer/snapshot.js";
+import { collectStatus } from "../packages/wiki/src/status/collect.js";
+import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
 import { writeCorruptTestStateJson } from "./fixtures/state-json.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 
 let root: string;
 const bakPath = () => path.join(root, ".llmwiki/state.json.bak");

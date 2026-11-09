@@ -23,9 +23,9 @@ import {
   assertViewerSubtree,
   PathSafetyError,
   resolveUnderRoot,
-} from "../src/viewer/path-safety.js";
-import { buildViewerSnapshot } from "../src/viewer/snapshot.js";
-import { startViewerServer } from "../src/viewer/server.js";
+} from "../packages/wiki/src/viewer/path-safety.js";
+import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
+import { startViewerServer } from "../packages/wiki/src/viewer/server.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { makeOutsideDir } from "./fixtures/outside-dir.js";
 import { buildNewsroomProject } from "./fixtures/newsroom-profile.js";

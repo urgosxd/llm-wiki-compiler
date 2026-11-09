@@ -6,18 +6,18 @@
 import { beforeEach, afterEach, vi } from "vitest";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { evaluateCandidates, formatCandidateReport } from "../src/eval/candidates.js";
-import { evaluationHash } from "../src/eval/candidate-evidence.js";
+import { evaluateCandidates, formatCandidateReport } from "../packages/wiki/src/eval/candidates.js";
+import { evaluationHash } from "../packages/wiki/src/eval/candidate-evidence.js";
 
 /** The writer's serialization: the text `revision` is hashed over. */
 const ser = (candidate: unknown): string => JSON.stringify(candidate, null, 2);
-import { evaluateCitationSupport } from "../src/eval/citation-support.js";
-import { readCandidate, writeCandidate } from "../src/compiler/candidates.js";
+import { evaluateCitationSupport } from "../packages/wiki/src/eval/citation-support.js";
+import { readCandidate, writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import { withStackEnv } from "./fixtures/stack-env.js";
-import { callClaude } from "../src/utils/llm.js";
+import { callClaude } from "../packages/wiki/src/utils/llm.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
-vi.mock("../src/utils/llm.js", () => ({ callClaude: vi.fn() }));
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({ callClaude: vi.fn() }));
 
 describe("pending candidate evaluation", () => {
   const env = useLintTempRoot("eval-pending");

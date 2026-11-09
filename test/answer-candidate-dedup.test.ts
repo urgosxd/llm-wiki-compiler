@@ -4,7 +4,7 @@
  */
 import { expect, it } from "vitest";
 import { readFile } from "fs/promises";
-import { writeCandidate, writeFreshCandidate, listCandidates } from "../src/compiler/candidates.js";
+import { writeCandidate, writeFreshCandidate, listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { answerDraft, candidateFile } from "./fixtures/answer-candidate.js";
 

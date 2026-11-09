@@ -17,10 +17,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { EVENTS_HEAD_FILE, MAX_EVENT_HEAD_BYTES } from "../src/utils/constants.js";
-import { appendEvent } from "../src/events/store.js";
-import { readEvents } from "../src/events/store-read.js";
-import { EventStoreCorruptError } from "../src/events/types.js";
+import { EVENTS_HEAD_FILE, MAX_EVENT_HEAD_BYTES } from "../packages/wiki/src/utils/constants.js";
+import { appendEvent } from "../packages/wiki/src/events/store.js";
+import { readEvents } from "../packages/wiki/src/events/store-read.js";
+import { EventStoreCorruptError } from "../packages/wiki/src/events/types.js";
 
 let root = "";
 beforeEach(async () => { root = await mkdtemp(path.join(os.tmpdir(), "evt-head-cap-")); });

@@ -18,7 +18,7 @@
 
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { tryAcquirePostgresLock } from "../src/utils/lock-postgres.js";
+import { tryAcquirePostgresLock } from "../packages/wiki/src/utils/lock-postgres.js";
 import { perRunDatabase } from "./fixtures/per-run-database.js";
 import { expectPerRunDatabase } from "./fixtures/per-run-database-assertions.js";
 

@@ -13,8 +13,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readStateClassified } from "../src/utils/state.js";
-import { collectStatus } from "../src/status/collect.js";
+import { readStateClassified } from "../packages/wiki/src/utils/state.js";
+import { collectStatus } from "../packages/wiki/src/status/collect.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 import { writeRawTestStateJson, writeTestStateJson } from "./fixtures/state-json.js";
 

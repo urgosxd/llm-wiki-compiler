@@ -51,7 +51,7 @@ import { testDatabaseUrl } from "../fixtures/test-database.js";
 import {
   DEFAULT_STACK_DOMAIN,
   DEFAULT_STACK_NAME,
-} from "../../src/dimensions/stack-selection.js";
+} from "../../packages/wiki/src/dimensions/stack-selection.js";
 
 /** The line a command prints when it resolved the default Stack. Verbatim. */
 const DEFAULT_STACK_NOTICE = "Using the default Stack (no --stack or AKS_STACK_ID configured).";

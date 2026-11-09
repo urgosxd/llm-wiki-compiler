@@ -19,13 +19,13 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
-import { compileAndReport } from "../../src/compiler/index.js";
-import { PROMPT_VERSION } from "../../src/compiler/prompts.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import { PROMPT_VERSION } from "../../packages/wiki/src/compiler/prompts.js";
 import {
   describeVersionSplit,
   summarizeVersions,
   type PageVersionRecord,
-} from "../../src/compiler/version-report.js";
+} from "../../packages/wiki/src/compiler/version-report.js";
 import { useTempRoot } from "../fixtures/temp-root.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
 import { fingerprintTree, changedPaths } from "../fixtures/tree-fingerprint.js";

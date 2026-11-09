@@ -24,7 +24,7 @@
  * the directory is genuinely its corpus.
  */
 import { describe, it, expect } from "vitest";
-import { collectStatus } from "../../src/status/collect.js";
+import { collectStatus } from "../../packages/wiki/src/status/collect.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 import { writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";

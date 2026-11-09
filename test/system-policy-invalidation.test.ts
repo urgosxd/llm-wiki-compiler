@@ -17,8 +17,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { createWiki } from "../src/sdk/wiki.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { createWiki } from "../packages/wiki/src/sdk/wiki.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 
 const EXTRACTION = JSON.stringify({

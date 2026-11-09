@@ -10,9 +10,9 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { writeFile, mkdir, readFile, symlink } from "fs/promises";
 import path from "path";
 import { execFileSync } from "node:child_process";
-import { repairLinks } from "../src/compiler/link-repair.js";
-import { applyCompilePageWritesLocked } from "../src/compiler/compile-write.js";
-import { writeCandidate } from "../src/compiler/candidates.js";
+import { repairLinks } from "../packages/wiki/src/compiler/link-repair.js";
+import { applyCompilePageWritesLocked } from "../packages/wiki/src/compiler/compile-write.js";
+import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { writePage as writeFixturePage } from "./fixtures/write-page.js";
 

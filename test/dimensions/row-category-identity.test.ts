@@ -25,8 +25,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { compileAndReport } from "../../src/compiler/index.js";
-import { CategoryWriteRefusedError } from "../../src/categories/types.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import { CategoryWriteRefusedError } from "../../packages/wiki/src/categories/types.js";
 import { withRowsStack } from "../fixtures/rows-only-stack.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import {

@@ -9,7 +9,7 @@
 
 import { writeFile, mkdir, access, symlink } from "fs/promises";
 import path from "path";
-import { LLMWIKI_DIR } from "../../src/utils/constants.js";
+import { LLMWIKI_DIR } from "../../packages/wiki/src/utils/constants.js";
 
 /** Absolute path to the project's journal directory. */
 export function journalDir(root: string): string {

@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, realpath } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { collectReferenceFiles, resolveReferences } from "../src/export/okf/references.js";
-import { safeRefName } from "../src/export/okf/mapping.js";
-import type { ExportPage } from "../src/export/types.js";
+import { collectReferenceFiles, resolveReferences } from "../packages/wiki/src/export/okf/references.js";
+import { safeRefName } from "../packages/wiki/src/export/okf/mapping.js";
+import type { ExportPage } from "../packages/wiki/src/export/types.js";
 
 const pages = [
   { citations: [{ file: "a.md", start: 1, end: 3 }] },

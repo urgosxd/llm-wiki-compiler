@@ -3,8 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { readCappedNoFollow } from "../src/utils/confined-read.js";
-import { openGraphFileAppend } from "../src/utils/jsonl-store.js";
+import { readCappedNoFollow } from "../packages/wiki/src/utils/confined-read.js";
+import { openGraphFileAppend } from "../packages/wiki/src/utils/jsonl-store.js";
 
 // Exercise the unavailable-capability branch with real files; this is not a Windows runner.
 vi.mock("node:fs", async (original) => {

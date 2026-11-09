@@ -31,9 +31,9 @@ import {
   withEmbeddingStoreSource,
   withRegistrySource,
 } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { databaseEmbeddingSink, splitPageId } from "../../src/utils/embeddings-database.js";
-import { hashChunkText, splitIntoChunks } from "../../src/utils/retrieval.js";
-import type { ChunkEmbeddingV3, EmbeddingStoreV3, PageEmbeddingV3 } from "../../src/utils/embeddings-store.js";
+import { databaseEmbeddingSink, splitPageId } from "../../packages/wiki/src/utils/embeddings-database.js";
+import { hashChunkText, splitIntoChunks } from "../../packages/wiki/src/utils/retrieval.js";
+import type { ChunkEmbeddingV3, EmbeddingStoreV3, PageEmbeddingV3 } from "../../packages/wiki/src/utils/embeddings-store.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
@@ -78,8 +78,8 @@ function vector(): number[] {
  * degrades for a reason that has nothing to do with what this suite measures. That
  * exact omission cost a debugging cycle, so both are stubbed explicitly.
  */
-vi.mock("../../src/utils/embedding-provider.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/utils/embedding-provider.js")>();
+vi.mock("../../packages/wiki/src/utils/embedding-provider.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../packages/wiki/src/utils/embedding-provider.js")>();
   return {
     ...actual,
     getEmbeddingProvider: () => ({

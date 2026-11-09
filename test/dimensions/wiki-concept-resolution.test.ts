@@ -22,7 +22,7 @@ import {
   type ConceptEmbeddingPort,
   type ConceptEmbedOutcome,
   type ConceptIncumbentSnapshot,
-} from "../../src/dimensions/wiki/concept-resolution.js";
+} from "../../packages/wiki/src/dimensions/wiki/concept-resolution.js";
 
 /** Vectors placed on a plane so one cosine value can be requested directly. */
 function vectorAtDegrees(degrees: number): number[] {

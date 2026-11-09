@@ -18,10 +18,10 @@ import {
   useAimockLifecycle,
   type MockClaudeHandle,
 } from "./fixtures/aimock-helper.js";
-import { CONCEPTS_DIR, EMBEDDINGS_FILE, LLMWIKI_DIR } from "../src/utils/constants.js";
-import { hashChunkText, splitIntoChunks } from "../src/utils/retrieval.js";
-import { buildEmbeddingText } from "../src/utils/embeddings-pages.js";
-import { resolveEmbeddingFingerprint } from "../src/utils/embeddings-store.js";
+import { CONCEPTS_DIR, EMBEDDINGS_FILE, LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
+import { hashChunkText, splitIntoChunks } from "../packages/wiki/src/utils/retrieval.js";
+import { buildEmbeddingText } from "../packages/wiki/src/utils/embeddings-pages.js";
+import { resolveEmbeddingFingerprint } from "../packages/wiki/src/utils/embeddings-store.js";
 
 const aimock = useAimockLifecycle("context-cli");
 

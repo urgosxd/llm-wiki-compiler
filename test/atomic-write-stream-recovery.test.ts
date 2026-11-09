@@ -16,7 +16,7 @@ import type { FileHandle } from "node:fs/promises";
 import {
   atomicStreamCreateOnlyDurable, AtomicWriteCollisionError,
   AtomicWriteCommittedCleanupError, type StreamedPostLinkStageV1,
-} from "../src/utils/atomic-write.js";
+} from "../packages/wiki/src/utils/atomic-write.js";
 
 const CONTENT = Buffer.from("streamed-content-addressed-evidence-bytes");
 const DIGEST = createHash("sha256").update(CONTENT).digest("hex");

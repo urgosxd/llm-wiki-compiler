@@ -13,7 +13,7 @@ import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
 import { makeOutsideDir } from "./fixtures/outside-dir.js";
-import { collectRawWikiPages, scanEntityDir, extractWikilinkSlugs, extractWikilinkTargets } from "../src/wiki/collect.js";
+import { collectRawWikiPages, scanEntityDir, extractWikilinkSlugs, extractWikilinkTargets } from "../packages/wiki/src/wiki/collect.js";
 
 describe("collectRawWikiPages", () => {
   it("collects pages from concepts and queries directories", async () => {

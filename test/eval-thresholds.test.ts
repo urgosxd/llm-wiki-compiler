@@ -5,7 +5,7 @@
 
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
-import { checkThresholds } from "../src/eval/thresholds.js";
+import { checkThresholds } from "../packages/wiki/src/eval/thresholds.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 import { makeEvalReport as makeReport } from "./fixtures/eval-report.js";
 

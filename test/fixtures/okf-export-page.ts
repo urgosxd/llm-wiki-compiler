@@ -5,7 +5,7 @@
  * ExportPages to drive `buildOkfBundle`; the full required-field shape lives here
  * once rather than being copy-pasted (and re-flagged as a clone) into each suite.
  */
-import type { ExportPage } from "../../src/export/types.js";
+import type { ExportPage } from "../../packages/wiki/src/export/types.js";
 
 /** Options for {@link makeExportPage}; only `slug` is required. */
 export interface ExportPageOptions {

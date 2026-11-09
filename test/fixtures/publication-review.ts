@@ -8,12 +8,12 @@ import path from "node:path";
 import { useTempRoot } from "./temp-root.js";
 import { stageCitationWorkspace } from "./query-answer-citations.js";
 import { candidateFile } from "./answer-candidate.js";
-import { maybeSaveQueryPage } from "../../src/commands/query-publication.js";
-import { buildQueryDocument } from "../../src/commands/query-document.js";
-import approve from "../../src/commands/review-approve.js";
-import { readCandidate, writeCandidate } from "../../src/compiler/candidates.js";
-import * as embeddings from "../../src/utils/embeddings.js";
-import type { ReviewCandidate } from "../../src/utils/types.js";
+import { maybeSaveQueryPage } from "../../packages/wiki/src/commands/query-publication.js";
+import { buildQueryDocument } from "../../packages/wiki/src/commands/query-document.js";
+import approve from "../../packages/wiki/src/commands/review-approve.js";
+import { readCandidate, writeCandidate } from "../../packages/wiki/src/compiler/candidates.js";
+import * as embeddings from "../../packages/wiki/src/utils/embeddings.js";
+import type { ReviewCandidate } from "../../packages/wiki/src/utils/types.js";
 
 /** Install real retained and pending targets and isolate mutable process state. */
 export function usePublicationRoot() {

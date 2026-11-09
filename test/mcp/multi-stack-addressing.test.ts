@@ -28,8 +28,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { rm } from "node:fs/promises";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { withRequestEnv } from "../../src/mcp/tenant-db.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { withRequestEnv } from "../../packages/wiki/src/mcp/tenant-db.js";
 import { buildServer, callTool } from "../fixtures/mcp-test-env.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";

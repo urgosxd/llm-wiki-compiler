@@ -13,9 +13,9 @@
  *      the reason they are registered there and not beside the mutation route.
  */
 import { describe, expect, it } from "vitest";
-import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
-import { startHost } from "../../src/host/server.js";
-import { createJobRegistry } from "../../src/services/ingest/jobs/registry.js";
+import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
+import { startHost } from "../../packages/wiki/src/host/server.js";
+import { createJobRegistry } from "../../packages/wiki/src/services/ingest/jobs/registry.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 import { useStackEnv } from "../fixtures/stack-env.js";
 

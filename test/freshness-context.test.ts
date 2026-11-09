@@ -17,8 +17,8 @@ import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
 import { sha256Hex, writeSourceFile, writeSourceState } from "./fixtures/state-json.js";
-import { buildContextPack } from "../src/context/build.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
+import { buildContextPack } from "../packages/wiki/src/context/build.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 
 let root: string;
 

@@ -23,9 +23,9 @@
 import { describe, it, expect } from "vitest";
 import { writeFile, symlink, rm } from "node:fs/promises";
 import path from "node:path";
-import { planRemoval } from "../../src/sources/removal.js";
+import { planRemoval } from "../../packages/wiki/src/sources/removal.js";
 import { makeEmptyRmProject } from "../fixtures/rm-project.js";
-import type { WikiState } from "../../src/utils/types.js";
+import type { WikiState } from "../../packages/wiki/src/utils/types.js";
 
 /** Write a state whose only entry is `id`, owning one exclusive concept. */
 async function seedStateFor(root: string, id: string): Promise<void> {

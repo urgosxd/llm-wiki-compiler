@@ -18,8 +18,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { makeTempRoot } from "./temp-root.js";
-import { PROFILE_FILE } from "../../src/utils/constants.js";
-import type { ProfilePack } from "../../src/profile/types.js";
+import { PROFILE_FILE } from "../../packages/wiki/src/utils/constants.js";
+import type { ProfilePack } from "../../packages/wiki/src/profile/types.js";
 
 /** One `note` entity at its canonical directory — a minimal non-default pack. */
 const PROFILE: ProfilePack = {

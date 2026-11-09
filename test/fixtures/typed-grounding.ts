@@ -13,11 +13,11 @@ import { vi } from "vitest";
 import { makeTempRoot } from "./temp-root.js";
 import { writePage } from "./write-page.js";
 import { writeProfileFile } from "./profile-fixtures.js";
-import * as providerMod from "../../src/utils/provider.js";
-import { resolveEmbeddingModel, type EmbeddingStoreV3 } from "../../src/utils/embeddings-store.js";
-import { hashChunkText, splitIntoChunks } from "../../src/utils/retrieval.js";
-import { buildEmbeddingText } from "../../src/utils/embeddings-pages.js";
-import type { ProfilePack } from "../../src/profile/types.js";
+import * as providerMod from "../../packages/wiki/src/utils/provider.js";
+import { resolveEmbeddingModel, type EmbeddingStoreV3 } from "../../packages/wiki/src/utils/embeddings-store.js";
+import { hashChunkText, splitIntoChunks } from "../../packages/wiki/src/utils/retrieval.js";
+import { buildEmbeddingText } from "../../packages/wiki/src/utils/embeddings-pages.js";
+import type { ProfilePack } from "../../packages/wiki/src/profile/types.js";
 
 /**
  * Factory for a `vi.mock("../src/utils/llm.js", echoCallClaudeModule)` stub whose
@@ -31,7 +31,7 @@ export function echoCallClaudeModule(): { callClaude: ReturnType<typeof vi.fn> }
 
 /** Count author calls so refusal and recovery tests can detect unwanted re-authoring. */
 export async function llmCallCount(): Promise<number> {
-  const mod = await import("../../src/utils/llm.js");
+  const mod = await import("../../packages/wiki/src/utils/llm.js");
   return (mod.callClaude as unknown as { mock: { calls: readonly unknown[] } }).mock.calls.length;
 }
 

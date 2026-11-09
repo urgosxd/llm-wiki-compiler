@@ -20,8 +20,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAlphaPageFixture } from "./fixtures/alpha-page.js";
-import { generateAnswer } from "../src/commands/query.js";
-import { selectPages } from "../src/commands/page-selection.js";
+import { generateAnswer } from "../packages/wiki/src/commands/query.js";
+import { selectPages } from "../packages/wiki/src/commands/page-selection.js";
 
 const QUESTION = "What is alpha?";
 const SELECTED_PAGE_ID = "concepts/alpha";
@@ -34,7 +34,7 @@ const ALPHA_INDEX = `- ${SELECTED_PAGE_ID}: Alpha summary`;
  */
 const prompts = vi.hoisted(() => ({ selection: [] as string[], answer: [] as string[] }));
 
-vi.mock("../src/utils/llm.js", () => ({
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({
   callClaude: vi.fn(async (options: { system: string; tools?: unknown[] }) => {
     if (options.tools) {
       prompts.selection.push(options.system);

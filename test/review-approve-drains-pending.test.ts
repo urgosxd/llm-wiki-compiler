@@ -14,12 +14,12 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { writeCandidate } from "../src/compiler/candidates.js";
-import reviewApproveCommand from "../src/commands/review-approve.js";
+import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import reviewApproveCommand from "../packages/wiki/src/commands/review-approve.js";
 import {
   writePendingEmbeddings,
   loadPendingEmbeddings,
-} from "../src/utils/pending-embeddings.js";
+} from "../packages/wiki/src/utils/pending-embeddings.js";
 import { mockEmbeddingSuccess } from "./fixtures/embedding-success.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 

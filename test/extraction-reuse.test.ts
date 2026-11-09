@@ -6,9 +6,9 @@
 import { describe, expect, it } from "vitest";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { compileAndReport } from "../src/compiler/index.js";
-import { readState, writeState } from "../src/utils/state.js";
-import { parseFrontmatter } from "../src/utils/markdown.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { readState, writeState } from "../packages/wiki/src/utils/state.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
 import { mockReconciliationProvider, useReconciliationProject } from "./fixtures/reconciliation-project.js";
 import { EMPTY_CATEGORY_ANSWER, extractionCalls, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
 

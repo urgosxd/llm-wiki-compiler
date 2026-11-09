@@ -13,11 +13,11 @@ import { vi } from "vitest";
 import { makeTempRoot } from "./temp-root.js";
 import { writePage } from "./write-page.js";
 import { writeProfileFile } from "./profile-fixtures.js";
-import type { ProfilePack } from "../../src/profile/types.js";
+import type { ProfilePack } from "../../packages/wiki/src/profile/types.js";
 
 /** Stub callClaude (under selectPages) to echo the given pageId tokens. */
 export async function stubSelectPages(tokens: string[]): Promise<void> {
-  const { callClaude } = await import("../../src/utils/llm.js");
+  const { callClaude } = await import("../../packages/wiki/src/utils/llm.js");
   vi.mocked(callClaude).mockResolvedValue(JSON.stringify({ pages: tokens, reasoning: "test" }));
 }
 

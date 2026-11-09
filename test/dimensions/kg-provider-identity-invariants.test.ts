@@ -40,8 +40,8 @@ import {
   getProvider,
   type ChatBackendDescriptor,
   type EmbeddingBackendDescriptor,
-} from "../../src/utils/provider.js";
-import { getEmbeddingProvider } from "../../src/utils/embedding-provider.js";
+} from "../../packages/wiki/src/utils/provider.js";
+import { getEmbeddingProvider } from "../../packages/wiki/src/utils/embedding-provider.js";
 import { withChatBackend, injectedChatModel } from "@repo/kg/chat-backend";
 import {
   withEmbeddingBackend,

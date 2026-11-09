@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { readPageRecord } from "../../src/pages/read.js";
+import { readPageRecord } from "../../packages/wiki/src/pages/read.js";
 
 describe("readPageRecord", () => {
   it("reads a concept page", async () => {

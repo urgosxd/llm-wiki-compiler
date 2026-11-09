@@ -2,11 +2,11 @@ import { describe, it, expect, vi, afterAll } from "vitest";
 import { mkdtemp, mkdir, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createWiki } from "../../src/sdk/wiki.js";
+import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
 import { provisionEnvStack } from "../fixtures/env-stack.js";
 import { useStackEnv } from "../fixtures/stack-env.js";
-import { createDimensionsDatabase } from "../../src/dimensions/activation.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
+import { createDimensionsDatabase } from "../../packages/wiki/src/dimensions/activation.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
 
 // The facade ingests, which writes a wiki page row, so it needs a real Stack.
 // Provisioned per FILE, never shared -- see test/fixtures/env-stack.ts for why a

@@ -8,13 +8,13 @@ import * as fs from "fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { collectAnswerCitationIndex } from "../src/citations/answer-index.js";
-import { reportAnswerCitations } from "../src/citations/answer-report.js";
-import { collectViewerPages, resolveBareSlug } from "../src/viewer/collect.js";
-import { listCandidates } from "../src/compiler/candidate-read.js";
-import { UnsafeCandidateDirError } from "../src/compiler/candidate-store-paths.js";
-import * as output from "../src/utils/output.js";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
+import { collectAnswerCitationIndex } from "../packages/wiki/src/citations/answer-index.js";
+import { reportAnswerCitations } from "../packages/wiki/src/citations/answer-report.js";
+import { collectViewerPages, resolveBareSlug } from "../packages/wiki/src/viewer/collect.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidate-read.js";
+import { UnsafeCandidateDirError } from "../packages/wiki/src/compiler/candidate-store-paths.js";
+import * as output from "../packages/wiki/src/utils/output.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
 
 vi.mock("fs/promises", async (original) => {
   const actual = await original<typeof fs>();

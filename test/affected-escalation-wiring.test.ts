@@ -78,7 +78,7 @@ const KG_TREE = "packages/llmwiki-kg/";
 const ROOT_TREE = "test/";
 
 /** A real root module that imports the bare specifier, so the bridge has a consumer. */
-const KG_ALIAS_CONSUMER = "src/dimensions/activation.ts";
+const KG_ALIAS_CONSUMER = "packages/wiki/src/dimensions/activation.ts";
 
 /** Inputs whose change reaches every file, so a narrow selection would be a lie. */
 const ESCALATION_INPUTS = [

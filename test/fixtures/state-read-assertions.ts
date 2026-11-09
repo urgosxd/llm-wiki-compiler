@@ -10,8 +10,8 @@
 import { expect } from "vitest";
 import { existsSync } from "fs";
 import path from "path";
-import { readStateClassified } from "../../src/utils/state.js";
-import { STATE_FILE } from "../../src/utils/constants.js";
+import { readStateClassified } from "../../packages/wiki/src/utils/state.js";
+import { STATE_FILE } from "../../packages/wiki/src/utils/constants.js";
 import { SAMPLE_OK_STATE_V1, writeCorruptTestStateJson, writeTestStateJson } from "./state-json.js";
 
 const bakPath = (root: string) => path.join(root, STATE_FILE + ".bak");

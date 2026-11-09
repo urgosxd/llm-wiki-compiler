@@ -15,12 +15,12 @@
  * capability URL). `filename` is the column that joins them.
  */
 import { vi } from "vitest";
-import * as seam from "../../src/dimensions/wiki/page-source-seam.js";
+import * as seam from "../../packages/wiki/src/dimensions/wiki/page-source-seam.js";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { lintByTier } from "../../src/linter/index.js";
-import type { RawWikiPage } from "../../src/wiki/collect.js";
+import { lintByTier } from "../../packages/wiki/src/linter/index.js";
+import type { RawWikiPage } from "../../packages/wiki/src/wiki/collect.js";
 
 /** One concept page as a row-backed source returns it (frontmatter stripped). */
 export function rawPage(

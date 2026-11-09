@@ -26,29 +26,22 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import path from "node:path";
-import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
-import { collectGhostIds, isGhostNode } from "../../src/context/graph.js";
-import { findInboundLinks } from "../../src/context/links-here.js";
-import { resolveTargetNodeId } from "../../src/context/resolve-target.js";
-import raceCommand from "../../src/commands/race.js";
-import linksHereCommand from "../../src/commands/links-here.js";
+import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
+import { collectGhostIds, isGhostNode } from "../../packages/wiki/src/context/graph.js";
+import { findInboundLinks } from "../../packages/wiki/src/context/links-here.js";
+import { resolveTargetNodeId } from "../../packages/wiki/src/context/resolve-target.js";
+import raceCommand from "../../packages/wiki/src/commands/race.js";
+import linksHereCommand from "../../packages/wiki/src/commands/links-here.js";
 import { ghostNode, realNode } from "../fixtures/graph-data.js";
-import { useTempRoot } from "../fixtures/temp-root.js";
+import { useConceptPage } from "../fixtures/concept-page.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
-import { writePage } from "../fixtures/write-page.js";
-import type { GraphData, PageId } from "../../src/viewer/types.js";
+import type { GraphData, PageId } from "../../packages/wiki/src/viewer/types.js";
 
 const DUP = "concepts/dup" as PageId;
 const BETA = "concepts/beta" as PageId;
 
-/** Throwaway wiki for the current case: chdir'd into and removed afterwards. */
-const ctx = useTempRoot();
-
-/** Write one concept page into the throwaway wiki. */
-async function page(slug: string, title: string, body: string): Promise<void> {
-  await writePage(path.join(ctx.dir, "wiki/concepts"), slug, { title }, body);
-}
+/** Throwaway wiki for the current case, plus its concept-page writer. */
+const { ctx, page } = useConceptPage();
 
 /** A graph the builder cannot emit: one id claimed by a real node AND a ghost. */
 function duplicatedIdGraph(): GraphData {

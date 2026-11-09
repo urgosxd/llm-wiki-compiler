@@ -26,12 +26,12 @@ import { existsSync } from "fs";
 import path from "path";
 import os from "os";
 import { mkdtemp, rm } from "fs/promises";
-import { applyCompilePageWritesLocked } from "../src/compiler/compile-write.js";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
-import { atomicWrite } from "../src/utils/markdown.js";
-import * as journal from "../src/trust/journal.js";
-import { replayJournal } from "../src/trust/journal.js";
-import { MAX_SOURCE_CHARS, GENERATED_PAGE_MAX_CHARS } from "../src/utils/constants.js";
+import { applyCompilePageWritesLocked } from "../packages/wiki/src/compiler/compile-write.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
+import { atomicWrite } from "../packages/wiki/src/utils/markdown.js";
+import * as journal from "../packages/wiki/src/trust/journal.js";
+import { replayJournal } from "../packages/wiki/src/trust/journal.js";
+import { MAX_SOURCE_CHARS, GENERATED_PAGE_MAX_CHARS } from "../packages/wiki/src/utils/constants.js";
 import { failingWriteOneOnNth } from "./trust/fixture.js";
 
 let root: string;

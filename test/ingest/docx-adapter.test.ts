@@ -36,9 +36,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import ingestDocx from "../../src/ingest/docx.js";
-import { titleFromFilename } from "../../src/ingest/shared.js";
-import { enforceCharLimit, enforceMinContent } from "../../src/services/ingest/document.js";
+import ingestDocx from "../../packages/wiki/src/ingest/docx.js";
+import { titleFromFilename } from "../../packages/wiki/src/ingest/shared.js";
+import { enforceCharLimit, enforceMinContent } from "../../packages/wiki/src/services/ingest/document.js";
 import { fixture, settle } from "./document-fixtures.js";
 
 describe("ingestDocx", () => {

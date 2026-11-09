@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildAnthropicClientOptions } from "../src/providers/anthropic.js";
+import { buildAnthropicClientOptions } from "../packages/wiki/src/providers/anthropic.js";
 
 describe("buildAnthropicClientOptions", () => {
   it("returns base options when baseURL is not provided", () => {

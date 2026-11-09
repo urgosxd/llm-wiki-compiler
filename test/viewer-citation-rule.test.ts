@@ -9,8 +9,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { renderPageHtml } from "../src/viewer/render.js";
-import type { ViewerSnapshot } from "../src/viewer/types.js";
+import { renderPageHtml } from "../packages/wiki/src/viewer/render.js";
+import type { ViewerSnapshot } from "../packages/wiki/src/viewer/types.js";
 
 function buildSnapshot(sourceFilenames: string[]): ViewerSnapshot {
   return {

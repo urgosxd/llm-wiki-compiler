@@ -8,12 +8,12 @@
  */
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { OpenAIProvider, readTimeoutEnv } from "../src/providers/openai.js";
-import { OllamaProvider } from "../src/providers/ollama.js";
+import { OpenAIProvider, readTimeoutEnv } from "../packages/wiki/src/providers/openai.js";
+import { OllamaProvider } from "../packages/wiki/src/providers/ollama.js";
 import {
   OPENAI_DEFAULT_TIMEOUT_MS,
   OLLAMA_DEFAULT_TIMEOUT_MS,
-} from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/constants.js";
 
 afterEach(() => {
   delete process.env.OLLAMA_TIMEOUT_MS;

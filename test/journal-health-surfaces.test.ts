@@ -32,19 +32,19 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, access } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { collectStatus } from "../src/status/collect.js";
-import { lint } from "../src/linter/index.js";
-import { buildViewerSnapshot } from "../src/viewer/snapshot.js";
-import { exportJson } from "../src/commands/export.js";
-import { runOkfExport } from "../src/export/okf/run.js";
-import { buildContextPack } from "../src/context/build.js";
-import { listPages } from "../src/pages/list.js";
-import { pickSearchRefs } from "../src/search/retrieval.js";
+import { collectStatus } from "../packages/wiki/src/status/collect.js";
+import { lint } from "../packages/wiki/src/linter/index.js";
+import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
+import { exportJson } from "../packages/wiki/src/commands/export.js";
+import { runOkfExport } from "../packages/wiki/src/export/okf/run.js";
+import { buildContextPack } from "../packages/wiki/src/context/build.js";
+import { listPages } from "../packages/wiki/src/pages/list.js";
+import { pickSearchRefs } from "../packages/wiki/src/search/retrieval.js";
 import {
   INCOMPLETE_COMPILE_CODE,
   JOURNAL_UNAVAILABLE_CODE,
-} from "../src/trust/journal-health-warning.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+} from "../packages/wiki/src/trust/journal-health-warning.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import {
   plantPendingTwoTargetBatch,
   plantSymlinkedJournalDir,
@@ -160,7 +160,7 @@ it("residual single-record reads have no warning channel (documented)", async ()
   await plantPending();
   await writeFile(path.join(root, "wiki", "concepts", "a.md"), "# A\n", "utf-8");
   // getPage returns a bare Page with no warnings[] — asserted structurally.
-  const { getPage } = await import("../src/pages/list.js");
+  const { getPage } = await import("../packages/wiki/src/pages/list.js");
   const page = await getPage(root, { pageDirectory: "concepts", slug: "a" });
   expect(page).not.toBeNull();
   expect(page).not.toHaveProperty("warnings");

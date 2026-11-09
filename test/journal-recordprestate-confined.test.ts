@@ -31,8 +31,8 @@ import {
   recordPreState,
   replayJournal,
   JournalPreStateUnreadableError,
-} from "../src/trust/journal.js";
-import { JOURNAL_PRESTATE_MAX_BYTES } from "../src/utils/constants.js";
+} from "../packages/wiki/src/trust/journal.js";
+import { JOURNAL_PRESTATE_MAX_BYTES } from "../packages/wiki/src/utils/constants.js";
 import { WIKI, makeTrustRoot, cleanupTrustRoot } from "./trust/fixture.js";
 import { journalFile as journalFileOf, pathExists } from "./trust/journal-fixture.js";
 

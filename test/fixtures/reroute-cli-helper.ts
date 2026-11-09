@@ -15,7 +15,7 @@
  *     the current (post-"crash") bytes, so the real CLI's recover/compile reverts
  *     it to the captured pre-state.
  *
- * The journal record shape mirrors {@link import("../../src/trust/journal.js").JournalBatch}
+ * The journal record shape mirrors {@link import("../../packages/wiki/src/trust/journal.js").JournalBatch}
  * exactly so a planted batch is loadable + revertable by the real CLI binary.
  */
 
@@ -23,7 +23,7 @@ import { readFile, writeFile, readdir, realpath } from "fs/promises";
 import path from "path";
 import type { MockClaudeHandle } from "./aimock-helper.js";
 import { writeJournal, journalDir, pathExists } from "../trust/journal-fixture.js";
-import { CONCEPTS_DIR } from "../../src/utils/constants.js";
+import { CONCEPTS_DIR } from "../../packages/wiki/src/utils/constants.js";
 
 /** A fixed 8-dim embedding so the page/chunk embedding passes succeed deterministically. */
 const STUB_EMBEDDING = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7];

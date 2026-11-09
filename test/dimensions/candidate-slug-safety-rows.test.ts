@@ -20,8 +20,8 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { listCandidates, writeCandidate } from "../../src/compiler/candidates.js";
-import { UnsafeCandidateIdError } from "../../src/compiler/candidate-paths.js";
+import { listCandidates, writeCandidate } from "../../packages/wiki/src/compiler/candidates.js";
+import { UnsafeCandidateIdError } from "../../packages/wiki/src/compiler/candidate-paths.js";
 import { withProjectRoot, withStackEnv } from "../fixtures/stack-env.js";
 
 /** A draft for `slug`, with the minimum the writer needs. */

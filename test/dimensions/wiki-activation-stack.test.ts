@@ -34,8 +34,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createDatabase, createClient } from "@repo/kg";
 
-import { AKS_STACK_ID_ENV_VAR, resolveDimensions } from "../../src/dimensions/activation.js";
-import type { DimensionInput } from "../../src/dimensions/types.js";
+import { AKS_STACK_ID_ENV_VAR, resolveDimensions } from "../../packages/wiki/src/dimensions/activation.js";
+import type { DimensionInput } from "../../packages/wiki/src/dimensions/types.js";
 import { provisionEnvStack } from "../fixtures/env-stack.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
 

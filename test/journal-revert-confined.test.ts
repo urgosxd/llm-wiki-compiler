@@ -20,7 +20,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFile, readFile, mkdir, symlink, rm, mkdtemp } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { revertEntry, type JournalEntry } from "../src/trust/journal.js";
+import { revertEntry, type JournalEntry } from "../packages/wiki/src/trust/journal.js";
 import { makeTrustRoot, cleanupTrustRoot } from "./trust/fixture.js";
 
 let root: string;

@@ -8,10 +8,10 @@ import {
   formatHistoryTable,
   formatCacheShow,
   formatJudgementsDisplay,
-} from "../src/eval/report.js";
-import type { EvalReport } from "../src/eval/types.js";
-import type { CacheSummary } from "../src/eval/cache.js";
-import type { CitationJudgement } from "../src/eval/types.js";
+} from "../packages/wiki/src/eval/report.js";
+import type { EvalReport } from "../packages/wiki/src/eval/types.js";
+import type { CacheSummary } from "../packages/wiki/src/eval/cache.js";
+import type { CitationJudgement } from "../packages/wiki/src/eval/types.js";
 
 function makeReport(overrides: Partial<EvalReport> = {}): EvalReport {
   return {

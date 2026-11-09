@@ -31,8 +31,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { compileAndReport } from "../../src/compiler/index.js";
-import { parseFrontmatter } from "../../src/utils/markdown.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 import { useCompileProject } from "../fixtures/compile-project.js";
 import { listConceptPages, readConceptPage } from "../fixtures/concept-page.js";
 import { extractionAnswer, stubCompileProvider } from "../fixtures/compile-provider.js";

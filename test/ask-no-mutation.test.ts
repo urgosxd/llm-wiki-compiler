@@ -30,7 +30,7 @@ import type { ProbeStack } from "./dimensions/harness-lifecycle.js";
 // back to the LLM selector and would otherwise get the grounding prompt echoed
 // back where it expects JSON. The CLI cases never reach that fallback: their
 // staged workspace carries a real chunk store, so selection needs no LLM.
-vi.mock("../src/utils/llm.js", () => {
+vi.mock("../packages/wiki/src/utils/llm.js", () => {
   const echo = echoCallClaudeModule();
   return {
     callClaude: vi.fn(async (options: { tools?: unknown[]; messages: Array<{ content: string }> }) =>
@@ -47,7 +47,7 @@ vi.mock("../src/utils/llm.js", () => {
 // machine and failing in CI, which is exactly what it did. The subject here is
 // filesystem mutation; provider availability is a different claim with its own
 // tests, so it is stubbed rather than depended on.
-vi.mock("../src/utils/provider-guard.js", () => ({ ensureProviderAvailable: () => {} }));
+vi.mock("../packages/wiki/src/utils/provider-guard.js", () => ({ ensureProviderAvailable: () => {} }));
 
 
 /** A project with two same-slug pages, both retrievable. */
@@ -76,7 +76,7 @@ afterEach(async () => {
 
 /** Capture the MCP `query_wiki` handler by registering tools against a stub. */
 async function mcpQueryHandler(root: string): Promise<(args: Record<string, unknown>) => Promise<unknown>> {
-  const { registerWikiTools } = await import("../src/mcp/tools.js");
+  const { registerWikiTools } = await import("../packages/wiki/src/mcp/tools.js");
   const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
   const server = {
     registerTool: (name: string, _schema: unknown, handler: (args: Record<string, unknown>) => Promise<unknown>) => {
@@ -92,7 +92,7 @@ async function mcpQueryHandler(root: string): Promise<(args: Record<string, unkn
 describe("asking a question without saving", () => {
   it("changes only the public activity log on the CLI route", async () => {
     const root = await project("ask-cli");
-    const { generateAnswer } = await import("../src/commands/query.js");
+    const { generateAnswer } = await import("../packages/wiki/src/commands/query.js");
     const before = await fingerprint(root);
     // Pins the precondition: an empty fingerprint would pass regardless.
     expect(before.size).toBeGreaterThan(0);
@@ -135,7 +135,7 @@ describe("asking a question without saving", () => {
 
   it("keeps an explicitly scoped read byte-identical", async () => {
     const root = await project("ask-scoped");
-    const { generateAnswer } = await import("../src/commands/query.js");
+    const { generateAnswer } = await import("../packages/wiki/src/commands/query.js");
     const before = await fingerprint(root);
     expect(before.size).toBeGreaterThan(0);
     await generateAnswer(root, "scaling?", { pageScope: ["concepts/foo", "papers/foo"] });
@@ -145,7 +145,7 @@ describe("asking a question without saving", () => {
   it("DOES journal when the answer is saved — the write path is unchanged", async () => {
     // Saving remains an explicit write as well as recording query activity.
     const root = await project("ask-saved");
-    const { generateAnswer } = await import("../src/commands/query.js");
+    const { generateAnswer } = await import("../packages/wiki/src/commands/query.js");
     const before = await fingerprint(root);
 
     await generateAnswer(root, "scaling?", { save: true });

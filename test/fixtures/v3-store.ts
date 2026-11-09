@@ -5,8 +5,8 @@
  * qualified concept-namespace pageId from a bare slug.
  */
 
-import { readStoreForUpdate, type EmbeddingStoreV3 } from "../../src/utils/embeddings-store.js";
-import { qualifiedPageId } from "../../src/utils/page-id.js";
+import { readStoreForUpdate, type EmbeddingStoreV3 } from "../../packages/wiki/src/utils/embeddings-store.js";
+import { qualifiedPageId } from "../../packages/wiki/src/utils/page-id.js";
 
 /** Read the on-disk store as a v3 store (the live writer persists v3), or null. */
 export async function readV3Store(root: string): Promise<EmbeddingStoreV3 | null> {

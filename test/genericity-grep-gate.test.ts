@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripComments } from "./fixtures/strip-comments.js";
 
-const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src");
+const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../packages/wiki/src");
 
 /** The sole file allowed to compare `profileId` to the built-in `default` sentinel. */
 const DEFAULT_PROFILE_ALLOWLIST = "profile/default.ts";

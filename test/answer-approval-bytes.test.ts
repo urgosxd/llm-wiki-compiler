@@ -6,12 +6,12 @@ import { expect, it, vi } from "vitest";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import approve from "../src/commands/review-approve.js";
-import reject from "../src/commands/review-reject.js";
-import { maybeSaveQueryPage } from "../src/commands/query-publication.js";
-import { updateEmbeddingsLockedCore } from "../src/utils/embeddings.js";
+import approve from "../packages/wiki/src/commands/review-approve.js";
+import reject from "../packages/wiki/src/commands/review-reject.js";
+import { maybeSaveQueryPage } from "../packages/wiki/src/commands/query-publication.js";
+import { updateEmbeddingsLockedCore } from "../packages/wiki/src/utils/embeddings.js";
 import { usePublicationRoot, propose, candidateBytes, retained, expectApprovalRefused, approvePage } from "./fixtures/publication-review.js";
-import * as planner from "../src/trust/planner.js";
+import * as planner from "../packages/wiki/src/trust/planner.js";
 
 const root = usePublicationRoot();
 it("publishes exact direct-save bytes, leaves same-slug concept unchanged and refreshes index MOC embeddings", async () => {

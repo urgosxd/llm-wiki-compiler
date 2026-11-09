@@ -14,7 +14,7 @@ import { mkdtemp, rm } from "fs/promises";
 import { access } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { readCandidate, writeCandidate } from "../src/compiler/candidates.js";
+import { readCandidate, writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import { withStackEnv } from "./fixtures/stack-env.js";
 
 let dir: string;

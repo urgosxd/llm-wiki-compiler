@@ -20,8 +20,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, readFile, readdir, rm } from "fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
-import { LOCK_FILE } from "../src/utils/constants.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
+import { LOCK_FILE } from "../packages/wiki/src/utils/constants.js";
 
 /** One throwaway project root per case, removed on the way out. */
 async function withProjectRoot(run: (root: string) => Promise<void>): Promise<void> {

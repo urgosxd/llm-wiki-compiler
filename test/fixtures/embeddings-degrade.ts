@@ -16,7 +16,7 @@
 
 import { expect } from "vitest";
 
-import { loadEmbeddingsForSearch } from "../../src/utils/embeddings-load.js";
+import { loadEmbeddingsForSearch } from "../../packages/wiki/src/utils/embeddings-load.js";
 
 /** Codes the loader can report when it refuses a store. */
 export type EmbeddingDegradeCode =

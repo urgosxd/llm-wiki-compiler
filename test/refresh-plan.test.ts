@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { existsSync } from "fs";
 import path from "path";
-import { resolveStaleRefresh } from "../src/compiler/refresh-plan.js";
+import { resolveStaleRefresh } from "../packages/wiki/src/compiler/refresh-plan.js";
 import { makeLintTempRoot } from "./fixtures/lint-temp-root.js";
 import {
   writeSourceState,

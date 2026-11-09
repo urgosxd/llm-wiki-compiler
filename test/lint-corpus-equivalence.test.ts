@@ -21,9 +21,9 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { lintByTier } from "../src/linter/index.js";
-import type { LintResult } from "../src/linter/types.js";
-import type { RawWikiPage } from "../src/wiki/collect.js";
+import { lintByTier } from "../packages/wiki/src/linter/index.js";
+import type { LintResult } from "../packages/wiki/src/linter/types.js";
+import type { RawWikiPage } from "../packages/wiki/src/wiki/collect.js";
 import { lintRowCorpus, stackProjectRoot } from "./fixtures/lint-row-corpus.js";
 
 let dir: string;

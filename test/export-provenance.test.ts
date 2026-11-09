@@ -18,8 +18,8 @@ import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { writePage } from "./fixtures/write-page.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
-import { collectExportPages } from "../src/export/collect.js";
-import { buildJsonExport } from "../src/export/json-export.js";
+import { collectExportPages } from "../packages/wiki/src/export/collect.js";
+import { buildJsonExport } from "../packages/wiki/src/export/json-export.js";
 
 interface ProvenancePage {
   slug: string;

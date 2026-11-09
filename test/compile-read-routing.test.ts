@@ -17,12 +17,12 @@ import { writeFile, symlink, readFile } from "fs/promises";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { makeOutsideDir } from "./fixtures/outside-dir.js";
-import { callClaude } from "../src/utils/llm.js";
-import * as output from "../src/utils/output.js";
-import { renderMergedPageContent } from "../src/compiler/page-renderer.js";
-import { resolveLinks } from "../src/compiler/resolver.js";
+import { callClaude } from "../packages/wiki/src/utils/llm.js";
+import * as output from "../packages/wiki/src/utils/output.js";
+import { renderMergedPageContent } from "../packages/wiki/src/compiler/page-renderer.js";
+import { resolveLinks } from "../packages/wiki/src/compiler/resolver.js";
 
-vi.mock("../src/utils/llm.js", () => ({ callClaude: vi.fn() }));
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({ callClaude: vi.fn() }));
 
 const SECRET = "OUTSIDE-SECRET-BYTES-7f3a9c";
 const STUB_SCHEMA = { defaultKind: "concept" } as Parameters<typeof renderMergedPageContent>[2];

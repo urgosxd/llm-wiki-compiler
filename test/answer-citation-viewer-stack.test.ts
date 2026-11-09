@@ -3,9 +3,9 @@
  * sanitization, which a bare wikilink-only markdown-it instance cannot cover.
  */
 import { expect, it } from "vitest";
-import { renderPageHtml } from "../src/viewer/render.js";
-import type { ViewerSnapshot } from "../src/viewer/types.js";
-import { recognizedWikilinkTargets } from "../src/wiki/wikilink-tokens.js";
+import { renderPageHtml } from "../packages/wiki/src/viewer/render.js";
+import type { ViewerSnapshot } from "../packages/wiki/src/viewer/types.js";
+import { recognizedWikilinkTargets } from "../packages/wiki/src/wiki/wikilink-tokens.js";
 
 const snapshot: ViewerSnapshot = {
   root: "/tmp/wiki", generatedAt: "2026-09-18T00:00:00Z",

@@ -27,12 +27,12 @@ import {
   readRuleCandidate,
   listRuleCandidates,
   archiveRuleCandidate,
-} from "../src/compiler/rule-candidates.js";
-import { candidateFileId } from "../src/utils/candidate-store.js";
-import { UnsafeCandidateDirError } from "../src/compiler/candidate-store-paths.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+} from "../packages/wiki/src/compiler/rule-candidates.js";
+import { candidateFileId } from "../packages/wiki/src/utils/candidate-store.js";
+import { UnsafeCandidateDirError } from "../packages/wiki/src/compiler/candidate-store-paths.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
-import type { RuleCandidate } from "../src/utils/rule-types.js";
+import type { RuleCandidate } from "../packages/wiki/src/utils/rule-types.js";
 
 const ctx = useConfinementRoots("rule-cand");
 

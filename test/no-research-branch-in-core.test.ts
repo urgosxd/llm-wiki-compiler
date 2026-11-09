@@ -82,7 +82,7 @@ function isTemplateDataFile(name: string): boolean {
 
 describe("no research domain-branch in core src/", () => {
   it("has zero core files that branch on the research vocabulary", async () => {
-    const srcRoot = path.resolve("src");
+    const srcRoot = path.resolve("packages/wiki/src");
     const names = await readdir(srcRoot, { recursive: true });
     const offenders: string[] = [];
     for (const name of names) {

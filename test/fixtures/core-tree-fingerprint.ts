@@ -10,7 +10,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 /** Hash sorted source paths and raw bytes with unambiguous length framing. */
 export function coreTreeFingerprint(includeUntracked = false): string {
   const selection = includeUntracked ? ["--cached", "--others", "--exclude-standard"] : [];
-  const listed = execFileSync("git", ["ls-files", ...selection, "-z", "src"], { cwd: REPO_ROOT });
+  const listed = execFileSync("git", ["ls-files", ...selection, "-z", "packages/wiki/src"], { cwd: REPO_ROOT });
   const files = [...new Set(listed.toString("utf8").split("\0").filter(Boolean))].sort();
   const hash = createHash("sha256");
   for (const rel of files) {

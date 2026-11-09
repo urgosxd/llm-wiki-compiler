@@ -8,8 +8,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { createWikiCore } from "../../src/sdk/core.js";
-import { createWiki } from "../../src/sdk/wiki.js";
+import { createWikiCore } from "../../packages/wiki/src/sdk/core.js";
+import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
 import { withStackEnv } from "../fixtures/stack-env.js";
 
 const roots: string[] = [];
@@ -20,15 +20,15 @@ afterEach(async () => {
 it("bundles the core SDK without loading local workflow execution", async () => {
   const result = await build({
     absWorkingDir: fileURLToPath(new URL("../../", import.meta.url)),
-    entryPoints: ["src/core-index.ts"], bundle: true, write: false,
+    entryPoints: ["packages/wiki/src/core-index.ts"], bundle: true, write: false,
     platform: "node", format: "esm", packages: "external", metafile: true,
     logLevel: "silent",
   });
   const inputs = Object.keys(result.metafile!.inputs);
-  expect(inputs).toContain("src/sdk/core.ts");
+  expect(inputs).toContain("packages/wiki/src/sdk/core.ts");
   expect(inputs.filter((input) => /^src\/(?:local-workflows|workflows)\//.test(input))).toEqual([]);
-  expect(inputs).not.toContain("src/sdk/wiki.ts");
-  expect(inputs).not.toContain("src/sdk/workflow-facade.ts");
+  expect(inputs).not.toContain("packages/wiki/src/sdk/wiki.ts");
+  expect(inputs).not.toContain("packages/wiki/src/sdk/workflow-facade.ts");
 });
 
 /** Allocate only test-owned roots for cleanup. */

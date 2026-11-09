@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdir, readdir, readFile } from "fs/promises";
 import path from "path";
-import { atomicWrite } from "../src/utils/markdown.js";
+import { atomicWrite } from "../packages/wiki/src/utils/markdown.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 
 const ctx = useConfinementRoots("temp-cleanup");

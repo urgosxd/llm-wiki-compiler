@@ -4,7 +4,7 @@
  */
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AnswerCitation, AnswerCitationReport } from "../../src/index.js";
+import type { AnswerCitation, AnswerCitationReport } from "../../packages/wiki/src/index.js";
 
 export const CITED_ANSWER = "[[Alpha|label]] [[beta]] [[missing]] [[ALPHA]]\n\n"
   + "`[[code-only]]` [See [[link-only]]](https://example.com)\n"

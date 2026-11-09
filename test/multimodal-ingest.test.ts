@@ -18,11 +18,11 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, writeFile, rm } from "fs/promises";
 import path from "path";
 import os from "os";
-import { detectSourceType, buildDocument, enforceCharLimit } from "../src/commands/ingest.js";
-import { parseFrontmatter } from "../src/utils/markdown.js";
-import ingestTranscript, { isYoutubeUrl } from "../src/ingest/transcript.js";
-import { resolveTitle } from "../src/ingest/pdf.js";
-import ingestImage from "../src/ingest/image.js";
+import { detectSourceType, buildDocument, enforceCharLimit } from "../packages/wiki/src/commands/ingest.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import ingestTranscript, { isYoutubeUrl } from "../packages/wiki/src/ingest/transcript.js";
+import { resolveTitle } from "../packages/wiki/src/ingest/pdf.js";
+import ingestImage from "../packages/wiki/src/ingest/image.js";
 
 const tempDirsToCleanup: string[] = [];
 

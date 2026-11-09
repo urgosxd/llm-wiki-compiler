@@ -14,8 +14,8 @@ import { describe, expect, it } from "vitest";
 import { readFile } from "fs/promises";
 import path from "path";
 
-const GRAPH_MODULE = path.resolve("src/viewer/assets/viewer-graph.js");
-const DASHBOARD_MODULE = path.resolve("src/viewer/assets/viewer-dashboard.js");
+const GRAPH_MODULE = path.resolve("packages/wiki/src/viewer/assets/viewer-graph.js");
+const DASHBOARD_MODULE = path.resolve("packages/wiki/src/viewer/assets/viewer-dashboard.js");
 
 describe("compact graph mode", () => {
   it("accepts an options argument on loadGraph", async () => {

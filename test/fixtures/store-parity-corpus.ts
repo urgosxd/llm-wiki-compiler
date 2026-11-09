@@ -45,15 +45,15 @@
 
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { compileAndReport } from "../../src/compiler/index.js";
-import { createFileCuratedLinkStore } from "../../src/compiler/curated-links-store.js";
-import type { CuratedLinkRecord, CuratedLinkStorePort } from "../../src/compiler/curated-links.js";
-import { createRowCuratedLinkStore } from "../../src/dimensions/wiki/curated-links-row-store.js";
-import { createPageContentSource } from "../../src/dimensions/wiki/page-scan-source.js";
-import { saveSourceDocument } from "../../src/dimensions/wiki/source-documents-store.js";
-import type { CategoryMember, CategoryRecord } from "../../src/categories/types.js";
-import { CONCEPTS_DIR } from "../../src/utils/constants.js";
-import { parseFrontmatter } from "../../src/utils/markdown.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import { createFileCuratedLinkStore } from "../../packages/wiki/src/compiler/curated-links-store.js";
+import type { CuratedLinkRecord, CuratedLinkStorePort } from "../../packages/wiki/src/compiler/curated-links.js";
+import { createRowCuratedLinkStore } from "../../packages/wiki/src/dimensions/wiki/curated-links-row-store.js";
+import { createPageContentSource } from "../../packages/wiki/src/dimensions/wiki/page-scan-source.js";
+import { saveSourceDocument } from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import type { CategoryMember, CategoryRecord } from "../../packages/wiki/src/categories/types.js";
+import { CONCEPTS_DIR } from "../../packages/wiki/src/utils/constants.js";
+import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 import {
   proposal,
   proposalAnswer,

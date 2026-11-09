@@ -15,10 +15,10 @@ import { describe, it, expect, vi } from "vitest";
 import { writeFile, readFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import { writeCandidate } from "../src/compiler/candidates.js";
-import reviewApproveCommand from "../src/commands/review-approve.js";
-import { openBatch, recordPreState, type JournalBatch } from "../src/trust/journal.js";
-import { CANDIDATES_DIR, CONCEPTS_DIR, MAX_SOURCE_CHARS } from "../src/utils/constants.js";
+import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import reviewApproveCommand from "../packages/wiki/src/commands/review-approve.js";
+import { openBatch, recordPreState, type JournalBatch } from "../packages/wiki/src/trust/journal.js";
+import { CANDIDATES_DIR, CONCEPTS_DIR, MAX_SOURCE_CHARS } from "../packages/wiki/src/utils/constants.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

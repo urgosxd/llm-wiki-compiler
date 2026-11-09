@@ -15,9 +15,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   readWikiStateFromRows,
   writeWikiStateToRows,
-} from "../../src/dimensions/wiki/wiki-state-source.js";
-import type { WikiState } from "../../src/utils/types.js";
-import { saveSourceDocument } from "../../src/dimensions/wiki/source-documents-store.js";
+} from "../../packages/wiki/src/dimensions/wiki/wiki-state-source.js";
+import type { WikiState } from "../../packages/wiki/src/utils/types.js";
+import { saveSourceDocument } from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 const COMPILED_AT = "2026-02-01T10:00:00.000Z";

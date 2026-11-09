@@ -5,11 +5,11 @@
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { compileAndReport } from "../src/compiler/index.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { CandidateRecordMalformedError } from "../src/compiler/candidate-read.js";
-import { selectCandidateEntriesForMutation } from "../src/compiler/candidate-selection.js";
-import { listCandidates, writeCandidate } from "../src/compiler/candidates.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { CandidateRecordMalformedError } from "../packages/wiki/src/compiler/candidate-read.js";
+import { selectCandidateEntriesForMutation } from "../packages/wiki/src/compiler/candidate-selection.js";
+import { listCandidates, writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 
 const project = useCompileProject({ dirSuffix: "candidate-preflight" });

@@ -26,7 +26,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { formatHref } from "../src/viewer/assets/viewer-field-format.js";
+import { formatHref } from "../packages/wiki/src/viewer/assets/viewer-field-format.js";
 
 describe("formatHref resolves the declared vocabulary", () => {
   it("resolves a doi through the fixed doi.org origin", () => {

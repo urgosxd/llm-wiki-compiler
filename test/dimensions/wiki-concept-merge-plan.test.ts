@@ -10,8 +10,8 @@ import {
   groupSlugs,
   planConceptMerge,
   type MergePlanCandidate,
-} from "../../src/dimensions/wiki/concept-merge-plan.js";
-import type { ConceptEmbeddingPort } from "../../src/dimensions/wiki/concept-resolution.js";
+} from "../../packages/wiki/src/dimensions/wiki/concept-merge-plan.js";
+import type { ConceptEmbeddingPort } from "../../packages/wiki/src/dimensions/wiki/concept-resolution.js";
 
 /** A port that scores every pair as identical, so every pair becomes a proposal. */
 const identicalPort: ConceptEmbeddingPort = {

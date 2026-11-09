@@ -14,7 +14,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import visualizeCommand from "../../src/commands/visualize.js";
+import visualizeCommand from "../../packages/wiki/src/commands/visualize.js";
 
 /** A minimal compiled wiki: two pages, one linking to the other. */
 async function wikiProject(): Promise<string> {

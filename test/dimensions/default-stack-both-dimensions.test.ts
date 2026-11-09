@@ -45,13 +45,13 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 
-import { DIMENSIONS_ENV_VAR } from "../../src/dimensions/activation.js";
-import { resolveDimensions } from "../../src/dimensions/index.js";
-import { DEFAULT_STACK_DOMAIN } from "../../src/dimensions/stack-selection.js";
-import type { KgDimensionOptions } from "../../src/dimensions/kg/index.js";
-import type { WikiStoreDimensionOptions } from "../../src/dimensions/wiki/database.js";
+import { DIMENSIONS_ENV_VAR } from "../../packages/wiki/src/dimensions/activation.js";
+import { resolveDimensions } from "../../packages/wiki/src/dimensions/index.js";
+import { DEFAULT_STACK_DOMAIN } from "../../packages/wiki/src/dimensions/stack-selection.js";
+import type { KgDimensionOptions } from "../../packages/wiki/src/dimensions/kg/index.js";
+import type { WikiStoreDimensionOptions } from "../../packages/wiki/src/dimensions/wiki/database.js";
 import type { DatabaseHandle } from "@repo/foundation";
-import { resolveStackForCommand } from "../../src/services/stacks/resolve-stack.js";
+import { resolveStackForCommand } from "../../packages/wiki/src/services/stacks/resolve-stack.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
 
@@ -63,9 +63,9 @@ import { testDatabaseUrl } from "../fixtures/test-database.js";
  */
 const builtWith = vi.hoisted(() => ({ wiki: [] as string[], kg: [] as string[] }));
 
-vi.mock("../../src/dimensions/wiki/database.js", async (importOriginal) => {
+vi.mock("../../packages/wiki/src/dimensions/wiki/database.js", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../../src/dimensions/wiki/database.js")>();
+    await importOriginal<typeof import("../../packages/wiki/src/dimensions/wiki/database.js")>();
   return {
     ...actual,
     createWikiStoreDimension: (options: WikiStoreDimensionOptions) => {
@@ -75,8 +75,8 @@ vi.mock("../../src/dimensions/wiki/database.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../src/dimensions/kg/index.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/dimensions/kg/index.js")>();
+vi.mock("../../packages/wiki/src/dimensions/kg/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../packages/wiki/src/dimensions/kg/index.js")>();
   return {
     ...actual,
     createKgDimension: (options: KgDimensionOptions) => {

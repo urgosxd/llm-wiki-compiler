@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, writeFile, mkdir, readFile, rm } from "fs/promises";
 import path from "path";
 import os from "os";
-import { resolveLinks } from "../src/compiler/resolver.js";
-import { applyCompilePageWritesLocked } from "../src/compiler/compile-write.js";
-import { buildFrontmatter } from "../src/utils/markdown.js";
+import { resolveLinks } from "../packages/wiki/src/compiler/resolver.js";
+import { applyCompilePageWritesLocked } from "../packages/wiki/src/compiler/compile-write.js";
+import { buildFrontmatter } from "../packages/wiki/src/utils/markdown.js";
 
 describe("resolveLinks", () => {
   let tmpDir: string;

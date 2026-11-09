@@ -5,8 +5,8 @@ import {
   findLateAffectedSources,
   findSharedConcepts,
   type ExtractionResult,
-} from "../src/compiler/deps.js";
-import type { WikiState, SourceChange } from "../src/utils/types.js";
+} from "../packages/wiki/src/compiler/deps.js";
+import type { WikiState, SourceChange } from "../packages/wiki/src/utils/types.js";
 
 function makeState(
   sources: Record<string, { hash: string; concepts: string[] }>,

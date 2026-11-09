@@ -16,10 +16,10 @@ import { mkdtemp, rm, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { appendLog, formatLogEntry, renderJournal } from "../../src/utils/activity-log.js";
-import { withJournalSource } from "../../src/dimensions/wiki/activity-log-source.js";
-import { createDimensionsDatabase } from "../../src/dimensions/activation.js";
-import { readJournalEntries } from "../../src/dimensions/wiki/activity-log-store.js";
+import { appendLog, formatLogEntry, renderJournal } from "../../packages/wiki/src/utils/activity-log.js";
+import { withJournalSource } from "../../packages/wiki/src/dimensions/wiki/activity-log-source.js";
+import { createDimensionsDatabase } from "../../packages/wiki/src/dimensions/activation.js";
+import { readJournalEntries } from "../../packages/wiki/src/dimensions/wiki/activity-log-store.js";
 import { withProjectRoot, withStackEnv } from "../fixtures/stack-env.js";
 
 

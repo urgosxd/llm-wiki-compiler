@@ -22,8 +22,8 @@ import { access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { deleteCandidate, listCandidates, readCandidate, writeCandidate } from "../../src/compiler/candidates.js";
-import { CANDIDATES_DIR } from "../../src/utils/constants.js";
+import { deleteCandidate, listCandidates, readCandidate, writeCandidate } from "../../packages/wiki/src/compiler/candidates.js";
+import { CANDIDATES_DIR } from "../../packages/wiki/src/utils/constants.js";
 import { createProbeStack, type ProbeStack } from "./harness-lifecycle.js";
 
 let probe: ProbeStack;
@@ -142,7 +142,7 @@ describe("rejection on a Stack-backed project", () => {
     // command reported "could not be archived safely".
     const written = await writeCandidate(root, process.env, draft("Zeta"));
 
-    const { archiveRejectedCandidate } = await import("../../src/compiler/candidate-rejection.js");
+    const { archiveRejectedCandidate } = await import("../../packages/wiki/src/compiler/candidate-rejection.js");
     expect(await archiveRejectedCandidate(root, process.env, written.id)).toBe(true);
     expect(await candidateDirExists()).toBe(false);
     expect(await listCandidates(root)).toEqual([]);
@@ -153,7 +153,7 @@ describe("other candidate entry points", () => {
   it("writeFreshCandidate publishes to rows without a candidate directory", async () => {
     // Typed staging supersede and validated answers call this directly, bypassing
     // writeCandidate. It was still allocating through the filesystem allocator.
-    const { writeFreshCandidate } = await import("../../src/compiler/candidates.js");
+    const { writeFreshCandidate } = await import("../../packages/wiki/src/compiler/candidates.js");
     const fresh = await writeFreshCandidate(root, process.env, draft("Eta"));
 
     expect(fresh.id).toBeTruthy();
@@ -162,7 +162,7 @@ describe("other candidate entry points", () => {
   });
 
   it("deleteCandidateBySlug removes every row for one concepts slug", async () => {
-    const { deleteCandidateBySlug } = await import("../../src/compiler/candidates.js");
+    const { deleteCandidateBySlug } = await import("../../packages/wiki/src/compiler/candidates.js");
     await writeCandidate(root, process.env, draft("Theta"));
 
     expect(await deleteCandidateBySlug(root, process.env, "theta")).toBe(true);

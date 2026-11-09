@@ -23,12 +23,12 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { existsSync } from "fs";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import path from "path";
-import { compile } from "../src/compiler/index.js";
-import refreshCommand from "../src/commands/refresh.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
-import * as recovery from "../src/trust/journal-recovery.js";
-import * as compileWrite from "../src/compiler/compile-write.js";
+import { compile } from "../packages/wiki/src/compiler/index.js";
+import refreshCommand from "../packages/wiki/src/commands/refresh.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
+import * as recovery from "../packages/wiki/src/trust/journal-recovery.js";
+import * as compileWrite from "../packages/wiki/src/compiler/compile-write.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 import { writeSourceState, sha256Hex } from "./fixtures/state-json.js";
 import {

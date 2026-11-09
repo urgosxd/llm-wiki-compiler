@@ -22,12 +22,12 @@ import path from "path";
 import {
   planPageMutation,
   type PlannedMutation,
-} from "../src/trust/planner.js";
-import { applyApprovedMutations } from "../src/trust/executor.js";
-import { replayJournal, openBatch, recordPreState } from "../src/trust/journal.js";
-import { entityId } from "../src/profile/identity.js";
-import { COMPILE_ORIGIN } from "../src/trust/checks.js";
-import { MAX_SOURCE_CHARS, GENERATED_PAGE_MAX_CHARS } from "../src/utils/constants.js";
+} from "../packages/wiki/src/trust/planner.js";
+import { applyApprovedMutations } from "../packages/wiki/src/trust/executor.js";
+import { replayJournal, openBatch, recordPreState } from "../packages/wiki/src/trust/journal.js";
+import { entityId } from "../packages/wiki/src/profile/identity.js";
+import { COMPILE_ORIGIN } from "../packages/wiki/src/trust/checks.js";
+import { MAX_SOURCE_CHARS, GENERATED_PAGE_MAX_CHARS } from "../packages/wiki/src/utils/constants.js";
 import {
   WIKI,
   makeTrustRoot,

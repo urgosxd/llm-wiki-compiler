@@ -17,8 +17,8 @@
 import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
-import { startHost, type HostHandle } from "../../src/host/server.js";
+import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
+import { startHost, type HostHandle } from "../../packages/wiki/src/host/server.js";
 
 /** A running host plus the base URL to reach it. */
 export interface RunningHost {

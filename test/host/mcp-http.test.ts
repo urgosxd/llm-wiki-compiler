@@ -20,8 +20,8 @@
 
 import { describe, expect, it } from "vitest";
 import { runningHost } from "../fixtures/running-host.js";
-import { MCP_HTTP_PATH } from "../../src/host/mcp-http.js";
-import { createWikiMcpServer } from "../../src/mcp/server.js";
+import { MCP_HTTP_PATH } from "../../packages/wiki/src/host/mcp-http.js";
+import { createWikiMcpServer } from "../../packages/wiki/src/mcp/server.js";
 
 /** Read a server's registered-tool map, so tool sets can be compared directly. */
 function registeredToolNames(server: { _registeredTools?: Record<string, unknown> }): string[] {

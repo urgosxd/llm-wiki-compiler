@@ -22,11 +22,11 @@ import {
   useViewerProcessLifecycle,
   type ViewerProcessHandle,
 } from "./fixtures/run-cli-server.js";
-import { collectPageSummaries } from "../src/compiler/indexgen.js";
-import { countCandidates } from "../src/compiler/candidates.js";
-import { readState } from "../src/utils/state.js";
-import { CONCEPTS_DIR, QUERIES_DIR } from "../src/utils/constants.js";
-import { writeLintCache } from "../src/linter/cache.js";
+import { collectPageSummaries } from "../packages/wiki/src/compiler/indexgen.js";
+import { countCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import { readState } from "../packages/wiki/src/utils/state.js";
+import { CONCEPTS_DIR, QUERIES_DIR } from "../packages/wiki/src/utils/constants.js";
+import { writeLintCache } from "../packages/wiki/src/linter/cache.js";
 
 const { start: startViewer } = useViewerProcessLifecycle();
 

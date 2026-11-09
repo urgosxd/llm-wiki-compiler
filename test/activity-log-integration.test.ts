@@ -12,13 +12,13 @@ import path from "path";
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
 import { makeLintTempRoot, type LintTempRoot } from "./fixtures/lint-temp-root.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
-import { lint } from "../src/linter/index.js";
-import { compileAndReport } from "../src/compiler/index.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { LOG_FILE } from "../src/utils/constants.js";
+import { lint } from "../packages/wiki/src/linter/index.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { LOG_FILE } from "../packages/wiki/src/utils/constants.js";
 import { useStackEnv } from "./fixtures/stack-env.js";
-import { withJournalSource } from "../src/dimensions/wiki/activity-log-source.js";
-import { renderJournal } from "../src/utils/activity-log.js";
+import { withJournalSource } from "../packages/wiki/src/dimensions/wiki/activity-log-source.js";
+import { renderJournal } from "../packages/wiki/src/utils/activity-log.js";
 
 
 const LONG_BODY = "This page body is comfortably long enough to clear the empty-page threshold.";

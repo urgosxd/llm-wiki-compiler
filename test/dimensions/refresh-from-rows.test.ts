@@ -11,9 +11,9 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveStaleRefresh } from "../../src/compiler/refresh-plan.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { createPageScanSource } from "../../src/dimensions/wiki/page-scan-source.js";
+import { resolveStaleRefresh } from "../../packages/wiki/src/compiler/refresh-plan.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { createPageScanSource } from "../../packages/wiki/src/dimensions/wiki/page-scan-source.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { provisionStack } from "../fixtures/stack-harness.js";
 

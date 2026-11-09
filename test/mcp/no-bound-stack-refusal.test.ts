@@ -21,7 +21,7 @@
  * failure surfaces here instead of the marker.
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { boundStackOrProblem, isRefusal, withTenantDatabase } from "../../src/mcp/tenant-db.js";
+import { boundStackOrProblem, isRefusal, withTenantDatabase } from "../../packages/wiki/src/mcp/tenant-db.js";
 import { createEnvSnapshot } from "../fixtures/env-snapshot.js";
 
 /** What the exempt discovery tool reports on an unbound deployment, verbatim. */

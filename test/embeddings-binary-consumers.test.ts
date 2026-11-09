@@ -8,12 +8,12 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 import { writePage } from "./fixtures/write-page.js";
-import * as transport from "../src/utils/embedding-provider.js";
-import { writeEmbeddingStore, resolveEmbeddingFingerprint, resolveEmbeddingModel, type EmbeddingStoreV3 } from "../src/utils/embeddings-store.js";
-import { loadEmbeddingsForSearch, loadEmbeddingsForContext, findRelevantPagesV3, findRelevantChunksV3 } from "../src/utils/embeddings-load.js";
-import { buildEmbeddingText } from "../src/utils/embeddings-pages.js";
-import { hashChunkText } from "../src/utils/retrieval.js";
-import type { LoadedProfile } from "../src/profile/types.js";
+import * as transport from "../packages/wiki/src/utils/embedding-provider.js";
+import { writeEmbeddingStore, resolveEmbeddingFingerprint, resolveEmbeddingModel, type EmbeddingStoreV3 } from "../packages/wiki/src/utils/embeddings-store.js";
+import { loadEmbeddingsForSearch, loadEmbeddingsForContext, findRelevantPagesV3, findRelevantChunksV3 } from "../packages/wiki/src/utils/embeddings-load.js";
+import { buildEmbeddingText } from "../packages/wiki/src/utils/embeddings-pages.js";
+import { hashChunkText } from "../packages/wiki/src/utils/retrieval.js";
+import type { LoadedProfile } from "../packages/wiki/src/profile/types.js";
 
 const ctx = useConfinementRoots("binary-consumers");
 beforeEach(() => {

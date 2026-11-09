@@ -19,8 +19,8 @@ import {
   parseEmbeddingStore,
   validateV3ForSearch,
   readStoreForUpdate,
-} from "../src/utils/embeddings-store.js";
-import { EmbeddingIntegrityError } from "../src/utils/embeddings-validate.js";
+} from "../packages/wiki/src/utils/embeddings-store.js";
+import { EmbeddingIntegrityError } from "../packages/wiki/src/utils/embeddings-validate.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 
 const ctx = useConfinementRoots("embed-parse");

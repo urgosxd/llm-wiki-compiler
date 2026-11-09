@@ -2,7 +2,7 @@
  * Small logical stores for binary persistence tests. Values and identities are
  * independent of the codec so serialization mistakes cannot define expectations.
  */
-import type { EmbeddingStoreV3 } from "../../src/utils/embeddings-store.js";
+import type { EmbeddingStoreV3 } from "../../packages/wiki/src/utils/embeddings-store.js";
 
 /** Return fresh arrays so corruption tests cannot contaminate another witness. */
 export function binaryFixture(): EmbeddingStoreV3 {

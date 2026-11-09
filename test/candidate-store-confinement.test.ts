@@ -27,9 +27,9 @@ import {
   deleteCandidate,
   archiveCandidate,
   listCandidates,
-} from "../src/compiler/candidates.js";
-import { UnsafeCandidateDirError } from "../src/compiler/candidate-store-paths.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+} from "../packages/wiki/src/compiler/candidates.js";
+import { UnsafeCandidateDirError } from "../packages/wiki/src/compiler/candidate-store-paths.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 
 const ctx = useConfinementRoots("candidate");

@@ -9,8 +9,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { writeCandidate } from "../../src/compiler/candidates.js";
-import { evaluateCandidates } from "../../src/eval/candidates.js";
+import { writeCandidate } from "../../packages/wiki/src/compiler/candidates.js";
+import { evaluateCandidates } from "../../packages/wiki/src/eval/candidates.js";
 import { withStackEnv } from "./../fixtures/stack-env.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

@@ -9,11 +9,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { useAlphaPageFixture, mockEmbeddingFailure } from "./fixtures/alpha-page.js";
-import { pickSearchRefs } from "../src/search/retrieval.js";
+import { pickSearchRefs } from "../packages/wiki/src/search/retrieval.js";
 
 // The fallback's page-selection call (tools present) picks the seeded concept;
 // it needs no embedder, which is the point.
-vi.mock("../src/utils/llm.js", () => ({
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({
   callClaude: vi.fn(async () => JSON.stringify({ pages: ["concepts/alpha"], reasoning: "r" })),
 }));
 

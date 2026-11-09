@@ -38,20 +38,20 @@ import { writeProfileFile } from "./fixtures/profile-fixtures.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { mockQueryVector, PAPERS_PROFILE, chunkOf } from "./fixtures/typed-grounding.js";
 import { buildServer, callTool } from "./fixtures/mcp-test-env.js";
-import { migrateEmbeddingStore, type EligibleLivePage } from "../src/utils/embeddings-migrate.js";
-import { buildEmbeddingText } from "../src/utils/embeddings-pages.js";
-import { hashChunkText } from "../src/utils/retrieval.js";
+import { migrateEmbeddingStore, type EligibleLivePage } from "../packages/wiki/src/utils/embeddings-migrate.js";
+import { buildEmbeddingText } from "../packages/wiki/src/utils/embeddings-pages.js";
+import { hashChunkText } from "../packages/wiki/src/utils/retrieval.js";
 import {
   writeEmbeddingStore,
   resolveEmbeddingModel,
   type ParsedStore,
   type EmbeddingStoreV3,
-} from "../src/utils/embeddings-store.js";
-import { findRelevantPagesV3 } from "../src/utils/embeddings-load.js";
-import { loadProfile } from "../src/profile/load.js";
-import type { PageRecord } from "../src/pages/read.js";
+} from "../packages/wiki/src/utils/embeddings-store.js";
+import { findRelevantPagesV3 } from "../packages/wiki/src/utils/embeddings-load.js";
+import { loadProfile } from "../packages/wiki/src/profile/load.js";
+import type { PageRecord } from "../packages/wiki/src/pages/read.js";
 
-vi.mock("../src/utils/llm.js", () => ({
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({
   // Echo the grounding context so the test can read which page body reached the
   // answer prompt (so cross-contamination is observable).
   callClaude: vi.fn(async (opts: { messages: Array<{ content: string }> }) => opts.messages[0].content),

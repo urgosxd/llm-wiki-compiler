@@ -18,10 +18,10 @@ import {
   reportConceptIdentity,
   resolveExtractionIdentity,
   supersededPageSlugs,
-} from "../../src/compiler/extraction-identity.js";
-import type { ConceptEmbeddingPort } from "../../src/dimensions/wiki/concept-resolution.js";
-import type { ExtractedConcept } from "../../src/utils/types.js";
-import type { ExtractionResult } from "../../src/compiler/deps.js";
+} from "../../packages/wiki/src/compiler/extraction-identity.js";
+import type { ConceptEmbeddingPort } from "../../packages/wiki/src/dimensions/wiki/concept-resolution.js";
+import type { ExtractedConcept } from "../../packages/wiki/src/utils/types.js";
+import type { ExtractionResult } from "../../packages/wiki/src/compiler/deps.js";
 
 /** One source carrying the given concepts, in order. */
 function source(file: string, concepts: ExtractedConcept[]): ExtractionResult {

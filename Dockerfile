@@ -6,7 +6,7 @@
 #
 # The KG package ships its own image, and it builds only `ts/src` — the reference
 # server, alone. This image builds the ROOT bundle instead, which is what carries
-# `src/dimensions/**`: the wiki dimension, the transactional coordinator that puts
+# `packages/wiki/src/dimensions/**`: the wiki dimension, the transactional coordinator that puts
 # both dimensions in one commit, and the CLI that can start either surface. The KG
 # package image cannot serve the wiki dimension because the wiki dimension is not
 # in its source tree; that is a fact about where the code lives, not a preference.
@@ -39,11 +39,15 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # down at `ts/` — and copying a path that does not exist fails the whole build.
 COPY packages/llmwiki-core/package.json packages/llmwiki-core/
 COPY packages/llmwiki-kg/ts/package.json packages/llmwiki-kg/ts/
+# `@repo/wiki` is a root devDependency pinned as `workspace:*`, so its manifest has
+# to exist before `pnpm install` or the install cannot resolve the member.
+COPY packages/wiki/package.json packages/wiki/
 RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.json tsup.config.ts ./
 COPY scripts ./scripts
-COPY src ./src
+# The wiki source no longer sits at `./src`: it is `@repo/wiki`'s tree under
+# `./packages/wiki/src`, which the `packages` copy below already carries.
 COPY packages ./packages
 
 # `tsup` also builds the compiler dependency packages, so this single command
@@ -88,9 +92,10 @@ COPY --from=build /app/package.json ./package.json
 # `dist` is copied to the same relative path so the symlink resolves.
 COPY --from=build /app/packages/llmwiki-core ./packages/llmwiki-core
 # The wiki dimension reads its schema and migrations from the source tree at
-# runtime when `apply-schemas` runs, and the KG schema lives beside it.
+# runtime when `apply-schemas` runs, and the KG schema lives beside it. The paths
+# are `scripts/apply-schemas.sh`'s, which are repository-relative.
 COPY --from=build /app/scripts ./scripts
-COPY --from=build /app/src/dimensions ./src/dimensions
+COPY --from=build /app/packages/wiki/src/dimensions ./packages/wiki/src/dimensions
 COPY --from=build /app/packages/llmwiki-kg/db ./packages/llmwiki-kg/db
 
 # Runs as the unprivileged user the base image already provides; the container

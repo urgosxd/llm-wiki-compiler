@@ -55,7 +55,7 @@ const ROW_ONLY_BODY = "ROW_ONLY_BODY_never_written_to_disk";
  * code, because they are what this file measures. The selector returns one qualified
  * page id, which is how the real model answers when it picks from the candidate list.
  */
-vi.mock("../../src/utils/llm.js", () => rowOnlyProviderModule(SELECTED_PAGE_ID));
+vi.mock("../../packages/wiki/src/utils/llm.js", () => rowOnlyProviderModule(SELECTED_PAGE_ID));
 
 /** Seed one page into the Stack through the same sink a compile uses. */
 async function seedRowOnlyPage(fixture: QueryStackFixture): Promise<void> {

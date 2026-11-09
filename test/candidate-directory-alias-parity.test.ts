@@ -5,9 +5,9 @@
 import { rename, symlink } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { archiveCandidate, listCandidates, writeCandidate } from "../src/compiler/candidates.js";
-import { selectCandidateEntriesForMutation } from "../src/compiler/candidate-selection.js";
-import { UnsafeCandidateDirError } from "../src/compiler/candidate-store-paths.js";
+import { archiveCandidate, listCandidates, writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import { selectCandidateEntriesForMutation } from "../packages/wiki/src/compiler/candidate-selection.js";
+import { UnsafeCandidateDirError } from "../packages/wiki/src/compiler/candidate-store-paths.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

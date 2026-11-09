@@ -55,8 +55,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import ingestPdf from "../../src/ingest/pdf.js";
-import { enforceCharLimit, enforceMinContent } from "../../src/services/ingest/document.js";
+import ingestPdf from "../../packages/wiki/src/ingest/pdf.js";
+import { enforceCharLimit, enforceMinContent } from "../../packages/wiki/src/services/ingest/document.js";
 import { fixture } from "./document-fixtures.js";
 
 /** pdf-parse's separator syntax, for any page count. */

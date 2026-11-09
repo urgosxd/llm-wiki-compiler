@@ -5,17 +5,17 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { createWiki } from "../src/index.js";
-import type { QueryResult } from "../src/index.js";
-import { generateAnswer } from "../src/commands/query.js";
-import { callClaude } from "../src/utils/llm.js";
-import { parseFrontmatter } from "../src/utils/markdown.js";
+import { createWiki } from "../packages/wiki/src/index.js";
+import type { QueryResult } from "../packages/wiki/src/index.js";
+import { generateAnswer } from "../packages/wiki/src/commands/query.js";
+import { callClaude } from "../packages/wiki/src/utils/llm.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { CITED_ANSWER, EXPECTED_REPORT, stageCitationWorkspace, citationWorkspaceBytes } from "./fixtures/query-answer-citations.js";
 
-vi.mock("../src/utils/llm.js", () => ({ callClaude: vi.fn() }));
-vi.mock("../src/utils/embeddings.js", async (original) => ({
-  ...await original<typeof import("../src/utils/embeddings.js")>(),
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({ callClaude: vi.fn() }));
+vi.mock("../packages/wiki/src/utils/embeddings.js", async (original) => ({
+  ...await original<typeof import("../packages/wiki/src/utils/embeddings.js")>(),
   updateEmbeddingsLockedCore: vi.fn().mockResolvedValue(undefined),
 }));
 const ctx = useTempRoot();

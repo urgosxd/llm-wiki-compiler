@@ -12,13 +12,13 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   getOutputLanguage,
   languageDirective,
-} from "../src/utils/output-language.js";
+} from "../packages/wiki/src/utils/output-language.js";
 import {
   buildExtractionPrompt,
   buildPagePrompt,
   buildSeedPagePrompt,
-} from "../src/compiler/prompts.js";
-import type { PageKindRule, SeedPage } from "../src/schema/index.js";
+} from "../packages/wiki/src/compiler/prompts.js";
+import type { PageKindRule, SeedPage } from "../packages/wiki/src/schema/index.js";
 
 const ENV_KEY = "LLMWIKI_OUTPUT_LANG";
 

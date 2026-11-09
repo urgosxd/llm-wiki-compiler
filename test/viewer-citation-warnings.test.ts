@@ -14,7 +14,7 @@ import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
-import { buildViewerSnapshot } from "../src/viewer/snapshot.js";
+import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
 
 async function writeSource(root: string, name: string): Promise<void> {
   await mkdir(path.join(root, "sources"), { recursive: true });

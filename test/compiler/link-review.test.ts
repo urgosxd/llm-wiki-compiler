@@ -15,22 +15,22 @@
 import { vi, describe, it, expect, afterEach } from "vitest";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { callClaude } from "../../src/utils/llm.js";
+import { callClaude } from "../../packages/wiki/src/utils/llm.js";
 import {
   describeLinkReview,
   reviewEarlierPages,
   type LinkReviewArticle,
   type LinkReviewCounts,
-} from "../../src/compiler/link-review.js";
+} from "../../packages/wiki/src/compiler/link-review.js";
 import {
   MAX_LINK_REVIEW_CANDIDATES_PER_ARTICLE,
   MAX_LINK_REVIEW_PAGES_MODIFIED_PER_RUN,
-} from "../../src/utils/constants.js";
+} from "../../packages/wiki/src/utils/constants.js";
 import { useManagedTempRoots } from "../fixtures/temp-root.js";
 import { writePage } from "../fixtures/write-page.js";
 import { changedPaths, fingerprintTree } from "../fixtures/tree-fingerprint.js";
 
-vi.mock("../../src/utils/llm.js", () => ({
+vi.mock("../../packages/wiki/src/utils/llm.js", () => ({
   callClaude: vi.fn(),
 }));
 

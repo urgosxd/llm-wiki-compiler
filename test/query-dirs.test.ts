@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { writeFile } from "fs/promises";
 import path from "path";
-import { buildFrontmatter } from "../src/utils/markdown.js";
-import { loadSelectedPages } from "../src/commands/query.js";
+import { buildFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import { loadSelectedPages } from "../packages/wiki/src/commands/query.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
 

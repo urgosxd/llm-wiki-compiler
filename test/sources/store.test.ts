@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { listSources, getSource } from "../../src/sources/store.js";
-import { PathSafetyError } from "../../src/viewer/path-safety.js";
+import { listSources, getSource } from "../../packages/wiki/src/sources/store.js";
+import { PathSafetyError } from "../../packages/wiki/src/viewer/path-safety.js";
 
 async function seed(root: string) {
   await mkdir(path.join(root, "sources"), { recursive: true });

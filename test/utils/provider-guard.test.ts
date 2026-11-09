@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { ensureProviderAvailable, ProviderUnavailableError, UnknownProviderError } from "../../src/utils/provider-guard.js";
+import { ensureProviderAvailable, ProviderUnavailableError, UnknownProviderError } from "../../packages/wiki/src/utils/provider-guard.js";
 
 /** Call ensureProviderAvailable() and return the caught error, or throw if it does not throw. */
 function catchGuardError(): unknown {

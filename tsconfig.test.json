@@ -7,6 +7,6 @@
     "types": ["node", "vitest/globals"],
     "allowImportingTsExtensions": true
   },
-  "include": ["src/**/*", "test/**/*", "scripts/test-typecheck*.ts", "scripts/typecheck-tests.ts", "packages/llmwiki-kg/ts/src/**/*"],
+  "include": ["packages/wiki/src/**/*", "test/**/*", "scripts/test-typecheck*.ts", "scripts/typecheck-tests.ts", "packages/llmwiki-kg/ts/src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

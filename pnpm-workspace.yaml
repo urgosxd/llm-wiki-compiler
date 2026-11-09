@@ -6,6 +6,7 @@ packages:
   - packages/foundation
   - packages/llmwiki-core
   - packages/llmwiki-kg/ts
+  - packages/wiki
 
 # Mirror of the root `package.json` `overrides` field, which pnpm ignores. This
 # is NOT a new pin: npm already forces esbuild 0.28.1 for this tree, and the

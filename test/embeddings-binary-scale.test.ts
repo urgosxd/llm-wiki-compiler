@@ -9,8 +9,8 @@ import { open, stat } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
-import { readStoreForUpdate, writeEmbeddingStore, type EmbeddingStoreV3 } from "../src/utils/embeddings-store.js";
-import { cosineSimilarity } from "../src/utils/embeddings-search.js";
+import { readStoreForUpdate, writeEmbeddingStore, type EmbeddingStoreV3 } from "../packages/wiki/src/utils/embeddings-store.js";
+import { cosineSimilarity } from "../packages/wiki/src/utils/embeddings-search.js";
 
 const PAGES = 900;
 const CHUNKS = 33_000;

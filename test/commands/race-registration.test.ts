@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import { Command } from "commander";
-import { registerContextCommands } from "../../src/cli/context-commands.js";
+import { registerContextCommands } from "../../packages/wiki/src/cli/context-commands.js";
 
 /** Register the context commands on a bare program so help can be read. */
 function registeredRace(): Command {

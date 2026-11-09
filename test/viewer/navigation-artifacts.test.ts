@@ -20,9 +20,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   canvasDocument, focusSubgraph, obsidianGraphConfig,
-} from "../../src/viewer/navigation-artifacts.js";
-import { writeDerivedArtifact } from "../../src/viewer/navigation-write.js";
-import type { GraphData } from "../../src/viewer/types.js";
+} from "../../packages/wiki/src/viewer/navigation-artifacts.js";
+import { writeDerivedArtifact } from "../../packages/wiki/src/viewer/navigation-write.js";
+import type { GraphData } from "../../packages/wiki/src/viewer/types.js";
 
 /** A three-node chain: alpha -cites-> beta, and gamma -cites-> alpha. */
 function chainGraph(): GraphData {

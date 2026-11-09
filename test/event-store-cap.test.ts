@@ -20,17 +20,17 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { EVENTS_FILE } from "../src/utils/constants.js";
-import { MAX_EVENT_RECORD_BYTES } from "../src/utils/constants.js";
-import { appendEvent } from "../src/events/store.js";
-import { readEvents } from "../src/events/store-read.js";
-import { EventStoreFullError } from "../src/events/types.js";
+import { EVENTS_FILE } from "../packages/wiki/src/utils/constants.js";
+import { MAX_EVENT_RECORD_BYTES } from "../packages/wiki/src/utils/constants.js";
+import { appendEvent } from "../packages/wiki/src/events/store.js";
+import { readEvents } from "../packages/wiki/src/events/store-read.js";
+import { EventStoreFullError } from "../packages/wiki/src/events/types.js";
 
 // Use a tiny store cap so the store-size tests stay fast (no 64 MB writes).
 // NOTE: the literal 1024 is inlined in the mock factory because vi.mock is hoisted
 // before variable declarations and cannot reference module-level const bindings.
-vi.mock("../src/utils/constants.js", async (importActual) => {
-  const actual = await importActual<typeof import("../src/utils/constants.js")>();
+vi.mock("../packages/wiki/src/utils/constants.js", async (importActual) => {
+  const actual = await importActual<typeof import("../packages/wiki/src/utils/constants.js")>();
   return { ...actual, MAX_EVENT_STORE_BYTES: 1024 };
 });
 

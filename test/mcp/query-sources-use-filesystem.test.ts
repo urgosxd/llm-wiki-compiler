@@ -28,7 +28,7 @@ import { seedConceptPage } from "../fixtures/mcp-stack-rows.js";
 import { buildServer, callTool } from "../fixtures/mcp-test-env.js";
 import { useQueryStackFixture } from "../fixtures/query-stack-root.js";
 import type { QueryStackFixture } from "../fixtures/query-stack-root.js";
-import type { ContextPack } from "../../src/context/build.js";
+import type { ContextPack } from "../../packages/wiki/src/context/build.js";
 
 /** The source file the citation names; it exists ONLY under `sources/`. */
 const SOURCE_FILE = "article.md";

@@ -14,8 +14,8 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile, symlink, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { listSources, getSource } from "../../src/sources/store.js";
-import { saveSource } from "../../src/utils/source-writer.js";
+import { listSources, getSource } from "../../packages/wiki/src/sources/store.js";
+import { saveSource } from "../../packages/wiki/src/utils/source-writer.js";
 
 describe("sources/ itself being a symlink is rejected (no escape)", () => {
   async function setup() {

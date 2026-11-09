@@ -17,7 +17,7 @@ import { makeOutsideDir } from "./fixtures/outside-dir.js";
 import {
   readConfinedWikiPage,
   readConfinedWikiFile,
-} from "../src/compiler/confined-wiki-read.js";
+} from "../packages/wiki/src/compiler/confined-wiki-read.js";
 
 describe("readConfinedWikiPage", () => {
   it("returns the real bytes for a real in-dir page", async () => {

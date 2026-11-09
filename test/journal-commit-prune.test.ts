@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFile, readdir } from "fs/promises";
 import path from "path";
-import { openBatch, recordPreState, commitBatch, replayJournal } from "../src/trust/journal.js";
+import { openBatch, recordPreState, commitBatch, replayJournal } from "../packages/wiki/src/trust/journal.js";
 import { WIKI, makeTrustRoot, cleanupTrustRoot } from "./trust/fixture.js";
 import { journalDir, journalFile, pathExists } from "./trust/journal-fixture.js";
 

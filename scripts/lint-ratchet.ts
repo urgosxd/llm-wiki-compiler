@@ -77,7 +77,7 @@ const HOUSE_RULES: readonly string[] = [
  * scope without anyone remembering to add them.
  */
 const LINT_PATTERNS = [
-  "src/**/*.{ts,tsx,js,mjs,cjs}",
+  "packages/wiki/**/*.{ts,tsx,js,mjs,cjs}",
   "packages/**/*.{ts,tsx,js,mjs,cjs}",
   "test/**/*.{ts,tsx,js,mjs,cjs}",
   "scripts/**/*.{ts,tsx,js,mjs,cjs}",

@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, symlink } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { confineUnderRoot } from "../src/utils/path-confine.js";
+import { confineUnderRoot } from "../packages/wiki/src/utils/path-confine.js";
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });

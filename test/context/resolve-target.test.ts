@@ -18,9 +18,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { resolveTargetNodeId } from "../../src/context/resolve-target.js";
+import { resolveTargetNodeId } from "../../packages/wiki/src/context/resolve-target.js";
 import { syntheticGraph } from "../fixtures/graph-data.js";
-import type { PageId } from "../../src/viewer/types.js";
+import type { PageId } from "../../packages/wiki/src/viewer/types.js";
 
 const ALPHA = "concepts/alpha" as PageId;
 const REPORT = "queries/alpha-report" as PageId;

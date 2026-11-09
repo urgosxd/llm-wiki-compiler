@@ -11,7 +11,7 @@ import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
 import { useViewerProcessLifecycle } from "./fixtures/run-cli-server.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 import { seedSampleNotesProject, writeMarkdownPage } from "./fixtures/profile-fixtures.js";
 
 const { start: startViewer } = useViewerProcessLifecycle();

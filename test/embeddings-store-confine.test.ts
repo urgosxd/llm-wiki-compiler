@@ -12,8 +12,8 @@ import { describe, it, expect } from "vitest";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { readEmbeddingStore, writeEmbeddingStore, type EmbeddingStore } from "../src/utils/embeddings-store.js";
-import { EMBEDDINGS_FILE, LLMWIKI_DIR, MAX_EMBEDDING_STORE_BYTES } from "../src/utils/constants.js";
+import { readEmbeddingStore, writeEmbeddingStore, type EmbeddingStore } from "../packages/wiki/src/utils/embeddings-store.js";
+import { EMBEDDINGS_FILE, LLMWIKI_DIR, MAX_EMBEDDING_STORE_BYTES } from "../packages/wiki/src/utils/constants.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 
 const ctx = useConfinementRoots("embed-confine");
@@ -68,7 +68,7 @@ describe("embedding store write size cap", () => {
   it("preserves legal records in binary when JSON would exceed its cap", async () => {
     // Build many entries within per-field caps whose combined JSON exceeds the store cap.
     // Each entry's summary is at MAX_EMBEDDING_FIELD_CHARS; ~650 entries ≈ 65+ MiB total.
-    const { MAX_EMBEDDING_FIELD_CHARS: FIELD_CAP } = await import("../src/utils/constants.js");
+    const { MAX_EMBEDDING_FIELD_CHARS: FIELD_CAP } = await import("../packages/wiki/src/utils/constants.js");
     const entryCount = Math.ceil(MAX_EMBEDDING_STORE_BYTES / FIELD_CAP) + 10;
     const entries = Array.from({ length: entryCount }, (_, i) => ({
       slug: `p${i}`, title: "T", summary: "x".repeat(FIELD_CAP),

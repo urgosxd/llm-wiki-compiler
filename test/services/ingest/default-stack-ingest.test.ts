@@ -37,9 +37,9 @@ import { sql } from "drizzle-orm";
 import type { DatabaseHandle } from "@repo/foundation";
 
 import { DATABASE_URL, createKgPostgresHarness } from "../../fixtures/kg-postgres.js";
-import { DEFAULT_STACK_DOMAIN } from "../../../src/dimensions/stack-selection.js";
-import { listSourceDocuments } from "../../../src/dimensions/wiki/source-documents-store.js";
-import { ingestSource } from "../../../src/services/ingest/service.js";
+import { DEFAULT_STACK_DOMAIN } from "../../../packages/wiki/src/dimensions/stack-selection.js";
+import { listSourceDocuments } from "../../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import { ingestSource } from "../../../packages/wiki/src/services/ingest/service.js";
 
 /** Enough body text to clear the minimum source length the ingest enforces. */
 const BODY = "A short document ingested by a checkout that never configured a Stack.";

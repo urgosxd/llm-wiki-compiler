@@ -21,8 +21,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 
 /** The pre-fix leaf shape: a live pid plus a HUMAN-READABLE rendered start time. */
 const LEGACY_RENDERING = "Thu Jul 23 11:16:28 2026";

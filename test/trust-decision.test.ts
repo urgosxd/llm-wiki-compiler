@@ -18,7 +18,7 @@ import {
   type TrustVerdict,
   type TrustDecision,
   type TrustCheckResult,
-} from "../src/trust/decision.js";
+} from "../packages/wiki/src/trust/decision.js";
 
 const VERDICTS: TrustVerdict[] = ["pass", "warn", "block"];
 const DECISIONS: TrustDecision[] = [

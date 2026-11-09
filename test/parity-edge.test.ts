@@ -23,8 +23,8 @@ import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, symlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { collectRawWikiPages, scanEntityDir, type RawWikiPage } from "../src/wiki/collect.js";
-import { CONCEPTS_DIR, QUERIES_DIR } from "../src/utils/constants.js";
+import { collectRawWikiPages, scanEntityDir, type RawWikiPage } from "../packages/wiki/src/wiki/collect.js";
+import { CONCEPTS_DIR, QUERIES_DIR } from "../packages/wiki/src/utils/constants.js";
 import { assertGolden } from "./parity/golden.js";
 
 /** Number of files written into the bulk directory to exercise readdir order. */

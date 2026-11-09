@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { saveSource } from "../../src/utils/source-writer.js";
+import { saveSource } from "../../packages/wiki/src/utils/source-writer.js";
 
 // Build a document with an explicit source identity and a given title/body.
 const doc = (title: string, body: string, source = "https://x.test/a") =>

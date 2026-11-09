@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { listCandidates, writeCandidate } from "../src/compiler/candidates.js";
+import { listCandidates, writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

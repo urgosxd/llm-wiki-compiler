@@ -3,8 +3,8 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import importCommand from "../src/commands/import.js";
-import { listCandidates } from "../src/compiler/candidates.js";
+import importCommand from "../packages/wiki/src/commands/import.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 import { writeOneDocBundle } from "./fixtures/okf-bundle-fixture.js";
 
 let dir: string;

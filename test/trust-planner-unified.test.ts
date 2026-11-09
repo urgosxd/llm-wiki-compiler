@@ -10,8 +10,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { planPageMutation } from "../src/trust/planner.js";
-import { COMPILE_ORIGIN } from "../src/trust/checks.js";
+import { planPageMutation } from "../packages/wiki/src/trust/planner.js";
+import { COMPILE_ORIGIN } from "../packages/wiki/src/trust/checks.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 
 describe("unified planPageMutation", () => {

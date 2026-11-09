@@ -3,8 +3,8 @@
  * embedding selection and the model identity used to invalidate stored vectors.
  */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { getEmbeddingProvider, findEmbeddingProviderProblem } from "../src/utils/embedding-provider.js";
-import { resolveEmbeddingModel } from "../src/utils/embeddings-store.js";
+import { getEmbeddingProvider, findEmbeddingProviderProblem } from "../packages/wiki/src/utils/embedding-provider.js";
+import { resolveEmbeddingModel } from "../packages/wiki/src/utils/embeddings-store.js";
 
 beforeEach(() => {
   vi.stubEnv("LLMWIKI_PROVIDER", "orcarouter");

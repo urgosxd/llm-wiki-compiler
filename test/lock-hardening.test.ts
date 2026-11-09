@@ -17,8 +17,8 @@
 import { describe, it, beforeEach, afterEach, expect, vi } from "vitest";
 import { mkdir, rm, symlink, writeFile, readFile } from "fs/promises";
 import path from "path";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import {
   makeRootWithOutside,
   cleanupRootWithOutside,

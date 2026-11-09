@@ -41,7 +41,7 @@ const FULL_TIER_LINE = 'affected: scope resolves to the full unit tier; run `pnp
 const NOTHING_TO_RUN_LINE = "test-affected: nothing to run — no changes since origin/main\n";
 
 /** A changed file the `files` outcome can select. */
-const CHANGED = ["src/dimensions/activation.ts"];
+const CHANGED = ["packages/wiki/src/dimensions/activation.ts"];
 
 /** The two ways the changed set fails to be computed, as the resolver reports them. */
 const UNRESOLVED_REASONS = [

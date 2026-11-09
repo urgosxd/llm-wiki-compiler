@@ -14,8 +14,8 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { Command } from "commander";
-import graphHealthCommand from "../../src/commands/graph-health.js";
-import { registerContextCommands } from "../../src/cli/context-commands.js";
+import graphHealthCommand from "../../packages/wiki/src/commands/graph-health.js";
+import { registerContextCommands } from "../../packages/wiki/src/cli/context-commands.js";
 import { useTempRoot } from "../fixtures/temp-root.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
 import { writePage } from "../fixtures/write-page.js";

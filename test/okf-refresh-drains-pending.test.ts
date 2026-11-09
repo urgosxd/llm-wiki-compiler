@@ -16,11 +16,11 @@
  */
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { refreshAfterImport } from "../src/import/okf-refresh.js";
+import { refreshAfterImport } from "../packages/wiki/src/import/okf-refresh.js";
 import {
   writePendingEmbeddings,
   loadPendingEmbeddings,
-} from "../src/utils/pending-embeddings.js";
+} from "../packages/wiki/src/utils/pending-embeddings.js";
 import { mockEmbeddingSuccess } from "./fixtures/embedding-success.js";
 import { makeTrustRoot, cleanupTrustRoot } from "./trust/fixture.js";
 import { useStackEnv } from "./fixtures/stack-env.js";

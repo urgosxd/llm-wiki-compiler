@@ -19,7 +19,7 @@ const V3_OK = { store: { version: 3, model: "m", dimensions: 2, entries: [], chu
 
 // Degrade the embedding load (store: null + outdated warning) so consumers hit
 // the index-selection fallback, and stub selectPages so no LLM call is needed.
-vi.mock("../src/utils/embeddings-load.js", () => ({
+vi.mock("../packages/wiki/src/utils/embeddings-load.js", () => ({
   loadEmbeddingsForSearch: vi.fn(async () => ({ store: null, warnings: [OUTDATED], stalePageIds: [] })),
   // The header-only entry point delegates to the same mocked load when the source
   // cannot rank, so these cases keep measuring the warning plumbing they are about.
@@ -29,19 +29,19 @@ vi.mock("../src/utils/embeddings-load.js", () => ({
   findRelevantChunksV3: vi.fn(),
   findRelevantPagesV3: vi.fn(),
 }));
-vi.mock("../src/commands/page-selection.js", () => ({
+vi.mock("../packages/wiki/src/commands/page-selection.js", () => ({
   selectPages: vi.fn(async () => ({ pages: [], reasoning: "none" })),
 }));
-vi.mock("../src/profile/load.js", () => ({
+vi.mock("../packages/wiki/src/profile/load.js", () => ({
   loadProfile: vi.fn(async () => defaultProfileLoad()),
 }));
 
-import { pickSearchRefs } from "../src/search/retrieval.js";
+import { pickSearchRefs } from "../packages/wiki/src/search/retrieval.js";
 import {
   loadEmbeddingsForSearch,
   findRelevantChunksV3,
   findRelevantPagesV3,
-} from "../src/utils/embeddings-load.js";
+} from "../packages/wiki/src/utils/embeddings-load.js";
 
 const mockedLoad = loadEmbeddingsForSearch as unknown as Mock;
 const mockedChunks = findRelevantChunksV3 as unknown as Mock;

@@ -37,8 +37,8 @@ import { appRoleExists, countAsAppRole } from "../fixtures/rls-probe.js";
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 
-import { createWikiStoreDimension } from "../../src/dimensions/wiki/store-dimension.js";
-import type { DimensionInput } from "../../src/dimensions/types.js";
+import { createWikiStoreDimension } from "../../packages/wiki/src/dimensions/wiki/store-dimension.js";
+import type { DimensionInput } from "../../packages/wiki/src/dimensions/types.js";
 import type { DatabaseHandle } from "@repo/foundation";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { mkdtemp } from "node:fs/promises";
@@ -125,7 +125,7 @@ describe("the wiki dimension isolates by Stack", () => {
   it.skipIf(!appRolePresent)("isolates the dimension's OWN reads, not just raw SQL", async () => {
     // The read path a caller actually uses. `listStoredPages` binds its own
     // tenant, so a handle pointed at the wrong Stack must not return the page.
-    const { listStoredPages } = await import("../../src/dimensions/wiki/page-store.js");
+    const { listStoredPages } = await import("../../packages/wiki/src/dimensions/wiki/page-store.js");
     const fromOwnStack = await listStoredPages(stackA.db, stackA.stackId, 200);
     expect(fromOwnStack.some((page) => page.title === SECRET_TITLE)).toBe(true);
 

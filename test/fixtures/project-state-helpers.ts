@@ -8,7 +8,7 @@
 import { readdir, access } from "fs/promises";
 import path from "path";
 import { expect } from "vitest";
-import { LLMWIKI_DIR } from "../../src/utils/constants.js";
+import { LLMWIKI_DIR } from "../../packages/wiki/src/utils/constants.js";
 
 /**
  * Assert that the given project root has zero entries and that `.llmwiki/`

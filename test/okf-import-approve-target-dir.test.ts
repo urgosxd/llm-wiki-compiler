@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, stat } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { writeCandidate, listCandidates } from "../src/compiler/candidates.js";
-import reviewApproveCommand from "../src/commands/review-approve.js";
+import { writeCandidate, listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import reviewApproveCommand from "../packages/wiki/src/commands/review-approve.js";
 
 let dir: string; const cwd = process.cwd();
 afterEach(async () => { process.chdir(cwd); if (dir) await rm(dir, { recursive: true, force: true }); });

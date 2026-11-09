@@ -3,8 +3,8 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { runOkfImport } from "../src/import/run.js";
-import { LockUnavailableError } from "../src/import/run-errors.js";
+import { runOkfImport } from "../packages/wiki/src/import/run.js";
+import { LockUnavailableError } from "../packages/wiki/src/import/run-errors.js";
 import { writeOneDocBundle } from "./fixtures/okf-bundle-fixture.js";
 
 let dir: string;

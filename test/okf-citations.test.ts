@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { canonicalBody, safeRefName } from "../src/export/okf/mapping.js";
-import { renderCitationsSection } from "../src/export/okf/citations.js";
+import { canonicalBody, safeRefName } from "../packages/wiki/src/export/okf/mapping.js";
+import { renderCitationsSection } from "../packages/wiki/src/export/okf/citations.js";
 
 /** A refName lookup that maps every file to its safe name (everything bundled). */
 const allRefs = (file: string): string | null => safeRefName(file);

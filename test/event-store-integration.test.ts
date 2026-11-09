@@ -23,8 +23,8 @@ import path from "node:path";
 import os from "node:os";
 import { runCLI, expectCLIExit, expectCLIFailure } from "./fixtures/run-cli.js";
 import { buildResearchLiteRelationsProject } from "./fixtures/profile-fixtures.js";
-import { appendEvent } from "../src/events/store.js";
-import { EVENTS_FILE, CONCEPTS_DIR } from "../src/utils/constants.js";
+import { appendEvent } from "../packages/wiki/src/events/store.js";
+import { EVENTS_FILE, CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 
 /** Minimal event input for seeding a relation-create event. */
 const evt = (n: string) => ({

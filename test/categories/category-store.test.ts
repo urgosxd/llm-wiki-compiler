@@ -31,9 +31,9 @@ import {
   listCategories,
   readCategory,
   updateCategory,
-} from "../../src/categories/index.js";
-import type { CategoryDraft } from "../../src/categories/index.js";
-import { parseFrontmatter } from "../../src/utils/markdown.js";
+} from "../../packages/wiki/src/categories/index.js";
+import type { CategoryDraft } from "../../packages/wiki/src/categories/index.js";
+import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 import { categoryTempRoots } from "../fixtures/category-root.js";
 import { categoryMember } from "../fixtures/category-record.js";
 

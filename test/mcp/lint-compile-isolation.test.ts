@@ -36,16 +36,16 @@ import { rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { readJournalEntries } from "../../src/dimensions/wiki/activity-log-store.js";
+import { readJournalEntries } from "../../packages/wiki/src/dimensions/wiki/activity-log-store.js";
 import {
   hashSourceContent,
   saveSourceDocument,
   stableSourceContent,
-} from "../../src/dimensions/wiki/source-documents-store.js";
-import { writeWikiStateToRows } from "../../src/dimensions/wiki/wiki-state-source.js";
-import { AnthropicProvider } from "../../src/providers/anthropic.js";
-import { compileAndReport } from "../../src/compiler/index.js";
-import type { WikiState } from "../../src/utils/types.js";
+} from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import { writeWikiStateToRows } from "../../packages/wiki/src/dimensions/wiki/wiki-state-source.js";
+import { AnthropicProvider } from "../../packages/wiki/src/providers/anthropic.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import type { WikiState } from "../../packages/wiki/src/utils/types.js";
 import { buildServer } from "../fixtures/mcp-test-env.js";
 import { callToolPayload, seedConceptPage } from "../fixtures/mcp-stack-rows.js";
 import { provisionStack, type ProvisionedStack } from "../fixtures/stack-harness.js";

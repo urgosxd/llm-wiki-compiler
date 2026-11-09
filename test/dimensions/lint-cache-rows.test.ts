@@ -29,11 +29,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { writeLintCache, readLintCache, type LintCacheEntry } from "../../src/linter/cache.js";
+import { writeLintCache, readLintCache, type LintCacheEntry } from "../../packages/wiki/src/linter/cache.js";
 import { withProjectRoot } from "../fixtures/stack-env.js";
-import type { LintSummary } from "../../src/linter/types.js";
-import { createDimensionsDatabase } from "../../src/dimensions/activation.js";
-import { writeCachedLintResult, readCachedLintResult } from "../../src/dimensions/wiki/marker-store.js";
+import type { LintSummary } from "../../packages/wiki/src/linter/types.js";
+import { createDimensionsDatabase } from "../../packages/wiki/src/dimensions/activation.js";
+import { writeCachedLintResult, readCachedLintResult } from "../../packages/wiki/src/dimensions/wiki/marker-store.js";
 
 /** A summary with the given totals but explicit per-rule results. */
 function summaryOf(errors: number, warnings: number, results: LintSummary["results"]): LintSummary {

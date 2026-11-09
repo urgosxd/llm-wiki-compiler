@@ -25,10 +25,10 @@ import { readFile, writeFile } from "fs/promises";
 import {
   writeCandidate,
   readCandidate,
-} from "../src/compiler/candidates.js";
-import reviewListCommand from "../src/commands/review-list.js";
-import { CANDIDATES_DIR } from "../src/utils/constants.js";
-import type { TrustDecision } from "../src/trust/decision.js";
+} from "../packages/wiki/src/compiler/candidates.js";
+import reviewListCommand from "../packages/wiki/src/commands/review-list.js";
+import { CANDIDATES_DIR } from "../packages/wiki/src/utils/constants.js";
+import type { TrustDecision } from "../packages/wiki/src/trust/decision.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

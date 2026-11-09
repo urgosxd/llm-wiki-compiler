@@ -17,14 +17,14 @@ import { rm } from "fs/promises";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
-import { buildFrontmatter } from "../src/utils/markdown.js";
-import { collectExportPages } from "../src/export/collect.js";
-import { buildLlmsTxt, buildLlmsFullTxt } from "../src/export/llms-txt.js";
-import { buildJsonLd } from "../src/export/json-ld.js";
-import { buildGraphml } from "../src/export/graphml.js";
-import { buildMarp } from "../src/export/marp.js";
-import { mapPageToOkfFrontmatter } from "../src/export/okf/mapping.js";
-import type { ExportPage } from "../src/export/types.js";
+import { buildFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import { collectExportPages } from "../packages/wiki/src/export/collect.js";
+import { buildLlmsTxt, buildLlmsFullTxt } from "../packages/wiki/src/export/llms-txt.js";
+import { buildJsonLd } from "../packages/wiki/src/export/json-ld.js";
+import { buildGraphml } from "../packages/wiki/src/export/graphml.js";
+import { buildMarp } from "../packages/wiki/src/export/marp.js";
+import { mapPageToOkfFrontmatter } from "../packages/wiki/src/export/okf/mapping.js";
+import type { ExportPage } from "../packages/wiki/src/export/types.js";
 
 /** Two wall-clock instants a year apart; the export must be indifferent to both. */
 const FIRST_RUN = new Date("2026-03-01T00:00:00.000Z");

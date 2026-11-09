@@ -34,9 +34,9 @@ import { describe, it, expect } from "vitest";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { getStoredPage } from "../../src/dimensions/wiki/page-store.js";
+import { getStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
-import { writeCandidate } from "../../src/compiler/candidates.js";
+import { writeCandidate } from "../../packages/wiki/src/compiler/candidates.js";
 import { useCommandProject } from "../fixtures/command-project.js";
 
 const SLUG = "row-only-concept";
@@ -82,7 +82,7 @@ async function withApprovedCandidate(
       const candidate = await writeCandidate(project.root, process.env, {
         title: "Row Only", slug: SLUG, summary: "", sources: [], body: BODY,
       });
-      const { default: reviewApproveCommand } = await import("../../src/commands/review-approve.js");
+      const { default: reviewApproveCommand } = await import("../../packages/wiki/src/commands/review-approve.js");
       await reviewApproveCommand(candidate.id);
       await assert(harness.stackId, harness);
     });

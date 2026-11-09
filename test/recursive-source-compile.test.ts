@@ -2,11 +2,11 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { compileAndReport } from "../src/compiler/index.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { parseFrontmatter } from "../src/utils/markdown.js";
-import { readState } from "../src/utils/state.js";
-import * as embeddings from "../src/utils/embeddings.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import { readState } from "../packages/wiki/src/utils/state.js";
+import * as embeddings from "../packages/wiki/src/utils/embeddings.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 
 const sourceA = "# Evidence A\n\nA_SENTINEL contributes shared and exclusive knowledge.";

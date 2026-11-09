@@ -18,8 +18,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
-import { compileDelta } from "../src/compiler/delta.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { compileDelta } from "../packages/wiki/src/compiler/delta.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 
 const FIRST_SOURCE = "alpha.md";

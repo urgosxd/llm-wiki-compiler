@@ -7,7 +7,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const ROOT = "src/viewer/assets";
+const ROOT = "packages/wiki/src/viewer/assets";
 const MAPS = ["theme-base", "public-tokens", "minimal", "scientific-clay", "nebula"];
 const STRUCTURE = ["content", "chrome", "dashboard", "health", "pipeline", "graph", "material", "journey"];
 

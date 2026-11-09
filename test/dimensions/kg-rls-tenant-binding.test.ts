@@ -39,11 +39,11 @@ import {
   databaseEmbeddingSource,
   readEmbeddingMeta,
   readEmbeddingStoreFromDb,
-} from "../../src/utils/embeddings-database.js";
-import { writeEmbeddingStoreToDb } from "../../src/utils/embeddings-database-write.js";
-import { listSourceDocuments, saveSourceDocument } from "../../src/dimensions/wiki/source-documents-store.js";
-import { createRegistryPageSource } from "../../src/dimensions/wiki/page-registry-source.js";
-import type { ChunkEmbeddingV3, EmbeddingStoreV3 } from "../../src/utils/embeddings-store.js";
+} from "../../packages/wiki/src/utils/embeddings-database.js";
+import { writeEmbeddingStoreToDb } from "../../packages/wiki/src/utils/embeddings-database-write.js";
+import { listSourceDocuments, saveSourceDocument } from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import { createRegistryPageSource } from "../../packages/wiki/src/dimensions/wiki/page-registry-source.js";
+import type { ChunkEmbeddingV3, EmbeddingStoreV3 } from "../../packages/wiki/src/utils/embeddings-store.js";
 import { provisionStack } from "../fixtures/stack-harness.js";
 import { appRoleExists } from "../fixtures/rls-probe.js";
 import { roleScopedDb } from "../fixtures/role-scoped-db.js";

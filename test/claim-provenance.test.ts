@@ -12,11 +12,11 @@ import {
   extractClaimCitations,
   inspectProvenance,
   isMalformedCitationEntry,
-} from "../src/utils/markdown.js";
+} from "../packages/wiki/src/utils/markdown.js";
 import {
   checkBrokenCitations,
   checkMalformedClaimCitations,
-} from "../src/linter/rules.js";
+} from "../packages/wiki/src/linter/rules.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 
 describe("extractClaimCitations parser", () => {
@@ -364,14 +364,14 @@ const HUNDRED_LINE_SOURCE = Array.from({ length: 100 }, (_, i) => `Line ${i + 1}
  * Write src.md with the given content and a concept page citing it with the
  * given marker text, then run checkBrokenCitations and return the findings.
  */
-async function lintWithSpan(sourceContent: string, marker: string): Promise<import("../src/linter/types.js").LintResult[]> {
+async function lintWithSpan(sourceContent: string, marker: string): Promise<import("../packages/wiki/src/linter/types.js").LintResult[]> {
   await writeSource("src.md", sourceContent);
   await writeConcept("page", `---\ntitle: T\n---\nClaim. ${marker}`);
   return checkBrokenCitations(tmpDir);
 }
 
 /** Assert that a single out-of-bounds broken-citation finding was emitted. */
-function expectOutOfBounds(results: import("../src/linter/types.js").LintResult[]): void {
+function expectOutOfBounds(results: import("../packages/wiki/src/linter/types.js").LintResult[]): void {
   expect(results).toHaveLength(1);
   expect(results[0].rule).toBe("broken-citation");
   expect(results[0].message).toContain("out of bounds");

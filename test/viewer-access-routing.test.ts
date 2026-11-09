@@ -6,8 +6,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ServerResponse } from "http";
 import http from "http";
-import { startViewerServer } from "../src/viewer/server.js";
-import type { ViewerSnapshot } from "../src/viewer/types.js";
+import { startViewerServer } from "../packages/wiki/src/viewer/server.js";
+import type { ViewerSnapshot } from "../packages/wiki/src/viewer/types.js";
 
 /** Echo only the transport capability assigned by the server. */
 function reply(res: ServerResponse, isLoopback: boolean): void {
@@ -15,7 +15,7 @@ function reply(res: ServerResponse, isLoopback: boolean): void {
   res.end(JSON.stringify({ isLoopback }));
 }
 
-vi.mock("../src/viewer/api-sources.js", () => ({
+vi.mock("../packages/wiki/src/viewer/api-sources.js", () => ({
   handleApiSource: (res: ServerResponse, _snapshot: unknown, _path: string, local: boolean) => reply(res, local),
 }));
 

@@ -23,7 +23,7 @@
  * false in CI, so every case clears it first and restores it afterwards.
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { buildIngestEnv } from "../../src/host/ingest-env.js";
+import { buildIngestEnv } from "../../packages/wiki/src/host/ingest-env.js";
 import { createEnvSnapshot } from "../fixtures/env-snapshot.js";
 
 /** An id shaped like a real Stack, so nothing can be confused with a default. */

@@ -21,7 +21,7 @@ import {
   tierThatJoined,
   unionCandidates,
   type ConceptForest,
-} from "../../src/dimensions/wiki/concept-forest.js";
+} from "../../packages/wiki/src/dimensions/wiki/concept-forest.js";
 
 /** The ranks similarity used to produce, still reachable from JavaScript callers. */
 const RETIRED_SCORE_TIERS = ["auto", "review"];

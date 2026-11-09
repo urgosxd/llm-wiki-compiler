@@ -9,9 +9,9 @@
 import { mkdir, writeFile, readFile } from "fs/promises";
 import { createHash } from "node:crypto";
 import path from "path";
-import { LLMWIKI_DIR, STATE_FILE } from "../../src/utils/constants.js";
-import { stableContent } from "../../src/utils/source-writer.js";
-import type { WikiState } from "../../src/utils/types.js";
+import { LLMWIKI_DIR, STATE_FILE } from "../../packages/wiki/src/utils/constants.js";
+import { stableContent } from "../../packages/wiki/src/utils/source-writer.js";
+import type { WikiState } from "../../packages/wiki/src/utils/types.js";
 
 /** Read and parse the persisted `.llmwiki/state.json` for a test root. */
 export async function readPersistedState(root: string): Promise<WikiState> {

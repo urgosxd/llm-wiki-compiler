@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { okfLinksToWikilinks } from "../src/export/okf/mapping.js";
+import { okfLinksToWikilinks } from "../packages/wiki/src/export/okf/mapping.js";
 
 // resolveLink: linkPath -> { slug, title } | null for known bundle docs.
 const resolveLink = (p: string) =>

@@ -13,7 +13,7 @@ import path from "path";
 import { mkdir, rm, writeFile, readFile } from "fs/promises";
 import { tmpdir } from "os";
 import { runCLI, expectCLIExit, expectCLIFailure } from "./fixtures/run-cli.js";
-import type { RuleCandidate } from "../src/utils/rule-types.js";
+import type { RuleCandidate } from "../packages/wiki/src/utils/rule-types.js";
 
 /** Create a disposable temp workspace with a sources/ sub-folder. */
 async function makeWorkspace(suffix: string): Promise<string> {

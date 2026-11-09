@@ -37,9 +37,9 @@ import { sql } from "drizzle-orm";
 
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { provisionStack, wikiReachable, type ProvisionedStack } from "../fixtures/stack-harness.js";
-import { ingestDimensions } from "../../src/dimensions/coordinator.js";
-import { createWikiStoreDimension } from "../../src/dimensions/wiki/database.js";
-import type { Dimension, DimensionInput, PreparedWrite } from "../../src/dimensions/types.js";
+import { ingestDimensions } from "../../packages/wiki/src/dimensions/coordinator.js";
+import { createWikiStoreDimension } from "../../packages/wiki/src/dimensions/wiki/database.js";
+import type { Dimension, DimensionInput, PreparedWrite } from "../../packages/wiki/src/dimensions/types.js";
 
 /** One document, shaped exactly as an ingest builds it. */
 const INPUT: DimensionInput = {

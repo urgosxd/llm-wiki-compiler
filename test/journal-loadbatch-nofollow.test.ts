@@ -12,7 +12,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, symlink } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { loadBatch } from "../src/trust/journal.js";
+import { loadBatch } from "../packages/wiki/src/trust/journal.js";
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });

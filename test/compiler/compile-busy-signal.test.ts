@@ -18,8 +18,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { acquireLock, releaseLock } from "../../src/utils/lock.js";
-import { compileAndReport } from "../../src/compiler/index.js";
+import { acquireLock, releaseLock } from "../../packages/wiki/src/utils/lock.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
 
 /** A scratch project root with the sources/ directory compile expects. */
 async function projectRoot(): Promise<string> {

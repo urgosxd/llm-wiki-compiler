@@ -7,12 +7,12 @@
  */
 
 import { vi, describe, it, expect } from "vitest";
-import { callClaude } from "../src/utils/llm.js";
-import { renderMergedPageContent } from "../src/compiler/page-renderer.js";
+import { callClaude } from "../packages/wiki/src/utils/llm.js";
+import { renderMergedPageContent } from "../packages/wiki/src/compiler/page-renderer.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { makeNumberedContent } from "./fixtures/citation-content.js";
 
-vi.mock("../src/utils/llm.js", () => ({
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({
   callClaude: vi.fn(),
 }));
 

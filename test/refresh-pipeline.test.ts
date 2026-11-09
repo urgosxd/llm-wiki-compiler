@@ -18,13 +18,13 @@ import { describe, it, expect, vi } from "vitest";
 import { writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import { compileAndReport } from "../src/compiler/index.js";
-import type { CompileOptions } from "../src/utils/types.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import type { CompileOptions } from "../packages/wiki/src/utils/types.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { EMPTY_CATEGORY_ANSWER, extractionCalls, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 import { writeSourceState, sha256Hex } from "./fixtures/state-json.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 
 // ---------------------------------------------------------------------------
 // Shared stub helpers

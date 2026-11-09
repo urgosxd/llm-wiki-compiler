@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { readPageRecord } from "../src/pages/read.js";
+import { readPageRecord } from "../packages/wiki/src/pages/read.js";
 import { writePage } from "./fixtures/write-page.js";
 import {
   buildServer as buildSharedServer,
@@ -17,7 +17,7 @@ import {
   snapshotWorkspace,
   useMcpRoot,
 } from "./fixtures/mcp-test-env.js";
-import { appendHistory } from "../src/eval/stats.js";
+import { appendHistory } from "../packages/wiki/src/eval/stats.js";
 import { makeEvalReport } from "./fixtures/eval-report.js";
 import { useStatusStackFixture } from "./fixtures/stack-status-fixtures.js";
 

@@ -2,11 +2,11 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, readFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { writeCandidate, listCandidates } from "../src/compiler/candidates.js";
-import reviewApproveCommand from "../src/commands/review-approve.js";
-import { okfDocToPage } from "../src/import/okf-map.js";
-import { collectExportPages } from "../src/export/collect.js";
-import { parseFrontmatter } from "../src/utils/markdown.js";
+import { writeCandidate, listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import reviewApproveCommand from "../packages/wiki/src/commands/review-approve.js";
+import { okfDocToPage } from "../packages/wiki/src/import/okf-map.js";
+import { collectExportPages } from "../packages/wiki/src/export/collect.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
 
 let dir: string; const cwd = process.cwd();
 afterEach(async () => { process.chdir(cwd); if (dir) await rm(dir, { recursive: true, force: true }); });

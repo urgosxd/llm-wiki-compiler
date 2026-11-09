@@ -11,11 +11,11 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import path from "path";
 import os from "os";
 import { mkdir, readdir } from "fs/promises";
-import { claudeAdapter } from "../src/adapters/claude.js";
-import { codexAdapter } from "../src/adapters/codex.js";
-import { cursorAdapter } from "../src/adapters/cursor.js";
-import { detectAdapter, parseSessionFile, formatSessionAsMarkdown, ADAPTERS } from "../src/adapters/registry.js";
-import { ingestSessionFile } from "../src/commands/ingest-session.js";
+import { claudeAdapter } from "../packages/wiki/src/adapters/claude.js";
+import { codexAdapter } from "../packages/wiki/src/adapters/codex.js";
+import { cursorAdapter } from "../packages/wiki/src/adapters/cursor.js";
+import { detectAdapter, parseSessionFile, formatSessionAsMarkdown, ADAPTERS } from "../packages/wiki/src/adapters/registry.js";
+import { ingestSessionFile } from "../packages/wiki/src/commands/ingest-session.js";
 
 const FIXTURES = path.join(import.meta.dirname, "fixtures/sessions");
 const claudeFile = path.join(FIXTURES, "claude-session.jsonl");

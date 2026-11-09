@@ -11,12 +11,12 @@
 import { vi, describe, it, expect, afterEach } from "vitest";
 import { mkdir, writeFile, rm } from "fs/promises";
 import path from "path";
-import { callClaude } from "../../src/utils/llm.js";
-import { renderMergedPageContent } from "../../src/compiler/page-renderer.js";
-import { parseFrontmatter } from "../../src/utils/markdown.js";
+import { callClaude } from "../../packages/wiki/src/utils/llm.js";
+import { renderMergedPageContent } from "../../packages/wiki/src/compiler/page-renderer.js";
+import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 import { makeTempRoot } from "../fixtures/temp-root.js";
 
-vi.mock("../../src/utils/llm.js", () => ({
+vi.mock("../../packages/wiki/src/utils/llm.js", () => ({
   callClaude: vi.fn(),
 }));
 

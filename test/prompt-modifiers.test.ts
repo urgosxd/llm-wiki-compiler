@@ -22,7 +22,7 @@ import {
   promptModifierPairs,
   promptModifiersChanged,
   promptModifiersDigest,
-} from "../src/compiler/prompt-modifiers.js";
+} from "../packages/wiki/src/compiler/prompt-modifiers.js";
 
 const LANG = "LLMWIKI_OUTPUT_LANG";
 afterEach(() => { delete process.env[LANG]; });

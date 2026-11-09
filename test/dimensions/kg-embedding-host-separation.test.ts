@@ -61,7 +61,7 @@ function embeddingsPayload(): Response {
 function loadModules() {
   vi.resetModules();
   return Promise.all([
-    import("../../src/utils/embedding-provider.js"),
+    import("../../packages/wiki/src/utils/embedding-provider.js"),
     import("@repo/kg/core/llm/embeddings"),
     import("@repo/kg/embedding-backend"),
   ]);

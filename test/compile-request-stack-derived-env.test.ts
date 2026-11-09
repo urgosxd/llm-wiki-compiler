@@ -36,12 +36,12 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { compileAndReport, compileRecompiling } from "../src/compiler/index.js";
-import { withDerivedSource } from "../src/dimensions/wiki/derived-artifact-source.js";
-import { createPageWriteSink } from "../src/dimensions/wiki/page-write-sink.js";
-import { saveSourceDocument } from "../src/dimensions/wiki/source-documents-store.js";
-import { regenerateIndices } from "../src/dimensions/wiki/page-source-seam.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { compileAndReport, compileRecompiling } from "../packages/wiki/src/compiler/index.js";
+import { withDerivedSource } from "../packages/wiki/src/dimensions/wiki/derived-artifact-source.js";
+import { createPageWriteSink } from "../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { saveSourceDocument } from "../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import { regenerateIndices } from "../packages/wiki/src/dimensions/wiki/page-source-seam.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { useRequestStacks } from "./fixtures/request-stack.js";
 
 /** The one source the compile extracts into a page. */

@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { findPageByQualifiedId } from "../src/context/ranking.js";
-import type { ViewerPage, ViewerSnapshot } from "../src/viewer/types.js";
+import { findPageByQualifiedId } from "../packages/wiki/src/context/ranking.js";
+import type { ViewerPage, ViewerSnapshot } from "../packages/wiki/src/viewer/types.js";
 
 /** Build a minimal ViewerPage carrying only the fields the resolver reads. */
 function page(id: string, dir: string, slug: string, title: string): ViewerPage {

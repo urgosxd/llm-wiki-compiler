@@ -23,7 +23,7 @@ import path from "path";
 import { JSDOM, VirtualConsole } from "jsdom";
 import { vi } from "vitest";
 
-const ASSETS_DIR = path.resolve("src/viewer/assets");
+const ASSETS_DIR = path.resolve("packages/wiki/src/viewer/assets");
 const SHELL_PATH = path.join(ASSETS_DIR, "index.html");
 const ENTRY_SCRIPT = "viewer.js";
 const THEME_BOOT_SCRIPT = "viewer-theme-boot.js";

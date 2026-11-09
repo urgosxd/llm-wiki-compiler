@@ -7,11 +7,11 @@ import { mkdir, open, readFile, stat, symlink, writeFile } from "node:fs/promise
 import path from "node:path";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 import { binaryFixture } from "./fixtures/binary-embedding-store.js";
-import { readStoreForUpdate, writeEmbeddingStore, resolveEmbeddingFingerprint } from "../src/utils/embeddings-store.js";
-import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
-import { collectStats } from "../src/eval/stats.js";
-import { readStoredEmbeddings } from "../src/utils/embeddings-storage.js";
-import { MAX_BINARY_STORE_BYTES } from "../src/utils/embeddings-binary.js";
+import { readStoreForUpdate, writeEmbeddingStore, resolveEmbeddingFingerprint } from "../packages/wiki/src/utils/embeddings-store.js";
+import { loadEmbeddingsForSearch } from "../packages/wiki/src/utils/embeddings-load.js";
+import { collectStats } from "../packages/wiki/src/eval/stats.js";
+import { readStoredEmbeddings } from "../packages/wiki/src/utils/embeddings-storage.js";
+import { MAX_BINARY_STORE_BYTES } from "../packages/wiki/src/utils/embeddings-binary.js";
 
 const ctx = useConfinementRoots("binary-store");
 afterEach(() => vi.unstubAllEnvs());

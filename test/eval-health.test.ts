@@ -3,8 +3,8 @@
  * Verifies weight map, per-rule deductions, and clamping.
  */
 
-import { evaluateHealth } from "../src/eval/health.js";
-import { writeCandidate } from "../src/compiler/candidates.js";
+import { evaluateHealth } from "../packages/wiki/src/eval/health.js";
+import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
 describe("evaluateHealth", () => {

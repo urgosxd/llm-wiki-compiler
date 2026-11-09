@@ -19,8 +19,8 @@ import {
   writeFreshCandidate,
   readCandidate,
   UnsafeCandidateIdError,
-} from "../src/compiler/candidates.js";
-import { CANDIDATES_DIR } from "../src/utils/constants.js";
+} from "../packages/wiki/src/compiler/candidates.js";
+import { CANDIDATES_DIR } from "../packages/wiki/src/utils/constants.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

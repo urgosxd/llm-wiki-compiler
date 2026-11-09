@@ -1,11 +1,11 @@
 /** Reader-facing labels preserve exact identifiers without making them the primary UI. */
 import { beforeEach, expect, it, vi } from "vitest";
 import { useViewerDocument } from "./fixtures/viewer-document.js";
-import { renderEntityContext } from "../src/viewer/assets/viewer-entity-context.js";
-import { buildEntityFields } from "../src/viewer/assets/viewer-entity-fields.js";
-import { renderPipeline } from "../src/viewer/assets/viewer-pipeline.js";
-import { decorateArtifactRefs } from "../src/viewer/assets/viewer-access-detail.js";
-import { buildConnections } from "../src/viewer/assets/viewer-connections.js";
+import { renderEntityContext } from "../packages/wiki/src/viewer/assets/viewer-entity-context.js";
+import { buildEntityFields } from "../packages/wiki/src/viewer/assets/viewer-entity-fields.js";
+import { renderPipeline } from "../packages/wiki/src/viewer/assets/viewer-pipeline.js";
+import { decorateArtifactRefs } from "../packages/wiki/src/viewer/assets/viewer-access-detail.js";
+import { buildConnections } from "../packages/wiki/src/viewer/assets/viewer-connections.js";
 
 const context = useViewerDocument();
 let main: HTMLElement;

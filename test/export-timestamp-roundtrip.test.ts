@@ -17,10 +17,10 @@ import { rm, mkdir } from "fs/promises";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
-import { parseFrontmatter } from "../src/utils/markdown.js";
-import { collectExportPages } from "../src/export/collect.js";
-import { buildOkfBundle } from "../src/export/okf/bundle.js";
-import { importOkfBundle } from "../src/import/okf-import.js";
+import { parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import { collectExportPages } from "../packages/wiki/src/export/collect.js";
+import { buildOkfBundle } from "../packages/wiki/src/export/okf/bundle.js";
+import { importOkfBundle } from "../packages/wiki/src/import/okf-import.js";
 
 const QUERY_CREATED = "2024-02-02T00:00:00.000Z";
 

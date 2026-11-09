@@ -11,8 +11,8 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { listPages } from "../../src/pages/list.js";
-import { createPageWriteSink, createPageListingSource } from "../../src/dimensions/wiki/page-write-sink.js";
+import { listPages } from "../../packages/wiki/src/pages/list.js";
+import { createPageWriteSink, createPageListingSource } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { provisionStack } from "../fixtures/stack-harness.js";
 

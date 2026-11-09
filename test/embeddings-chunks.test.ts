@@ -13,13 +13,13 @@ import {
   updateEmbeddings,
   writeEmbeddingStore,
   type ChunkEmbeddingEntry,
-} from "../src/utils/embeddings.js";
-import { refreshChunkEmbeddings } from "../src/utils/embeddings-chunks.js";
+} from "../packages/wiki/src/utils/embeddings.js";
+import { refreshChunkEmbeddings } from "../packages/wiki/src/utils/embeddings-chunks.js";
 import { readV3Store, conceptId } from "./fixtures/v3-store.js";
-import * as providerMod from "../src/utils/provider.js";
-import type { PageRecord } from "../src/utils/embeddings-pages.js";
-import { OpenAIProvider } from "../src/providers/openai.js";
-import { CHUNK_TARGET_CHARS } from "../src/utils/constants.js";
+import * as providerMod from "../packages/wiki/src/utils/provider.js";
+import type { PageRecord } from "../packages/wiki/src/utils/embeddings-pages.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
+import { CHUNK_TARGET_CHARS } from "../packages/wiki/src/utils/constants.js";
 
 async function makeRoot(): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), "llmwiki-chunks-"));

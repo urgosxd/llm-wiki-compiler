@@ -19,13 +19,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { existsSync } from "fs";
 import path from "path";
-import { compileAndReport } from "../src/compiler/index.js";
-import { listCandidates } from "../src/compiler/candidates.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { CONCEPTS_DIR, GENERATED_PAGE_MAX_CHARS } from "../src/utils/constants.js";
-import * as journal from "../src/trust/journal.js";
-import * as resolver from "../src/compiler/resolver.js";
-import * as embeddings from "../src/utils/embeddings.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { CONCEPTS_DIR, GENERATED_PAGE_MAX_CHARS } from "../packages/wiki/src/utils/constants.js";
+import * as journal from "../packages/wiki/src/trust/journal.js";
+import * as resolver from "../packages/wiki/src/compiler/resolver.js";
+import * as embeddings from "../packages/wiki/src/utils/embeddings.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 import { mkdir, writeFile } from "fs/promises";
 

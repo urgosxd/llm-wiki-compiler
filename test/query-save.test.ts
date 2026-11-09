@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { writeFile, readFile } from "fs/promises";
 import path from "path";
-import { buildFrontmatter, parseFrontmatter } from "../src/utils/markdown.js";
-import { summarizeAnswer } from "../src/commands/query.js";
+import { buildFrontmatter, parseFrontmatter } from "../packages/wiki/src/utils/markdown.js";
+import { summarizeAnswer } from "../packages/wiki/src/commands/query.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { generateAndReadIndex } from "./fixtures/generate-and-read-index.js";
 

@@ -26,7 +26,7 @@ import {
   createFilesystemSourceStore,
   normalizeSourceId,
   SourceNotFoundError,
-} from "../../src/sources/source-store.js";
+} from "../../packages/wiki/src/sources/source-store.js";
 
 /** A project root with the given files written under `sources/`. */
 async function projectWith(files: Record<string, string>): Promise<string> {

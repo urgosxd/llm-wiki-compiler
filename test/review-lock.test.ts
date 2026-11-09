@@ -18,15 +18,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFile, realpath, unlink } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import { writeCandidate } from "../src/compiler/candidates.js";
+import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import {
   CANDIDATES_DIR,
   CANDIDATES_ARCHIVE_DIR,
   CONCEPTS_DIR,
   STATE_FILE,
-} from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/constants.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
-import type { ReviewCandidate, WikiState } from "../src/utils/types.js";
+import type { ReviewCandidate, WikiState } from "../packages/wiki/src/utils/types.js";
 
 const SHARED_SOURCE = "shared-source.md";
 
@@ -74,7 +74,7 @@ async function stubLock(granted: boolean): Promise<{
   acquireSpy: ReturnType<typeof vi.spyOn>;
   releaseSpy: ReturnType<typeof vi.spyOn>;
 }> {
-  const lockMod = await import("../src/utils/lock.js");
+  const lockMod = await import("../packages/wiki/src/utils/lock.js");
   const acquireSpy = vi.spyOn(lockMod, "acquireLock").mockResolvedValue(granted);
   const releaseSpy = vi.spyOn(lockMod, "releaseLock").mockResolvedValue(undefined);
   return { acquireSpy, releaseSpy };
@@ -133,7 +133,7 @@ describe("review approve — lock discipline", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     const { default: reviewApproveCommand } = await import(
-      "../src/commands/review-approve.js"
+      "../packages/wiki/src/commands/review-approve.js"
     );
     const candidate = await writeSampleCandidate(root.dir, "Alpha", "alpha");
 
@@ -147,7 +147,7 @@ describe("review approve — lock discipline", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     const { default: reviewApproveCommand } = await import(
-      "../src/commands/review-approve.js"
+      "../packages/wiki/src/commands/review-approve.js"
     );
     const candidate = await writeSampleCandidate(root.dir, "Beta", "beta");
 
@@ -165,7 +165,7 @@ describe("review reject — lock discipline", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     const { default: reviewRejectCommand } = await import(
-      "../src/commands/review-reject.js"
+      "../packages/wiki/src/commands/review-reject.js"
     );
     const candidate = await writeSampleCandidate(root.dir, "Gamma", "gamma");
 
@@ -179,7 +179,7 @@ describe("review reject — lock discipline", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     const { default: reviewRejectCommand } = await import(
-      "../src/commands/review-reject.js"
+      "../packages/wiki/src/commands/review-reject.js"
     );
     const candidate = await writeSampleCandidate(root.dir, "Delta", "delta");
 
@@ -202,7 +202,7 @@ describe("sequential approvals — source-state persistence under lock", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     const { default: reviewApproveCommand } = await import(
-      "../src/commands/review-approve.js"
+      "../packages/wiki/src/commands/review-approve.js"
     );
 
     const sourceStates = {
@@ -242,7 +242,7 @@ async function stubLockWithCandidateRemoval(
   root: string,
   candidateId: string,
 ): Promise<void> {
-  const lockMod = await import("../src/utils/lock.js");
+  const lockMod = await import("../packages/wiki/src/utils/lock.js");
   vi.spyOn(lockMod, "acquireLock").mockImplementation(async () => {
     const candidateFile = path.join(root, CANDIDATES_DIR, `${candidateId}.json`);
     await unlink(candidateFile);
@@ -259,7 +259,7 @@ describe("approve TOCTOU — candidate removed between pre-lock check and under-
     await stubLockWithCandidateRemoval(root.dir, candidate.id);
 
     const { default: reviewApproveCommand } = await import(
-      "../src/commands/review-approve.js"
+      "../packages/wiki/src/commands/review-approve.js"
     );
     await reviewApproveCommand(candidate.id);
 
@@ -279,7 +279,7 @@ describe("reject TOCTOU — candidate removed between pre-lock check and under-l
     await stubLockWithCandidateRemoval(root.dir, candidate.id);
 
     const { default: reviewRejectCommand } = await import(
-      "../src/commands/review-reject.js"
+      "../packages/wiki/src/commands/review-reject.js"
     );
     await reviewRejectCommand(candidate.id);
 

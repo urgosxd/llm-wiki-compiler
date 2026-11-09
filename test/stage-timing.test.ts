@@ -9,7 +9,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { timeStage } from "../src/utils/stage-timing.js";
+import { timeStage } from "../packages/wiki/src/utils/stage-timing.js";
 
 const dirs: string[] = [];
 afterEach(async () => {

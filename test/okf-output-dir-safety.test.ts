@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, stat, symlink } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { buildOkfBundle } from "../src/export/okf/bundle.js";
+import { buildOkfBundle } from "../packages/wiki/src/export/okf/bundle.js";
 import { makeExportPage } from "./fixtures/okf-export-page.js";
 import { useOkfTempDir } from "./fixtures/okf-temp-dir.js";
 

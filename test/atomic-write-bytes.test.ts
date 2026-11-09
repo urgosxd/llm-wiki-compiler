@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs/promises";
 import path from "node:path";
-import { atomicWrite } from "../src/utils/atomic-write.js";
+import { atomicWrite } from "../packages/wiki/src/utils/atomic-write.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 
 vi.mock("fs/promises", async (importOriginal) => {

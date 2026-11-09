@@ -18,7 +18,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { rm, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { lintByTier } from "../src/linter/index.js";
+import { lintByTier } from "../packages/wiki/src/linter/index.js";
 import {
   lintRowCorpus,
   rawPage,

@@ -49,7 +49,7 @@ async function loadModules() {
   vi.resetModules();
   for (const [name, value] of Object.entries(BLANK_SHARED_KEY_ENV)) vi.stubEnv(name, value);
   return {
-    host: await import("../../src/utils/embedding-provider.js"),
+    host: await import("../../packages/wiki/src/utils/embedding-provider.js"),
     backend: await import("@repo/kg/embedding-backend"),
   };
 }

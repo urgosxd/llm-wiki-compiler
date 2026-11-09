@@ -23,8 +23,8 @@ import {
   StagedWriteInputError,
   DEFAULT_STAGED_WRITE_PER_CALL,
   DEFAULT_STAGED_WRITE_PER_SESSION,
-} from "../src/trust/staged-change.js";
-import type { TrustDecision } from "../src/trust/decision.js";
+} from "../packages/wiki/src/trust/staged-change.js";
+import type { TrustDecision } from "../packages/wiki/src/trust/decision.js";
 
 /** A representative `kind:"page"` StagedChange built from the spec fields. */
 function pageStagedChange(): StagedChange {

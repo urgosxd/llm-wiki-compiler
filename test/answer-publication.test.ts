@@ -5,12 +5,12 @@
 import { beforeEach, expect, it } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { assertCitationPublication, validateCitationPublication } from "../src/citations/answer-publication.js";
-import type { AnswerCitationReport } from "../src/citations/answer-types.js";
-import { buildQueryDocument } from "../src/commands/query-document.js";
+import { assertCitationPublication, validateCitationPublication } from "../packages/wiki/src/citations/answer-publication.js";
+import type { AnswerCitationReport } from "../packages/wiki/src/citations/answer-types.js";
+import { buildQueryDocument } from "../packages/wiki/src/commands/query-document.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { stageCitationWorkspace } from "./fixtures/query-answer-citations.js";
-import { slugify } from "../src/utils/markdown.js";
+import { slugify } from "../packages/wiki/src/utils/markdown.js";
 
 const ctx = useTempRoot();
 beforeEach(() => stageCitationWorkspace(ctx.dir));

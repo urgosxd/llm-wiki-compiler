@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { exportJson } from "../../src/commands/export.js";
+import { exportJson } from "../../packages/wiki/src/commands/export.js";
 
 describe("exportJson returns an in-memory object", () => {
   it("returns a JsonExportDocument object (not a string) with no file writes", async () => {

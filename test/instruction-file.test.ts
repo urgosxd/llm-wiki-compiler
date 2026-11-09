@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { readInstructions } from "../src/cli/instructions.js";
+import { readInstructions } from "../packages/wiki/src/cli/instructions.js";
 
 let root: string;
 beforeEach(async () => { root = await mkdtemp(path.join(tmpdir(), "instruction-file-")); });

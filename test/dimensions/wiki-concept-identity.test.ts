@@ -12,7 +12,7 @@ import {
   canonicalSlugKey,
   sharesBlockingSignal,
   tagsConflict,
-} from "../../src/dimensions/wiki/concept-identity.js";
+} from "../../packages/wiki/src/dimensions/wiki/concept-identity.js";
 
 describe("canonicalConceptKey", () => {
   it("folds case and punctuation, so a hyphen is not an identity", () => {

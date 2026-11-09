@@ -25,8 +25,8 @@ import path from "path";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
-import type { ReviewCandidate } from "../src/utils/types.js";
-import type { LintResult } from "../src/linter/types.js";
+import type { ReviewCandidate } from "../packages/wiki/src/utils/types.js";
+import type { LintResult } from "../packages/wiki/src/linter/types.js";
 
 // ---------------------------------------------------------------------------
 // Workspace helpers

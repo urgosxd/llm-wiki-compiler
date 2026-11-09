@@ -8,7 +8,7 @@ import {
   confinedFetch,
   type ConfinedFetchSeams,
   type ConfinedHttpResponse,
-} from "../../src/connectors/confined-fetch.js";
+} from "../../packages/wiki/src/connectors/confined-fetch.js";
 
 const LIMITS = {
   timeoutMs: 100,

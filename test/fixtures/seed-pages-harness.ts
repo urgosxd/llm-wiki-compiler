@@ -7,8 +7,8 @@
 
 import { beforeEach, afterEach, vi } from "vitest";
 import { rm } from "fs/promises";
-import * as llm from "../../src/utils/llm.js";
-import type { PageGenerationResult } from "../../src/compiler/types.js";
+import * as llm from "../../packages/wiki/src/utils/llm.js";
+import type { PageGenerationResult } from "../../packages/wiki/src/compiler/types.js";
 import { makeTrustRoot } from "../trust/fixture.js";
 
 /** Mutable handle to the current test's trust root, set by {@link useSeedPagesRoot}. */

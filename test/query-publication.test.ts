@@ -5,14 +5,14 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { maybeSaveQueryPage } from "../src/commands/query-publication.js";
-import { updateEmbeddingsLockedCore } from "../src/utils/embeddings.js";
-import { buildQueryDocument } from "../src/commands/query-document.js";
+import { maybeSaveQueryPage } from "../packages/wiki/src/commands/query-publication.js";
+import { updateEmbeddingsLockedCore } from "../packages/wiki/src/utils/embeddings.js";
+import { buildQueryDocument } from "../packages/wiki/src/commands/query-document.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { stageCitationWorkspace } from "./fixtures/query-answer-citations.js";
 
-vi.mock("../src/utils/embeddings.js", async (original) => ({
-  ...await original<typeof import("../src/utils/embeddings.js")>(),
+vi.mock("../packages/wiki/src/utils/embeddings.js", async (original) => ({
+  ...await original<typeof import("../packages/wiki/src/utils/embeddings.js")>(),
   updateEmbeddingsLockedCore: vi.fn().mockResolvedValue(undefined),
 }));
 const ctx = useTempRoot();

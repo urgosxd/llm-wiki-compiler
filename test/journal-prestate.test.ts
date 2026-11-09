@@ -25,9 +25,9 @@ import {
   openBatch, recordPreState, recordBinaryPreState, replayJournal,
   JournalAggregateBudgetExceededError, JournalPreStateUnreadableError,
   type JournalBatch,
-} from "../src/trust/journal.js";
-import { isCanonicalBase64 } from "../src/trust/journal-prestate.js";
-import { JOURNAL_PRESTATE_MAX_BYTES } from "../src/utils/constants.js";
+} from "../packages/wiki/src/trust/journal.js";
+import { isCanonicalBase64 } from "../packages/wiki/src/trust/journal-prestate.js";
+import { JOURNAL_PRESTATE_MAX_BYTES } from "../packages/wiki/src/utils/constants.js";
 import { WIKI, makeTrustRoot, cleanupTrustRoot } from "./trust/fixture.js";
 import { journalFile, quarantineFile, writeJournal, pathExists } from "./trust/journal-fixture.js";
 

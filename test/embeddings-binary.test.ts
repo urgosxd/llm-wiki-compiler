@@ -3,9 +3,9 @@
  * explicit little-endian Float32, and malformed lengths never expose records.
  */
 import { describe, expect, it } from "vitest";
-import { encodeBinaryStore, decodeBinaryStore } from "../src/utils/embeddings-binary.js";
+import { encodeBinaryStore, decodeBinaryStore } from "../packages/wiki/src/utils/embeddings-binary.js";
 import { binaryFixture } from "./fixtures/binary-embedding-store.js";
-import { EmbeddingIntegrityError } from "../src/utils/embeddings-validate.js";
+import { EmbeddingIntegrityError } from "../packages/wiki/src/utils/embeddings-validate.js";
 
 /** Build altered metadata independently of the codec while retaining the payload. */
 function withMetadata(bytes: Buffer, value: unknown): Buffer {

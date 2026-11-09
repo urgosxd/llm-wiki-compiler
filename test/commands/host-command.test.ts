@@ -75,7 +75,7 @@ afterEach(() => {
  * would let the two drift onto different setups.
  */
 async function startHostCommand(): Promise<{ url: string; stop: () => Promise<void> }> {
-  const { default: hostCommand } = await import("../../src/commands/host.js");
+  const { default: hostCommand } = await import("../../packages/wiki/src/commands/host.js");
   const out = captureStdout();
   // Kept un-awaited: the command resolves only when the process is asked to stop.
   const running = hostCommand({ port: 0, noGraph: true });
@@ -124,7 +124,7 @@ describe("the host command", () => {
   }, 60_000);
 
   it("rejects a host flag supplied without --allow-lan", async () => {
-    const { default: hostCommand } = await import("../../src/commands/host.js");
+    const { default: hostCommand } = await import("../../packages/wiki/src/commands/host.js");
     // The privacy gate is shared with `view`; this proves the host did not
     // grow its own, weaker copy.
     await expect(hostCommand({ port: 0, host: "192.168.1.10" })).rejects.toThrow(

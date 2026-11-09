@@ -12,9 +12,9 @@ import {
   buildRuleSlug,
   sanitizeRuleCategory,
   validateRuleCandidate,
-} from "../src/compiler/rule-candidates.js";
-import { parseRules } from "../src/compiler/rule-prompts.js";
-import type { RuleCandidate } from "../src/utils/rule-types.js";
+} from "../packages/wiki/src/compiler/rule-candidates.js";
+import { parseRules } from "../packages/wiki/src/compiler/rule-prompts.js";
+import type { RuleCandidate } from "../packages/wiki/src/utils/rule-types.js";
 
 const NOW = "2026-05-31T00:00:00.000Z";
 

@@ -14,7 +14,7 @@
  * missing link is a signal about the corpus and a wrong link is a lie.
  */
 import { describe, expect, it } from "vitest";
-import { createRepairResolver } from "../src/compiler/link-repair.js";
+import { createRepairResolver } from "../packages/wiki/src/compiler/link-repair.js";
 
 /** Resolve `target` against `slugs` with no pending candidates. */
 function resolve(target: string, slugs: string[]): string | null {

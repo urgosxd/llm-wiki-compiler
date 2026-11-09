@@ -9,7 +9,7 @@
  */
 
 import { vi } from "vitest";
-import { AnthropicProvider } from "../../src/providers/anthropic.js";
+import { AnthropicProvider } from "../../packages/wiki/src/providers/anthropic.js";
 
 /** Per-extraction sleep so concurrent calls measurably overlap. */
 const OVERLAP_MS = 25;

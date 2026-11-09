@@ -12,8 +12,8 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { resolveEmbeddingModel } from "../src/utils/embeddings-store.js";
-import { EMBEDDING_MODELS } from "../src/utils/constants.js";
+import { resolveEmbeddingModel } from "../packages/wiki/src/utils/embeddings-store.js";
+import { EMBEDDING_MODELS } from "../packages/wiki/src/utils/constants.js";
 import { createEnvSnapshot } from "./fixtures/env-snapshot.js";
 
 const { setEnv, restore } = createEnvSnapshot([

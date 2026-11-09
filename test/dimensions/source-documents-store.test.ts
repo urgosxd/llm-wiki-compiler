@@ -21,7 +21,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { provisionStack } from "../fixtures/stack-harness.js";
-import { detectChanges } from "../../src/compiler/hasher.js";
+import { detectChanges } from "../../packages/wiki/src/compiler/hasher.js";
 import {
   hashSourceContent,
   listSourceDocuments,
@@ -31,7 +31,7 @@ import {
   sourceDocumentsRuleCorpus,
   sourceFilename,
   stableSourceContent,
-} from "../../src/dimensions/wiki/source-documents-store.js";
+} from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
 
 /** The wiki tables must exist for these cases to mean anything. */
 const harnessReachable = await (async (): Promise<boolean> => {

@@ -12,8 +12,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { writeFile, symlink } from "fs/promises";
 import path from "path";
-import { compileAndReport } from "../src/compiler/index.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { makeOutsideDir } from "./fixtures/outside-dir.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 

@@ -7,7 +7,7 @@
 import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { AtomicWriteCollisionError, atomicWrite, atomicWriteNoReplace } from "../src/utils/atomic-write.js";
+import { AtomicWriteCollisionError, atomicWrite, atomicWriteNoReplace } from "../packages/wiki/src/utils/atomic-write.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

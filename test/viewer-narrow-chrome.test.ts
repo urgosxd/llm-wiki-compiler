@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 
 /** Apply the narrow media rules through the CSSOM, which JSDOM does not evaluate. */
 function narrowStyles() {
-  const css = readFileSync("src/viewer/assets/viewer-chrome.css", "utf8");
+  const css = readFileSync("packages/wiki/src/viewer/assets/viewer-chrome.css", "utf8");
   const dom = new JSDOM(`<style>${css}</style><aside class="sidebar"></aside>
     <header class="app-header"><div class="app-actions"></div></header>`);
   const sheet = dom.window.document.styleSheets[0];

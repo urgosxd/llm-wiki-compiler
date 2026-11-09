@@ -210,7 +210,7 @@ describe("fallow ignoreExports guard", () => {
   });
 
   it("the ignoreExports guard reports a planted dead file by path", () => {
-    const config: FallowConfig = { ignoreExports: [{ file: "src/utils/output.ts" }, { file: "src/gone/deleted.ts" }] };
+    const config: FallowConfig = { ignoreExports: [{ file: "packages/wiki/src/utils/output.ts" }, { file: "src/gone/deleted.ts" }] };
     expect(findDeadIgnoreExports(config, filesystemResolver(listRepositoryFiles()))).toEqual([
       ".fallowrc.json ignoreExports[].file does not exist: src/gone/deleted.ts",
     ]);
@@ -229,7 +229,7 @@ describe("tsconfig alias target guard", () => {
   });
 
   it("the alias guard reports a planted dead target with config, key and target, and resolves wildcards", () => {
-    const config: TsConfigFile = { compilerOptions: { paths: { "gone-alias": ["./src/deleted/*"], "live-alias": ["./src/utils/*.ts"] } } };
+    const config: TsConfigFile = { compilerOptions: { paths: { "gone-alias": ["./src/deleted/*"], "live-alias": ["./packages/wiki/src/utils/*.ts"] } } };
     expect(findDeadAliasTargets("tsconfig.json", config, filesystemResolver(listRepositoryFiles()))).toEqual([
       'tsconfig.json compilerOptions.paths["gone-alias"] target does not resolve: ./src/deleted/*',
     ]);
@@ -255,9 +255,9 @@ describe("tsconfig alias target guard", () => {
     // the two resolutions disagree. If that ever stops being true this test
     // fails loudly instead of decaying into a guard that proves nothing.
     const configPath = "tsconfig.json";
-    const baseUrl = "./src/utils";
+    const baseUrl = "./packages/wiki/src/utils";
     const target = "./output.ts";
-    expect(existsSync(path.join(REPO_ROOT, "src/utils/output.ts")), "discriminator lost: the target is not on disk under baseUrl").toBe(true);
+    expect(existsSync(path.join(REPO_ROOT, "packages/wiki/src/utils/output.ts")), "discriminator lost: the target is not on disk under baseUrl").toBe(true);
     expect(existsSync(path.join(REPO_ROOT, "output.ts")), "discriminator lost: the target now also exists relative to the config directory").toBe(false);
     const config: TsConfigFile = { compilerOptions: { baseUrl, paths: { "from-base-url": [target], ghost: ["./does-not-exist.ts"] } } };
     expect(findDeadAliasTargets(configPath, config, filesystemResolver(listRepositoryFiles()))).toEqual([
@@ -274,7 +274,7 @@ describe("coordination sharedPaths guard", () => {
   });
 
   it("the sharedPaths guard reports a planted dead entry by path", () => {
-    const contract: CoordinationContract = { sharedPaths: ["src/utils/**", "src/ghost/**", "tsconfig*.json"] };
+    const contract: CoordinationContract = { sharedPaths: ["packages/wiki/src/utils/**", "src/ghost/**", "tsconfig*.json"] };
     expect(findDeadSharedPaths(contract, filesystemResolver(listRepositoryFiles()))).toEqual([
       "contract-cordination.json sharedPaths entry does not exist: src/ghost/**",
     ]);

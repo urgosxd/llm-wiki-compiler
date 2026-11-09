@@ -16,16 +16,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, writeFile, readFile, symlink } from "fs/promises";
 import path from "path";
 import os from "os";
-import { updateEmbeddings, updateEmbeddingsLockedCore } from "../src/utils/embeddings.js";
-import { writeEmbeddingStore } from "../src/utils/embeddings-store.js";
-import { acquireLockBlocking, releaseLock } from "../src/utils/lock.js";
-import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
-import { refreshAfterImport } from "../src/import/okf-refresh.js";
-import { EMBEDDINGS_FILE } from "../src/utils/constants.js";
-import * as providerMod from "../src/utils/provider.js";
+import { updateEmbeddings, updateEmbeddingsLockedCore } from "../packages/wiki/src/utils/embeddings.js";
+import { writeEmbeddingStore } from "../packages/wiki/src/utils/embeddings-store.js";
+import { acquireLockBlocking, releaseLock } from "../packages/wiki/src/utils/lock.js";
+import { loadEmbeddingsForSearch } from "../packages/wiki/src/utils/embeddings-load.js";
+import { refreshAfterImport } from "../packages/wiki/src/import/okf-refresh.js";
+import { EMBEDDINGS_FILE } from "../packages/wiki/src/utils/constants.js";
+import * as providerMod from "../packages/wiki/src/utils/provider.js";
 import { writeProfileFile } from "./fixtures/profile-fixtures.js";
 import { readV3Store, conceptId } from "./fixtures/v3-store.js";
-import type { ProfilePack } from "../src/profile/types.js";
+import type { ProfilePack } from "../packages/wiki/src/profile/types.js";
 
 let embedCalls = 0;
 

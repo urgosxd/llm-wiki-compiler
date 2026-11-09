@@ -16,8 +16,8 @@ import {
   jobStageFor,
   reportCompileProgress,
   reportCompileStage,
-} from "../../src/services/ingest/jobs/compile-observer.js";
-import type { CompileDetail, CompileStage, JobProgress } from "../../src/services/ingest/jobs/types.js";
+} from "../../packages/wiki/src/services/ingest/jobs/compile-observer.js";
+import type { CompileDetail, CompileStage, JobProgress } from "../../packages/wiki/src/services/ingest/jobs/types.js";
 
 /** A reporter that records what it was told, instead of writing a job. */
 function recordingReporter() {

@@ -2,8 +2,8 @@
 import { describe, expect, it } from "vitest";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { loadEmbeddingRetry } from "../src/utils/embeddings-retry.js";
-import { loadPendingEmbeddings, writePendingEmbeddings } from "../src/utils/pending-embeddings.js";
+import { loadEmbeddingRetry } from "../packages/wiki/src/utils/embeddings-retry.js";
+import { loadPendingEmbeddings, writePendingEmbeddings } from "../packages/wiki/src/utils/pending-embeddings.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 import { fullEmbeddingMarker } from "./fixtures/embedding-marker-capacity.js";
 

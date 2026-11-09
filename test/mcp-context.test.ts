@@ -38,10 +38,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFile } from "fs/promises";
 import path from "path";
-import { buildContextPack } from "../src/context/build.js";
-import { createPageWriteSink } from "../src/dimensions/wiki/page-write-sink.js";
-import { writeWikiStateToRows } from "../src/dimensions/wiki/wiki-state-source.js";
-import { saveSourceDocument } from "../src/dimensions/wiki/source-documents-store.js";
+import { buildContextPack } from "../packages/wiki/src/context/build.js";
+import { createPageWriteSink } from "../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { writeWikiStateToRows } from "../packages/wiki/src/dimensions/wiki/wiki-state-source.js";
+import { saveSourceDocument } from "../packages/wiki/src/dimensions/wiki/source-documents-store.js";
 import {
   buildServer,
   callTool,

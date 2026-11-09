@@ -55,20 +55,20 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { compileAndReport } from "../src/compiler/index.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
 import {
   listCandidates,
   listCandidatePage,
   readCandidate,
   readCandidateBySlug,
   writeCandidate,
-} from "../src/compiler/candidates.js";
-import { lint } from "../src/linter/index.js";
-import { createPageWriteSink } from "../src/dimensions/wiki/page-write-sink.js";
-import { saveSourceDocument } from "../src/dimensions/wiki/source-documents-store.js";
-import { createWikiCore } from "../src/sdk/core.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import type { WikiCore } from "../src/sdk/core-types.js";
+} from "../packages/wiki/src/compiler/candidates.js";
+import { lint } from "../packages/wiki/src/linter/index.js";
+import { createPageWriteSink } from "../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { saveSourceDocument } from "../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import { createWikiCore } from "../packages/wiki/src/sdk/core.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import type { WikiCore } from "../packages/wiki/src/sdk/core-types.js";
 import { EMPTY_CATEGORY_ANSWER, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
 import {
   draftFor,

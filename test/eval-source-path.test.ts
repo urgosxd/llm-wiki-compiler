@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm, symlink } from "fs/promises";
 import os from "os";
 import path from "path";
-import { resolveSourceFile } from "../src/eval/source-path.js";
+import { resolveSourceFile } from "../packages/wiki/src/eval/source-path.js";
 
 describe("resolveSourceFile — path confinement", () => {
   let sourcesDir: string;

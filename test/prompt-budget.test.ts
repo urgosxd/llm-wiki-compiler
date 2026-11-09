@@ -12,8 +12,8 @@ import {
   buildBudgetedCombinedContent,
   resolvePromptBudgetChars,
   type SourceSlice,
-} from "../src/compiler/prompt-budget.js";
-import { DEFAULT_PROMPT_BUDGET_CHARS } from "../src/utils/constants.js";
+} from "../packages/wiki/src/compiler/prompt-budget.js";
+import { DEFAULT_PROMPT_BUDGET_CHARS } from "../packages/wiki/src/utils/constants.js";
 
 const ENV_KEY = "LLMWIKI_PROMPT_BUDGET_CHARS";
 

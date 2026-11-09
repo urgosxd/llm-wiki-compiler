@@ -14,20 +14,13 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import path from "node:path";
-import raceCommand from "../../src/commands/race.js";
-import linksHereCommand from "../../src/commands/links-here.js";
-import { useTempRoot } from "../fixtures/temp-root.js";
+import raceCommand from "../../packages/wiki/src/commands/race.js";
+import linksHereCommand from "../../packages/wiki/src/commands/links-here.js";
+import { useConceptPage } from "../fixtures/concept-page.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
-import { writePage } from "../fixtures/write-page.js";
 
-/** Throwaway wiki for the current case: chdir'd into and removed afterwards. */
-const ctx = useTempRoot();
-
-/** Write one concept page into the throwaway wiki. */
-async function page(slug: string, title: string, body: string): Promise<void> {
-  await writePage(path.join(ctx.dir, "wiki/concepts"), slug, { title }, body);
-}
+/** Throwaway wiki for the current case, plus its concept-page writer. */
+const { ctx, page } = useConceptPage();
 
 
 /** alpha -> beta -> gamma: two hops, so a bound of one cannot reach gamma. */

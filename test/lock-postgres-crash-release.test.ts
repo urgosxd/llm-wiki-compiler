@@ -42,11 +42,11 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acquireLock, acquireLockBlocking, releaseLock, LockBusyError,
-} from "../src/utils/lock.js";
-import { lockRegistry, tryAcquirePostgresLock, type HeldPostgresLock } from "../src/utils/lock-postgres.js";
-import { acquireMutationLock, tryWithOrdinaryMutationLock } from "../src/utils/mutation-lock.js";
-import { JournalUnsafeError } from "../src/trust/journal-recovery.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+} from "../packages/wiki/src/utils/lock.js";
+import { lockRegistry, tryAcquirePostgresLock, type HeldPostgresLock } from "../packages/wiki/src/utils/lock-postgres.js";
+import { acquireMutationLock, tryWithOrdinaryMutationLock } from "../packages/wiki/src/utils/mutation-lock.js";
+import { JournalUnsafeError } from "../packages/wiki/src/trust/journal-recovery.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import { perRunDatabase } from "./fixtures/per-run-database.js";
 
 /** This process's own database; provisioning fails loudly rather than skipping. */
@@ -187,7 +187,7 @@ describe("a session-level lock dies with its session", () => {
    * wrapper and leave the real holder alive, which would make the probe prove nothing.
    */
   function startHolder(key: string): { child: ChildProcess; ready: Promise<void> } {
-    const modulePath = fileURLToPath(new URL("../src/utils/lock-postgres.ts", import.meta.url));
+    const modulePath = fileURLToPath(new URL("../packages/wiki/src/utils/lock-postgres.ts", import.meta.url));
     // Written to a temp file rather than passed to `--eval`: the child needs
     // top-level await, which the eval transform rejects.
     const scriptPath = path.join(tmpdir(), `lock-holder-${randomUUID()}.mts`);

@@ -12,14 +12,14 @@ import {
   buildFrontmatter,
   parseFrontmatter,
   parseProvenanceMetadata,
-} from "../src/utils/markdown.js";
+} from "../packages/wiki/src/utils/markdown.js";
 import {
   checkLowConfidencePages,
   checkContradictedPages,
   checkInferredWithoutCitations,
-} from "../src/linter/rules.js";
-import { parseConcepts } from "../src/compiler/prompts.js";
-import { reconcileConceptMetadata } from "../src/compiler/extraction-merge.js";
+} from "../packages/wiki/src/linter/rules.js";
+import { parseConcepts } from "../packages/wiki/src/compiler/prompts.js";
+import { reconcileConceptMetadata } from "../packages/wiki/src/compiler/extraction-merge.js";
 import { makeLintTempRoot } from "./fixtures/lint-temp-root.js";
 
 let tmpDir: string;

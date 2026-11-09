@@ -32,10 +32,10 @@
 
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
-import { compileAndReport } from "../../src/compiler/index.js";
-import { categoryObjectId } from "../../src/categories/identity.js";
-import { criterionTerms, evidenceKeyFor, matchingCriterionTerm } from "../../src/categories/criteria.js";
-import { getStoredPage } from "../../src/dimensions/wiki/page-store.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import { categoryObjectId } from "../../packages/wiki/src/categories/identity.js";
+import { criterionTerms, evidenceKeyFor, matchingCriterionTerm } from "../../packages/wiki/src/categories/criteria.js";
+import { getStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
 import { withRowsStack } from "../fixtures/rows-only-stack.js";
 import {

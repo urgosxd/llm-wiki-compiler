@@ -16,9 +16,9 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   tool: vi.fn((name: string) => ({ name })),
 }));
 
-const { ClaudeAgentProvider } = await import("../src/providers/claude-agent.js");
-const { getProvider } = await import("../src/utils/provider.js");
-const { PROVIDER_MODELS } = await import("../src/utils/constants.js");
+const { ClaudeAgentProvider } = await import("../packages/wiki/src/providers/claude-agent.js");
+const { getProvider } = await import("../packages/wiki/src/utils/provider.js");
+const { PROVIDER_MODELS } = await import("../packages/wiki/src/utils/constants.js");
 
 /** Wrap messages in an async generator, mimicking the SDK's query() return. */
 async function* messageStream(messages: unknown[]): AsyncGenerator<unknown> {

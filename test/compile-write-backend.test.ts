@@ -16,8 +16,8 @@ import { mkdir, mkdtemp, readFile, rm } from "fs/promises";
 import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyCompilePageWritesLocked } from "../src/compiler/compile-write.js";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
+import { applyCompilePageWritesLocked } from "../packages/wiki/src/compiler/compile-write.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
 
 const BODY = "---\ntitle: Backend\n---\n\nbody\n";
 

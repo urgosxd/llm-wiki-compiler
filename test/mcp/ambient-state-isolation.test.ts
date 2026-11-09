@@ -36,15 +36,15 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { saveStoredCandidate } from "../../src/dimensions/wiki/candidate-store.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { saveStoredCandidate } from "../../packages/wiki/src/dimensions/wiki/candidate-store.js";
 import {
   hashSourceContent,
   saveSourceDocument,
   stableSourceContent,
-} from "../../src/dimensions/wiki/source-documents-store.js";
-import { writeWikiStateToRows } from "../../src/dimensions/wiki/wiki-state-source.js";
-import type { WikiState } from "../../src/utils/types.js";
+} from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import { writeWikiStateToRows } from "../../packages/wiki/src/dimensions/wiki/wiki-state-source.js";
+import type { WikiState } from "../../packages/wiki/src/utils/types.js";
 import { buildServer, callTool } from "../fixtures/mcp-test-env.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";

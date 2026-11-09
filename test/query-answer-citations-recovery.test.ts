@@ -6,16 +6,16 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createWiki } from "../src/index.js";
-import { generateAnswer } from "../src/commands/query.js";
-import { reportAnswerCitations } from "../src/citations/answer-report.js";
-import { callClaude } from "../src/utils/llm.js";
-import * as activityLog from "../src/utils/activity-log.js";
-import { setQuerySaveTestHookForTest } from "../src/commands/query-publication.js";
+import { createWiki } from "../packages/wiki/src/index.js";
+import { generateAnswer } from "../packages/wiki/src/commands/query.js";
+import { reportAnswerCitations } from "../packages/wiki/src/citations/answer-report.js";
+import { callClaude } from "../packages/wiki/src/utils/llm.js";
+import * as activityLog from "../packages/wiki/src/utils/activity-log.js";
+import { setQuerySaveTestHookForTest } from "../packages/wiki/src/commands/query-publication.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { stageCitationWorkspace, citationWorkspaceBytes } from "./fixtures/query-answer-citations.js";
 
-vi.mock("../src/utils/llm.js", () => ({ callClaude: vi.fn() }));
+vi.mock("../packages/wiki/src/utils/llm.js", () => ({ callClaude: vi.fn() }));
 const ctx = useTempRoot();
 const ANSWER = "The answer cites [[Alpha]].";
 beforeEach(async () => {

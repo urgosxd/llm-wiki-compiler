@@ -15,7 +15,7 @@ import { readFile } from "fs/promises";
 import path from "path";
 import { JSDOM } from "jsdom";
 
-const GRAPH_SCRIPT = path.resolve("src/viewer/assets/viewer-graph.js");
+const GRAPH_SCRIPT = path.resolve("packages/wiki/src/viewer/assets/viewer-graph.js");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 /**

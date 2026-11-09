@@ -14,15 +14,15 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, rm, readFile, writeFile, symlink } from "fs/promises";
 import os from "os";
 import path from "path";
-import { flattenCitations } from "../src/context/provenance.js";
+import { flattenCitations } from "../packages/wiki/src/context/provenance.js";
 import {
   createSourceWindowBudget,
   materializeSourceWindows,
   MAX_LINES_PER_WINDOW,
   MAX_SOURCE_WINDOWS,
-} from "../src/context/provenance.js";
-import type { ClaimCitation } from "../src/utils/types.js";
-import { SOURCES_DIR } from "../src/utils/constants.js";
+} from "../packages/wiki/src/context/provenance.js";
+import type { ClaimCitation } from "../packages/wiki/src/utils/types.js";
+import { SOURCES_DIR } from "../packages/wiki/src/utils/constants.js";
 
 /** Builder for a one-span claim citation with an optional line range. */
 function claim(file: string, lines?: { start: number; end: number }): ClaimCitation {
@@ -240,7 +240,7 @@ describe("src/context/provenance.ts — file hygiene", () => {
     // graph.ts shipped NUL delimiters in an earlier commit; the same
     // class of bug landed here on first commit (`${citation.file}\x00${start}\x00${end}`).
     // Pin it byte-for-byte so any future delimiter regression is loud.
-    const raw = await readFile("src/context/provenance.ts");
+    const raw = await readFile("packages/wiki/src/context/provenance.ts");
     const nulCount = raw.filter((byte) => byte === 0).length;
     expect(nulCount).toBe(0);
   });

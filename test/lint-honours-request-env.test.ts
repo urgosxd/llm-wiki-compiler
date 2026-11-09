@@ -21,11 +21,11 @@
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { rm } from "node:fs/promises";
-import * as seam from "../src/dimensions/wiki/page-source-seam.js";
-import * as freshness from "../src/freshness/index.js";
-import * as profile from "../src/profile/load.js";
-import { lint, lintByTier } from "../src/linter/index.js";
-import type { RawWikiPage } from "../src/wiki/collect.js";
+import * as seam from "../packages/wiki/src/dimensions/wiki/page-source-seam.js";
+import * as freshness from "../packages/wiki/src/freshness/index.js";
+import * as profile from "../packages/wiki/src/profile/load.js";
+import { lint, lintByTier } from "../packages/wiki/src/linter/index.js";
+import type { RawWikiPage } from "../packages/wiki/src/wiki/collect.js";
 import { stackProjectRoot } from "./fixtures/lint-row-corpus.js";
 
 let dir: string;

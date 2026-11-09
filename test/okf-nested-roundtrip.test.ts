@@ -2,9 +2,9 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, readFile, stat } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { importOkfBundle } from "../src/import/okf-import.js";
-import { collectExportPages } from "../src/export/collect.js";
-import { buildOkfBundle } from "../src/export/okf/bundle.js";
+import { importOkfBundle } from "../packages/wiki/src/import/okf-import.js";
+import { collectExportPages } from "../packages/wiki/src/export/collect.js";
+import { buildOkfBundle } from "../packages/wiki/src/export/okf/bundle.js";
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });

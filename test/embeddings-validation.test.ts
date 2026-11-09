@@ -13,12 +13,12 @@ import {
   updateEmbeddings,
   writeEmbeddingStore,
   type EmbeddingStoreV3,
-} from "../src/utils/embeddings.js";
-import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";
+} from "../packages/wiki/src/utils/embeddings.js";
+import { loadEmbeddingsForSearch } from "../packages/wiki/src/utils/embeddings-load.js";
 import { expectDegradedStore } from "./fixtures/embeddings-degrade.js";
-import { EmbeddingIntegrityError } from "../src/utils/embeddings-batch.js";
-import { OpenAIProvider } from "../src/providers/openai.js";
-import * as providerMod from "../src/utils/provider.js";
+import { EmbeddingIntegrityError } from "../packages/wiki/src/utils/embeddings-batch.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
+import * as providerMod from "../packages/wiki/src/utils/provider.js";
 
 async function makeRoot(): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), "llmwiki-embed-validation-"));

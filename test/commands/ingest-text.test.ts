@@ -3,10 +3,10 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ingestTextSource } from "../../src/commands/ingest.js";
+import { ingestTextSource } from "../../packages/wiki/src/commands/ingest.js";
 import { useStackEnv } from "../fixtures/stack-env.js";
-import { createDimensionsDatabase } from "../../src/dimensions/activation.js";
-import { listSourceDocuments } from "../../src/dimensions/wiki/source-documents-store.js";
+import { createDimensionsDatabase } from "../../packages/wiki/src/dimensions/activation.js";
+import { listSourceDocuments } from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
 
 /**
  * How many sources exist, read from whichever backend is active.

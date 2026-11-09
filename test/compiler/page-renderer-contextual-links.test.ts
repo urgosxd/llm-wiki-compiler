@@ -10,28 +10,21 @@
  * once every page of the run exists.
  */
 
-import { vi, describe, it, expect, afterEach } from "vitest";
+import { vi, describe, it, expect } from "vitest";
 import path from "node:path";
-import { callClaude } from "../../src/utils/llm.js";
-import { renderMergedPageContent } from "../../src/compiler/page-renderer.js";
-import { parseFrontmatter } from "../../src/utils/markdown.js";
-import { useManagedTempRoots } from "../fixtures/temp-root.js";
+import { callClaude } from "../../packages/wiki/src/utils/llm.js";
+import { renderMergedPageContent } from "../../packages/wiki/src/compiler/page-renderer.js";
+import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
+import { STUB_SCHEMA, usePageRendererSuite } from "../fixtures/page-renderer-suite.js";
 import { writePage } from "../fixtures/write-page.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
 
-vi.mock("../../src/utils/llm.js", () => ({
+vi.mock("../../packages/wiki/src/utils/llm.js", () => ({
   callClaude: vi.fn(),
 }));
 
-/** Minimal SchemaConfig stub matching the shape page-renderer needs. */
-const STUB_SCHEMA = { defaultKind: "concept" } as Parameters<typeof renderMergedPageContent>[2];
-
-/** Throwaway wiki roots, one per case, removed after each test. */
-const { tempRoot } = useManagedTempRoots();
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
+/** Throwaway wiki roots, one per case, plus the per-test mock restore. */
+const { tempRoot } = usePageRendererSuite();
 
 /** Write a page into the throwaway wiki's concepts directory. */
 async function writeConceptPage(

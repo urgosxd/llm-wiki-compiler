@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import path from "path";
-import { loadSelectedPages } from "../src/commands/query.js";
+import { loadSelectedPages } from "../packages/wiki/src/commands/query.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
 import { generateAndReadIndex } from "./fixtures/generate-and-read-index.js";

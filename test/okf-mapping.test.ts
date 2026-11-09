@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "crypto";
-import { mapPageToOkfFrontmatter } from "../src/export/okf/mapping.js";
-import type { ExportPage } from "../src/export/types.js";
+import { mapPageToOkfFrontmatter } from "../packages/wiki/src/export/okf/mapping.js";
+import type { ExportPage } from "../packages/wiki/src/export/types.js";
 
 const sha = (s: string) => createHash("sha256").update(s, "utf-8").digest("hex");
 function page(overrides: Partial<ExportPage> = {}): ExportPage {

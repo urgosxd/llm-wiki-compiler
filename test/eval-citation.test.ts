@@ -3,8 +3,8 @@
  * Verifies coverage%, precision%, and per-page breakdown.
  */
 
-import { evaluateCitationCoverage } from "../src/eval/citation-coverage.js";
-import type { CitationCoverageResult } from "../src/eval/types.js";
+import { evaluateCitationCoverage } from "../packages/wiki/src/eval/citation-coverage.js";
+import type { CitationCoverageResult } from "../packages/wiki/src/eval/types.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
 function expectTwoValidCitations(result: CitationCoverageResult): void {

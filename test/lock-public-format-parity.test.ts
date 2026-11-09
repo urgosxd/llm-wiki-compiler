@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   classifyOwnerLiveness, isLockRecordStale, parseOwner, readProcessStartTime, serializeOwner,
-} from "../src/utils/lock-owner.js";
+} from "../packages/wiki/src/utils/lock-owner.js";
 
 /** Exact ambient rendering compared by baseline public lock readers. */
 function legacyStart(): string {

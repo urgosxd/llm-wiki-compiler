@@ -61,10 +61,10 @@ import {
   runParityCorpus,
   type ParityEvidence,
 } from "../fixtures/store-parity-corpus.js";
-import { createRowCuratedLinkStore } from "../../src/dimensions/wiki/curated-links-row-store.js";
-import { createPageContentSource } from "../../src/dimensions/wiki/page-scan-source.js";
-import { CATEGORIES_DIR, CONCEPTS_DIR, CURATED_LINKS_FILE, SOURCES_DIR } from "../../src/utils/constants.js";
-import { parseFrontmatter } from "../../src/utils/markdown.js";
+import { createRowCuratedLinkStore } from "../../packages/wiki/src/dimensions/wiki/curated-links-row-store.js";
+import { createPageContentSource } from "../../packages/wiki/src/dimensions/wiki/page-scan-source.js";
+import { CATEGORIES_DIR, CONCEPTS_DIR, CURATED_LINKS_FILE, SOURCES_DIR } from "../../packages/wiki/src/utils/constants.js";
+import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 
 /** Where the failure and the skip reason say what needed a database: THIS file. */
 const DATABASE_CONTEXT =

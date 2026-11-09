@@ -47,7 +47,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { exec, CLI, stripAnsi } from "../fixtures/cli-runner.js";
 import { makeEmptyRmProject, twoSourceRmProject } from "../fixtures/rm-project.js";
-import type { WikiState } from "../../src/utils/types.js";
+import type { WikiState } from "../../packages/wiki/src/utils/types.js";
 
 /** A project with one source owning one concept page. */
 async function oneSourceProject(): Promise<string> {

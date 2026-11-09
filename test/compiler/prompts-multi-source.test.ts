@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildPagePrompt, PROMPT_VERSION } from "../../src/compiler/prompts.js";
+import { buildPagePrompt, PROMPT_VERSION } from "../../packages/wiki/src/compiler/prompts.js";
 
 /** The page prompt a project with no output-language override sees. */
 function pagePrompt(): string {

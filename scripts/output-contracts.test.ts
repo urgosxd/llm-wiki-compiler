@@ -13,7 +13,7 @@ import { classifyTests } from "./test-partition.ts";
 
 const CONTRACT = "test/quickstart-json-stdout.test.ts";
 const UNIT_FILES = ["test/alpha-unit.test.ts", "test/beta-unit.test.ts"];
-const CHANGED = ["src/cli/run.ts"];
+const CHANGED = ["packages/wiki/src/cli/run.ts"];
 
 /**
  * Every file the plan runs UNCONDITIONALLY, i.e. from a `run` invocation.

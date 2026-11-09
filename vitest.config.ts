@@ -31,10 +31,10 @@ export default defineConfig({
   // installed compiler peer by name; this resolver is not shipped at runtime.
   resolve: {
     alias: [
-      { find: /^@atomicstrata\/llmwiki-core\/compiler-cli$/, replacement: fileURLToPath(new URL("./src/compiler-cli.ts", import.meta.url)) },
-      { find: /^@atomicstrata\/llmwiki-core\/compiler-sdk$/, replacement: fileURLToPath(new URL("./src/sdk/compiler-composition.ts", import.meta.url)) },
-      { find: /^@atomicstrata\/llmwiki-core$/, replacement: fileURLToPath(new URL("./src/core-index.ts", import.meta.url)) },
-      { find: /^llm-wiki-compiler$/, replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)) },
+      { find: /^@atomicstrata\/llmwiki-core\/compiler-cli$/, replacement: fileURLToPath(new URL("./packages/wiki/src/compiler-cli.ts", import.meta.url)) },
+      { find: /^@atomicstrata\/llmwiki-core\/compiler-sdk$/, replacement: fileURLToPath(new URL("./packages/wiki/src/sdk/compiler-composition.ts", import.meta.url)) },
+      { find: /^@atomicstrata\/llmwiki-core$/, replacement: fileURLToPath(new URL("./packages/wiki/src/core-index.ts", import.meta.url)) },
+      { find: /^llm-wiki-compiler$/, replacement: fileURLToPath(new URL("./packages/wiki/src/index.ts", import.meta.url)) },
     ],
   },
   test: {

@@ -37,9 +37,9 @@
 
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { compileAndReport } from "../../src/compiler/index.js";
-import { parseFrontmatter, parseFrontmatterStatus } from "../../src/utils/markdown.js";
-import { CONCEPTS_DIR } from "../../src/utils/constants.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import { parseFrontmatter, parseFrontmatterStatus } from "../../packages/wiki/src/utils/markdown.js";
+import { CONCEPTS_DIR } from "../../packages/wiki/src/utils/constants.js";
 import { useCompileProject } from "../fixtures/compile-project.js";
 import { listConceptPages, readConceptPage } from "../fixtures/concept-page.js";
 import { extractionAnswer, stubCompileProvider } from "../fixtures/compile-provider.js";

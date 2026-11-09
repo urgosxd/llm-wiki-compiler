@@ -8,9 +8,9 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { OpenAIProvider } from "../src/providers/openai.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { EMBEDDING_MODELS } from "../src/utils/constants.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { EMBEDDING_MODELS } from "../packages/wiki/src/utils/constants.js";
 
 interface StubCall {
   model: string;

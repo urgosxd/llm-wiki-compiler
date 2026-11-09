@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { tryAcquirePostgresLock } from "../src/utils/lock-postgres.js";
+import { tryAcquirePostgresLock } from "../packages/wiki/src/utils/lock-postgres.js";
 import { perRunDatabase } from "./fixtures/per-run-database.js";
 import { expectPerRunDatabase } from "./fixtures/per-run-database-assertions.js";
 
@@ -26,7 +26,7 @@ const DSN = (await perRunDatabase()).url;
 
 /** Run a child that tries the lock once, reporting whether it got it. */
 function childAcquires(key: string): boolean {
-  const modulePath = fileURLToPath(new URL("../src/utils/lock-postgres.ts", import.meta.url));
+  const modulePath = fileURLToPath(new URL("../packages/wiki/src/utils/lock-postgres.ts", import.meta.url));
   // Written to a temp file rather than passed to `--eval`: the child needs
   // top-level await, which the eval transform rejects.
   const scriptPath = join(tmpdir(), `lock-probe-${randomUUID()}.mts`);

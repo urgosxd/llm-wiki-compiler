@@ -11,8 +11,8 @@ import { access, mkdir, readFile, readdir, writeFile } from "fs/promises";
 import path from "path";
 import { mockClaudeEnv, useAimockLifecycle } from "./fixtures/aimock-helper.js";
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
-import type { ReviewCandidate } from "../src/utils/types.js";
-import type { WikiState } from "../src/utils/types.js";
+import type { ReviewCandidate } from "../packages/wiki/src/utils/types.js";
+import type { WikiState } from "../packages/wiki/src/utils/types.js";
 
 const aimock = useAimockLifecycle("review-policy-cli");
 

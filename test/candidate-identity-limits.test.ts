@@ -13,15 +13,15 @@ import {
   writeCandidate,
   readCandidate,
   archiveCandidate,
-} from "../src/compiler/candidates.js";
+} from "../packages/wiki/src/compiler/candidates.js";
 import {
   archivePath,
   candidatePath,
   MAX_CANDIDATE_ID_BYTES,
   MAX_CANDIDATE_SLUG_BYTES,
   MAX_WRITABLE_CANDIDATE_ID_BYTES,
-} from "../src/compiler/candidate-paths.js";
-import { CANDIDATES_DIR } from "../src/utils/constants.js";
+} from "../packages/wiki/src/compiler/candidate-paths.js";
+import { CANDIDATES_DIR } from "../packages/wiki/src/utils/constants.js";
 import { snapshotCandidateQueue } from "./fixtures/candidate-queue.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 

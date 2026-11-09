@@ -20,7 +20,7 @@ import {
   ensureProviderAvailable,
   ProviderUnavailableError,
   UnknownProviderError,
-} from "../src/utils/provider-guard.js";
+} from "../packages/wiki/src/utils/provider-guard.js";
 import { createEnvSnapshot } from "./fixtures/env-snapshot.js";
 
 const { setEnv, restore } = createEnvSnapshot([

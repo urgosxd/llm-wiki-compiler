@@ -20,10 +20,10 @@ import {
   describeCuratedLinks,
   emptyCuratedLinkCounts,
   type CuratedLinkRecord,
-} from "../../src/compiler/curated-links.js";
-import { overlayCuratedLinks } from "../../src/compiler/curated-links-overlay.js";
-import { emptyCuratedLinkStore } from "../../src/compiler/curated-links-store.js";
-import { MAX_CURATED_LINKS_PER_PAGE, MAX_CURATED_LINKS_PER_RUN } from "../../src/utils/constants.js";
+} from "../../packages/wiki/src/compiler/curated-links.js";
+import { overlayCuratedLinks } from "../../packages/wiki/src/compiler/curated-links-overlay.js";
+import { emptyCuratedLinkStore } from "../../packages/wiki/src/compiler/curated-links-store.js";
+import { MAX_CURATED_LINKS_PER_PAGE, MAX_CURATED_LINKS_PER_RUN } from "../../packages/wiki/src/utils/constants.js";
 
 /** The page the link lives on. */
 const SOURCE = "concepts/alpha-topic";

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile, readFile, symlink, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { saveSource } from "../../src/utils/source-writer.js";
+import { saveSource } from "../../packages/wiki/src/utils/source-writer.js";
 
 describe("saveSource ignores symlinked source entries (no read/write-through)", () => {
   it("does not match or write through a symlink escaping sources/", async () => {

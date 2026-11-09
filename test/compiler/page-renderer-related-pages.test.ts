@@ -13,12 +13,12 @@
 import { vi, describe, it, expect, afterEach } from "vitest";
 import path from "node:path";
 import { rm } from "node:fs/promises";
-import { callClaude } from "../../src/utils/llm.js";
-import { rankRelatedSlugs, renderMergedPageContent } from "../../src/compiler/page-renderer.js";
+import { callClaude } from "../../packages/wiki/src/utils/llm.js";
+import { rankRelatedSlugs, renderMergedPageContent } from "../../packages/wiki/src/compiler/page-renderer.js";
 import { makeTempRoot } from "../fixtures/temp-root.js";
 import { writePage } from "../fixtures/write-page.js";
 
-vi.mock("../../src/utils/llm.js", () => ({
+vi.mock("../../packages/wiki/src/utils/llm.js", () => ({
   callClaude: vi.fn(),
 }));
 

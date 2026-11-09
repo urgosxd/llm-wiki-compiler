@@ -16,8 +16,8 @@
 
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { buildPageLinkIndex, validateContextualLinks } from "../../src/compiler/link-anchoring.js";
-import { MAX_CONTEXTUAL_LINKS_PER_PAGE } from "../../src/utils/constants.js";
+import { buildPageLinkIndex, validateContextualLinks } from "../../packages/wiki/src/compiler/link-anchoring.js";
+import { MAX_CONTEXTUAL_LINKS_PER_PAGE } from "../../packages/wiki/src/utils/constants.js";
 import { useManagedTempRoots } from "../fixtures/temp-root.js";
 import { writePage } from "../fixtures/write-page.js";
 

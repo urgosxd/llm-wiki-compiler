@@ -15,9 +15,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFile } from "fs/promises";
 import path from "path";
-import { compileAndReport } from "../src/compiler/index.js";
-import { parseFrontmatter, extractClaimCitations } from "../src/utils/markdown.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { parseFrontmatter, extractClaimCitations } from "../packages/wiki/src/utils/markdown.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 
 // ---------------------------------------------------------------------------

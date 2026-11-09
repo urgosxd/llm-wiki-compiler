@@ -8,8 +8,8 @@
 
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { createPageWriteSink, toPage } from "../../src/dimensions/wiki/page-write-sink.js";
-import { getStoredPage, listStoredPages } from "../../src/dimensions/wiki/page-store.js";
+import { createPageWriteSink, toPage } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { getStoredPage, listStoredPages } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { wikiReachable } from "../fixtures/stack-harness.js";
 

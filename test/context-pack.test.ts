@@ -15,12 +15,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import os from "os";
 import path from "path";
-import { buildContextPack } from "../src/context/build.js";
-import { estimateTokens, estimatePackTokens } from "../src/context/budget.js";
-import { PROMPT_ECHO_MAX_LENGTH } from "../src/context/types.js";
-import { retrieveSemanticChunks } from "../src/context/retrieval.js";
-import type { SemanticChunkHit } from "../src/context/retrieval.js";
-import { CONCEPTS_DIR, QUERIES_DIR } from "../src/utils/constants.js";
+import { buildContextPack } from "../packages/wiki/src/context/build.js";
+import { estimateTokens, estimatePackTokens } from "../packages/wiki/src/context/budget.js";
+import { PROMPT_ECHO_MAX_LENGTH } from "../packages/wiki/src/context/types.js";
+import { retrieveSemanticChunks } from "../packages/wiki/src/context/retrieval.js";
+import type { SemanticChunkHit } from "../packages/wiki/src/context/retrieval.js";
+import { CONCEPTS_DIR, QUERIES_DIR } from "../packages/wiki/src/utils/constants.js";
 
 // Stub semantic retrieval at the module boundary so each test can drive
 // build.ts deterministically without touching disk-resident embedding
@@ -28,7 +28,7 @@ import { CONCEPTS_DIR, QUERIES_DIR } from "../src/utils/constants.js";
 // Slice 1 lexical-only behaviour byte-for-byte — every existing test
 // runs as if the embedding store does not exist (which is true in the
 // fresh temp roots these tests build).
-vi.mock("../src/context/retrieval.js", () => ({
+vi.mock("../packages/wiki/src/context/retrieval.js", () => ({
   retrieveSemanticChunks: vi.fn(async () => ({ hits: [], warning: null })),
 }));
 const mockedRetrieve = vi.mocked(retrieveSemanticChunks);

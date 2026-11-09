@@ -5,7 +5,7 @@
  */
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { withExclusiveLock, type LockPaths } from "../src/utils/exclusive-lock.js";
+import { withExclusiveLock, type LockPaths } from "../packages/wiki/src/utils/exclusive-lock.js";
 import { managedTempRoots as publisherTempRoots } from "./fixtures/managed-temp-roots.js";
 
 const roots = publisherTempRoots();

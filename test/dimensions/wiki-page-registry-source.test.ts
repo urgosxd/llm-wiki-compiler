@@ -10,11 +10,11 @@
 
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRegistryPageSource } from "../../src/dimensions/wiki/page-registry-source.js";
-import { createPageWriteSink } from "../../src/dimensions/wiki/page-write-sink.js";
-import { buildNamespaceDirs } from "../../src/utils/page-registry.js";
-import { parseFrontmatter } from "../../src/utils/markdown.js";
-import { hashChunkText, splitIntoChunks } from "../../src/utils/retrieval.js";
+import { createRegistryPageSource } from "../../packages/wiki/src/dimensions/wiki/page-registry-source.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
+import { buildNamespaceDirs } from "../../packages/wiki/src/utils/page-registry.js";
+import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
+import { hashChunkText, splitIntoChunks } from "../../packages/wiki/src/utils/retrieval.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 /** A page whose body carries leading whitespace, to pin the trim on the way out. */

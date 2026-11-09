@@ -32,7 +32,7 @@
  * like any other id that is not a Stack id, before the work runs.
  */
 import { describe, it, expect } from "vitest";
-import { isRefusal, withRequestEnv } from "../../src/mcp/tenant-db.js";
+import { isRefusal, withRequestEnv } from "../../packages/wiki/src/mcp/tenant-db.js";
 
 /** An id that is a well-formed UUID and exists in no Stack table. */
 const ABSENT_STACK = "00000000-0000-4000-8000-000000000000";

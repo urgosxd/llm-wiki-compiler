@@ -11,7 +11,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/viewer/render.js", () => ({
+vi.mock("../packages/wiki/src/viewer/render.js", () => ({
   renderPageHtml: () => {
     throw new Error("simulated render failure with details that must not leak");
   },
@@ -22,8 +22,8 @@ vi.mock("../src/viewer/render.js", () => ({
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { writePage } from "./fixtures/write-page.js";
-import { buildViewerSnapshot } from "../src/viewer/snapshot.js";
-import { startViewerServer } from "../src/viewer/server.js";
+import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
+import { startViewerServer } from "../packages/wiki/src/viewer/server.js";
 
 interface ServerHandle {
   host: string;

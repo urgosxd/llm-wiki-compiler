@@ -22,7 +22,7 @@ import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { makeOutsideDir } from "./fixtures/outside-dir.js";
 import { writePage } from "./fixtures/write-page.js";
-import { collectPageRecords } from "../src/utils/embeddings-pages.js";
+import { collectPageRecords } from "../packages/wiki/src/utils/embeddings-pages.js";
 
 describe("collectPageRecords egress confinement", () => {
   it("does NOT read or embed an out-of-tree symlinked concept/query page", async () => {

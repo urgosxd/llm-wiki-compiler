@@ -10,9 +10,9 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendEventRow, readEventLog } from "../../src/dimensions/wiki/event-log-store.js";
-import { eventPrevHash } from "../../src/events/event-digest.js";
-import { GENESIS_PREV_HASH } from "../../src/events/types.js";
+import { appendEventRow, readEventLog } from "../../packages/wiki/src/dimensions/wiki/event-log-store.js";
+import { eventPrevHash } from "../../packages/wiki/src/events/event-digest.js";
+import { GENESIS_PREV_HASH } from "../../packages/wiki/src/events/types.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { createProbeStack } from "./harness-lifecycle.js";
 
@@ -77,7 +77,7 @@ describe("event log as rows", () => {
     const log = await readEventLog(harness.db, harness.stackId);
     // The stored checksum no longer describes the row, and the NEXT record's link
     // points at a digest that no longer matches either.
-    const { eventChecksum } = await import("../../src/events/store-record.js");
+    const { eventChecksum } = await import("../../packages/wiki/src/events/store-record.js");
     const recomputed = eventChecksum({
       id: log[0]!.id, type: log[0]!.type, origin: log[0]!.origin,
       payload: log[0]!.payload, at: log[0]!.at, prevHash: log[0]!.prevHash,

@@ -20,8 +20,8 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { openBatch, replayJournal } from "../src/trust/journal.js";
-import { applyPageMutationLocked } from "../src/trust/page-apply.js";
+import { openBatch, replayJournal } from "../packages/wiki/src/trust/journal.js";
+import { applyPageMutationLocked } from "../packages/wiki/src/trust/page-apply.js";
 import { tempRootTracker } from "./temp-roots.js";
 
 const tracker = tempRootTracker();

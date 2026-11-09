@@ -34,10 +34,10 @@
 
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
-import { compileAndReport } from "../../src/compiler/index.js";
-import { saveSourceDocument } from "../../src/dimensions/wiki/source-documents-store.js";
-import { getStoredPage } from "../../src/dimensions/wiki/page-store.js";
-import { parseFrontmatter } from "../../src/utils/markdown.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import { saveSourceDocument } from "../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
+import { getStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
+import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 import { readConceptPage } from "../fixtures/concept-page.js";
 import { extractionAnswer, stubCompileProvider } from "../fixtures/compile-provider.js";
 import { writeSource } from "../fixtures/curated-scenario.js";

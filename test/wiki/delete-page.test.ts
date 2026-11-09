@@ -26,8 +26,8 @@ import { mkdtemp, mkdir, writeFile, readFile, unlink, readdir, symlink } from "n
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { deleteWikiPagesLocked } from "../../src/wiki/delete-page.js";
-import { replayJournal } from "../../src/trust/journal.js";
+import { deleteWikiPagesLocked } from "../../packages/wiki/src/wiki/delete-page.js";
+import { replayJournal } from "../../packages/wiki/src/trust/journal.js";
 
 /** A temp project with `wiki/concepts/<slug>.md` for each given slug. */
 async function projectWithPages(slugs: string[]): Promise<string> {

@@ -8,10 +8,10 @@ import { existsSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { OpenAIProvider } from "../src/providers/openai.js";
-import { compileAndReport } from "../src/compiler/index.js";
-import { EMBEDDINGS_FILE, ENV_EMBEDDINGS } from "../src/utils/constants.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { EMBEDDINGS_FILE, ENV_EMBEDDINGS } from "../packages/wiki/src/utils/constants.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 import { conceptId, readV3Store } from "./fixtures/v3-store.js";
 

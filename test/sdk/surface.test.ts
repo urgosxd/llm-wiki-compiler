@@ -23,7 +23,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createWiki } from "../../src/sdk/wiki.js";
+import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
 
 /** The methods the facade must expose, mirrored from `WikiCore`. */
 const REQUIRED = [

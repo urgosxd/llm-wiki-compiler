@@ -17,9 +17,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildViewerSnapshot } from "../../src/viewer/snapshot.js";
-import { startHost } from "../../src/host/server.js";
-import { clearTenantSnapshots, tenantSlugOf } from "../../src/host/tenants.js";
+import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
+import { startHost } from "../../packages/wiki/src/host/server.js";
+import { clearTenantSnapshots, tenantSlugOf } from "../../packages/wiki/src/host/tenants.js";
 
 /** A project whose single concept page is named after `label`. */
 async function projectNamed(label: string): Promise<string> {

@@ -20,9 +20,9 @@
 
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { compileAndReport } from "../../src/compiler/index.js";
-import { buildFrontmatter } from "../../src/utils/markdown.js";
-import { CURATED_LINKS_FILE } from "../../src/utils/constants.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import { buildFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
+import { CURATED_LINKS_FILE } from "../../packages/wiki/src/utils/constants.js";
 import { declareAlias } from "./concept-page.js";
 import { stubCompileProvider } from "./compile-provider.js";
 

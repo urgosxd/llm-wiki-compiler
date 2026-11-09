@@ -17,8 +17,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createWiki } from "../../src/sdk/wiki.js";
-import { ProviderUnavailableError, UnknownProviderError } from "../../src/utils/provider-guard.js";
+import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
+import { ProviderUnavailableError, UnknownProviderError } from "../../packages/wiki/src/utils/provider-guard.js";
 import { useStackEnv } from "../fixtures/stack-env.js";
 
 const saved = { ...process.env };

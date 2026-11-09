@@ -20,16 +20,16 @@ import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { makeOutsideDir } from "./fixtures/outside-dir.js";
 import { writePage } from "./fixtures/write-page.js";
-import { splitIntoChunks, hashChunkText } from "../src/utils/retrieval.js";
-import { buildEmbeddingText } from "../src/utils/embeddings-pages.js";
+import { splitIntoChunks, hashChunkText } from "../packages/wiki/src/utils/retrieval.js";
+import { buildEmbeddingText } from "../packages/wiki/src/utils/embeddings-pages.js";
 import {
   buildLiveIdSet,
   buildLiveRegistryEntry,
   buildNamespaceDirs,
   loadPageRecordsByPageId,
   loadSelectedPagesByPageId,
-} from "../src/utils/page-registry.js";
-import type { ProfilePack, LoadedProfile } from "../src/profile/types.js";
+} from "../packages/wiki/src/utils/page-registry.js";
+import type { ProfilePack, LoadedProfile } from "../packages/wiki/src/profile/types.js";
 
 // ---------------------------------------------------------------------------
 // buildLiveIdSet — metadata-only (no body read)

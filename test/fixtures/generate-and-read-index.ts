@@ -6,7 +6,7 @@
 
 import { readFile } from "fs/promises";
 import path from "path";
-import { generateIndex } from "../../src/compiler/indexgen.js";
+import { generateIndex } from "../../packages/wiki/src/compiler/indexgen.js";
 
 /**
  * Generate the wiki index for a project root and return its content.

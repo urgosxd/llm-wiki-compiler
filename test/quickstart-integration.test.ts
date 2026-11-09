@@ -28,11 +28,11 @@ import {
 } from "./fixtures/aimock-helper.js";
 import { runCLI, expectCLIExit, expectCLIFailure, type CLIResult } from "./fixtures/run-cli.js";
 import { useQuickstartProcessLifecycle } from "./fixtures/run-cli-server.js";
-import { LLMWIKI_DIR, LAST_LINT_FILE } from "../src/utils/constants.js";
+import { LLMWIKI_DIR, LAST_LINT_FILE } from "../packages/wiki/src/utils/constants.js";
 import { countConceptPages, listSourceFilenames } from "./fixtures/source-corpus.js";
 import { useStackEnv } from "./fixtures/stack-env.js";
-import { createDimensionsDatabase } from "../src/dimensions/activation.js";
-import { listStoredPagesUnfiltered } from "../src/dimensions/wiki/page-store.js";
+import { createDimensionsDatabase } from "../packages/wiki/src/dimensions/activation.js";
+import { listStoredPagesUnfiltered } from "../packages/wiki/src/dimensions/wiki/page-store.js";
 import { holdProjectLockOnNextRelease } from "./fixtures/quickstart-lock-holder.js";
 
 // Every suite here drives quickstart end to end, which ingests.

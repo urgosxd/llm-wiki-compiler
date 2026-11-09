@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, writeFile, mkdir, rm } from "fs/promises";
 import path from "path";
 import os from "os";
-import { detectChanges, hashFile } from "../src/compiler/hasher.js";
-import type { WikiState } from "../src/utils/types.js";
+import { detectChanges, hashFile } from "../packages/wiki/src/compiler/hasher.js";
+import type { WikiState } from "../packages/wiki/src/utils/types.js";
 
 function emptyState(): WikiState {
   return { version: 1, indexHash: "", sources: {} };

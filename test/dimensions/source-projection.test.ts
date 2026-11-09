@@ -123,8 +123,8 @@ async function fsPromisesMock(
 vi.mock("fs/promises", (importOriginal) => fsPromisesMock(importOriginal));
 vi.mock("node:fs/promises", (importOriginal) => fsPromisesMock(importOriginal));
 
-import { projectSourceMarkdown } from "../../src/dimensions/wiki/source-projection.js";
-import { saveSource } from "../../src/utils/source-writer.js";
+import { projectSourceMarkdown } from "../../packages/wiki/src/dimensions/wiki/source-projection.js";
+import { saveSource } from "../../packages/wiki/src/utils/source-writer.js";
 
 /**
  * Slug suffix identifying the file the injected failure targets.

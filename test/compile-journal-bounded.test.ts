@@ -20,9 +20,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { existsSync } from "fs";
 import path from "path";
-import { compileAndReport } from "../src/compiler/index.js";
-import { LOCK_FILE } from "../src/utils/constants.js";
-import * as executor from "../src/trust/executor.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { LOCK_FILE } from "../packages/wiki/src/utils/constants.js";
+import * as executor from "../packages/wiki/src/trust/executor.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 import {
   journalFileCount,

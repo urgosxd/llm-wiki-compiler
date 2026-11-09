@@ -43,7 +43,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../fixtures/mcp-test-env.js";
-import { STACK_ARG_REQUIRED_NOTE } from "../../src/mcp/stack-arg.js";
+import { STACK_ARG_REQUIRED_NOTE } from "../../packages/wiki/src/mcp/stack-arg.js";
 import {
   expectNamelessCallsRefused,
   expectRefusedNamingStackId,

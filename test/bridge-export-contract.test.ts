@@ -18,12 +18,12 @@ import { describe, it, expect } from "vitest";
 import path from "path";
 import { writePage } from "./fixtures/write-page.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
-import { collectExportPages } from "../src/export/collect.js";
-import { buildJsonExport, EXPORT_SCHEMA_VERSION } from "../src/export/json-export.js";
+import { collectExportPages } from "../packages/wiki/src/export/collect.js";
+import { buildJsonExport, EXPORT_SCHEMA_VERSION } from "../packages/wiki/src/export/json-export.js";
 import {
   PROJECT_ID_PATTERN,
   validateProjectId,
-} from "../src/export/project-id.js";
+} from "../packages/wiki/src/export/project-id.js";
 
 interface BridgeExportPage {
   title: string;

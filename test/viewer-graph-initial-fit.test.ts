@@ -17,9 +17,9 @@ async function graph(count: number, compact: boolean, duringLoad?: (container: E
   Object.defineProperty(win.SVGElement.prototype, "viewBox", {
     get() { return { baseVal: { x: 0, y: 0, width: 440, height: 296 } }; },
   });
-  win.eval(await readFile("src/viewer/assets/d3.min.js", "utf8"));
+  win.eval(await readFile("packages/wiki/src/viewer/assets/d3.min.js", "utf8"));
   for (const name of ["viewer-dom", "viewer-format", "viewer-graph"]) {
-    const source = await readFile(`src/viewer/assets/${name}.js`, "utf8");
+    const source = await readFile(`packages/wiki/src/viewer/assets/${name}.js`, "utf8");
     win.eval(source.replace(/^import .*;$/gm, "").replace(/\bexport /g, ""));
   }
   win.fetch = async () => new Response(JSON.stringify({

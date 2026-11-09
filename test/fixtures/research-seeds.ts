@@ -16,7 +16,7 @@
  * (`buildResearchProject`, `seedResearchRelations`) unchanged.
  */
 
-import type { EntityId } from "../../src/profile/types.js";
+import type { EntityId } from "../../packages/wiki/src/profile/types.js";
 import type { SeedPage } from "./seed-page.js";
 
 export type { SeedPage };

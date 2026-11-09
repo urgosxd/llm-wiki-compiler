@@ -19,9 +19,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { declaredRuleTiers, lint, lintByTier } from "../../src/linter/index.js";
-import { tieredReport } from "../../src/linter/tiers.js";
-import type { LintResult } from "../../src/linter/types.js";
+import { declaredRuleTiers, lint, lintByTier } from "../../packages/wiki/src/linter/index.js";
+import { tieredReport } from "../../packages/wiki/src/linter/tiers.js";
+import type { LintResult } from "../../packages/wiki/src/linter/types.js";
 import { tempRootTracker } from "../temp-roots.js";
 
 const tracker = tempRootTracker();

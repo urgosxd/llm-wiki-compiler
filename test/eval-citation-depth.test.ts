@@ -2,7 +2,7 @@
  * Tests for src/eval/citation-depth.ts — citation precision metrics.
  */
 
-import { evaluateCitationDepth } from "../src/eval/citation-depth.js";
+import { evaluateCitationDepth } from "../packages/wiki/src/eval/citation-depth.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
 function fm(title: string, extra = ""): string {

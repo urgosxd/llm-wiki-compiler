@@ -4,10 +4,10 @@
  * from the pipeline tests so an unsafe cache hit cannot masquerade as savings.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { reusableExtraction, snapshotExtraction, stableSourceHash, withExtractionSnapshot } from "../src/compiler/extraction-snapshot.js";
-import { withRunSystemPolicy } from "../src/compiler/prompt-modifiers.js";
-import { CONCEPT_EXTRACTION_TOOL } from "../src/compiler/prompts.js";
-import type { SourceState } from "../src/utils/types.js";
+import { reusableExtraction, snapshotExtraction, stableSourceHash, withExtractionSnapshot } from "../packages/wiki/src/compiler/extraction-snapshot.js";
+import { withRunSystemPolicy } from "../packages/wiki/src/compiler/prompt-modifiers.js";
+import { CONCEPT_EXTRACTION_TOOL } from "../packages/wiki/src/compiler/prompts.js";
+import type { SourceState } from "../packages/wiki/src/utils/types.js";
 
 const content = "Evidence for a shared concept.";
 const concepts = [{ concept: "Shared", summary: "Supported", is_new: true, confidence: 0.8 }];

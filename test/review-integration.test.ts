@@ -14,7 +14,7 @@ import { describe, it, expect } from "vitest";
 import path from "path";
 import { mkdir, rm, writeFile, readdir, readFile, access } from "fs/promises";
 import { tmpdir } from "os";
-import type { ReviewCandidate } from "../src/utils/types.js";
+import type { ReviewCandidate } from "../packages/wiki/src/utils/types.js";
 import { runCLI, expectCLIExit, expectCLIFailure } from "./fixtures/run-cli.js";
 
 

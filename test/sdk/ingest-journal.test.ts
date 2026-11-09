@@ -14,9 +14,9 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createWiki } from "../../src/sdk/wiki.js";
-import { LOG_FILE } from "../../src/utils/constants.js";
-import { withJournalSource } from "../../src/dimensions/wiki/activity-log-source.js";
+import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
+import { LOG_FILE } from "../../packages/wiki/src/utils/constants.js";
+import { withJournalSource } from "../../packages/wiki/src/dimensions/wiki/activity-log-source.js";
 import { useStackEnv } from "../fixtures/stack-env.js";
 
 describe("SDK ingest journaling is root-bound", () => {

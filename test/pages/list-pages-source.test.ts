@@ -11,7 +11,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { listPages, type Page, type PageListingSource } from "../../src/pages/list.js";
+import { listPages, type Page, type PageListingSource } from "../../packages/wiki/src/pages/list.js";
 
 const ALPHA = "---\ntitle: Alpha\nsummary: first\ntags:\n  - a\n---\n\nLinks [[beta]].\n";
 const BETA = "---\ntitle: Beta\nsummary: second\n---\n\nplain.\n";
@@ -83,7 +83,7 @@ describe("listPages from a source", () => {
   });
 
   it("reads a single page by directory and slug", async () => {
-    const { getPage } = await import("../../src/pages/list.js");
+    const { getPage } = await import("../../packages/wiki/src/pages/list.js");
     const page = await getPage(root, { slug: "alpha", pageDirectory: "concepts" },
       sourceOf([pageOf("alpha", ALPHA)]));
 

@@ -82,10 +82,10 @@ import { testDatabaseUrl } from "../fixtures/test-database.js";
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 /** The migration under test. */
-const MIGRATION = "src/dimensions/wiki/migration_wiki_db_parity.sql";
+const MIGRATION = "packages/wiki/src/dimensions/wiki/migration_wiki_db_parity.sql";
 
 /** The wiki schema of record, which carries the mirror. */
-const WIKI_SCHEMA = "src/dimensions/wiki/schema.sql";
+const WIKI_SCHEMA = "packages/wiki/src/dimensions/wiki/schema.sql";
 
 /**
  * A frozen copy of {@link WIKI_SCHEMA} from before this migration existed.

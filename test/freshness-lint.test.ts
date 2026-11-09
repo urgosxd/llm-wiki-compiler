@@ -2,9 +2,9 @@ import { describe, it, expect } from "vitest";
 import { mkdir, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import { checkStalePages } from "../src/linter/rules.js";
-import { lint } from "../src/linter/index.js";
-import { buildFreshnessSnapshot } from "../src/freshness/index.js";
+import { checkStalePages } from "../packages/wiki/src/linter/rules.js";
+import { lint } from "../packages/wiki/src/linter/index.js";
+import { buildFreshnessSnapshot } from "../packages/wiki/src/freshness/index.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 import {
   sha256Hex,

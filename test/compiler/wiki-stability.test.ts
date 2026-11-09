@@ -25,9 +25,9 @@
 import { describe, it, expect } from "vitest";
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
-import { compileAndReport } from "../../src/compiler/index.js";
-import { reviewEarlierPages } from "../../src/compiler/link-review.js";
-import { PROMPT_VERSION } from "../../src/compiler/prompts.js";
+import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import { reviewEarlierPages } from "../../packages/wiki/src/compiler/link-review.js";
+import { PROMPT_VERSION } from "../../packages/wiki/src/compiler/prompts.js";
 import { useCompileProject } from "../fixtures/compile-project.js";
 import { readConceptPage } from "../fixtures/concept-page.js";
 import {

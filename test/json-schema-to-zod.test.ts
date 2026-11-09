@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { jsonSchemaToZodShape } from "../src/providers/json-schema-to-zod.js";
+import { jsonSchemaToZodShape } from "../packages/wiki/src/providers/json-schema-to-zod.js";
 
 /** Build a validator from a JSON Schema object, mirroring the SDK tool() usage. */
 function validator(schema: Record<string, unknown>) {

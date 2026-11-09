@@ -17,15 +17,15 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { makeTempRoot } from "./fixtures/temp-root.js";
-import { CANDIDATES_DIR } from "../src/utils/constants.js";
+import { CANDIDATES_DIR } from "../packages/wiki/src/utils/constants.js";
 
-vi.mock("../src/utils/markdown.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/utils/markdown.js")>();
+vi.mock("../packages/wiki/src/utils/markdown.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../packages/wiki/src/utils/markdown.js")>();
   return { ...actual, safeReadFile: vi.fn(actual.safeReadFile) };
 });
 
-import { safeReadFile } from "../src/utils/markdown.js";
-import { listCandidatePage, writeFreshCandidate } from "../src/compiler/candidates.js";
+import { safeReadFile } from "../packages/wiki/src/utils/markdown.js";
+import { listCandidatePage, writeFreshCandidate } from "../packages/wiki/src/compiler/candidates.js";
 
 /** Candidate files read from disk since the counter was last reset. */
 function candidateReadCount(): number {

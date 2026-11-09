@@ -19,8 +19,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { writeFile, readFile, mkdir, symlink, rm, mkdtemp } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { replayJournal } from "../src/trust/journal.js";
-import { LLMWIKI_DIR } from "../src/utils/constants.js";
+import { replayJournal } from "../packages/wiki/src/trust/journal.js";
+import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
 import { WIKI, makeTrustRoot, cleanupTrustRoot, existsUnder } from "./trust/fixture.js";
 import {
   journalDir as journalDirOf,
@@ -31,7 +31,7 @@ import {
   plantSymlinkedJournalDir,
   plantPendingTwoTargetBatch,
 } from "./trust/journal-fixture.js";
-import * as output from "../src/utils/output.js";
+import * as output from "../packages/wiki/src/utils/output.js";
 
 let root: string;
 

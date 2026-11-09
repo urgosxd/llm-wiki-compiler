@@ -3,8 +3,8 @@
  * @description One shared connector-origin predicate backs every review surface.
  */
 import { describe, expect, it } from "vitest";
-import { connectorBlockFromBody, isConnectorCandidate } from "../../src/connectors/origin.js";
-import type { ReviewCandidate } from "../../src/utils/types.js";
+import { connectorBlockFromBody, isConnectorCandidate } from "../../packages/wiki/src/connectors/origin.js";
+import type { ReviewCandidate } from "../../packages/wiki/src/utils/types.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);

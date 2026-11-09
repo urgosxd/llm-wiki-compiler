@@ -14,9 +14,9 @@ import {
   listCandidates,
   readCandidate,
   writeCandidate,
-} from "../src/compiler/candidates.js";
-import reviewListCommand from "../src/commands/review-list.js";
-import reviewShowCommand from "../src/commands/review-show.js";
+} from "../packages/wiki/src/compiler/candidates.js";
+import reviewListCommand from "../packages/wiki/src/commands/review-list.js";
+import reviewShowCommand from "../packages/wiki/src/commands/review-show.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();

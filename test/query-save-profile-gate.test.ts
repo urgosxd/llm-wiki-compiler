@@ -14,10 +14,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync } from "fs";
 import { readdir } from "fs/promises";
 import path from "path";
-import { maybeSaveQueryPage, setQuerySaveTestHookForTest } from "../src/commands/query-publication.js";
+import { maybeSaveQueryPage, setQuerySaveTestHookForTest } from "../packages/wiki/src/commands/query-publication.js";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { buildResearchLiteProject } from "./fixtures/profile-fixtures.js";
-import { acquireLock, releaseLock } from "../src/utils/lock.js";
+import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
 
 const QUESTION = "What is attention?";
 const ANSWER = "Attention is a weighting mechanism over a sequence.";

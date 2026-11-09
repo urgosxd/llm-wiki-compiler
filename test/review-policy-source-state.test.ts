@@ -20,13 +20,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdir, readFile, rm, writeFile } from "fs/promises";
 import path from "path";
 import os from "os";
-import { compileAndReport } from "../src/compiler/index.js";
-import { listCandidates } from "../src/compiler/candidates.js";
-import reviewApproveCommand from "../src/commands/review-approve.js";
-import reviewRejectCommand from "../src/commands/review-reject.js";
-import { AnthropicProvider } from "../src/providers/anthropic.js";
-import { readStateClassified } from "../src/utils/state.js";
-import { CONCEPTS_DIR } from "../src/utils/constants.js";
+import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import reviewApproveCommand from "../packages/wiki/src/commands/review-approve.js";
+import reviewRejectCommand from "../packages/wiki/src/commands/review-reject.js";
+import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
+import { readStateClassified } from "../packages/wiki/src/utils/state.js";
+import { CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 
 /** Write a review policy config with the given hold modes into a project root. */
 async function writeReviewConfig(rootDir: string, hold: string[]): Promise<void> {

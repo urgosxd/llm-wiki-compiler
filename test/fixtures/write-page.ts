@@ -5,7 +5,7 @@
 
 import { writeFile } from "fs/promises";
 import path from "path";
-import { buildFrontmatter } from "../../src/utils/markdown.js";
+import { buildFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 
 /**
  * Write a wiki page with frontmatter to a directory.

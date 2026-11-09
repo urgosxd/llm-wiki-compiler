@@ -5,10 +5,10 @@
 import { readFile, mkdir, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import { collectStats, appendHistory, loadHistory, loadLastFullReport } from "../src/eval/stats.js";
+import { collectStats, appendHistory, loadHistory, loadLastFullReport } from "../packages/wiki/src/eval/stats.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 import { makeEvalReport } from "./fixtures/eval-report.js";
-import type { EvalReport } from "../src/eval/types.js";
+import type { EvalReport } from "../packages/wiki/src/eval/types.js";
 
 describe("collectStats", () => {
   const env = useLintTempRoot("eval-stats");

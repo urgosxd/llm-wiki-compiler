@@ -5,12 +5,12 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { extractRuleCandidates } from "../src/compiler/rule-extractor.js";
-import * as llm from "../src/utils/llm.js";
+import { extractRuleCandidates } from "../packages/wiki/src/compiler/rule-extractor.js";
+import * as llm from "../packages/wiki/src/utils/llm.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { useStackEnv } from "./fixtures/stack-env.js";
 import { seedRuleSource, restoreProviderEnvAfterEach, stubRuleExtraction } from "./fixtures/rule-extraction.js";
-import { listRuleCandidates } from "../src/compiler/rule-candidates.js";
+import { listRuleCandidates } from "../packages/wiki/src/compiler/rule-candidates.js";
 import { runCLI, expectCLIExit } from "./fixtures/run-cli.js";
 
 const ctx = useTempRoot(["sources"]);

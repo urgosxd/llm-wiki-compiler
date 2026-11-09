@@ -7,11 +7,11 @@
 import { readFile, stat, unlink, writeFile } from "fs/promises";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OpenAIProvider } from "../src/providers/openai.js";
-import { refreshEmbeddingsDrainingPending } from "../src/utils/embeddings-refresh.js";
-import { acquireLockBlocking, releaseLock } from "../src/utils/lock.js";
-import { loadPendingEmbeddings, writePendingEmbeddings } from "../src/utils/pending-embeddings.js";
-import { MAX_PENDING_EMBEDDING_ATTEMPTS, QUARANTINED_EMBEDDINGS_FILE } from "../src/utils/constants.js";
+import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
+import { refreshEmbeddingsDrainingPending } from "../packages/wiki/src/utils/embeddings-refresh.js";
+import { acquireLockBlocking, releaseLock } from "../packages/wiki/src/utils/lock.js";
+import { loadPendingEmbeddings, writePendingEmbeddings } from "../packages/wiki/src/utils/pending-embeddings.js";
+import { MAX_PENDING_EMBEDDING_ATTEMPTS, QUARANTINED_EMBEDDINGS_FILE } from "../packages/wiki/src/utils/constants.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 import { readV3Store } from "./fixtures/v3-store.js";
 import { fullEmbeddingMarker } from "./fixtures/embedding-marker-capacity.js";

@@ -23,8 +23,8 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   classifyOwnerLiveness, isOwnerStale, isUnobservableLiveness, readProcessStartTime,
-} from "../src/utils/lock-owner.js";
-import type { LockOwner, OwnerLiveness } from "../src/utils/lock-owner.js";
+} from "../packages/wiki/src/utils/lock-owner.js";
+import type { LockOwner, OwnerLiveness } from "../packages/wiki/src/utils/lock-owner.js";
 
 /** A pid no host assigns, so the signal probe reports it GONE. */
 const DEAD_PID = 999999;
@@ -78,14 +78,14 @@ function expectArm(owner: LockOwner, liveness: OwnerLiveness, preCollapseStale: 
  * the readable path and the case would pass while testing the wrong branch.
  */
 async function withUnreadableStartTimes(
-  use: (module: typeof import("../src/utils/lock-owner.js")) => void | Promise<void>,
+  use: (module: typeof import("../packages/wiki/src/utils/lock-owner.js")) => void | Promise<void>,
 ): Promise<void> {
   vi.resetModules();
   vi.doMock("node:child_process", () => ({
     execFileSync: () => { throw new Error("ps unavailable"); },
   }));
   try {
-    await use(await import("../src/utils/lock-owner.js"));
+    await use(await import("../packages/wiki/src/utils/lock-owner.js"));
   } finally {
     vi.doUnmock("node:child_process");
     vi.resetModules();
