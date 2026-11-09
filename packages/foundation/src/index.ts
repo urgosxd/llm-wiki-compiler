@@ -13,7 +13,10 @@
  *   one the wiki side holds everywhere;
  * - the Stack-id rule in `stack-id.ts`, which is pure and imports nothing at all;
  * - the two injection seams in `providers.ts` — an advisory lock and one Stack's
- *   config — implemented by `@repo/api` and received by the owning dimension.
+ *   config — implemented by `@repo/api` and received by the owning dimension;
+ * - the third injection seam in `dimensions-port.ts` — the configured dimensions
+ *   themselves, resolved by `@repo/api` where the join is legal and handed to the
+ *   engine, which may not name the package that owns it.
  *
  * None of them names a wiki, KG or api type, which is what keeps this file the
  * bottom layer rather than the first step back up it.
@@ -154,3 +157,11 @@ export { STACK_ID_PATTERN, isStackId, stackIdProblem } from "./stack-id.js";
  * the receiving dimension takes it by injection; see `providers.ts`.
  */
 export type { AdvisoryLock, AdvisoryLockProvider, ProjectConfigProvider } from "./providers.js";
+
+/**
+ * The dimensions seam. Declared in `dimensions-port.ts` with the reasoning that says
+ * why the join is injected rather than imported, and why its absence is an error
+ * instead of an empty dimension set.
+ */
+export type { DimensionsPort, DimensionsRequest } from "./dimensions-port.js";
+export { MissingDimensionsPortError, requireDimensionsPort } from "./dimensions-port.js";

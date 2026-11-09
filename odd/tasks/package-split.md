@@ -337,3 +337,17 @@ baseline diagnostics in 94 files; no regression**, so `test-typecheck-baseline.j
 unchanged); `fallow:ci` 0 — 0 dead-code, 0 complexity, 0 duplication introduced; `build` 0;
 `node dist/cli.js --version` → `1.4.0-dev.20260919` exit 0; `grep -o '@repo/[a-z-]*' dist/*.js` empty;
 and the three new probes 6/6 green together.
+
+### L16 — S4b: the composition root moves to `@repo/api` (Manager ruling, A)
+
+Design obstacle found before any write: `eslint.config.mjs` composes `WIKI_BOUNDARY = [...WIKI_TO_KG.patterns, ...WIKI_TO_API.patterns]` over `WIKI_SIDE = [...WIKI_ZONE, ...tree("test/"), ...tree("scripts/")]`, so no file under `packages/wiki/**`, `test/**` or `scripts/**` may name `@repo/api`. The authorised construction sites (`packages/wiki/src/cli.ts`, `packages/wiki/src/index.ts`, `packages/wiki/src/commands/host.ts`, a vitest setup file) were therefore each a forbidden `wiki → api` site, and "wiki → @repo/api = 0 with a falling census" was unsatisfiable as written. Reported with the gate text and the call graph before writing.
+
+Ruling (A):
+- The composition root moves into `@repo/api`: `git mv` of `cli.ts`, `index.ts`, `commands/host.ts`, `host/server.ts`; re-point both tsup entries, root `bin`/`main`, the `llm-wiki-compiler` path alias and the matching vitest alias. `api → wiki` and `api → kg` become exercised, which is the first live proof of S2.
+- `wiki → api` narrows to the production zones (`packages/wiki/**`, `scripts/**`); `wiki → kg` keeps the full `WIKI_SIDE` width, so all 79 sites stay counted and the narrowing cannot manufacture the census drop.
+- The allowance is counted: a durable pin names the test-side `@repo/api` files and their exact count, and fails when that set grows or shrinks without the pin being updated. Follow-up when the test estate relocates: the pin goes to 0 and the narrowing is removed.
+- `activation.ts` splits rather than moves. Its configuration vocabulary stays wiki-side — `createDimensionsDatabase` (11 wiki importers), `AKS_STACK_ID_ENV_VAR` (10), `AKS_DATABASE_URL_ENV_VAR` (2), `DIMENSIONS_ENV_VAR`, `resolveStackId`, `DimensionsDatabase` — because a wholesale move would invert 15 intra-wiki imports into forbidden edges. Only the kg construction moves, behind the port.
+- No test constructs the port unless its assertion cannot be expressed otherwise; each such edit is named with its reason.
+- Census prediction corrected from 62/35 to **63/36** (static 33): `createDimensionsDatabase` keeps `activation.ts` at one `@repo/kg` static site because it builds the handle with the KG package's client factory and 11 wiki files call it.
+
+Subtasks: W1 foundation `DimensionsPort` + `MissingDimensionsPortError`; W2 `activation.ts` split, `dimensions/kg/**` → api, port implemented in api; W3 composition root → api, eslint narrowing, counted pin, threading through compile/ingest/host/MCP; W4 delete `utils/stack-id.ts`; W5 gates, artifact proof, full suite, independent verification.
