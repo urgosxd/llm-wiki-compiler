@@ -250,9 +250,7 @@
   "unresolved_imports": [
     "src/testing/per-run-database.ts:../../../../.."
   ],
-  "unlisted_dependencies": [
-    "ajv"
-  ],
+  "unlisted_dependencies": [],
   "duplicate_exports": [
     "ClassificationState|src/core/graph_read.ts|src/schema-open-classification.ts",
     "StackResolution|src/core/stack_resolver.ts|src/routes/backfeed/stack.ts",

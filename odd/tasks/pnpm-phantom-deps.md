@@ -32,12 +32,26 @@ Requirement: "Declare it in the root `package.json` at the exact same semver ran
 
 "`pnpm exec tsc --noEmit` · `pnpm run lint` (**650/498/526**, must not move) · `pnpm run typecheck:tests` · `pnpm run typecheck:kg` · `pnpm run build` · `pnpm run fallow:ci` · `pnpm run test:affected` · and `pnpm test` only if `pgrep -af vitest` is empty, otherwise NOT RUN with the reason."
 
+### S7 — Move `ajv` ownership to the package that imports it
+
+Lead requirement, verbatim: "declare `ajv` in the KG package copying the existing root
+range verbatim, remove it from root `dependencies`, and delete the `.fallowrc.json`
+ignore entry — with the invariant 'no version may move'".
+
+Defect it fixes, as stated by the Lead: `packages/llmwiki-kg/ts/src/routes/aks/export-conformance.test.ts:27-28`
+imports `ajv/dist/2020.js` but the KG manifest declares no `ajv` — the same phantom class
+as `drizzle-orm`. It resolved only via `nodeLinker: hoisted`. Meanwhile ajv's last ROOT
+importer (`src/providers/codex-agent.ts`) was deleted by main's `66fc76d`, which also
+added an `"ajv"` entry to `.fallowrc.json` `ignoreDependencies` to silence the now-unused
+root declaration. "Move ownership to where the import lives and delete the ignore."
+
 ## Tasks
 
-- T1 (S1) — `.npmrc` proof via `pnpm config get` / `pnpm config list`, then removal of unread keys or deletion of the file. **status: done (L2/L3/L9) — file DELETED, not stripped; no keys retained.** commit: not committed (Lead-owned)
-- T2 (S2) — root `package.json`: declare `drizzle-orm` copying the KG range. **status: done (L4).** commit: not committed (Lead-owned)
-- T3 (S3) — `packages/llmwiki-core/package.json`: declare `tsup` devDependency copying the root range. **status: done (L5).** commit: not committed (Lead-owned)
-- T4 (S5-S6) — lockfile absorption with zero version movement, clean `--frozen-lockfile` install, `require.resolve` proof, and all gates. **status: done (L6/L7).** commit: not committed (Lead-owned)
+- T1 (S1) — `.npmrc` proof via `pnpm config get` / `pnpm config list`, then removal of unread keys or deletion of the file. **status: done (L2/L3/L9) — file DELETED, not stripped; no keys retained.** commit: `9da4a18152876aa302c16ebe8cada703fef3e25d` (pre-rebase) → `993df6bb3c8ce5de689d08c50818bdc88525ad96` (post-rebase, unit 1)
+- T2 (S2) — root `package.json`: declare `drizzle-orm` copying the KG range. **status: done (L4).** commit: `9da4a18152876aa302c16ebe8cada703fef3e25d` (pre-rebase) → `993df6bb3c8ce5de689d08c50818bdc88525ad96` (post-rebase, unit 1)
+- T3 (S3) — `packages/llmwiki-core/package.json`: declare `tsup` devDependency copying the root range. **status: done (L5).** commit: `9da4a18152876aa302c16ebe8cada703fef3e25d` (pre-rebase) → `993df6bb3c8ce5de689d08c50818bdc88525ad96` (post-rebase, unit 1)
+- T4 (S5-S6) — lockfile absorption with zero version movement, clean `--frozen-lockfile` install, `require.resolve` proof, and all gates. **status: done (L6/L7/L10).** commit: `9da4a18152876aa302c16ebe8cada703fef3e25d` (pre-rebase) → `993df6bb3c8ce5de689d08c50818bdc88525ad96` (post-rebase, unit 1)
+- T5 (S7) — move `ajv` ownership: declare it in `packages/llmwiki-kg/ts/package.json` devDependencies at the root range copied verbatim, delete the root `dependencies` entry, delete the `.fallowrc.json` `ignoreDependencies` entry and the KG baseline `unlisted_dependencies` line, correct the stale comment in the conformance test, extend `test/declared-dependencies-wiring.test.ts`, and re-prove the lockfile invariant. **status: done (L11).** commit: `<pending: unit 2>`
 
 ## Log
 
@@ -601,3 +615,133 @@ the 92-line body extracted from between the fences has the same `sha256`
 (`46b25e5a…25fa3e8db`) as the same range extracted from the pre-fence copy kept in the
 scratch tree, `diff` exit 0. Every `S#` and `L#` identifier is stable; `L10` is appended,
 not substituted.
+
+### L11 — S7: `ajv` ownership moved to the package that imports it
+
+**Defect.** `packages/llmwiki-kg/ts/src/routes/aks/export-conformance.test.ts:27-28` imports
+`ajv/dist/2020.js`, but `packages/llmwiki-kg/ts/package.json` declared no `ajv` at all. It
+resolved only because `nodeLinker: hoisted` (in `pnpm-workspace.yaml`, untouched) flattens the
+tree — the same phantom class this delivery already fixed for `drizzle-orm`. Meanwhile main's
+`66fc76d` deleted ajv's last ROOT importer (`src/providers/codex-agent.ts`) and added an
+`"ajv"` entry to `.fallowrc.json` `ignoreDependencies` to silence the resulting unused root
+declaration. Confirmed before any edit: `git grep "ajv" -- src/ scripts/ test/ .husky/
+eslint.config.mjs tsup.config.ts vitest.config.ts` returns only a prose comment at
+`src/profile/load.ts:6` — root has zero ajv module imports.
+
+**Five surfaces changed.**
+
+| # | surface | change |
+| --- | --- | --- |
+| 1 | `package.json` | deleted `"ajv": "^8.20.0"` from `dependencies`; no other line touched |
+| 2 | `packages/llmwiki-kg/ts/package.json` | added `"ajv": "^8.20.0"` to **devDependencies** (range copied verbatim from the root line; alphabetical, between `@types/supertest` and `supertest`). devDependencies because the only importer is a test file |
+| 3 | `.fallowrc.json` | deleted the `"ajv"` line and changed `"picomatch",` → `"picomatch"`; file still strict JSON |
+| 4 | `packages/llmwiki-kg/ts/baselines/dead-code-baseline.json` | `"unlisted_dependencies": [ "ajv" ]` → `[]`; no other baseline entry touched |
+| 5 | `packages/llmwiki-kg/ts/src/routes/aks/export-conformance.test.ts` | comment only: the header claimed `ajv` "is already a runtime dependency of this repository", which root no longer is; it now says this package declares it as its own devDependency. No code, import or assertion changed |
+
+Plus `test/declared-dependencies-wiring.test.ts` (the S7 regression test) and
+`odd/tasks/pnpm-phantom-deps.md`. Both JSON files proved parseable:
+`node -e "JSON.parse(require('node:fs').readFileSync('<path>','utf8'))"` → exit 0 for each.
+
+**RED first, in a scratch copy.** The new assertions were written into the real test file
+first, then the worktree was copied to `mktemp -d` (excluding `.git` and `node_modules`) and
+the four pre-change files reverted in the copy with `git show HEAD:<path>`. Run there
+(`node node_modules/vitest/vitest.mjs run test/declared-dependencies-wiring.test.ts`, with
+`node_modules` symlinked from the worktree because the copy excludes it) →
+`Tests 4 failed | 5 passed (9)`, exit 1, failing assertions verbatim:
+
+```console
+× ajv belongs to the KG package > declares it there as a dev dependency at the range root used to carry
+  → expected undefined to be '^8.20.0' // Object.is equality
+× ajv belongs to the KG package > leaves the root manifest with no ajv declaration at all
+  → expected '^8.20.0' to be undefined
+× ajv belongs to the KG package > moves the lockfile edge from the root importer to the KG importer
+  → expected undefined to be '^8.20.0' // Object.is equality
+× ajv belongs to the KG package > stops silencing the phantom with a fallow ignore entry
+  → expected [ '@fontsource/dm-sans', …(5) ] to not include 'ajv'
+```
+
+The five pre-existing drizzle-orm/tsup tests passed in the same run, so the RED is scoped to
+the new rule.
+
+**Lockfile invariant proof** — baseline is main `f444dbb88ab4a8c33375be54db8d48f31de46605`,
+saved with `git show f444dbb…:pnpm-lock.yaml > /tmp/base-lock2.orig` (186102 bytes), after
+`corepack pnpm install --lockfile-only` (exit 0).
+
+| proof | command | result |
+| --- | --- | --- |
+| `packages:` key sets | `diff <(sed -n '/^packages:/,/^snapshots:/p' F \| grep -oE '^  [^ ].*:$' \| sort)` | exit 0, **empty**; 645 → 645 |
+| `snapshots:` key sets | `diff <(sed -n '/^snapshots:/,$p' F \| grep -oE '^  [^ ].*:$' \| sort)` | exit 0, **empty**; 355 → 355 |
+| resolved-version multiset | `diff <(grep -E '^        version: ' F \| sort)` | exit 1; **+2 additions, 0 removals** (76 → 78). The two additions are unit 1's `0.45.4(postgres@3.4.9)` and `8.5.1(postcss@…)` edges — ajv's own edge cancels |
+| ajv snapshot keys still present | `grep -E '^  (ajv@8\.20\.0\|ajv@6\.15\.0\|ajv-formats@3\.0\.1\(ajv@8\.20\.0\)):'` | all five keys still present |
+| `git diff --numstat pnpm-lock.yaml` vs `993df6b` | — | **`3  3`** — the root importer's 3 ajv lines out, the KG importer's 3 ajv lines in, no `dependencies:`/`devDependencies:` header shuffle |
+| full hunk inspection | `git diff pnpm-lock.yaml` | two hunks, both pure importer edges; zero `packages:`/`snapshots:` churn |
+
+`ajv@8.20.0` has exactly two importer `version:` edges after the move — `packages/llmwiki-core`
+(line 164, pre-existing) and `packages/llmwiki-kg/ts` (line 244) — so the resolution neither
+duplicated nor disappeared. `corepack pnpm install --frozen-lockfile` → exit 0,
+`Lockfile is up to date, resolution step is skipped`, and the lockfile sha256 was unchanged by it
+(`ce10c490…b9904`).
+
+**Gate table** (all from the worktree root; `plain` = `corepack pnpm` under the pinned Node
+v24.21.0 / pnpm 11.5.0, `shim` = a `/tmp` one-liner `exec corepack pnpm "$@"` because the
+commands below spawn bare `pnpm`, which is broken here with exit 127):
+
+| gate | launcher | exit | printed |
+| --- | --- | --- | --- |
+| `corepack pnpm exec tsc --noEmit` | plain | 0 | (no output) |
+| `corepack pnpm run lint` | plain | 0 | `ESLint ratchet: 1815 files scanned; 644 baseline violations in 492 files across 520 rule/file entries; no regression.` — the post-rebase triple **644/492/520**, unmoved |
+| `corepack pnpm run typecheck:tests` | plain | 0 | `Test type-check: 1760 files checked; 260 baseline diagnostics in 94 files; no regression.` |
+| `corepack pnpm run typecheck:kg` | plain | 0 | `KG package type-check: 354 files checked; 0 diagnostics baselined across 0 entries …; no regression.` |
+| `corepack pnpm run build` | plain | 0 | tsup v8.5.1 root + core, `DTS ⚡️ Build success` |
+| `corepack pnpm run fallow:ci` | plain | 0 | `Fallow CI: 0 dead-code, 0 complexity, 0 duplication introduced since main (verdict pass; 0 … inherited, not counted)` |
+| `corepack pnpm run fallow:kg` | plain | 0 | `"verdict": "pass"`, `dead_code_introduced: 0`, `duplication_introduced: 0`, `unlisted_dependencies: 0` with `"unlisted_dependencies": []` — the baseline line removed is no longer needed |
+| `corepack pnpm run test:affected` | shim | 0 | `Test Files 829 passed \| 3 skipped (832)` / `Tests 6255 passed \| 4 skipped (6259)` |
+| `corepack pnpm test` | shim | **1 — FAILED, environment** | two attempts; see below |
+
+**`corepack pnpm test` failed, and it is an environment failure, not a regression.**
+
+- Attempt 1 (run only after `pgrep -af vitest` was clean of this worktree's processes) aborted
+  with `Unhandled Rejection — Error: Channel closed` /
+  `Serialized Error: { code: 'ERR_IPC_CHANNEL_CLOSED' }` from `tinypool`, with **no** failing
+  assertion and 15 test files green — a worker process died under memory pressure.
+- Attempt 2 (after waiting for the box to clear: 0 vitest workers, 7.9 GB available) reached 14
+  green files and then hit **`Test timed out in 15000ms`** on exactly one test,
+  `multimodal ingest — edge cases > ingest a .txt with timestamps but no speaker tags routes to
+  transcript`, followed by the same `ERR_IPC_CHANNEL_CLOSED` abort, so vitest printed no
+  summary at all.
+- The failing assertions are **timeouts, never assertion mismatches**. The same file's other 19
+  tests passed at **5.0–7.3 s each** in both full runs, and in isolated reruns they took
+  21–45 s and timed out — i.e. the tests are correct and the machine is starved.
+- Cause measured at the time: `uptime` load average **51.37** (1 min) with **11 concurrent
+  vitest workers owned by sibling worktrees** (`fix-pnpm-invocation-resolution`,
+  `fix-rls-write-coverage-test`) and swap at 4056/4095 MB. `test:affected` (829 files) passed
+  under the same conditions before the load peaked.
+
+The KG/DB tier is **not** the reason for this failure: the database-backed suites ran fine — the
+`[test-database]` harness adopted the running `pgvector/pgvector:pg16` container (`kind_kirch`)
+and all KG test files in the affected run were green. Nothing here is a Docker-missing failure.
+Per the verification contract, two attempts is the ceiling without a real fix, so this gate is
+reported as observed rather than retried again.
+
+**`Risk:`** the diff changes `package.json`, `pnpm-lock.yaml`, `.fallowrc.json` and a dead-code
+baseline — item 5 (delivery/environment) and item 3 (the `.fallowrc.json` gate config that other
+commands consume). Mitigated by the mechanical proofs above: zero removals in the
+resolved-version multiset, empty `packages:`/`snapshots:` key-set diffs, a clean
+`--frozen-lockfile` install, and `fallow:ci` + `fallow:kg` both at `verdict: pass`.
+
+**Open question for a later delivery (information only, unchanged by this unit):**
+`packages/llmwiki-core/package.json:48` still declares `"ajv": "^8.20.0"` in `dependencies`
+while root no longer does. Verified rather than assumed: **no file under `packages/llmwiki-core/`
+imports `ajv`** — `git grep -n "ajv" -- packages/llmwiki-core/` returns only the manifest line
+and two explanatory comments in `tsup.config.ts:25-27`. The declaration is a runtime *supply*
+edge: the core bundle externalizes the MCP SDK because bundling it pulls `ajv-formats`, which
+`require("ajv")`s at import time and dies under an ESM output, so core keeps `ajv` declared for
+Node to resolve from `node_modules` after the bundle loads. That is legitimate but it is the same
+shape of declaration this unit just removed from root, and it is invisible to the fallow gate:
+the core manifest is listed in `.fallowrc.json` `ignorePatterns`
+(`"packages/llmwiki-core/package.json"`), so fallow never scans it. Whether to bring core under
+the fallow scan, and whether a supply edge belongs in `dependencies` or `peerDependencies`, is a
+decision for a later delivery; nothing was changed here.
+
+**Commit.** Unit 2 covers T5/S7: `build(toolchain): move ajv ownership to the package that
+imports it`, SHA `<pending: unit 2>`.

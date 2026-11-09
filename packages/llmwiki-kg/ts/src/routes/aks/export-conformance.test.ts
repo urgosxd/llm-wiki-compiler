@@ -3,9 +3,10 @@
  * @description Validates the exported bundle against the vendored AKS schema.
  *
  * This is S45.14 done with a REAL validator rather than a hand-written structural
- * check: `ajv` is already a runtime dependency of this repository and the vendored
- * specification is draft 2020-12, so `ajv/dist/2020.js` compiles
- * `oracle/aks-specification-v0.1.0/SCHEMA.json` directly. No schema is restated here.
+ * check: this package declares `ajv` as its own devDependency (the only importer is
+ * this test file) and the vendored specification is draft 2020-12, so
+ * `ajv/dist/2020.js` compiles `oracle/aks-specification-v0.1.0/SCHEMA.json`
+ * directly. No schema is restated here.
  *
  * Two deviations from the vendored schema are known and pre-existing, and neither is
  * this task's to change:
