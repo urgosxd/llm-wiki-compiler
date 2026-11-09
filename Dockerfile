@@ -28,6 +28,15 @@ FROM node:24-slim AS build
 
 WORKDIR /app
 
+# `node:24-slim` ships corepack but no `pnpm` symlink, so the root manifest's
+# `packageManager: pnpm@11.5.0` is INERT until corepack is enabled and the install
+# below dies with `/bin/sh: 1: pnpm: not found` (exit 127). Measured on this base
+# image: `corepack enable` installs the shim, and running `pnpm` in a tree whose
+# manifest pins `pnpm@11.5.0` downloads exactly that version — so the manifest's
+# pin decides the toolchain instead of a version hard-coded here, and the layer
+# caches independently of every manifest and source edit below it.
+RUN corepack enable
+
 # Manifests first, so the dependency layer caches independently of source edits.
 # The root manifest depends on workspace packages, so their manifests and the
 # single workspace lockfile are copied before `pnpm install` or the install
@@ -39,12 +48,16 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # down at `ts/` — and copying a path that does not exist fails the whole build.
 COPY packages/llmwiki-core/package.json packages/llmwiki-core/
 COPY packages/llmwiki-kg/ts/package.json packages/llmwiki-kg/ts/
+# `@repo/foundation` is the bottom layer `@repo/wiki` names as `workspace:*`, and it
+# is a root workspace member with its own `pnpm-lock.yaml` importer, so the frozen
+# install validates its manifest here for the same reason as the manifests above.
+COPY packages/foundation/package.json packages/foundation/
 # `@repo/wiki` is a root devDependency pinned as `workspace:*`, so its manifest has
 # to exist before `pnpm install` or the install cannot resolve the member.
 COPY packages/wiki/package.json packages/wiki/
 # `@repo/api` is a root workspace member (the root manifest's `workspaces`) and the
 # entry the image execs, so the frozen install validates its manifest before it can
-# resolve the workspace — the same reason the three manifests above are copied.
+# resolve the workspace — the same reason the four manifests above are copied.
 COPY packages/api/package.json packages/api/
 RUN pnpm install --frozen-lockfile
 
