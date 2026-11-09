@@ -26,12 +26,6 @@ importers:
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
-      '@repo/foundation':
-        specifier: workspace:*
-        version: link:packages/foundation
-      '@repo/kg':
-        specifier: workspace:*
-        version: link:packages/llmwiki-kg/ts
       canonicalize:
         specifier: ^3.0.0
         version: 3.0.0
@@ -96,6 +90,12 @@ importers:
       '@fontsource/space-grotesk':
         specifier: ^5.3.0
         version: 5.3.0
+      '@repo/foundation':
+        specifier: workspace:*
+        version: link:packages/foundation
+      '@repo/kg':
+        specifier: workspace:*
+        version: link:packages/llmwiki-kg/ts
       '@testcontainers/postgresql':
         specifier: 12.2.1
         version: 12.2.1(bare-buffer@3.7.1)

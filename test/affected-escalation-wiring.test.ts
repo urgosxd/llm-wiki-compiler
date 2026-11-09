@@ -30,6 +30,16 @@
  *    starts capturing longer specifiers from a wildcard and redirects unrelated
  *    imports.
  *
+ *    The declaration is pinned in `devDependencies`, and the placement is part
+ *    of the pin rather than incidental: `@repo/kg` is `private: true` and is
+ *    bundled into `dist/`, so it is a build/type-time edge. Declared under
+ *    `dependencies` it became both a specifier the shipped bundle could not
+ *    resolve and a `workspace:*` range `npm` refuses to install from a tarball
+ *    (`EUNSUPPORTEDPROTOCOL`). What is asserted is unchanged — a real workspace
+ *    edge exists at the root, which is what makes the specifier resolve for the
+ *    bundler and for `vitest related` — only the manifest field that must carry
+ *    it moved.
+ *
  * A crawl proving `vitest related` honours the alias was considered and dropped
  * by decision: it costs ~155 seconds and can only fail once one of the two
  * properties pinned here already fails. Milliseconds here, same bugs caught.
@@ -155,9 +165,14 @@ describe("the package bridge carries the root dimension into the kg dimension", 
 
   it("declares the dependency at the root, so nothing has to fake the mapping", () => {
     const root = JSON.parse(readFileSync(path.join(ROOT, ROOT_MANIFEST), "utf8")) as {
+      devDependencies?: Record<string, string>;
       dependencies?: Record<string, string>;
     };
-    expect(root.dependencies?.[KG_BARE_SPECIFIER], `root must depend on ${KG_BARE_SPECIFIER}`).toBe("workspace:*");
+    expect(root.devDependencies?.[KG_BARE_SPECIFIER], `root must depend on ${KG_BARE_SPECIFIER}`).toBe("workspace:*");
+    expect(
+      root.dependencies?.[KG_BARE_SPECIFIER],
+      `${KG_BARE_SPECIFIER} is bundled into dist/, so a runtime dependency would ship a workspace: range npm rejects`,
+    ).toBeUndefined();
   });
 
   it("does not capture a longer specifier that merely starts with @repo/kg", () => {
