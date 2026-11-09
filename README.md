@@ -449,7 +449,36 @@ pnpm run lint
 
 `pnpm run test:affected` covers the tests for what you changed; `pnpm test` runs the
 whole suite and is the one to use for cross-cutting changes or before opening a
-pull request. It does not replace `pnpm run test:affected`.
+pull request. Where they meet, `test:affected` yields rather than duplicating work: it is
+local-only tooling — CI's one test verdict is `pnpm test`, and the push hook runs only
+`pnpm run build` — and
+when your change has suite-wide reach (`package.json`, the lockfile, `vitest.config.ts`,
+`tsconfig*.json`, or anything under `scripts/`) it declines to run the full unit tier,
+which is a subset of `pnpm test`. It prints
+`` affected: scope resolves to the full unit tier; run `pnpm test` instead `` on stderr
+and exits `78`, so in that case run `pnpm test` yourself. It exits `69` when the change
+set cannot be computed at all (no `origin/main` or `upstream/main`, or a failed
+merge-base); exit `0` means a successful computation found nothing relevant.
+
+### Measured verification limits
+
+Two limits here come from measurement on the reference host rather than from core count
+or habit, and raising either means re-measuring first.
+
+- **Workers.** `vitest.config.ts` pins `maxWorkers: 4`. One full-suite run per
+  configuration, sequential and alone, peak RSS of the whole run's process tree:
+  2 workers 809 s / 2808 MB / no swap out, 4 workers 496 s / 3816 MB / ~1 MB, 6 workers
+  403 s / 5119 MB / ~400 MB with worst MemAvailable at 2576 MB. Six workers buys 93 s and
+  costs the host, which is how concurrent runs start killing each other. The cap is sized
+  from the worst case `pnpm test` can actually meet — the integration tier's per-worker
+  peak, because those files spawn `node dist/cli.js` children at up to 442 MB each — so
+  the unit tier deliberately runs below its own optimum. `pnpm run test:integration`
+  overrides it lower still, with `--maxWorkers=2`.
+- **Static gates.** `pnpm run gates:static` runs `tsc`, `typecheck:tests`, `typecheck:kg`,
+  `lint`, `fallow:ci` and `fallow:kg` two at a time, prints each gate's output as its own
+  labelled block, and fails if any fails. Measured: 35.6 s serially to ~26.7 s, peak
+  ~2.2 GB, no swap added. `build` is deliberately not in the set — it writes `dist/` and
+  stays ordered before anything that spawns it.
 
 A local run of the database-backed suites needs Docker: it starts its own pinned
 `pgvector/pgvector:pg16` container, where CI instead supplies the same image as a

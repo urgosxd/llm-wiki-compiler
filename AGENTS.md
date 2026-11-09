@@ -44,11 +44,19 @@ actually affect; do not wait for the whole suite while iterating.
 1. **Iterating on code** — run the tests related to what you touched:
    `pnpm exec vitest related <changed-file>`. This selects only files that import it.
 2. **Before considering a task complete** — run `pnpm run test:affected`. It diffs
-   against the merge-base and runs `vitest related` over your changes. It
-   escalates to the full `test:unit` tier automatically when the change has
-   suite-wide reach (`package.json`, `pnpm-lock.yaml`, `vitest.config.ts`,
-   `tsconfig*.json`, or anything under `scripts/`), because narrowing there
-   would be a false negative.
+   against the merge-base and runs `vitest related` over your changes. It is
+   local-iteration tooling, not a gate anything else runs: CI does not run it and
+   neither does the push hook. When the change has suite-wide reach
+   (`package.json`, `pnpm-lock.yaml`, `vitest.config.ts`, `tsconfig*.json`, or
+   anything under `scripts/`), narrowing there would be a false negative, so it
+   resolves the scope to the full unit tier and then declines to run it — that
+   tier is a subset of `pnpm test`, and running it here pays for the same files
+   twice. It prints
+   `` affected: scope resolves to the full unit tier; run `pnpm test` instead ``
+   on stderr and exits `78`, so run `pnpm test` yourself in that case. It exits
+   `69` when the change set cannot be computed at all (no `origin/main` or
+   `upstream/main`, or a failed merge-base); exit `0` is reserved for a
+   computation that succeeded and found nothing relevant.
 3. **`pnpm test`** — the exhaustive run. Required only when your change is
    cross-cutting, when you suspect a coupling the related-selection cannot see,
    or before opening a pull request. CI runs it on every push and pull request,
@@ -65,6 +73,19 @@ than behaviour reached in process. `test:unit` takes everything that does not
 spawn, and `pnpm test` is plain `vitest run`, which collects both tiers.
 `test/sdk/packaging.test.ts` spawns too but `vitest.config.ts` excludes it from
 that collection; it runs only via `pnpm run test:pack`.
+
+**Workers are capped by measured memory, not by core count.** `vitest.config.ts` pins
+`maxWorkers: 4`, and `pnpm run test:integration` lowers it further with
+`--maxWorkers=2`, because those files spawn `node dist/cli.js` children whose cost is per
+child process rather than per file. Three full-suite runs on the reference host — one per
+configuration, sequential and alone, peak RSS of the whole run's process tree from its
+cgroup counter — measured 2 workers 809 s / 2808 MB / no swap out, 4 workers 496 s /
+3816 MB / ~1 MB, and 6 workers 403 s / 5119 MB / ~400 MB with worst MemAvailable down to
+2576 MB. Six workers buys 93 s and costs the host, which is how concurrent verification
+runs start killing each other. The cap is sized from the worst case `pnpm test` can
+actually meet — the integration tier's per-worker peak, since that run covers both
+tiers unfiltered — so **the unit tier deliberately runs below its own optimum; do not
+raise this number without the integration tier's peak in hand.**
 
 Tests must not depend on timing or external services.
 
@@ -94,8 +115,10 @@ Before committing any work, and before considering any task complete, you must:
 1. `pnpm exec tsc --noEmit` — type-check passes
 2. `pnpm run typecheck:tests` — the test type-check ratchet passes (no new test type errors)
 3. `pnpm run build` — build succeeds
-4. `pnpm run test:affected` — tests for what you changed pass (use `pnpm test` when
-   the change is cross-cutting or before opening a PR; see Test Execution Policy)
+4. `pnpm run test:affected` — tests for what you changed pass. It is local-only, and
+   it declines with exit `78` when the change has suite-wide reach: run `pnpm test`
+   yourself then, and likewise when the change is cross-cutting or before opening a
+   PR (see Test Execution Policy)
 5. `pnpm run fallow:ci` — the fallow codebase health analyzer with `--gate new-only`, and the command that actually gates. Fix all issues it reports (dead code, duplication, complexity). Use `fallow fix --dry-run` to preview auto-fixes, then `fallow fix --yes` to apply. Fix any remaining issues manually. Do not commit while it fails. `pnpm exec fallow` is the raw full-tree report and exits non-zero on inherited debt; it is not the gate.
 6. `pnpm run lint` — the house-rule ratchet: 400-line files, 40-line functions, no
    `any`, and the `src/` <-> `packages/llmwiki-kg` import boundary. It passes on a
@@ -123,6 +146,16 @@ Before committing any work, and before considering any task complete, you must:
    `kg → wiki` at 0.
 
 Never bypass these gates with `--no-verify`; fix the underlying issue instead.
+
+The statically independent gates are cheaper together: `pnpm run gates:static` runs
+`tsc`, `typecheck:tests`, `typecheck:kg`, `lint`, `fallow:ci` and `fallow:kg` two at a
+time, buffers each gate's output and prints it as its own labelled block, and exits
+non-zero if any gate failed. Measured on the reference host, those six gates took 35.6 s
+serially (`tsc` 5.1 s, `typecheck:tests` 12.5 s, `typecheck:kg` 5.2 s, `lint` 10.2 s,
+`fallow:ci` 2.1 s, `fallow:kg` 0.5 s) and ~26.7 s behind the command, peaking at ~2.2 GB
+with no swap added. `pnpm run build` is deliberately NOT in that set and must not be
+added: every gate there is read-only over the checkout, while `build` writes `dist/`, so
+it stays ordered before anything that spawns `dist/` — in the push hook and in CI.
 
 ### Branch protection
 
@@ -234,7 +267,9 @@ nothing.
 paths you listed in `files_changed`, the report is refused. A verifying report is the
 proof, so citing the commit is the only form that carries information.
 
-This does not weaken the Pre-Commit Checks above. `tsc`, `build`, `test:affected`, and
-`fallow:ci` still gate a completed task. They are yours to run in your own checkout; none
-of them requires a peer's agreement, and none of them is a message.
+This does not weaken the Pre-Commit Checks above. `tsc`, `build`, `test:affected`,
+`fallow:ci` and `lint` still gate a completed task — `test:affected` locally only, and
+`pnpm run gates:static` runs the statically independent ones of them concurrently (see
+Pre-Commit Checks). They are yours to run in your own checkout; none of them requires a
+peer's agreement, and none of them is a message.
 </pi-intercom>
