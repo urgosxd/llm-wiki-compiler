@@ -10,6 +10,14 @@
  * `scripts/lint-ratchet.ts` is what makes it a gate rather than an alarm:
  * today's violations are frozen in `eslint-baseline.json`, and only drift fails.
  *
+ * The boundary is enforced by two rules, not one: `no-restricted-imports` for
+ * static declarations, and the local `local/dimension-boundary` rule for the
+ * forms it cannot see (dynamic `import()`, type-level `typeof import()`, and
+ * `vi.mock`/`vi.doMock`/`vi.importActual`/`vi.importMock` factories). Both read
+ * the same pattern arrays, and a non-literal specifier is reported as its own
+ * category rather than ignored. `scripts/lint-ratchet.ts` collects both rules,
+ * so the baseline counts both.
+ *
  * `max` is 399 and 39, not 400 and 40: "smaller than 400" means 399 is the
  * largest allowed file, and "smaller than 40" means 39 is the largest allowed
  * function. The off-by-one matters — a 400-line file is a violation.
@@ -22,6 +30,7 @@
  * it contributes no rules.
  */
 import tseslint from "typescript-eslint";
+import dimensionBoundary from "./scripts/eslint-rules/dimension-boundary.mjs";
 
 /** Every source extension the house rules cover. */
 const CODE_EXTENSIONS = ["ts", "tsx", "js", "mjs", "cjs"];
@@ -136,6 +145,24 @@ const KG_TO_WIKI = {
   ],
 };
 
+/**
+ * The local rule that sees the reach forms `no-restricted-imports` cannot.
+ *
+ * `no-restricted-imports` visits `ImportDeclaration` and `ExportDeclaration` and
+ * nothing else, so a dynamic `import()` of `llmwiki-kg`, a type-level
+ * `typeof import()` of a `packages/llmwiki-kg` module and a `vi.mock` factory
+ * naming one were all invisible: the boundary leaked in forms the gate could not
+ * report. This rule visits exactly those three forms plus nothing else, and it
+ * takes the SAME pattern arrays as options — `WIKI_TO_KG` and `KG_TO_WIKI`
+ * below — so it widens what the gate can SEE without changing what it PERMITS.
+ *
+ * A specifier that is not a string literal is reported in its own category and
+ * never resolved: reporting it is honest, resolving it would be a guess. Static
+ * declarations stay with `no-restricted-imports` so no site is counted twice.
+ * `scripts/eslint-rules/dimension-boundary.mjs` is the rule itself.
+ */
+const LOCAL_PLUGIN = { local: { rules: { "dimension-boundary": dimensionBoundary } } };
+
 export default tseslint.config(
   {
     ignores: [
@@ -163,11 +190,19 @@ export default tseslint.config(
   },
   {
     files: WIKI_SIDE,
-    rules: { "no-restricted-imports": ["error", WIKI_TO_KG] },
+    plugins: LOCAL_PLUGIN,
+    rules: {
+      "no-restricted-imports": ["error", WIKI_TO_KG],
+      "local/dimension-boundary": ["error", WIKI_TO_KG],
+    },
   },
   {
     files: KG_ZONE,
-    rules: { "no-restricted-imports": ["error", KG_TO_WIKI] },
+    plugins: LOCAL_PLUGIN,
+    rules: {
+      "no-restricted-imports": ["error", KG_TO_WIKI],
+      "local/dimension-boundary": ["error", KG_TO_WIKI],
+    },
   },
   {
     /**

@@ -102,6 +102,22 @@ Before committing any work, and before considering any task complete, you must:
    frozen baseline and fails only on newly introduced violations. `pnpm run lint:update`
    rebaselines; using it to absorb a new violation defeats the gate.
 
+   The boundary half of that gate is two rules reading one set of patterns.
+   `no-restricted-imports` reports static `import`/`export` declarations; the local
+   `local/dimension-boundary` rule (`scripts/eslint-rules/dimension-boundary.mjs`)
+   reports the forms it cannot see — a dynamic `import()`, a type-level
+   `typeof import()`, and a `vi.mock`/`vi.doMock`/`vi.importActual`/`vi.importMock`
+   factory whose first argument names a module. A specifier that is not a string
+   literal (a template with substitutions, an identifier, a concatenation) is
+   reported as its own category instead of being ignored, and it is deliberately
+   not resolved: the gate states that it cannot verify it rather than guessing.
+   What is forbidden has not changed — `wiki → kg` and `kg → wiki` are both
+   forbidden, exactly as before. `corepack pnpm run lint` regenerates the counts:
+   680 frozen violations in 498 files across 532 rule/file entries, of which 80
+   static sites (67 files), 30 literal dynamic-or-mocked sites (11 files) and 6
+   non-literal sites (1 file) are boundary reaches, all `wiki → kg`, with
+   `kg → wiki` at 0.
+
 Never bypass these gates with `--no-verify`; fix the underlying issue instead.
 
 ### Branch protection

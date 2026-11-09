@@ -62,6 +62,7 @@ const HOUSE_RULES: readonly string[] = [
   "max-lines-per-function",
   "@typescript-eslint/no-explicit-any",
   "no-restricted-imports",
+  "local/dimension-boundary",
 ];
 
 /**
