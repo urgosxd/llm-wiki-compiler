@@ -2,8 +2,10 @@
 
 The authorized monorepo split of llm-wiki-compiler: four packages — `@repo/wiki`, `@repo/kg`,
 `@repo/api` and a bottom `@repo/foundation` — carved behind a boundary gate that can actually see
-the boundary. Status: slice **S0** (widen the dimension boundary gate) is specified and is the
-first write of this feature; **S1–S6** are planned and unstarted.
+the boundary. Status: **S0** is complete, and the `@repo/kg` carve and the `@repo/foundation`
+bottom layer have landed with three repair commits; **S3–S5** are unstarted and **S6** is partial —
+the boundary gate is re-pointed at `@repo/kg` and proven to bite, but `@repo/wiki` and `@repo/api`
+do not exist yet, so the allowed-edge matrix cannot be verified.
 
 ## Specs
 
@@ -52,9 +54,9 @@ Consequence: S0 is a gate slice. Source relocation belongs to S1 and later, and 
 
 S0 — Widen the dimension boundary gate so it sees dynamic `import()` and `vi.mock`/`vi.doMock` with literal specifiers, report non-literal specifiers as their own category, keep the boundary exactly as it is, and rebaseline so the ratchet visibly grows with a named cause. — specs: S7, S8, S9 — commit: ac0b54b29f06ab3626de759b1245e45134970c01
 
-S1 — Create `@repo/foundation` and relocate the dimension-agnostic shared modules into it with `git mv`. — specs: S1, S2, S3, S6 — commit: pending
+S1 — Create `@repo/foundation` and relocate the dimension-agnostic shared modules into it with `git mv`. — specs: S1, S2, S3, S6 — complete — commit: d8f10e8800326cce6f3918a52ccc7039746c3c07, followed by d022086f6c45b3e06770e9c10a0905f83e1298d3 (the dimension-agnostic shared module landed as the `DatabaseHandle` seam; the forfeited strict TS flags are recorded in L11)
 
-S2 — Carve `@repo/kg` from `packages/llmwiki-kg`, landing `ontology-store.ts` and `embedding-model-bridge.test.ts` there per D1. — specs: S1, S2, S3, S4, S6 — commit: pending
+S2 — Carve `@repo/kg` from `packages/llmwiki-kg`, landing `ontology-store.ts` and `embedding-model-bridge.test.ts` there per D1. — specs: S1, S2, S3, S4, S6 — complete — commit: 1971ead9a525a451bad8537be9788f238b47bcc2, followed by aedadebffb91c1a4697c8bba2d59d1fb412741ed
 
 S3 — Carve `@repo/wiki` from `src/dimensions/wiki`. — specs: S1, S2, S3, S6 — commit: pending
 
@@ -62,7 +64,7 @@ S4 — Carve `@repo/api`, absorbing `src/dimensions/kg` per D1. — specs: S1, S
 
 S5 — Place unit tests in their owning package, module integration in-package with Testcontainers, cross-module integration in `@repo/api`. — specs: S5 — commit: pending
 
-S6 — Re-point the boundary gate at package names, verify the allowed edges `api → wiki`, `api → kg`, `{wiki,kg,api} → foundation` and that `wiki ↔ kg` is rejected both ways, and bring all gates green. — specs: S2, S3 — commit: pending
+S6 — Re-point the boundary gate at package names, verify the allowed edges `api → wiki`, `api → kg`, `{wiki,kg,api} → foundation` and that `wiki ↔ kg` is rejected both ways, and bring all gates green. — specs: S2, S3 — **partial, not complete** — commit: none yet (the gate is re-pointed at `@repo/kg` in 1971ead9a525a451bad8537be9788f238b47bcc2 and proven to bite, and all gates are green, but `@repo/wiki` and `@repo/api` do not exist yet, so the allowed-edge matrix cannot be verified)
 
 ## Log
 
@@ -87,3 +89,17 @@ L8 (rebaseline constraint). Verbatim: "**the rebaseline diff must contain only t
 L9 (the type-level reach, recorded as a finding). `test/dimensions/kg-runtime-extraction-provenance.test.ts:192` reaches kg through a TS `typeof import()` — a real compile-time coupling invisible to every import-based gate — so the widened gate must also visit `TSImportType`, not only `ImportExpression` and `vi.mock` factories.
 
 L10 (rebaseline measured, and the orchestrator's own prediction corrected). The S0 rebaseline as measured: static `no-restricted-imports` unchanged at **80 sites / 67 files**; the new rule `local/dimension-boundary` reports **36 sites in 12 files** = **30 literal sites in 11 files** + **6 non-literal sites in 1 file**; triple `644/492/520 → 680/498/532`; **exactly 12 baseline entries added, 0 removed, 0 changed**, plus one `configuration` digest line that moved because `eslint.config.mjs` bytes changed. The correction is attributed to the orchestrator's own prediction being wrong, not to a code change: L8 predicted `502` files-with-violations on the assumption that all 12 new-key files were new to the baseline, but **6 of the 12 already carried another house-rule violation** (for example `max-lines-per-function`) and were therefore already counted inside the `492`, so only 6 files are added: 492 + 6 = 498. Totals (`680`) and rule/file entries (`532`) matched the prediction exactly; only the files-with-violations component moved. The ruled-on figure of **116 sites / 77 files** (L6) is unaffected and remains the agreed reach surface: this correction concerns only the ratchet's files-with-violations component, never the reach count. The count the Manager's ruling established, verbatim: "80 + 30 = 110 literal + 6 non-literal = 116 sites / 77 files is the number."
+
+L11 (delivery of the `@repo/kg` carve and the `@repo/foundation` bottom layer, batched as "S1 + S2 + S3" in the delivery's own labels). The instruction that scoped it, verbatim: `continuemos con el plan … todas las S1 s2 s... s6, tener turborepo y un monorepo estable`. **Label collision, resolved here so a later reader does not have to guess:** the delivery's internal step labels (`S1`/`S2`/`S3`) are a *different slicing* from this document's `S1`–`S6`, and the `## Tasks` cells above are recorded by what was actually done. The delivery's `S1` = this document's **S2** (`1971ead` + `aedadeb`: rename the package to `@repo/kg`, re-point the boundary gate, move `ontology-store.ts` and `embedding-model-bridge.test.ts`). The delivery's `S3` = this document's **S1** (`d8f10e8` + `d022086`: `@repo/foundation` with the `DatabaseHandle` seam). Nothing in the delivery corresponds to this document's `S3`–`S5`, and this document's `S6` is advanced, not closed. Three repair commits sit on the batch: `9c73ff6` (build: bundle the private workspace packages instead of externalizing them), `d022086` (docs: the seam's evidence pointers), `66a4a05` (packaging: `postgres` as a runtime dependency).
+
+Measured evidence, re-measured against `a2c001f..66a4a05` for this entry. Boundary census **116 sites / 77 files → 80 sites / 42 files**: static `no-restricted-imports` **80 → 44** sites (67 → 32 files) and the widened `local/dimension-boundary` rule **unchanged at 36 sites / 12 files** — so the entire drop is the rename's real reduction and no part of it is the gate going blind. Baseline: **35 keys retired, 0 added, 0 rule values changed**; the only moved value is the `configuration` digest (`81fb64e0…` → `c36d6dcd…`), because `eslint.config.mjs` bytes changed. Both relocations are `=>` renames — `git diff --summary -M a2c001f..66a4a05` reports `rename {src/dimensions/kg => packages/llmwiki-kg/ts/src}/ontology-store.ts (94%)` and `…/embedding-model-bridge.test.ts (92%)`. The `Database` importer surface was resolved **by counting, not by picking between the two reported numbers**: **37 files**, in two syntactic families — the "25" was `src/`-only single-binding imports, the "27" was all `src/` files carrying the binding. Lint triple trajectory: **680/498/532 → 677/496/530 → 644/467/497**. Gate bite proof: an `@repo/kg` import introduced in `src/sdk/types.ts` fires `no-restricted-imports` with the wiki-must-not-import-kg message, and the file was restored byte-identical.
+
+The failure only the exhaustive suite could see. Verbatim: `Every fast gate was green — tsc, both typechecks, lint, build, fallow:ci, fallow:kg, and test:affected escalated to the full unit tier — while 403 tests in 75 files failed because the shipped CLI cannot start. Only the exhaustive suite caught it.` Mechanism: `@repo/kg` in root `dependencies` made tsup externalize it, Node resolved it to raw TypeScript, and `dist/cli.js` died with `ERR_MODULE_NOT_FOUND`.
+
+Final gate of record at `66a4a05bce3ca7feccb2370741670290c7a3f769`: `pnpm test` **920 files / 6844 tests**, 917 passed, 3 env-gated skips, **0 failures**; `test:affected` escalated and green; `test:pack` 1/1; `dist/cli.js` and `dist/index.js` carry **zero** `@repo/*` specifiers.
+
+Deliberate deviations a reviewer must be able to find: the delivery's-S2 baseline key migration (2 keys retired by hand, strict reduction); the delivery's-S3 baseline reduction (33 keys, 0 insertions); the mock-seam relocation in `test/dimensions/kg-core-ontology-read.test.ts`; the widening of 10 KG signatures; both workspace packages placed in `devDependencies`; `postgres` promoted to `dependencies` with a `.fallowrc.json` suppression whose reason lives in `docs/fallow-gates.md`; and the deleted `packages/foundation/tsconfig.json`, whose forfeited flags — `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`, `noUnusedLocals` — never applied to this package because no gate ever ran that file. They are not silently re-baselined: foundation is now a root-program root through the root `include`, so it cannot stop being type-checked when its last importer disappears.
+
+Verifier incident, recorded as a permanent caution: `cp -a` on a linked worktree copies a `.git` **pointer file**, so any git command inside the copy operates on the shared gitdir — build a baseline tree with `git worktree add` or `git archive`, **never `cp -a`**. It cost no file content (2176 paths verified), and the repair was `git checkout -f`.
+
+Three follow-ups named and explicitly not done: a prepublish manifest rewrite so the packed `devDependencies` carry no `workspace:`; the 9 removable `as unknown as DatabaseHandle` casts (proven removable, only `scope?.tx` needs narrowing); and `@repo/kg`'s `exports` targeting source rather than `dist/`.
