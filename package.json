@@ -33,6 +33,7 @@
     "test:unit": "vitest run $(node scripts/test-partition.ts unit | tr '\\n' ' ')",
     "test:integration": "vitest run --maxWorkers=2 $(node scripts/test-partition.ts integration | tr '\\n' ' ')",
     "test:affected": "node scripts/run-affected-tests.ts",
+    "gates:static": "node scripts/static-gates.ts",
     "test:watch": "vitest",
     "typecheck:tests": "node scripts/typecheck-tests.ts",
     "typecheck:tests:update": "node scripts/typecheck-tests.ts --update",
