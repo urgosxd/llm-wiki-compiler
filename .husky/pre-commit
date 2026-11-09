@@ -2,5 +2,11 @@
 # exits 1 on pre-existing debt (6 dead-code issues, 20 clone groups) and would
 # block every commit in a correctly installed worktree, which is how every other
 # gate gets bypassed with --no-verify. Do not "simplify" this back to pnpm exec fallow.
-pnpm run fallow:ci
-pnpm exec tsc --noEmit
+#
+# Both lines go through `scripts/pnpm-invocation.ts` instead of the bare name
+# `pnpm`, which resolves and then exits 127 wherever the launcher is stale — a
+# gate that only runs behind a hand-built PATH shim is a gate that gets bypassed.
+# No `set -e` here on purpose: husky's shim already runs this file as `sh -e`,
+# and the resolver exits non-zero on its own, so each line fails by itself.
+node scripts/pnpm-invocation.ts run fallow:ci
+node scripts/pnpm-invocation.ts exec tsc --noEmit
