@@ -41,6 +41,9 @@ importers:
       dotenv:
         specifier: ^17.4.0
         version: 17.4.2
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(postgres@3.4.9)
       js-yaml:
         specifier: ^4.3.0
         version: 4.3.2
@@ -207,6 +210,10 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.6.7
+    devDependencies:
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.15)(tsx@4.23.15)(typescript@5.9.3)(yaml@2.9.1)
 
   packages/llmwiki-kg/ts:
     dependencies:

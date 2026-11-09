@@ -76,12 +76,17 @@ describe("pnpm migration wiring: one graph", () => {
     expect(workspace.packages).toEqual(pkg.workspaces);
   });
 
-  it("binds nodeLinker=hoisted and documents it as a deliberate temporary choice", () => {
+  it("binds nodeLinker=hoisted in the workspace file and keeps no .npmrc behind", () => {
+    // The root `.npmrc` carried no npm-level keys — its entire inventory was
+    // `node-linker=hoisted` and `link-workspace-packages=true`, both proven
+    // unread under pnpm@11.5.0 (`pnpm config get node-linker` returns
+    // `undefined` with that file as the only config source; the values this
+    // repo sees come from `pnpm-workspace.yaml`). Fix 1 says delete such a file
+    // rather than keep an empty shell, so absence is the pinned endpoint, not a
+    // stripped-down file: a reintroduced `.npmrc` would be a second source of
+    // truth that looks authoritative while binding nothing.
     expect(workspace.nodeLinker).toBe("hoisted");
-    const npmrc = read(".npmrc");
-    expect(npmrc).toMatch(/^node-linker=hoisted$/m);
-    expect(npmrc).toContain("DELIBERATE TEMPORARY CHOICE");
-    expect(npmrc).toContain("phantom");
+    expect(existsSync(`${REPO_ROOT}/.npmrc`)).toBe(false);
   });
 
   it("mirrors npm's esbuild override instead of inventing a pin", () => {
