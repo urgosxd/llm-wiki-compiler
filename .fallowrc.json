@@ -14,7 +14,8 @@
     "test/fixtures/mock-embeddings.mjs",
     "test/fixtures/track-dotenv-read.mjs",
     "test/fixtures/documents/make-fixtures.mjs",
-    "packages/wiki/src/dimensions/index.ts"
+    "packages/wiki/src/dimensions/index.ts",
+    "packages/api/src/main.ts"
   ],
   "ignorePatterns": [
     "packages/llmwiki-core/package.json",

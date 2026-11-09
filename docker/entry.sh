@@ -61,9 +61,9 @@ run_host() {
   port="${LLMWIKI_PORT:-4173}"
   host="${LLMWIKI_HOST:-$(default_route_host)}"
   if [ -z "$host" ]; then
-    set -- node /app/dist/cli.js host --port "$port"
+    set -- node /app/dist/api.js host --port "$port"
   else
-    set -- node /app/dist/cli.js host --port "$port" --host "$host" --allow-lan
+    set -- node /app/dist/api.js host --port "$port" --host "$host" --allow-lan
   fi
   exec "$@"
 }
@@ -81,4 +81,4 @@ fi
 
 # `exec` so the MCP server owns the process and receives SIGTERM directly; without it
 # the shell swallows the signal and the container waits out the Docker stop timeout.
-exec node /app/dist/cli.js serve
+exec node /app/dist/api.js serve

@@ -154,7 +154,17 @@ importers:
         specifier: ^3.2.7
         version: 3.2.7(@types/node@25.6.0)(jsdom@25.0.1)(tsx@4.23.15)(yaml@2.9.1)
 
-  packages/api: {}
+  packages/api:
+    dependencies:
+      '@repo/kg':
+        specifier: workspace:*
+        version: link:../llmwiki-kg/ts
+      '@repo/wiki':
+        specifier: workspace:*
+        version: link:../wiki
+      dotenv:
+        specifier: ^17.4.0
+        version: 17.4.2
 
   packages/foundation:
     dependencies:

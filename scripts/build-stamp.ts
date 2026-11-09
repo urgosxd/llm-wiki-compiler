@@ -61,6 +61,7 @@ const INPUT_FILES = ["tsup.config.ts", "tsconfig.json", "package.json"];
  */
 export const REQUIRED_OUTPUTS = [
   "dist/cli.js",
+  "dist/api.js",
   "dist/index.js",
   "dist/index.d.ts",
   "packages/llmwiki-core/dist/index.js",

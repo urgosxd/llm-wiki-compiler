@@ -59,5 +59,35 @@ export default defineConfig(async (options) => {
     dts: true,
     // No banner — library bundle must not include a shebang line.
   },
+  {
+    ...shared,
+    // The container launcher, emitted as `dist/api.js` so the final image stage
+    // keeps copying a single root `dist/`. `docker/entry.sh` execs this bundle in
+    // both modes; `packages/api/package.json` publishes no path to it.
+    entry: { api: "packages/api/src/main.ts" },
+    // Per-entry targeted clean, for the reason the CLI entry documents: the array
+    // entries build in parallel, so a blanket `clean: true` would delete a
+    // sibling's output mid-write and turn every watch rebuild into a race.
+    clean: ["dist/api.js", "dist/api.js.map"],
+    // Every `@repo/*` workspace package is BUNDLED, not externalized. They publish
+    // raw TypeScript paths, so an externalized specifier would ship a bundle that
+    // imports files the consumer does not have — the failure mode
+    // `test/artifact/dist-specifiers.test.ts` asserts at zero — and the runtime
+    // image carries no `packages/api` or `packages/wiki` tree to resolve them from.
+    noExternal: [/^@repo\//],
+    // The shebang, plus a module-scope `require`. Bundled dependencies are CommonJS
+    // (express, via body-parser and debug), so esbuild rewrites their `require("tty")`
+    // into a `__require` shim that THROWS in ESM output unless a `require`
+    // identifier exists in module scope. Measured: without the last two lines this
+    // bundle dies at its first import with `Dynamic require of "tty" is not
+    // supported`, and `packages/api/src/main.test.ts` is what caught it.
+    banner: {
+      js: [
+        "#!/usr/bin/env node",
+        'import { createRequire as __createRequire } from "node:module";',
+        "const require = __createRequire(import.meta.url);",
+      ].join("\n"),
+    },
+  },
   ];
 });

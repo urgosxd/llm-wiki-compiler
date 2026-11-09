@@ -42,6 +42,10 @@ COPY packages/llmwiki-kg/ts/package.json packages/llmwiki-kg/ts/
 # `@repo/wiki` is a root devDependency pinned as `workspace:*`, so its manifest has
 # to exist before `pnpm install` or the install cannot resolve the member.
 COPY packages/wiki/package.json packages/wiki/
+# `@repo/api` is a root workspace member (the root manifest's `workspaces`) and the
+# entry the image execs, so the frozen install validates its manifest before it can
+# resolve the workspace — the same reason the three manifests above are copied.
+COPY packages/api/package.json packages/api/
 RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.json tsup.config.ts ./

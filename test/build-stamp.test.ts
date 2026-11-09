@@ -29,13 +29,15 @@ import {
 let root: string;
 
 /**
- * The files a real `tsup` run at the repository root writes: two root bundles
- * (the CLI entry and the library entry with its `d.ts`) plus the built
- * dependency package. Deliberately NOT derived from `REQUIRED_OUTPUTS` — a seed
- * read out of the module under test would make every case below vacuous.
+ * The files a real `tsup` run at the repository root writes: three root bundles
+ * (the CLI entry, the `@repo/api` launcher the container execs, and the library
+ * entry with its `d.ts`) plus the built dependency package. Deliberately NOT
+ * derived from `REQUIRED_OUTPUTS` — a seed read out of the module under test
+ * would make every case below vacuous.
  */
 const BUILT_OUTPUTS = [
   "dist/cli.js",
+  "dist/api.js",
   "dist/index.js",
   "dist/index.d.ts",
   "packages/llmwiki-core/dist/index.js",
