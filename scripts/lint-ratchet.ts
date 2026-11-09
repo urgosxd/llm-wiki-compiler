@@ -72,16 +72,22 @@ const HOUSE_RULES: readonly string[] = [
  * same order. The config decides which rules apply to a file; this list decides
  * which files are read at all, and a tree the config exempts but no pattern
  * reaches is never scanned — a zone the ratchet cannot see, so it can neither
- * freeze nor fail on anything in it. That is why `api/**` is named here even
- * though the directory does not exist yet: the moment it does, its files are in
- * scope without anyone remembering to add them.
+ * freeze nor fail on anything in it. That is why the api zone is named here even
+ * while it holds a single entry point: the moment a file lands under it, its
+ * files are in scope without anyone remembering to add them.
+ *
+ * The api entry names `packages/api/`, the directory `@repo/api` occupies, and
+ * not the package's name — the same spelling `API_ZONE` carries in
+ * `eslint.config.mjs`. It read `api/**` while the package was empty, which matched
+ * nothing; a matcher over nothing reports zero violations, so the ratchet would
+ * have gone on printing a clean line over a tree it never read.
  */
 const LINT_PATTERNS = [
   "packages/wiki/**/*.{ts,tsx,js,mjs,cjs}",
   "packages/**/*.{ts,tsx,js,mjs,cjs}",
   "test/**/*.{ts,tsx,js,mjs,cjs}",
   "scripts/**/*.{ts,tsx,js,mjs,cjs}",
-  "api/**/*.{ts,tsx,js,mjs,cjs}",
+  "packages/api/**/*.{ts,tsx,js,mjs,cjs}",
 ];
 
 /** This ratchet's name for the shared stored document. */
@@ -193,12 +199,14 @@ export function configurationDigest(root: string): string {
  */
 export async function collectSnapshot(root: string): Promise<Snapshot> {
   /*
-   * `errorOnUnmatchedPattern` is off because a declared zone may be empty:
-   * `api/` does not exist yet, and ESLint treats a pattern that matches no file
-   * as an error rather than as an empty set. Turning it off keeps an empty zone
-   * from breaking the gate. It does not make a tree silently invisible: a file
-   * that appears under any pattern here is scanned and counted, which the probes
-   * for each zone check.
+   * `errorOnUnmatchedPattern` is off because a declared zone may be empty: a
+   * package can be declared before its first source file lands, and ESLint treats
+   * a pattern that matches no file as an error rather than as an empty set.
+   * Turning it off keeps an empty zone from breaking the gate. It does not make a
+   * tree silently invisible — a file that appears under any pattern here is
+   * scanned and counted, which the probe for each zone checks — but it does mean a
+   * MISSPELLED pattern is silent too, so the spelling is verified by the census in
+   * the commit that moves the paths, not by this flag.
    */
   const eslint = new ESLint({ cwd: root, errorOnUnmatchedPattern: false });
   const results = await eslint.lintFiles([...LINT_PATTERNS]);

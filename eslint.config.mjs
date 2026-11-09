@@ -55,12 +55,20 @@ const tree = (directory) => CODE_EXTENSIONS.map((extension) => `${directory}**/*
  *   permitted direction is `api → wiki` and `api → kg`. There is no `wiki ↔ kg`
  *   import in either direction.
  *
- * `api/` does not exist yet. It is declared and linted anyway: a zone that is
- * only a comment cannot be scanned, and an empty zone costs nothing.
+ * `api` is spelled `packages/api/`, because that is the directory `@repo/api`
+ * occupies. A zone pattern names a DIRECTORY a file sits in, not the package name
+ * it publishes, so the two spellings are written separately and both have to be
+ * right. This one read `tree("api/")` until the `@repo/wiki` carve moved the
+ * source into `packages/`: that pattern matched nothing, and a zone matching
+ * nothing reports zero violations — indistinguishable from a clean tree, which is
+ * the exact failure mode that makes zone spelling a gate concern rather than a
+ * tidiness one. `scripts/lint-ratchet.ts` reads the same tree in its
+ * `LINT_PATTERNS`, and the two lists are documented as having to stay in step, so
+ * a re-point here without a re-point there leaves the ratchet blind either way.
  */
 const WIKI_ZONE = tree("packages/wiki/");
 const KG_ZONE = tree("packages/llmwiki-kg/");
-const API_ZONE = tree("api/");
+const API_ZONE = tree("packages/api/");
 
 /**
  * The trees on the wiki side of the boundary, which is the wiki zone plus the
