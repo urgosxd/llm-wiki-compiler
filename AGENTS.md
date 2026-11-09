@@ -113,7 +113,11 @@ Before committing any work, and before considering any task complete, you must:
    not resolved: the gate states that it cannot verify it rather than guessing.
    What is forbidden has not changed — `wiki → kg` and `kg → wiki` are both
    forbidden, exactly as before. `corepack pnpm run lint` regenerates the counts:
-   680 frozen violations in 498 files across 532 rule/file entries, of which 80
+   the triple it prints — violations, files, rule/file entries — is the
+   authoritative figure, and `npm run lint` (equivalently `pnpm run lint`) fails
+   only on newly introduced violations; this file does not carry the numbers,
+   since a baked count goes stale the moment someone adds a rule or a file. Of
+   the violations the gate counts today, 80
    static sites (67 files), 30 literal dynamic-or-mocked sites (11 files) and 6
    non-literal sites (1 file) are boundary reaches, all `wiki → kg`, with
    `kg → wiki` at 0.
