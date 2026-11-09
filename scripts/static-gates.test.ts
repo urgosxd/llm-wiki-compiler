@@ -22,7 +22,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { GATE_TIMEOUT_MS, STATIC_GATES } from "./static-gates.ts";
+import {
+  GATE_TIMEOUT_MS,
+  STATIC_GATES,
+  describeStatus,
+  failedLabels,
+  formatSummary,
+  type GateOutcome,
+} from "./static-gates.ts";
 
 /** The gate labels this runner must always carry, in report order. */
 const EXPECTED_LABELS = ["tsc", "typecheck:tests", "typecheck:kg", "lint", "fallow:ci", "fallow:kg"] as const;
@@ -102,5 +109,33 @@ describe("static gates — the set cannot shrink silently", () => {
     // 12.5 s is the slowest gate measured on this host; a bound that close would
     // turn a loaded machine into a false failure instead of a stuck gate.
     expect(GATE_TIMEOUT_MS).toBeGreaterThan(30_000);
+  });
+});
+
+/** A finished gate that passed, with no output. */
+function passedGate(label: string): GateOutcome {
+  return { label, status: 0, timedOut: false, durationMs: 1000, output: "" };
+}
+
+/** A finished gate that failed with one printed line. */
+function failedGate(label: string): GateOutcome {
+  return { label, status: 1, timedOut: false, durationMs: 1000, output: "boom\n" };
+}
+
+describe("static gates — the verdict names what failed", () => {
+  it("names every failed gate in the summary's last line", () => {
+    const summary = formatSummary([passedGate("tsc"), failedGate("lint"), failedGate("fallow:ci")], 5000);
+    expect(summary.trimEnd().split("\n").pop()).toBe("static gates: 2 of 3 failed — lint, fallow:ci (5.0 s wall)");
+  });
+
+  it("reports an all-pass run as its own verdict, not as an empty failure", () => {
+    const summary = formatSummary([passedGate("tsc"), passedGate("lint")], 2000);
+    expect(summary.trimEnd().split("\n").pop()).toBe("static gates: all 2 passed in 2.0 s");
+  });
+
+  it("reports a timeout as a timeout, not as a generic failure", () => {
+    const hung: GateOutcome = { label: "lint", status: null, timedOut: true, durationMs: 300_000, output: "" };
+    expect(describeStatus(hung)).toBe("timeout after 300 s");
+    expect(failedLabels([hung])).toEqual(["lint"]);
   });
 });

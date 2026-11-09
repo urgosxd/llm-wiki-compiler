@@ -252,8 +252,8 @@ claiming the guardrail covered it.
   running; each measurement point sequential and alone. The three measurement points are
   recorded by appending them to this document's `## Log`, with the worker count printed
   next to every RSS figure.
-- [ ] T5 — the concurrent static-gate command plus its `package.json` script · S5 · worker · commit: pending
-- [ ] T6 — documentation and script-header updates for T2-T5 · S4 · worker · commit: pending
+- [x] T5 — the concurrent static-gate command plus its `package.json` script · S5 · worker · commit: 3c0604b6e6b000e3d4df6c67c73b5a71193cf12e
+- [x] T6 — documentation and script-header updates for T2-T5 · S4 · worker · commit: d997a0b41d42ebf7dc5a8a8d788c477d9de1c96c
   Exact edit list from the audit (`F6`): `AGENTS.md:46-51` (the Test Execution Policy
   sentence saying it escalates to the full unit tier), `AGENTS.md:97-98` (pre-commit gate
   4 prose tail — the numbered command itself must stay, only the prose changes),

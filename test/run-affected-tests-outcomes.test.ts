@@ -47,6 +47,7 @@ const CHANGED = ["src/dimensions/activation.ts"];
 const UNRESOLVED_REASONS = [
   "no canonical base ref (upstream/main or origin/main) could be resolved",
   "merge-base against origin/main failed",
+  "diff against origin/main failed",
 ];
 
 /**

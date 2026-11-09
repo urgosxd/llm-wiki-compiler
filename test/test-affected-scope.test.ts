@@ -161,7 +161,6 @@ describe("resolveAffectedScope in a synthetic repository", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-
 });
 
 /**
