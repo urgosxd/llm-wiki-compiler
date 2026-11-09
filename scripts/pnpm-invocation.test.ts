@@ -32,6 +32,16 @@ import { buildPnpmCandidates, describeFailure } from "./pnpm-invocation.ts";
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const RESOLVER = path.join(REPO_ROOT, "scripts", "pnpm-invocation.ts");
 const HOOK = path.join(REPO_ROOT, ".husky", "pre-commit");
+/** The push gate: the same defect class as the commit gate, on the other hook. */
+const PRE_PUSH = path.join(REPO_ROOT, ".husky", "pre-push");
+/** The deterministic product gate's runner, the third bare-name instance. */
+const KEYLESS = path.join(REPO_ROOT, "scripts", "test-keyless.sh");
+
+/**
+ * A pnpm invoked by bare NAME: not a path segment (`scripts/pnpm-…`) and not
+ * part of a longer word. Shell lines are tested one at a time, so `^` suffices.
+ */
+const BARE_PNPM = /(^|[\s;&|(])pnpm(\s|$)/mu;
 
 /** Printed by the working fake, so a pass proves it was the program that ran. */
 const SENTINEL = "fake-pnpm-third-candidate";
@@ -191,6 +201,44 @@ describe("pnpm-invocation — the failure message is the contract", () => {
   });
 });
 
+describe("pnpm-invocation — the push gate routes through the resolver", () => {
+  it("keeps the push gate order and never invokes a bare pnpm program", () => {
+    const commands = hookCommands(readFileSync(PRE_PUSH, "utf8"));
+    expect(commands).toEqual([
+      "node scripts/pnpm-invocation.ts run build",
+      "node scripts/pnpm-invocation.ts run test:affected",
+    ]);
+    for (const line of commands) expect(line).not.toMatch(BARE_PNPM);
+  });
+
+  it("fails loudly instead of reaching the gates when nothing resolves", () => {
+    const root = makeRoot();
+    const env = hostileEnv(root);
+    // An inapplicable candidate is not tried, so candidate 1 is absent here.
+    delete env.npm_execpath;
+    copyIntoRoot(root, { hook: PRE_PUSH, name: "pre-push" });
+    writeFake(path.join(root, "node_modules", ".bin", "pnpm"), EXIT_127);
+
+    const hook = spawnSync("sh", ["-e", ".husky/pre-push"], { cwd: root, env, encoding: "utf8" });
+
+    expect(hook.status).not.toBe(0);
+    expect(hook.stderr).toContain("pnpm-invocation: no working pnpm found (tried 3 candidates):");
+    // Fast and loud: resolution failed, so no gate was started.
+    expect(hook.stdout).not.toContain("build");
+  });
+});
+
+describe("pnpm-invocation — the keyless runner routes through the resolver", () => {
+  it("forwards its arguments through the resolver instead of a bare pnpm", () => {
+    const commands = hookCommands(readFileSync(KEYLESS, "utf8"));
+    const runner = commands.find((line) => line.includes("pnpm-invocation.ts"));
+
+    // The env prefix and the `"$@"` forwarding are the script's whole contract.
+    expect(runner).toBe('HOME="$FRESH_HOME" node scripts/pnpm-invocation.ts test "$@"');
+    for (const line of commands) expect(line).not.toMatch(BARE_PNPM);
+  });
+});
+
 describe("pnpm-invocation — the hook routes through the resolver", () => {
   it("keeps the gate order and never invokes a bare pnpm program", () => {
     const commands = hookCommands(readFileSync(HOOK, "utf8"));
@@ -235,9 +283,10 @@ function hookCommands(text: string): string[] {
  * temporary root has to carry that tree for the failure path to be the
  * resolver's rather than the shell's "no such file".
  * @param root - Temporary root to populate.
+ * @param target - Hook to install and the name to install it under; defaults to the commit gate.
  */
-function copyIntoRoot(root: string): void {
+function copyIntoRoot(root: string, target: { hook: string; name: string } = { hook: HOOK, name: "pre-commit" }): void {
   mkdirSync(path.join(root, ".husky"), { recursive: true });
-  copyFileSync(HOOK, path.join(root, ".husky", "pre-commit"));
+  copyFileSync(target.hook, path.join(root, ".husky", target.name));
   cpSync(path.join(REPO_ROOT, "scripts"), path.join(root, "scripts"), { recursive: true });
 }

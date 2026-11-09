@@ -1,2 +1,8 @@
-pnpm run build
-pnpm run test:affected
+# Both lines go through `scripts/pnpm-invocation.ts` instead of the bare name
+# `pnpm`, for the same reason as the commit gate: here the launcher RESOLVES and
+# then exits 127, so the bare name turns every push into a hand-built PATH shim.
+# No `set -e` here either: husky's shim already runs this file as `sh -e`
+# (see `.husky/_/h`), and the resolver exits non-zero on its own, so the build
+# gate fails by itself and `test:affected` never runs after it.
+node scripts/pnpm-invocation.ts run build
+node scripts/pnpm-invocation.ts run test:affected
