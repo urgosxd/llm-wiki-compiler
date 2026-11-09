@@ -70,6 +70,7 @@ describe("pnpm migration wiring: one graph", () => {
   it("declares pnpm as the package manager and keeps the npm workspaces field", () => {
     expect(pkg.packageManager).toBe("pnpm@11.5.0");
     expect(pkg.workspaces).toEqual([
+      "packages/api",
       "packages/foundation",
       "packages/llmwiki-core",
       "packages/llmwiki-kg/ts",

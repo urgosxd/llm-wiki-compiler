@@ -31,6 +31,10 @@ const WIKI_KG_MESSAGE =
 const KG_WIKI_MESSAGE =
   "kg must not import wiki: the target topology has api joining them (api → wiki, api → kg), with no wiki ↔ kg import.";
 
+/** The exact text `KG_TO_API` carries, quoted so the gate cannot silently reword it. */
+const KG_API_MESSAGE =
+  "kg must not import api: the target topology has api joining wiki and kg (api → wiki, api → kg), so no dimension may import it.";
+
 /** The phrase that marks the second category: a specifier the gate cannot read. */
 const NON_LITERAL_FRAGMENT = "not a string literal";
 
@@ -122,6 +126,24 @@ describe("the kg zone is scanned in its own direction", () => {
     const code = 'vi.doMock("llm-wiki-compiler", () => ({}));';
     const messages = await boundaryMessages("packages/llmwiki-kg/ts/src/boundary-probe.test.ts", code);
     expect(messages).toEqual([{ ruleId: RULE_ID, message: KG_WIKI_MESSAGE }]);
+  });
+
+  it("reports a relative walk into the api package that spells no packages/api segment", async () => {
+    // `packages/llmwiki-kg/ts/src/` is three directories below the root that
+    // holds `packages/api/`, so `../../../api/src/index.ts` resolves to
+    // `packages/api/src/index.ts` while the specifier never contains the
+    // `/packages/api` segment the path pattern looks for. This is the spelling a
+    // KG file actually writes when it reaches the joiner by path.
+    const specifier = "../../../api/src/index.ts";
+    const messages = (await lintAs("packages/llmwiki-kg/ts/src/boundary-probe.ts", `import "${specifier}";`)).filter(
+      (message) => message.ruleId === "no-restricted-imports",
+    );
+    expect(messages).toEqual([
+      {
+        ruleId: "no-restricted-imports",
+        message: `'${specifier}' import is restricted from being used by a pattern. ${KG_API_MESSAGE}`,
+      },
+    ]);
   });
 });
 

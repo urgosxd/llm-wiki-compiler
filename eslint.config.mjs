@@ -178,16 +178,36 @@ const WIKI_TO_API = {
 };
 
 /**
- * kg → api is forbidden for the same reason, in the same two shapes.
+ * kg → api is forbidden for the same reason, in three shapes rather than two.
  *
- * The relative form is not `{4,}` here: `packages/llmwiki-kg/ts/src/` sits three
- * directories below the root that holds `packages/api/`, and the path pattern
- * matches the `/packages/api` segment however many `../` precede it, so the walk
- * is covered without counting segments that would drift with the next rename.
+ * The `/packages/api` segment pattern covers a specifier that walks all the way
+ * out of the package (`../../../../packages/api/src/index.ts`) and the
+ * root-relative spelling, because both contain that segment. It does NOT cover
+ * the spelling a KG file actually writes: `packages/llmwiki-kg/ts/src/` sits
+ * three directories below `packages/`, so `../../../api/src/index.ts` resolves
+ * to `packages/api/src/index.ts` while the specifier never spells the segment.
+ * Measured at the commit that added the joiner: that line linted clean.
+ *
+ * The relative-walk pattern is therefore the second shape, and it counts
+ * segments the same way `KG_TO_WIKI` does: `{3,}` `../` followed by `api`. Three
+ * is the count from the deepest real KG source root, `packages/llmwiki-kg/ts/src/`,
+ * to `packages/`, deeper files need more and are covered by the open upper bound,
+ * and no legitimate relative import inside KG can match — the only `api`
+ * directory at that distance is `packages/api` itself.
+ *
+ * What it does not match, stated so nobody reads the pattern as total: a file
+ * shallower than three levels reaches `packages/api` with fewer segments
+ * (`packages/llmwiki-kg/ts/vitest.config.ts` and `ts/eval/**` need two, from
+ * `ts/` one). `KG_TO_WIKI`'s `{4,}src` carries the same bound for root `src/`,
+ * and this pattern deliberately mirrors it rather than inventing a second
+ * mechanism; a live reach from those depths is what would justify lowering it.
+ * The package specifier is the third shape because `@repo/api` is a name, not a
+ * path.
  */
 const KG_TO_API = {
   patterns: [
     { regex: "(^|/)packages/api(/|$)", message: NO_KG_API_IMPORT },
+    { regex: "^(\.\./){3,}api(/|$)", message: NO_KG_API_IMPORT },
     { regex: "^@repo/api(/|$)", message: NO_KG_API_IMPORT },
   ],
 };
