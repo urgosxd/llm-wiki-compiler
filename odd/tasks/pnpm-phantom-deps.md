@@ -51,7 +51,7 @@ root declaration. "Move ownership to where the import lives and delete the ignor
 - T2 (S2) — root `package.json`: declare `drizzle-orm` copying the KG range. **status: done (L4).** commit: `9da4a18152876aa302c16ebe8cada703fef3e25d` (pre-rebase) → `993df6bb3c8ce5de689d08c50818bdc88525ad96` (post-rebase, unit 1)
 - T3 (S3) — `packages/llmwiki-core/package.json`: declare `tsup` devDependency copying the root range. **status: done (L5).** commit: `9da4a18152876aa302c16ebe8cada703fef3e25d` (pre-rebase) → `993df6bb3c8ce5de689d08c50818bdc88525ad96` (post-rebase, unit 1)
 - T4 (S5-S6) — lockfile absorption with zero version movement, clean `--frozen-lockfile` install, `require.resolve` proof, and all gates. **status: done (L6/L7/L10).** commit: `9da4a18152876aa302c16ebe8cada703fef3e25d` (pre-rebase) → `993df6bb3c8ce5de689d08c50818bdc88525ad96` (post-rebase, unit 1)
-- T5 (S7) — move `ajv` ownership: declare it in `packages/llmwiki-kg/ts/package.json` devDependencies at the root range copied verbatim, delete the root `dependencies` entry, delete the `.fallowrc.json` `ignoreDependencies` entry and the KG baseline `unlisted_dependencies` line, correct the stale comment in the conformance test, extend `test/declared-dependencies-wiring.test.ts`, and re-prove the lockfile invariant. **status: done (L11).** commit: `<pending: unit 2>`
+- T5 (S7) — move `ajv` ownership: declare it in `packages/llmwiki-kg/ts/package.json` devDependencies at the root range copied verbatim, delete the root `dependencies` entry, delete the `.fallowrc.json` `ignoreDependencies` entry and the KG baseline `unlisted_dependencies` line, correct the stale comment in the conformance test, extend `test/declared-dependencies-wiring.test.ts`, and re-prove the lockfile invariant. **status: done (L11).** commit: `856bf3a4403bb6fca966a3ed018076e801cd0859`
 
 ## Log
 
@@ -225,7 +225,8 @@ keys in this file** — no `registry`, no `save-exact`, no `_authToken`, no `//r
 this file needs to survive for `npm publish` / `npm pack`.
 
 Full original contents (the file describes itself as "docs/documentation of intent", so the record is
-preserved here regardless of the pending decision):
+preserved here verbatim; the decision recorded in this entry was superseded — see L9, where the file
+was deleted on Lead approval, so the block below is history, not live configuration):
 
 ```
 # NOTE: pnpm 11.5.0 does NOT read pnpm-specific settings from this file
@@ -744,4 +745,12 @@ the fallow scan, and whether a supply edge belongs in `dependencies` or `peerDep
 decision for a later delivery; nothing was changed here.
 
 **Commit.** Unit 2 covers T5/S7: `build(toolchain): move ajv ownership to the package that
-imports it`, SHA `<pending: unit 2>`.
+imports it`, SHA `856bf3a4403bb6fca966a3ed018076e801cd0859`.
+
+**Closing unit.** Unit 3 appends four invariant tests to
+`test/declared-dependencies-wiring.test.ts` pinning what the move had to leave alone: the ajv
+resolution set (`6.15.0`, `8.20.0`, peer suffixes stripped), core's own `ajv` importer edge
+(`^8.20.0` → `8.20.0`), the `.fallowrc.json` ignore list (still strict JSON, ajv-free, `picomatch`
+last, no duplicates), and the KG baseline's `unlisted_dependencies: []`. Each test was bite-checked
+by mutating only its own subject in a `mktemp -d` copy of the tree, so all four are observed to
+fail when the invariant they pin is broken.

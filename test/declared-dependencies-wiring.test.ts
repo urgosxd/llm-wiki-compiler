@@ -31,8 +31,13 @@
  *    `ignoreDependencies` entry. Here the range has to be a literal: root no
  *    longer carries one to copy, and the point of the assertion is that the
  *    moved declaration kept root's old range instead of re-choosing one.
+ * 4. The negative space of that move is a claim of its own: the ajv resolution
+ *    set, core's own `ajv` importer edge, the `.fallowrc.json` ignore list, and
+ *    the KG dead-code baseline must all read exactly as they did before
+ *    ownership moved, so the last block pins what the move had to leave alone
+ *    rather than what it changed.
  *
- * All three facts are invisible to typecheck, lint, and any unit test of product
+ * All four claims are invisible to typecheck, lint, and any unit test of product
  * behaviour, which is why they are asserted here by reading the manifests and
  * the lockfile directly.
  *
@@ -61,6 +66,11 @@ interface Manifest {
 /** Only the `.fallowrc.json` surface this file cares about. */
 interface FallowConfig {
   ignoreDependencies?: string[];
+}
+
+/** Only the KG dead-code baseline field this file pins. */
+interface DeadCodeBaseline {
+  unlisted_dependencies?: string[];
 }
 
 /** One `importers` edge: the declared range and the resolution it was given. */
@@ -96,6 +106,10 @@ const TSUP_RESOLVED = "8.5.1(postcss@8.5.15)(tsx@4.23.15)(typescript@5.9.3)(yaml
 const AJV_RANGE = "^8.20.0";
 /** The single ajv resolution the moved edge has to reuse — already in `snapshots`. */
 const AJV_RESOLVED = "8.20.0";
+/** Every ajv resolution the tree carried before the move and must still carry. */
+const AJV_RESOLUTIONS = ["6.15.0", "8.20.0"];
+/** The KG package's dead-code baseline, the file S7 had to empty of `ajv`. */
+const KG_DEAD_CODE_BASELINE = "packages/llmwiki-kg/ts/baselines/dead-code-baseline.json";
 
 describe("declared dependencies wiring: root drizzle-orm", () => {
   it("copies the KG range verbatim instead of choosing one", () => {
@@ -161,5 +175,38 @@ describe("declared dependencies wiring: ajv belongs to the KG package", () => {
     // comment leaves the repository tooling unable to read its own config.
     const fallow = JSON.parse(read(".fallowrc.json")) as FallowConfig;
     expect(fallow.ignoreDependencies).not.toContain("ajv");
+  });
+});
+
+describe("declared dependencies wiring: what the ajv move left alone", () => {
+  it("keeps every ajv resolution the tree already carried", () => {
+    // Peer suffixes are stripped so a re-resolution under a different peer set
+    // still surfaces as a version string this list does not contain.
+    const versions = [
+      ...new Set(
+        Object.keys(snapshots)
+          .filter((key) => key.startsWith("ajv@"))
+          .map((key) => key.slice("ajv@".length).replace(/\(.*\)$/u, "")),
+      ),
+    ].sort();
+    expect(versions).toEqual(AJV_RESOLUTIONS);
+  });
+
+  it("leaves core's own ajv importer edge untouched", () => {
+    const edge = importers["packages/llmwiki-core"]?.dependencies?.ajv;
+    expect(edge).toEqual({ specifier: AJV_RANGE, version: AJV_RESOLVED });
+  });
+
+  it("keeps the fallow ignore list strict JSON and ajv-free, ending in picomatch", () => {
+    const fallow = JSON.parse(read(".fallowrc.json")) as FallowConfig;
+    const ignored = fallow.ignoreDependencies ?? [];
+    expect(ignored).not.toContain("ajv");
+    expect(ignored[ignored.length - 1]).toBe("picomatch");
+    expect(ignored).toHaveLength(new Set(ignored).size);
+  });
+
+  it("keeps the KG dead-code baseline free of unlisted dependencies", () => {
+    const baseline = JSON.parse(read(KG_DEAD_CODE_BASELINE)) as DeadCodeBaseline;
+    expect(baseline.unlisted_dependencies).toEqual([]);
   });
 });
