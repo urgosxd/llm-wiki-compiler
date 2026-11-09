@@ -25,25 +25,24 @@
  */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { buildContextPack } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { collectStatus } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { generateAnswer } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { getPage } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { lint } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { loadSelectedRefs } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { pickSearchRefs } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { readPageRecord } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { ensureProviderAvailable } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { generateAnswer } from "../commands/query.js";
+import { buildContextPack } from "../context/build.js";
+import { createDimensionsDatabase } from "../dimensions/activation.js";
 import {
   withEmbeddingStoreSource,
   withPageScan,
   withPageSource,
   withRegistrySource,
   withSourceDocuments,
-} from "@atomicstrata/llmwiki-core/compiler-cli";
-import type { PageListingSource } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { createDimensionsDatabase } from "../dimensions/activation.js";
+} from "../dimensions/wiki/page-source-seam.js";
 import { createPageListingSource } from "../dimensions/wiki/page-write-sink.js";
+import { lint } from "../linter/index.js";
+import { getPage } from "../pages/list.js";
+import type { PageListingSource } from "../pages/list.js";
+import { readPageRecord } from "../pages/read.js";
+import { pickSearchRefs, loadSelectedRefs } from "../search/retrieval.js";
+import { collectStatus } from "../status/collect.js";
+import { ensureProviderAvailable } from "../utils/provider-guard.js";
 import { jsonResult } from "./result.js";
 import { isRefusal, refusalResult, withRequestEnv } from "./tenant-db.js";
 import type { Refusal } from "./tenant-db.js";

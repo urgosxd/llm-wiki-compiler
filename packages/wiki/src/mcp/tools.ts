@@ -10,42 +10,31 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ingestSource } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { compileAndReport } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { generateAnswer } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { lint } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { generateAnswer } from "../commands/query.js";
+import { compileAndReport } from "../compiler/index.js";
+import { buildContextPack } from "../context/build.js";
+import { createDimensionsDatabase } from "../dimensions/activation.js";
 import {
   withEmbeddingStoreSource,
   withPageScan,
   withPageSource,
-} from "@atomicstrata/llmwiki-core/compiler-cli";
-import { collectStatus } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { buildContextPack } from "@atomicstrata/llmwiki-core/compiler-cli";
+  withRegistrySource,
+} from "../dimensions/wiki/page-source-seam.js";
+import { createPageListingSource } from "../dimensions/wiki/page-write-sink.js";
+import { runEval, DEFAULT_SAMPLE_SIZE } from "../eval/index.js";
+import { lint } from "../linter/index.js";
+import { getPage } from "../pages/list.js";
+import type { PageListingSource, PageRef } from "../pages/list.js";
+import { readPageRecord } from "../pages/read.js";
+import { loadNonDefaultProfile } from "../profile/block.js";
+import { pickSearchRefs, loadSelectedRefs } from "../search/retrieval.js";
+import { ingestSource } from "../services/ingest/service.js";
+import { collectStatus } from "../status/collect.js";
+import { isSlugSafe } from "../utils/page-identity.js";
 import {
   ensureCompileProviderAvailable,
   ensureProviderAvailable,
-} from "@atomicstrata/llmwiki-core/compiler-cli";
-import {
-  runEval,
-  DEFAULT_SAMPLE_SIZE,
-} from "@atomicstrata/llmwiki-core/compiler-cli";
-import { readPageRecord } from "@atomicstrata/llmwiki-core/compiler-cli";
-import type {
-  PageListingSource,
-  PageRef,
-} from "@atomicstrata/llmwiki-core/compiler-cli";
-import {
-  getPage,
-  pickSearchRefs,
-  loadSelectedRefs,
-  withRegistrySource,
-} from "@atomicstrata/llmwiki-core/compiler-cli";
-import { createDimensionsDatabase } from "../dimensions/activation.js";
-import { createPageListingSource } from "../dimensions/wiki/page-write-sink.js";
-import { loadNonDefaultProfile } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { isSlugSafe } from "@atomicstrata/llmwiki-core/compiler-cli";
-import {
-} from "@atomicstrata/llmwiki-core/compiler-cli";
+} from "../utils/provider-guard.js";
 import { jsonResult, errorResult } from "./result.js";
 import { registerJobTools } from "./job-tools.js";
 import { registerStackTools } from "./stack-tools.js";

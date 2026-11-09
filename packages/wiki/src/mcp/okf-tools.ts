@@ -2,10 +2,10 @@
 /** @file MCP OKF tools: export_okf (confined) + import_okf (staging-only, confined, queue-capped). Extracted from tools.ts to stay under the file-size limit. */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { confineUnderRoot } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { withQuiet } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { runOkfExport } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { runOkfImport } from "@atomicstrata/llmwiki-core/compiler-cli";
+import { runOkfExport } from "../export/okf/run.js";
+import { runOkfImport } from "../import/run.js";
+import { withQuiet } from "../utils/output.js";
+import { confineUnderRoot } from "../utils/path-confine.js";
 import { jsonResult, errorResult } from "./result.js";
 import { STACK_ARG_REQUIRED_NOTE, STACK_ID_SCHEMA } from "./stack-arg.js";
 import { isRefusal, refusalResult, withRequestEnv } from "./tenant-db.js";

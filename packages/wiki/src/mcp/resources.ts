@@ -9,16 +9,16 @@
 import path from "path";
 import { readdir } from "fs/promises";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { CONCEPTS_DIR, INDEX_FILE, QUERIES_DIR, SOURCES_DIR, STATE_FILE } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { safeReadFile, parseFrontmatter } from "@atomicstrata/llmwiki-core/compiler-cli";
 import {
+  readStateClassifiedFor,
   withPageScan,
   withPageSource,
-} from "@atomicstrata/llmwiki-core/compiler-cli";
-import type { PageDirectory } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { readStateClassifiedFor } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { loadPreviousReport, loadHistory } from "@atomicstrata/llmwiki-core/compiler-cli";
-import { listSelectedSourceFiles } from "@atomicstrata/llmwiki-core/compiler-cli";
+} from "../dimensions/wiki/page-source-seam.js";
+import { loadPreviousReport, loadHistory } from "../eval/stats.js";
+import type { PageDirectory } from "../export/types.js";
+import { listSelectedSourceFiles } from "../sources/scan.js";
+import { CONCEPTS_DIR, INDEX_FILE, QUERIES_DIR, SOURCES_DIR, STATE_FILE } from "../utils/constants.js";
+import { safeReadFile, parseFrontmatter } from "../utils/markdown.js";
 
 /** Standard JSON content block for an MCP resource read result. */
 function jsonContent(uri: URL, payload: unknown): {
