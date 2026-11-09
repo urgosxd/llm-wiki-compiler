@@ -2,6 +2,7 @@
 # `package.json` `workspaces` field, which pnpm does not read (npm still needs
 # that field for `npm publish --workspace`).
 packages:
+  - packages/api
   - packages/foundation
   - packages/llmwiki-core
   - packages/llmwiki-kg/ts

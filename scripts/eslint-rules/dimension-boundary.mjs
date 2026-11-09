@@ -1,8 +1,8 @@
 /**
  * @file scripts/eslint-rules/dimension-boundary.mjs
  * @description The dimension boundary rule: report every specifier that reaches
- * across the `wiki ↔ kg` boundary, including the forms `no-restricted-imports`
- * cannot see.
+ * across a forbidden dimension edge — `wiki ↔ kg` or `{wiki,kg} → api` — including
+ * the forms `no-restricted-imports` cannot see.
  *
  * ## Why this rule exists
  *
@@ -18,10 +18,21 @@
  *
  * The forbidden patterns and their messages are NOT defined here. The caller
  * passes the same `{ regex, message }` arrays `no-restricted-imports` already
- * receives from `eslint.config.mjs` (`WIKI_TO_KG.patterns`, `KG_TO_WIKI.patterns`),
- * so the rule can see more reach without permitting any: a pattern is a pattern
- * whichever visitor found the specifier, and a second re-encoded copy would be
- * free to drift from the first.
+ * receives from `eslint.config.mjs` (`WIKI_BOUNDARY.patterns`,
+ * `KG_BOUNDARY.patterns`), so the rule can see more reach without permitting any:
+ * a pattern is a pattern whichever visitor found the specifier, and a second
+ * re-encoded copy would be free to drift from the first.
+ *
+ * ## Both forbidden edges, one visitor set
+ *
+ * The api pair arrives the same way, through the same two composed arrays: a
+ * dynamic `import("@repo/api")`, a type-level `typeof import("@repo/api")` and a
+ * `vi.mock("@repo/api")` factory are reported by the visitors below with the api
+ * pattern's own message, and no visitor, category or resolution rule was added to
+ * make that happen. That is the point of taking patterns as options instead of
+ * naming dimensions in the rule: a new forbidden edge costs a config entry and
+ * nothing here, so the kg pair's reporting cannot change as a side effect of
+ * teaching the gate about api.
  *
  * ## Two categories, and never a silent pass
  *
@@ -30,8 +41,8 @@
  * - a specifier that is NOT a string literal (an identifier, a template literal
  *   with expressions, a concatenation) is reported as its own category instead of
  *   being ignored, and it is deliberately NOT resolved or evaluated: a module-scope
- *   `const X = "…/llmwiki-kg/…"` stays in this category, because a gate that
- *   guesses at constants reports a boundary it did not verify.
+ *   `const X = "…/llmwiki-kg/…"` (or `"…/packages/api/…"`) stays in this category,
+ *   because a gate that guesses at constants reports a boundary it did not verify.
  *
  * Static declarations are deliberately not visited: `no-restricted-imports` owns
  * them, and reporting one site twice would inflate the frozen baseline count

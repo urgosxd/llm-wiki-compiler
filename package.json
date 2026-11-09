@@ -5,6 +5,7 @@
   "description": "A knowledge compiler CLI \u2014 raw sources in, interlinked wiki out",
   "type": "module",
   "workspaces": [
+    "packages/api",
     "packages/foundation",
     "packages/llmwiki-core",
     "packages/llmwiki-kg/ts"
@@ -103,6 +104,7 @@
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/nunito": "5.2.7",
     "@fontsource/space-grotesk": "^5.3.0",
+    "@repo/api": "workspace:*",
     "@repo/foundation": "workspace:*",
     "@repo/kg": "workspace:*",
     "@testcontainers/postgresql": "12.2.1",

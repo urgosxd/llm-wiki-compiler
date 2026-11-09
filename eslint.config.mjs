@@ -105,6 +105,19 @@ const NO_KG_WIKI_IMPORT =
   "kg must not import wiki: the target topology has api joining them (api → wiki, api → kg), with no wiki ↔ kg import.";
 
 /**
+ * A dimension importing the joiner is the inverted arrow, and it is forbidden too.
+ *
+ * `api → wiki` and `api → kg` are the permitted edges, so an arrow pointing the
+ * other way — a wiki or kg file naming `@repo/api` — would make the joiner part of
+ * the dimension that imports it and reintroduce the coupling one layer up. The
+ * message therefore names the edge that is legal, not only the one that is not.
+ */
+const NO_WIKI_API_IMPORT =
+  "wiki must not import api: the target topology has api joining wiki and kg (api → wiki, api → kg), so no dimension may import it.";
+const NO_KG_API_IMPORT =
+  "kg must not import api: the target topology has api joining wiki and kg (api → wiki, api → kg), so no dimension may import it.";
+
+/**
  * wiki → kg is forbidden outright, in both shapes.
  *
  * The mechanism is `patterns[].regex`, matching the raw specifier, not a `group`
@@ -149,6 +162,50 @@ const KG_TO_WIKI = {
 };
 
 /**
+ * wiki → api is forbidden, in the same two shapes as wiki → kg.
+ *
+ * The path pattern is what covers the relative walk: `import "../../packages/api/src"`
+ * contains `/packages/api` just as the root-relative spelling does, so one regex
+ * states the directory form for both. The package specifier is its own pattern
+ * because `@repo/api` is a name, not a path, and a gate that only knew the
+ * directory would miss every import a consumer actually writes.
+ */
+const WIKI_TO_API = {
+  patterns: [
+    { regex: "(^|/)packages/api(/|$)", message: NO_WIKI_API_IMPORT },
+    { regex: "^@repo/api(/|$)", message: NO_WIKI_API_IMPORT },
+  ],
+};
+
+/**
+ * kg → api is forbidden for the same reason, in the same two shapes.
+ *
+ * The relative form is not `{4,}` here: `packages/llmwiki-kg/ts/src/` sits three
+ * directories below the root that holds `packages/api/`, and the path pattern
+ * matches the `/packages/api` segment however many `../` precede it, so the walk
+ * is covered without counting segments that would drift with the next rename.
+ */
+const KG_TO_API = {
+  patterns: [
+    { regex: "(^|/)packages/api(/|$)", message: NO_KG_API_IMPORT },
+    { regex: "^@repo/api(/|$)", message: NO_KG_API_IMPORT },
+  ],
+};
+
+/**
+ * The two composed prohibitions, one per side of the boundary.
+ *
+ * Both rules take a single `patterns` array, so the two forbidden edges of a side
+ * are concatenated rather than configured twice: a second `no-restricted-imports`
+ * entry for the same file set would override the first instead of adding to it,
+ * and the api patterns would silently replace the kg ones. Concatenation keeps the
+ * kg pair's position, order and message bytes exactly as they were, which is what
+ * makes "the kg edge is reported unchanged" a fact about the array and not a hope.
+ */
+const WIKI_BOUNDARY = { patterns: [...WIKI_TO_KG.patterns, ...WIKI_TO_API.patterns] };
+const KG_BOUNDARY = { patterns: [...KG_TO_WIKI.patterns, ...KG_TO_API.patterns] };
+
+/**
  * The local rule that sees the reach forms `no-restricted-imports` cannot.
  *
  * `no-restricted-imports` visits `ImportDeclaration` and `ExportDeclaration` and
@@ -156,8 +213,9 @@ const KG_TO_WIKI = {
  * `typeof import()` of a `packages/llmwiki-kg` module and a `vi.mock` factory
  * naming one were all invisible: the boundary leaked in forms the gate could not
  * report. This rule visits exactly those three forms plus nothing else, and it
- * takes the SAME pattern arrays as options — `WIKI_TO_KG` and `KG_TO_WIKI`
- * below — so it widens what the gate can SEE without changing what it PERMITS.
+ * takes the SAME pattern arrays as options — `WIKI_BOUNDARY` and `KG_BOUNDARY`
+ * below, which are `WIKI_TO_KG` and `KG_TO_WIKI` plus the api pair — so it widens
+ * what the gate can SEE without changing what it PERMITS.
  *
  * A specifier that is not a string literal is reported in its own category and
  * never resolved: reporting it is honest, resolving it would be a guess. Static
@@ -195,16 +253,16 @@ export default tseslint.config(
     files: WIKI_SIDE,
     plugins: LOCAL_PLUGIN,
     rules: {
-      "no-restricted-imports": ["error", WIKI_TO_KG],
-      "local/dimension-boundary": ["error", WIKI_TO_KG],
+      "no-restricted-imports": ["error", WIKI_BOUNDARY],
+      "local/dimension-boundary": ["error", WIKI_BOUNDARY],
     },
   },
   {
     files: KG_ZONE,
     plugins: LOCAL_PLUGIN,
     rules: {
-      "no-restricted-imports": ["error", KG_TO_WIKI],
-      "local/dimension-boundary": ["error", KG_TO_WIKI],
+      "no-restricted-imports": ["error", KG_BOUNDARY],
+      "local/dimension-boundary": ["error", KG_BOUNDARY],
     },
   },
   {

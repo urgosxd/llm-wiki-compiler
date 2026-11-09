@@ -1,0 +1,13 @@
+{
+  "name": "@repo/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The joining package: the only package permitted to depend on both @repo/wiki and @repo/kg",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

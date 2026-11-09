@@ -28,6 +28,7 @@
   },
   "include": [
     "src/**/*",
+    "packages/api/src/**/*.ts",
     "packages/foundation/src/**/*.ts"
   ],
   "exclude": [

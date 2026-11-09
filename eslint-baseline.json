@@ -1,7 +1,7 @@
 {
   "version": 1,
   "typescript": "5.9.3",
-  "configuration": "c36d6dcd7cf3080a3475e95f0c62a8c76911b3a19b63cb577559bcc1af4d6a7e",
+  "configuration": "38deb2aa3e5805308a2030bb62cdaf6f60babb41663380551e87319eccb5caed",
   "counts": {
     "packages/llmwiki-kg/ts/src/auth.test.ts max-lines-per-function": 1,
     "packages/llmwiki-kg/ts/src/config.test.ts max-lines-per-function": 1,
