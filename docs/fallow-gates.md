@@ -9,7 +9,7 @@ cannot carry a comment.
 The root `.fallowrc.json` lists `packages/llmwiki-kg/**` under `ignorePatterns`.
 
 **That exclusion is deliberate.** `packages/llmwiki-kg/ts` is a vendored
-TypeScript port (`aks-reference-server`) whose HTTP handlers and helpers are
+TypeScript port (`@repo/kg`) whose HTTP handlers and helpers are
 exported for consumption by a server entry point that fallow cannot resolve, so
 the repo-wide analysis reports roughly 240 dead-code findings that are upstream's
 public surface rather than defects. Un-ignoring it repo-wide would bury the

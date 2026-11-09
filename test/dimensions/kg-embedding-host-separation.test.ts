@@ -62,8 +62,8 @@ function loadModules() {
   vi.resetModules();
   return Promise.all([
     import("../../src/utils/embedding-provider.js"),
-    import("../../packages/llmwiki-kg/ts/src/core/llm/embeddings.js"),
-    import("../../packages/llmwiki-kg/ts/src/embedding-backend.js"),
+    import("@repo/kg/core/llm/embeddings"),
+    import("@repo/kg/embedding-backend"),
   ]);
 }
 

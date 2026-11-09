@@ -42,7 +42,7 @@
  * must refuse keep refusing.
  */
 
-import { createClient, createDatabase, kgConfig, type Database } from "llmwiki-kg";
+import { createClient, createDatabase, kgConfig, type Database } from "@repo/kg";
 import { createKgDimension } from "./kg/index.js";
 import { createWikiStoreDimension } from "./wiki/database.js";
 import type { Dimension, DimensionName } from "./types.js";

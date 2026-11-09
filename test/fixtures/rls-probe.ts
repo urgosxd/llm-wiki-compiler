@@ -55,7 +55,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { missingTestDatabase } from "./test-database-handoff.js";
 
 /** The role the application is meant to run as, once the DSN is switched. */

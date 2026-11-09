@@ -50,7 +50,7 @@ import { resolveDimensions } from "../../src/dimensions/index.js";
 import { DEFAULT_STACK_DOMAIN } from "../../src/dimensions/stack-selection.js";
 import type { KgDimensionOptions } from "../../src/dimensions/kg/index.js";
 import type { WikiStoreDimensionOptions } from "../../src/dimensions/wiki/database.js";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { resolveStackForCommand } from "../../src/services/stacks/resolve-stack.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";

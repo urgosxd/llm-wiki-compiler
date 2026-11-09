@@ -21,9 +21,9 @@
  */
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { registerDocumentRow } from "llmwiki-kg";
+import { registerDocumentRow } from "@repo/kg";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
-import { consolidateEntityRows, consolidateRelationshipRows } from "llmwiki-kg";
+import { consolidateEntityRows, consolidateRelationshipRows } from "@repo/kg";
 
 const harness = await createKgPostgresHarness("kg-integrity");
 const { db, stackId, reachable } = harness;

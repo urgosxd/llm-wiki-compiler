@@ -34,7 +34,7 @@
  * advisory forms with `objsubid = 2`, so it cannot discriminate them; `classid` can.
  */
 
-import { createClient } from "llmwiki-kg";
+import { createClient } from "@repo/kg";
 import { tryAcquirePostgresLock } from "../../src/utils/lock-postgres.js";
 
 /** The driver handle the package's factory returns; named structurally, not re-imported. */

@@ -21,7 +21,7 @@
  * "borrow the checkout's" — borrowing would restore the divergence silently.
  */
 
-import { createClient, createDatabase, kgConfig } from "llmwiki-kg";
+import { createClient, createDatabase, kgConfig } from "@repo/kg";
 import { readProjectConfig, type StoredProjectConfig } from "./project-config-store.js";
 
 /**

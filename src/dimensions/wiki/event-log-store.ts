@@ -28,7 +28,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { ulid } from "../../utils/ulid.js";
 import { eventChecksum, type EventChecksumInput } from "../../events/store-record.js";
 import { eventPrevHash } from "../../events/event-digest.js";

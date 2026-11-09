@@ -51,7 +51,7 @@ import http from "node:http";
 import { listenOn } from "../utils/http-listen.js";
 import type { AddressInfo } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createApp } from "llmwiki-kg/server";
+import { createApp } from "@repo/kg/server";
 
 /** The graph sub-app type, derived so this module needs no direct express import. */
 type GraphApp = ReturnType<typeof createApp>;

@@ -31,7 +31,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 
 const transactionScope = new AsyncLocalStorage<Database>();
 

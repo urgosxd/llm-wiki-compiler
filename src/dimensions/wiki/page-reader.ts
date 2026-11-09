@@ -35,7 +35,7 @@
  * "nothing matched", so a text-only query reports `unavailable` instead.
  */
 
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import type {
   DimensionAnswer,
   DimensionQuery,

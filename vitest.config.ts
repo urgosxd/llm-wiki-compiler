@@ -35,8 +35,6 @@ export default defineConfig({
       { find: /^@atomicstrata\/llmwiki-core\/compiler-sdk$/, replacement: fileURLToPath(new URL("./src/sdk/compiler-composition.ts", import.meta.url)) },
       { find: /^@atomicstrata\/llmwiki-core$/, replacement: fileURLToPath(new URL("./src/core-index.ts", import.meta.url)) },
       { find: /^llm-wiki-compiler$/, replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)) },
-      { find: /^llmwiki-kg$/, replacement: fileURLToPath(new URL("./packages/llmwiki-kg/ts/src/core-index.ts", import.meta.url)) },
-      { find: /^llmwiki-kg\/server$/, replacement: fileURLToPath(new URL("./packages/llmwiki-kg/ts/src/server.ts", import.meta.url)) },
     ],
   },
   test: {

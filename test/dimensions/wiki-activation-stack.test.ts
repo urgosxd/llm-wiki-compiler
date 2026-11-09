@@ -32,7 +32,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createDatabase, createClient } from "llmwiki-kg";
+import { createDatabase, createClient } from "@repo/kg";
 
 import { AKS_STACK_ID_ENV_VAR, resolveDimensions } from "../../src/dimensions/activation.js";
 import type { DimensionInput } from "../../src/dimensions/types.js";

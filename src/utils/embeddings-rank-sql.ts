@@ -37,7 +37,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 
 import type { ChunkRanking, RankedChunk, RankScope } from "./embeddings-load.js";
 import { toVectorLiteral } from "./embeddings-database-write.js";

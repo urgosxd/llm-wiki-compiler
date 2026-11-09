@@ -21,7 +21,7 @@ import {
   consolidateEntityRows,
   forgetDocumentRows,
   registerDocumentRow,
-} from "llmwiki-kg";
+} from "@repo/kg";
 
 const harness = await createKgPostgresHarness("kg-forget");
 const { db, stackId, reachable } = harness;

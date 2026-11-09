@@ -33,7 +33,7 @@
 import type { JobRegistry } from "./registry.js";
 import type { IngestJob } from "./types.js";
 import { saveIngestJob } from "./job-store.js";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 
 /** What the wrapper needs beyond the registry it wraps. */
 export interface DurableRegistryOptions {

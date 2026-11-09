@@ -74,10 +74,10 @@ function loadModules() {
   return Promise.all([
     import("../../src/utils/provider.js"),
     import("../../src/utils/embedding-provider.js"),
-    import("../../packages/llmwiki-kg/ts/src/core/llm/embeddings.js"),
-    import("../../packages/llmwiki-kg/ts/src/core/llm/tool-call.js"),
-    import("../../packages/llmwiki-kg/ts/src/embedding-backend.js"),
-    import("../../packages/llmwiki-kg/ts/src/chat-backend.js"),
+    import("@repo/kg/core/llm/embeddings"),
+    import("@repo/kg/core/llm/tool-call"),
+    import("@repo/kg/embedding-backend"),
+    import("@repo/kg/chat-backend"),
   ]);
 }
 

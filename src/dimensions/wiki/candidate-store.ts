@@ -26,7 +26,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import type { ReviewCandidate } from "../../utils/types.js";
 import { toArrayLiteral } from "./sql-array.js";
 

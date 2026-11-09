@@ -27,7 +27,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 
 import { APP_ROLE } from "./rls-probe.js";
 

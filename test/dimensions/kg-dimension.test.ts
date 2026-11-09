@@ -33,11 +33,11 @@ const registerDocumentRow = vi.fn();
 
 // The adapter imports the barrel by package name, which the vitest alias maps
 // to `core-index.ts`. Mocking that same specifier intercepts the adapter's view.
-vi.mock("llmwiki-kg", async () => {
+vi.mock("@repo/kg", async () => {
   // The ontology reader is the REAL one: the dimension's default `loadOntology`
   // routes through it, and a stub would make the import fail rather than let the
   // suite state its own `loadOntology`. Tests may import packages freely.
-  const core = await import("../../packages/llmwiki-kg/ts/src/core-index.js");
+  const core = await import("@repo/kg/core-index");
   const { prepareCoreExports } = await import("./kg-core-mock.js");
   return {
     chunkAndEmbed,

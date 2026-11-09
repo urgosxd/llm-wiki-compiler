@@ -33,7 +33,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import {
   addCuratedLinks,
   CURATED_LINK_STORE_VERSION,

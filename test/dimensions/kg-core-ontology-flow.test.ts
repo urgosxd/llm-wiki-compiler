@@ -15,7 +15,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { validateOntology } from "../../packages/llmwiki-kg/ts/src/core/ontology.js";
+import { validateOntology } from "@repo/kg/core/ontology";
 
 const chunkAndEmbed = vi.fn();
 const extractGraphFromChunks = vi.fn();
@@ -24,11 +24,11 @@ const consolidateEntityRows = vi.fn();
 const consolidateRelationshipRows = vi.fn();
 const forgetDocumentRows = vi.fn();
 
-vi.mock("llmwiki-kg", async () => {
+vi.mock("@repo/kg", async () => {
   // The ontology reader is the REAL one: the dimension's default `loadOntology`
   // routes through it, and a stub would make the import fail rather than let the
   // suite state its own `loadOntology`. Tests may import packages freely.
-  const core = await import("../../packages/llmwiki-kg/ts/src/core-index.js");
+  const core = await import("@repo/kg/core-index");
   const { prepareCoreExports } = await import("./kg-core-mock.js");
   return {
     chunkAndEmbed,

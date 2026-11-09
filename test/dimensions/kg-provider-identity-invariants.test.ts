@@ -42,16 +42,16 @@ import {
   type EmbeddingBackendDescriptor,
 } from "../../src/utils/provider.js";
 import { getEmbeddingProvider } from "../../src/utils/embedding-provider.js";
-import { withChatBackend, injectedChatModel } from "../../packages/llmwiki-kg/ts/src/chat-backend.js";
+import { withChatBackend, injectedChatModel } from "@repo/kg/chat-backend";
 import {
   withEmbeddingBackend,
   injectedEmbeddingModel,
-} from "../../packages/llmwiki-kg/ts/src/embedding-backend.js";
+} from "@repo/kg/embedding-backend";
 import {
   embeddingEndpoint,
   extractionEndpoint,
   extractionUsesAnthropicScheme,
-} from "../../packages/llmwiki-kg/ts/src/core/llm/endpoints.js";
+} from "@repo/kg/core/llm/endpoints";
 
 /** The chat host the owner's `.env` points at — not an OpenAI host. */
 const CHAT_HOST = "https://openrouter.ai/api/v1";
@@ -173,8 +173,8 @@ describe("the extraction host comes from the resolved chat client, never from th
     // case's environment and the comparison cannot be inherited from a sibling.
     vi.resetModules();
     const [chatBackend, endpoints] = await Promise.all([
-      import("../../packages/llmwiki-kg/ts/src/chat-backend.js"),
-      import("../../packages/llmwiki-kg/ts/src/core/llm/endpoints.js"),
+      import("@repo/kg/chat-backend"),
+      import("@repo/kg/core/llm/endpoints"),
     ]);
 
     // Nothing installed: the vendored default provider identity decides, which

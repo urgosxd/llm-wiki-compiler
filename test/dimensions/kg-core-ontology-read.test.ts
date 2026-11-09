@@ -34,8 +34,8 @@ const createDatabase = vi.fn(() => ({
 // property under test is that a stored declaration is validated and a malformed
 // one fails the run, and a stub could only assert that the dimension called
 // something. Tests may import packages freely; only `src/` may not.
-vi.mock("llmwiki-kg", async () => {
-  const core = await import("../../packages/llmwiki-kg/ts/src/core-index.js");
+vi.mock("@repo/kg", async () => {
+  const core = await import("@repo/kg/core-index");
   const { prepareCoreExports } = await import("./kg-core-mock.js");
   return {
     chunkAndEmbed,
@@ -53,7 +53,7 @@ vi.mock("llmwiki-kg", async () => {
 
 const { createKgDimension } = await import("../../src/dimensions/kg/index.js");
 const { OntologyError } = await import(
-  "../../packages/llmwiki-kg/ts/src/core/ontology.js"
+  "@repo/kg/core/ontology"
 );
 
 /** The declaration a configured Stack carries. */

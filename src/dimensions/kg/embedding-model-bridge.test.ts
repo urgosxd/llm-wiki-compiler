@@ -14,11 +14,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { parseConfig } from "../../../packages/llmwiki-kg/ts/src/config.js";
+import { parseConfig } from "@repo/kg/config";
 import {
   bridgeEnvWithWikiCredentials,
   findEmbeddingModelProblem,
-} from "../../../packages/llmwiki-kg/ts/src/wiki-credential-fallback.js";
+} from "@repo/kg/wiki-credential-fallback";
 
 /** The wiki-side embedding model, 768-wide on the host that serves it. */
 const WIKI_MODEL = "hf:nomic-ai/nomic-embed-text-v1.5";

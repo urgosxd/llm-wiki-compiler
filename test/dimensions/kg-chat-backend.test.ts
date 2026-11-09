@@ -61,9 +61,9 @@ async function loadModules(env: Record<string, string | undefined> = CLEAN_ENV) 
   vi.resetModules();
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
   const [toolCall, endpoints, backend] = await Promise.all([
-    import("../../packages/llmwiki-kg/ts/src/core/llm/tool-call.js"),
-    import("../../packages/llmwiki-kg/ts/src/core/llm/endpoints.js"),
-    import("../../packages/llmwiki-kg/ts/src/chat-backend.js"),
+    import("@repo/kg/core/llm/tool-call"),
+    import("@repo/kg/core/llm/endpoints"),
+    import("@repo/kg/chat-backend"),
   ]);
   return { toolCall, endpoints, backend };
 }

@@ -44,7 +44,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { createClient, createDatabase } from "llmwiki-kg";
+import { createClient, createDatabase } from "@repo/kg";
 import { perRunDatabase } from "./per-run-database.js";
 import { missingTestDatabase } from "./test-database-handoff.js";
 import { testDatabaseUrl } from "./test-database.js";

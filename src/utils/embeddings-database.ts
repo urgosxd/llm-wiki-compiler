@@ -32,7 +32,7 @@
  * compiled page are different subjects with different lifecycles.
  */
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { rankChunksInSql } from "./embeddings-rank-sql.js";
 import { bindStack, splitPageId } from "./embeddings-tenant.js";
 import type { PageId } from "./page-id.js";

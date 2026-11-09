@@ -27,7 +27,7 @@
 
 import { sql } from "drizzle-orm";
 
-import { createClient, createDatabase, kgConfig } from "llmwiki-kg";
+import { createClient, createDatabase, kgConfig } from "@repo/kg";
 
 /** Seconds to wait for the graph database before giving up. */
 const DB_CONNECT_TIMEOUT_SECONDS = 10;

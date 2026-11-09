@@ -41,7 +41,7 @@ import {
   readEntityByName,
   traverseGraph,
   type AKSEntityDto,
-} from "llmwiki-kg";
+} from "@repo/kg";
 import type {
   DimensionAnswer,
   DimensionQuery,

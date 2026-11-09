@@ -48,7 +48,8 @@ const tree = (directory) => CODE_EXTENSIONS.map((extension) => `${directory}**/*
  *   same way the zone does, so the wiki-side prohibition covers it too (see
  *   `WIKI_SIDE`).
  * - `kg` is everything knowledge-graph, today `packages/llmwiki-kg/**` (its code
- *   lives under the package's `ts/` subdirectory).
+ *   lives under the package's `ts/` subdirectory). The package it publishes is
+ *   `@repo/kg`.
  * - `api` is the joining package: the ONLY zone allowed to import both, so the
  *   permitted direction is `api → wiki` and `api → kg`. There is no `wiki ↔ kg`
  *   import in either direction.
@@ -73,7 +74,7 @@ const API_ZONE = tree("api/");
  * are frozen with a count and a new one fails.
  *
  * `scripts/` is included on evidence, not by symmetry: one script imports the
- * package (`measure-graph-expansion.ts` reaching `llmwiki-kg`), and a single
+ * package (`measure-graph-expansion.ts` reaching `@repo/kg`), and a single
  * reach is still a reach. Only the wiki-side rule is widened — the kg-side rule
  * is unchanged.
  */
@@ -118,13 +119,15 @@ const NO_KG_WIKI_IMPORT =
  *    barrel is gone: the barrel is still a `wiki → kg` import, and the audit
  *    found the live violations arriving through the `tsconfig.json` alias for
  *    it (pattern 2), which the old rule never looked at.
- * 2. the package specifier `llmwiki-kg` and its subpaths (`llmwiki-kg/server`),
- *    which `tsconfig.json` maps to `packages/llmwiki-kg/ts/src/**`.
+ * 2. the package specifier `@repo/kg` and its subpaths (`@repo/kg/server`),
+ *    which the package's own `exports` map points at `packages/llmwiki-kg/ts/src/**`.
+ *    This is the specifier every wiki-side consumer writes; the `llmwiki-kg`
+ *    alias it replaced no longer exists, so a pattern for it would match nothing.
  */
 const WIKI_TO_KG = {
   patterns: [
     { regex: "(^|/)packages/llmwiki-kg(/|$)", message: NO_WIKI_KG_IMPORT },
-    { regex: "^llmwiki-kg(/|$)", message: NO_WIKI_KG_IMPORT },
+    { regex: "^@repo/kg(/|$)", message: NO_WIKI_KG_IMPORT },
   ],
 };
 
@@ -149,7 +152,7 @@ const KG_TO_WIKI = {
  * The local rule that sees the reach forms `no-restricted-imports` cannot.
  *
  * `no-restricted-imports` visits `ImportDeclaration` and `ExportDeclaration` and
- * nothing else, so a dynamic `import()` of `llmwiki-kg`, a type-level
+ * nothing else, so a dynamic `import()` of `@repo/kg`, a type-level
  * `typeof import()` of a `packages/llmwiki-kg` module and a `vi.mock` factory
  * naming one were all invisible: the boundary leaked in forms the gate could not
  * report. This rule visits exactly those three forms plus nothing else, and it

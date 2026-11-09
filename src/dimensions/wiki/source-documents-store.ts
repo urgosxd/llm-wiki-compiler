@@ -35,7 +35,7 @@
  * rather than by refusal.
  */
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { createHash } from "node:crypto";
 import { slugify } from "../../utils/markdown.js";
 import { stableContent } from "../../utils/source-writer.js";

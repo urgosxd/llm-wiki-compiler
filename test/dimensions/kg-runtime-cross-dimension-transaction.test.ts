@@ -45,7 +45,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
-import { createClient, createDatabase } from "llmwiki-kg";
+import { createClient, createDatabase } from "@repo/kg";
 
 import { DATABASE_URL, createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import {

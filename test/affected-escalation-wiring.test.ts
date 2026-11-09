@@ -17,15 +17,18 @@
  *    dimension is indistinguishable from a correct one by length, so the
  *    assertion has to name both trees.
  *
- * 2. THE ALIAS BRIDGE. The narrow path is `vitest related`, whose import graph
- *    crosses dimensions only through the `llmwiki-kg` alias in
- *    `vitest.config.ts`: `src/dimensions/activation.ts` imports the BARE
- *    specifier, and no relative import crosses into `packages/`. Vitest
- *    following aliases is not the fragile part — the mapping inside the config
- *    file is, by edit or by deletion. So the regression worth pinning is a
- *    mapping that stops resolving to the kg entry point, that points at a file
- *    which no longer exists, or that starts matching longer specifiers and
- *    redirects unrelated imports.
+ * 2. THE PACKAGE BRIDGE. The narrow path is `vitest related`, whose import graph
+ *    crosses dimensions through the bare specifier `@repo/kg`:
+ *    `src/dimensions/activation.ts` imports the BARE specifier, and no relative
+ *    import crosses into `packages/`. Nothing maps that specifier any more — no
+ *    `tsconfig` path alias and no `vitest` alias, both deleted when the package
+ *    became a real workspace member — so the resolution now lives in the
+ *    package's own `exports` map plus the root manifest's declared dependency.
+ *    That is the mapping that is fragile, by edit or by deletion. So the
+ *    regression worth pinning is an `exports` map that stops resolving to the
+ *    kg entry point, that points at a file which no longer exists, or that
+ *    starts capturing longer specifiers from a wildcard and redirects unrelated
+ *    imports.
  *
  * A crawl proving `vitest related` honours the alias was considered and dropped
  * by decision: it costs ~155 seconds and can only fail once one of the two
@@ -46,11 +49,17 @@ import { classifyTests, partition } from "../scripts/test-partition.js";
 
 const ROOT = path.resolve(".");
 
-/** The bare specifier the root dimension imports; only the alias can resolve it. */
-const KG_BARE_SPECIFIER = "llmwiki-kg";
+/** The bare specifier the root dimension imports; only the package bridge resolves it. */
+const KG_BARE_SPECIFIER = "@repo/kg";
 
 /** The file that bare specifier must arrive at, repository-relative. */
 const KG_ENTRY = "packages/llmwiki-kg/ts/src/core-index.ts";
+
+/** The manifest that owns the bridge: the KG package's own `exports` map. */
+const KG_MANIFEST = "packages/llmwiki-kg/ts/package.json";
+
+/** The manifest that has to consume it, or the specifier resolves nowhere. */
+const ROOT_MANIFEST = "package.json";
 
 /** Prefix of the second dimension's test tree. */
 const KG_TREE = "packages/llmwiki-kg/";
@@ -58,7 +67,7 @@ const KG_TREE = "packages/llmwiki-kg/";
 /** Prefix of the first dimension's test tree. */
 const ROOT_TREE = "test/";
 
-/** A real root module that imports the bare specifier, so the alias has a consumer. */
+/** A real root module that imports the bare specifier, so the bridge has a consumer. */
 const KG_ALIAS_CONSUMER = "src/dimensions/activation.ts";
 
 /** Inputs whose change reaches every file, so a narrow selection would be a lie. */
@@ -71,47 +80,44 @@ const ESCALATION_INPUTS = [
   "scripts/test-partition.ts",
 ];
 
-/** One `resolve.alias` entry, as `vitest.config.ts` declares them. */
-interface AliasRule {
-  find: string | RegExp;
-  replacement: string;
+/** One `exports` target: a plain file string, or a condition map naming one. */
+type ExportTarget = string | Record<string, string>;
+
+/** Only the manifest surface this file reads. */
+interface KgManifest {
+  exports?: Record<string, ExportTarget>;
 }
 
 /**
- * Test a rule's `find` against one specifier.
+ * Load the KG package's own manifest, which is where the bridge lives now.
  *
- * A fresh `RegExp` is built per call so a stateful `lastIndex` on a re-tested
- * pattern cannot make a later assertion depend on an earlier one.
- */
-function matchesSpecifier(rule: AliasRule, specifier: string): boolean {
-  return typeof rule.find === "string"
-    ? rule.find === specifier
-    : new RegExp(rule.find).test(specifier);
-}
-
-/**
- * Load the alias rules from the REAL config file rather than from a copy.
- *
- * Importing the config is what makes this a pin: a rewrite of
- * `vitest.config.ts` that no longer exports the mapping fails here, and a
+ * Reading the REAL manifest rather than a copy is what makes this a pin: an
+ * `exports` map rewritten to stop resolving the bare specifier fails here, and a
  * duplicated table in this test would keep passing while production lost it.
  */
-async function loadAliasRules(): Promise<AliasRule[]> {
-  const { default: config } = await import("../vitest.config.js");
-  const alias = config.resolve?.alias;
-  if (!Array.isArray(alias)) {
-    throw new Error("vitest.config.ts must declare resolve.alias as an array of rules");
-  }
-  return alias;
+function loadKgManifest(): KgManifest {
+  return JSON.parse(readFileSync(path.join(ROOT, KG_MANIFEST), "utf8")) as KgManifest;
 }
 
-/** The alias rule matching the bare `llmwiki-kg` specifier, or a failure explaining the absence. */
-async function requireKgAlias(): Promise<AliasRule> {
-  const rule = (await loadAliasRules()).find((entry) => matchesSpecifier(entry, KG_BARE_SPECIFIER));
-  if (rule === undefined) {
-    throw new Error(`vitest.config.ts has no resolve.alias entry matching "${KG_BARE_SPECIFIER}"`);
+/**
+ * The file an `exports` target names, unwrapped from a condition map.
+ *
+ * @param target - One `exports["."]` value, or `undefined` when the key is absent.
+ * @returns The target path as written, or null when the key states none.
+ */
+function targetFile(target: ExportTarget | undefined): string | null {
+  if (typeof target === "string") return target;
+  if (target === undefined) return null;
+  return target.types ?? target.import ?? Object.values(target)[0] ?? null;
+}
+
+/** The repository-relative file the bare `@repo/kg` specifier exports. */
+function requireKgBridge(): string {
+  const entry = targetFile(loadKgManifest().exports?.["."]);
+  if (entry === null) {
+    throw new Error(`${KG_MANIFEST} has no exports["."] entry, so "${KG_BARE_SPECIFIER}" cannot resolve`);
   }
-  return rule;
+  return path.relative(ROOT, path.join(path.dirname(KG_MANIFEST), entry)).split(path.sep).join("/");
 }
 
 /**
@@ -136,28 +142,32 @@ function runFiles(plan: readonly VitestInvocation[]): string[] {
 
 const UNIT_FILES = partition(classifyTests(ROOT)).unit;
 
-describe("the vitest alias bridges the root dimension into the kg dimension", () => {
-  it("matches the bare llmwiki-kg specifier and maps it to the kg entry point", async () => {
-    const rule = await requireKgAlias();
-    expect(matchesSpecifier(rule, KG_BARE_SPECIFIER), "the rule must match the bare specifier").toBe(true);
-    expect(path.relative(ROOT, rule.replacement), "the rule must map to the kg entry point").toBe(KG_ENTRY);
+describe("the package bridge carries the root dimension into the kg dimension", () => {
+  it("exports the bare @repo/kg specifier from the kg entry point", () => {
+    expect(requireKgBridge(), `exports["."] must map to ${KG_ENTRY}`).toBe(KG_ENTRY);
   });
 
-  it("points at a file that exists, so a move or a deletion cannot pass silently", async () => {
-    const rule = await requireKgAlias();
-    expect(existsSync(rule.replacement), `${KG_ENTRY} is missing — the alias target moved or was deleted`).toBe(true);
+  it("points at a file that exists, so a move or a deletion cannot pass silently", () => {
+    expect(existsSync(path.join(ROOT, KG_ENTRY)), `${KG_ENTRY} is missing — the exports target moved or was deleted`).toBe(
+      true,
+    );
   });
 
-  it("does not match a longer specifier that merely starts with llmwiki-kg", async () => {
-    const rule = await requireKgAlias();
-    const longer = ["llmwiki-kg-other", "llmwiki-kgx", "not-llmwiki-kg"];
-    const overreaching = longer.filter((specifier) => matchesSpecifier(rule, specifier));
-    expect(overreaching, `the pattern also captures: ${overreaching.join(", ")}`).toEqual([]);
+  it("declares the dependency at the root, so nothing has to fake the mapping", () => {
+    const root = JSON.parse(readFileSync(path.join(ROOT, ROOT_MANIFEST), "utf8")) as {
+      dependencies?: Record<string, string>;
+    };
+    expect(root.dependencies?.[KG_BARE_SPECIFIER], `root must depend on ${KG_BARE_SPECIFIER}`).toBe("workspace:*");
+  });
+
+  it("does not capture a longer specifier that merely starts with @repo/kg", () => {
+    const wildcards = Object.keys(loadKgManifest().exports ?? {}).filter((key) => key.includes("*"));
+    expect(wildcards, `the exports map also captures: ${wildcards.join(", ")}`).toEqual([]);
   });
 
   it("has a real root consumer importing the bare specifier", () => {
     const source = readFileSync(path.join(ROOT, KG_ALIAS_CONSUMER), "utf8");
-    expect(source, `${KG_ALIAS_CONSUMER} must import "${KG_BARE_SPECIFIER}" for the alias to matter`).toContain(
+    expect(source, `${KG_ALIAS_CONSUMER} must import "${KG_BARE_SPECIFIER}" for the bridge to matter`).toContain(
       `from "${KG_BARE_SPECIFIER}"`,
     );
   });

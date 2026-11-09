@@ -21,7 +21,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { CONTRACT_STACK_KEYS } from "../../packages/llmwiki-kg/ts/src/mcp-harness.js";
+import { CONTRACT_STACK_KEYS } from "@repo/kg/mcp-harness";
 import { dockerAvailable } from "../fixtures/ephemeral-postgres.js";
 import { textOf } from "./kg-mcp-child.js";
 import type { SeededStack } from "./probe-database.js";

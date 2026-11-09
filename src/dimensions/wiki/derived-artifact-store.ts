@@ -26,7 +26,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 
 /** Which derived artifact a row holds. */
 export type DerivedArtifactKind = "index" | "moc";

@@ -27,7 +27,7 @@ import type { Sql } from "postgres";
 
 import { startEphemeralPostgres } from "../fixtures/ephemeral-postgres.js";
 import type { EphemeralPostgres } from "../fixtures/ephemeral-postgres.js";
-import { withClient, applySchema } from "../../packages/llmwiki-kg/ts/src/testing/per-run-database.js";
+import { withClient, applySchema } from "@repo/kg/testing/per-run-database";
 import { startCountingProxy } from "./counting-proxy.js";
 import type { CountingProxy, ProxiedRequest } from "./counting-proxy.js";
 import { startKgApi } from "./kg-api-child.js";

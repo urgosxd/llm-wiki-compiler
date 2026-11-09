@@ -24,7 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createClient } from "llmwiki-kg";
+import { createClient } from "@repo/kg";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { firstJsonReport } from "./child-report.js";

@@ -35,7 +35,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // The core's declaration build resolves a narrower graph than the root bundle, and
 // these modules transitively import `llmwiki-kg`, which that build cannot resolve —
 // re-exporting them from `compiler-cli.ts` broke `npm run build` with
-// "Cannot find module 'llmwiki-kg'". `src/mcp/**` ships in the ROOT bundle, which
+// "Cannot find module '@repo/kg'". `src/mcp/**` ships in the ROOT bundle, which
 // resolves the package fine, so reaching the source directly keeps both builds green
 // without widening the core's surface.
 import { listIngestJobs, readIngestJob } from "../services/ingest/jobs/job-store.js";

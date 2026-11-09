@@ -25,7 +25,7 @@
  */
 
 import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import {
   deleteStoredCandidate,
   getStoredCandidate,

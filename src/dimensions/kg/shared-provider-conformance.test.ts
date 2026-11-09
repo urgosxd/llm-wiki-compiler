@@ -35,27 +35,27 @@ import type { LLMProvider } from "../../utils/provider.js";
 import { buildProvider } from "../../utils/provider.js";
 import { SUPPORTED_PROVIDER_INPUTS, normalizeProviderName } from "../../utils/constants.js";
 import { OpenAIProvider } from "../../providers/openai.js";
-import { parseConfig } from "../../../packages/llmwiki-kg/ts/src/config.js";
+import { parseConfig } from "@repo/kg/config";
 import {
   bridgeEnvWithWikiCredentials,
   findEmbeddingCredentialProblem,
   KG_BRIDGED_VARIABLES,
-} from "../../../packages/llmwiki-kg/ts/src/wiki-credential-fallback.js";
+} from "@repo/kg/wiki-credential-fallback";
 import {
   withEmbeddingBackend,
   injectedEmbeddingEndpoint,
   injectedEmbeddingModel,
-} from "../../../packages/llmwiki-kg/ts/src/embedding-backend.js";
+} from "@repo/kg/embedding-backend";
 import {
   withChatBackend,
   injectedChatEndpoint,
   injectedChatModel,
-} from "../../../packages/llmwiki-kg/ts/src/chat-backend.js";
+} from "@repo/kg/chat-backend";
 import {
   embeddingEndpoint,
   extractionEndpoint,
   extractionModel,
-} from "../../../packages/llmwiki-kg/ts/src/core/llm/endpoints.js";
+} from "@repo/kg/core/llm/endpoints";
 
 /** The one wiki provider the kg dimension has an equivalent for. */
 const WIKI_OPENAI = "openai";

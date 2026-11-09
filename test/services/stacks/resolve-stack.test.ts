@@ -22,7 +22,7 @@
 
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 
 import { createKgPostgresHarness } from "../../fixtures/kg-postgres.js";
 import { DEFAULT_STACK_DOMAIN } from "../../../src/dimensions/stack-selection.js";

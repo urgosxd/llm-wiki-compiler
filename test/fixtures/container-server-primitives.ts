@@ -35,7 +35,7 @@ import postgres from "postgres";
 import {
   applySchema,
   withClient,
-} from "../../packages/llmwiki-kg/ts/src/testing/per-run-database.js";
+} from "@repo/kg/testing/per-run-database";
 
 /** How long a probe may spend connecting before the server counts as unreachable. */
 export const DEFAULT_PROBE_TIMEOUT_SECONDS = 3;

@@ -24,7 +24,7 @@
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { createClient, createDatabase } from "llmwiki-kg";
+import { createClient, createDatabase } from "@repo/kg";
 import { databaseEmbeddingSource } from "../src/utils/embeddings-database.js";
 import { findRelevantChunksV3 } from "../src/utils/embeddings-load.js";
 import { loadEmbeddingsForSearch } from "../src/utils/embeddings-load.js";

@@ -29,7 +29,7 @@ import {
   readEntityByName,
   registerDocumentRow,
   traverseGraph,
-} from "llmwiki-kg";
+} from "@repo/kg";
 
 const harness = await createKgPostgresHarness("kg-read");
 const { db, stackId, reachable } = harness;

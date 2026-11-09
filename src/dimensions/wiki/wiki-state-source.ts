@@ -35,7 +35,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import type { WikiState, SourceState } from "../../utils/types.js";
 import { KNOWN_STATE_VERSION, type StateStatus } from "../../utils/state.js";
 import { readCompileConfig, writeCompileConfig } from "./compile-config-store.js";

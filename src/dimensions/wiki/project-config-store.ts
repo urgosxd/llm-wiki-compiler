@@ -23,7 +23,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { withTenant } from "./page-store.js";
 
 /** The config envelope a Stack holds, or `undefined` when it holds none. */

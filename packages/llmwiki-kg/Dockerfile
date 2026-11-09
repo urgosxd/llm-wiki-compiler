@@ -35,7 +35,7 @@ RUN pnpm install --frozen-lockfile
 # because a build has no TTY to answer it.
 COPY packages/llmwiki-kg/ts/tsconfig.json packages/llmwiki-kg/ts/tsconfig.build.json packages/llmwiki-kg/ts/
 COPY packages/llmwiki-kg/ts/src packages/llmwiki-kg/ts/src
-RUN pnpm --filter aks-reference-server run build \
+RUN pnpm --filter @repo/kg run build \
  && pnpm prune --prod --ignore-scripts --config.confirm-modules-purge=false
 
 EXPOSE 8000

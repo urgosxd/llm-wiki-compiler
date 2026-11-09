@@ -34,7 +34,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 
 import { DATABASE_URL, createKgPostgresHarness } from "../../fixtures/kg-postgres.js";
 import { DEFAULT_STACK_DOMAIN } from "../../../src/dimensions/stack-selection.js";

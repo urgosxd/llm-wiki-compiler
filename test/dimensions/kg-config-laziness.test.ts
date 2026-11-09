@@ -15,9 +15,9 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const CONFIG_MODULE = "../../packages/llmwiki-kg/ts/src/config.js";
-const DB_MODULE = "../../packages/llmwiki-kg/ts/src/db.js";
-const BRIDGE_MODULE = "../../packages/llmwiki-kg/ts/src/wiki-credential-fallback.js";
+const CONFIG_MODULE = "@repo/kg/config";
+const DB_MODULE = "@repo/kg/db";
+const BRIDGE_MODULE = "@repo/kg/wiki-credential-fallback";
 
 /** Never dialled: only the resolved client's options are read. */
 const LATE_DSN = "postgresql://lazy-probe@127.0.0.1:6543/first-access-db";

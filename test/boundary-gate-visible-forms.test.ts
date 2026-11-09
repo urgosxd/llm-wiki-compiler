@@ -5,7 +5,7 @@
  *
  * `no-restricted-imports` visits `ImportDeclaration`/`ExportDeclaration` and
  * nothing else, so a dynamic `import()`, a type-level `typeof import()` and a
- * `vi.mock("llmwiki-kg")` factory were all invisible: the boundary leaked in
+ * `vi.mock("@repo/kg")` factory were all invisible: the boundary leaked in
  * forms the gate could not report, which made any claim of a clean boundary
  * unprovable. The local `local/dimension-boundary` rule closes that gap.
  *
@@ -53,7 +53,7 @@ async function boundaryMessages(file: string, code: string): Promise<{ ruleId: s
 
 describe("a literal specifier that crosses the boundary is reported", () => {
   it("reports a dynamic import of the kg package from a wiki-side source file", async () => {
-    const messages = await boundaryMessages("src/boundary-probe.ts", 'void import("llmwiki-kg");');
+    const messages = await boundaryMessages("src/boundary-probe.ts", 'void import("@repo/kg");');
     expect(messages).toEqual([{ ruleId: RULE_ID, message: WIKI_KG_MESSAGE }]);
   });
 
@@ -64,13 +64,13 @@ describe("a literal specifier that crosses the boundary is reported", () => {
   });
 
   it("reports a vi.mock factory whose first argument names the kg package", async () => {
-    const code = 'vi.mock("llmwiki-kg", () => ({}));';
+    const code = 'vi.mock("@repo/kg", () => ({}));';
     const messages = await boundaryMessages("test/boundary-probe.test.ts", code);
     expect(messages).toEqual([{ ruleId: RULE_ID, message: WIKI_KG_MESSAGE }]);
   });
 
   it("reports a type-level typeof import of the kg package", async () => {
-    const code = 'type Probe = typeof import("llmwiki-kg");';
+    const code = 'type Probe = typeof import("@repo/kg");';
     const messages = await boundaryMessages("src/boundary-probe.ts", code);
     expect(messages).toEqual([{ ruleId: RULE_ID, message: WIKI_KG_MESSAGE }]);
   });
@@ -106,7 +106,7 @@ describe("what the rule must leave alone", () => {
   });
 
   it("leaves static declarations to no-restricted-imports, so nothing is counted twice", async () => {
-    const messages = await boundaryMessages("src/boundary-probe.ts", 'import "llmwiki-kg";');
+    const messages = await boundaryMessages("src/boundary-probe.ts", 'import "@repo/kg";');
     expect(messages).toEqual([]);
   });
 });
@@ -127,18 +127,18 @@ describe("the kg zone is scanned in its own direction", () => {
 
 describe("the forms the widened gate must not regress", () => {
   it("keeps the api zone exempt from both directions", async () => {
-    const code = 'void import("llmwiki-kg");\nvoid import("llm-wiki-compiler");';
+    const code = 'void import("@repo/kg");\nvoid import("llm-wiki-compiler");';
     const messages = await lintAs("api/boundary-probe.ts", code);
     expect(messages).toEqual([]);
   });
 
   it("reports a kg package subpath, not only the bare package name", async () => {
-    const messages = await boundaryMessages("src/boundary-probe.ts", 'void import("llmwiki-kg/server");');
+    const messages = await boundaryMessages("src/boundary-probe.ts", 'void import("@repo/kg/server");');
     expect(messages).toEqual([{ ruleId: RULE_ID, message: WIKI_KG_MESSAGE }]);
   });
 
   it("reports a type-level import type without the typeof operator", async () => {
-    const messages = await boundaryMessages("src/boundary-probe.ts", 'type C = import("llmwiki-kg").Config;');
+    const messages = await boundaryMessages("src/boundary-probe.ts", 'type C = import("@repo/kg").Config;');
     expect(messages).toEqual([{ ruleId: RULE_ID, message: WIKI_KG_MESSAGE }]);
   });
 });

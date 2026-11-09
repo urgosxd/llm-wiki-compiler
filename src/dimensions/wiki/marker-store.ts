@@ -19,7 +19,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { toArrayLiteral } from "./sql-array.js";
 
 /** Where a marker entry stands. `pending` is retried; `quarantined` is only reported. */

@@ -36,7 +36,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { consolidateEntityRows } from "llmwiki-kg";
+import { consolidateEntityRows } from "@repo/kg";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { asAppRole } from "./kg-runtime-app-role.js";
 

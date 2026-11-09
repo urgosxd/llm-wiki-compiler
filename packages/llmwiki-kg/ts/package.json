@@ -1,9 +1,27 @@
 {
-  "name": "aks-reference-server",
+  "name": "@repo/kg",
   "version": "0.2.0",
   "private": true,
   "description": "TypeScript port of the AKS Reference Server (Express 5 + Zod + Drizzle + Vitest)",
   "type": "module",
+  "exports": {
+    ".": "./src/core-index.ts",
+    "./core-index": "./src/core-index.ts",
+    "./server": "./src/server.ts",
+    "./config": "./src/config.ts",
+    "./db": "./src/db.ts",
+    "./mcp": "./src/mcp.ts",
+    "./mcp-harness": "./src/mcp-harness.ts",
+    "./embedding-backend": "./src/embedding-backend.ts",
+    "./chat-backend": "./src/chat-backend.ts",
+    "./wiki-credential-fallback": "./src/wiki-credential-fallback.ts",
+    "./core/ontology": "./src/core/ontology.ts",
+    "./core/extraction-harness": "./src/core/extraction-harness.ts",
+    "./core/llm/endpoints": "./src/core/llm/endpoints.ts",
+    "./core/llm/embeddings": "./src/core/llm/embeddings.ts",
+    "./core/llm/tool-call": "./src/core/llm/tool-call.ts",
+    "./testing/per-run-database": "./src/testing/per-run-database.ts"
+  },
   "engines": {
     "node": ">=24"
   },

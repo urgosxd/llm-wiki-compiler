@@ -39,7 +39,7 @@ import { sql } from "drizzle-orm";
 
 import { createWikiStoreDimension } from "../../src/dimensions/wiki/store-dimension.js";
 import type { DimensionInput } from "../../src/dimensions/types.js";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";

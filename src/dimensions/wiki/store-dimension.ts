@@ -79,7 +79,7 @@ import type {
 } from "../types.js";
 import { wikiIdempotencyKey } from "./idempotency.js";
 import { withTenant } from "./page-store.js";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 
 /** Directory compiled concept pages live in. */
 const CONCEPTS_DIRECTORY = "concepts";

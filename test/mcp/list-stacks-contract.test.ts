@@ -39,13 +39,13 @@ import { buildServer } from "../fixtures/mcp-test-env.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
-import { createMcpServer } from "../../packages/llmwiki-kg/ts/src/mcp.js";
+import { createMcpServer } from "@repo/kg/mcp";
 import {
   BASE_URL,
   CONTRACT_STACK_KEYS,
   ORACLE_STACKS_BODY,
   recordingFetch,
-} from "../../packages/llmwiki-kg/ts/src/mcp-harness.js";
+} from "@repo/kg/mcp-harness";
 
 /** The `stackId` sentence both dimensions must share, byte for byte. */
 const SHARED_STACK_ID_SENTENCE =

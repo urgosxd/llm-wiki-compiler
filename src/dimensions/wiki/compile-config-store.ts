@@ -32,7 +32,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { withTenant } from "./page-store.js";
 import { toArrayLiteral } from "./sql-array.js";
 

@@ -15,7 +15,7 @@
 import { appRoleExists, countAsAppRole } from "../fixtures/rls-probe.js";
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { writeCompileConfig } from "../../src/dimensions/wiki/compile-config-store.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 

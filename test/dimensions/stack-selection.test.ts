@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createDatabase, createClient, type Database } from "llmwiki-kg";
+import { createDatabase, createClient, type Database } from "@repo/kg";
 import {
   AKS_STACK_ID_ENV_VAR,
   DIMENSIONS_ENV_VAR,

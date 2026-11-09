@@ -23,7 +23,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
-import { consolidateEntityRows, consolidateRelationshipRows, registerDocumentRow } from "llmwiki-kg";
+import { consolidateEntityRows, consolidateRelationshipRows, registerDocumentRow } from "@repo/kg";
 import { createKgReader } from "../../src/dimensions/kg/reader.js";
 import { expectNamedLookupContract } from "../fixtures/reader-assertions.js";
 

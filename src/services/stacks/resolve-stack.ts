@@ -42,7 +42,7 @@
  * The flag is the caller-level override; the resolution stays here, once.
  */
 
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { selectStack } from "../../dimensions/stack-selection.js";
 import { DIMENSIONS_ENV_VAR } from "../../dimensions/activation.js";
 import type { DimensionName } from "../../dimensions/types.js";

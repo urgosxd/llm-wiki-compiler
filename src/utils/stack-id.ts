@@ -47,4 +47,4 @@
 
 // A pure re-export on purpose: any body here would be a second place for the rule
 // to live, and a second place is exactly what this refactor removed.
-export { stackIdProblem } from "llmwiki-kg";
+export { stackIdProblem } from "@repo/kg";

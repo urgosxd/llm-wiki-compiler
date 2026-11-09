@@ -28,8 +28,8 @@ import {
   listPerRunDatabases as listPerRunDatabasesOn,
   perRunDatabase as perRunDatabaseOn,
   reapStalePerRunDatabases as reapStalePerRunDatabasesOn,
-} from "../../packages/llmwiki-kg/ts/src/testing/per-run-database.js";
-import type { SuiteDatabase } from "../../packages/llmwiki-kg/ts/src/testing/per-run-database.js";
+} from "@repo/kg/testing/per-run-database";
+import type { SuiteDatabase } from "@repo/kg/testing/per-run-database";
 import { TEST_DATABASE_URL_ENV_VAR, testDatabaseUrl } from "./test-database.js";
 
 export { PER_RUN_DATABASE_PREFIX, isPerRunDatabaseName };

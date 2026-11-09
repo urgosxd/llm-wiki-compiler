@@ -42,7 +42,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { DEFAULT_STACK_DOMAIN, DEFAULT_STACK_NAME } from "../../dimensions/stack-selection.js";
 
 /** Narrow a caught value to a message worth appending to ours. */

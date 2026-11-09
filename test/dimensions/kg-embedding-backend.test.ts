@@ -66,9 +66,9 @@ async function loadModules(env: Record<string, string> = CLEAN_ENV) {
   vi.resetModules();
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
   const [embeddings, endpoints, backend] = await Promise.all([
-    import("../../packages/llmwiki-kg/ts/src/core/llm/embeddings.js"),
-    import("../../packages/llmwiki-kg/ts/src/core/llm/endpoints.js"),
-    import("../../packages/llmwiki-kg/ts/src/embedding-backend.js"),
+    import("@repo/kg/core/llm/embeddings"),
+    import("@repo/kg/core/llm/endpoints"),
+    import("@repo/kg/embedding-backend"),
   ]);
   return { embeddings, endpoints, backend };
 }

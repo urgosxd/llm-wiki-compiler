@@ -28,9 +28,9 @@ const state: { config: Record<string, string> } = {
   config: { EMBEDDING_PROVIDER: "openai", OPENAI_API_KEY: "", GATEWAY_URL: "", GATEWAY_API_KEY: "" },
 };
 
-vi.mock("llmwiki-kg", async () => {
+vi.mock("@repo/kg", async () => {
   // The bridge and the error class stay REAL: the check under test is theirs.
-  const core = await import("../../../packages/llmwiki-kg/ts/src/core-index.js");
+  const core = await import("@repo/kg/core-index");
   return {
     ...core,
     chunkAndEmbed,
@@ -42,17 +42,17 @@ vi.mock("llmwiki-kg", async () => {
 });
 
 const { createKgDimension } = await import("../../../src/dimensions/kg/index.js");
-const { ConfigValidationError } = await import("llmwiki-kg");
+const { ConfigValidationError } = await import("@repo/kg");
 // The injected wiring itself, read through the real modules so the assertions
 // observe the endpoint a request would actually use.
 const { injectedEmbeddingEndpoint } = await import(
-  "../../../packages/llmwiki-kg/ts/src/embedding-backend.js"
+  "@repo/kg/embedding-backend"
 );
 const { injectedChatEndpoint } = await import(
-  "../../../packages/llmwiki-kg/ts/src/chat-backend.js"
+  "@repo/kg/chat-backend"
 );
 const { embeddingEndpoint, extractionEndpoint } = await import(
-  "../../../packages/llmwiki-kg/ts/src/core/llm/endpoints.js"
+  "@repo/kg/core/llm/endpoints"
 );
 
 /** The backend the wiki dimension reports for the injected cases below. */

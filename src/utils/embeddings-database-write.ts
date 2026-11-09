@@ -22,7 +22,7 @@
  * table describes exactly the store that was passed in.
  */
 import { sql } from "drizzle-orm";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { bindStack, splitPageId } from "./embeddings-tenant.js";
 import type { ChunkEmbeddingV3, EmbeddingStoreV3, PageEmbeddingV3 } from "./embeddings-store.js";
 import { EMBEDDING_MODELS } from "./constants.js";

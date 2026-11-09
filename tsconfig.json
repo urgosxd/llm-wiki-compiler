@@ -23,12 +23,6 @@
       ],
       "llm-wiki-compiler": [
         "./src/index.ts"
-      ],
-      "llmwiki-kg": [
-        "./packages/llmwiki-kg/ts/src/core-index.ts"
-      ],
-      "llmwiki-kg/server": [
-        "./packages/llmwiki-kg/ts/src/server.ts"
       ]
     }
   },

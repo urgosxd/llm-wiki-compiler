@@ -47,7 +47,7 @@
  * checkout path and it is NOT protected across hosts. See the `lock.ts` module header.
  */
 
-import { createClient } from "llmwiki-kg";
+import { createClient } from "@repo/kg";
 
 /**
  * Namespace for this application's advisory locks.

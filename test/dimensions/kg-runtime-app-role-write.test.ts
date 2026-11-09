@@ -41,8 +41,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import "./kg-runtime-provider-env.js";
 
 import { sql } from "drizzle-orm";
-import { setToolResponse } from "../../packages/llmwiki-kg/ts/src/core/extraction-harness.js";
-import { registerDocumentRow } from "llmwiki-kg";
+import { setToolResponse } from "@repo/kg/core/extraction-harness";
+import { registerDocumentRow } from "@repo/kg";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
 import { asAppRole, sqlStateOf } from "./kg-runtime-app-role.js";

@@ -56,7 +56,7 @@
 import { sql } from "drizzle-orm";
 
 import type { Page, PageDirectory } from "../../pages/list.js";
-import type { Database } from "llmwiki-kg";
+import type { Database } from "@repo/kg";
 import { toArrayLiteral } from "./sql-array.js";
 import { stringList } from "./page-string-list.js";
 

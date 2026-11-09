@@ -75,9 +75,9 @@ import {
   type EmbeddingBackendRun,
   type ExtractedEntity,
   type ExtractedRelationship,
-} from "llmwiki-kg";
-import { defaultOntology } from "llmwiki-kg";
-import type { Database, ExtractionResult, Ontology } from "llmwiki-kg";
+} from "@repo/kg";
+import { defaultOntology } from "@repo/kg";
+import type { Database, ExtractionResult, Ontology } from "@repo/kg";
 
 import { getEmbeddingProvider } from "../../utils/embedding-provider.js";
 import { getProvider } from "../../utils/provider.js";

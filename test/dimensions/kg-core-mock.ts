@@ -13,9 +13,9 @@
  * `llmwiki-kg`.
  */
 
-import type * as Core from "../../packages/llmwiki-kg/ts/src/core-index.js";
+import type * as Core from "@repo/kg/core-index";
 
-/** The barrel shape a `vi.mock("llmwiki-kg")` factory receives. */
+/** The barrel shape a `vi.mock("@repo/kg")` factory receives. */
 type CoreModule = typeof Core;
 
 /**
