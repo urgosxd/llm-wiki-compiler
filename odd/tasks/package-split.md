@@ -58,13 +58,13 @@ S1 — Create `@repo/foundation` and relocate the dimension-agnostic shared modu
 
 S2 — Carve `@repo/kg` from `packages/llmwiki-kg`, landing `ontology-store.ts` and `embedding-model-bridge.test.ts` there per D1. — specs: S1, S2, S3, S4, S6 — complete — commit: 1971ead9a525a451bad8537be9788f238b47bcc2, followed by aedadebffb91c1a4697c8bba2d59d1fb412741ed
 
-S3 — Carve `@repo/wiki` from `src/dimensions/wiki`. — specs: S1, S2, S3, S6 — **advanced, not complete** — commit: 61cee9c09bfd9ae9144c5a35c7a3ce3be12fcd35, followed by the commit carrying L13. The parent brief labels this slice `S5: create @repo/wiki and relocate src/`, and that brief label is **this document's S3**, not this document's S5 (see L13); the relocation moved the whole `src/` tree into `packages/wiki/src/`, so the package exists while the wiki dimension is not yet singled out inside it.
+S3 — Carve `@repo/wiki` from `src/dimensions/wiki`. — specs: S1, S2, S3, S6 — **advanced, not complete** — commit: 61cee9c09bfd9ae9144c5a35c7a3ce3be12fcd35, followed by the commit carrying L13, which is 8d3d4a449abebedfaf195a012f09f51c0f099546 (the `API_ZONE` re-point and the census re-derivation), followed by the two root-`src` residue repairs L14 records: d3fb36ceb8d0eed13109b1816115a84bdf7eee05 (the partition roots, the font-vendor target and the typecheck oracle's literals) and 3a0c70d9da1c8f82c08723478763975a4367a56e (`test/fixtures/src-tree.ts` pointed at the relocated package) — L15 records that these two SHAs were absent from this document until it was written. The parent brief labels this slice `S5: create @repo/wiki and relocate src/`, and that brief label is **this document's S3**, not this document's S5 (see L13); the relocation moved the whole `src/` tree into `packages/wiki/src/`, so the package exists while the wiki dimension is not yet singled out inside it.
 
 S4 — Carve `@repo/api`, absorbing `src/dimensions/kg` per D1. — specs: S1, S2, S3, S4, S6 — **partial, not complete** — commit: dc47d27a6632f8b3bad68f1aec7d5a3c665215f6, 6e1370e687e258f273d93f6820fabefc57a3a0c9, d94b20108e51ce8ebd25c855c4d8a95b5b45f6d2 (`@repo/api` exists and is gated, but D1's dissolution did not happen because it cannot happen before `@repo/wiki` exists (see L12))
 
 S5 — Place unit tests in their owning package, module integration in-package with Testcontainers, cross-module integration in `@repo/api`. — specs: S5 — commit: pending (untouched: only `test/`'s import specifiers were rewritten, the test estate has not moved — see L13's label note)
 
-S6 — Re-point the boundary gate at package names, verify the allowed edges `api → wiki`, `api → kg`, `{wiki,kg,api} → foundation` and that `wiki ↔ kg` is rejected both ways, and bring all gates green. — specs: S2, S3 — **partial, not complete** — commit: none yet (the gate is re-pointed at `@repo/kg` in 1971ead9a525a451bad8537be9788f238b47bcc2 and proven to bite, and all gates are green, but `@repo/wiki` and `@repo/api` do not exist yet, so the allowed-edge matrix cannot be verified; advanced by 61cee9c09bfd9ae9144c5a35c7a3ce3be12fcd35 (which moved `WIKI_ZONE` to `packages/wiki/`) and by the commit carrying L13 (which fixed the stale `API_ZONE`, brought the ratchet's matching pattern into step, and re-derived the census at 79 sites / 41 files with a bite proof — still partial, because `@repo/api` is empty and the permitted `api → wiki` / `api → kg` directions stay unexercised)
+S6 — Re-point the boundary gate at package names, verify the allowed edges `api → wiki`, `api → kg`, `{wiki,kg,api} → foundation` and that `wiki ↔ kg` is rejected both ways, and bring all gates green. — specs: S2, S3 — **partial, not complete** — commit: none yet (the gate is re-pointed at `@repo/kg` in 1971ead9a525a451bad8537be9788f238b47bcc2 and proven to bite, and all gates are green, but `@repo/wiki` and `@repo/api` do not exist yet, so the allowed-edge matrix cannot be verified; advanced by 61cee9c09bfd9ae9144c5a35c7a3ce3be12fcd35 (which moved `WIKI_ZONE` to `packages/wiki/`) and by the commit carrying L13, which is 8d3d4a449abebedfaf195a012f09f51c0f099546 (which fixed the stale `API_ZONE`, brought the ratchet's matching pattern into step, and re-derived the census at 79 sites / 41 files with a bite proof — still partial, because `@repo/api` is empty and the permitted `api → wiki` / `api → kg` directions stay unexercised)
 
 ## Log
 
@@ -256,3 +256,84 @@ baseline, no regression); `typecheck:kg` 0 (357 files); `lint` 0 at the literal 
 introduced); `fallow:kg` 0; and the three new/touched test files 22/22 green together with
 `test-partition-coverage.test.ts`. The full suite was deliberately **not** run here — the independent
 verifier runs it once, alone, after this commit.
+
+L15 (closing record for the `@repo/wiki` slice: the verifier's failure classes turned into durable probes,
+and the arithmetic repaired).
+
+**Why this entry exists.** Independent verification certified the delivery GREEN and then found that this
+document could not be used to reconstruct it: `d3fb36ceb8d0eed13109b1816115a84bdf7eee05` and
+`3a0c70d9da1c8f82c08723478763975a4367a56e` — the two commits that closed L14's blockers — appeared
+**nowhere** as SHAs, and both `S3`'s and `S6`'s cells referred to a third commit only as "the commit
+carrying L13". All three are now in `## Tasks` as full 40-character SHAs, appended to the existing cell
+text, with nothing deleted. A reader following the cells can now walk the slice commit by commit.
+
+**The gate of record, certified by the verifier on this tree.** `pnpm test` exit **0** — **6,861 passed /
+7 skipped**, **480 s**, with the database-backed suites RUNNING (no `LLMWIKI_TEST_ALLOW_NO_DATABASE`), which
+is the only tier that proves the `apply-schemas.sh` dual contract L13 recorded. This closing commit does
+**not** repeat that run, and the omission is deliberate rather than an oversight: what it changes is three
+new test files plus this markdown append, so a second 480-second run would re-prove the same tree at the
+price of the whole tier. The probes' own gates are listed at the end of this entry.
+
+**The final arithmetic, superseding L13's wider range.** **560 renames, 0 deletions**; **2,694 added /
+2,269 deleted** authored lines against **101,202** relocated lines = **37.6:1**. L13 recorded 2,417 /
+2,242 / ≈42:1, and that figure was **correct for its own narrower range** — it predated the final fixtures
+and both residue repairs. The order of magnitude is unchanged; what was wrong was the brief's assumption
+of three orders, never L13's measurement of the range it actually covered.
+
+**The census, re-derived through the ratchet's own collector in this commit.** **79 sites / 41 files** —
+`no-restricted-imports` **43 sites / 31 files** plus `local/dimension-boundary` **30 literal / 11 files**
+and **6 non-literal / 1 file** — with **`kg → wiki` = 0** and **`wiki|kg → api` = 0**. The whole house
+violation set the same collector returns is 643 sites / 466 files / 1838 files scanned, which is exactly
+the literal lint triple below: the probes added **0** boundary sites, so the freeze and the reach agree.
+
+**P1 — `test/gate-zone-paths-exist.test.ts`: a zone that names a directory the tree does not have.** The
+config is **parsed**, not regex-scanned, because its own comments quote the pre-move spelling
+(`tree("api/")`) while explaining the repair — a text scan would fail on the explanation. Every
+`tree("<path>")` literal is extracted with its owning constant and resolved against the tree, and a second
+case pins that `WIKI_ZONE`, `KG_ZONE` and `API_ZONE` were all read, so the extraction cannot pass
+vacuously. RED, proved by temporarily restoring the pre-`8d3d4a4` spelling (the parent's method):
+`zone API_ZONE = tree("api/") names a directory the tree does not have`, reverted with
+`git status --short eslint.config.mjs` empty. GREEN after the revert, 2/2.
+
+**P2 — `test/build-stamp-source-coverage.test.ts`: a cache that silently stops watching the moved tree.**
+`INPUT_DIRS` is read out of the script's own source and at least one entry must exist AND hold a `.ts` file
+anywhere below it. It asserts **coverage**, not the absence of the deliberate dead `"src"` entry, which is
+documented in the file and which `test/build-stamp.test.ts` depends on for its scratch fixture. RED,
+proved by temporarily narrowing the list to the dead root alone (`INPUT_DIRS = ["src"]`):
+`INPUT_DIRS covers no directory holding .ts files: src`, reverted with `git status --short
+scripts/build-stamp.ts` empty. GREEN after the revert, 2/2, plus a permanent synthetic case over an
+`mkdtemp` tree holding no sources.
+
+**P3 — `test/no-executable-root-src-walks.test.ts`: the class that shipped two defects past six green
+gates.** The scanned estate is `scripts/**/*.{ts,js,mjs}` and `test/fixtures/*.ts`; violations fail as
+`path:line: stale root src walk`. Two shapes count, and the second is why the allowlist names
+`scripts/build-stamp.ts:47`: a filesystem call whose first string argument names root `src`, and a
+**walk-root list** — a `*_DIRS`/`*_ROOTS` array literal a walker iterates — naming one. The parent brief
+specified only the call shape, under which that line is **not** an argument (`INPUT_DIRS` reaches
+`readdirSync` two hops later through `hashDir`), and the allowance it names would then have been dead
+weight documenting a site nothing could ever report. RED was therefore observed on the real tree by
+running the probe **before** setting its allowlist: `scripts/build-stamp.ts:47: stale root src walk`, one
+violation, GREEN after the entry and its reason landed, 2/2 + a synthetic case proving the detector fires.
+The relative-walk spelling (`"../../src"`, the shape `test/fixtures/src-tree.ts` carried before
+`3a0c70d9`) is **not** in either shape and stays uncovered, stated here so nobody reads this probe as
+total.
+
+**Two advisories left open, and neither is closed by this commit.** (1) `AGENTS.md:93,95,104,124` still
+carries stale prose about a root `src/` — `test:unit` covering `src/`, the build stamp hashing the `src/`
+tree, and the lint ratchet naming `src/` ↔ `packages/llmwiki-kg` — all of which stopped being true at
+`61cee9c`. It was **undisclosed until now**: L14 listed the surviving prose as
+`.github/workflows/ci.yml`, `Dockerfile`, `scripts/kg-typecheck.ts`, `scripts/lint-ratchet.ts` and
+`scripts/test-keyless.sh`, and `AGENTS.md` was not on that list. It is outside this slice's edit surfaces
+and is recorded, not fixed. (2) `test/` was **not** relocated: only its import specifiers were rewritten,
+so this document's `S5` remains `pending` and no `## Tasks` cell moves for it.
+
+**This commit's SHA is a placeholder in this entry — `<recorded when read back>`. History rewriting is
+prohibited, so `--amend` was not used to fill it; the parent's record sweep reads it from the branch.**
+
+**Gates of record for this commit.** `tsc --noEmit` 0; `typecheck:tests` 0 — **1774 files checked; 260
+baseline diagnostics in 94 files; no regression**, so `test-typecheck-baseline.json` was **not touched**
+(the three new files added 4 files to the checked set and 0 diagnostics); `lint` 0 at the literal triple
+**643 / 466 / 496** with **1838 files scanned** (the rise is the three new files, the triple is
+unchanged); `fallow:ci` 0 — 0 dead-code, 0 complexity, 0 duplication introduced; `build` 0;
+`node dist/cli.js --version` → `1.4.0-dev.20260919` exit 0; `grep -o '@repo/[a-z-]*' dist/*.js` empty;
+and the three new probes 6/6 green together.
