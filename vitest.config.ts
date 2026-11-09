@@ -46,13 +46,32 @@ export default defineConfig({
     setupFiles: ["./test/setup/test-database-url.ts"],
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: HOOK_TIMEOUT_MS,
-    // Many integration tests spawn a CLI subprocess. With one worker per core
-    // each ALSO spawning a node process, the machine is oversubscribed ~2x and
-    // subprocess spawns get starved past their timeout — a non-deterministic
-    // failure whose victim varies per run. Cap workers to half the cores so
-    // each worker+subprocess pair fits, independent of how many subprocess
-    // tests exist.
-    maxWorkers: "50%",
+    // CAP SIZED BY MEASURED PEAK RSS, NOT BY CORE COUNT. Many integration tests
+    // spawn a CLI subprocess, so one worker per core oversubscribes the machine
+    // ~2x and subprocess spawns get starved past their timeout — a
+    // non-deterministic failure whose victim varies per run. Core count is the
+    // wrong input for that; peak RSS is the right one. Measured on this host
+    // (16 cores, 13805 MB RAM, 4 GB swap already 3.4-3.7 GB consumed by
+    // unrelated resident processes), one full-suite run per configuration,
+    // sequential and alone, peak RSS of the whole run's process tree from the
+    // scope's cgroup `memory.peak` (descendants included):
+    //   2 workers: 809 s, 2808 MB peak (1404 MB/worker), 0 swap out
+    //   4 workers: 496 s, 3816 MB peak ( 954 MB/worker), ~1 MB swap out
+    //   6 workers: 403 s, 5119 MB peak ( 853 MB/worker), ~400 MB swap out,
+    //              worst MemAvailable 2576 MB
+    // Six workers buys 93 s and costs the host: it pushes ~400 MB into swap and
+    // pulls MemAvailable down to 2576 MB while other sessions are resident,
+    // which is how concurrent verification runs start killing each other. These
+    // absolute figures are INDICATIVE of this shared host, not its capacity.
+    //
+    // WHY 4 AND NOT THE UNIT TIER'S OPTIMUM: the number is sized from the worst
+    // case `pnpm test` can actually meet. `test` runs BOTH tiers unfiltered in
+    // one process pool, so the per-worker cost that binds the cap is the
+    // integration tier's — those files spawn `node dist/cli.js` children
+    // (measured max single-child RSS 442 MB), and the unit tier therefore
+    // deliberately runs below its own optimum here. Nobody should raise this
+    // number without the integration tier's per-worker peak in hand.
+    maxWorkers: 4,
     minWorkers: 1,
     // Seed, do not default: see TEST_DATABASE_ENV for why omission is the bug.
     // The per-run fixture overrides this per process; without the seed an un-provisioned suite would reach production's 5432.
