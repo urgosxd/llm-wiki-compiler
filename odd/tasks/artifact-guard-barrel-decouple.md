@@ -85,11 +85,12 @@ Consequence: the work is plumbing that survives every CLI decision, and "no prod
 | T1 (done) — this feature document | none | worker | (this commit) |
 | T2 (done) — Piece 2, the MCP barrel decoupling (`packages/wiki/src/mcp/**`) | S5-S9 | worker | e00b838534bb6a3ed8a7e827399e6867ad3cd6c0 |
 | T3 — Piece 1, `test/artifact/dist-specifiers.test.ts` | S1-S4 | worker | pending |
-| T4 — Piece 3, `test/artifact/entries-load.test.ts` | S10-S11 | worker | pending |
+| T4 (done) — Piece 3, `test/artifact/entries-load.test.ts` | S10-S11 | worker | (this commit) |
 | T5 — independent verification of T2-T4 plus the full gate set | S12-S15 | verify | pending |
 
-T1 is done because this file is its deliverable; its commit column stays `pending` because a commit cannot
-contain its own hash, and the SHA is reported in the implementation handoff instead.
+T1 is done because this file is its deliverable. The commit column of T1 and T4 reads `(this commit)`
+because a commit cannot contain its own hash, and the SHAs are reported in the implementation handoff
+instead.
 
 ## Log
 
