@@ -191,7 +191,7 @@ async function uniqueFilename(
  * state atomic ingest removes. The tenant is still bound here, for the reason
  * {@link bindStack} documents.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack that owns this document.
  * @param document - Title, full markdown (frontmatter + body), and source identity.
  * @param callerTx - Ambient transaction to join, when the coordinator owns one.
@@ -247,7 +247,7 @@ export async function saveSourceDocument(
  * This is the replacement for `readdir` over `sources/`: same set, same order, but
  * the answer comes from rows.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack whose corpus to read.
  * @returns Documents ordered by filename.
  */
@@ -258,7 +258,7 @@ export async function saveSourceDocument(
  * content by a key it just discovered, and a document deleted between detection and
  * extraction is a race the caller can report as a finding, not a crash.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack the document belongs to.
  * @param sourceIdentity - Unique identity of the document.
  * @returns The document, or undefined when the Stack no longer holds it.
@@ -323,7 +323,7 @@ export async function listSourceDocuments(db: DatabaseHandle, stackId: string): 
  * identities would force the compiler to re-read every document to hash it -- which
  * is the `readdir` cost this migration exists to remove.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack whose corpus to scan.
  * @returns A source the compiler can diff against its previous state.
  */
@@ -350,7 +350,7 @@ export function sourceDocumentsChangeSource(
  * every hash on every run, while content is read only for the documents that
  * actually get extracted.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack whose corpus to read.
  * @returns A reader the compiler can use instead of `readFile`.
  */
@@ -375,7 +375,7 @@ export function sourceDocumentsContentSource(
  * listed documents from one place and read them from another would ask for keys the
  * reader never had.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack whose corpus to extract from.
  * @returns The paired corpus source.
  */

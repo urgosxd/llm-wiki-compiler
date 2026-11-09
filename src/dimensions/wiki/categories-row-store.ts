@@ -292,7 +292,7 @@ function outcomeOf(record: CategoryRecord): CategoryStoreOutcome {
  * colliding path and this refuses a taken primary key, with the SAME error and the same
  * decision string, so a caller cannot tell which backend answered a collision.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack that will own the category.
  * @param draft - The category to create.
  * @returns The stored record and its object id.
@@ -318,7 +318,7 @@ async function createInRows(
 /**
  * Apply a partial change to one stored category, preserving its identity.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack that owns the category.
  * @param categoryId - The identity to update.
  * @param patch - The fields to change; omitted fields keep their stored value.
@@ -353,7 +353,7 @@ async function updateInRows(
  * backend can reuse the already-held project lock, and rows have no project lock -- the
  * transaction opened here is the unit.
  *
- * @param db - DatabaseHandle handle of the run.
+ * @param db - The run's database handle.
  * @param stackId - The Stack to read and write.
  * @returns The row-backed port.
  */

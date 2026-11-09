@@ -60,7 +60,7 @@ interface RankedChunkRow extends Record<string, unknown> {
  * "ranked, and found nothing" from "could not rank": an empty array reads as "no
  * relevant pages", which is a different claim from "the index is unusable".
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The tenant whose chunks to rank.
  * @param queryVec - Embedded query; the caller has already checked its dimensions.
  * @param k - Maximum hits to return.

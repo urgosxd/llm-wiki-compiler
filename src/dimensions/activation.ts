@@ -161,7 +161,7 @@ export interface ResolveDimensionsOptions {
    */
   readonly stackId?: string;
   /**
-   * DatabaseHandle handle to bind the wiki dimension to.
+   * The database handle to bind the wiki dimension to.
    *
    * REQUIRED, and deliberately not optional. Every dimension is Postgres-backed
    * now, so a caller without a handle cannot build one. It is a required

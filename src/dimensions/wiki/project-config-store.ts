@@ -52,7 +52,7 @@ class ProjectConfigVersionMismatch extends Error {
 /**
  * Read one Stack's config document.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack whose config to read.
  * @returns The stored document, or `undefined` when the Stack has none.
  */

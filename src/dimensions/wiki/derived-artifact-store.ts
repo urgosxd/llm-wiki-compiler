@@ -38,7 +38,7 @@ export type DerivedArtifactKind = "index" | "moc";
  * artifact is a FUNCTION of the registry, so writing it twice with the same input
  * must leave one row and not fail.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack this artifact belongs to.
  * @param kind - Which artifact is being stored.
  * @param content - Exactly what the renderer emitted.
@@ -67,7 +67,7 @@ export async function saveDerivedArtifact(
  * Undefined is distinct from empty: a Stack that never compiled has no index, while a
  * Stack that compiled an empty corpus has a valid empty one.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack whose artifact to read.
  * @param kind - Which artifact to read.
  * @returns The rendered content, or undefined when absent.

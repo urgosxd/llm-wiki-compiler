@@ -104,7 +104,7 @@ interface ExistingPage {
  * title there may be compile's rather than the source's. `wiki.source_documents`
  * is written only by `saveSourceDocument`, which only ingest calls.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The tenant.
  * @param source - Source identity.
  * @returns The stored title, or `undefined` when this source has no document row.
@@ -153,7 +153,7 @@ function requireSlug(title: string): string {
  * `page-store.ts` documents: RLS is inert under a bypassing role, so the explicit
  * predicate is the guarantee.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The tenant.
  * @param source - Source identity.
  * @returns The existing page, or `undefined`.
@@ -182,7 +182,7 @@ async function findPageBySource(
  * the only existing holder is the same source, which is what keeps a re-ingest
  * under a changed title updating in place rather than forking.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The tenant.
  * @param slug - The desired slug.
  * @param source - The source asking for it.
@@ -219,7 +219,7 @@ async function resolveFreeSlug(
 export interface WikiStoreDimensionOptions {
   /** The tenant whose pages this dimension writes. */
   readonly stackId: string;
-  /** DatabaseHandle handle; the pooled one in production, a test's own in tests. */
+  /** The database handle; the pooled one in production, a test's own in tests. */
   readonly db: DatabaseHandle;
   /**
    * Project root whose `sources/` the raw markdown is ALSO written to.

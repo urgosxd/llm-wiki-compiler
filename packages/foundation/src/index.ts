@@ -37,13 +37,17 @@
  *
  * Every property access on a `Database`-typed value in `src/`, `test/`,
  * `scripts/` and `packages/llmwiki-kg/ts/src` was resolved through the TypeScript
- * checker and counted: 152 `execute` reaches and 37 `transaction` reaches, and no
- * other member appears at all. `insert`, `select`, `update` and `delete` were
- * expected to be part of this seam and were measured to be called nowhere — every
- * statement in the tree is a `sql` template handed to `execute`, because the
- * drizzle `schema` object describes `public` only and the wiki's own tables are raw
- * SQL by design. So they are not here: four methods every layer must satisfy and
- * nobody calls are the same dead-configuration class as an unused setting.
+ * checker and counted, and `execute` and `transaction` are the only two members
+ * that appear at all. `insert`, `select`, `update` and `delete` were expected to be
+ * part of this seam and were measured to be called nowhere — every statement in the
+ * tree is a `sql` template handed to `execute`, because the drizzle `schema` object
+ * describes `public` only and the wiki's own tables are raw SQL by design. So they
+ * are not here: four methods every layer must satisfy and nobody calls are the same
+ * dead-configuration class as an unused setting.
+ *
+ * The reach counts are deliberately not written down. They move with every new
+ * store that touches a handle, and a number in a comment rots the first time the
+ * tree does — which is what happened to the pair this paragraph used to carry.
  *
  * ## Why this package names `drizzle-orm` instead of describing it structurally
  *
@@ -84,7 +88,10 @@ type DatabaseRows<TRow extends Record<string, unknown>> = PgQueryResultKind<
  * A database handle, as this repository uses one.
  *
  * Satisfied by `createDatabase(createClient(url))` with no cast; see
- * `test/foundation-database-handle.test.ts`, which is where that claim is held to.
+ * `packages/llmwiki-kg/ts/src/foundation-database-handle.test.ts`, which is where
+ * that claim is held to. The test lives beside the concrete handle it exercises
+ * rather than here: reaching `createDatabase` from this package would make the
+ * bottom layer import the dimension it exists to decouple.
  */
 export interface DatabaseHandle {
   /**

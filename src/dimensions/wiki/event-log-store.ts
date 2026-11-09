@@ -81,7 +81,7 @@ function toEventRecord(row: EventRow): EventRecord & { seq: number } {
  * Ordered by `seq` because that IS the chain: a reader that reordered these rows
  * would report every link as broken.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack whose log to read.
  * @returns The records, oldest first; empty for a Stack that logged nothing.
  */
@@ -117,7 +117,7 @@ export async function readEventLog(db: DatabaseHandle, stackId: string): Promise
  * Reading the tail's checksum inside the lock is one indexed lookup and cannot be
  * stale.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack to append to.
  * @param content - The event content, without `id`, `prevHash` or `checksum`.
  * @returns The appended record, with its allocated `seq`.

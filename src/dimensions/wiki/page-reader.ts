@@ -54,7 +54,7 @@ import { listStoredPages } from "./page-store.js";
 export interface WikiPageReaderOptions {
   /** The tenant whose pages this reader answers for. */
   readonly stackId: string;
-  /** DatabaseHandle handle; the pooled one in production, a test's own in tests. */
+  /** The database handle; the pooled one in production, a test's own in tests. */
   readonly db: DatabaseHandle;
 }
 

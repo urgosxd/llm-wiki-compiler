@@ -58,7 +58,7 @@ interface JournalRow extends Record<string, unknown> {
 /**
  * Append one entry to a Stack's journal.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack this entry belongs to.
  * @param entry - The operation, description, details and timestamp.
  * @returns The `seq` the entry was allocated.
@@ -94,7 +94,7 @@ export async function appendJournalEntry(
  * two entries can share a rendered timestamp. A caller that sorts by date would
  * reorder history the moment two operations landed in the same second.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack whose journal to read.
  * @returns Every entry in the order it was appended.
  */

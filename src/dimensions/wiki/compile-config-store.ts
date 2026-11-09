@@ -70,7 +70,7 @@ interface CompileConfigRow extends Record<string, unknown> {
  * caller forced to handle `undefined` here would end up inventing an empty value
  * at every site, which is how one of them eventually invents a different one.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack whose config to read.
  * @returns The stored config, or the empty one when no compile has run.
  */
@@ -102,7 +102,7 @@ export async function readCompileConfig(
  * would leave a window where the row exists with defaults that were never the
  * intent.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack that owns this config.
  * @param config - The state to persist.
  */

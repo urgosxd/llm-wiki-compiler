@@ -69,7 +69,7 @@ function describe(error: unknown): string {
 /**
  * Decide whether a failed probe means "absent" or "no database at all".
  *
- * @param db - DatabaseHandle handle whose probe failed.
+ * @param db - The database handle whose probe failed.
  * @param context - Which probe failed, phrased for whoever reads the failure.
  * @param cause - The probe's own error.
  * @returns `false` when the server answered and the object is genuinely absent.
@@ -102,7 +102,7 @@ async function absentOrUnreachable(
  * Without it the only available role is the superuser, every policy is inert, and
  * every isolation assertion would pass vacuously.
  *
- * @param db - DatabaseHandle handle to ask.
+ * @param db - The database handle to ask.
  * @returns True when `llmwiki_app` exists.
  * @throws When the database cannot be obtained at all, unless the opt-out is set.
  */
@@ -129,7 +129,7 @@ export async function appRoleExists(db: DatabaseHandle): Promise<boolean> {
  * `set local role`, and the probe would silently answer from the superuser session
  * -- which is exactly the vacuous pass it exists to prevent.
  *
- * @param db - DatabaseHandle handle to open the probe transaction on.
+ * @param db - The database handle to open the probe transaction on.
  * @param boundStackId - Stack to bind, or `null` for an unbound session.
  * @param count - Statement answering how many rows the bound session can see.
  * @returns What `count` returned inside the app-role transaction.
@@ -163,7 +163,7 @@ export async function countAsAppRole(
  * and disabled a whole suite -- and a skip is SILENT, so nothing pointed at the cause.
  * Asking for the specific tables a suite uses cannot be invalidated by unrelated work.
  *
- * @param db - DatabaseHandle handle to ask.
+ * @param db - The database handle to ask.
  * @param tables - Table names the suite cannot run without.
  * @returns True when every named table exists.
  * @throws When the database cannot be obtained at all, unless the opt-out is set.

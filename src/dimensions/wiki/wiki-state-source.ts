@@ -75,7 +75,7 @@ function toIsoString(value: string | Date): string {
  * a missing `state.json`, and keeping the same answer means no caller needs a new
  * branch.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack whose state to read.
  * @returns The reassembled state.
  */
@@ -108,7 +108,7 @@ export async function readWikiStateFromRows(db: DatabaseHandle, stackId: string)
  * `page-store.ts`: under a superuser owner the policy is inert, so a query relying
  * on RLS alone would return every Stack's rows.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack whose rows to read.
  * @returns The rows, ordered by identity for a stable result.
  */
@@ -157,7 +157,7 @@ function toSourceState(row: CompileStateRow): SourceState {
  * compile record behind, or the next run would consider a document that no longer
  * exists to be already compiled.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack that owns this state.
  * @param state - The state to persist.
  */
@@ -212,7 +212,7 @@ export async function writeWikiStateToRows(
  * type: the draft lives on the compile path, which must stay usable with no database
  * at all.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack whose state this is.
  * @returns A reader and a writer for that Stack's state.
  */
@@ -248,7 +248,7 @@ export function createWikiStateRowsBackend(
  *     because a Stack's rows are always migrated with the deployment that wrote them.
  *     Kept in the union so callers written against the file path stay valid.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack whose state to classify.
  * @returns The status plus the carried state, matching `ClassifiedState`.
  */

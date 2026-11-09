@@ -60,7 +60,7 @@ function candidateStackId(env: NodeJS.ProcessEnv = process.env): string | undefi
 /**
  * Build the row source for an open handle.
  *
- * @param db - DatabaseHandle handle, already scoped by the caller.
+ * @param db - The database handle, already scoped by the caller.
  * @param stackId - The Stack whose queue this source answers for.
  * @returns A source the read and write modules can use interchangeably.
  */

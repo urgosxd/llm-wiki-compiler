@@ -88,7 +88,7 @@ function joinPageId(pageDirectory: string, slug: string): PageId {
  * treat the wiki as un-embedded, while an unreadable header must degrade retrieval
  * with a warning instead of silently rebuilding over paid vectors.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack whose header to read.
  * @returns The header, or null when this Stack has none.
  */
@@ -156,7 +156,7 @@ async function readMetaInScope(
  * rather than failing the read: the file loader's contract was that one malformed
  * identity must not make the corpus unavailable.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack whose store to read.
  * @returns The reassembled store, or null when this Stack has none.
  */
@@ -295,7 +295,7 @@ function toIsoString(value: Date | string): string {
  * missing header would make every first query on a fresh Stack emit a warning that
  * looks like a fault.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack whose store to read.
  * @returns A source the loaders can gate.
  */
@@ -365,7 +365,7 @@ function describeReadFailure(err: unknown): string {
  * vector describe one page while sitting under another's identity. The writer only
  * ever produces v3, so a non-v3 here means a caller bypassed the migration core.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack that owns these vectors.
  * @returns A sink the writer can persist through.
  */
@@ -391,7 +391,7 @@ export function databaseEmbeddingSink(db: DatabaseHandle, stackId: string): Embe
  * and write the file, updating a store nothing consults. Returning the pair from
  * one function makes that mismatch unrepresentable.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - Stack that owns these vectors.
  * @returns A location the writer and reader both accept.
  */

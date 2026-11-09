@@ -35,7 +35,7 @@ afterAll(async () => {
 /**
  * Count rows mentioning this file's secret slug, with NO stack predicate.
  *
- * @param db - DatabaseHandle handle to run on.
+ * @param db - The database handle to run on.
  * @param boundStackId - Stack to bind, or `null` for an unbound session.
  * @returns How many rows the statement could see.
  */

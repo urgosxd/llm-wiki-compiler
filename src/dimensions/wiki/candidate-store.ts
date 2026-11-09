@@ -204,7 +204,7 @@ function generationEvidenceOf(row: CandidateRow): Partial<ReviewCandidate> {
 /**
  * List one Stack's pending candidates, newest first.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack whose queue to read.
  * @returns The candidates, newest first.
  */
@@ -228,7 +228,7 @@ export async function listStoredCandidates(db: StoreHandle, stackId: string): Pr
 /**
  * Read one candidate by id, or undefined when this Stack has no such candidate.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack whose candidate to read.
  * @param candidateId - The candidate's stable identifier.
  * @returns The candidate, or undefined.
@@ -260,7 +260,7 @@ export async function getStoredCandidate(
  * Upsert rather than insert: a candidate is re-persisted when its review metadata
  * changes, and that must update the existing entry rather than fail on the key.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack that owns the candidate.
  * @param candidate - The candidate to store.
  */
@@ -365,7 +365,7 @@ function toInsertValues(stackId: string, c: ReviewCandidate) {
 /**
  * Store one candidate for a Stack.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack that owns the candidate.
  * @param candidate - The candidate to store.
  */
@@ -384,7 +384,7 @@ export async function saveStoredCandidate(
  * caller distinguish "consumed the queue entry" from "it was already gone", which
  * the file store expressed by whether the unlink succeeded.
  *
- * @param db - DatabaseHandle handle.
+ * @param db - The database handle.
  * @param stackId - The Stack that owns the candidate.
  * @param candidateId - The candidate's stable identifier.
  * @returns True when a row was removed.

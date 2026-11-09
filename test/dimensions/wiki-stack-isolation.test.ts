@@ -78,7 +78,7 @@ function inputOf(title: string, source: string): DimensionInput {
  * The absence of a `where stack_id` is the point: it asks what the database
  * itself enforces, not what a query author remembered to write.
  *
- * @param db - DatabaseHandle handle to run on.
+ * @param db - The database handle to run on.
  * @param boundStackId - Stack to bind, or `null` for an unbound session.
  * @returns How many rows the statement could see.
  */
