@@ -44,7 +44,10 @@
  * never touched. See that function's docstring for the detail.
  */
 
-import { getSource, deleteSource, sourceFileMissing } from "./store.js";
+import { unlink } from "node:fs/promises";
+import path from "node:path";
+import { getSource, sourceFileMissing } from "./store.js";
+import { confinedRegularFile, resolveSourcesDir } from "../utils/path-confine.js";
 import { assertSafeSourceId } from "./source-record.js";
 import {
   computeRemovalPlan,
@@ -204,6 +207,37 @@ export async function planRemoval(root: string, ref: string): Promise<RemovalPla
 }
 
 /**
+ * Unlink the plan's source FILE, confined exactly as the store's read paths are.
+ *
+ * TEMPORARY SHAPE, NOT A DESIGN. This is the one unlink `deleteSource` used to
+ * perform, inlined here because that half-capability was withdrawn with `rm`:
+ * it unlinked the raw source and left its derived pages, links and state rows
+ * behind. `rm` and this whole module leave the product in task T5, so this is
+ * deliberately the smallest faithful equivalent rather than a new API — do not
+ * grow it, and do not mistake it for a delete capability anyone should call.
+ *
+ * @param root - Absolute project root.
+ * @param id - Source-relative path including `.md`, already validated by
+ *   {@link planRemoval}.
+ * @returns `true` when a file was removed, `false` when the (valid) id had no
+ *   file — the resume path, where an earlier run already unlinked it.
+ */
+async function unlinkPlannedSource(root: string, id: string): Promise<boolean> {
+  assertSafeSourceId(id);
+  const dir = await resolveSourcesDir(root);
+  if (dir === null) return false;
+  // Not a confined regular file (missing, symlink, or directory) → nothing to unlink.
+  if ((await confinedRegularFile(dir, id)) === null) return false;
+  try {
+    await unlink(path.join(dir, id));
+    return true;
+  } catch (err) {
+    if ((err as { code?: string }).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+/**
  * What {@link applyRemovalLocked} actually did — the source of truth the CLI's
  * `printPlan` (`src/commands/rm.ts`) must report from, never the pre-lock
  * `RemovalPlan` itself, which can overstate reality.
@@ -293,7 +327,7 @@ export async function applyRemovalLocked(root: string, plan: RemovalPlan): Promi
   const current = partitionConcepts(plan.sourceFile, fresh);
   assertOwnershipUnchanged(plan, current);
 
-  const sourceDeleted = await deleteSource(root, plan.sourceFile);
+  const sourceDeleted = await unlinkPlannedSource(root, plan.sourceFile);
   // Floor-skipped pages are RETURNED, never swallowed: compile surfaces its own
   // skips as errors (src/compiler/index.ts:225), and a page the user asked to
   // remove that silently stayed on disk is exactly the failure `rm` exists to

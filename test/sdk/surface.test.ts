@@ -20,7 +20,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
@@ -28,7 +28,7 @@ import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
 /** The methods the facade must expose, mirrored from `WikiCore`. */
 const REQUIRED = [
   "ingest", "ingestText", "compile", "search", "query", "getPage", "listPages",
-  "listSources", "getSource", "deleteSource", "status", "lint", "lintByTier",
+  "listSources", "getSource", "status", "lint", "lintByTier",
   "getContextPack", "exportJson", "runEval", "exportOkf", "importOkf",
 ] as const;
 
@@ -40,6 +40,19 @@ const REMOVED = [
 ] as const;
 
 describe("createWiki facade surface", () => {
+  it("no longer exposes deleteSource, the rm half-capability", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "sdk-surface-del-"));
+    try {
+      const wiki = createWiki({ root }) as unknown as Record<string, unknown>;
+      // `deleteSource` unlinked the raw source and left its derived pages, links
+      // and state rows behind. With `rm` gone it would turn "no delete" into
+      // "delete, but it corrupts", so it left with the capability.
+      expect(wiki.deleteSource, "deleteSource was withdrawn with the rm capability").toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("exposes every wiki method and none of the removed slices", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "sdk-surface-"));
     try {
@@ -52,6 +65,22 @@ describe("createWiki facade surface", () => {
         // Named separately so a reintroduction reads as what it is, not as a generic failure.
         expect(wiki[method], `${method} belongs to a removed subsystem`).toBeUndefined();
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("still reads a source by id, the capability that survives the removal", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "sdk-surface-get-"));
+    try {
+      await mkdir(path.join(root, "sources"), { recursive: true });
+      await writeFile(path.join(root, "sources/note.md"), "---\ntitle: Note\n---\nsurviving body", "utf-8");
+
+      const wiki = createWiki({ root });
+      const source = (await wiki.getSource("note.md")) as { id: string; body?: string } | null;
+
+      expect(source?.id).toBe("note.md");
+      expect(source?.body).toContain("surviving body");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

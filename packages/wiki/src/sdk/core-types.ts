@@ -105,8 +105,6 @@ export interface WikiCore {
   listSources(opts?: ListSourcesOptions): Promise<unknown>;
   /** Read one source document. */
   getSource(id: string): Promise<unknown>;
-  /** Delete one source document. */
-  deleteSource(id: string): Promise<unknown>;
   /** Project status. */
   status(): Promise<unknown>;
   /** Lint the wiki. */

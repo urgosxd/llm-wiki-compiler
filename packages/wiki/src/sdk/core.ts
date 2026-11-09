@@ -40,7 +40,7 @@ import { collectStatus } from "../status/collect.js";
 import { pickSearchRefs, loadSelectedRefs } from "../search/retrieval.js";
 import { getPage, listPages } from "../pages/list.js";
 import { withPageSource, withRegistrySource } from "../dimensions/wiki/page-source-seam.js";
-import { listSources, getSource, deleteSource } from "../sources/store.js";
+import { listSources, getSource } from "../sources/store.js";
 import { runOkfExport } from "../export/okf/run.js";
 import { runOkfImport } from "../import/run.js";
 import { applyApprovedMutations } from "../trust/executor.js";
@@ -126,8 +126,6 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     listSources: (opts) => runQuiet(() => listSources(root, opts)),
 
     getSource: (id) => runQuiet(() => getSource(root, id)),
-
-    deleteSource: (id) => runQuiet(() => deleteSource(root, id)),
 
     status: () => runQuiet(() => collectStatus(root)),
 

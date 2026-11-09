@@ -8,7 +8,7 @@ import { useStackEnv } from "../fixtures/stack-env.js";
 describe("Wiki source API", () => {
   // Every dimension is Postgres-backed, so a Stack is required before any ingest.
   useStackEnv("source-api");
-  it("ingest → list/get → delete round-trip, with writeStatus, silently", async () => {
+  it("ingest → list/get round-trip, with writeStatus, silently", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "sdk-src-"));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const wiki = createWiki({ root });
@@ -23,9 +23,6 @@ describe("Wiki source API", () => {
 
     const got = await wiki.getSource(r.filename);
     expect(got?.body).toContain("source body");
-
-    expect(await wiki.deleteSource(r.filename)).toBe(true);
-    expect(await wiki.getSource(r.filename)).toBeNull();
 
     expect(logSpy).not.toHaveBeenCalled(); // quiet
     logSpy.mockRestore();

@@ -78,7 +78,7 @@
     "test/rule-validation.test.ts": 1,
     "test/sdk/acceptance.test.ts": 1,
     "test/sdk/facade.test.ts": 3,
-    "test/sdk/source-api.test.ts": 10,
+    "test/sdk/source-api.test.ts": 8,
     "test/search-fallback-eligibility.test.ts": 3,
     "test/services/stacks/default-stack.test.ts": 1,
     "test/state-shape-validation.test.ts": 2,

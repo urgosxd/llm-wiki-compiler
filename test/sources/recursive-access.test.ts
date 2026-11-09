@@ -2,7 +2,7 @@
 import { beforeEach, expect, it } from "vitest";
 import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { listSources, getSource, deleteSource, sourceFileMissing } from "../../packages/wiki/src/sources/store.js";
+import { listSources, getSource, sourceFileMissing } from "../../packages/wiki/src/sources/store.js";
 import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
 import { readViewerSource } from "../../packages/wiki/src/viewer/source-access.js";
 import { startViewerServer } from "../../packages/wiki/src/viewer/server.js";
@@ -27,16 +27,9 @@ it("lists and reads distinct nested source IDs without basename collisions", asy
   expect((await getSource(root.dir, "b/notes.md"))?.body).toContain("Beta body.");
 });
 
-it("deletes only the exact nested source and preserves the same-basename sibling", async () => {
-  expect(await deleteSource(root.dir, "a/notes.md")).toBe(true);
-  expect(await sourceFileMissing(root.dir, "a/notes.md")).toBe(true);
-  expect(await readFile(path.join(root.dir, "sources/b/notes.md"), "utf8")).toContain("Beta body.");
-});
-
-it("does not read or delete a nested source through a directory alias", async () => {
+it("does not read a nested source through a directory alias", async () => {
   await symlink(path.join(root.dir, "sources/a"), path.join(root.dir, "sources/alias"), "dir");
   expect(await getSource(root.dir, "alias/notes.md")).toBeNull();
-  expect(await deleteSource(root.dir, "alias/notes.md")).toBe(false);
   expect(await readFile(path.join(root.dir, "sources/a/notes.md"), "utf8")).toContain("Alpha body.");
 });
 

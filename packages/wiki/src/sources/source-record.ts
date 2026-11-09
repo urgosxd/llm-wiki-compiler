@@ -5,8 +5,8 @@
  * the relative-path id-safety guard, and the frontmatter→record projection.
  *
  * Factored out of `./store.ts` so the I/O entry points (`listSources`,
- * `getSource`, `deleteSource`) stay a thin filesystem layer over these pure
- * helpers — and so the record/guard logic is unit-testable without touching disk.
+ * `getSource`) stay a thin filesystem layer over these pure helpers — and so
+ * the record/guard logic is unit-testable without touching disk.
  */
 
 import { parseFrontmatter } from "../utils/markdown.js";

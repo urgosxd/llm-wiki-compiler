@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { listSources, getSource, deleteSource } from "../../packages/wiki/src/sources/store.js";
+import { listSources, getSource } from "../../packages/wiki/src/sources/store.js";
 
 async function seedAlias() {
   const root = await mkdtemp(path.join(tmpdir(), "src-alias-"));
@@ -23,10 +23,5 @@ describe("in-tree symlink aliases are not sources", () => {
     const root = await seedAlias();
     expect(await getSource(root, "alias.md")).toBeNull();
     expect((await getSource(root, "real.md"))?.body).toContain("body-real");
-  });
-  it("deleteSource(alias) is false; deleteSource(real) is true", async () => {
-    const root = await seedAlias();
-    expect(await deleteSource(root, "alias.md")).toBe(false);
-    expect(await deleteSource(root, "real.md")).toBe(true);
   });
 });

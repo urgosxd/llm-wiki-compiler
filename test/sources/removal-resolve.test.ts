@@ -68,7 +68,7 @@ describe("planRemoval ref resolution", () => {
     expect(await planRemoval(root, "../../etc/passwd")).toBeNull();
   });
 
-  it("refuses a symlinked entry, matching getSource and deleteSource", async () => {
+  it("refuses a symlinked entry, matching getSource", async () => {
     const root = await projectWithSource();
     await writeFile(path.join(root, "secret.txt"), "SECRET", "utf-8");
     await symlink(path.join(root, "secret.txt"), path.join(root, "sources/leak.md"));

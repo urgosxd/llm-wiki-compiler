@@ -1,13 +1,13 @@
 /**
  * @file src/sources/store.ts
- * @description Source-store I/O API for the llmwiki SDK: list / get / delete
- * sources under `sources/`. Source IDs are relative POSIX paths including `.md`
+ * @description Source-store I/O API for the llmwiki SDK: list / get sources
+ * under `sources/`. Source IDs are relative POSIX paths including `.md`
  * (e.g. "records/note.md"), never joined with an extra extension. The pure
  * record/guard logic lives in `./source-record.js`; this module is the thin
- * filesystem layer over it. Read-only-ish (delete aside), no LLM.
+ * filesystem layer over it. Read-only, no LLM.
  */
 import path from "path";
-import { lstat, readFile, unlink } from "fs/promises";
+import { lstat, readFile } from "fs/promises";
 import { listSelectedSourceFiles } from "./scan.js";
 import { confinedRegularFile, resolveSourcesDir } from "../utils/path-confine.js";
 import {
@@ -39,30 +39,6 @@ export async function listSources(root: string, options: ListSourcesOptions = {}
   }
   const next = offset + page.length < files.length ? String(offset + page.length) : undefined;
   return next !== undefined ? { sources, cursor: next } : { sources };
-}
-
-/**
- * Delete the source file `sources/<id>` (the id already includes `.md`).
- * Returns `true` if a file was removed, `false` if the (valid) id had no file.
- * Reconciliation of the now-orphaned compiled page is deferred to the next
- * `compile`, consistent with how llmwiki already handles deleted sources —
- * this does not touch `wiki/`.
- */
-export async function deleteSource(root: string, id: string): Promise<boolean> {
-  assertSafeSourceId(id);
-  const dir = await resolveSourcesDir(root);
-  if (dir === null) return false;
-  // Not a confined regular file (missing, symlink, or directory) → nothing to delete.
-  // Keeps delete coherent with getSource/listSources.
-  const real = await confinedRegularFile(dir, id);
-  if (real === null) return false;
-  try {
-    await unlink(path.join(dir, id));
-    return true;
-  } catch (err) {
-    if ((err as { code?: string }).code === "ENOENT") return false;
-    throw err;
-  }
 }
 
 /**

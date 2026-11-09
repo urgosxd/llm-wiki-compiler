@@ -257,7 +257,7 @@ describe("llmwiki rm end to end", () => {
     };
 
     await expect(attemptRemoval()).rejects.toThrow();
-    expect(existsSync(path.join(root, "sources/bad.md"))).toBe(true); // never reached deleteSource
+    expect(existsSync(path.join(root, "sources/bad.md"))).toBe(true); // never reached the source unlink
     // Load-bearing: the pre-fix bug was SILENT DATA LOSS (the fabricated empty
     // state got written back, wiping every other source's record). Nothing
     // must touch this file on a refusal.
