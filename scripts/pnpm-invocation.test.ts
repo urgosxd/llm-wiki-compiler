@@ -42,6 +42,17 @@ const CANDIDATE_LABELS = ["npm_execpath", "corepack pnpm", "node_modules/.bin/pn
 /** A real, spawnable program that answers the way the broken launcher does. */
 const EXIT_127 = "#!/bin/sh\nexit 127\n";
 
+/**
+ * A pnpm that resolves and then fails its real work, like a red gate child.
+ *
+ * The probe must pass, because a resolver that rejected this candidate would
+ * never reach the failure being pinned here.
+ */
+const FAILING_GATE_FAKE = '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 9.9.9; exit 0; fi\nexit 42\n';
+
+/** A pnpm that resolves and then reports exactly what it was asked to run. */
+const ARGV_ECHO_FAKE = '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 9.9.9; exit 0; fi\necho "ARGV=$*"\nexit 0\n';
+
 /** Every temporary root this file created, removed in `afterEach`. */
 const scratchRoots: string[] = [];
 
@@ -103,6 +114,28 @@ describe("pnpm-invocation — resolve by executing, not by name", () => {
     expect(resolver.stdout).toContain(SENTINEL);
     // The defect in one line: the bare name resolves and still exits 127.
     expect(spawnSync("pnpm", ["--version"], { cwd: root, env, encoding: "utf8" }).status).toBe(127);
+  });
+
+  it("propagates the gate child's non-zero exit status", () => {
+    const root = makeRoot();
+    const env = hostileEnv(root);
+    writeFake(path.join(root, "node_modules", ".bin", "pnpm"), FAILING_GATE_FAKE);
+
+    const resolver = runResolver(root, env, ["run", "build"]);
+
+    // A resolver that swallowed this would let the hook pass while the gate failed.
+    expect(resolver.status).toBe(42);
+  });
+
+  it("forwards the hook's arguments to pnpm verbatim", () => {
+    const root = makeRoot();
+    const env = hostileEnv(root);
+    writeFake(path.join(root, "node_modules", ".bin", "pnpm"), ARGV_ECHO_FAKE);
+
+    const resolver = runResolver(root, env, ["exec", "tsc", "--noEmit"]);
+
+    expect(resolver.status).toBe(0);
+    expect(resolver.stdout).toContain("ARGV=exec tsc --noEmit");
   });
 
   it("names every candidate and its failure when none of them work", () => {
