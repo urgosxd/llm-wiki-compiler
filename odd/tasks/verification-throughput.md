@@ -245,7 +245,7 @@ claiming the guardrail covered it.
 ## Tasks
 
 - [x] T1 — this document · S1-S11 · Lead · commit: e4f3b8f1887d9ef4b03672099a91810279be323a
-- [x] T2 — `run-affected-tests.ts`: full-tier scope prints the line and exits 78 (see L5; L2's exit 0 is superseded), RED test first, including the extracted entry behind the invoked-directly guard, the injected `runner` seam so the test can count invocations, and the S11 guardrail — the four-way outcome, the three statuses (`0` / `69` / `78`), and the `unresolved`-is-not-`none` tests · S3a, S6, S11 · worker · commit: 405c5999f46a2e41e951790d8add09c21dac6f65
+- [x] T2 — `run-affected-tests.ts`: full-tier scope prints the line and exits 78 (see L5; L2's exit 0 is superseded), RED test first, including the extracted entry behind the invoked-directly guard, the injected `runner` seam so the test can count invocations, and the S11 guardrail — the four-way outcome, the three statuses (`0` / `69` / `78`), and the `unresolved`-is-not-`none` tests · S3a, S6, S11 · worker · commit: 405c5999f46a2e41e951790d8add09c21dac6f65 — reopened and re-closed: T5's `lint` run found a function-length violation in the test file this work unit added; fixed by refactoring in the follow-up `fix(tests): split the synthetic-repo helper under the function-length limit` work unit (see L9)
 - [x] T3 — remove `test:affected` from `.github/workflows/ci.yml` and `.husky/pre-push`, update the `test/control-gates.test.ts` CI-wiring assertions explicitly, and update the push-gate pins in `scripts/pnpm-invocation.test.ts` (the hook command list and the build-then-affected ordering assertions); grep for any other test pinning the deleted invocation · S3b, S3c, S9 · worker · commit: f658edffde9ac46a8c9195fb3449bdff6131dd70
 - [x] T4 — `vitest.config.ts` worker and integration caps derived from the S1 measurements · S1, S2 · worker · commit: e4f3b8f1887d9ef4b03672099a91810279be323a
   Precondition: measure only when `pgrep -af vitest` is empty and no other campaign is
@@ -267,7 +267,7 @@ claiming the guardrail covered it.
 
 `Build` stays in `.husky/pre-push` and in CI; only the `test:affected` invocation is
 removed from both, so the hook keeps a real gate and the pipeline keeps `pnpm test` as
-its only test verdict.
+its only full-suite verdict.
 
 ## Log
 
@@ -515,3 +515,35 @@ at 442 MB each); **no higher count was measured, so none was invented**. `test`,
 `test:unit` and every other script stay byte-identical, which is the S2 split from L6: the
 global config cap protects the unfiltered gate of record, the script override gives the
 spawning tier its lower number.
+
+**L9 — T2 reopened: house-rule violation found by T5's gate run.**
+
+The static-gate task ran `pnpm run lint` — the gate T2 was explicitly told not to run — and it
+failed on T2's own new code:
+
+```text
+test/test-affected-scope.test.ts:116 max-lines-per-function Arrow function has too many lines (51). Maximum allowed is 39.
+```
+
+T2 introduced it when it added the two synthetic-repository cases and the local
+`FixtureRepo` / `inSyntheticRepo` helpers to that file: the enclosing `describe` arrow grew to
+51 lines against a 39-line allowance. It was caught by a DIFFERENT task's gate run, not by the
+one that wrote the code, which is the whole reason the gate exists.
+
+Fixed by REFACTORING, not by disabling. The repeated fixture setup (commit the base, point an
+unrelated `origin/main` at an orphan history) became named helpers — `commitAll` and
+`addUnrelatedOriginMain` — and the two new cases moved into their own `describe`, so each case
+body is four lines and every arrow is under the limit. Not one assertion changed: both cases
+still assert `unresolved` and explicitly not `none`, and the recognised-kind list still carries
+`unresolved`. No `eslint-disable`, no `lint:update`, no baseline absorption — a baseline raised
+to swallow a new violation is the gate deleting itself. The file stays in the integration tier,
+because it spawns `git` and `scripts/test-partition.ts` classifies by content.
+
+Lint after the fix, literally: `643 baseline violations in 466 files across 496 rule/file
+entries; no regression.` (`corepack pnpm run lint`, exit 0). Test count unchanged: 20 passed
+before and after.
+
+Corrected in the same pass while the document was open: the note under `## Tasks` claimed the
+pipeline keeps `pnpm test` as its "only test verdict", which is false —
+`.github/workflows/ci.yml` also runs `pnpm run test:pack` and the two schema-apply steps. It now
+reads "its only full-suite verdict" (defect F11 from the same audit).

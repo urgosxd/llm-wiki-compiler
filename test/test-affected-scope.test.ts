@@ -59,6 +59,26 @@ function inSyntheticRepo(build: (repo: FixtureRepo) => void): AffectedScope {
   }
 }
 
+/** Stage everything and commit it, so the fixture has a history to diff from. */
+function commitAll(repo: FixtureRepo, message: string): void {
+  repo.run(["add", "-A"]);
+  repo.run(["commit", "-qm", message]);
+}
+
+/**
+ * Give the fixture an `origin/main` that shares no ancestor with its base commit.
+ *
+ * The ref EXISTS and resolves, but `merge-base` fails against it: the case that
+ * tells a resolvable ref apart from a computable change set.
+ */
+function addUnrelatedOriginMain(repo: FixtureRepo): void {
+  repo.run(["checkout", "-q", "--orphan", "unrelated"]);
+  repo.run(["commit", "-qm", "unrelated"]);
+  repo.run(["update-ref", "refs/remotes/origin/main", repo.run(["rev-parse", "HEAD"])]);
+  repo.run(["remote", "add", "origin", "."]);
+  repo.run(["checkout", "-q", "main"]);
+}
+
 describe("isGlobalScope", () => {
   it.each([
     "package.json",
@@ -142,19 +162,21 @@ describe("resolveAffectedScope in a synthetic repository", () => {
     }
   });
 
-  /**
-   * A failed computation is a refusal, never a true negative.
-   *
-   * `none` means "the computation succeeded and nothing relevant changed". When the
-   * base ref cannot be resolved, or the history is unrelated so `merge-base`
-   * fails, nothing was computed at all — and reporting that as `none` would be a
-   * clean green run over a change set nobody ever looked at.
-   */
+});
+
+/**
+ * A failed computation is a refusal, never a true negative.
+ *
+ * `none` means "the computation succeeded and nothing relevant changed". When the
+ * base ref cannot be resolved, or the history is unrelated so `merge-base` fails,
+ * nothing was computed at all — and reporting that as `none` would be a clean
+ * green run over a change set nobody ever looked at.
+ */
+describe("resolveAffectedScope when the change set cannot be computed", () => {
   it("reports `unresolved`, and not `none`, when no canonical base ref exists", () => {
     const scope = inSyntheticRepo((repo) => {
       repo.write("src/kept.ts", "export const a = 1;\n");
-      repo.run(["add", "-A"]);
-      repo.run(["commit", "-qm", "base"]);
+      commitAll(repo, "base");
       // No remote at all: neither origin/main nor upstream/main can be resolved.
     });
     expect(scope.kind, "an absent base ref must not degrade to a clean run").not.toBe("none");
@@ -164,14 +186,8 @@ describe("resolveAffectedScope in a synthetic repository", () => {
   it("reports `unresolved` when the base ref exists but the histories are unrelated", () => {
     const scope = inSyntheticRepo((repo) => {
       repo.write("src/kept.ts", "export const a = 1;\n");
-      repo.run(["add", "-A"]);
-      repo.run(["commit", "-qm", "base"]);
-      // An orphan branch shares no ancestor with the base commit, so merge-base fails.
-      repo.run(["checkout", "-q", "--orphan", "unrelated"]);
-      repo.run(["commit", "-qm", "unrelated"]);
-      repo.run(["update-ref", "refs/remotes/origin/main", repo.run(["rev-parse", "HEAD"])]);
-      repo.run(["remote", "add", "origin", "."]);
-      repo.run(["checkout", "-q", "main"]);
+      commitAll(repo, "base");
+      addUnrelatedOriginMain(repo);
     });
     expect(scope.kind, "an unresolvable merge-base must not degrade to a clean run").not.toBe("none");
     expect(scope.kind).toBe("unresolved");
