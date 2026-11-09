@@ -26,6 +26,30 @@ pnpm run fallow:kg
 Clean tree → exit 0. A newly introduced finding inside the package → exit 1,
 naming only the new finding.
 
+## The ignored dependencies, and why `postgres` is one of them
+
+`ignoreDependencies` is a flat list of names — the schema accepts strings only —
+so this page is where the reasons for its entries live, for the same reason the
+section above exists.
+
+`postgres` is a **transitive runtime requirement that static import analysis
+cannot follow**: the shipped `dist/index.js` imports `drizzle-orm/postgres-js`,
+whose driver imports `postgres`, and no file in `src/` names it. fallow therefore
+classifies it as a test-only production dependency and asks for it to be demoted
+to `devDependencies` — which is precisely the change that breaks the published
+artifact, because a packed install receives only the root `dependencies` block.
+The claim is measured, not argued: with `postgres` in `devDependencies`,
+`pnpm run test:pack` fails installing its tarball into a throwaway fixture with
+
+```
+ERR_MODULE_NOT_FOUND: Cannot find package 'postgres' imported from …/node_modules/drizzle-orm/postgres-js/driver.js
+```
+
+and that failure reproduces at `a2c001f`, before the package split, so it is a
+property of the published manifest and not of this tree's layout. The dependency
+stays in `dependencies`; the `ignoreDependencies` entry records that decision
+rather than hiding an unused package.
+
 ## Why a package-scoped config instead of the historical explanation
 
 `odd/tasks/kg-dimension.md:148-162` attributes the phantom repo-wide findings to
