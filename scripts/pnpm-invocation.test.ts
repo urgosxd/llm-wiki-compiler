@@ -46,6 +46,27 @@ const BARE_PNPM = /(^|[\s;&|(])pnpm(\s|$)/mu;
 /** Printed by the working fake, so a pass proves it was the program that ran. */
 const SENTINEL = "fake-pnpm-third-candidate";
 
+/**
+ * The runtime assertion the commit gate runs BEFORE either expensive gate.
+ *
+ * It is listed line by line, like the gate commands below it, because the
+ * property this file pins is the hook's own text: a check that is first, states
+ * both majors, and refuses the commit instead of letting a misconfigured runtime
+ * report a green gate. Kept as a constant so the assertion below still reads as
+ * "these lines, in this order".
+ */
+const NODE_MAJOR_ASSERTION = [
+  "REQUIRED_NODE_MAJOR=24",
+  'ACTUAL_NODE_VERSION=$(node --version 2>/dev/null || echo "node not on PATH")',
+  'ACTUAL_NODE_MAJOR=$(printf "%s\\n" "$ACTUAL_NODE_VERSION" | sed "s/^v//; s/\\..*$//")',
+  'if [ "$ACTUAL_NODE_MAJOR" != "$REQUIRED_NODE_MAJOR" ]; then',
+  'echo "pre-commit: Node $REQUIRED_NODE_MAJOR is required, but this hook is running under $ACTUAL_NODE_VERSION." >&2',
+  'echo "pre-commit: pnpm-lock.yaml and corepack resolve pnpm through the running Node, so a pass here would not mean what it claims." >&2',
+  'echo "pre-commit: put a Node $REQUIRED_NODE_MAJOR bin directory ahead of PATH and commit again. Do not bypass this with --no-verify or HUSKY=0." >&2',
+  "exit 1",
+  "fi",
+];
+
 /** Named by the failure message: one line per candidate that was tried. */
 const CANDIDATE_LABELS = ["npm_execpath", "corepack pnpm", "node_modules/.bin/pnpm", "pnpm"];
 
@@ -250,10 +271,24 @@ describe("pnpm-invocation — the hook routes through the resolver", () => {
   it("keeps the gate order and never invokes a bare pnpm program", () => {
     const commands = hookCommands(readFileSync(HOOK, "utf8"));
     expect(commands).toEqual([
+      ...NODE_MAJOR_ASSERTION,
       "node scripts/pnpm-invocation.ts run fallow:ci",
       "node scripts/pnpm-invocation.ts exec tsc --noEmit",
     ]);
     for (const line of commands) expect(line).not.toMatch(/^(\.\/)?pnpm(\s|$)/u);
+  });
+
+  it("refuses a commit whose Node major the gates were not calibrated for", () => {
+    const { root, env } = foreignNodeMajorRoot("v22.23.2");
+
+    const hook = spawnSync("sh", ["-e", ".husky/pre-commit"], { cwd: root, env, encoding: "utf8" });
+
+    expect(hook.status).toBe(1);
+    // Both numbers, so the message is actionable on its own.
+    expect(hook.stderr).toContain("Node 24 is required");
+    expect(hook.stderr).toContain("v22.23.2");
+    // Fast and loud: the runtime was refused, so no gate was started.
+    expect(hook.stdout).not.toContain("fallow");
   });
 
   it("fails loudly instead of reaching the gates when nothing resolves", () => {
@@ -274,6 +309,22 @@ describe("pnpm-invocation — the hook routes through the resolver", () => {
     expect(hook.stdout).not.toContain("fallow");
   });
 });
+
+/**
+ * A scratch root whose `node` REPORTS another version, so the gate's refusal is observable.
+ *
+ * The runtime itself is untouched: the substitution is a PATH shim in front of a
+ * fake `node`, the same fake-a-program idiom the resolver cases below already use.
+ * @param reportedVersion - What the shimmed `node --version` answers.
+ */
+function foreignNodeMajorRoot(reportedVersion: string): { root: string; env: NodeJS.ProcessEnv } {
+  const root = makeRoot();
+  const bin = path.join(root, "node-major-bin");
+  writeFake(path.join(bin, "node"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo ${reportedVersion}; exit 0; fi\nexit 0\n`);
+  mkdirSync(path.join(root, ".husky"), { recursive: true });
+  copyFileSync(HOOK, path.join(root, ".husky", "pre-commit"));
+  return { root, env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` } };
+}
 
 /**
  * A scratch root carrying the push gate and one chosen pnpm behind the poison.

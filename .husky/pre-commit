@@ -1,3 +1,17 @@
+# FIRST CHECK — the runtime, before any expensive gate. `pnpm-lock.yaml` and
+# `corepack` resolve pnpm through the running Node, so a hook that passes under a
+# different major measured nothing and still reported success; a commit on this
+# branch landed from a v22 hook for exactly that reason. Both numbers are named
+# here because "it failed" without them is what sends people to --no-verify.
+REQUIRED_NODE_MAJOR=24
+ACTUAL_NODE_VERSION=$(node --version 2>/dev/null || echo "node not on PATH")
+ACTUAL_NODE_MAJOR=$(printf "%s\n" "$ACTUAL_NODE_VERSION" | sed "s/^v//; s/\..*$//")
+if [ "$ACTUAL_NODE_MAJOR" != "$REQUIRED_NODE_MAJOR" ]; then
+  echo "pre-commit: Node $REQUIRED_NODE_MAJOR is required, but this hook is running under $ACTUAL_NODE_VERSION." >&2
+  echo "pre-commit: pnpm-lock.yaml and corepack resolve pnpm through the running Node, so a pass here would not mean what it claims." >&2
+  echo "pre-commit: put a Node $REQUIRED_NODE_MAJOR bin directory ahead of PATH and commit again. Do not bypass this with --no-verify or HUSKY=0." >&2
+  exit 1
+fi
 # The gate lives in `pnpm run fallow:ci`, NOT in `pnpm exec fallow`: the raw report
 # exits 1 on pre-existing debt (6 dead-code issues, 20 clone groups) and would
 # block every commit in a correctly installed worktree, which is how every other
