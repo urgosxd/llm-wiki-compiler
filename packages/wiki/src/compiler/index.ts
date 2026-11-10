@@ -150,10 +150,11 @@ type DimensionsDatabaseHandle = ReturnType<typeof createDimensionsDatabase>["db"
 
 import {
   createDimensionsDatabase,
-  resolveDimensions,
   AKS_STACK_ID_ENV_VAR,
 } from "../dimensions/index.js";
-import type { DimensionName } from "../dimensions/index.js";
+import type { Dimension, DimensionName } from "../dimensions/index.js";
+import { createDefaultDimensionsPort } from "../dimensions/activation.js";
+import type { DimensionsPort } from "@repo/foundation";
 import { resolveStackForDimensions } from "../services/stacks/resolve-stack.js";
 import type { EmbeddingStoreLocation } from "../utils/embeddings.js";
 import { databaseEmbeddingLocation } from "../utils/embeddings-database.js";
@@ -1131,6 +1132,10 @@ async function runCompilePipeline(
   // concurrent runs cannot see each other's. Omitted means `process.env`, which keeps
   // every existing caller byte-identical.
   const env = options.env ?? process.env;
+  // The ONE dimensions resolution this run performs, resolved here rather than inside
+  // the helper that asks for it: a default built per deleted source would be a second
+  // answer to one question, and the caller's port must be the one retirement uses.
+  const dimensionsPort = dimensionsPortFor(options);
   const { schema, reviewPolicy } = await loadRunConfiguration(root, env);
   reportSchemaStatus(schema);
   // Single in-memory draft of state.json for the whole run. Every intra-compile
@@ -1181,7 +1186,9 @@ async function runCompilePipeline(
     await markDeletedAsOrphaned(root, buckets.deleted, draft, seams);
     // Graph retirement follows the same review rule: a held-back run must not
     // retire documents the wiki has not stopped serving yet.
-    forgetErrors.push(...(await forgetDeletedSources(root, buckets.deleted, state, db, env)));
+    forgetErrors.push(
+      ...(await forgetDeletedSources(root, buckets.deleted, state, db, env, dimensionsPort)),
+    );
   }
 
   // Only extraction failures in THIS run freeze a page. Deletion and persisted
@@ -1377,38 +1384,72 @@ async function markDeletedAsOrphaned(
 const RETIREMENT_DIMENSIONS: readonly DimensionName[] = ["kg"];
 
 /**
+ * The dimensions port this run resolves through.
+ *
+ * The caller's, when it supplied one, and otherwise this build's default — composed
+ * here, once per run, because it is cheap and connects to nothing. OMITTING the option
+ * is therefore VALID rather than fatal: an embedder reaching a compile through
+ * `createWiki().compile()` keeps working, and the run resolves exactly what it always
+ * resolved.
+ *
+ * A helper rather than an inline `??` so the pipeline's own branch count does not grow
+ * for a decision `compile` does not make.
+ *
+ * @param options - The options this run was given.
+ * @returns The caller's port, or the default one.
+ */
+function dimensionsPortFor(options: CompileOptions): DimensionsPort<Dimension> {
+  return options.dimensionsPort ?? createDefaultDimensionsPort();
+}
+
+/**
  * The graph dimensions retirement needs, bound to the Stack this run resolved.
  *
- * ONE switch decides whether there is work at all, and it is read BEFORE anything is
- * resolved. A workspace that configured no Stack gets the default one provisioned the
- * first time something needs it, so resolving unconditionally would make every
- * wiki-only compile -- the ordinary case -- open a connection for a dimension it
- * never uses. `resolveDimensions` alone cannot answer that cheaply: its refusal for a
- * missing Stack is indistinguishable, to a caller, from its refusal for an unknown
- * dimension name, and branching on the message would tie this decision to wording.
+ * TWO OWNERS, on purpose, and the split is the whole contract here:
  *
- * When the answer is "nothing to do" it returns no dimensions and touches neither the
- * database nor the environment's Stack.
+ *   - the PORT owns resolution. It is the caller's injected answer to "which
+ *     dimensions does this deployment have", so a run handed one retires from that
+ *     graph rather than from the ambient switch, and this function builds no
+ *     dimension itself.
+ *   - the PRE-CHECK keeps its own read of the switch, through
+ *     `resolveStackForDimensions`. It answers a different question -- does a default
+ *     Stack have to be provisioned at all -- and it must be answered BEFORE anything
+ *     is resolved: a workspace with no Stack configured gets the default one
+ *     provisioned on first use, so resolving unconditionally would make every
+ *     wiki-only compile, the ordinary case, open a connection for a dimension it
+ *     never uses.
+ *
+ * The pre-check cannot move into the port. `DimensionsRequest.stackId` is optional
+ * only in the sense that omitting it is INVALID: a resolution without it falls
+ * through to the required `AKS_STACK_ID` and refuses. So the Stack id the port needs
+ * is a value only the pre-check produces, and routing the pre-check through the port
+ * would turn "graph disabled -> no work, no connection, no throw" into a throw for
+ * every stackless wiki-only compile.
+ *
+ * When the answer is "nothing to do" it returns no dimensions and asks the port
+ * nothing, so the database the pre-check spared stays untouched.
  *
  * @param root - Project root, for dimension resolution.
  * @param db - Database handle every dimension is backed by.
  * @param env - The one environment this run reads.
+ * @param port - The injected dimensions port this run resolves through.
  * @returns The graph dimensions to retire from; empty when the graph is disabled.
- * @throws Whatever resolution throws for an unknown dimension name — it is raised
- *   there, unchanged, and never caught here to steer this decision.
+ * @throws Whatever the pre-check or the port throws for an unknown dimension name —
+ *   it is raised there, unchanged, and never caught here to steer this decision.
  */
 async function graphRetirementDimensions(
   root: string,
   db: DimensionsDatabaseHandle,
   env: NodeJS.ProcessEnv,
-): Promise<ReturnType<typeof resolveDimensions>> {
+  port: DimensionsPort<Dimension>,
+): Promise<readonly Dimension[]> {
   const stackId = await resolveStackForDimensions(db, env, RETIREMENT_DIMENSIONS);
   if (stackId === undefined) return [];
   // The SAME environment the pre-check just read: a switch taken from one place and
   // dimensions built from another is two answers to one question, and the run that
   // enables the graph through `options.env` would resolve a Stack and then build
   // nothing from it.
-  return resolveDimensions({ root, db, env, only: RETIREMENT_DIMENSIONS, stackId });
+  return port.resolve({ root, db, env, only: RETIREMENT_DIMENSIONS, stackId });
 }
 
 /**
@@ -1434,6 +1475,7 @@ async function graphRetirementDimensions(
  * @param state - State BEFORE this run, which still holds the missing sources.
  * @param db - Database handle every dimension is backed by.
  * @param env - The one environment this run reads, used to resolve the Stack.
+ * @param port - The dimensions port the run resolves through.
  * @returns One message per source that could not be retired.
  */
 async function forgetDeletedSources(
@@ -1442,6 +1484,7 @@ async function forgetDeletedSources(
   state: WikiState,
   db: DimensionsDatabaseHandle,
   env: NodeJS.ProcessEnv,
+  port: DimensionsPort<Dimension>,
 ): Promise<string[]> {
   const failures: string[] = [];
   // Graph retirement is the ONLY concern here, so ask for the graph dimension
@@ -1450,7 +1493,7 @@ async function forgetDeletedSources(
   // file-backed; it is Postgres-backed now, so resolving it demands a Stack id
   // this path never needed. `only` also respects the switch: a project that never
   // enabled `kg` retires nothing here, exactly as before.
-  const dimensions = await graphRetirementDimensions(root, db, env);
+  const dimensions = await graphRetirementDimensions(root, db, env, port);
   if (dimensions.length === 0) return failures;
   for (const change of deleted) {
     const source = state.sources[change.file]?.source;

@@ -43,7 +43,7 @@
  */
 
 import { createClient, createDatabase, kgConfig } from "@repo/kg";
-import type { DatabaseHandle } from "@repo/foundation";
+import type { DatabaseHandle, DimensionsPort, DimensionsRequest } from "@repo/foundation";
 import { createKgDimension } from "./kg/index.js";
 import { createWikiStoreDimension } from "./wiki/database.js";
 import type { Dimension, DimensionName } from "./types.js";
@@ -329,4 +329,60 @@ export function resolveDimensions(options: ResolveDimensionsOptions): Dimension[
   }
 
   return dimensions;
+}
+
+/**
+ * Narrow a port request's `only` to the names this build can write, refusing the rest.
+ *
+ * REFUSING, never filtering. `DimensionsRequest.only` is `readonly string[]` at the
+ * seam, so an unknown name is a real input rather than a type error, and a port that
+ * dropped it would answer "resolved, empty set". For the compiler that means graph
+ * retirement vanishing with a success -- the exact silent-skip bug the switch itself
+ * already refuses -- reintroduced one layer up at the new seam.
+ *
+ * @param only - The dimension names the caller may receive.
+ * @returns Those names, de-duplicated, in the caller's order.
+ * @throws {DimensionActivationError} on a name this build cannot write.
+ */
+function narrowOnly(only: readonly string[]): DimensionName[] {
+  const names: DimensionName[] = [];
+  for (const name of only) {
+    if (!isKnownDimension(name)) {
+      throw new DimensionActivationError(
+        `Unknown dimension ${JSON.stringify(name)} requested of the DimensionsPort. ` +
+          `Known dimensions: ${KNOWN_DIMENSIONS.join(", ")}.`,
+      );
+    }
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * The dimensions port this build composes when its caller supplies none.
+ *
+ * WHY THE DEFAULT LIVES HERE. This file already imports `@repo/kg` -- it is the
+ * pinned `wiki -> kg` boundary site -- so composing the port here needs no new import
+ * and no new boundary allowance. It also keeps the port out of every published entry:
+ * the compiler holds a port that answers with THIS build's resolution, and a caller
+ * that already has dimensions of its own passes them in instead.
+ *
+ * Stateless, and cheap enough to compose per run: `resolve` delegates to
+ * {@link resolveDimensions}, which opens no connection (the pool connects lazily) and
+ * keeps every refusal it already had. Nothing here detects, defaults to an empty set,
+ * or swallows an error.
+ *
+ * @returns A port resolving exactly what this module's own resolution resolves.
+ */
+export function createDefaultDimensionsPort(): DimensionsPort<Dimension> {
+  return {
+    resolve: (request: DimensionsRequest) =>
+      resolveDimensions({
+        root: request.root,
+        db: request.db,
+        env: request.env,
+        only: narrowOnly(request.only),
+        stackId: request.stackId,
+      }),
+  };
 }

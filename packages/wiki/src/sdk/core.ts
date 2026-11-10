@@ -104,10 +104,16 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     // resolves an omitted one to `process.env`. A compile that named Stack B while
     // the process served Stack A therefore recorded B's compile state under A — or
     // under the process' own state file when it served no Stack at all.
+    //
+    // `options.dimensionsPort` is forwarded for the reason `ingest` states: it is the
+    // caller's own dimension resolution, and a compile that dropped it would retire
+    // deleted sources from whatever the ambient `LLMWIKI_DIMENSIONS` switch names
+    // instead. Absent stays valid — the compiler composes its default port at the
+    // point of use, so omission is a real resolution rather than a refusal.
     compile: (opts: SdkCompileOptions = {}) =>
       runQuiet(() => {
         ensureCompileProviderAvailable(opts.embeddings !== false);
-        return compileAndReport(root, { ...opts, env });
+        return compileAndReport(root, { ...opts, env, dimensionsPort: options.dimensionsPort });
       }),
 
     search: (question, opts = {}) =>

@@ -13,6 +13,8 @@ import type { SelectedPageRef } from "../search/retrieval.js";
 import type { AnswerCitationReport } from "../citations/answer-types.js";
 import type { AnswerCitationManifest, ValidatedAnswerKind } from "../citations/answer-manifest.js";
 import type { IngestJobObserver } from "../services/ingest/jobs/types.js";
+import type { DimensionsPort } from "@repo/foundation";
+import type { Dimension } from "../dimensions/types.js";
 
 /**
  * Lifecycle state of a concept or page's provenance.
@@ -302,6 +304,22 @@ export interface CompileOptions {
    * compiling against the process environment exactly as before.
    */
   env?: NodeJS.ProcessEnv;
+  /**
+   * The configured dimensions, when the caller already holds them.
+   *
+   * OPTIONAL, AND OMITTING IT IS VALID: the compiler composes this build's own
+   * default port at the point of use, so an absent port means "resolve with the
+   * default" — never "throw", and never "resolve nothing". A required field would
+   * be a breaking change for every embedder reaching a compile through
+   * `createWiki().compile()`; an optional field that refused at runtime is the same
+   * break discovered later instead of at the call site.
+   *
+   * It is consulted for graph retirement, the one dimension resolution a compile
+   * performs itself. A supplied port is the caller's own answer to "which dimensions
+   * does this deployment have", so a run that accepted it and then read the ambient
+   * switch anyway would retire from a different graph than the caller named.
+   */
+  dimensionsPort?: DimensionsPort<Dimension>;
 }
 
 /**
