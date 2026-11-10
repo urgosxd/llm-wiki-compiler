@@ -118,7 +118,16 @@ function isValidPort(value: number): boolean {
  * @param close - Shutdown routine for the bound listener.
  */
 export function registerShutdown(close: () => Promise<void>): void {
+  // A repeated signal must be IGNORED, not acted on twice. Orchestrators escalate
+  // and `docker stop` escalates on its own timer, so a second SIGTERM arriving
+  // while the first close is still in flight is an ordinary event. Re-entering
+  // `shutdown` would call `close()` a second time — which throws on an already
+  // closed listener — and the catch below would then report exit 1: a different
+  // way to break the same "the stop path exits 0" contract this routine exists for.
+  let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     // The exit code is decided first and the process exits ONCE, outside the try.
     //
     // `process.exit(0)` must not sit inside the block that catches `close()`
@@ -135,6 +144,12 @@ export function registerShutdown(close: () => Promise<void>): void {
     }
     process.exit(exitCode);
   };
-  process.once("SIGINT", () => void shutdown());
-  process.once("SIGTERM", () => void shutdown());
+  // `on`, not `once`: a one-shot listener removes itself the moment the first
+  // signal is emitted, which leaves the process with no SIGTERM listener at all
+  // while `close()` is still pending — so a second signal would meet the kernel's
+  // default disposition and kill the process by signal (exit code null) instead of
+  // staying on the graceful path. The `shuttingDown` guard above makes the repeated
+  // delivery harmless.
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
 }
