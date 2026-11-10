@@ -156,15 +156,16 @@ importers:
 
   packages/api:
     dependencies:
+      dotenv:
+        specifier: ^17.4.0
+        version: 17.4.2
+    devDependencies:
       '@repo/kg':
         specifier: workspace:*
         version: link:../llmwiki-kg/ts
       '@repo/wiki':
         specifier: workspace:*
         version: link:../wiki
-      dotenv:
-        specifier: ^17.4.0
-        version: 17.4.2
 
   packages/foundation:
     dependencies:

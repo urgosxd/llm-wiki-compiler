@@ -11,8 +11,10 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@repo/kg": "workspace:*",
-    "@repo/wiki": "workspace:*",
     "dotenv": "^17.4.0"
+  },
+  "devDependencies": {
+    "@repo/kg": "workspace:*",
+    "@repo/wiki": "workspace:*"
   }
 }

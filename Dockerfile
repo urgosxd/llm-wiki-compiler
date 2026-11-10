@@ -21,7 +21,20 @@
 # `@atomicstrata/llmwiki-core`, the MCP SDK, `zod`, `openai`, `commander`,
 # `markdown-it`, `jsdom` and the rest of the 20 root dependencies. Dropping
 # `node_modules` produces an image that starts and then fails on its first import,
-# so the runtime stage installs production dependencies and carries them.
+# so the runtime stage carries a production-only install of them, built from clean
+# by the `prod-deps` stage below.
+#
+# WHY THE RUNTIME TREE IS INSTALLED, NOT PRUNED
+#
+# It used to be `pnpm prune --prod` over the build stage's tree. That step
+# deadlocks in its removal/relink phase on a fresh `node_modules`: it printed to
+# `1.827s` and then went silent for ~39 minutes until the build timed out, and it
+# reproduces outside Docker — main thread parked in `ep_poll`, 16 threads, no
+# block I/O, RSS 1.9 GB, `utime` +0.12 s and `wchar` +2.6 KB in 120 s, with the
+# removal itself working (`node_modules` 621 M → 426 M) and a re-run on an
+# already-pruned tree finishing instantly. Diagnosing pnpm's unlink path is not
+# this delivery's job; not having a removal phase is. `prod-deps` installs the
+# production set directly, so there is nothing to prune and nothing to hang in.
 
 # ---- build -------------------------------------------------------------------
 FROM node:24-slim AS build
@@ -71,13 +84,54 @@ COPY packages ./packages
 # produces everything the runtime needs.
 RUN pnpm run build
 
-# Production dependencies only, for the runtime stage. `--ignore-scripts` is load
-# bearing: pruning also runs the root `prepare` hook, and `husky` is one of the dev
-# dependencies this step just removed, so the hook would fail the layer. The purge
-# confirmation is the other one: with the tree replaced wholesale, pnpm asks before
-# removing `node_modules` and aborts with
-# `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` in a build, which has no TTY.
-RUN pnpm prune --prod --ignore-scripts --config.confirm-modules-purge=false
+# NOTE: this stage deliberately does NOT prune. The runtime stage takes its
+# `node_modules` from the `prod-deps` stage below instead; see the header.
+
+# ---- production dependencies ---------------------------------------------------
+#
+# A SECOND, INDEPENDENT install — production only, from clean.
+#
+# The build tree cannot be converted into a runtime tree, because the only
+# supported conversion (`pnpm prune --prod`) is the step that hangs. Installing
+# the production set into an empty tree skips the removal phase entirely: there is
+# no `node_modules` to purge and no relink of a half-removed tree.
+#
+# Measured on this host against exactly these manifests and this lockfile: the
+# prod-only install resolves 212 packages into a flat 426 M `node_modules` in
+# 1.4 s. The same manifests are copied here as in the build stage above, on
+# purpose: `--frozen-lockfile` validates EVERY workspace importer, so a member
+# manifest missing from this block fails the install exactly as it does there.
+FROM node:24-slim AS prod-deps
+
+WORKDIR /app
+
+# Same reason as the build stage: `node:24-slim` ships no `pnpm` on PATH, and the
+# root manifest's `packageManager` pin is inert until corepack is enabled.
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/llmwiki-core/package.json packages/llmwiki-core/
+COPY packages/llmwiki-kg/ts/package.json packages/llmwiki-kg/ts/
+COPY packages/foundation/package.json packages/foundation/
+COPY packages/wiki/package.json packages/wiki/
+COPY packages/api/package.json packages/api/
+
+# `--prod` drops every devDependency, `--ignore-scripts` keeps the root `prepare`
+# hook (`husky`, a dev dependency that is not installed here) from running, and
+# `--frozen-lockfile` makes this layer fail loudly the moment a manifest and the
+# lockfile disagree, instead of silently resolving a different tree than the host.
+#
+# `pnpm-workspace.yaml` is copied because it is where `nodeLinker: hoisted` LIVES:
+# without it this install would produce pnpm's default strict, symlinked layout
+# instead of the flat tree the bundle's bare specifiers resolve against.
+#
+# The one workspace link this leaves behind points at `packages/llmwiki-core`:
+# `@atomicstrata/llmwiki-core` is a root PRODUCTION dependency AND a workspace
+# member, so pnpm resolves it to `link:../../packages/llmwiki-core` — a manifest-only
+# directory here, supplied as a built tree by the runtime stage's own COPY. The
+# `@repo/*` packages are bundled into `dist/api.js` instead, so no link to them is
+# created (verified: the prod tree has no `node_modules/@repo` at all).
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
 # ---- runtime -----------------------------------------------------------------
 FROM node:24-slim AS runtime
@@ -97,9 +151,12 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends postgresql-client \
  && rm -rf /var/lib/apt/lists/*
 
-# Copied whole from the build stage: `cli.js` externalizes runtime dependencies, so
-# pruning harder than `--prod` breaks the image at its first import.
-COPY --from=build /app/node_modules ./node_modules
+# Copied from the `prod-deps` stage, never from the build tree: the bundle
+# externalizes its runtime dependencies, so they have to be here, and the build
+# tree also carries every dev dependency (`tsup`, `vitest`, `eslint`) that nothing
+# at runtime loads. `prod-deps` installs the production set directly, which is the
+# only supported way to get it — see that stage for why pruning is not.
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json
 # `@atomicstrata/llmwiki-core` is a WORKSPACE package: `node_modules/@atomicstrata/
