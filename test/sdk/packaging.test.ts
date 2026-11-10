@@ -48,10 +48,28 @@ function packDistribution(repo: string, destination: string): string[] {
  * `SlugSafe` proves the branded identifier types still survive the shipped
  * declarations as brands: a second copy of core's `.d.ts` (or a hand-written
  * duplicate) would either lose the brand or be indistinguishable from `string`.
+ *
+ * ## The dimensions port is proved from the INSTALLED declarations too (spec S9)
+ *
+ * Two claims, both read off the tarballs a consumer installs rather than off this
+ * checkout's sources:
+ *
+ * 1. **The port type is publicly REACHABLE and SATISFIABLE.** A hand-written
+ *    object literal is declared as `NonNullable<CreateWikiOptions["dimensionsPort"]>`
+ *    and passed through the same `createWiki` call the probe already makes. A field
+ *    whose type an embedder cannot name -- because its only spelling lives in a
+ *    private workspace package -- is not a public option, so this is the claim that
+ *    the addition is actually usable, not merely declared.
+ * 2. **The option stays OPTIONAL** (spec S3): `createWiki({ root: "/tmp/x" })` also
+ *    type-checks. Omitting the port is valid, and that is the non-breaking half.
+ *
+ * Both are type-level only. Nothing here opens a database or starts a dimension, so
+ * the gate stays DB-free; the DB-backed ingest through the built entry belongs to
+ * the artifact tier (`test/artifact/entries-ingest-port.test.ts`).
  */
 async function verifyInstalledTypes(repo: string, fixture: string): Promise<void> {
   await writeFile(path.join(fixture, "types.ts"), `
-    import { createWiki, type Wiki } from "llm-wiki-compiler";
+    import { createWiki, type CreateWikiOptions as FacadeOptions, type Wiki } from "llm-wiki-compiler";
     import type { SlugSafe, WikiCore } from "@atomicstrata/llmwiki-core";
     import type { CreateWikiOptions } from "@atomicstrata/llmwiki-core/compiler-sdk";
     declare const wiki: Wiki;
@@ -66,7 +84,21 @@ async function verifyInstalledTypes(repo: string, fixture: string): Promise<void
     const facade: Wiki = createWiki(options);
     const slugText: string = slug;
     const brandSurvives: ErasedToPlainString<SlugSafe> = false;
-    void [sameContract, core, facade, slugText, brandSurvives];
+
+    /** The port type as the core's installed declarations state it. */
+    type CorePort = NonNullable<CreateWikiOptions["dimensionsPort"]>;
+    /** The same field as the ROOT facade's installed declarations state it. */
+    type FacadePort = NonNullable<FacadeOptions["dimensionsPort"]>;
+
+    /** A hand-written port: no private package is needed to satisfy the contract. */
+    const port: CorePort = { resolve: () => [] };
+    /** Both published entries name the SAME port type, so a consumer cannot drift. */
+    const samePortType: MutuallyAssignable<CorePort, FacadePort> = true;
+    /** Supplying it is accepted through the public option. */
+    const supplied: Wiki = createWiki({ ...options, dimensionsPort: port });
+    /** Omitting it stays valid (spec S3): the field is optional, never required. */
+    const omitted: Wiki = createWiki({ root: "/tmp/x" });
+    void [sameContract, core, facade, slugText, brandSurvives, samePortType, supplied, omitted];
   `);
   execFileSync(process.execPath, [path.join(repo, "node_modules/typescript/bin/tsc"),
     "--noEmit", "--strict", "--skipLibCheck", "--target", "ES2022",
