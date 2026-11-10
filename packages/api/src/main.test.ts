@@ -30,7 +30,8 @@
  * bare `ENOENT` from the spawn.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
+import type { Readable, Writable } from "node:stream";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -50,8 +51,32 @@ const BUILD_COMMAND = "corepack pnpm run build";
 /** The line `host` mode prints once its listener has bound, captured to reach it. */
 const READY_LINE = /^Host ready at (http:\/\/\S+)$/m;
 
+/**
+ * Preload that raises SIGTERM against the child itself at the readiness write, so
+ * the stop contract is measured at a code-determined instant instead of after a
+ * pipe round-trip. See the fixture's own header for why the signal is child-side.
+ */
+const SIGTERM_AT_READY = path.join(REPO_ROOT, "test", "fixtures", "sigterm-at-ready.cjs");
+
+/** Bound on the wait for a stopped child to be gone; a bound, never the wait itself. */
+const HOST_EXIT_DEADLINE_MS = 30_000;
+
+/**
+ * The part of a live child {@link waitForStdout} needs: its output so far and the
+ * promise that settles when it is gone. Narrower than {@link Running} so a child
+ * spawned for a signal contract can share the same readiness wait.
+ */
+interface Observable {
+  /** Raw bytes the process has written to stdout so far. */
+  readonly stdout: () => string;
+  /** Raw bytes the process has written to stderr so far. */
+  readonly stderr: () => string;
+  /** Settles once the process is gone. */
+  readonly exited: Promise<unknown>;
+}
+
 /** One launched child process, with everything it has said so far. */
-interface Running {
+interface Running extends Observable {
   /** Raw bytes the process wrote to stdout. */
   readonly stdout: () => string;
   /** Raw bytes the process wrote to stderr. */
@@ -66,26 +91,58 @@ interface Running {
   readonly terminate: () => void;
 }
 
-/** Start the launcher bundle with `args`, rooted at `cwd`. */
-function launch(args: readonly string[], cwd: string): Running {
+/**
+ * The child {@link spawnCaptured} returns. All three stdio slots are pipes, so the
+ * stdin `Running.send` writes to is never null — the narrowing the local `spawn`
+ * used to give `launch` for free.
+ */
+type PipedChild = ChildProcessByStdio<Writable, Readable, Readable>;
+
+/** A spawned launcher child with its two output streams captured as they arrive. */
+interface Captured {
+  /** The child process itself. */
+  readonly child: PipedChild;
+  /** Everything the child has written to stdout so far. */
+  readonly stdout: () => string;
+  /** Everything the child has written to stderr so far. */
+  readonly stderr: () => string;
+}
+
+/**
+ * Spawn the launcher bundle with `args` and capture both streams. This is the one
+ * place that decides how a launcher child is started, so the readiness cases and
+ * the stop-path cases cannot drift on the build precondition or the stream wiring.
+ *
+ * @param args - argv after the launcher's own path.
+ * @param cwd - The working directory the child runs in.
+ * @param env - The child's environment; defaults to this process's own.
+ * @returns The child and its captured streams.
+ */
+function spawnCaptured(args: readonly string[], cwd: string, env: NodeJS.ProcessEnv = process.env): Captured {
   if (!existsSync(LAUNCHER)) {
     throw new Error(`${LAUNCHER} is missing, so the build has not run; run \`${BUILD_COMMAND}\``);
   }
-  const child = spawn(process.execPath, [LAUNCHER, ...args], { cwd, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [LAUNCHER, ...args], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+  return { child, stdout: () => stdout, stderr: () => stderr };
+}
+
+/** Start the launcher bundle with `args`, rooted at `cwd`. */
+function launch(args: readonly string[], cwd: string): Running {
+  const captured = spawnCaptured(args, cwd);
   const exited = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
-    child.on("close", (code) => resolve({ code, stdout, stderr }));
+    captured.child.on("close", (code) => resolve({ code, stdout: captured.stdout(), stderr: captured.stderr() }));
   });
   return {
-    stdout: () => stdout,
-    stderr: () => stderr,
+    stdout: captured.stdout,
+    stderr: captured.stderr,
     exited,
-    send: (line) => void child.stdin.write(`${line}\n`),
-    closeStdin: () => child.stdin.end(),
-    terminate: () => void child.kill("SIGTERM"),
+    send: (line) => void captured.child.stdin.write(`${line}\n`),
+    closeStdin: () => captured.child.stdin.end(),
+    terminate: () => void captured.child.kill("SIGTERM"),
   };
 }
 
@@ -100,7 +157,7 @@ async function runToExit(args: readonly string[], cwd: string): Promise<{ code: 
  * A fixed sleep would be a race in both directions: too short flakes on a loaded
  * machine, too long costs every run. The process's own output is the signal.
  */
-async function waitForStdout(running: Running, pattern: RegExp): Promise<RegExpMatchArray> {
+async function waitForStdout(running: Observable, pattern: RegExp): Promise<RegExpMatchArray> {
   const deadline = Date.now() + 30_000;
   for (;;) {
     const matched = running.stdout().match(pattern);
@@ -111,6 +168,56 @@ async function waitForStdout(running: Running, pattern: RegExp): Promise<RegExpM
     }
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${pattern}; stdout so far: ${running.stdout()}`);
   }
+}
+
+/**
+ * How a `host` child ended. The signal is the discriminator these cases need: a
+ * child the kernel stopped for us reports `code === null` and a signal, and a child
+ * that took the graceful path reports a code and no signal.
+ */
+interface StopOutcome {
+  /** Exit code, or `null` when a signal terminated the process. */
+  readonly code: number | null;
+  /** The signal that terminated the process, or `null` when it exited on its own. */
+  readonly signal: NodeJS.Signals | null;
+  /** Everything the child wrote to stdout. */
+  readonly stdout: string;
+  /** Everything the child wrote to stderr. */
+  readonly stderr: string;
+}
+
+/** A spawned `host` child and the single promise that settles once it is gone. */
+interface HostChild extends Observable {
+  /** The child process, for delivering the signals a stop path must survive. */
+  readonly child: ChildProcess;
+  /** Resolves once the child is gone, after both streams closed. */
+  readonly exited: Promise<StopOutcome>;
+}
+
+/**
+ * Spawn `<launcher> host --no-graph --port 0` and wait for ONE event — `close`,
+ * the same event {@link launch} awaits, so stdout is complete when it is read —
+ * bounded by {@link HOST_EXIT_DEADLINE_MS}. `close` also carries the signal, which
+ * is what tells a graceful stop apart from a death by default disposition.
+ *
+ * @param cwd - The working directory the child runs in.
+ * @param env - The child's environment; defaults to this process's own.
+ * @returns The child and its exit promise.
+ */
+function spawnHostToExit(cwd: string, env: NodeJS.ProcessEnv = process.env): HostChild {
+  const captured = spawnCaptured(["host", "--no-graph", "--port", "0"], cwd, env);
+  const exited = new Promise<StopOutcome>((resolve, reject) => {
+    const deadline = setTimeout(() => {
+      captured.child.kill("SIGKILL");
+      const seen = `stdout: ${captured.stdout()}; stderr: ${captured.stderr()}`;
+      reject(new Error(`host did not exit within ${HOST_EXIT_DEADLINE_MS}ms; ${seen}`));
+    }, HOST_EXIT_DEADLINE_MS);
+    captured.child.once("close", (code, signal) => {
+      clearTimeout(deadline);
+      resolve({ code, signal, stdout: captured.stdout(), stderr: captured.stderr() });
+    });
+  });
+  return { ...captured, exited };
 }
 
 /** The JSON-RPC `initialize` request every MCP client opens a session with. */
@@ -180,6 +287,16 @@ describe("the container launcher, in both modes the container starts", () => {
     const settled = await runToExit(["host", "--port", "0", "--host", "127.0.0.1"], root);
     expect(settled.code, "a lone --host must fail rather than bind").toBe(1);
     expect(settled.stderr, "the failure must state the gate").toContain("Privacy gate");
+  });
+});
+
+describe("the container launcher's SIGTERM stop contract", () => {
+  it("arms the SIGTERM stop path before it announces readiness", async () => {
+    const host = spawnHostToExit(root, { ...process.env, NODE_OPTIONS: `--require ${SIGTERM_AT_READY}` });
+    const settled = await host.exited;
+    expect(settled.stdout, "the child must reach readiness, or it never met the stop path this case measures").toContain("Host ready at");
+    expect(settled.signal, "the child died FROM the signal: readiness must imply the stop path is already armed").toBeNull();
+    expect(settled.code, "host must still exit 0 on SIGTERM, as the container's stop path requires").toBe(0);
   });
 });
 

@@ -300,8 +300,16 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
     mcpServerFactory: () => createWikiMcpServer({ root, version, dimensionsPort }),
     ...(parsed.flags.has(NO_GRAPH) ? { includeGraph: false } : {}),
   });
-  process.stdout.write(`Host ready at ${buildReadyUrl(handle.host, handle.port)}\n`);
+  // The stop path is armed BEFORE the readiness line is written. "Ready" has to
+  // mean "a SIGTERM here is answered with exit 0", because that is exactly what
+  // `docker stop` assumes: it announces nothing and waits for nothing, so a signal
+  // that lands between the announcement and this call would meet the kernel's
+  // default disposition and kill the process by signal (exit code null) instead of
+  // taking the graceful path. The two statements are adjacent, but the readiness
+  // bytes reach the parent from inside `stdout.write`, i.e. with this call still
+  // pending, so the window is real and was observed under load.
   registerShutdown(handle.close);
+  process.stdout.write(`Host ready at ${buildReadyUrl(handle.host, handle.port)}\n`);
 }
 
 /**
