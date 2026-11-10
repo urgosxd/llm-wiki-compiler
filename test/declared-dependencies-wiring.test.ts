@@ -36,20 +36,31 @@
  *    the KG dead-code baseline must all read exactly as they did before
  *    ownership moved, so the last block pins what the move had to leave alone
  *    rather than what it changed.
+ * 5. A declaration is only worth what a CONSUMER can install. The last block
+ *    reads the root `dependencies` block as an embedder's installer would, so a
+ *    range that resolves only inside this workspace cannot ship unnoticed.
  *
- * All four claims are invisible to typecheck, lint, and any unit test of product
- * behaviour, which is why they are asserted here by reading the manifests and
- * the lockfile directly.
+ * All of these claims are invisible to typecheck, lint, and any unit test of
+ * product behaviour, which is why they are asserted here by reading the
+ * manifests and the lockfile directly.
  *
  * Spec: project brief fixes 2 and 3 — root `drizzle-orm` declaration and
  * `packages/llmwiki-core` `tsup` devDependency, with zero version movement —
  * plus S7 of `odd/tasks/pnpm-phantom-deps.md`, which moves `ajv` ownership to
- * the package that imports it.
+ * the package that imports it, plus S1-S3 of
+ * `odd/tasks/packed-manifest-guard.md`, which asserts the published
+ * `dependencies` block.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { load } from "js-yaml";
 import { describe, expect, it } from "vitest";
+import {
+  WORKSPACE_PROTOCOL_PREFIX,
+  describeDependencyViolations,
+  findDependenciesByProtocol,
+  findUninstallableDependencies,
+} from "./fixtures/manifest-dependencies.js";
 
 /** Repository root from this file's own location, never from `process.cwd()`. */
 const REPO_ROOT = join(import.meta.dirname, "..");
@@ -208,5 +219,46 @@ describe("declared dependencies wiring: what the ajv move left alone", () => {
   it("keeps the KG dead-code baseline free of unlisted dependencies", () => {
     const baseline = JSON.parse(read(KG_DEAD_CODE_BASELINE)) as DeadCodeBaseline;
     expect(baseline.unlisted_dependencies).toEqual([]);
+  });
+});
+
+/**
+ * READ THIS BEFORE WIDENING THE GUARD BELOW TO THE WHOLE MANIFEST.
+ *
+ * The subject is root `dependencies`, and only that block, because that is the
+ * only block an embedder's installer reads. Root `package.json:103-106` carries
+ * four `workspace:*` entries — `@repo/api`, `@repo/foundation`, `@repo/kg` and
+ * `@repo/wiki` — and all four are inside `devDependencies`. They are COSMETIC
+ * and HARMLESS: no package manager installs the `devDependencies` of a package
+ * you install, so a consumer never sees them and never tries to resolve one.
+ *
+ * They must NOT be "fixed". That assertion belongs to `give the workspace build
+ * its edge, not the consumer`: the workspace build needs those links to compile
+ * this repository, and rewriting them to registry versions would break it to
+ * satisfy a rule no consumer can observe. The acceptance criterion that demanded
+ * a `workspace:`-free packed manifest was retracted for exactly this reason.
+ *
+ * The scope is also pinned from the other side: `test/affected-escalation-wiring.test.ts`
+ * REQUIRES `@repo/kg` to stay `workspace:*` under `devDependencies`. A guard
+ * asserting a whole-manifest absence would therefore go RED on a correct tree,
+ * which is how a guard becomes noise and then gets deleted.
+ *
+ * What DOES protect an embedder is the block asserted here: `dependencies` must
+ * carry no local protocol, and every range there must be registry-ranged or
+ * URL-shaped. That is the negative and the positive half of the same claim —
+ * absence alone would pass on an empty or mangled block. The INSTALLED tarball's
+ * manifest gets the same two assertions in `test/sdk/packaging.test.ts`, because
+ * this checkout cannot see what a packer actually ships.
+ */
+describe("declared dependencies wiring: root dependencies reach a consumer intact", () => {
+  it("pins nothing to a local protocol such as workspace:", () => {
+    const pinned = findDependenciesByProtocol(rootPkg.dependencies, [WORKSPACE_PROTOCOL_PREFIX]);
+    expect(pinned, `workspace-pinned dependencies: ${describeDependencyViolations(pinned)}`).toEqual([]);
+  });
+
+  it("declares only registry-ranged or URL-shaped dependency ranges", () => {
+    expect(rootPkg.dependencies).toBeDefined();
+    const uninstallable = findUninstallableDependencies(rootPkg.dependencies);
+    expect(uninstallable, `uninstallable dependencies: ${describeDependencyViolations(uninstallable)}`).toEqual([]);
   });
 });

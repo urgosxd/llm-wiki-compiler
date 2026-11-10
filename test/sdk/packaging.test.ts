@@ -14,6 +14,8 @@
  *   - A consumer-facing package subpath that does not resolve from the
  *     installed tarballs (the facade's declarations import the core's
  *     `compiler-sdk` subpath, so that entry is a real contract)
+ *   - A `dependencies` range that only resolves inside this workspace, which a
+ *     consumer's installer fails on with `EUNSUPPORTEDPROTOCOL`
  *
  * Network-dependent: `npm install <tarball>` resolves llmwiki's ~17 runtime
  * deps fresh from the registry, so this is a developer-invoked `test:pack`
@@ -27,6 +29,12 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PACK_DISTRIBUTION } from "./pack-distribution.js";
+import {
+  WORKSPACE_PROTOCOL_PREFIX,
+  describeDependencyViolations,
+  findDependenciesByProtocol,
+  findUninstallableDependencies,
+} from "../fixtures/manifest-dependencies.js";
 
 /** Pack already-built exact workspace dependencies alongside the standard facade. */
 function packDistribution(repo: string, destination: string): string[] {
@@ -106,6 +114,29 @@ async function verifyInstalledTypes(repo: string, fixture: string): Promise<void
   { cwd: fixture, stdio: "pipe" });
 }
 
+/**
+ * The INSTALLED manifest is the packed one, and NOTHING else reads it.
+ *
+ * `test/declared-dependencies-wiring.test.ts` can only inspect this checkout's
+ * `package.json`; what a packer rewrites, drops or leaves verbatim is invisible
+ * to it. So the two properties the guard there asserts are asserted again here
+ * against `node_modules/llm-wiki-compiler/package.json` — the file an embedder's
+ * installer actually resolves. Same helper, same grammar, different artefact:
+ * no local protocol such as `workspace:`, and every range registry-ranged or
+ * URL-shaped.
+ */
+async function verifyInstalledManifest(fixture: string): Promise<void> {
+  const manifestPath = path.join(fixture, "node_modules/llm-wiki-compiler/package.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+    dependencies?: Record<string, string>;
+  };
+  expect(Object.keys(manifest.dependencies ?? {}).length).toBeGreaterThan(0);
+  const pinned = findDependenciesByProtocol(manifest.dependencies, [WORKSPACE_PROTOCOL_PREFIX]);
+  expect(pinned, `packed manifest pins a local protocol: ${describeDependencyViolations(pinned)}`).toEqual([]);
+  const uninstallable = findUninstallableDependencies(manifest.dependencies);
+  expect(uninstallable, `packed manifest has uninstallable ranges: ${describeDependencyViolations(uninstallable)}`).toEqual([]);
+}
+
 describe("packaging (slow; run via `npm run test:pack`)", () => {
   it("library entry imports from a packed tarball, no shebang, types emitted", async () => {
     const repo = process.cwd();
@@ -119,6 +150,7 @@ describe("packaging (slow; run via `npm run test:pack`)", () => {
       const tarballs = packDistribution(repo, out);
       await writeFile(path.join(fixture, "package.json"), JSON.stringify({ name: "f", type: "module" }));
       execFileSync("npm", ["install", "--ignore-scripts", ...tarballs], { cwd: fixture, stdio: "ignore" });
+      await verifyInstalledManifest(fixture);
       await writeFile(path.join(fixture, "probe.mjs"), `import { createWiki } from "llm-wiki-compiler"; if (typeof createWiki !== "function") process.exit(2);`);
       execFileSync("node", ["probe.mjs"], { cwd: fixture, stdio: "ignore" });
       await verifyInstalledTypes(repo, fixture);
