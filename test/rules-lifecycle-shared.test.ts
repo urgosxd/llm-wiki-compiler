@@ -7,17 +7,20 @@
  *
  * The brief named `compiler/rule-candidates.ts`, `compiler/rule-extractor.ts`
  * and `export/rule-candidates-json.ts` and asked for that to be checked before
- * anything was ported. It holds, by import graph and not by name:
+ * anything was ported. The first two hold: `compiler/rule-candidates.ts` is
+ * imported by `compiler/rule-extractor.ts`, and `compiler/rule-extractor.ts` is
+ * imported (type-only) by `dimensions/wiki/source-documents-store.ts`.
  *
- *   - `compiler/rule-candidates.ts` is imported by `export/rule-candidates-json.ts`.
- *   - `compiler/rule-extractor.ts` is imported (type-only) by
- *     `dimensions/wiki/source-documents-store.ts`.
- *   - `export/rule-candidates-json.ts` declares the export scope set and the
- *     serializer; `commands/rules.ts` was only ever the argv shell around them.
+ * `export/rule-candidates-json.ts` was WITHDRAWN afterwards, and the cases below
+ * were trimmed with it. It was reachable only from `commands/rules.ts`: once the
+ * CLI left, its only importer was this file, which is exactly the shape the
+ * reachability audit rules out — a module kept alive by the test written to cover
+ * it. The capability is gone from the product (no surviving entry exports rule
+ * candidates), so covering its serializer would be coverage for an orchestrator
+ * that no longer exists. Reported as a coverage note, not ported.
  *
- * So the lifecycle — list, mutate, export, extract — has a shared referent for
- * everything except its argv surface, and each case below asserts the shared
- * behaviour the command used to wire up.
+ * What remains below is the lifecycle that still has a production referent — the
+ * pending-candidate store — plus the provider guard extraction depends on.
  *
  * ## What is deliberately NOT ported
  *
@@ -34,29 +37,16 @@ import { describe, it, expect } from "vitest";
 import { readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { extractRuleCandidates } from "../packages/wiki/src/compiler/rule-extractor.js";
 import {
   archiveRuleCandidate,
   readRuleCandidate,
   setRuleCandidateStatus,
 } from "../packages/wiki/src/compiler/rule-candidates.js";
-import {
-  buildRuleCandidatesJson,
-  collectRuleCandidatesForExport,
-} from "../packages/wiki/src/export/rule-candidates-json.js";
 import { candidateFileId } from "../packages/wiki/src/utils/candidate-store.js";
 import { ensureProviderAvailable } from "../packages/wiki/src/utils/provider-guard.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { useStackEnv } from "./fixtures/stack-env.js";
-import {
-  restoreProviderEnvAfterEach,
-  seedRuleSource,
-  stubRuleExtraction,
-} from "./fixtures/rule-extraction.js";
-import type { RuleCandidate } from "../packages/wiki/src/utils/rule-types.js";
-
-/** Fixed clock so the persisted records are deterministic. */
-const FIXED_NOW = "2026-05-31T00:00:00.000Z";
+import { restoreProviderEnvAfterEach } from "./fixtures/rule-extraction.js";
 
 /** Pending candidates live here for a Stack-backed project. */
 const CANDIDATE_DIR = path.join(".llmwiki", "rule-candidates");
@@ -79,15 +69,6 @@ async function pendingFiles(root: string): Promise<string[]> {
   }
 }
 
-describe("listing the pending queue", () => {
-  const ctx = useTempRoot(["sources"]);
-
-  it("reports no pending candidates for a project that has none", async () => {
-    expect(await collectRuleCandidatesForExport(ctx.dir, "proposed")).toEqual([]);
-    expect(await pendingFiles(ctx.dir)).toEqual([]);
-  });
-});
-
 describe("mutating an id no candidate carries", () => {
   const ctx = useTempRoot(["sources"]);
   const fileId = candidateFileId(MISSING_ID);
@@ -100,34 +81,7 @@ describe("mutating an id no candidate carries", () => {
 
   it("archives nothing and leaves the queue empty", async () => {
     expect(await archiveRuleCandidate(ctx.dir, fileId)).toBe(false);
-    expect(await collectRuleCandidatesForExport(ctx.dir, "all")).toEqual([]);
-  });
-});
-
-describe("exporting the approved scope", () => {
-  const ctx = useTempRoot(["sources"]);
-
-  it("emits exactly one approved record with the importer's field names", async () => {
-    await seedRuleSource(ctx.dir);
-    await stubRuleExtraction();
-    const { candidates } = await extractRuleCandidates(ctx.dir, FIXED_NOW);
-    await setRuleCandidateStatus(ctx.dir, candidateFileId(candidates[0]!.id), "approved");
-
-    const approved = await collectRuleCandidatesForExport(ctx.dir, "approved");
-    expect(approved).toHaveLength(1);
-    const parsed = JSON.parse(buildRuleCandidatesJson(approved)) as RuleCandidate[];
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0]!.id).toBe(candidates[0]!.id);
-    expect(parsed[0]!.status).toBe("approved");
-  });
-
-  it("excludes a still-proposed candidate from the approved scope", async () => {
-    await seedRuleSource(ctx.dir);
-    await stubRuleExtraction();
-    await extractRuleCandidates(ctx.dir, FIXED_NOW);
-
-    expect(await collectRuleCandidatesForExport(ctx.dir, "approved")).toEqual([]);
-    expect(await collectRuleCandidatesForExport(ctx.dir, "proposed")).toHaveLength(1);
+    expect(await pendingFiles(ctx.dir)).toEqual([]);
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * @file Graph fixtures shared by the graph-reading test suites.
  *
- * `context-graph` and `context-links-here` both need synthetic `GraphData`:
+ * `context-graph` and `context/resolve-target` both need synthetic `GraphData`:
  * real nodes, dangling (ghost) nodes, and directed edges. Building that shape
  * twice meant two definitions of "what a ghost node is" that could drift, so it
  * lives here once.

@@ -1,9 +1,8 @@
-/** Selected nested sources must appear in status and stale-refresh guidance. */
+/** Selected nested sources must appear in status, eval, next-action and MCP guidance. */
 import { beforeEach, expect, it } from "vitest";
 import { writeFile, symlink } from "node:fs/promises";
 import path from "node:path";
 import { collectStatus } from "../packages/wiki/src/status/collect.js";
-import { resolveStaleRefresh } from "../packages/wiki/src/compiler/refresh-plan.js";
 import { collectStats } from "../packages/wiki/src/eval/stats.js";
 import { collectProjectState } from "../packages/wiki/src/project/state.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
@@ -47,11 +46,6 @@ it("status exposes pending retirement after exclusion and clears it on reselecti
       ? [{ file: "records/note.md", status: "deleted" }] : []);
     expect(status.pendingChangesCount).toBe(excludeRecords ? 1 : 0);
   }
-});
-
-it("stale-refresh identifies selected nested files that need a full compile", async () => {
-  const { plan } = await resolveStaleRefresh(root.dir);
-  expect(plan?.newSkipped).toEqual(["records/note.md", "top.md"]);
 });
 
 it.each([

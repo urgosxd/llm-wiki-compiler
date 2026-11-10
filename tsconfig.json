@@ -12,9 +12,6 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
     "paths": {
-      "@atomicstrata/llmwiki-core/compiler-cli": [
-        "./packages/wiki/src/compiler-cli.ts"
-      ],
       "@atomicstrata/llmwiki-core/compiler-sdk": [
         "./packages/wiki/src/sdk/compiler-composition.ts"
       ],

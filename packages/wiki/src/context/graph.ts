@@ -193,7 +193,7 @@ export function expandGraphNeighborhood(
 }
 
 /** Outgoing + incoming edge maps for fast neighbor lookup keyed by GraphNodeId. */
-export interface Adjacency {
+interface Adjacency {
   outgoing: Map<GraphNodeId, Set<GraphNodeId>>;
   incoming: Map<GraphNodeId, Set<GraphNodeId>>;
 }
@@ -204,12 +204,13 @@ export interface Adjacency {
  * another `source`→`target` pair — so context expansion traverses both without
  * any edge-kind branching.
  *
- * Exported because `src/context/race-path.ts` needs the same `source`→`target`
- * reading of the edge list to answer "which route gets me from A to B?". Two
- * independent adjacency builders would be two definitions of what an edge is,
- * and they would drift the first time an edge kind is added.
+ * Written once so the `source`→`target` reading of the edge list has a single
+ * definition: two independent adjacency builders would be two definitions of
+ * what an edge is, and they would drift the first time an edge kind is added.
+ * Private to this module since the race traversal that also needed it went with
+ * the CLI: {@link expandGraphNeighborhood} is its only caller.
  */
-export function buildAdjacency(graph: GraphData): Adjacency {
+function buildAdjacency(graph: GraphData): Adjacency {
   const outgoing = new Map<GraphNodeId, Set<GraphNodeId>>();
   const incoming = new Map<GraphNodeId, Set<GraphNodeId>>();
   for (const edge of graph.edges) {
@@ -268,33 +269,36 @@ function addToSetMap<K, V>(map: Map<K, Set<V>>, key: K, value: V): void {
  * A node is NOT an article when, and only when, it is flagged `isDangling` —
  * the marker `buildGraphData` puts on a synthesized placeholder for a wikilink
  * target (or relation endpoint) that has no page behind it. Every reader that
- * navigates the graph — `race` refusing a destination, `links-here` refusing a
- * linking page, `context` refusing a neighbor — asks this one predicate, so a
- * node cannot be an article for one command and a ghost for another.
+ * navigates the graph — `context` refusing a neighbor, `context/resolve-target`
+ * refusing a destination — asks this one predicate, so a node cannot be an
+ * article for one reader and a ghost for another.
  *
  * WHY "flagged dangling" needs no second "and nothing real claims it" test: the
  * builder keys ghosts off the very page set it already has. `buildGhostNodes`
  * skips any target present in `pageIds`, and `buildRelationGhostNodes` skips
  * every id in `knownIds` (pages, existing nodes and entity nodes). So a ghost id
  * and a real page id can never collide inside one snapshot, and the snapshot is
- * built once per read and never mutated afterwards. `links-here` used to carry
- * that redundant claim check as a private duplicate; it now calls this predicate
- * like everything else, and `test/context/ghost-rule.test.ts` pins both the rule
+ * built once per read and never mutated afterwards. A reader that used to carry
+ * that redundant claim check as a private duplicate now calls this predicate like
+ * everything else, and `test/context/resolve-target.test.ts` pins both the rule
  * and the builder guarantee it relies on.
+ *
+ * Private to this module: {@link collectGhostIds} is the seam every other reader
+ * goes through, so the predicate has no consumer outside it.
  *
  * @param node - Any graph node, real page or ghost placeholder.
  * @returns True when the node has no backing page and is therefore no article.
  */
-export function isGhostNode(node: GraphNode): boolean {
+function isGhostNode(node: GraphNode): boolean {
   return node.isDangling === true;
 }
 
 /**
  * Collect every ghost-node id so we can drop dangling targets from neighbors.
  *
- * Exported because a dangling target is not an article, so the race traversal
- * must refuse it as a stop using the one definition of "ghost" this module owns
- * — {@link isGhostNode} — rather than inventing a second one.
+ * Exported because a dangling target is not an article: `context/resolve-target`
+ * refuses it as a stop using the one definition of "ghost" this module owns —
+ * {@link isGhostNode} — rather than inventing a second one.
  */
 export function collectGhostIds(nodes: GraphNode[]): Set<GraphNodeId> {
   const ghosts = new Set<GraphNodeId>();

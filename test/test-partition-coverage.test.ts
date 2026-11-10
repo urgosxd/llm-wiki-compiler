@@ -45,7 +45,7 @@ const KG_SOURCE = "packages/llmwiki-kg/ts/src/core/ontology.ts";
 /** A real suite that starts a child process, so it belongs in the slow tier. */
 const SPAWNING_SUITE = "test/parity-default.test.ts";
 /** A real suite with no child-process call site, so it belongs in the fast tier. */
-const PURE_SUITE = "test/context-links-here.test.ts";
+const PURE_SUITE = "test/context-graph.test.ts";
 
 /** Inputs whose change reaches every file, so they must force a broad run. */
 const ESCALATION_INPUTS = [

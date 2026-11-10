@@ -1,6 +1,6 @@
 /**
- * Tests for the rule-candidate pipeline: extraction → candidate →
- * approve → export. The LLM tool call is stubbed via vi.spyOn on the shared
+ * Tests for the rule-candidate pipeline: extraction → candidate → approve.
+ * The LLM tool call is stubbed via vi.spyOn on the shared
  * `callClaude` helper (the same mock pattern used by review.test.ts), so no
  * network call is made and the extracted rule is deterministic.
  *
@@ -10,18 +10,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdir, writeFile } from "fs/promises";
-import path from "path";
 import { extractRuleCandidates } from "../packages/wiki/src/compiler/rule-extractor.js";
 import {
   listRuleCandidates,
   setRuleCandidateStatus,
   validateRuleCandidate,
 } from "../packages/wiki/src/compiler/rule-candidates.js";
-import {
-  buildRuleCandidatesJson,
-  collectRuleCandidatesForExport,
-} from "../packages/wiki/src/export/rule-candidates-json.js";
 import { candidateFileId } from "../packages/wiki/src/utils/candidate-store.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { useStackEnv } from "./fixtures/stack-env.js";
@@ -73,7 +67,7 @@ describe("rule-candidate extraction", () => {
   });
 });
 
-describe("rule-candidate approve + export", () => {
+describe("rule-candidate approve", () => {
   const ctx = useTempRoot(["sources"]);
 
   it("approve flips status to approved", async () => {
@@ -87,43 +81,6 @@ describe("rule-candidate approve + export", () => {
 
     const listed = await listRuleCandidates(ctx.dir);
     expect(listed[0]!.status).toBe("approved");
-  });
-
-  it("export emits a JSON array of approved RuleCandidate records", async () => {
-    await seedSource(ctx.dir);
-    await stubRuleExtraction();
-    const { candidates } = await extractRuleCandidates(ctx.dir, FIXED_NOW);
-    const fileId = candidateFileId(candidates[0]!.id);
-    await setRuleCandidateStatus(ctx.dir, fileId, "approved");
-
-    const approved = await collectRuleCandidatesForExport(ctx.dir, "approved");
-    const json = JSON.parse(buildRuleCandidatesJson(approved)) as RuleCandidate[];
-    expect(Array.isArray(json)).toBe(true);
-    expect(json).toHaveLength(1);
-    expect(json[0]!.status).toBe("approved");
-    expect(json[0]!.proposed.version).toBe(1);
-    expect(json[0]!.evidence[0]).toEqual({ kind: "file", path: "guide.md", lineStart: 1, lineEnd: 2 });
-  });
-
-  it("skips malformed persisted candidates instead of exporting them", async () => {
-    await mkdir(path.join(ctx.dir, ".llmwiki/rule-candidates"), { recursive: true });
-    await writeFile(
-      path.join(ctx.dir, ".llmwiki/rule-candidates/rulecand-process-bad.json"),
-      JSON.stringify({
-        id: "rulecand.process.bad",
-        proposed: {},
-        evidence: [],
-        provenance: { source: "llm-wiki-compiler" },
-        confidence: "high",
-        status: "approved",
-        createdAt: FIXED_NOW,
-      }),
-      "utf-8",
-    );
-
-    const approved = await collectRuleCandidatesForExport(ctx.dir, "approved");
-
-    expect(approved).toEqual([]);
   });
 });
 

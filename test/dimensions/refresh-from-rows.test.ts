@@ -1,9 +1,9 @@
 /**
- * The stale-refresh planner classifying pages that only exist as rows.
+ * The page scan reading pages that only exist as rows.
  *
- * `classifyPages` already took the scan shape, so this asserts the last reader moved
- * rather than that the classification changed: the root has no `wiki/`, so a non-empty
- * classification proves the pages came from the table.
+ * The scan already took the scan shape, so this asserts the last reader moved rather
+ * than that the classification changed: the root has no `wiki/`, so a non-empty
+ * scan proves the pages came from the table.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -11,7 +11,6 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveStaleRefresh } from "../../packages/wiki/src/compiler/refresh-plan.js";
 import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
 import { createPageScanSource } from "../../packages/wiki/src/dimensions/wiki/page-scan-source.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
@@ -31,17 +30,6 @@ describe("refresh plan from rows", () => {
   afterEach(async () => {
     await harness.cleanup();
     await rm(root, { recursive: true, force: true });
-  });
-
-  it("reports missing state rather than inventing a plan", async () => {
-    // The planner's own precondition, unchanged: no state means no plan, and a row
-    // corpus does not change that.
-    const { stateStatus, plan } = await resolveStaleRefresh(
-      root, createPageScanSource(harness.db, harness.stackId),
-    );
-
-    expect(stateStatus).not.toBe("ok");
-    expect(plan).toBeNull();
   });
 
   it("sees the row-backed page, so classification is not empty", async () => {

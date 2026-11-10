@@ -121,7 +121,7 @@ describe("classifyTests", () => {
 
   it("puts pure unit suites in the fast tier", () => {
     const { unit } = partition(classified);
-    expect(unit).toContain("test/context-links-here.test.ts");
+    expect(unit).toContain("test/context/resolve-target.test.ts");
     expect(unit).toContain("test/context-graph.test.ts");
   });
 
