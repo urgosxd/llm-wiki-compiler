@@ -43,7 +43,7 @@ S11. THE ARTEFACT TIER'S LIMIT IS WRITTEN DOWN. Manager ruling, verbatim: "the r
 T0 · S10-S11 · route: worker · this document · commit: fcfcc15bac6bb0e743152a6205141bec465a9a59
 T1 · S2-S4 · route: worker · self-contained published `DimensionsPort`/`DimensionsRequest` beside `core-types.ts`, the optional `CreateWikiOptions.dimensionsPort`, and the mutual-assignability guard proven to bite · commit: <pending>
 T2 · S5-S7 · route: worker · port threading in `core.ts:84/:86` and the `port?` on `ingestTextSource:303` · commit: <pending>
-T2b · S1 · route: worker · `env` forwarding in `core.ts:84/:86`, RED FIRST, own commit so the behaviour change is revertable alone · commit: <pending>
+T2b · S1 · route: worker · `env` forwarding in `core.ts:84/:86`, RED FIRST, own commit so the behaviour change is revertable alone · commit: 3089859777e68324385c948af3797a134d4b1b67
 T3 · S7-S8 · route: worker · recording fake proving the port is CALLED, plus `MissingDimensionsPortError` at the internal seam · commit: <pending>
 T4 · S9 · route: worker · packed-artefact proof, each tier in its proper place · commit: <pending>
 T5 · S11 · route: worker · artefact-tier note recording the façade-only limit · commit: <pending>
