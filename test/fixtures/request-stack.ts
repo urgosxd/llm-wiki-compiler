@@ -48,7 +48,6 @@
 
 import { rm } from "node:fs/promises";
 
-import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, expect, vi } from "vitest";
 
 import type { CandidateDraft } from "../../packages/wiki/src/compiler/candidates.js";
@@ -273,27 +272,3 @@ export const PROVENANCE_CITED_SOURCE = {
   text: "# Topic source\n\nCited text.\n",
 };
 
-/**
- * Give one Stack a review policy that HOLDS on provenance violations.
- *
- * The row is the documented corpus for a Stack-configured project's config
- * (`wiki.project_config`; the file fallback is never consulted once a Stack is named), and
- * no writer for it exists in `src/` today, so the fixture states the policy the way the
- * reader reads it. A policy that HOLDS is what makes a page's provenance a gate rather
- * than decoration: with the cited source written where the rule looks, `evaluatePolicy`
- * must return no reasons.
- *
- * @param harness - A handle on the database the Stack lives in.
- * @param stackId - The Stack whose review policy this sets.
- */
-export async function holdOnProvenanceViolations(
-  harness: KgPostgresHarness,
-  stackId: string,
-): Promise<void> {
-  const document = { version: 1, review: { hold: ["provenance-violating"] } };
-  await harness.db.execute(sql`
-    insert into wiki.project_config (stack_id, document, version)
-    values (${stackId}, ${JSON.stringify(document)}::jsonb, 1)
-    on conflict (stack_id) do update set document = excluded.document, version = excluded.version
-  `);
-}

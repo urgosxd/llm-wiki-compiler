@@ -3,30 +3,29 @@
  * @description Integration coverage for routing compile's page GENERATION
  * through the unified planner/executor (phase 1 of the compile reroute).
  *
- * Pins three contracts of the live-write branch reroute:
+ * Pins two contracts of the live-write branch reroute:
  *  - a DEFAULT compile produces the same page bytes AND routes the generation
  *    write through the executor (a single journal batch is opened);
- *  - the CANDIDATE branch (a policy hold) is untouched: it writes ONLY a candidate
- *    JSON, opens NO executor batch / journal, and writes NO live page;
  *  - (HIGH-A) a floor-SKIPPED page (oversized body > GENERATED_PAGE_MAX_CHARS,
  *    the compile guardrail) is
  *    ABSENT from the committed set: it is NOT in `result.pages`, IS surfaced in
  *    errors, and is NEITHER resolved (resolveLinks slug set) NOR embedded
  *    (updateEmbeddingsLockedCore page-id set).
+ *
+ * The CANDIDATE branch this file used to pin is gone with every candidate stager:
+ * a page is always a live write now, so there is no branch left off the executor.
  */
 
 import { describe, it, expect, vi } from "vitest";
 import { existsSync } from "fs";
 import path from "path";
 import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
-import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { CONCEPTS_DIR, GENERATED_PAGE_MAX_CHARS } from "../packages/wiki/src/utils/constants.js";
 import * as journal from "../packages/wiki/src/trust/journal.js";
 import * as resolver from "../packages/wiki/src/compiler/resolver.js";
 import * as embeddings from "../packages/wiki/src/utils/embeddings.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
-import { mkdir, writeFile } from "fs/promises";
 
 const ctx = useCompileProject({
   dirSuffix: "reroute-gen",
@@ -47,14 +46,6 @@ function stubConcepts(pageBody = "Generated page body with enough content."): vo
   vi.spyOn(console, "log").mockImplementation(() => {});
 }
 
-/** Write a review-hold config that holds every page (forces the candidate branch). */
-async function holdEveryPage(): Promise<void> {
-  const dir = path.join(ctx.dir, ".llmwiki");
-  await mkdir(dir, { recursive: true });
-  const body = JSON.stringify({ version: 1, review: { hold: ["all"] } });
-  await writeFile(path.join(dir, "config.json"), body, "utf-8");
-}
-
 describe("compile generation routed through planner/executor", () => {
   it("default compile writes the pages via a single journal batch", async () => {
     stubConcepts();
@@ -67,21 +58,6 @@ describe("compile generation routed through planner/executor", () => {
     expect(onDisk("alpha") && onDisk("beta")).toBe(true);
     // Generation writes now flow through the executor: exactly one batch opened.
     expect(openSpy).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("candidate branches stay off the executor", () => {
-  it("a policy-held page writes only a candidate JSON, opens no journal batch", async () => {
-    await holdEveryPage();
-    stubConcepts();
-    const openSpy = vi.spyOn(journal, "openBatch");
-
-    const result = await compileAndReport(ctx.dir);
-
-    expect(result.review?.held.length).toBe(2);
-    expect((result.pages ?? []).length).toBe(0);
-    expect(existsSync(path.join(ctx.dir, CONCEPTS_DIR, "alpha.md"))).toBe(false);
-    expect(openSpy).not.toHaveBeenCalled();
   });
 });
 

@@ -1,63 +1,30 @@
 /**
- * Per-page review-candidate generation pipeline for the compiler.
+ * Per-page page-generation pipeline for the compiler.
  *
  * Owns the single responsibility of turning one {@link MergedConcept} into a
- * {@link MergedPageOutcome}: render the page, run schema- and provenance-aware
- * lint, evaluate the review policy, and EITHER persist a policy-held review
- * candidate OR return a deferred live-write for the caller to commit as a
- * journalled batch.
+ * {@link MergedPageOutcome}: render the page, run the validate prefilter, clear any
+ * candidate the live write supersedes, and DEFER the write for the caller to commit as
+ * a journalled batch.
+ *
+ * No review path lives here any more. Every candidate stager is retired because no
+ * surface promotes a candidate into the wiki, so a hold could never be honoured: a page
+ * this module renders is always a live write and never a staged record.
  */
 
-import path from "path";
-import {
-  parseFrontmatter,
-  parseProvenanceMetadata,
-  validateWikiPage,
-} from "../utils/markdown.js";
-import { promptModifiersDigest } from "./prompt-modifiers.js";
-import { pickStatesForSources } from "./source-state.js";
+import { validateWikiPage } from "../utils/markdown.js";
 import { renderMergedPageContent } from "./page-renderer.js";
 import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
-import { deleteCandidateBySlug, writeCandidate } from "./candidates.js";
-import {
-  checkPageBrokenCitations,
-  checkPageCrossLinks,
-  checkPageMalformedCitations,
-} from "../linter/rules.js";
-import type { LintResult } from "../linter/types.js";
+import { deleteCandidateBySlug } from "./candidates.js";
 import * as output from "../utils/output.js";
-import { evaluatePolicy } from "../review/policy.js";
-import type { HeldReason, ReviewPolicy } from "../review/policy.js";
-import { SOURCES_DIR } from "../utils/constants.js";
 import type { SchemaConfig } from "../schema/index.js";
-import type {
-  CompileOptions,
-  ReviewCandidate,
-} from "../utils/types.js";
-import type {
-  MergedConcept,
-  MergedPageOutcome,
-  SourceStateMap,
-} from "./types.js";
-
-/** Review diagnostics computed from the final generated page. */
-interface ReviewDiagnostics {
-  schemaViolations: LintResult[];
-  provenanceViolations: LintResult[];
-}
-
-/** Metadata needed when persisting a candidate. */
-interface ReviewCandidateMeta {
-  reviewMode: "policy" | "forced";
-  heldReasons: HeldReason[];
-}
+import type { CompileOptions } from "../utils/types.js";
+import type { MergedConcept, MergedPageOutcome } from "./types.js";
 
 /**
  * Generate a wiki page from merged source content.
  * For shared concepts, the LLM sees content from all contributing sources
- * and frontmatter records every source file. When the run's review policy
- * holds the page, the rendered page is persisted as a review candidate
- * instead of being written into `wiki/`.
+ * and frontmatter records every source file. The rendered page is validated with the
+ * skip-invalid prefilter and then returned as a deferred live write.
  *
  * `contentSource` is the run's page reader, and it is load-bearing rather than
  * cosmetic: the renderer re-reads the page it is about to replace to carry forward
@@ -72,127 +39,20 @@ export async function generateMergedPage(
   entry: MergedConcept,
   schema: SchemaConfig,
   options: CompileOptions,
-  sourceStates: SourceStateMap,
-  policy: ReviewPolicy,
   contentSource?: PageContentSource,
 ): Promise<MergedPageOutcome> {
   // THE BOUNDARY. `generateMergedPage` is where the request enters the page pipeline:
   // `CompileOptions` carries the caller's `env`, and this is the ONE place it is
   // resolved. Every seam below is handed the result, so a run answering for a NAMED
-  // Stack stages its candidate and clears its duplicate in THAT Stack instead of in
-  // whichever tenant the process happens to be bound to.
+  // Stack clears its duplicate in THAT Stack instead of in whichever tenant the
+  // process happens to be bound to.
   const env = options.env ?? process.env;
   const fullPage = await renderMergedPageContent(root, entry, schema, contentSource);
-  const diagnostics = await collectReviewDiagnostics(root, entry, fullPage, schema);
-  const signals = buildPolicySignals(fullPage, diagnostics);
-  const reasons = evaluatePolicy(signals, policy);
 
-  if (reasons.length > 0) {
-    return await persistReviewCandidate(root, entry, fullPage, sourceStates, diagnostics, signals, {
-      reviewMode: "policy",
-      heldReasons: reasons,
-    }, env);
-  }
-
-  // Live-write branch: run the same validate prefilter (skip-invalid), then
-  // DEFER the write — return it as a pending CompilePageWrite so the caller can
-  // apply every page as one journalled executor batch (instead of an inline
-  // atomicWrite here). Generation only ever writes concept-namespace pages.
   if (!validateWikiPage(fullPage)) {
     output.status("!", output.warn(`Invalid page for "${entry.concept.concept}" — skipped.`));
     return { error: `Invalid page for "${entry.concept.concept}" — failed validation` };
   }
   await deleteCandidateBySlug(root, env, entry.slug);
   return { liveWrite: { namespace: "concepts", slug: entry.slug, body: fullPage } };
-}
-
-/** Persist a candidate JSON record for later review and report it on stdout. */
-async function collectReviewDiagnostics(
-  root: string,
-  entry: MergedConcept,
-  fullPage: string,
-  schema: SchemaConfig,
-): Promise<ReviewDiagnostics> {
-  // Run schema-aware AND provenance-aware lint against the candidate body so
-  // both classes of violation are visible in `review show` before a reviewer
-  // approves the page. The virtual file path uses the slug so diagnostics
-  // are identifiable without a real disk path. Provenance lint covers the
-  // citation rules that previously only ran on the post-promotion compile.
-  const virtualPath = `wiki/concepts/${entry.slug}.md`;
-  const schemaViolations = checkPageCrossLinks(fullPage, virtualPath, schema);
-  const provenanceViolations = await collectCandidateProvenanceViolations(
-    root,
-    fullPage,
-    virtualPath,
-  );
-  return { schemaViolations, provenanceViolations };
-}
-
-/** Build review-policy signals from final page frontmatter and diagnostics. */
-function buildPolicySignals(fullPage: string, diagnostics: ReviewDiagnostics) {
-  const { meta } = parseFrontmatter(fullPage);
-  const provenance = parseProvenanceMetadata(meta);
-  return {
-    confidence: provenance.confidence,
-    contradicted: (provenance.contradictedBy?.length ?? 0) > 0,
-    schemaViolations: diagnostics.schemaViolations,
-    provenanceViolations: diagnostics.provenanceViolations,
-  };
-}
-
-/** Persist a candidate JSON record for later review and report it on stdout. */
-async function persistReviewCandidate(
-  root: string,
-  entry: MergedConcept,
-  fullPage: string,
-  sourceStates: SourceStateMap,
-  diagnostics: ReviewDiagnostics,
-  signals: ReturnType<typeof buildPolicySignals>,
-  meta: ReviewCandidateMeta,
-  env: NodeJS.ProcessEnv,
-): Promise<MergedPageOutcome> {
-  const candidate: ReviewCandidate = await writeCandidate(root, env, {
-    title: entry.concept.concept,
-    slug: entry.slug,
-    summary: entry.concept.summary,
-    sources: entry.sourceFiles,
-    body: fullPage,
-    sourceStates: pickStatesForSources(sourceStates, entry.sourceFiles),
-    promptModifiers: promptModifiersDigest(),
-    schemaViolations:
-      diagnostics.schemaViolations.length > 0 ? diagnostics.schemaViolations : undefined,
-    provenanceViolations:
-      diagnostics.provenanceViolations.length > 0 ? diagnostics.provenanceViolations : undefined,
-    reviewMode: meta.reviewMode,
-    heldReasons: meta.heldReasons,
-    confidence: signals.confidence,
-    contradicted: signals.contradicted,
-  });
-  output.status("?", output.info(`Candidate ready: ${candidate.id} (${entry.slug})`));
-  return {
-    candidate: {
-      id: candidate.id,
-      mode: meta.reviewMode === "policy" ? "held" : "forced",
-      ref: { id: candidate.id, slug: entry.slug, reasons: meta.heldReasons.map((r) => r.code) },
-    },
-  };
-}
-
-/**
- * Run the in-memory provenance lint rules against a candidate body:
- * malformed claim citations + broken-source / out-of-bounds line spans.
- * Returns the combined diagnostics so writeCandidate can persist them.
- */
-async function collectCandidateProvenanceViolations(
-  root: string,
-  fullPage: string,
-  virtualPath: string,
-): Promise<LintResult[]> {
-  const malformed = checkPageMalformedCitations(fullPage, virtualPath);
-  const broken = await checkPageBrokenCitations(
-    fullPage,
-    virtualPath,
-    path.join(root, SOURCES_DIR),
-  );
-  return [...malformed, ...broken];
 }

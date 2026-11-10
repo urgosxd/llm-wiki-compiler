@@ -10,8 +10,8 @@
  * DECLARER is `services/ingest/service.ts`, and `commands/ingest.ts` is a
  * four-line re-export of it (`:24`) that `sdk/core.ts:28` reaches. The compile
  * step is `compiler/index.ts`'s `compileAndReport`, and the queue count the
- * envelope reported is `compiler/candidate-read.ts`'s `countCandidates`. All
- * three survive, so every case whose subject is one of those steps is restated
+ * envelope reported is `compiler/candidate-read.ts`'s `countCandidates`. Both
+ * survive, so every case whose subject is one of those steps is restated
  * here against the step.
  *
  * ## What is deliberately NOT ported
@@ -24,13 +24,9 @@
  * there because the condition they name cannot be produced by the product at
  * all; they are NO-REFERENT, not ports owed.
  *
- * One case is ported as its SURVIVING behaviour rather than as written: the
- * source file expects `next.command === "llmwiki review list"` after a `--review`
- * compile. Measured here, `countCandidates` does report the one queued candidate,
- * but `collectProjectState` counts candidates only when `.llmwiki/` exists on
- * disk and `recommendNextAction` ranks `sources-only` ahead of `review-pending`,
- * so `compile` is the answer the shared modules actually give. The divergence is
- * asserted and reported instead of being papered over.
+ * The held-page report is gone with the last candidate stager: a compile can no longer
+ * produce a pending candidate, so a case asserting that a `--review` compile fills the
+ * queue has no surviving subject.
  *
  * ## Isolation
  *
@@ -41,19 +37,15 @@
  */
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { sql } from "drizzle-orm";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ingestSource } from "../packages/wiki/src/services/ingest/service.js";
 import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
-import { countCandidates } from "../packages/wiki/src/compiler/candidate-read.js";
 import { ensureCompileProviderAvailable } from "../packages/wiki/src/utils/provider-guard.js";
 import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
 import { createDimensionsDatabase } from "../packages/wiki/src/dimensions/activation.js";
 import { listStoredPagesUnfiltered } from "../packages/wiki/src/dimensions/wiki/page-store.js";
-import { collectProjectState } from "../packages/wiki/src/project/state.js";
-import { recommendNextAction } from "../packages/wiki/src/project/recommendations.js";
 import { useStackEnv } from "./fixtures/stack-env.js";
 import { stubExtractionAndBody } from "./fixtures/compile-reroute-helpers.js";
 
@@ -123,28 +115,6 @@ function stubProvider(): void {
   process.env.LLMWIKI_PROVIDER = "anthropic";
   process.env.ANTHROPIC_API_KEY = "test-key";
   stubExtractionAndBody(CONCEPT, PAGE_BODY);
-}
-
-/**
- * Hold every generated page for the Stack `process.env` names.
- *
- * A review policy is the only lever left that reaches the candidate branch: the `review`
- * compile option that used to force it was removed. No writer for `wiki.project_config`
- * exists in `src/` today, so the row is stated the way the config reader reads it.
- */
-async function holdEveryPage(): Promise<void> {
-  const handle = createDimensionsDatabase(process.env);
-  try {
-    const stackId = (process.env.AKS_STACK_ID ?? "").trim();
-    const document = JSON.stringify({ version: 1, review: { hold: ["all"] } });
-    await handle.db.execute(sql`
-      insert into wiki.project_config (stack_id, document, version)
-      values (${stackId}, ${document}::jsonb, 1)
-      on conflict (stack_id) do update set document = excluded.document, version = excluded.version
-    `);
-  } finally {
-    await handle.close();
-  }
 }
 
 describe("step 1 — ingest", () => {
@@ -247,42 +217,6 @@ describe("step 2 — compile failure paths", () => {
     } finally {
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       delete process.env.LLMWIKI_CLAUDE_SETTINGS_PATH;
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("step 3 — the held-page report", () => {
-  it("counts the pending queue from the candidate store", async () => {
-    const root = await projectRoot();
-    stubProvider();
-    try {
-      await ingestSource(root, await sourceFile(root));
-      await holdEveryPage();
-      await compileAndReport(root);
-      expect(await countCandidates(root)).toBe(1);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it("classifies the post-held-compile project as `sources-only` and recommends compile", async () => {
-    const root = await projectRoot();
-    stubProvider();
-    try {
-      await ingestSource(root, await sourceFile(root));
-      await holdEveryPage();
-      await compileAndReport(root);
-      const rec = recommendNextAction(await collectProjectState(root));
-      // The queue IS populated -- `countCandidates` is asserted to say so above. The
-      // deleted command's `next.command === "llmwiki review list"` expectation for
-      // this same state is therefore NOT portable: `collectProjectState` counts
-      // candidates only when `.llmwiki/` exists on disk, and `recommendNextAction`
-      // ranks a source with no compiled pages ahead of the review queue. `compile`
-      // is the surviving contract. Reported as a finding, not hidden.
-      expect(rec.state).toBe("sources-only");
-      expect(rec.recommended.executable?.tool).toBe("compile_wiki");
-    } finally {
       await rm(root, { recursive: true, force: true });
     }
   });

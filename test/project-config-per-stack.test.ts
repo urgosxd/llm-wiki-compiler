@@ -4,10 +4,13 @@
  *
  * WHY THIS EXISTS
  *
- * `.llmwiki/config.json` holds how a wiki is REVIEWED (`review`) and how its
- * sources are DISCOVERED (`sources`). Neither is a property of a checkout: two
- * clones serving one Stack must review and discover identically, and a file per
- * clone let them disagree with nothing to report it.
+ * `.llmwiki/config.json` holds how a wiki's sources are DISCOVERED (`sources`). That
+ * is not a property of a checkout: two clones serving one Stack must discover
+ * identically, and a file per clone let them disagree with nothing to report it.
+ *
+ * The `review` half travelled here until the review policy was retired: the key is
+ * still parsed by the config reader and no longer decides anything, so nothing is
+ * pinned about it here.
  *
  * These tests pin the three states that matter, because each fails silently in a
  * different way:
@@ -23,7 +26,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import * as store from "../packages/wiki/src/dimensions/wiki/project-config-store.js";
 import { loadProjectConfig } from "../packages/wiki/src/project/config.js";
-import { loadReviewPolicy } from "../packages/wiki/src/review/config.js";
 import { loadSourceSelection } from "../packages/wiki/src/sources/selection.js";
 
 let dir: string;
@@ -75,17 +77,6 @@ describe("config from the Stack", () => {
     const selection = await loadSourceSelection(dir, { AKS_STACK_ID: STACK_B });
 
     expect(selection).toEqual({ recursive: false, exclude: [] });
-  });
-
-  it("reads review policy from the Stack's document", async () => {
-    dir = await projectWithFileConfig();
-    withStoredConfig({
-      [STACK_A]: { version: 1, review: { hold: ["low-confidence"] } },
-    });
-
-    const policy = await loadReviewPolicy(dir, { AKS_STACK_ID: STACK_A });
-
-    expect(policy.hold).toContain("low-confidence");
   });
 });
 

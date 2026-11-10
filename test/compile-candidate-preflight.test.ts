@@ -34,7 +34,11 @@ async function stubCompileWithMalformedCandidate(): Promise<string> {
   return malformed;
 }
 
-/** Hold every generated page, so the run stages a candidate instead of writing the page. */
+/**
+ * Configure the retired hold policy: it no longer stages anything, so the page below is
+ * written live. Kept in place because "the policy still parses and decides nothing" is
+ * exactly the property these cases share.
+ */
 async function holdEveryPage(): Promise<void> {
   const document = JSON.stringify({ version: 1, review: { hold: ["all"] } });
   await writeFile(path.join(project.dir, ".llmwiki", "config.json"), document);
@@ -78,13 +82,15 @@ describe("public-default candidate discovery", () => {
       .toContain("An example body.");
   });
 
-  it("compiles and stages the page under a policy hold despite an unrelated malformed candidate", async () => {
+  it("writes the page live under a policy hold despite an unrelated malformed candidate", async () => {
     const malformed = await stubCompileWithMalformedCandidate();
     await holdEveryPage();
 
     const result = await compileAndReport(project.dir);
     await expectCleanRun(result, malformed);
-    expect((await listCandidates(project.dir)).map((candidate) => candidate.slug)).toEqual(["example"]);
+    expect(await listCandidates(project.dir)).toEqual([]);
+    expect(await readFile(path.join(project.dir, "wiki", "concepts", "example.md"), "utf8"))
+      .toContain("An example body.");
   });
 
   it("still refuses malformed authority when a strict operation explicitly selects it", async () => {

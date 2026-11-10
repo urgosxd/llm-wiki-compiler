@@ -17,13 +17,8 @@ import type { VersionSplit } from "./version-report.js";
 import type { AttributionCounts, AttributionSink, RelatedPageIndex } from "./page-renderer.js";
 import type {
   ExtractedConcept,
-  ReviewedCandidateRef,
   SourceChange,
-  SourceState,
 } from "../utils/types.js";
-
-/** Per-source state snapshots keyed by source filename. */
-export type SourceStateMap = Record<string, SourceState>;
 
 /** A concept with all contributing sources merged for generation. */
 export interface MergedConcept {
@@ -67,18 +62,11 @@ export interface ChangeBuckets {
 
 /** Result of phase 2: page writes plus any errors collected along the way. */
 export interface PageGenerationResult {
-  /** All merged concepts generated this run, including held candidates. */
+  /** All merged concepts generated this run. */
   pages: MergedConcept[];
   /** Concept pages actually written into wiki/concepts this run. */
   writtenPages: MergedConcept[];
   errors: string[];
-  /** Candidate ids written by --review or review policy. Empty otherwise. */
-  candidates: string[];
-  /** Structured split of candidates created this run. */
-  review: {
-    held: ReviewedCandidateRef[];
-    forced: ReviewedCandidateRef[];
-  };
   /**
    * Slugs of seed pages written this run (overview / comparison / entity).
    * Concept pages live on `pages`; seed pages don't fit MergedConcept's
@@ -176,13 +164,7 @@ export interface MergedPageOutcome {
   error?: string;
   /**
    * A valid live page to write, deferred to the batched executor apply in
-   * {@link generatePagesPhase}. Set ONLY on the live-write branch; the two
-   * candidate branches leave it unset (they persist a candidate JSON instead).
+   * {@link generatePagesPhase}. Unset only when the page failed validation.
    */
   liveWrite?: CompilePageWrite;
-  candidate?: {
-    mode: "held" | "forced";
-    id: string;
-    ref: ReviewedCandidateRef;
-  };
 }

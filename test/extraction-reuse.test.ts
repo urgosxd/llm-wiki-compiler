@@ -94,21 +94,6 @@ describe("unchanged extraction reuse", () => {
     expect(await readFile(path.join(ctx.dir, "wiki/concepts/shared.md"), "utf8")).toBe(page);
   });
 
-  it("does not narrow existing ownership when affected pages are held by policy", async () => {
-    const provider = await seed();
-    const before = await readState(ctx.dir);
-    await writeFile(path.join(ctx.dir, ".llmwiki/config.json"), JSON.stringify({
-      version: 1, review: { hold: ["low-confidence"], lowConfidenceThreshold: 0.9 },
-    }));
-    const result = await addGamma();
-    expect(result.review?.held).toHaveLength(2);
-    expect(provider.complete).toHaveBeenCalledTimes(2);
-    const after = await readState(ctx.dir);
-    for (const file of ["alpha.md", "beta.md"]) expect(after.sources[file]).toEqual(before.sources[file]);
-    expect(after.sources["gamma.md"].concepts).toEqual([]);
-    expect(after.sources["gamma.md"].extraction).toBeUndefined();
-  });
-
   it("falls back to extraction for legacy state without snapshots", async () => {
     const provider = await seed();
     const state = await readState(ctx.dir);

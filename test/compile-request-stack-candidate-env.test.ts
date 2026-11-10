@@ -39,16 +39,14 @@
  * reached the delete. T10 closes that by making the run take the live-write branch and
  * seeding a candidate in the REQUEST's Stack for the live write to clear.
  *
- * Reaching that branch needs a page that the review policy LETS THROUGH, and the
- * fixture's default (a Stack with no config row) is policy-off, where `evaluatePolicy`
- * lets anything through and the provenance signal is decorative. So T10 gives Stack A a
- * policy that HOLDS on `provenance-violating` and then satisfies it honestly: the
- * provenance rule reads `sources/` ON DISK while this fixture's corpus is ROWS, so the
- * cited document is written to both. With the disk copy missing the page is held and the
- * delete never runs, which is precisely what `expect(report.candidates ?? [])` catches.
+ * Reaching the live-write branch no longer needs a policy to let a page through: the
+ * branch is unconditional now that no stager exists to divert a page into the queue. T10
+ * still writes the cited document to `sources/` ON DISK, because the provenance rule
+ * reads disk while this fixture's corpus is ROWS — a missing copy is a broken citation,
+ * not a hold.
  *
  * The Stack pair, the ambient environment binding, the teardown and the seed corpus
- * (`seedConceptPage`, `draftFor`, `holdOnProvenanceViolations`) live in
+ * (`seedConceptPage`, `draftFor`) live in
  * `test/fixtures/request-stack.ts`, shared with the sibling request-stack suites.
  */
 
@@ -72,7 +70,6 @@ import type { WikiCore } from "../packages/wiki/src/sdk/core-types.js";
 import { EMPTY_CATEGORY_ANSWER, isCategoryAssignmentCall } from "./fixtures/provider-calls.js";
 import {
   draftFor,
-  holdOnProvenanceViolations,
   PROVENANCE_CITED_SOURCE,
   seedConceptPage,
   seedSharedPage,
@@ -159,51 +156,6 @@ describe("the review candidate follows the request's Stack", () => {
   /** The ambient tenant's rows as they stand now, for the snapshot comparisons below. */
   const ambientSnapshot = (): Promise<Record<string, readonly string[]>> =>
     snapshotTenantRows(stacks.ambient.harness, stacks.ambientStackId);
-
-  it("T2.a stages the candidate in the request's Stack and leaves the ambient Stack byte-identical", async () => {
-    // A policy hold is the lever, not the removed compile option: Stack A holds pages
-    // whose citations are broken, and the stub body cites a document this project does
-    // not have. The page therefore reaches the SAME candidate seam its policy always
-    // reached, and `options.review` is gone from the call entirely.
-    await holdOnProvenanceViolations(stacks.request.harness, stacks.requestStackId);
-    stubProvider();
-    await saveSourceDocument(stacks.request.harness.db, stacks.requestStackId, SOURCE);
-    await seedConceptPage(stacks.ambient.harness, stacks.ambientStackId, SHARED_SLUG, "Ambient Only");
-    const before = await ambientSnapshot();
-    // Not a comparison of empties: the helper has to SEE the ambient tenant's rows, or
-    // "unchanged" below would be satisfied by a snapshot that captured nothing at all.
-    expect(before["wiki.pages"]).toHaveLength(1);
-
-    const report = await compileAndReport(stacks.root, {
-      embeddings: false, env: stacks.env,
-    });
-    expect(report).toMatchObject({ errors: [] });
-
-    // The half that bites: one tenant's candidate must never land in another's rows.
-    assertTenantUnchanged(before, await ambientSnapshot(), "Stack B (ambient)");
-    expect((await listCandidates(stacks.root, {}, stacks.env)).map((candidate) => candidate.slug))
-      .toEqual([SLUG]);
-  });
-
-  it("T2.b stores a real candidate in the request's Stack instead of nowhere", async () => {
-    await holdOnProvenanceViolations(stacks.request.harness, stacks.requestStackId);
-    stubProvider();
-    await saveSourceDocument(stacks.request.harness.db, stacks.requestStackId, SOURCE);
-
-    const report = await compileAndReport(stacks.root, { embeddings: false, env: stacks.env });
-    expect(report).toMatchObject({ errors: [] });
-
-    const staged = await listCandidates(stacks.root, {}, stacks.env);
-    expect(staged).toHaveLength(1);
-    const [candidate] = staged;
-    // Content, not a count: an empty candidate or one staged under a placeholder id
-    // would pass a presence check and fail the reader that asked for this slug.
-    expect(candidate).toMatchObject({ title: CONCEPT, slug: SLUG });
-    expect(candidate.id.startsWith(`${SLUG}-`)).toBe(true);
-    expect(candidate.body).toContain(CONCEPT);
-    // And the ambient tenant holds no candidate at all, so the write is not duplicated.
-    expect(await listCandidates(stacks.root, {}, stacks.ambientEnv)).toEqual([]);
-  });
 
   it("T2.c reads through the request's Stack, not the ambient one", async () => {
     await seedSharedPage(stacks, SHARED_SLUG, "Alpha At Request", "Alpha At Ambient");
@@ -301,9 +253,6 @@ describe("the review candidate follows the request's Stack", () => {
     await saveSourceDocument(stacks.request.harness.db, stacks.requestStackId, SOURCE);
     const cited = PROVENANCE_CITED_SOURCE;
     await writeFile(path.join(stacks.root, "sources", cited.filename), cited.text, "utf8");
-    // The policy that makes the live-write branch a real gate rather than a default: the
-    // page must survive a hold-on-provenance policy to be written instead of staged.
-    await holdOnProvenanceViolations(stacks.request.harness, stacks.requestStackId);
 
     // The candidate the live write must clear, in the REQUEST's Stack. Its slug is the one
     // the generated page is published under, which is the only slug the delete names.
@@ -322,10 +271,6 @@ describe("the review candidate follows the request's Stack", () => {
       embeddings: false, env: stacks.env,
     });
     expect(report).toMatchObject({ errors: [] });
-    // The fixture's own precondition: nothing was staged, so the page took the LIVE-WRITE
-    // branch and `deleteCandidateBySlug` above really ran. A page held by the policy would
-    // make every assertion below vacuous.
-    expect(report.candidates ?? []).toEqual([]);
 
     // (i) The request's Stack no longer holds the candidate the live write replaced, and
     // holds the page it published in its place.

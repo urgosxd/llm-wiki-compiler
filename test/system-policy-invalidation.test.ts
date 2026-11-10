@@ -9,13 +9,14 @@
  * compile" long before any prompt is built. The control that matters is a SECOND
  * compile over byte-identical sources.
  *
- * Pending review candidates are the second surface. Deduplication compares a
- * candidate's source hash and the selection it was generated under, so a
- * candidate written under one policy must not satisfy a run asking for another.
+ * Pending review candidates used to be the second surface: deduplication compared a
+ * candidate's source hash and the selection it was generated under. Every candidate
+ * stager is retired, so a compile can no longer produce one and that surface has no
+ * subject left.
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createWiki } from "../packages/wiki/src/sdk/wiki.js";
 import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
@@ -47,19 +48,6 @@ function stubCompile(): { pages: () => number } {
 async function recordedDigest(): Promise<string | undefined> {
   const raw = await readFile(path.join(ctx.dir, ".llmwiki/state.json"), "utf-8");
   return (JSON.parse(raw) as { promptModifiers?: string }).promptModifiers;
-}
-
-/**
- * Hold every generated page, so a run stages candidates instead of writing pages.
- *
- * The compile `review` option that used to force this is gone, and the review policy is
- * the only lever left. Reaching the candidate branch is the point: the second surface
- * this file measures lives there.
- */
-async function holdEveryPage(): Promise<void> {
-  await mkdir(path.join(ctx.dir, ".llmwiki"), { recursive: true });
-  const document = JSON.stringify({ version: 1, review: { hold: ["all"] } });
-  await writeFile(path.join(ctx.dir, ".llmwiki", "config.json"), document, "utf-8");
 }
 
 /**
@@ -103,14 +91,5 @@ describe("changing the policy invalidates what the old one produced", () => {
     const runs = await compileTwice({}, { systemPolicy: "   " });
     expect(runs.second).toBe(0);
     expect(await recordedDigest()).toBe("");
-  }, 60_000);
-
-  it("replaces a pending candidate generated under a different policy", async () => {
-    // Same source bytes, different policy: the pending candidate was produced
-    // under a selection this run is not asking for, so it is not a duplicate.
-    await holdEveryPage();
-    const runs = await compileTwice({ systemPolicy: "Policy A" }, { systemPolicy: "Policy B" });
-    expect(runs.first).toBeGreaterThan(0);
-    expect(runs.second).toBeGreaterThan(0);
   }, 60_000);
 });

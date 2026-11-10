@@ -17,9 +17,6 @@ import {
   JournalUnsafeError,
 } from "../trust/journal-recovery.js";
 import {
-  buildExtractionSourceStates,
-} from "./source-state.js";
-import {
   parseFrontmatter,
   slugify,
 } from "../utils/markdown.js";
@@ -98,10 +95,7 @@ import {
 } from "./compile-write.js";
 import * as output from "../utils/output.js";
 import { verbose } from "../utils/output.js";
-import { loadReviewPolicy } from "../review/config.js";
 import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
-import { isPolicyOff } from "../review/policy.js";
-import type { ReviewPolicy } from "../review/policy.js";
 import {
   CONCEPTS_DIR,
   QUERIES_DIR,
@@ -133,7 +127,6 @@ import type {
 import type {
   CompileOptions,
   CompileResult,
-  ReviewedCandidateRef,
   SourceChange,
   SourceState,
   WikiState,
@@ -422,10 +415,8 @@ function bucketChanges(changes: SourceChange[]): ChangeBuckets {
 async function generatePagesPhase(
   root: string,
   merged: MergedConcept[],
-  extractions: ExtractionResult[],
   schema: SchemaConfig,
   options: CompileOptions,
-  policy: ReviewPolicy,
   concurrency: number,
   pageSink: PageSink | undefined,
   pageRemover: PageRemover | undefined,
@@ -439,12 +430,6 @@ async function generatePagesPhase(
   // one stage never inherits another's counts), so the opening 0/N has to be
   // published here, after the transition, or the bar starts blank.
   reportCompileProgress(progressSink, 0, merged.length);
-  // Build the per-source state snapshot once so each candidate can carry the
-  // exact data needed to mark its sources compiled on approval.
-  const shouldBuildSourceStates = !isPolicyOff(policy);
-  const sourceStates = shouldBuildSourceStates
-    ? await buildExtractionSourceStates(root, extractions)
-    : {};
   const limit = pLimit(concurrency);
   // ONE attribution accumulator for the whole run, handed to every page the renderer
   // writes. The renderer records each page's gap into it (the same reading that stamps the
@@ -465,7 +450,7 @@ async function generatePagesPhase(
     renderable.map((entry) => limit(async () => {
       try {
         const result = await generateMergedPage(
-          root, entry, schema, options, sourceStates, policy, contentSource,
+          root, entry, schema, options, contentSource,
         );
         return { entry, result };
       } finally {
@@ -475,14 +460,8 @@ async function generatePagesPhase(
     })),
   );
   const errors: string[] = [];
-  const candidates: string[] = [];
-  const review = { held: [] as ReviewedCandidateRef[], forced: [] as ReviewedCandidateRef[] };
   for (const { result } of outcomes) {
     if (result.error) errors.push(result.error);
-    if (result.candidate) {
-      candidates.push(result.candidate.id);
-      review[result.candidate.mode].push(result.candidate.ref);
-    }
   }
   const pages = outcomes.map(({ entry }) => entry);
   // Apply every live page as ONE journalled executor batch under the held lock,
@@ -492,7 +471,7 @@ async function generatePagesPhase(
     root, outcomes, pageSink, pageRemover, transaction, curatedStore);
   errors.push(...batchErrors);
   return {
-    pages, writtenPages, errors, candidates, review, seedSlugs: [],
+    pages, writtenPages, errors, seedSlugs: [],
     curatedLinks: curated, attribution: attributionCountsOf(attribution),
   };
 }
@@ -852,31 +831,6 @@ async function seedThenFinalize(
 }
 
 /**
- * Load the two documents a compile is configured by, from ONE environment.
- *
- * Grouped rather than inlined because both resolve against the run's Stack: a
- * schema from disk and a review policy from a DIFFERENT tenant would be a run
- * reviewed by rules nobody chose. Extracting it also keeps `runCompilePipeline`
- * inside its complexity ceiling, which is how the duplication stayed invisible
- * before — the policy loader used to re-derive `options.env ?? process.env`
- * instead of reusing the `env` already computed two lines above.
- *
- * @param root - Project root, used by the schema and the file config.
- * @param env - The one environment this run reads.
- * @returns Both documents.
- */
-async function loadRunConfiguration(
-  root: string,
-  env: NodeJS.ProcessEnv,
-): Promise<{ schema: Awaited<ReturnType<typeof loadSchema>>; reviewPolicy: ReviewPolicy }> {
-  const [schema, reviewPolicy] = await Promise.all([
-    loadSchema(root),
-    loadReviewPolicy(root, env),
-  ]);
-  return { schema, reviewPolicy };
-}
-
-/**
  * Post-generation bookkeeping: the state writes and page retirements that follow
  * a committed page set.
  *
@@ -950,7 +904,6 @@ interface GenerationStageInput {
   readonly reconciliationSlugs: ReadonlySet<string>;
   readonly schema: SchemaConfig;
   readonly options: CompileOptions;
-  readonly reviewPolicy: ReviewPolicy;
   readonly concurrency: number;
   readonly seams: PageSeams;
   readonly compileReporter: CompileProgressReporter | undefined;
@@ -1026,10 +979,8 @@ async function runGenerationStage(
   const generation = await timeStage("compile.page-generation", () => generatePagesPhase(
     root,
     merged,
-    canonicalExtractions,
     input.schema,
     input.options,
-    input.reviewPolicy,
     input.concurrency,
     input.seams.sink,
     input.seams.remover,
@@ -1084,8 +1035,7 @@ async function finalizeNothingToCompile(
     root, draft, reconciliationSlugs, seams,
   );
   const emptyGeneration: PageGenerationResult = {
-    pages: [], writtenPages: [], errors: [], candidates: [],
-    review: { held: [], forced: [] }, seedSlugs: [],
+    pages: [], writtenPages: [], errors: [], seedSlugs: [],
     // Created here rather than left undefined: seed pages are regenerated on this
     // path too, and the overlay they run folds its counts into this SAME object.
     curatedLinks: emptyCuratedLinkCounts(),
@@ -1144,7 +1094,7 @@ async function runCompilePipeline(
   // the helper that asks for it: a default built per deleted source would be a second
   // answer to one question, and the caller's port must be the one retirement uses.
   const dimensionsPort = dimensionsPortFor(options);
-  const { schema, reviewPolicy } = await loadRunConfiguration(root, env);
+  const schema = await loadSchema(root);
   reportSchemaStatus(schema);
   // Single in-memory draft of state.json for the whole run. Every intra-compile
   // state read/write goes through it; the durable marker advances only at the
@@ -1219,7 +1169,7 @@ async function runCompilePipeline(
 
   const { identity, canonicalExtractions, generation, existingIds } = await runGenerationStage({
     root, extractions, frozenSlugs, reconciliationSlugs, schema, options,
-    reviewPolicy, concurrency, seams, compileReporter,
+    concurrency, seams, compileReporter,
     regenerateOnly: slugsToRegenerate(scope.recompilePlan),
   });
 

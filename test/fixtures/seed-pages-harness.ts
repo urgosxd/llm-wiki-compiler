@@ -41,7 +41,6 @@ export function useSeedPagesRoot(prefix: string): SeedPagesRootCtx {
 /** An empty generation result whose `seedSlugs`/`errors` a `generateSeedPages` call mutates. */
 export function emptyGeneration(): PageGenerationResult {
   return {
-    pages: [], writtenPages: [], errors: [], candidates: [],
-    review: { held: [], forced: [] }, seedSlugs: [],
+    pages: [], writtenPages: [], errors: [], seedSlugs: [],
   };
 }

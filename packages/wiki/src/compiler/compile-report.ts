@@ -83,11 +83,7 @@ export function summarizeCompile(
   reportCuratedLinks(generation);
   reportCategoryAssignment(generation);
   if (generation.versionSplit !== undefined) reportVersionSplit(generation.versionSplit);
-  if (generation.candidates.length > 0) {
-    output.status("?", output.info(
-      reviewSummaryLine(generation),
-    ));
-  } else if (buckets.toCompile.length > 0) {
+  if (buckets.toCompile.length > 0) {
     output.status("→", output.dim('Next: ask a question with the query_wiki MCP tool'));
   }
 
@@ -114,10 +110,6 @@ export function summarizeCompile(
     pages: [...conceptSlugs, ...generation.seedSlugs],
     errors,
   };
-  if (generation.candidates.length > 0) {
-    baseResult.candidates = generation.candidates;
-    baseResult.review = generation.review;
-  }
   return baseResult;
 }
 
@@ -246,16 +238,6 @@ function reportCategoryAssignment(generation: PageGenerationResult): void {
 export function reportVersionSplit(split: VersionSplit): void {
   const line = describeVersionSplit(split);
   output.status("i", split.stalePages > 0 ? output.warn(line) : output.info(line));
-}
-
-/** Human completion line for candidates created this run. */
-function reviewSummaryLine(generation: PageGenerationResult): string {
-  const held = generation.review.held.length;
-  const forced = generation.review.forced.length;
-  if (held > 0 && forced === 0) {
-    return `Wrote ${generation.writtenPages.length} page(s), held ${held} under .llmwiki/candidates/`;
-  }
-  return `${generation.candidates.length} candidate(s) staged under .llmwiki/candidates/`;
 }
 
 /** Print a summary of detected source file changes. */

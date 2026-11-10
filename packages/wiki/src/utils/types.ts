@@ -4,7 +4,7 @@
  */
 
 import type { PageKind } from "../schema/types.js";
-import type { HeldReason, PolicyHeldReasonCode, ReviewMode } from "../review/policy.js";
+import type { HeldReason, ReviewMode } from "../review/policy.js";
 import type { EntityId } from "../profile/types.js";
 import type { ConnectorProvenance } from "../connectors/types.js";
 import type { TrustDecision } from "../trust/decision.js";
@@ -197,13 +197,6 @@ export interface CompileResult {
   concepts: string[];
   pages: string[];
   errors: string[];
-  /** Candidate IDs created by compile outputs the `review.hold` policy held. */
-  candidates?: string[];
-  /** Structured review split for candidates created by the compile run. */
-  review?: {
-    held: ReviewedCandidateRef[];
-    forced: ReviewedCandidateRef[];
-  };
   /**
    * Set when the run never started because another mutation held the lock.
    *
@@ -214,13 +207,6 @@ export interface CompileResult {
    * discriminator.
    */
   busy?: true;
-}
-
-/** Candidate reference returned in CompileResult.review. */
-export interface ReviewedCandidateRef {
-  id: string;
-  slug: string;
-  reasons: PolicyHeldReasonCode[];
 }
 
 /** Optional behaviour controls for the compile pipeline. */
@@ -339,7 +325,12 @@ export interface ReviewCandidate {
   body: string;
   /** ISO timestamp recorded when the candidate was generated. */
   generatedAt: string;
-  /** Whether this candidate was policy-held or explicitly forced by --review. */
+  /**
+   * Origin recorded on the record: policy-selected, forced, imported or
+   * connector-fetched. The `policy` and `forced` literals have no producer any more
+   * — every candidate stager is retired — and stay declared so records written
+   * before the retirement remain readable.
+   */
   reviewMode: ReviewMode;
   /** Structured reasons the candidate is awaiting review. */
   heldReasons: HeldReason[];
