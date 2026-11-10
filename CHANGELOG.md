@@ -149,6 +149,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `packages/llmwiki-kg/odd/findings/aks-spec-conformance.md` §2c, and the new
   bytes are pinned by tests.
 
+- **Deleting a source now retires its graph documents, which compile never did
+  before — and so does deselecting a source whose file is still on disk.** In
+  Postgres, a compile that processed a deletion removed the source and its pages
+  but left its document, chunks, evidence and entity provenance in the Stack
+  forever, so the graph kept answering from text the project no longer had. The
+  retirement branch ran and resolved its dimensions on every such compile, then
+  skipped every source: the deleted sources' identities were read from the live
+  compile state AFTER orphan marking had already removed those entries, so the
+  lookup always missed. A non-review compile now captures the identities before
+  orphaning and retires them; a review compile still retires nothing, because the
+  wiki has not stopped serving those documents yet. Operators upgrading should
+  expect `stack_documents` rows to be deleted IRREVERSIBLY in two cases, not one:
+  a source that was deleted, and a source that was merely DESELECTED and still
+  sits on disk — `packages/wiki/src/compiler/hasher.ts:194` tags the latter
+  `reason: "deselected"` and it rides in the same deletion bucket, so its graph
+  rows (and the chunks, evidence and entity-provenance rows that cascade from
+  them) go while the file stays. Reselecting it and compiling registers its rows
+  again; nothing restores the rows that were already removed.
+
 ### Added
 
 - **`llmwiki ingest` accepts `.docx`, and refuses `.doc` and `.xlsx` with a named

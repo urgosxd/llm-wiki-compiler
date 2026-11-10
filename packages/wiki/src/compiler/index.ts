@@ -1183,11 +1183,17 @@ async function runCompilePipeline(
   // compiles.
   const forgetErrors: string[] = [];
   if (!options.review) {
+    // Capture the identities HERE, before orphaning: `state` is the LIVE object
+    // `draft.read()` handed out, and the next call deletes these very entries. A read
+    // after it can only find `undefined`, which is how graph retirement went two
+    // verifiers without retiring a single source.
+    const retiredIdentities = deletedSourceIdentities(state, buckets.deleted);
     await markDeletedAsOrphaned(root, buckets.deleted, draft, seams);
     // Graph retirement follows the same review rule: a held-back run must not
-    // retire documents the wiki has not stopped serving yet.
+    // retire documents the wiki has not stopped serving yet. Capture and retire share
+    // this branch on purpose, so neither can outlive the other's guard.
     forgetErrors.push(
-      ...(await forgetDeletedSources(root, buckets.deleted, state, db, env, dimensionsPort)),
+      ...(await forgetDeletedSources(root, retiredIdentities, db, env, dimensionsPort)),
     );
   }
 
@@ -1453,6 +1459,50 @@ async function graphRetirementDimensions(
 }
 
 /**
+ * The recorded identities of the deleted sources, read while state still holds them.
+ *
+ * WHY THIS IS ITS OWN STEP, AND WHY IT RUNS BEFORE ORPHANING. `state` is the LIVE
+ * object `draft.read()` returns — `compile-state-draft.ts:73`, "returns the LIVE
+ * internal reference, not a copy" — and `markDeletedAsOrphaned` empties exactly these
+ * entries via `draft.removeSource(...)` → `removeSourceFrom` →
+ * `delete state.sources[...]` (`utils/state.ts:274`). An identity read AFTER that call
+ * therefore always misses: if the entry existed, orphaning just deleted it; if it did
+ * not, `orphan.ts:54` returned early and the read misses anyway. That is how graph
+ * retirement stayed dead for two verifiers while every log line looked healthy.
+ * Capturing first is the whole fix; retiring from a clone instead would break the
+ * extraction phase that consumes this same live object afterwards (`index.ts:1207`–`:1208`).
+ *
+ * TOLERANT BY DESIGN. A state entry can be missing, and `SourceState.source` is absent
+ * for pre-v2 state and for files whose frontmatter carried no identity, so only
+ * defined identities survive. Guessing one from the filename would be worse than doing
+ * nothing: the filename is a title slug, never the identity the graph was written
+ * under, so a guess would retire either nothing or the wrong document.
+ *
+ * NO DE-DUPLICATION, deliberately. One deleted FILE cannot appear twice in
+ * `buckets.deleted` — it holds one entry per state key (`hasher.ts:172`–`:196`), and
+ * the only later addition is `augmentWithAffectedSources`, which pushes `changed`.
+ * Two DIFFERENT entries can name the same identity, and that needs nothing here:
+ * `Dimension.forget` must be idempotent and must tolerate an unknown source
+ * (`dimensions/types.ts:313`), so a repeated retirement is a no-op, not a second
+ * deletion.
+ *
+ * @param state - The run's live state, still holding every deleted source's entry.
+ * @param deleted - Source changes already classified as deletions.
+ * @returns One identity per deleted source that recorded one, in bucket order.
+ */
+function deletedSourceIdentities(
+  state: WikiState,
+  deleted: readonly SourceChange[],
+): string[] {
+  const identities: string[] = [];
+  for (const change of deleted) {
+    const source = state.sources[change.file]?.source;
+    if (source !== undefined) identities.push(source);
+  }
+  return identities;
+}
+
+/**
  * Retire deleted sources from every registered dimension that is not the wiki.
  *
  * WHY THIS EXISTS. `compile` already marks a deleted source's pages orphaned, but
@@ -1460,28 +1510,22 @@ async function graphRetirementDimensions(
  * document, chunks, entities, and contributions in Postgres forever, so the graph
  * kept answering with text the project no longer had.
  *
- * ONLY SOURCES WITH A RECORDED IDENTITY ARE RETIRED. `SourceState.source` is absent
- * for state written before v2 and for files whose frontmatter carried none.
- * Guessing an identity from the filename would be worse than doing nothing: the
- * filename is a title slug, never the identity the graph was written under, so a
- * guess would delete either nothing or the wrong document.
- *
  * The wiki is skipped because it owns its own removal story (`markDeletedAsOrphaned`
  * preserves pages other sources still support); retiring here too would duplicate
  * that decision in a second place.
  *
  * @param root - Project root, for dimension resolution.
- * @param deleted - Source changes already classified as deletions.
- * @param state - State BEFORE this run, which still holds the missing sources.
+ * @param sources - Identities captured by {@link deletedSourceIdentities} BEFORE
+ *   orphaning removed their state entries. Passed in rather than re-read from state
+ *   because that read is exactly the one that always missed.
  * @param db - Database handle every dimension is backed by.
  * @param env - The one environment this run reads, used to resolve the Stack.
  * @param port - The dimensions port the run resolves through.
- * @returns One message per source that could not be retired.
+ * @returns One message per (source, dimension) pair whose `forget` threw.
  */
 async function forgetDeletedSources(
   root: string,
-  deleted: readonly SourceChange[],
-  state: WikiState,
+  sources: readonly string[],
   db: DimensionsDatabaseHandle,
   env: NodeJS.ProcessEnv,
   port: DimensionsPort<Dimension>,
@@ -1495,9 +1539,7 @@ async function forgetDeletedSources(
   // enabled `kg` retires nothing here, exactly as before.
   const dimensions = await graphRetirementDimensions(root, db, env, port);
   if (dimensions.length === 0) return failures;
-  for (const change of deleted) {
-    const source = state.sources[change.file]?.source;
-    if (source === undefined) continue;
+  for (const source of sources) {
     for (const dimension of dimensions) {
       try {
         await dimension.forget(source);

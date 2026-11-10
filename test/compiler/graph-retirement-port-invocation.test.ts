@@ -19,13 +19,15 @@
  *
  * It does not claim that the returned dimension's `forget` is called. Measured while
  * writing it: `markDeletedAsOrphaned` runs first and removes the deleted source's entry
- * from the LIVE state draft, and `forgetDeletedSources` then reads
- * `state.sources[change.file]?.source` from that same object, finds nothing and skips
- * the source. Graph retirement therefore retires nothing through `compile`, with or
- * without a supplied port. That is a pre-existing gap outside this slice's scope: it is
- * reported, not pinned here, because a case asserting it would enshrine it. What IS
- * proven is the seam this slice adds — the run composes or accepts a port and calls it
- * with the request it resolved, before that lookup is ever reached.
+ * from the LIVE state draft, and `forgetDeletedSources` then read
+ * `state.sources[change.file]?.source` from that same object, found nothing and skipped
+ * the source. Graph retirement therefore retired nothing through `compile`, with or
+ * without a supplied port. That gap has since been fixed — the identities are captured
+ * before orphaning — and the retirement itself is pinned by
+ * `test/compiler/graph-retirement-retires-source.test.ts`. This case keeps its
+ * original, narrower subject so the seam and the behaviour stay separately reviewable:
+ * what IS proven here is that the run composes or accepts a port and calls it with the
+ * request it resolved.
  *
  * ## Why this case needs a database
  *
