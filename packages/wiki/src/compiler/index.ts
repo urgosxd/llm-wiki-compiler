@@ -283,7 +283,7 @@ function emptyCompileResult(): CompileResult {
  * Acquires .llmwiki/lock, detects changes, compiles new/changed sources,
  * marks orphaned pages, resolves interlinks, and rebuilds the index.
  * @param root - Project root directory.
- * @param options - Optional pipeline overrides (e.g. --review mode).
+ * @param options - Optional pipeline overrides.
  */
 export async function compile(root: string, options: CompileOptions = {}): Promise<void> {
   await compileAndReport(root, options);
@@ -325,13 +325,23 @@ export async function compileRecompiling(
  * non-CLI consumers (the MCP server, programmatic callers) can report
  * meaningful data without scraping terminal output.
  * @param root - Project root directory.
- * @param options - Optional pipeline overrides (e.g. --review mode).
+ * @param options - Optional pipeline overrides.
  * @returns Structured result describing what was compiled.
  */
 export async function compileAndReport(
   root: string,
   options: CompileOptions = {},
 ): Promise<CompileResult> {
+  // The `review` option is gone for good: it promised a hold with no surface that
+  // promotes a held candidate. Typed callers already get a compile error; this guard
+  // is for untyped and dynamically built ones, and it THROWS rather than returning an
+  // error because `compile` returns `Promise<void>` and discards this function's
+  // result, while the SDK wrapper spreads the options through without turning
+  // `errors` into a failure. A returned error would be silent at both surfaces. The
+  // test is the presence of the key, so `{ review: false }` is refused too.
+  if ("review" in options) {
+    throw new Error("The review compile option no longer exists: no surface promotes a held candidate, and the option will not come back. Remove it from your call.");
+  }
   output.header("Wiki compile");
 
   // One handle for the whole run, closed in the `finally` below. Pages are rows
@@ -431,7 +441,7 @@ async function generatePagesPhase(
   reportCompileProgress(progressSink, 0, merged.length);
   // Build the per-source state snapshot once so each candidate can carry the
   // exact data needed to mark its sources compiled on approval.
-  const shouldBuildSourceStates = options.review || !isPolicyOff(policy);
+  const shouldBuildSourceStates = !isPolicyOff(policy);
   const sourceStates = shouldBuildSourceStates
     ? await buildExtractionSourceStates(root, extractions)
     : {};
@@ -777,9 +787,9 @@ async function reconcileOwnerlessFrozen(
 }
 
 /**
- * Generate seed pages unless `skipSeedPages` is set or we are in review mode.
- * Centralises both guard conditions so each call site in the pipeline is a
- * single unconditional statement instead of an inline if-block.
+ * Generate seed pages unless `skipSeedPages` is set.
+ * Centralises the guard so each call site in the pipeline is a single
+ * unconditional statement instead of an inline if-block.
  */
 async function maybeSeedPages(
   root: string,
@@ -788,7 +798,7 @@ async function maybeSeedPages(
   options: CompileOptions,
   seams: PageSeams,
 ): Promise<void> {
-  if (!options.review && !options.skipSeedPages) {
+  if (!options.skipSeedPages) {
     await generateSeedPages(
       root, schema, generation, seams.content, seams.sink, seams.remover,
       seams.transaction, seams.curatedLinks);
@@ -1070,9 +1080,6 @@ async function finalizeNothingToCompile(
   // Seed pages are cheap deterministic writes — always run them even when no source
   // files changed, so adding a seed page to schema.json takes effect on the next
   // compile without needing a source file edit.
-  if (options.review) {
-    return { ...emptyCompileResult(), skipped: input.unchangedCount };
-  }
   const hasOwnerlessFrozen = await reconcileOwnerlessFrozen(
     root, draft, reconciliationSlugs, seams,
   );
@@ -1162,7 +1169,7 @@ async function runCompilePipeline(
   if (!isRunScope(scope)) return scope;
   const changes = scope.changes;
   await markUnchangedPendingSources(root, changes, sourceContentReading(db, env));
-  const reusableSources = reusableSourceFiles(state, changes, detected, Boolean(options.review));
+  const reusableSources = reusableSourceFiles(state, changes, detected);
   augmentWithAffectedSources(changes, findAffectedSources(state, changes, detected));
   const reconciliationSlugs = findReconciliationSlugs(state, changes);
 
@@ -1175,28 +1182,18 @@ async function runCompilePipeline(
   }
 
   printChangesSummary(changes);
-  // In review mode the pipeline contract is "write candidates instead of
-  // mutating wiki/". Deletion bookkeeping (orphan marking + frozen-slug
-  // persistence) writes directly into wiki/ and updates state.json, so we
-  // defer it to the next non-review compile pass. Source-state persistence
-  // for compiled sources is also review-deferred — those entries land at
-  // approve time so unapproved candidates remain re-detectable on subsequent
-  // compiles.
   const forgetErrors: string[] = [];
-  if (!options.review) {
-    // Capture the identities HERE, before orphaning: `state` is the LIVE object
-    // `draft.read()` handed out, and the next call deletes these very entries. A read
-    // after it can only find `undefined`, which is how graph retirement went two
-    // verifiers without retiring a single source.
-    const retiredIdentities = deletedSourceIdentities(state, buckets.deleted);
-    await markDeletedAsOrphaned(root, buckets.deleted, draft, seams);
-    // Graph retirement follows the same review rule: a held-back run must not
-    // retire documents the wiki has not stopped serving yet. Capture and retire share
-    // this branch on purpose, so neither can outlive the other's guard.
-    forgetErrors.push(
-      ...(await forgetDeletedSources(root, retiredIdentities, db, env, dimensionsPort)),
-    );
-  }
+  // Capture the identities HERE, before orphaning: `state` is the LIVE object
+  // `draft.read()` handed out, and the next call deletes these very entries. A read
+  // after it can only find `undefined`, which is how graph retirement went two
+  // verifiers without retiring a single source.
+  const retiredIdentities = deletedSourceIdentities(state, buckets.deleted);
+  await markDeletedAsOrphaned(root, buckets.deleted, draft, seams);
+  // Graph retirement reuses the identities captured above rather than re-reading the
+  // state the orphaning just deleted them from.
+  forgetErrors.push(
+    ...(await forgetDeletedSources(root, retiredIdentities, db, env, dimensionsPort)),
+  );
 
   // Only extraction failures in THIS run freeze a page. Deletion and persisted
   // freezes are reconciliation work: their surviving owners rebuild cleanly.
@@ -1218,7 +1215,7 @@ async function runCompilePipeline(
         reportCompileProgress(compileReporter, completed, total),
     },
   ), () => reportCompileStage(compileReporter, "compile.extraction"));
-  recordExtractionFreezes(draft, extractions, frozenSlugs, options);
+  recordExtractionFreezes(draft, extractions, frozenSlugs);
 
   const { identity, canonicalExtractions, generation, existingIds } = await runGenerationStage({
     root, extractions, frozenSlugs, reconciliationSlugs, schema, options,
@@ -1226,86 +1223,70 @@ async function runCompilePipeline(
     regenerateOnly: slugsToRegenerate(scope.recompilePlan),
   });
 
-
-  if (!options.review) {
-    await commitLiveOutcome({
-      root, draft, seams, canonicalExtractions, generation, identity,
-      frozenSlugs, reconciliationSlugs,
-      // A scoped regeneration writes ONE page out of the sources it re-extracted. Every
-      // other concept those sources produced is still owned by them, so ownership is
-      // retained explicitly: filtering the generated page set must never look, to the
-      // next compile, like a source that stopped producing what it still produces.
-      retainSlugs: retainedForScope(scope.recompilePlan, canonicalExtractions),
-    });
-    // The run's link totals are collected in place by the link gate, which runs in
-    // the resolution seam below — after every page of the run exists, which is the
-    // only point where a link into a page this run created can be judged fairly.
-    const totals: RunReportTotals = {
-      linkCounts: emptyContextualLinkCounts(),
-      linkReview: emptyLinkReviewCounts(),
-      // The generation overlay already counted what it restored while writing pages;
-      // the review stage below folds its own recording into the SAME object.
-      curatedLinks: generation.curatedLinks ?? emptyCuratedLinkCounts(),
-      // Filled by the category assignment stage, which runs after every page of the
-      // run is final: a membership is recorded against the page the wiki now serves.
-      categories: emptyCategoryAssignmentCounts(),
-    };
-    // Seed + resolution route through the SAME executor batches as the
-    // no-source-changes branch (see seedThenFinalize). The draft flush is the
-    // single durable state write, done inside finalizeWiki after resolution
-    // commits.
-    await timeStage("compile.finalize", () => seedThenFinalize(
-      root, schema, generation, options, draft, embeddingStoreLocation(db),
-      resolverSourceReading(db, env),
-      embeddingPageReading(db, env),
-      seams,
-      stateRows,
-      totals,
-    ), () => reportCompileStage(compileReporter, "compile.finalize"));
-    const reportGeneration: PageGenerationResult = {
-      ...generation,
-      linkCounts: totals.linkCounts,
-      linkReview: totals.linkReview,
-      curatedLinks: totals.curatedLinks,
-      categories: totals.categories,
-      // Read AFTER the run wrote its pages, so the split describes the wiki the operator
-      // now has rather than the one the run found.
-      versionSplit: await readVersionSplit(root, seams.content),
-    };
-    await logCompile(root, buckets, reportGeneration, existingIds, env);
-    verbose(`compile finished in ${Date.now() - startMs} ms`);
-    return summarizeCompile(buckets, reportGeneration, canonicalExtractions, options, forgetErrors);
-  }
+  await commitLiveOutcome({
+    root, draft, seams, canonicalExtractions, generation, identity,
+    frozenSlugs, reconciliationSlugs,
+    // A scoped regeneration writes ONE page out of the sources it re-extracted. Every
+    // other concept those sources produced is still owned by them, so ownership is
+    // retained explicitly: filtering the generated page set must never look, to the
+    // next compile, like a source that stopped producing what it still produces.
+    retainSlugs: retainedForScope(scope.recompilePlan, canonicalExtractions),
+  });
+  // The run's link totals are collected in place by the link gate, which runs in
+  // the resolution seam below — after every page of the run exists, which is the
+  // only point where a link into a page this run created can be judged fairly.
+  const totals: RunReportTotals = {
+    linkCounts: emptyContextualLinkCounts(),
+    linkReview: emptyLinkReviewCounts(),
+    // The generation overlay already counted what it restored while writing pages;
+    // the review stage below folds its own recording into the SAME object.
+    curatedLinks: generation.curatedLinks ?? emptyCuratedLinkCounts(),
+    // Filled by the category assignment stage, which runs after every page of the
+    // run is final: a membership is recorded against the page the wiki now serves.
+    categories: emptyCategoryAssignmentCounts(),
+  };
+  // Seed + resolution route through the SAME executor batches as the
+  // no-source-changes branch (see seedThenFinalize). The draft flush is the
+  // single durable state write, done inside finalizeWiki after resolution
+  // commits.
+  await timeStage("compile.finalize", () => seedThenFinalize(
+    root, schema, generation, options, draft, embeddingStoreLocation(db),
+    resolverSourceReading(db, env),
+    embeddingPageReading(db, env),
+    seams,
+    stateRows,
+    totals,
+  ), () => reportCompileStage(compileReporter, "compile.finalize"));
+  const reportGeneration: PageGenerationResult = {
+    ...generation,
+    linkCounts: totals.linkCounts,
+    linkReview: totals.linkReview,
+    curatedLinks: totals.curatedLinks,
+    categories: totals.categories,
+    // Read AFTER the run wrote its pages, so the split describes the wiki the operator
+    // now has rather than the one the run found.
+    versionSplit: await readVersionSplit(root, seams.content),
+  };
+  await logCompile(root, buckets, reportGeneration, existingIds, env);
   verbose(`compile finished in ${Date.now() - startMs} ms`);
-  return summarizeCompile(
-    buckets,
-    { ...generation, versionSplit: await readVersionSplit(root, seams.content) },
-    canonicalExtractions,
-    options,
-    forgetErrors,
-  );
+  return summarizeCompile(buckets, reportGeneration, canonicalExtractions, options, forgetErrors);
 }
 
 /**
  * Freeze the pages whose source extraction failed this run, and report them.
  *
  * Only extraction failures of THIS run freeze a page: deletion and persisted freezes are
- * reconciliation work whose surviving owners rebuild cleanly. Review mode freezes nothing —
- * a held-back run writes no page to freeze — which is the only branch here, kept in one
- * place rather than inside the pipeline.
+ * reconciliation work whose surviving owners rebuild cleanly.
  *
  * @param draft - The run's state draft.
  * @param extractions - This run's extraction results.
  * @param frozenSlugs - Mutable set the freeze is recorded into.
- * @param options - The compile options the run carries.
  */
 function recordExtractionFreezes(
   draft: CompileStateDraft,
   extractions: ExtractionResult[],
   frozenSlugs: Set<string>,
-  options: CompileOptions,
 ): void {
-  if (options.review) return;
   freezeFailedExtractions(draft, extractions, frozenSlugs);
   reportFrozenSlugs(frozenSlugs);
 }
@@ -1319,11 +1300,9 @@ function recordExtractionFreezes(
  * so a hash-only test demotes the promotion made moments earlier and reports
  * "Nothing to compile" with a candidate nobody asked for still pending.
  *
- * The candidate's OWN digest is the comparison, not the project's. Review mode
- * never flushes state, so a project whose only compiles were `--review` has no
- * recorded digest at all — and comparing against that absent value would make
- * clearing a modifier look like no change, because "none selected" is exactly
- * what an absent digest means.
+ * The candidate's OWN digest is the comparison, not the project's: a project whose
+ * recorded digest is absent would otherwise make clearing a modifier look like no
+ * change, because "none selected" is exactly what an absent digest means.
  */
 async function markUnchangedPendingSources(
   root: string,

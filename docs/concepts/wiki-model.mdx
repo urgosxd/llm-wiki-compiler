@@ -53,7 +53,7 @@ wiki/
     The v3 embedding store carries page and chunk vectors under qualified page ids for query and context retrieval. Small stores use `embeddings.json`; large or explicitly opted-in stores use `embeddings.bin`. Binary remains authoritative on later runs; an old JSON file is only a historical backup. See [storage and recovery](/configuration/environment-variables#embedding-storage).
   </Card>
   <Card title="candidates/" icon="clock">
-    JSON records for pages held for review - either via `compile({ review: true })`, triggered automatically by a review policy in `config.json`, or staged by `importOkf(...)`. Each candidate records exactly why it was held (low confidence, contradicted, schema-violating, provenance-violating, or imported from OKF). This build exposes no surface that promotes or rejects a candidate - there is no SDK method, no MCP tool, and the viewer's review list is read-only - so a held page stays under `.llmwiki/candidates/`.
+    JSON records for pages held for review - held automatically by a review policy in `config.json`, or staged by `importOkf(...)`. Each candidate records exactly why it was held (low confidence, contradicted, schema-violating, provenance-violating, or imported from OKF). This build exposes no surface that promotes or rejects a candidate - there is no SDK method, no MCP tool, and the viewer's review list is read-only - so a held page stays under `.llmwiki/candidates/`.
   </Card>
   <Card title="schema.json" icon="sitemap">
     An optional file you write by hand. Defines which page kinds are permitted, per-kind minimum wikilink counts, and seed pages the compiler should materialize (such as domain-level overview pages). Projects without a schema file fall back to the `concept` kind for all pages.

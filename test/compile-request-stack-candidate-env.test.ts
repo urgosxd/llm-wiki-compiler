@@ -161,6 +161,11 @@ describe("the review candidate follows the request's Stack", () => {
     snapshotTenantRows(stacks.ambient.harness, stacks.ambientStackId);
 
   it("T2.a stages the candidate in the request's Stack and leaves the ambient Stack byte-identical", async () => {
+    // A policy hold is the lever, not the removed compile option: Stack A holds pages
+    // whose citations are broken, and the stub body cites a document this project does
+    // not have. The page therefore reaches the SAME candidate seam its policy always
+    // reached, and `options.review` is gone from the call entirely.
+    await holdOnProvenanceViolations(stacks.request.harness, stacks.requestStackId);
     stubProvider();
     await saveSourceDocument(stacks.request.harness.db, stacks.requestStackId, SOURCE);
     await seedConceptPage(stacks.ambient.harness, stacks.ambientStackId, SHARED_SLUG, "Ambient Only");
@@ -170,7 +175,7 @@ describe("the review candidate follows the request's Stack", () => {
     expect(before["wiki.pages"]).toHaveLength(1);
 
     const report = await compileAndReport(stacks.root, {
-      review: true, embeddings: false, env: stacks.env,
+      embeddings: false, env: stacks.env,
     });
     expect(report).toMatchObject({ errors: [] });
 
@@ -181,11 +186,12 @@ describe("the review candidate follows the request's Stack", () => {
   });
 
   it("T2.b stores a real candidate in the request's Stack instead of nowhere", async () => {
+    await holdOnProvenanceViolations(stacks.request.harness, stacks.requestStackId);
     stubProvider();
     await saveSourceDocument(stacks.request.harness.db, stacks.requestStackId, SOURCE);
 
-    expect(await compileAndReport(stacks.root, { review: true, embeddings: false, env: stacks.env }))
-      .toMatchObject({ errors: [] });
+    const report = await compileAndReport(stacks.root, { embeddings: false, env: stacks.env });
+    expect(report).toMatchObject({ errors: [] });
 
     const staged = await listCandidates(stacks.root, {}, stacks.env);
     expect(staged).toHaveLength(1);
@@ -313,7 +319,7 @@ describe("the review candidate follows the request's Stack", () => {
     expect(before["wiki.review_candidates"]).toHaveLength(1);
 
     const report = await compileAndReport(stacks.root, {
-      review: false, embeddings: false, env: stacks.env,
+      embeddings: false, env: stacks.env,
     });
     expect(report).toMatchObject({ errors: [] });
     // The fixture's own precondition: nothing was staged, so the page took the LIVE-WRITE

@@ -17,8 +17,6 @@
 import type { Dimension } from "../dimensions/types.js";
 
 export interface SdkCompileOptions {
-  /** Write generated pages as candidates for review instead of mutating wiki/. */
-  review?: boolean;
   /**
    * Maximum concurrent LLM calls during compile (extraction + page generation).
    * Overrides LLMWIKI_COMPILE_CONCURRENCY and the built-in default of 5;

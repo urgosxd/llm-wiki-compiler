@@ -41,6 +41,7 @@
  */
 
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { sql } from "drizzle-orm";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -122,6 +123,28 @@ function stubProvider(): void {
   process.env.LLMWIKI_PROVIDER = "anthropic";
   process.env.ANTHROPIC_API_KEY = "test-key";
   stubExtractionAndBody(CONCEPT, PAGE_BODY);
+}
+
+/**
+ * Hold every generated page for the Stack `process.env` names.
+ *
+ * A review policy is the only lever left that reaches the candidate branch: the `review`
+ * compile option that used to force it was removed. No writer for `wiki.project_config`
+ * exists in `src/` today, so the row is stated the way the config reader reads it.
+ */
+async function holdEveryPage(): Promise<void> {
+  const handle = createDimensionsDatabase(process.env);
+  try {
+    const stackId = (process.env.AKS_STACK_ID ?? "").trim();
+    const document = JSON.stringify({ version: 1, review: { hold: ["all"] } });
+    await handle.db.execute(sql`
+      insert into wiki.project_config (stack_id, document, version)
+      values (${stackId}, ${document}::jsonb, 1)
+      on conflict (stack_id) do update set document = excluded.document, version = excluded.version
+    `);
+  } finally {
+    await handle.close();
+  }
 }
 
 describe("step 1 — ingest", () => {
@@ -229,25 +252,27 @@ describe("step 2 — compile failure paths", () => {
   });
 });
 
-describe("step 3 — the review-mode report", () => {
+describe("step 3 — the held-page report", () => {
   it("counts the pending queue from the candidate store", async () => {
     const root = await projectRoot();
     stubProvider();
     try {
       await ingestSource(root, await sourceFile(root));
-      await compileAndReport(root, { review: true });
+      await holdEveryPage();
+      await compileAndReport(root);
       expect(await countCandidates(root)).toBe(1);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("classifies the post-review-compile project as `sources-only` and recommends compile", async () => {
+  it("classifies the post-held-compile project as `sources-only` and recommends compile", async () => {
     const root = await projectRoot();
     stubProvider();
     try {
       await ingestSource(root, await sourceFile(root));
-      await compileAndReport(root, { review: true });
+      await holdEveryPage();
+      await compileAndReport(root);
       const rec = recommendNextAction(await collectProjectState(root));
       // The queue IS populated -- `countCandidates` is asserted to say so above. The
       // deleted command's `next.command === "llmwiki review list"` expectation for

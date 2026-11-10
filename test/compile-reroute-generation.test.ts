@@ -6,9 +6,8 @@
  * Pins three contracts of the live-write branch reroute:
  *  - a DEFAULT compile produces the same page bytes AND routes the generation
  *    write through the executor (a single journal batch is opened);
- *  - the two CANDIDATE branches (`--review` and a policy hold) are untouched:
- *    they write ONLY a candidate JSON, open NO executor batch / journal, and
- *    write NO live page;
+ *  - the CANDIDATE branch (a policy hold) is untouched: it writes ONLY a candidate
+ *    JSON, opens NO executor batch / journal, and writes NO live page;
  *  - (HIGH-A) a floor-SKIPPED page (oversized body > GENERATED_PAGE_MAX_CHARS,
  *    the compile guardrail) is
  *    ABSENT from the committed set: it is NOT in `result.pages`, IS surfaced in
@@ -72,20 +71,6 @@ describe("compile generation routed through planner/executor", () => {
 });
 
 describe("candidate branches stay off the executor", () => {
-  it("--review writes only a candidate JSON, opens no journal batch, no live page", async () => {
-    stubConcepts();
-    const openSpy = vi.spyOn(journal, "openBatch");
-
-    const result = await compileAndReport(ctx.dir, { review: true });
-
-    const candidates = await listCandidates(ctx.dir);
-    expect(candidates.length).toBeGreaterThan(0);
-    expect(result.review?.forced.length).toBeGreaterThan(0);
-    expect(existsSync(path.join(ctx.dir, CONCEPTS_DIR, "alpha.md"))).toBe(false);
-    expect(existsSync(path.join(ctx.dir, CONCEPTS_DIR, "beta.md"))).toBe(false);
-    expect(openSpy).not.toHaveBeenCalled();
-  });
-
   it("a policy-held page writes only a candidate JSON, opens no journal batch", async () => {
     await holdEveryPage();
     stubConcepts();

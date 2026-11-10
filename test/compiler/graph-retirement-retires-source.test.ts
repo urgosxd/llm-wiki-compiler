@@ -98,7 +98,7 @@ import type { DimensionsPort } from "../../packages/wiki/src/sdk/core-types.js";
 import type { Dimension, DimensionName } from "../../packages/wiki/src/dimensions/types.js";
 import { STATE_FILE } from "../../packages/wiki/src/utils/constants.js";
 import type {
-  CompileOptions, CompileResult, SourceState, WikiState,
+  CompileResult, SourceState, WikiState,
 } from "../../packages/wiki/src/utils/types.js";
 import { DATABASE_URL, createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
@@ -226,12 +226,10 @@ interface RetirementRun {
  * before this returns, so each case observes its own run and leaves nothing behind.
  *
  * @param seed - Writes the project's recorded state.
- * @param overrides - Compile options the case adds (for example `review`).
  * @returns The compile's result and the identities the graph was asked to forget.
  */
 async function runRetirementCompile(
   seed: (dir: string) => Promise<void>,
-  overrides: Partial<CompileOptions> = {},
 ): Promise<RetirementRun> {
   const dir = await mkdtemp(path.join(tmpdir(), "retirement-retires-"));
   const retired: string[] = [];
@@ -242,7 +240,6 @@ async function runRetirementCompile(
       env: RETIREMENT_ENV,
       embeddings: false,
       dimensionsPort: recordingPort(retired),
-      ...overrides,
     });
     return { result, retired };
   } finally {
@@ -261,19 +258,6 @@ describe("graph retirement through compile", () => {
     expect(result.errors).toEqual([]);
     expect(retired).toHaveLength(1);
     expect(retired[0]).toBe(DELETED_SOURCE_IDENTITY);
-  }, 60_000);
-
-  it("retires nothing when the run is held back for review", async () => {
-    const { result, retired } = await runRetirementCompile(
-      seedDeletedSourceProject, { review: true },
-    );
-
-    // The deletion was processed by this same run — review mode reports it too
-    // (measured: `result.deleted` is 1 here), so the case cannot pass by never
-    // reaching the point where a moved-out retirement call would fire.
-    expect(result).toMatchObject({ deleted: 1, errors: [] });
-    // A held-back run leaves the graph alone: the wiki is still serving it.
-    expect(retired).toEqual([]);
   }, 60_000);
 
   it("retires nothing for a deleted source with no recorded identity", async () => {

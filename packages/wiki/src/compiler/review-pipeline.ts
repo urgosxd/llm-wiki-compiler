@@ -3,9 +3,9 @@
  *
  * Owns the single responsibility of turning one {@link MergedConcept} into a
  * {@link MergedPageOutcome}: render the page, run schema- and provenance-aware
- * lint, evaluate the review policy, and EITHER persist a review candidate
- * (forced `--review` or policy-held) OR return a deferred live-write for the
- * caller to commit as a journalled batch.
+ * lint, evaluate the review policy, and EITHER persist a policy-held review
+ * candidate OR return a deferred live-write for the caller to commit as a
+ * journalled batch.
  */
 
 import path from "path";
@@ -55,9 +55,9 @@ interface ReviewCandidateMeta {
 /**
  * Generate a wiki page from merged source content.
  * For shared concepts, the LLM sees content from all contributing sources
- * and frontmatter records every source file. When `options.review` is set,
- * the rendered page is persisted as a review candidate instead of being
- * written into `wiki/`.
+ * and frontmatter records every source file. When the run's review policy
+ * holds the page, the rendered page is persisted as a review candidate
+ * instead of being written into `wiki/`.
  *
  * `contentSource` is the run's page reader, and it is load-bearing rather than
  * cosmetic: the renderer re-reads the page it is about to replace to carry forward
@@ -86,14 +86,6 @@ export async function generateMergedPage(
   const diagnostics = await collectReviewDiagnostics(root, entry, fullPage, schema);
   const signals = buildPolicySignals(fullPage, diagnostics);
   const reasons = evaluatePolicy(signals, policy);
-
-  if (options.review) {
-    const heldReasons = [{ code: "manual-review-requested" } as HeldReason, ...reasons];
-    return await persistReviewCandidate(root, entry, fullPage, sourceStates, diagnostics, signals, {
-      reviewMode: "forced",
-      heldReasons,
-    }, env);
-  }
 
   if (reasons.length > 0) {
     return await persistReviewCandidate(root, entry, fullPage, sourceStates, diagnostics, signals, {

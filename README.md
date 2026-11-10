@@ -78,7 +78,7 @@ If an agent is scanning this README, these are the high-signal entry points:
 | Ingest raw text with no network fetch | `wiki.ingestText({ title, text })` |
 | Compile or recompile changed sources | `wiki.compile()`, or MCP `compile_wiki` |
 | Add project-specific writing guidance | `wiki.compile({ systemPolicy })` |
-| Hold generated pages for human approval | `wiki.compile({ review: true })` or review policy config |
+| Hold generated pages for human approval | a review policy in `.llmwiki/config.json` |
 | Ask grounded questions | `wiki.query("question")`, or MCP `query_wiki` |
 | Save an answer back into the wiki | `wiki.query("question", { save: true })` |
 | Build an evidence pack for another agent | `wiki.getContextPack({ prompt })` or MCP `get_context_pack` |
@@ -232,7 +232,7 @@ See [`docs/configuration/providers.mdx`](docs/configuration/providers.mdx) and [
 
 llmwiki is designed for auditable generated knowledge:
 
-- **Review before write.** Use `compile({ review: true })` or `.llmwiki/config.json` review policy to hold risky pages as candidates.
+- **Review before write.** Use a `.llmwiki/config.json` review policy to hold risky pages as candidates.
 - **Fail-closed config.** Invalid review-policy config aborts compile instead of silently disabling review.
 - **Source confinement.** Source snippets and import/export paths are confined to the project.
 - **Freshness is explicit.** Pages can be fresh, stale, orphaned, or unverified; stale pages are flagged and repairable. The JSON export is active-page-only: it carries freshness for live pages (`fresh`/`stale`/`unverified`); computed-orphaned pages (all sources deleted) surface only as lint and viewer signals and are dropped from the export.

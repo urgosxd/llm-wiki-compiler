@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createWiki } from "../packages/wiki/src/sdk/wiki.js";
 import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
@@ -47,6 +47,19 @@ function stubCompile(): { pages: () => number } {
 async function recordedDigest(): Promise<string | undefined> {
   const raw = await readFile(path.join(ctx.dir, ".llmwiki/state.json"), "utf-8");
   return (JSON.parse(raw) as { promptModifiers?: string }).promptModifiers;
+}
+
+/**
+ * Hold every generated page, so a run stages candidates instead of writing pages.
+ *
+ * The compile `review` option that used to force this is gone, and the review policy is
+ * the only lever left. Reaching the candidate branch is the point: the second surface
+ * this file measures lives there.
+ */
+async function holdEveryPage(): Promise<void> {
+  await mkdir(path.join(ctx.dir, ".llmwiki"), { recursive: true });
+  const document = JSON.stringify({ version: 1, review: { hold: ["all"] } });
+  await writeFile(path.join(ctx.dir, ".llmwiki", "config.json"), document, "utf-8");
 }
 
 /**
@@ -95,10 +108,8 @@ describe("changing the policy invalidates what the old one produced", () => {
   it("replaces a pending candidate generated under a different policy", async () => {
     // Same source bytes, different policy: the pending candidate was produced
     // under a selection this run is not asking for, so it is not a duplicate.
-    const runs = await compileTwice(
-      { review: true, systemPolicy: "Policy A" },
-      { review: true, systemPolicy: "Policy B" },
-    );
+    await holdEveryPage();
+    const runs = await compileTwice({ systemPolicy: "Policy A" }, { systemPolicy: "Policy B" });
     expect(runs.first).toBeGreaterThan(0);
     expect(runs.second).toBeGreaterThan(0);
   }, 60_000);

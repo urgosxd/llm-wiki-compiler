@@ -157,9 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retirement branch ran and resolved its dimensions on every such compile, then
   skipped every source: the deleted sources' identities were read from the live
   compile state AFTER orphan marking had already removed those entries, so the
-  lookup always missed. A non-review compile now captures the identities before
-  orphaning and retires them; a review compile still retires nothing, because the
-  wiki has not stopped serving those documents yet. Operators upgrading should
+  lookup always missed. A compile now captures the identities before
+  orphaning and retires them. Operators upgrading should
   expect `stack_documents` rows to be deleted IRREVERSIBLY in two cases, not one:
   a source that was deleted, and a source that was merely DESELECTED and still
   sits on disk — `packages/wiki/src/compiler/hasher.ts:194` tags the latter
@@ -183,6 +182,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   input fields, so JavaScript callers reading the removed `executable.binary` or
   `executable.args` get `undefined` silently while TypeScript callers fail to
   compile**.
+
+- **BREAKING — the `review` compile option is removed, and `compile({ review: true })`
+  now throws.** The option promised a hold with no surface that promotes a held
+  candidate, so it is deleted rather than softened and it will not come back.
+  Naming it is a type error for a typed caller; an untyped or dynamically built
+  caller is refused at first use with "The review compile option no longer exists:
+  no surface promotes a held candidate, and the option will not come back. Remove
+  it from your call." The refusal is raised before the provider, the advisory lock
+  or any write, so a refused call does no work at all, and it keys on the presence
+  of the key rather than its value — `{ review: false }` is refused the same way.
+
+  Nothing replaces it, deliberately: there is no surface that promotes a held
+  candidate, which is the reason the option is gone rather than something to
+  route around, and the removal is final.
 
 ### Added
 

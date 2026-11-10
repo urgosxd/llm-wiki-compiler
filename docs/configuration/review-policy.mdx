@@ -4,7 +4,7 @@ sidebarTitle: "Review Policy"
 description: "Configure .llmwiki/config.json to automatically hold low-confidence, contradicted, or schema-violating pages for review instead of writing them live."
 ---
 
-By default, a compile writes every generated page directly to `wiki/`. You can change that behavior in two ways. The `review` compile option - `wiki.compile({ review: true })` - is all-or-nothing: every candidate is held and nothing lands in `wiki/`. A **review policy** is more surgical - it lets a normal compile run write most pages live while automatically holding back the ones that trip specific risk conditions.
+By default, a compile writes every generated page directly to `wiki/`. A **review policy** changes that, and it is surgical: a normal compile run writes most pages live while automatically holding back the ones that trip specific risk conditions. To hold *every* page, use the policy's `all` mode.
 
 With a policy in place, a low-confidence page is held while an unambiguous page is written immediately. You get confidence-appropriate friction without slowing down the happy path.
 
@@ -40,7 +40,7 @@ A page is held as a candidate if it trips **any** enabled mode (union semantics)
 
 - **`provenance-violating`** - holds any page whose citations are broken or malformed - pointing to missing source files, impossible line ranges, or unparseable citation markers.
 
-- **`all`** - holds every generated page, regardless of any other condition. Equivalent to the `review` compile option, but expressed as a persistent policy.
+- **`all`** - holds every generated page, regardless of any other condition. This is the all-or-nothing mode: with it, nothing lands in `wiki/`.
 
 - **`off`** or `"hold": []` - disables the policy entirely. All pages are written live.
 

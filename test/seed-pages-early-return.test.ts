@@ -63,12 +63,11 @@ async function writeSchemaWithSeedPage(rootDir: string, seedTitle: string): Prom
  */
 async function runSeedPageCompile(
   seedTitle: string,
-  options: { review?: boolean } = {},
 ): Promise<Awaited<ReturnType<typeof compileAndReport>>> {
   await writeSchemaWithSeedPage(root.dir, seedTitle);
   await stubLLMForSeedPage(seedTitle);
   vi.spyOn(console, "log").mockImplementation(() => {});
-  return compileAndReport(root.dir, options);
+  return compileAndReport(root.dir);
 }
 
 describe("seed pages generated when no source files changed", () => {
@@ -89,14 +88,6 @@ describe("seed pages generated when no source files changed", () => {
     expect(existsSync(indexPath)).toBe(true);
     const indexContent = await readFile(indexPath, "utf-8");
     expect(indexContent).toContain("domain-overview");
-  });
-
-  it("does not generate seed pages in review mode (review keeps wiki/ clean)", async () => {
-    await runSeedPageCompile("Review Overview", { review: true });
-
-    // Seed pages must not land in wiki/ when running in review mode
-    const seedPath = path.join(root.dir, CONCEPTS_DIR, "review-overview.md");
-    expect(existsSync(seedPath)).toBe(false);
   });
 
   it("surfaces successfully-written seed slugs on CompileResult.pages", async () => {

@@ -77,9 +77,9 @@ export function withExtractionSnapshot(entry: SourceState, result: ExtractionRes
 
 /** Leave reconciliation and explicit requests on the original fresh path. */
 export function reusableSourceFiles(
-  state: WikiState, scoped: SourceChange[], detected: SourceChange[], review: boolean,
+  state: WikiState, scoped: SourceChange[], detected: SourceChange[],
 ): Set<string> {
-  if (review || state.frozenSlugs?.length || detected.some((change) => change.status === "deleted")) return new Set();
+  if (state.frozenSlugs?.length || detected.some((change) => change.status === "deleted")) return new Set();
   const requested = new Set(scoped.filter((change) => change.status !== "unchanged").map((change) => change.file));
   return new Set(detected.filter((change) => change.status === "unchanged" && !requested.has(change.file)).map((change) => change.file));
 }

@@ -127,15 +127,6 @@ describe("unchanged extraction reuse", () => {
     expect(shared).not.toContain("alpha.md");
   });
 
-  it("does not reuse snapshots or advance state during reviewed staging", async () => {
-    const provider = await seed();
-    const before = await readFile(path.join(ctx.dir, ".llmwiki/state.json"), "utf8");
-    await writeFile(path.join(ctx.dir, "sources/gamma.md"), "# Gamma\n\nGamma evidence.");
-    await compileAndReport(ctx.dir, { review: true });
-    expect(extractionCalls(provider.toolCall)).toHaveLength(3);
-    expect(await readFile(path.join(ctx.dir, ".llmwiki/state.json"), "utf8")).toBe(before);
-  });
-
   it("re-extracts retry owners even when a valid snapshot exists", async () => {
     const provider = await seed();
     const state = await readState(ctx.dir);

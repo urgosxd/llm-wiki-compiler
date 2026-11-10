@@ -50,7 +50,7 @@ Organize inputs with recursive source folders and literal path exclusions, suppl
 
 **Open Knowledge Format round-trip.** `exportOkf()` writes a Google OKF-style bundle with page docs, references, and an activity log. `importOkf()` stages external bundles as review candidates by default, so third-party knowledge does not enter the live wiki; pass `trusted: true` only for bundles you already trust. Imported foreign pages re-export at their safe original paths when possible.
 
-**Review holds stage work; they do not publish it.** `compile({ review: true })`, `importOkf()` without `trusted: true`, and a review policy in `.llmwiki/config.json` write a candidate record under `.llmwiki/candidates/` while the live wiki is left untouched, and each candidate records why it was held - low confidence, contradicted, schema-violating, provenance-violating, or imported from OKF. This build exposes no surface that promotes or rejects a candidate: there is no approval operation on the SDK or among the MCP tools, and the viewer's review list is read-only.
+**Review holds stage work; they do not publish it.** `importOkf()` without `trusted: true` and a review policy in `.llmwiki/config.json` write a candidate record under `.llmwiki/candidates/` while the live wiki is left untouched, and each candidate records why it was held - low confidence, contradicted, schema-violating, provenance-violating, or imported from OKF. This build exposes no surface that promotes or rejects a candidate: there is no approval operation on the SDK or among the MCP tools, and the viewer's review list is read-only.
 
 **Programmatic control via SDK.** `createWiki({ root })` drives the entire pipeline in-process - no shelling out, no console noise, fully typed, including OKF import/export.
 
