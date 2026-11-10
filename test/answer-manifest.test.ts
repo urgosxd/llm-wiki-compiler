@@ -3,7 +3,7 @@
  * Audit metadata is structural here; fresh resolution belongs to publication.
  */
 import { expect, it } from "vitest";
-import { readCandidate, writeFreshCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import { readCandidate, writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { answerDraft, replaceCandidate } from "./fixtures/answer-candidate.js";
 
@@ -26,14 +26,14 @@ it.each([
   ["unsorted pending identities", { citations: [{ target: "x", status: "pending", candidateIds: ["b", "a"] }] }],
   ["cross-status fields", { citations: [{ target: "x", status: "broken", pageId: "concepts/x" }] }],
 ])("refuses malformed observation metadata: %s", async (_name, fields) => {
-  const candidate = await writeFreshCandidate(root.dir, process.env, answerDraft());
+  const candidate = await writeCandidate(root.dir, process.env, answerDraft());
   await replaceCandidate(root.dir, candidate.id, { ...candidate,
     citationManifest: { ...answerDraft().citationManifest, ...fields } });
   expect(await readCandidate(root.dir, process.env, candidate.id)).toBeNull();
 });
 
 it("preserves all supported observations including the normalized empty broken target", async () => {
-  const candidate = await writeFreshCandidate(root.dir, process.env, answerDraft());
+  const candidate = await writeCandidate(root.dir, process.env, answerDraft());
   const citationManifest = { ...answerDraft().citationManifest, citations: [
     { target: "alias", status: "resolved", pageId: "queries/Raw Name" },
     { target: "pending", status: "pending", candidateIds: ["pending-01", "pending-02"] },

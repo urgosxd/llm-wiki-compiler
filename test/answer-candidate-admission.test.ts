@@ -4,7 +4,7 @@
  */
 import { expect, it, vi } from "vitest";
 import { readFile } from "fs/promises";
-import { writeCandidate, writeFreshCandidate, readCandidate, listCandidates,
+import { writeCandidate, readCandidate, listCandidates,
 countCandidates, listCandidatePage, loadCandidateOrFail } from "../packages/wiki/src/compiler/candidates.js";
 import { readCandidateSnapshot } from "../packages/wiki/src/compiler/candidate-read.js";
 import { InvalidCandidateMetadataError } from "../packages/wiki/src/citations/answer-manifest.js";
@@ -16,7 +16,7 @@ const root = useTempRoot();
 
 it("round trips the exact kind and manifest through all consumed reads", async () => {
   const draft = answerDraft();
-  const created = await writeFreshCandidate(root.dir, process.env, draft);
+  const created = await writeCandidate(root.dir, process.env, draft);
   expect(created).toMatchObject(draft);
   expect(await readCandidate(root.dir, process.env, created.id)).toEqual(created);
   expect((await readCandidateSnapshot(root.dir, created.id))?.candidate).toEqual(created);
@@ -51,7 +51,7 @@ it.each([
   ["unsafe internal id", { id: "../outside" }],
   ["mismatched internal id", { id: "other" }],
 ])("skips %s with a named warning and retains original bytes", async (_name, changes) => {
-  const created = await writeFreshCandidate(root.dir, process.env, answerDraft());
+  const created = await writeCandidate(root.dir, process.env, answerDraft());
   const raw = await replaceCandidate(root.dir, created.id, { ...created, ...changes });
   const note = vi.spyOn(output, "note").mockImplementation(() => {});
   expect(await readCandidate(root.dir, process.env, created.id)).toBeNull();
@@ -66,7 +66,7 @@ it.each([
 });
 
 it("targeted metadata diagnostics are invalid-candidate rather than not-found", async () => {
-  const created = await writeFreshCandidate(root.dir, process.env, answerDraft());
+  const created = await writeCandidate(root.dir, process.env, answerDraft());
   await replaceCandidate(root.dir, created.id, { ...created, citationManifest: undefined });
   const status = vi.spyOn(output, "status").mockImplementation(() => {});
   try {

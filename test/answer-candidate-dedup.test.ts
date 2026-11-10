@@ -4,11 +4,33 @@
  */
 import { expect, it } from "vitest";
 import { readFile } from "fs/promises";
-import { writeCandidate, writeFreshCandidate, listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import { writeCandidate, listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
-import { answerDraft, candidateFile } from "./fixtures/answer-candidate.js";
+import { answerDraft, candidateFile, replaceCandidate } from "./fixtures/answer-candidate.js";
 
 const root = useTempRoot();
+
+/**
+ * Plant one extra pending generic candidate for the SAME target as `generic`, with a
+ * later generation time so the earlier write stays canonical. The writer cannot
+ * produce this state itself — it canonicalises a duplicate away — so a legacy queue
+ * holding two leaves for one target is reproduced by writing the record directly.
+ *
+ * @param dir - Project root directory.
+ * @param draft - The generic draft the duplicate must match.
+ * @returns The planted candidate's file id.
+ */
+async function plantDuplicateGeneric(dir: string, draft: Record<string, unknown>): Promise<string> {
+  const id = "answer-duplicate-0001";
+  await replaceCandidate(dir, id, {
+    id,
+    ...draft,
+    generatedAt: "2099-01-01T00:00:00.000Z",
+    reviewMode: "forced",
+    heldReasons: [{ code: "manual-review-requested" }],
+  });
+  return id;
+}
 
 it.each([true, false])("isolates generic and answer identities with generic-first=%s", async (genericFirst) => {
   const { candidateKind: _kind, citationManifest: _manifest, ...generic } = answerDraft();
@@ -20,11 +42,11 @@ it.each([true, false])("isolates generic and answer identities with generic-firs
   if (first) expect(imported.id).toBe(first.id);
   const repeated = await writeCandidate(root.dir, process.env, answerDraft());
   expect(repeated.id).not.toBe(answer.id);
-  const extra = await writeFreshCandidate(root.dir, process.env, generic);
+  const extra = await plantDuplicateGeneric(root.dir, generic);
   const canonical = await writeCandidate(root.dir, process.env, { ...generic, body: "Latest" });
   expect(canonical.id).toBe(imported.id);
   expect(await readFile(candidateFile(root.dir, answer.id), "utf8")).toBe(bytes);
-  await expect(readFile(candidateFile(root.dir, extra.id))).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(readFile(candidateFile(root.dir, extra))).rejects.toMatchObject({ code: "ENOENT" });
   const all = await listCandidates(root.dir);
   expect(all.map(c => c.id).sort()).toEqual([answer.id, repeated.id, imported.id].sort());
   expect(all.every(c => typeof c.generatedAt === "string")).toBe(true);

@@ -25,7 +25,8 @@ vi.mock("../packages/wiki/src/utils/markdown.js", async (importOriginal) => {
 });
 
 import { safeReadFile } from "../packages/wiki/src/utils/markdown.js";
-import { listCandidatePage, writeFreshCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import { listCandidatePage } from "../packages/wiki/src/compiler/candidates.js";
+import { seedPendingCandidates } from "./fixtures/candidate-queue.js";
 
 /** Candidate files read from disk since the counter was last reset. */
 function candidateReadCount(): number {
@@ -35,24 +36,21 @@ function candidateReadCount(): number {
 }
 
 /**
- * Seed `count` pending candidates and reset the read counter, so a test counts
- * only the reads its own call made. `writeFreshCandidate` rather than
- * `writeCandidate`: the latter scans the whole queue per write to canonicalize
- * duplicates, which is O(n²) over a queue this size and would drown the very
- * reads under test. Every slug here is distinct, so there is nothing to dedup.
+ * Seed `count` pending candidates in bulk, then reset the read counter so a test
+ * counts only the reads its own call made. Every slug is distinct and nothing
+ * needs canonicalising, so the bulk seeder replaces the writer here: its per-write
+ * queue scan is O(n²) over a queue this size and would drown the reads under test.
  */
 async function seedQueue(count: number): Promise<string> {
   const root = await makeTempRoot("reviews-bounds");
-  for (let i = 0; i < count; i++) {
-    const slug = `candidate-${String(i).padStart(3, "0")}`;
-    await writeFreshCandidate(root, process.env, {
-      title: `Candidate ${i}`,
-      slug,
-      summary: `Summary ${i}`,
-      sources: ["karpathy.md"],
-      body: `---\ntitle: Candidate ${i}\n---\n\nBody ${i}.`,
-    });
-  }
+  const seeds = Array.from({ length: count }, (_unused, i) => ({
+    title: `Candidate ${i}`,
+    slug: `candidate-${String(i).padStart(3, "0")}`,
+    summary: `Summary ${i}`,
+    sources: ["karpathy.md"],
+    body: `---\ntitle: Candidate ${i}\n---\n\nBody ${i}.`,
+  }));
+  await seedPendingCandidates(root, seeds);
   vi.mocked(safeReadFile).mockClear();
   return root;
 }

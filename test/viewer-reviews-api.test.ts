@@ -20,7 +20,8 @@
 import { describe, it, expect } from "vitest";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
-import { writeCandidate, writeFreshCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import { seedPendingCandidates } from "./fixtures/candidate-queue.js";
+import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
 import type { CandidateDraft } from "../packages/wiki/src/compiler/candidates.js";
 import { REVIEW_LIST_LIMIT } from "../packages/wiki/src/viewer/reviews.js";
 import { useViewerProcessLifecycle } from "./fixtures/run-cli-server.js";
@@ -54,21 +55,19 @@ function totalOf(body: unknown): number {
 }
 
 /**
- * Seed `count` distinct pending candidates. `writeFreshCandidate` rather than
- * `writeCandidate`: the latter re-lists the whole queue on every write to
- * canonicalize duplicates, which is O(n²) at the sizes this cap is about.
- * Every slug here is distinct, so there is nothing to canonicalize.
+ * Seed `count` distinct pending candidates in bulk. Every slug is distinct, so
+ * nothing needs canonicalising; the bulk seeder exists because the writer's
+ * per-write queue scan is O(n²) at the size this cap is about.
  */
 async function seedQueue(root: string, count: number): Promise<void> {
-  for (let i = 0; i < count; i++) {
-    await writeFreshCandidate(root, process.env, {
-      title: `Candidate ${i}`,
-      slug: `candidate-${String(i).padStart(4, "0")}`,
-      summary: `Summary ${i}`,
-      sources: ["karpathy.md"],
-      body: `---\ntitle: Candidate ${i}\n---\n\nBody ${i}.`,
-    });
-  }
+  const seeds = Array.from({ length: count }, (_unused, i) => ({
+    title: `Candidate ${i}`,
+    slug: `candidate-${String(i).padStart(4, "0")}`,
+    summary: `Summary ${i}`,
+    sources: ["karpathy.md"],
+    body: `---\ntitle: Candidate ${i}\n---\n\nBody ${i}.`,
+  }));
+  await seedPendingCandidates(root, seeds);
 }
 
 /** Seed one pending candidate through the project's own writer, so the on-disk

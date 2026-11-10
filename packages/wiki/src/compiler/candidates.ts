@@ -207,7 +207,11 @@ export async function writeCandidate(
 
   // Validated answers always take a fresh id: a later import or generic write
   // for the same target must never rewrite an answer under its id or delete it.
-  if (Object.hasOwn(draft, "candidateKind")) return writeFreshCandidate(root, env, draft, options);
+  // A fresh id means the collision-exclusive allocator, without the target-key
+  // canonicalisation the generic path below performs.
+  if (Object.hasOwn(draft, "candidateKind")) {
+    return publishNewCandidate(root, draft, writableCandidateId(draft.slug, 0, options), options);
+  }
   const generatedId = writableCandidateId(draft.slug, 0, options);
   const targetKey = candidateTargetKey(draft);
   const matches = await selectReadableCandidateEntriesForMutation(
@@ -220,29 +224,6 @@ export async function writeCandidate(
       duplicates, options);
   }
   return publishNewCandidate(root, draft, generatedId, options);
-}
-
-/** Persist a new candidate without target-key canonicalization. Used only by typed staging supersede. */
-export async function writeFreshCandidate(
-  root: string,
-  env: NodeJS.ProcessEnv,
-  draft: CandidateDraft,
-  options: FreshCandidateWriteOptions = {},
-): Promise<ReviewCandidate> {
-  // The typed-staging and validated-answer paths call this directly, bypassing
-  // writeCandidate, so it needs the same backend decision rather than falling through
-  // to the filesystem allocator.
-  const viaRows = await withCandidateSource(env, async (source) => {
-    if (source === undefined) return undefined;
-    const id = writableCandidateId(draft.slug, 0, options);
-    const candidate = buildCandidate(draft, id);
-    await source.save(candidate);
-    return candidate;
-  });
-  if (viaRows !== undefined) return viaRows;
-
-  const firstId = writableCandidateId(draft.slug, 0, options);
-  return publishNewCandidate(root, draft, firstId, options);
 }
 
 /** Materialize one public candidate publication. */

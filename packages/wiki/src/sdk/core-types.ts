@@ -187,7 +187,7 @@ export interface WikiCore {
   /** Rank pages for a question without generating an answer. */
   search(question: string, opts?: { limit?: number; maxPages?: number }): Promise<unknown>;
   /** Answer a question from the wiki. */
-  query(question: string, opts?: { save?: boolean; review?: boolean; limit?: number }): Promise<unknown>;
+  query(question: string, opts?: { save?: boolean; limit?: number }): Promise<unknown>;
   /** Read one page. */
   getPage(ref: PageRef): Promise<unknown>;
   /** Enumerate pages. */

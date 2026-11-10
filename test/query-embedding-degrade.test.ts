@@ -23,7 +23,6 @@ describe("page-level embedding failure degrades to the fallback", () => {
   it.each([
     { embeddingFailure: "fallback" as const },
     { pageScope: ["concepts/alpha"] },
-    { review: true },
   ])("answers via fallback only when opted in: %j", async (options) => {
     const root = await seedRootWithPageStore();
     const embed = mockEmbeddingFailure();

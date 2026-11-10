@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — the `query` review option is removed, and a saved answer is now
+  always written as a `wiki/queries/` page.** No call can request a review
+  candidate from a query any more: `wiki.query(question, { save: true, review:
+  true })` no longer stages anything, so the answer is published as a page or
+  refused, never held. The option documented a workflow in its own type that no
+  surface implements — it told the operator to apply the staged answer "via
+  `review approve`", a command that does not exist — so what it promised had
+  never been reachable.
+
+  Three consequences follow, and they are what an existing caller actually
+  experiences. A query can no longer put a record under `.llmwiki/candidates/`:
+  the saved-answer proposer (`stageQueryProposal`) is gone, and with it the
+  `"Query review requires save."` guard that only made sense while a proposal
+  could be requested. The publication result no longer carries `candidateId`, so
+  a result that used to report a staged proposal now reports `saved` and a
+  written page instead. And a TypeScript caller passing `review` stops
+  compiling, while an untyped caller passing it is silently ignored rather than
+  staged.
+
+  This is not a rename or a re-flagging. Query review candidates are retired, not
+  softened: nothing reproduces that behaviour elsewhere, and no replacement
+  option is offered.
+
 - **BREAKING — the `llmwiki` executable and its `bin` entry are removed, and
   there is no replacement command.** Anyone who ran `llmwiki <command>` loses it
   entirely: `npm install -g llm-wiki-compiler` no longer puts anything on

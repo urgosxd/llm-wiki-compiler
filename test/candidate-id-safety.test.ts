@@ -14,12 +14,7 @@ import { describe, it, expect } from "vitest";
 import { mkdir, readdir, readFile, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import {
-  writeCandidate,
-  writeFreshCandidate,
-  readCandidate,
-  UnsafeCandidateIdError,
-} from "../packages/wiki/src/compiler/candidates.js";
+import { writeCandidate, readCandidate, UnsafeCandidateIdError } from "../packages/wiki/src/compiler/candidates.js";
 import { CANDIDATES_DIR } from "../packages/wiki/src/utils/constants.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
@@ -205,10 +200,10 @@ describe("candidate id/slug path-traversal safety", () => {
     expect(existsSync(path.join(root.dir, CANDIDATES_DIR, `${recordId}.json`))).toBe(false);
   });
 
-  it("reserves every ASCII case variant in the fresh candidate writer", async () => {
+  it("reserves every ASCII case variant in the candidate writer", async () => {
     for (const slug of ["bnd_fresh-candidate", "BND_fresh-candidate"]) {
       await expect(
-        writeFreshCandidate(root.dir, process.env, draftFor(slug)),
+        writeCandidate(root.dir, process.env, draftFor(slug)),
       ).rejects.toBeInstanceOf(UnsafeCandidateIdError);
     }
   });

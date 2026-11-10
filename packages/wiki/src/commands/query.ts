@@ -32,8 +32,7 @@ import { slugFromPageId, type PageId } from "../utils/page-id.js";
 import type { PageRecordWithId } from "../utils/page-registry.js";
 import { selectRelevantPages, type SelectedPages } from "./query-selection.js";
 import { timeStage } from "../utils/stage-timing.js";
-import { maybeSaveQueryPage, assertQuerySaveOptions } from "./query-publication.js";
-export { assertQuerySaveOptions } from "./query-publication.js";
+import { maybeSaveQueryPage } from "./query-publication.js";
 import { buildQueryDocument } from "./query-document.js";
 import { printAnswerCitationReport, reportQueryAnswerCitations } from "./query-citation-report.js";
 // Preserve the existing summary helper import for consumers/tests.
@@ -124,7 +123,7 @@ function buildChunkProvenance(chunks: ChunkCitation[]): string {
 
 /** Options for generateAnswer — programmatic-friendly. */
 interface GenerateAnswerOptions {
-  /** Opt into embedding-error recovery; scoped/review queries default to fallback. */
+  /** Opt into embedding-error recovery; scoped queries default to fallback. */
   embeddingFailure?: "throw" | "fallback";
   /**
    * Where page bodies come from, when the caller holds a database handle.
@@ -146,16 +145,14 @@ interface GenerateAnswerOptions {
    * compiled" -- and the caller gets a confident wrong answer instead of an error.
    */
   env?: NodeJS.ProcessEnv;
-  /** Report/filter to hydrated grounding. Scoped/review queries always use this mode. */
+  /** Report/filter to hydrated grounding. Scoped queries always use this mode. */
   grounding?: "hydrated";
-  /** Persist the answer as a wiki query page when set. */
-  save?: boolean;
   /**
-   * With `save`, stage the answer as a validated review candidate instead of
-   * writing `wiki/queries/` directly — the operator applies it via `review
-   * approve`, which re-validates citations freshly. Requires `save`.
+   * Persist the answer as a `wiki/queries/` page when set. There is no staging
+   * alternative: a saved answer is always written as a page, never held as a
+   * review candidate for a later approval.
    */
-  review?: boolean;
+  save?: boolean;
   /** Per-token callback for streaming. Omit for non-streaming usage. */
   onToken?: (text: string) => void;
   /** Callback fired once page selection completes — lets CLIs print reasoning before streaming. */
@@ -185,10 +182,6 @@ export async function generateAnswer(
   question: string,
   options: GenerateAnswerOptions = {},
 ): Promise<QueryResult> {
-  // `review` without `save` is rejected by the user-facing query surfaces (the
-  // CLI action, `queryCommand`, and the SDK facade's `wiki.query`). This lower-
-  // level function is also exported for compatibility, and here `review` alone
-  // only selects review-mode grounding; nothing is published unless `save` is set.
   // Ask whether PAGES exist, not whether the derived index file does. The index is
   // a projection of the pages; requiring it refused a Stack-backed project whose
   // pages are all present but whose filesystem is empty.
@@ -196,10 +189,10 @@ export async function generateAnswer(
     throw new Error("No compiled pages found. Run the compile_wiki MCP tool first.");
   }
 
-  const scopedOrReview = options.pageScope !== undefined || options.review === true;
-  const hydratedGrounding = scopedOrReview || options.grounding === "hydrated";
+  const scoped = options.pageScope !== undefined;
+  const hydratedGrounding = scoped || options.grounding === "hydrated";
   const selection = await timeStage("query.retrieval", () => selectRelevantPages(root, question, Boolean(options.debug), options.pageScope, {
-    embeddingFailure: options.embeddingFailure ?? (scopedOrReview ? "fallback" : "throw"),
+    embeddingFailure: options.embeddingFailure ?? (scoped ? "fallback" : "throw"),
     registrySource: options.registrySource,
     embeddingStoreSource: options.embeddingStoreSource,
   }));
@@ -212,8 +205,8 @@ export async function generateAnswer(
 
   // Hydrate via the qualified-id loader (confined, namespace-correct per pageId):
   // a `papers/foo` ref loads wiki/<papers-dir>/foo.md, never wiki/concepts/foo.md.
-  // Scoped/review and explicitly hydrated queries use the live pairs as their
-  // grounding identity. Ordinary public queries retain their selected-ref contract.
+  // Scoped and explicitly hydrated queries use the live pairs as their grounding
+  // identity. Ordinary public queries retain their selected-ref contract.
   const hydratedPairs = await loadSelectedRefRecords(root, selection.refs, options.registrySource);
   const pagesContent = renderRefRecords(hydratedPairs);
   verbose(`context pack: ${pagesContent.length} chars`);
@@ -233,7 +226,7 @@ export async function generateAnswer(
   const { document, body } = buildQueryDocument(question, answer, new Date().toISOString());
   const citationFields = await reportQueryAnswerCitations(root, body);
   const publication = await maybeSaveQueryPage({
-    root, question, answer, save: Boolean(options.save), review: options.review, document,
+    root, question, answer, save: Boolean(options.save), document,
     // The same environment retrieval and hydration above were opened with: the saved
     // page and the indices regenerated for it belong to the Stack the CALLER named,
     // not to the deployment this process happens to run in.
@@ -241,11 +234,11 @@ export async function generateAnswer(
   });
 
   // Preserve the public activity log for ordinary CLI/MCP questions, even when
-  // not saved as pages. Explicitly scoped reads and review proposals retain
-  // their no-activity-log contract; a saved scoped answer is a write.
+  // not saved as pages. Explicitly scoped reads retain their no-activity-log
+  // contract; a saved scoped answer is a write.
   // Log only after generation succeeds, using the selected grounding policy.
   const resultFields = buildResultFields(selection, hydratedGrounding ? hydratedPairs : undefined);
-  if (options.review !== true && (options.save === true || options.pageScope === undefined)) {
+  if (options.save === true || options.pageScope === undefined) {
     await appendLog(root, "query", question, {
       details: resultFields.pageIds.length > 0 ? [`Pages: ${formatWikilinkList(resultFields.pageIds)}`] : [],
       // The journal is appended as ROWS for whichever Stack the environment names, so
@@ -336,9 +329,8 @@ function warningsField(
 export default async function queryCommand(
   root: string,
   question: string,
-  options: { save?: boolean; debug?: boolean; review?: boolean },
+  options: { save?: boolean; debug?: boolean },
 ): Promise<void> {
-  assertQuerySaveOptions(options);
   if (!(await hasCompiledPages(root))) {
     output.status("!", output.error("No compiled pages found. Run the compile_wiki MCP tool first."));
     return;
@@ -353,7 +345,6 @@ export default async function queryCommand(
     withEmbeddingStoreSource(process.env, (embeddingStoreSource) =>
     generateAnswer(root, question, {
       save: options.save,
-      review: options.review,
       debug: options.debug,
       registrySource,
       embeddingStoreSource,
@@ -386,16 +377,13 @@ export default async function queryCommand(
   printPublicationOutcome(result, Boolean(options.save));
 }
 
-/** Distinguish a published page, staged proposal, and answer-preserving refusal. */
+/** Distinguish a published page from an answer-preserving refusal. */
 function printPublicationOutcome(result: QueryResult, saveRequested: boolean): void {
   if (result.publicationRefusal) {
     if (result.publicationRefusal.code !== "profile-disabled") {
       output.status("!", output.error(result.publicationRefusal.message));
       process.exitCode = 1;
     }
-  } else if (result.candidateId) {
-    output.status("→", output.info(`Staged answer: ${result.candidateId}`));
-    output.status("→", output.dim(`Candidate record: .llmwiki/candidates/${result.candidateId}.json`));
   } else if (result.saved) {
     output.status("→", output.dim("Saved. Future queries will use this answer as context."));
   } else if (!saveRequested) {

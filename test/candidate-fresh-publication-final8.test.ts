@@ -1,7 +1,10 @@
 /**
  * @file test/candidate-fresh-publication-final8.test.ts
- * @description Decision 17 regressions require fresh review candidates to use
- * collision-exclusive identities across pending and archive namespaces.
+ * @description Decision 17 regressions require a validated answer to take a
+ * collision-exclusive identity across pending and archive namespaces. These
+ * cases drive `writeCandidate` with answer metadata — the only surviving entry
+ * to the fresh allocator, since the standalone fresh writer was retired with the
+ * saved-answer proposer.
  */
 
 import { lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
@@ -9,19 +12,20 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   FreshCandidateIdExhaustedError,
-  writeFreshCandidate,
-  type CandidateDraft,
+  writeCandidate,
+  type CandidateWriteOptions,
 } from "../packages/wiki/src/compiler/candidates.js";
 import { snapshotCandidateQueue } from "./fixtures/candidate-queue.js";
+import { answerDraft } from "./fixtures/answer-candidate.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();
 const COLLISION = "fresh-collision";
 const SECOND = "fresh-second";
 
-/** Minimal draft for collision-exclusive publication tests. */
-function draft(): CandidateDraft {
-  return { title: "Fresh", slug: "fresh", summary: "", sources: [], body: "new" };
+/** Write one answer candidate through the surviving fresh-identity path. */
+function writeAnswer(options: CandidateWriteOptions = {}) {
+  return writeCandidate(root.dir, process.env, answerDraft(), options);
 }
 
 /** Plant exact bytes in one candidate namespace. */
@@ -43,9 +47,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
   it("preserves a pending collision and retries with a distinct id", async () => {
     const existing = await plant("pending", COLLISION, "manual-authority");
 
-    const created = await writeFreshCandidate(root.dir, process.env, draft(), {
-      idForAttemptForTest: ids(COLLISION, SECOND),
-    });
+    const created = await writeAnswer({ idForAttemptForTest: ids(COLLISION, SECOND) });
 
     expect(created.id).toBe(SECOND);
     expect(await readFile(existing, "utf8")).toBe("manual-authority");
@@ -55,9 +57,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
   it("does not reuse an archived predecessor identity", async () => {
     const archived = await plant("archive", COLLISION, "archived-authority");
 
-    const created = await writeFreshCandidate(root.dir, process.env, draft(), {
-      idForAttemptForTest: ids(COLLISION, SECOND),
-    });
+    const created = await writeAnswer({ idForAttemptForTest: ids(COLLISION, SECOND) });
 
     expect(created.id).toBe(SECOND);
     expect(await readFile(archived, "utf8")).toBe("archived-authority");
@@ -72,9 +72,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
     await writeFile(authority, "manual-authority");
     await symlink(authority, collision);
 
-    const created = await writeFreshCandidate(root.dir, process.env, draft(), {
-      idForAttemptForTest: ids(COLLISION, SECOND),
-    });
+    const created = await writeAnswer({ idForAttemptForTest: ids(COLLISION, SECOND) });
 
     expect(created.id).toBe(SECOND);
     expect((await lstat(collision)).isSymbolicLink()).toBe(true);
@@ -84,7 +82,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
   it("loses a publish race without replacing the raced pending leaf", async () => {
     const raced = path.join(root.dir, ".llmwiki", "candidates", `${COLLISION}.json`);
 
-    const created = await writeFreshCandidate(root.dir, process.env, draft(), {
+    const created = await writeAnswer({
       idForAttemptForTest: ids(COLLISION, SECOND),
       beforePublishForTest: async (_id, attempt) => {
         if (attempt === 0) await writeFile(raced, "raced-authority");
@@ -96,7 +94,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
   });
 
   it("treats post-link cleanup failure as committed publication", async () => {
-    const created = await writeFreshCandidate(root.dir, process.env, draft(), {
+    const created = await writeAnswer({
       idForAttemptForTest: ids(SECOND),
       afterPublishForTest: async () => { throw new Error("cleanup failed"); },
     });
@@ -112,7 +110,7 @@ describe("Final8 collision-exclusive candidate publication", () => {
     const before = await snapshotCandidateQueue(root.dir);
     let attempts = 0;
 
-    const writing = writeFreshCandidate(root.dir, process.env, draft(), {
+    const writing = writeAnswer({
       idForAttemptForTest: () => { attempts += 1; return COLLISION; },
     });
 

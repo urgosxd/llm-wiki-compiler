@@ -54,14 +54,13 @@ describe("query grounding identity is the HYDRATED set", () => {
   it.each([
     { grounding: "hydrated" as const },
     { pageScope: ["concepts/alpha", "concepts/ghost"] },
-    { review: true },
   ])("drops an unreadable page with opted-in hydrated grounding: %j", async (options) => {
     const root = await seedRoot();
     state.selection = ["concepts/alpha", "concepts/ghost"];
     state.onSelect = () => rm(path.join(root, "wiki/concepts", "ghost.md"));
     const selected: string[] = [];
     const result = await generateAnswer(root, "what is alpha?", {
-      save: !("review" in options),
+      save: true,
       ...options,
       onPageSelection: (pages) => void selected.push(...pages),
     });
@@ -77,11 +76,9 @@ describe("query grounding identity is the HYDRATED set", () => {
     expect(warning?.message).toContain("concepts/ghost");
     // The durable save journal records the SAME hydrated identity the result
     // returns — the dropped page is never permanently logged as grounding.
-    if (!("review" in options)) {
-      const log = await readFile(path.join(root, "log.md"), "utf8");
-      expect(log).toContain("concepts/alpha");
-      expect(log, "the journal recorded a page that never hydrated").not.toContain("concepts/ghost");
-    }
+    const log = await readFile(path.join(root, "log.md"), "utf8");
+    expect(log).toContain("concepts/alpha");
+    expect(log, "the journal recorded a page that never hydrated").not.toContain("concepts/ghost");
   });
 
   it("preserves selected refs and activity-log identities by default after a hydration drop", async () => {

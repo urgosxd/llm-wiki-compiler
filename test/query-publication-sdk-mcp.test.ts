@@ -106,21 +106,27 @@ function answerWith(answer: string): void {
   });
 }
 
-it("validates review before missing credentials at SDK, command, and generation entrypoints", async () => {
+it("guards missing credentials at the SDK entrypoint", async () => {
   vi.stubEnv("ANTHROPIC_API_KEY", "");
   const wiki = createWiki({ root: ctx.dir });
-  await expect(wiki.query("Explain alpha", { review: true })).rejects.toThrow("Query review requires save.");
   await expect(wiki.query("Explain alpha")).rejects.toBeInstanceOf(ProviderUnavailableError);
-  await expect(queryCommand("/missing-wiki", "Explain alpha", { review: true })).rejects.toThrow("Query review requires save.");
   expect(callClaude).not.toHaveBeenCalled();
 });
 
+it("refuses the query command on a project with no compiled pages", async () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const status = vi.spyOn(console, "log").mockImplementation(() => {});
+  await expect(queryCommand(path.join(ctx.dir, "uncompiled"), "Explain alpha", { save: true })).resolves.toBeUndefined();
+  expect(status.mock.calls.flat().join(" ")).toContain("No compiled pages found");
+  expect(callClaude).not.toHaveBeenCalled();
+  expect(error).not.toHaveBeenCalled();
+});
+
 it.each([
-  { save: true, review: false, answer: "Retained [[alpha]].", field: "saved" },
-  { save: true, review: true, answer: "Pending [[beta]].", field: "candidateId" },
-  { save: true, review: false, answer: "Pending [[beta]].", field: "publicationRefusal" },
-  { save: false, review: false, answer: "Broken [[missing]].", field: undefined },
-])("returns distinct quiet SDK result $field", async ({ save, review, answer, field }) => {
+  { save: true, answer: "Retained [[alpha]].", field: "saved" },
+  { save: true, answer: "Pending [[beta]].", field: "publicationRefusal" },
+  { save: false, answer: "Broken [[missing]].", field: undefined },
+])("returns distinct quiet SDK result $field", async ({ save, answer, field }) => {
   answerWith(answer);
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -128,12 +134,13 @@ it.each([
   const stdout = vi.spyOn(process.stdout, "write");
   const stderr = vi.spyOn(process.stderr, "write");
   const { query } = createWiki({ root: ctx.dir });
-  const result = await query("Explain alpha", { save, review });
+  const result = await query("Explain alpha", { save });
   expect(result.answer).toBe(answer);
-  for (const key of ["saved", "candidateId", "publicationRefusal"] as const) {
+  for (const key of ["saved", "publicationRefusal"] as const) {
     if (key === field) expect(result[key]).toBeTruthy();
     else expect(result).not.toHaveProperty(key);
   }
+  expect(result).not.toHaveProperty("candidateId");
   expect(callClaude).toHaveBeenCalledTimes(2);
   expect(log).not.toHaveBeenCalled();
   expect(warn).not.toHaveBeenCalled();
@@ -143,15 +150,15 @@ it.each([
 });
 
 
-it("stages quietly in a profile-enabled project because the candidate is the trust-routed destination", async () => {
+it("writes a saved answer as a queries page, never as a review candidate", async () => {
   await writeFile(path.join(ctx.dir, ".llmwiki/profile.json"), JSON.stringify(SAMPLE_PROFILE));
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
-  const result = await createWiki({ root: ctx.dir }).query("Explain alpha", { save: true, review: true });
+  const result = await createWiki({ root: ctx.dir }).query("Explain alpha", { save: true });
   expect(result.answer).toBe("Retained [[alpha]].");
+  expect(result.saved).toBe("explain-alpha");
   expect(result.publicationRefusal).toBeUndefined();
-  expect(result.saved).toBeUndefined();
-  expect(result.candidateId).toBeTypeOf("string");
-  await expect(readFile(path.join(ctx.dir, "wiki/queries/explain-alpha.md"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect(result).not.toHaveProperty("candidateId");
+  expect(await readFile(path.join(ctx.dir, "wiki/queries/explain-alpha.md"), "utf8")).toContain("Retained [[alpha]]");
   expect(log).not.toHaveBeenCalled();
   expect(callClaude).toHaveBeenCalledTimes(2);
 });

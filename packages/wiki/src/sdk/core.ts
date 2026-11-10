@@ -27,7 +27,7 @@ import { existsSync, statSync } from "node:fs";
 import { withQuiet } from "../utils/output.js";
 import { ingestSource, ingestTextSource } from "../commands/ingest.js";
 import { compileAndReport } from "../compiler/index.js";
-import { generateAnswer, assertQuerySaveOptions } from "../commands/query.js";
+import { generateAnswer } from "../commands/query.js";
 import { lint, lintByTier } from "../linter/index.js";
 import { buildContextPack } from "../context/build.js";
 import { exportJson } from "../commands/export.js";
@@ -48,7 +48,6 @@ import {
 import { listSources, getSource } from "../sources/store.js";
 import { runOkfExport } from "../export/okf/run.js";
 import { runOkfImport } from "../import/run.js";
-import { applyApprovedMutations } from "../trust/executor.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
 import type { CreateWikiOptions, WikiCore, SdkCompileOptions } from "./core-types.js";
 
@@ -130,7 +129,6 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
 
     query: (question, opts = {}) =>
       runQuiet(() => {
-        assertQuerySaveOptions(opts);
         ensureProviderAvailable();
         // The registry source is an internal handle, never part of the public SDK
         // options, so the facade resolves it here for every embedder.
