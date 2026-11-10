@@ -173,7 +173,7 @@ The slice landed as **seven** commits on `docs/remove-stale-cli-prose` (base `5a
 | S6 | `3dbd2d5ced87ead6be45c2be0dc1437d1fb5e5f4` | `docs: describe the monorepo and feature set that actually exist` | 7 | +128 / -233 |
 | S7 | `e1034233ce95904ceff2305822499b3ebd5f55e1` | `docs(introduction): describe the wiki shape and review holds that ship` | 1 | +13 / -9 |
 
-Thirty-seven documentation files were modified; each one sits in exactly one commit, and the tree is clean at `e1034233`.
+Thirty-six documentation files were modified, plus this feature document — 37 changed paths in total. Each of the 36 sits in exactly one commit, and the tree is clean at `e1034233`.
 
 **Census, re-derived at the commit point (not inherited).** The command is the one this slice standardised on:
 
@@ -197,8 +197,8 @@ The briefed figure — "~280 `llmwiki <command>` prose occurrences across ~30 fi
 
 - `corepack pnpm run gates:static` → exit 0, all six gates ok (`tsc` 8.2 s, `typecheck:kg` 8.2 s, `typecheck:tests` 19.7 s, `fallow:ci` 3.3 s, `fallow:kg` 1.1 s, `lint` 12.5 s; "static gates: all 6 passed in 28.9 s"; eslint ratchet 1645 files, 566 baseline violations, no regression).
 - `./node_modules/.bin/vitest run test/config-prose-rot-guard.test.ts test/control-gates.test.ts scripts/static-gates.test.ts` → 3 files passed, **34 tests passed** (prose-rot guard 11, static gates 9, control gates 14). No Docker was started and no database was provisioned; the `adopted running pgvector/pgvector:pg16 container` banner is the fixture reusing a container another slice already had up.
-- Zero dead links, dead anchors or dead imports: a link checker over all 37 changed files resolved every relative link, MDX `href=`, import specifier and slugified anchor, and every `docs/docs.json` nav entry resolves to a page that exists.
-- All changed MDX is structurally valid: 27 `.mdx` files with even fence counts, closed frontmatter, and balanced `Card`/`CardGroup`/`Steps`/`Step`/`Accordion`/`Note`/`Tip`/`Warning`/`Tabs`/`Tab`/`ParamField`/`Frame`/`CodeGroup`.
+- Zero dead links, dead anchors or dead imports, re-measured on the final commit rather than inherited: a link-and-anchor checker over all 37 changed paths (the 36 documentation files plus this document) resolved every relative link, MDX `href=`, import specifier and slugified anchor, and every `docs/docs.json` nav entry resolves to a page that exists. The only reported hits were three `import … from "llm-wiki-compiler"` lines inside code fences (`README.md:109,135,194`, `docs/guides/sdk.mdx:25,33,43,287`, `examples/basic/README.md:31`) — package specifiers the checker's import rule caught, not links.
+- All changed MDX is structurally valid: 29 `.mdx` files with even fence counts, closed frontmatter, and balanced `Card`/`CardGroup`/`Steps`/`Step`/`Accordion`/`Note`/`Tip`/`Warning`/`Tabs`/`Tab`/`ParamField`/`Frame`/`CodeGroup`.
 - No non-doc file in the diff (`git diff --name-only | grep -vE '\.(md|mdx)$'` → `NO_NON_DOC_FILES`), `CHANGELOG.md` never staged and never modified, `packages/llmwiki-kg/LICENSE.md` intact, `odd/` touched only through this document.
 
 **The nine verifier defects, and the state each is in now.** Every one was re-checked at the final commit with the verifier's own grep:
