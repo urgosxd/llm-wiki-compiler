@@ -101,6 +101,35 @@ function isKnownDimension(name: string): name is DimensionName {
 }
 
 /**
+ * The dimensions the switch enables, in the order it lists them.
+ *
+ * THE ONE READER of `LLMWIKI_DIMENSIONS`. Every question about which dimensions
+ * are on is answered here, and a caller that needs the answer earlier than
+ * {@link resolveDimensions} — such as the Stack pre-check that decides whether a
+ * default Stack may have to be provisioned at all — asks this function instead of
+ * parsing the variable a second time.
+ *
+ * WHY THAT IS NOT MERELY TIDY. A textual copy alongside this one answers correctly
+ * only while the two stay in step, so the second copy is where a change lands
+ * unimplemented. It already happened: the Stack pre-check kept duplicates and left
+ * an unknown name for later, so `LLMWIKI_DIMENSIONS=nope` enabled nothing there and
+ * that caller skipped its dimension work in silence, while this module refuses the
+ * very same environment.
+ *
+ * It also refuses, rather than only reporting: a caller that asks about the switch
+ * here meets the same `DimensionActivationError` the resolver would raise, in the
+ * same words, and meets it before spending a database round trip.
+ *
+ * @param env - Environment to read; defaults to `process.env`.
+ * @returns The enabled dimension names, de-duplicated; `["wiki"]` when the switch
+ *   is absent, empty, or made only of separators.
+ * @throws {DimensionActivationError} on a name this build cannot write.
+ */
+export function enabledDimensionNames(env: NodeJS.ProcessEnv = process.env): DimensionName[] {
+  return parseNames(env[DIMENSIONS_ENV_VAR]);
+}
+
+/**
  * A database handle plus the one way to release it.
  *
  * The client is carried alongside the handle because closing the drizzle object
@@ -276,7 +305,7 @@ export function resolveStackId(env: NodeJS.ProcessEnv = process.env): string {
 
 export function resolveDimensions(options: ResolveDimensionsOptions): Dimension[] {
   const env = options.env ?? process.env;
-  const names = parseNames(env[DIMENSIONS_ENV_VAR]);
+  const names = enabledDimensionNames(env);
   const dimensions: Dimension[] = [];
 
   for (const name of KNOWN_DIMENSIONS) {

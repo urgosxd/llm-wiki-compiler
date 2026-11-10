@@ -69,7 +69,8 @@ import { createApp } from "@repo/kg/server";
 /** The graph sub-app type, derived so this module needs no direct express import. */
 type GraphApp = ReturnType<typeof createApp>;
 import { createViewerHandler, type ViewerRequestHandler } from "@repo/wiki/viewer-server";
-import { handleApiRequest, type ApiDeps } from "./api.js";
+import { handleApiRequest, type ApiDeps, type IngestDimensionsPort } from "./api.js";
+import { createDimensionsPort } from "../dimensions/port.js";
 import { handleMcpHttp, isMcpHttpPath } from "./mcp-http.js";
 import { createJobRegistry, type JobRegistry } from "@repo/wiki/job-registry";
 import { createDurableJobRegistry } from "@repo/wiki/job-durable-registry";
@@ -139,6 +140,18 @@ export interface HostOptions {
    * means the mutation mount is absent.
    */
   readonly projectRoot?: string;
+  /**
+   * The configured dimensions every ingest on this host writes through.
+   *
+   * COMPOSED HERE when the caller omits it, which is the difference between this
+   * entry point and the ingest routes themselves: a host therefore cannot serve a
+   * dimension-less ingest, because `createDimensionsPort()` is the real
+   * implementation and never an empty set. The loud refusal lives at the seams that
+   * take an injected port -- the mutation mount and the stdio MCP server -- where a
+   * wiring mistake is actually possible. Callers that need a shared instance (the
+   * container entry, which also hands one to the MCP-over-HTTP factory) pass theirs.
+   */
+  readonly dimensionsPort?: IngestDimensionsPort;
   /**
    * Additional projects served under `/p/<slug>/...`.
    *
@@ -448,7 +461,17 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // Mutable holder: the origin policy needs the ACTUALLY bound port, which only
   // exists after `listen`, so this record is filled in below rather than at
   // construction.
-  const apiDeps: { ingestJobs?: JobRegistry; viewerConfig?: ApiDeps["viewerConfig"] } = { ingestJobs };
+  const apiDeps: {
+    ingestJobs?: JobRegistry;
+    viewerConfig?: ApiDeps["viewerConfig"];
+    dimensionsPort: IngestDimensionsPort;
+  } = {
+    ingestJobs,
+    // Composed, never omitted: see `HostOptions.dimensionsPort`. A host always holds
+    // a real port, so the mutation mount's required-port refusal is unreachable from
+    // here and the container cannot ship dimension-less.
+    dimensionsPort: options.dimensionsPort ?? createDimensionsPort(),
+  };
   // MCP over HTTP, on the same listener. Mounted only when this host serves a
   // project: the tools operate on a root, and a host with none would accept MCP
   // calls it cannot answer. Version comes from the caller so this module never

@@ -44,7 +44,7 @@
 
 import type { IncomingMessage, ServerResponse } from "http";
 import { writeJson, writeJsonError } from "@repo/wiki/viewer-respond";
-import { ingestSource } from "@repo/wiki/ingest-service";
+import { INGEST_DIMENSIONS, ingestSource } from "@repo/wiki/ingest-service";
 import { compileAndReport } from "@repo/wiki/compiler";
 import { LockBusyError } from "@repo/wiki/utils-lock";
 import { applySecurityHeaders, validateOriginHeaders } from "@repo/wiki/viewer-server";
@@ -53,10 +53,20 @@ import type { JobRegistry } from "@repo/wiki/job-registry";
 import { runIngestJob } from "@repo/wiki/job-run";
 import type { IngestJobAccepted } from "@repo/wiki/job-types";
 import type { CompileResult, IngestResult } from "@repo/wiki/utils-types";
-import { stackIdProblem } from "@repo/foundation";
+import { requireDimensionsPort, stackIdProblem } from "@repo/foundation";
 import { buildIngestEnv } from "@repo/wiki/ingest-env";
 import { AKS_DATABASE_URL_ENV_VAR, createDimensionsDatabase } from "@repo/wiki/dimensions-activation";
 import { stackExists } from "@repo/wiki/stack-store";
+import type { createDimensionsPort } from "../dimensions/port.js";
+
+/**
+ * The dimensions port this mount threads to the ingest service.
+ *
+ * Derived from the factory rather than named: `@repo/api` is the only package that
+ * may implement the seam, and deriving keeps this file from restating wiki's
+ * dimension type.
+ */
+export type IngestDimensionsPort = ReturnType<typeof createDimensionsPort>;
 
 /** Largest request body these endpoints accept, in bytes. */
 const MAX_BODY_BYTES = 1024 * 64;
@@ -148,6 +158,17 @@ export interface ApiDeps {
   /** Registry the async route creates jobs in. */
   readonly ingestJobs?: JobRegistry;
   /**
+   * The configured dimensions every ingest on this mount writes through.
+   *
+   * REQUIRED whenever an ingest runs, and refused loudly when absent: both routes
+   * call `requireDimensionsPort` before any work starts, so a mount wired without
+   * one answers 500 with `MissingDimensionsPortError`'s message instead of ingesting
+   * into an empty dimension set. `HostOptions.dimensionsPort` is what fills this in
+   * for every host `startHost` builds, which is why the container cannot ship
+   * dimension-less.
+   */
+  readonly dimensionsPort?: IngestDimensionsPort;
+  /**
    * Bind config the origin policy compares against.
    *
    * Supplied by the host, which is the only layer that knows the address it
@@ -187,6 +208,17 @@ function acceptAsyncIngest(
     writeJsonError(res, 503, "jobs_unavailable", "this host does not track ingest jobs");
     return;
   }
+  // REFUSED BEFORE A JOB EXISTS. The check comes before `create` on purpose: a 202
+  // for work that cannot resolve its dimensions would leave a tracked job that is
+  // guaranteed to fail, which reads to a client like an accepted upload. Rejected
+  // input therefore leaves the registry exactly as it was.
+  let dimensionsPort: IngestDimensionsPort;
+  try {
+    dimensionsPort = requireDimensionsPort(deps.dimensionsPort, INGEST_DIMENSIONS);
+  } catch (error) {
+    respondToThrow(res, root, error);
+    return;
+  }
   // The Stack travels into the MIRROR, not only into the pipeline: the durable row is
   // what a client reads back by id, so a job named in B must be findable under B.
   const job = registry.create(source, new Date(), stackId);
@@ -199,8 +231,9 @@ function acceptAsyncIngest(
   };
   writeJson(res, 202, accepted);
   // The Stack travels ON the job: the work starts after this response is answered, so
-  // the request is gone by then and the job is the only thing that can carry it.
-  void runIngestJob({ root, registry, job, compile, stackId });
+  // the request is gone by then, and the job is the only thing that can carry it. The
+  // dimensions ride with it for the same reason.
+  void runIngestJob({ root, registry, job, compile, stackId, dimensionsPort });
 }
 
 /**
@@ -231,7 +264,7 @@ async function handleIngest(
     acceptAsyncIngest(root, request, res, deps);
     return;
   }
-  await runSyncIngest(root, request, res);
+  await runSyncIngest(root, request, res, deps);
 }
 
 /**
@@ -341,19 +374,32 @@ function resolveRequestStack(
  * @param root - Project root to mutate.
  * @param request - A validated ingest request.
  * @param res - Response to answer on.
+ * @param deps - Mount dependencies, carrying the dimensions port.
  */
 async function runSyncIngest(
   root: string,
   request: IngestRequest,
   res: ServerResponse,
+  deps: ApiDeps,
 ): Promise<void> {
   try {
+    // REQUIRED here, inside the try so the refusal answers the request instead of
+    // rejecting it: a caller that built this mount without a port is a wiring
+    // mistake, and the honest answer is 500 with the reason before any work starts.
+    const dimensionsPort = requireDimensionsPort(deps.dimensionsPort, INGEST_DIMENSIONS);
     // The Stack is passed down as an ENVIRONMENT, not assigned into `process.env`.
     // One env for the whole request means ingest and compile cannot disagree about the
     // tenant, and two concurrent requests cannot see each other's Stack -- which the
     // previous assign-and-restore could not promise.
     const env = buildIngestEnv(request.stackId);
-    const ingested: IngestResult = await ingestSource(root, request.source, undefined, env);
+    const ingested: IngestResult = await ingestSource(
+      root,
+      request.source,
+      undefined,
+      env,
+      {},
+      dimensionsPort,
+    );
     const compiled: CompileResult | null =
       request.compile === false
         ? null

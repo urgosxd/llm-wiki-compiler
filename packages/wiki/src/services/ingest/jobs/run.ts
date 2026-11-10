@@ -31,6 +31,8 @@
 
 import { LockBusyError } from "../../../utils/lock.js";
 import { compileAndReport } from "../../../compiler/index.js";
+import type { DimensionsPort } from "@repo/foundation";
+import type { Dimension } from "../../../dimensions/index.js";
 import { ingestSource } from "../service.js";
 import { buildIngestEnv } from "../ingest-env.js";
 import { recordJobFailure } from "./failure-log.js";
@@ -59,6 +61,16 @@ export interface RunJobInput {
    * reads back an empty Stack with no error to explain it.
    */
   readonly stackId?: string;
+  /**
+   * The configured dimensions, injected by the caller that owns the join.
+   *
+   * Forwarded, never resolved here: a background job runs after the HTTP response
+   * that created it, so the dimensions have to travel ON the job exactly as the
+   * Stack does. Absent means the ingest service resolves them internally, which is
+   * what lets a job be run directly in a test; the api route that MINTS a job
+   * requires a port before it creates one.
+   */
+  readonly dimensionsPort?: DimensionsPort<Dimension>;
 }
 
 /** Swallow an observer call's failure; a status bug must not fail the ingest. */
@@ -248,7 +260,15 @@ async function runIngestJobUnder(input: RunJobInput): Promise<void> {
   const env = buildIngestEnv(input.stackId);
   const now = () => new Date();
   try {
-    const ingested = await ingestSource(root, job.source, jobObserverFor(registry, job.id, now), env);
+    const ingested = await ingestSource(
+      root,
+      job.source,
+      jobObserverFor(registry, job.id, now),
+      env,
+      // The Stack travels in `env`, not as an argument: see `buildIngestEnv`.
+      {},
+      input.dimensionsPort,
+    );
     settleIngestFromResult(registry, job.id, ingested.writeStatus, now());
     await runCompileHalf(input, now, env);
   } catch (error) {

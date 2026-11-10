@@ -70,6 +70,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createWikiMcpServer, startMCPServer } from "@repo/wiki/mcp";
 import { startHost } from "./host/server.js";
+import { createDimensionsPort } from "./dimensions/port.js";
 import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
 import { buildReadyUrl, registerShutdown, resolveBindConfig, type BindOptions } from "./serve-bind.js";
 
@@ -280,15 +281,23 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
   // Built before binding so the listener never accepts a request against a
   // half-constructed snapshot.
   const viewerSnapshot = await buildViewerSnapshot(root);
+  // ONE port for the whole host: the listener's mutation mount and the
+  // MCP-over-HTTP factory both ingest through it, so a request handled over either
+  // surface writes the dimensions the same way. Composed HERE because this module is
+  // the composition root -- the only place in the process allowed to join the two
+  // dimensions -- and this is the line that makes the container's launcher possess a
+  // port at all.
+  const dimensionsPort = createDimensionsPort();
   const handle = await startHost({
     viewerSnapshot,
     host,
     port,
     projectRoot: root,
     version,
+    dimensionsPort,
     // The MCP-over-HTTP factory is built HERE because this module is imported by
     // nothing: it is the one place a host→mcp edge cannot close a cycle.
-    mcpServerFactory: () => createWikiMcpServer({ root, version }),
+    mcpServerFactory: () => createWikiMcpServer({ root, version, dimensionsPort }),
     ...(parsed.flags.has(NO_GRAPH) ? { includeGraph: false } : {}),
   });
   process.stdout.write(`Host ready at ${buildReadyUrl(handle.host, handle.port)}\n`);
@@ -301,7 +310,14 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
  * @param parsed - What the caller supplied.
  */
 async function runServe(parsed: LauncherArguments): Promise<void> {
-  await startMCPServer({ root: parsed.values.get("--root") ?? process.cwd(), version: resolveVersion() });
+  await startMCPServer({
+    root: parsed.values.get("--root") ?? process.cwd(),
+    version: resolveVersion(),
+    // REQUIRED by `startMCPServer`, which refuses at construction without it: the
+    // stdio surface is a container mode, so the port exists here or the process
+    // fails loudly before it advertises tools it cannot honour.
+    dimensionsPort: createDimensionsPort(),
+  });
 }
 
 /** A subcommand: the function that runs it, and the options it honours. */

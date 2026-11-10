@@ -44,31 +44,9 @@
 
 import type { DatabaseHandle } from "@repo/foundation";
 import { selectStack } from "../../dimensions/stack-selection.js";
-import { DIMENSIONS_ENV_VAR } from "../../dimensions/activation.js";
+import { enabledDimensionNames } from "../../dimensions/activation.js";
 import type { DimensionName } from "../../dimensions/types.js";
 import { ensureDefaultStack } from "./default-stack.js";
-
-/** The dimension enabled when the switch is absent, empty, or all separators. */
-const DEFAULT_DIMENSION_NAME: DimensionName = "wiki";
-
-/**
- * The dimension names `LLMWIKI_DIMENSIONS` enables.
- *
- * MUST MIRROR `activation`'s parser, default included: unset, empty, and a value
- * made only of separators all mean `wiki` alone. It is deliberately NOT a validator
- * — an unknown name is left for `resolveDimensions` to refuse in its own words, so
- * this pre-check can never describe a misconfiguration differently from the
- * resolver that will reject it a moment later.
- *
- * @param env - The one environment the run reads.
- * @returns The enabled dimension names, in the order the switch lists them.
- */
-function enabledDimensionNames(env: NodeJS.ProcessEnv): readonly string[] {
-  const raw = env[DIMENSIONS_ENV_VAR]?.trim() ?? "";
-  if (raw === "") return [DEFAULT_DIMENSION_NAME];
-  const names = raw.split(",").map((token) => token.trim()).filter((name) => name !== "");
-  return names.length === 0 ? [DEFAULT_DIMENSION_NAME] : names;
-}
 
 /**
  * Resolve the Stack a Stack-scoped command must work on.
@@ -110,6 +88,8 @@ export async function resolveStackForCommand(
  * @param env - The one environment the run reads.
  * @param dimensions - The dimensions this caller will actually use.
  * @returns The Stack id to bind them to, or `undefined` when none is needed.
+ * @throws {DimensionActivationError} when the switch names a dimension this build
+ *   cannot write; see `enabledDimensionNames`.
  * @throws {Error} when the default Stack can neither be read nor created; see
  *   `ensureDefaultStack`.
  */
@@ -131,8 +111,15 @@ export async function resolveStackForDimensions(
 /**
  * True when the switch enables at least one of `dimensions`.
  *
+ * Answered by `activation`'s reader, never by a copy of it: the switch has ONE
+ * reader, so this pre-check cannot disagree with the resolver that runs a moment
+ * later. That includes the refusal — an unknown name is rejected here, in the
+ * authority's words, rather than being answered as "nothing enabled" and letting a
+ * misconfigured run skip its dimension work in silence.
+ *
  * @param env - The one environment the run reads.
  * @param dimensions - The dimensions the caller will touch.
+ * @throws {DimensionActivationError} on a name this build cannot write.
  */
 function needsAnyOf(env: NodeJS.ProcessEnv, dimensions: readonly DimensionName[]): boolean {
   const enabled = enabledDimensionNames(env);

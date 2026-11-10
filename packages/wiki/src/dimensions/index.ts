@@ -58,6 +58,7 @@ export {
   DIMENSIONS_ENV_VAR,
   DimensionActivationError,
   createDimensionsDatabase,
+  enabledDimensionNames,
   resolveDimensions,
   resolveStackId,
 } from "./activation.js";

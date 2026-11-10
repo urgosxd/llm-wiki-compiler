@@ -26,11 +26,13 @@
 import { tryWithOrdinaryMutationLock } from "../../utils/mutation-lock.js";
 import path from "path";
 import { createHash } from "node:crypto";
+import type { DimensionsPort } from "@repo/foundation";
 import {
   createDimensionsDatabase,
   ingestDimensions,
   resolveDimensions,
 } from "../../dimensions/index.js";
+import type { Dimension, DimensionName } from "../../dimensions/index.js";
 import { resolveStackForCommand } from "../stacks/resolve-stack.js";
 import { LockBusyError } from "../../utils/lock.js";
 import { appendLog } from "../../utils/activity-log.js";
@@ -61,6 +63,19 @@ export interface IngestTextInput { title: string; text: string; source?: string 
  * resolution they have always had.
  */
 export interface IngestStackArgument { readonly stackId?: string }
+
+/**
+ * The dimensions an ingest may write, in the order they are written.
+ *
+ * A CEILING, not an answer: `resolveDimensions` intersects it with
+ * `LLMWIKI_DIMENSIONS`, so an environment that enables only `wiki` still writes
+ * only `wiki`. It exists because a `DimensionsPort` must be TOLD which dimensions
+ * a caller may receive -- `DimensionsRequest.only` is required, because a
+ * resolution that does not state its narrowing has lost the configuration it was
+ * supposed to pass -- and because the refusal a port-less api caller receives names
+ * the dimensions it asked for.
+ */
+export const INGEST_DIMENSIONS: readonly DimensionName[] = ["wiki", "kg"];
 
 /** Format the root-relative source reference recorded in the Markdown journal. */
 export function journalSavedPath(savedPath: string, pathApi = path): string {
@@ -132,6 +147,13 @@ async function journalIngest(
  * @param env - Environment the dimensions write with; defaults to `process.env`.
  * @param explicitStackId - A Stack the CALLER named. When absent the Stack is resolved
  *   from `env` exactly as before, default Stack included.
+ * @param port - The dimensions, injected by the caller that owns them.
+ *   OPTIONAL, and its omission is VALID: absent means "resolve the dimensions
+ *   internally, exactly as this function always has", never "throw" and never
+ *   "write to nothing". The loud refusal belongs to the API-owned entry points,
+ *   which require a port and raise `MissingDimensionsPortError` when they were not
+ *   given one; a shared function that threw on omission would break every caller
+ *   that legitimately has no port (the SDK facade, the published surface).
  * @returns The written path and its write status.
  * @throws {LockBusyError} When another mutation holds the project lock.
  */
@@ -141,6 +163,7 @@ async function writeToDimensions(
   observer?: IngestJobObserver,
   env: NodeJS.ProcessEnv = process.env,
   explicitStackId?: string,
+  port?: DimensionsPort<Dimension>,
 ): Promise<{ savedPath: string; writeStatus: NonNullable<IngestResult["writeStatus"]> }> {
   // Pages are rows in Postgres now, so the dimensions need a handle. It is built
   // for this operation and released right after, because an unclosed pool keeps
@@ -170,10 +193,19 @@ async function writeToDimensions(
         dimensionsDb.db,
         stackId,
         input,
+        // ABSENT PORT MEANS RESOLVE INTERNALLY -- not "throw", not "write to
+        // nothing". The two branches are deliberately the SAME resolution: the port
+        // forwards exactly the root, handle, environment and Stack this function
+        // already holds, so an injected port cannot answer a different question than
+        // the internal one. The refusal for a missing port lives at the API-owned
+        // entry points that require one; here, omission is valid by design.
+        //
         // `env` still reaches the dimensions because it carries the dimension switch,
         // the Stack name and the connection string; `stackId` settles the one question
         // this function already answered.
-        resolveDimensions({ root, db: dimensionsDb.db, env, stackId }),
+        port === undefined
+          ? resolveDimensions({ root, db: dimensionsDb.db, env, stackId })
+          : port.resolve({ only: INGEST_DIMENSIONS, env, root, db: dimensionsDb.db, stackId }),
         { attempts: observer?.attempts },
       );
     } finally {
@@ -201,6 +233,8 @@ async function writeToDimensions(
  * @param env - Environment the dimensions write with; defaults to `process.env`.
  * @param stack - A Stack the caller named. Absent for every existing caller, which
  *   keeps the environment's selection (default Stack included) unchanged.
+ * @param port - The dimensions, injected by the caller that owns them. Omitted means
+ *   "resolve internally", exactly as before; see {@link writeToDimensions}.
  * @returns Saved filename, character count, truncation flag, source URI, and source type.
  * @throws {LockBusyError} When another mutation holds the project lock.
  */
@@ -210,6 +244,7 @@ export async function ingestSource(
   observer?: IngestJobObserver,
   env: NodeJS.ProcessEnv = process.env,
   stack: IngestStackArgument = {},
+  port?: DimensionsPort<Dimension>,
 ): Promise<IngestResult> {
   observer?.ingest.stage("detecting");
   const sourceType = await detectSourceType(source);
@@ -229,7 +264,7 @@ export async function ingestSource(
     source,
     document,
     body: result.content,
-  }, observer, env, stack.stackId);
+  }, observer, env, stack.stackId, port);
   verbose(`saved: ${savedPath} (${result.content.length} chars extracted)`);
 
   // Journal only real writes — a no-op re-ingest must not append a log line.

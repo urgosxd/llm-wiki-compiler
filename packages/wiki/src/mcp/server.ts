@@ -24,6 +24,10 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { requireDimensionsPort } from "@repo/foundation";
+import type { DimensionsPort } from "@repo/foundation";
+import type { Dimension } from "../dimensions/index.js";
+import { INGEST_DIMENSIONS } from "../services/ingest/service.js";
 import { registerWikiTools } from "./tools.js";
 import { registerOkfTools } from "./okf-tools.js";
 import { registerWikiResources } from "./resources.js";
@@ -33,6 +37,17 @@ export interface ServerOptions {
   root: string;
   /** Server version surfaced to MCP clients in the initialize handshake. */
   version: string;
+  /**
+   * The configured dimensions, resolved by the caller that owns the join.
+   *
+   * The server does not name the joining package and never will: the value crosses
+   * as foundation's interface, exactly like the ingest service's own seam. Absent
+   * means the ingest tool resolves the dimensions internally, which is what keeps a
+   * directly-constructed server usable; {@link startMCPServer} REQUIRES it, because
+   * that is the entry point the container starts and a wiring mistake there must be
+   * refused at construction rather than discovered mid-ingest.
+   */
+  dimensionsPort?: DimensionsPort<Dimension>;
 }
 
 /**
@@ -44,7 +59,7 @@ export interface ServerOptions {
  * @returns A server that has not been connected to a transport yet.
  */
 export function createWikiMcpServer(options: ServerOptions): McpServer {
-  const { root, version } = options;
+  const { root, version, dimensionsPort } = options;
   const server = new McpServer({ name: "llmwiki", version }, {
     instructions:
       "llmwiki is a knowledge compiler. Use ingest_source to add raw sources, " +
@@ -61,7 +76,7 @@ export function createWikiMcpServer(options: ServerOptions): McpServer {
       "verdict, never the body; there is no write or store-wide list tool for artifacts over MCP.",
   });
 
-  registerWikiTools(server, root);
+  registerWikiTools(server, root, dimensionsPort);
   registerOkfTools(server, root);
   registerWikiResources(server, root);
   return server;
@@ -71,11 +86,19 @@ export function createWikiMcpServer(options: ServerOptions): McpServer {
  * Start the MCP server bound to stdio transport.
  * Resolves once the transport closes (typically when the parent process exits).
  *
- * @param options - Root directory and server version (the CLI passes its own
- *                  version so the server doesn't need to read package.json).
+ * @param options - Root directory and server version (the container entry passes its
+ *                  own version so the server doesn't need to read package.json).
+ * @throws {MissingDimensionsPortError} when the caller supplied no dimensions port.
+ *   REQUIRED here, and refused at construction rather than mid-ingest: this is the
+ *   entry point the `serve` mode starts, so a missing port is a wiring mistake made
+ *   by whoever built this call, and the failure to refuse is the one that ships.
  */
 export async function startMCPServer(options: ServerOptions): Promise<void> {
-  const server = createWikiMcpServer(options);
+  // The refusal is the POINT of taking the port here: `requireDimensionsPort`
+  // throws `MissingDimensionsPortError` naming the dimensions this server's ingest
+  // tool writes, before a transport is ever connected.
+  const dimensionsPort = requireDimensionsPort(options.dimensionsPort, INGEST_DIMENSIONS);
+  const server = createWikiMcpServer({ ...options, dimensionsPort });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

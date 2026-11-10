@@ -10,10 +10,12 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { DimensionsPort } from "@repo/foundation";
 import { generateAnswer } from "../commands/query.js";
 import { compileAndReport } from "../compiler/index.js";
 import { buildContextPack } from "../context/build.js";
 import { createDimensionsDatabase } from "../dimensions/activation.js";
+import type { Dimension } from "../dimensions/index.js";
 import {
   withEmbeddingStoreSource,
   withPageScan,
@@ -43,8 +45,12 @@ import { STACK_ARG_REQUIRED_NOTE, STACK_ID_SCHEMA } from "./stack-arg.js";
 import { isRefusal, refusalResult, withRequestEnv } from "./tenant-db.js";
 
 /** Register all 10 wiki tools on the given MCP server instance. */
-export function registerWikiTools(server: McpServer, root: string): void {
-  registerIngestTool(server, root);
+export function registerWikiTools(
+  server: McpServer,
+  root: string,
+  dimensionsPort?: DimensionsPort<Dimension>,
+): void {
+  registerIngestTool(server, root, dimensionsPort);
   registerCompileTool(server, root);
   registerWikiReadTools(server, root);
   registerEvalTool(server, root);
@@ -52,7 +58,11 @@ export function registerWikiTools(server: McpServer, root: string): void {
   registerStackTools(server);
 }
 
-function registerIngestTool(server: McpServer, root: string): void {
+function registerIngestTool(
+  server: McpServer,
+  root: string,
+  dimensionsPort?: DimensionsPort<Dimension>,
+): void {
   server.registerTool(
     "ingest_source",
     {
@@ -74,8 +84,12 @@ function registerIngestTool(server: McpServer, root: string): void {
       // The tool's argument is the ONLY source of the Stack here: `withRequestEnv`
       // refuses an id this deployment cannot serve, and the service is handed the id
       // directly so it never resolves a default Stack of its own.
+      // The dimensions travel beside the Stack, both injected by whoever built the
+      // server: the caller that owns the join resolves them, and this tool only
+      // forwards them. Omitted means the service resolves them internally, which is
+      // why a directly-constructed server still ingests.
       const result = await withRequestEnv(stackId, (env) =>
-        ingestSource(root, source, undefined, env, { stackId }),
+        ingestSource(root, source, undefined, env, { stackId }, dimensionsPort),
       );
       if (isRefusal(result)) return refusalResult(result);
       return jsonResult(result);
