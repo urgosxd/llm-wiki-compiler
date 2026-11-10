@@ -148,7 +148,7 @@ Database discipline for the suite and for the container work is unchanged: fresh
 - [x] T4 — resolve graph-retirement dimensions through the port in `packages/wiki/src/compiler/index.ts`, keeping the Stack pre-check — S1, S4 — route: gentle-ai-worker — commit: eb6b357b537bdfd902ead8c86788ea37c7707c35
 - [x] T5 — pin that an unknown dimension name REFUSES through the real compile path instead of silently skipping graph retirement — S4 — route: gentle-ai-worker — commit: eb6b357b537bdfd902ead8c86788ea37c7707c35
 - [x] T6 — pin that a stackless compile with graph retirement disabled completes and opens NO database — S1, S4 — route: gentle-ai-worker — commit: eb6b357b537bdfd902ead8c86788ea37c7707c35
-- [x] T7 — gates, artifact tier, full `pnpm test`, both container modes — S5, S8 — route: gentle-ai-worker — commit: (pending)
+- [x] T7 — gates, artifact tier, full `pnpm test`, both container modes — S5, S8 — route: gentle-ai-worker — commit: db9c7d1277b1a82e7e79a408349f19051955d37b
 
 ## Log
 
@@ -276,7 +276,7 @@ Each command was run alone, in the foreground, on `a32b66067c932dba0905ee178ded8
 - **`pnpm test` alone** — **0**: `Test Files 812 passed | 3 skipped (815)`, `Tests 6130 passed | 4 skipped (6134)`, **312.56 s**. The known flake (`packages/api/src/main-subcommand-flags.test.ts:147` SIGTERM) **did not appear**.
 
 The 3 skipped files are the pre-existing `packages/llmwiki-kg/ts/src/routes/{pages,aks,ingest}-gateway.test.ts` — unrelated to this slice.
-This writer re-ran `corepack pnpm run gates:static` (**0**, `all 6 passed in 22.6 s`, same literal lint triple) and `corepack pnpm run build` (**0**) immediately before committing this record, as the brief requires; nothing was fixed by bypassing a gate.
+This writer re-ran `corepack pnpm run gates:static` (**0**, `all 6 passed in 22.6 s`, same literal lint triple) and `corepack pnpm run build` (**0**) immediately before committing this record, as the brief requires; nothing was fixed by bypassing a gate. (The pre-commit hook's post-commit slice notice reported `135075 authored changed lines in 407 commits on feature/compile-port-threading since origin/main` — a branch-wide figure, not this slice's; recorded, not acted on.)
 
 **L20 (executed acceptance proofs — omission, invocation, differential) — measured, not read.**
 Executed in scratch (`mktemp -d` copy without `.git`), against a **freshly provisioned** pgvector container with the port read via `docker port <name> 5432/tcp` and `TESTCONTAINERS_REUSE_ENABLE=false`:
