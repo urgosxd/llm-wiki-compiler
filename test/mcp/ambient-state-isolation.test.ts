@@ -217,7 +217,13 @@ describe("a named Stack's answer never carries the ambient deployment's state", 
     const status = await statusFor(server, named.harness.stackId);
 
     expect(status.pages.total).toBe(NAMED_SLUGS.length);
-    expect(status.sources).toBe(1);
+    // `sources` follows the SELECTED `sources/` listing — the corpus `listSources()`
+    // enumerates — and this root deliberately has no `sources/` tree, only rows. A
+    // source ROW is not a listing, so the count is 0 even though the named Stack owns
+    // one. This is not the named Stack being ignored: the row-derived answers below
+    // (`pages`, `lastCompiledAt`, `pendingChanges`, `pendingCandidates`) are what prove
+    // the named Stack was read and the ambient one was not.
+    expect(status.sources).toBe(0);
     expect(status.lastCompiledAt).toBe(NAMED_COMPILED_AT);
     expect(status.pendingChanges).toEqual([{ file: NAMED_IDENTITY, status: "changed" }]);
     // The review queue is part of the same answer: `countCandidates` read the
@@ -239,7 +245,14 @@ describe("a named Stack's answer never carries the ambient deployment's state", 
     // Deep equality, not a field list: an answer that gains or loses a field when the
     // ambient environment agrees would be a regression this control has to catch.
     expect(withAmbientAgreement).toEqual(withAmbientLeak);
-    expect(withAmbientAgreement.sources).toBe(1);
+    // What makes this control fail if no rows were read at all: two equally empty
+    // answers would compare equal.
+    expect(withAmbientAgreement.pages.total).toBe(NAMED_SLUGS.length);
+    // 0 in both calls for the reason given above: no `sources/` tree here, so the
+    // selected listing is empty and rows are not counted. The payloads being compared
+    // carry the named Stack's `pages.total` and `lastCompiledAt`, so agreement here
+    // still means "the same Stack was read", not "nothing was read".
+    expect(withAmbientAgreement.sources).toBe(0);
   });
 
   it("builds get_context_pack from the named Stack while another is bound", async () => {

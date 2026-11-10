@@ -18,9 +18,11 @@ describe("collectStatus", () => {
     const root = await mkdtemp(path.join(tmpdir(), "wiki-status-toonew-"));
     const llmwikiDir = path.join(root, ".llmwiki");
     await mkdir(llmwikiDir, { recursive: true });
-    // A future format need not carry a v1 `sources` map. The unusable-state
-    // reads must fail closed (sources:0, lastCompiledAt:null) instead of
-    // throwing on Object.keys(undefined).
+    // A future format need not carry a v1 `sources` map. Of the two fields this
+    // test reads, only `lastCompiledAt` still comes from the compile state, and
+    // that unusable-state read must fail closed (null) instead of throwing on
+    // Object.keys(undefined). `sources` is 0 because this root has no `sources/`
+    // listing to count, not because of the state.
     await writeFile(path.join(llmwikiDir, "state.json"), JSON.stringify({ version: 3 }), "utf-8");
 
     const status: WikiStatus = await collectStatus(root);

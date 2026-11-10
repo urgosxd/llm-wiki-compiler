@@ -163,7 +163,10 @@ describe("payloads the retired parity captures used to freeze", () => {
     // excludes `gone-page`, which is exactly the page `orphanedPages` reports.
     expect(status).toEqual({
       pages: { concepts: 2, queries: 0, total: 2 },
-      sources: 2,
+      // `status.sources` counts the SELECTED `sources/` listing, and this root has no
+      // `sources/` tree: three source ROWS do not make a listing. Every other field in
+      // this payload is row-derived, so it still proves the rows were read.
+      sources: 0,
       lastCompiledAt: COMPILED_AT,
       stalePages: ["stale-page"],
       staleCount: 1,

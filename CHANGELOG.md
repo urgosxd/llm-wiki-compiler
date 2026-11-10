@@ -336,6 +336,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deferred by capacity or quarantine retain their same-backend v3 cached vectors
   without relabeling stale content as current.
 
+- **`status.sources` now counts the sources `listSources()` lists, instead of the
+  entries the last compile recorded.** Before the first compile the counter read
+  `0` beside a one-item list, which is the disagreement this fixes. A corpus that
+  was compiled and fully projected reports the same number as before; a Stack
+  whose rows and `sources/` tree disagree — an excluded source, or one whose
+  projected file was deleted — reports what a caller can actually list and read.
+
 ## [1.3.0] - 2026-09-11
 
 ### Highlights

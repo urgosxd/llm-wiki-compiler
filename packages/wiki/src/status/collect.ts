@@ -9,6 +9,13 @@
  * `pendingChanges` is derived directly from the freshness snapshot (which
  * already has per-source currentHash/recordedHash/exists) plus a cheap
  * selected-file listing — no second hash pass. `detectChanges` is NOT called.
+ *
+ * `sources` is that same listing's LENGTH — the selected `sources/` corpus, in every
+ * case, with or without a Stack. It must equal `listSources().sources.length`, and
+ * `listSources()` reads no rows at all: it enumerates the selected listing
+ * (`sources/store.ts` → `listSelectedSourceFiles`). Counting the Stack's
+ * `wiki.source_documents` rows instead reported sources a caller can neither list nor
+ * read — an excluded one, or one whose projected file was deleted.
  */
 
 import path from "path";
@@ -41,6 +48,17 @@ export const MAX_STATUS_LIST = 100;
 /** Shape returned by `collectStatus` and surfaced by the `wiki_status` tool. */
 export interface WikiStatus {
   pages: { concepts: number; queries: number; total: number };
+  /**
+   * Sources this project has: always `listSources().sources.length`.
+   *
+   * Counted from the selected `sources/` listing — the one corpus both methods answer
+   * for. The `sourceDocuments` seam deliberately does NOT feed it: those rows answer
+   * what the Stack HOLDS, which includes a source whose projected file was deleted and
+   * one the Stack's `sources.exclude` removes from the corpus, while a count naming a
+   * source nobody can list or read is the disagreement this field must never report.
+   * `listSources()` applies no default limit (`sources/store.ts:29`), so that listing
+   * and this count are both unpaginated.
+   */
   sources: number;
   lastCompiledAt: string | null;
   /**
@@ -173,6 +191,10 @@ export interface CollectStatusOptions {
    * reported `pages: 1, sources: 1` beside `pendingChanges: 23`, every one of those 23
    * being an unrelated file in the checkout. Adding the seam here is the same fix
    * `detectChanges` already had.
+   *
+   * This drives `pendingChanges` and the freshness snapshot only — NOT `WikiStatus.sources`,
+   * which follows the selected `sources/` listing in every case so it can equal
+   * `listSources().sources.length`.
    */
   sourceDocuments?: SourceDocumentListing;
   /**
@@ -235,6 +257,13 @@ export async function collectStatus(
   // The directory is consulted only when it is not, so a project that never opted into
   // the backend keeps reporting the same numbers it always did.
   const sourceFilesOnDisk = stackDocuments?.map((doc) => doc.sourceIdentity);
+  // The corpus `listSources()` enumerates, started here so it overlaps the rest of the
+  // batch. It is the SAME call that listing makes (`listSelectedSourceFiles`, which
+  // owns recursion, the `.md` filter, symlink refusal and `sources.exclude`), so the
+  // count below and the list cannot be computed by two different rule sets — the way
+  // they drifted when one side counted rows. A project without a Stack reuses it as
+  // `filesFromDisk`, so `sources/` is still walked once.
+  const selectedSourceListing = listSelectedSourceFiles(root);
   const [conceptSummaries, queries, scannedConcepts, pendingCandidates, filesFromDisk] = await Promise.all([
     // Summaries are DERIVED from the same scan the classification uses, so a row
     // listing cannot report a page count that disagrees with its own stale list.
@@ -249,9 +278,12 @@ export async function collectStatus(
       : scan.scan("concepts"),
     countCandidates(root, options.env),
     sourceFilesOnDisk === undefined
-      ? listSelectedSourceFiles(root)
+      ? selectedSourceListing
       : Promise.resolve(sourceFilesOnDisk),
   ]);
+  // Unpaginated by construction: `listSources` uses the whole listing unless a caller
+  // passes a limit, so this length is what an unpaginated `listSources()` returns.
+  const listedSourceCount = (await selectedSourceListing).length;
 
   const { stalePages, orphanedPages } = classifyConceptPages(scannedConcepts, snapshot);
   // Surface read-surface health signals so an agent never reads a degraded status
@@ -279,12 +311,18 @@ export async function collectStatus(
 
   // A too-new state carries the RAW parsed object, which need not be v1-shaped:
   // its `sources` may be absent. Fail closed by reading an empty map for any
-  // unusable state, so the source count and last-compile reads cannot crash.
+  // unusable state, so the last-compile read cannot crash.
   const usableSources = stateUnusable ? {} : classified.state.sources;
 
   return {
     pages: { concepts: conceptSummaries.length, queries: queries.length, total: conceptSummaries.length + queries.length },
-    sources: Object.keys(usableSources).length,
+    // The selected listing's length — never the compile state's keys, never the Stack's
+    // rows. State keys only appear once a compile records them, so counting them reported
+    // 0 beside a one-item `listSources()`; counting ROWS fixed that one case and broke the
+    // three where rows and files differ (a hidden dot-file, a config-excluded source, a row
+    // whose projected file was deleted). `listSources()` reads the selected `sources/`
+    // listing and nothing else, so this counts the same listing it does.
+    sources: listedSourceCount,
     lastCompiledAt: lastCompileTime(usableSources),
     stalePages: capSlugs(stalePages),
     staleCount: stalePages.length,
