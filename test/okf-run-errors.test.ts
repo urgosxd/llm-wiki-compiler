@@ -1,15 +1,12 @@
 // test/okf-run-errors.test.ts
 import { describe, it, expect } from "vitest";
-import { LockUnavailableError, QueueFullError } from "../packages/wiki/src/import/run-errors.js";
+import { LockUnavailableError } from "../packages/wiki/src/import/run-errors.js";
 
 describe("OKF run errors", () => {
-  it("are distinguishable Error subclasses with messages", () => {
+  it("is a distinguishable Error subclass with a message", () => {
     const lock = new LockUnavailableError();
-    const queue = new QueueFullError("review queue would exceed the cap");
     expect(lock).toBeInstanceOf(Error);
     expect(lock).toBeInstanceOf(LockUnavailableError);
-    expect(queue).toBeInstanceOf(QueueFullError);
     expect(lock.message).toMatch(/lock/i);
-    expect(queue.message).toMatch(/queue/i);
   });
 });

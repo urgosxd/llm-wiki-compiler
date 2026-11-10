@@ -9,7 +9,8 @@ import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
 import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { CandidateRecordMalformedError } from "../packages/wiki/src/compiler/candidate-read.js";
 import { selectCandidateEntriesForMutation } from "../packages/wiki/src/compiler/candidate-selection.js";
-import { listCandidates, writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import { seedPendingCandidate } from "./fixtures/candidate-queue.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
 
 const project = useCompileProject({ dirSuffix: "candidate-preflight" });
@@ -67,9 +68,12 @@ describe("public-default candidate discovery", () => {
     const large = "x".repeat(5 * 1024 * 1024);
     const file = path.join(project.dir, ".llmwiki", "candidates", "large.json");
     await writeFile(file, large);
-    await expect(writeCandidate(project.dir, process.env, {
+    const id = await seedPendingCandidate(project.dir, {
       title: "Small", slug: "small", summary: "", sources: [], body: "Small body",
-    })).resolves.toMatchObject({ slug: "small" });
+    });
+    // The unrelated oversized leaf is neither read into memory as a candidate nor
+    // clobbered: the readable record is discovered beside it.
+    expect((await listCandidates(project.dir)).map((entry) => entry.id)).toEqual([id]);
     expect(await readFile(file, "utf8")).toBe(large);
   });
 

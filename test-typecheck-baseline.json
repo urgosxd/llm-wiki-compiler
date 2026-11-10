@@ -55,7 +55,7 @@
     "test/mcp/multi-stack-addressing.test.ts": 2,
     "test/mcp/query-sources-use-filesystem.test.ts": 2,
     "test/mcp/stack-argument-required-refusal.test.ts": 2,
-    "test/mcp/tools-required-stack-okf-ingest.test.ts": 5,
+    "test/mcp/tools-required-stack-okf-ingest.test.ts": 4,
     "test/offline-provider-keyless.test.ts": 3,
     "test/okf-reexport-map.test.ts": 2,
     "test/okf-render-doc.test.ts": 1,

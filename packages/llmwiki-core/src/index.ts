@@ -83,7 +83,6 @@ export type {
 // are the classes the engine actually throws.
 export {
   LockUnavailableError,
-  QueueFullError,
   confineUnderRoot,
   resolveConfinedPrivateDir,
   releaseLock,

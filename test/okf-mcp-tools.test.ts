@@ -1,7 +1,7 @@
 // test/okf-mcp-tools.test.ts
 /**
- * The OKF tools are Stack-scoped: `export_okf` reads the pages of the Stack named by
- * `stackId` and `import_okf` stages for it. These cases drive the handlers directly
+ * The OKF export tool is Stack-scoped: `export_okf` reads the pages of the Stack named
+ * by `stackId`. These cases drive the handlers directly
  * (they bypass the SDK's schema validation, which is pinned in `test/mcp/`), so every
  * call here has to carry the required argument itself.
  *
@@ -11,10 +11,9 @@
  * would then pass against an empty bundle.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, mkdir, writeFile, stat, readdir } from "fs/promises";
+import { mkdtemp, rm, stat } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 import { createPageWriteSink } from "../packages/wiki/src/dimensions/wiki/page-write-sink.js";
 import { assertNoOutput } from "./fixtures/no-output.js";
 import { collectOkfHandlers } from "./fixtures/okf-tools-harness.js";
@@ -65,24 +64,6 @@ describe("MCP OKF tools", () => {
     // exported nothing cannot pass behind the index.md check above.
     expect((await stat(path.join(dir, "dist/exports/okf/concepts/rag.md"))).isFile()).toBe(true);
     const bad = await h.get("export_okf")!({ out: "../escape", stackId: stackId() });
-    expect(bad.isError).toBe(true);
-  });
-  it("import_okf stages (no trusted reachable) and rejects dir outside root", async () => {
-    if (!stack.harness.reachable) return;
-    dir = await mkdtemp(path.join(tmpdir(), "mcp-okf2-"));
-    const b = path.join(dir, "kb"); await mkdir(path.join(b, "concepts"), { recursive: true });
-    await writeFile(path.join(b, "concepts", "a.md"), "---\ntype: concept\ntitle: A\n---\n\nBody.\n");
-    const h = collectOkfHandlers(dir);
-    const res = await h.get("import_okf")!({ dir: "kb", stackId: stackId() });
-    expect(res.isError).toBeUndefined();
-    // S11: asserts the INTENDED effect — the candidate lands on the Stack the request
-    // NAMED (read back with that Stack's env) and the ambient file queue stays empty.
-    // The old `listCandidates(dir).length === 1` counted the leak instead: the write
-    // fell through to `.llmwiki/candidates` and the ambient list found the displaced file.
-    const staged = await listCandidates(dir, {}, { ...process.env, ...stack.env() });
-    expect(staged.map((c) => c.slug)).toEqual(["a"]);
-    expect(await readdir(path.join(dir, ".llmwiki/candidates")).catch(() => [])).toEqual([]);
-    const bad = await h.get("import_okf")!({ dir: "/etc", stackId: stackId() });
     expect(bad.isError).toBe(true);
   });
   it("export_okf stays silent even when a cited source is unbundled (stdio-stream safety)", async () => {

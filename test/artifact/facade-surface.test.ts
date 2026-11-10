@@ -129,7 +129,6 @@ const CORE_VALUES: readonly string[] = [
   "UnknownProviderError",
   "startViewer",
   "LockUnavailableError",
-  "QueueFullError",
   "activeProfileDigest",
   "readConfinedCappedBuffer",
   "loadNonDefaultProfile",

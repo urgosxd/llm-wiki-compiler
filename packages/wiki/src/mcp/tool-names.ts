@@ -40,7 +40,6 @@ export const WIKI_MCP_TOOL_NAMES = [
   "compile_wiki",
   "export_okf",
   "get_context_pack",
-  "import_okf",
   "ingest_job_status",
   "ingest_jobs_list",
   "ingest_source",

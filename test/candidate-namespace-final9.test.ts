@@ -12,8 +12,6 @@ import {
   deleteCandidate,
   listCandidates,
   readCandidate,
-  writeCandidate,
-  type CandidateDraft,
 } from "../packages/wiki/src/compiler/candidates.js";
 import {
   resolveConfinedCandidatesDir,
@@ -22,13 +20,13 @@ import {
 import { CANDIDATES_ARCHIVE_DIR } from "../packages/wiki/src/utils/constants.js";
 import { CandidateCustodyUnavailableError } from "../packages/wiki/src/compiler/candidate-custody.js";
 import { readCandidateEntryForMutation } from "../packages/wiki/src/compiler/candidate-read.js";
+import { seedPendingCandidate, type PendingCandidateSeed } from "./fixtures/candidate-queue.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
-import { CandidatePublicationUnavailableError } from "../packages/wiki/src/compiler/candidate-publication.js";
 
 const root = useTempRoot();
 
-/** Minimal draft that would expose an aliased writer. */
-function draft(): CandidateDraft {
+/** Minimal record used to probe the real pending namespace. */
+function draft(): PendingCandidateSeed {
   return { title: "Owned", slug: "owned", summary: "", sources: [], body: "new" };
 }
 
@@ -54,15 +52,15 @@ async function plantInProjectAlias(id = "planted"): Promise<string> {
 async function withUnreadablePending(
   assertion: (candidateId: string) => Promise<void>,
 ): Promise<string> {
-  const candidate = await writeCandidate(root.dir, process.env, draft());
+  const candidateId = await seedPendingCandidate(root.dir, draft());
   const dir = path.join(root.dir, ".llmwiki", "candidates");
   await chmod(dir, 0o000);
   try {
-    await assertion(candidate.id);
+    await assertion(candidateId);
   } finally {
     await chmod(dir, 0o700);
   }
-  return path.join(dir, `${candidate.id}.json`);
+  return path.join(dir, `${candidateId}.json`);
 }
 
 describe("Confined candidate namespaces", () => {
@@ -70,14 +68,6 @@ describe("Confined candidate namespaces", () => {
     await plantInProjectAlias();
 
     expect((await listCandidates(root.dir)).map((entry) => entry.id)).toEqual(["planted"]);
-  });
-
-  it("rejects a stable in-project pending alias before writing alternate bytes", async () => {
-    const planted = await plantInProjectAlias();
-    const before = await readFile(planted, "utf8");
-
-    await expect(writeCandidate(root.dir, process.env, draft())).rejects.toBeInstanceOf(CandidatePublicationUnavailableError);
-    expect(await readFile(planted, "utf8")).toBe(before);
   });
 
   it("reads and deletes through a stable in-project pending alias", async () => {

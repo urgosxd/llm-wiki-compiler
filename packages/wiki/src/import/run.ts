@@ -1,9 +1,17 @@
 // src/import/run.ts
-/** @file Output-free OKF import core shared by SDK/MCP: read→map→collision→validate→stage/write/preview, returning a structured report. Owns the mutation lock. */
+/**
+ * @file Output-free OKF import core shared by SDK/MCP: read→map→collision→validate→write/preview,
+ * returning a structured report. Owns the mutation lock.
+ *
+ * The live write is a TRUSTED operation. An untrusted import used to stage every document as a
+ * review candidate under `.llmwiki/candidates/`, and no surface promotes a candidate into the
+ * wiki, so those records could never become pages; that arm is retired and an untrusted call
+ * now refuses with a typed error instead of staging. A `dryRun` preview still works: it writes
+ * nothing at all.
+ */
 import path from "path";
 import { importOkfBundle } from "./okf-import.js";
 import { isWritable } from "../commands/import-core.js"; // leaf created in Task 4 Step 0
-import { writeCandidate, listCandidates } from "../compiler/candidates.js";
 import { withPageSeams, type PageSeams } from "../dimensions/wiki/page-source-seam.js";
 import { atomicWrite } from "../utils/markdown.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
@@ -12,7 +20,7 @@ import { refreshAfterImport } from "./okf-refresh.js";
 import { releaseLock } from "../utils/lock.js";
 import { acquireMutationLock } from "../utils/mutation-lock.js";
 import { withQuiet } from "../utils/output.js";
-import { LockUnavailableError, QueueFullError } from "./run-errors.js";
+import { LockUnavailableError } from "./run-errors.js";
 import { buildBundleSections, type BundleReportSections, type ParsedBundleBlock } from "./bundle-block-read.js";
 import type { ImportedOkfBundle } from "./okf-import.js";
 import type { MappedOkfPage } from "./types.js";
@@ -20,18 +28,42 @@ import type { MappedOkfPage } from "./types.js";
 export interface OkfImportSkip { slug: string; okfPath: string; reason: "live-page" | "pending-candidate" | "duplicate-in-bundle" | "invalid-page"; }
 export interface OkfImportedPage { slug: string; okfPath: string; targetDirectory: "concepts" | "queries"; }
 export interface OkfImportReport extends BundleReportSections {
-  mode: "staged" | "written" | "dry-run";
+  mode: "written" | "dry-run";
   pages: OkfImportedPage[];
   skipped: OkfImportSkip[];
   warnings: string[];
   nextAction?: string;
 }
 export interface OkfImportOptions {
+  /**
+   * Write the bundle's pages straight into the wiki. REQUIRED for a real import: it is
+   * the only surviving import arm, so an import that does not name it refuses instead of
+   * staging its documents as review candidates.
+   */
   trusted?: boolean;
   dryRun?: boolean;
-  maxNewCandidates?: number;
   /** Environment deciding which Stack the page seams write to; defaults to the ambient one. */
   env?: NodeJS.ProcessEnv;
+}
+
+/** Verbatim refusal text, so a caller can match on it and a test can pin it. */
+const UNTRUSTED_IMPORT_REFUSAL =
+  "The untrusted OKF import no longer exists: staging documents as review candidates " +
+  "is retired, because no surface promotes a candidate into the wiki. Import with " +
+  "{ trusted: true } to write the bundle's pages live; see docs/guides/open-knowledge-format.mdx.";
+
+/**
+ * The refusal an untrusted import raises.
+ *
+ * It teaches rather than merely blocks: it names what no longer happens (staging for review),
+ * why (no surface promotes a candidate into the wiki), the surviving option, and where that
+ * option is documented.
+ */
+export class UntrustedOkfImportError extends Error {
+  constructor(message = UNTRUSTED_IMPORT_REFUSAL) {
+    super(message);
+    this.name = "UntrustedOkfImportError";
+  }
 }
 
 const toImported = (p: MappedOkfPage): OkfImportedPage => ({ slug: p.slug, okfPath: p.okfPath, targetDirectory: p.targetDirectory });
@@ -50,16 +82,6 @@ function partition(pages: MappedOkfPage[], collisionSkips: OkfImportSkip[]): { v
     else invalid.push({ slug: p.slug, okfPath: p.okfPath, reason: "invalid-page" });
   }
   return { valid, skipped: [...collisionSkips, ...invalid] };
-}
-
-async function stageAll(root: string, valid: MappedOkfPage[], env: NodeJS.ProcessEnv): Promise<void> {
-  for (const page of valid) {
-    await writeCandidate(root, env, {
-      title: page.title, slug: page.slug, summary: page.summary, sources: page.sources, body: page.body,
-      reviewMode: "imported", heldReasons: [{ code: "imported-okf" }],
-      targetDirectory: page.targetDirectory, okfPath: page.okfPath,
-    });
-  }
 }
 
 async function writeAll(root: string, valid: MappedOkfPage[], env: NodeJS.ProcessEnv): Promise<void> {
@@ -104,35 +126,7 @@ async function writeOneImportedPage(
   await atomicWrite(path.join(root, dir, `${page.slug}.md`), page.body);
 }
 
-/**
- * Refuse a staging run that would push the pending candidate queue past its cap.
- *
- * Staging (`--untrusted`, the MCP `import_okf` default) ADDS candidates to the
- * review queue, so an operator-set `maxNewCandidates` bounds how many a single
- * import may add. `--trusted` writes live and adds none, and a dry run stages
- * nothing — both are exempt. `generate` mode is unmetered, so a generate-mode
- * import is metered by the same rule as `documents`: helpers-unmounted generate
- * imports go through the ordinary staging partition. The function DOES NOT
- * re-count for a generate import; it is called only after `partition` so
- * `generate`-only bundles are inert here.
- *
- * Lives outside {@link runOkfImport} so the metering can be reasoned about
- * without reading the whole import sequence; direction of the check matters —
- * `≥` (not `>`) because `maxNewCandidates` is a cap on the TOTAL pending count
- * after the import, not on additions alone.
- *
- * @param root - Project root whose candidate queue is measured.
- * @param validCount - How many pages this import would stage.
- * @param opts - Import options carrying the cap.
- * @throws {QueueFullError} When staging would exceed the cap.
- */
-async function assertQueueCapacity(root: string, validCount: number, opts: OkfImportOptions): Promise<void> {
-  if (opts.maxNewCandidates === undefined || opts.trusted || opts.dryRun) return;
-  const pending = (await listCandidates(root)).length;
-  if (pending + validCount > opts.maxNewCandidates) throw new QueueFullError();
-}
-
-/** Read→map→collision→validate→stage/write/preview an OKF bundle; output-free; returns a report. `opts.env` selects the Stack the page seams write to; it defaults to the ambient environment, so the CLI's behaviour is unchanged. */
+/** Read→map→collision→validate→write/preview an OKF bundle; output-free; returns a report. `opts.env` selects the Stack the page seams write to; it defaults to the ambient environment, so the CLI's behaviour is unchanged. */
 export async function runOkfImport(root: string, dir: string, opts: OkfImportOptions = {}): Promise<OkfImportReport> {
   const env = opts.env ?? process.env;
   const warnings: string[] = [];
@@ -141,8 +135,11 @@ export async function runOkfImport(root: string, dir: string, opts: OkfImportOpt
     const imported = await importOkfBundle(dir, root, {}, onWarn);
     const { valid, skipped: allSkipped } = partition(imported.pages, imported.skipped as OkfImportSkip[]);
     const bundle = await bundleSectionsFor(root, imported.bundleBlock);
-    return { mode: "dry-run", pages: valid.map(toImported), skipped: allSkipped, warnings, ...bundle, nextAction: "Re-run without dryRun to apply." };
+    return { mode: "dry-run", pages: valid.map(toImported), skipped: allSkipped, warnings, ...bundle, nextAction: "Re-run with { trusted: true } to write these pages live." };
   }
+  // Refuse BEFORE asking for the lock: the refusal is a property of the CALL, not of the
+  // project's state, so an untrusted import must not contend for (or wait on) the lock.
+  if (!opts.trusted) throw new UntrustedOkfImportError();
   // withQuiet: acquireLock prints "Another compilation is running." on contention;
   // the typed LockUnavailableError is the signal, so the core stays output-free.
   const locked = await withQuiet(() => acquireMutationLock(root, "ordinary"));
@@ -150,17 +147,15 @@ export async function runOkfImport(root: string, dir: string, opts: OkfImportOpt
   try {
     const imported = await importOkfBundle(dir, root, {}, onWarn);
     const { valid, skipped: allSkipped } = partition(imported.pages, imported.skipped as OkfImportSkip[]);
-    await assertQueueCapacity(root, valid.length, opts);
-    if (opts.trusted) await writeAll(root, valid, env);
-    else await stageAll(root, valid, env);
+    await writeAll(root, valid, env);
     const bundle = await bundleSectionsFor(root, imported.bundleBlock);
     return {
-      mode: opts.trusted ? "written" : "staged",
+      mode: "written",
       pages: valid.map(toImported),
       skipped: allSkipped,
       warnings,
       ...bundle,
-      nextAction: opts.trusted ? `${valid.length} page(s) written live.` : "Staged under .llmwiki/candidates/ — no surface promotes a candidate into the wiki.",
+      nextAction: `${valid.length} page(s) written live.`,
     };
   } finally {
     await releaseLock(root);

@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, mkdir, rm, readFile, writeFile, stat } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { runOkfImport } from "../packages/wiki/src/import/run.js";
+import { runOkfImport, UntrustedOkfImportError } from "../packages/wiki/src/import/run.js";
 import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 import { assertNoOutput } from "./fixtures/no-output.js";
 import { writeOneDocBundle as bundle } from "./fixtures/okf-bundle-fixture.js";
@@ -27,13 +27,12 @@ let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
 
 describe("runOkfImport", () => {
-  it("stages by default and returns a staged report (no stdout)", async () => {
+  it("refuses by default instead of staging (no stdout)", async () => {
     dir = await mkdtemp(path.join(tmpdir(), "rii-"));
     const b = await bundle(dir);
-    const report = await assertNoOutput(() => runOkfImport(dir, b, {}));
-    expect(report.mode).toBe("staged");
-    expect(report.pages).toEqual([{ slug: "a", okfPath: "concepts/a.md", targetDirectory: "concepts" }]);
-    expect(await listCandidates(dir)).toHaveLength(1);
+    await expect(assertNoOutput(() => runOkfImport(dir, b, {})))
+      .rejects.toBeInstanceOf(UntrustedOkfImportError);
+    expect(await listCandidates(dir)).toHaveLength(0);
   });
   it("dry-run writes/stages nothing and reports would-import", async () => {
     dir = await mkdtemp(path.join(tmpdir(), "rii2-"));

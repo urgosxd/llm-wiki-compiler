@@ -7,11 +7,3 @@ export class LockUnavailableError extends Error {
     this.name = "LockUnavailableError";
   }
 }
-
-/** Thrown when staging would push pending review candidates over a caller-supplied cap. */
-export class QueueFullError extends Error {
-  constructor(message = "Review queue would exceed the cap; approve/reject pending candidates first.") {
-    super(message);
-    this.name = "QueueFullError";
-  }
-}

@@ -4,7 +4,7 @@
  */
 
 import { evaluateHealth } from "../packages/wiki/src/eval/health.js";
-import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import { seedPendingCandidate } from "./fixtures/candidate-queue.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
 describe("evaluateHealth", () => {
@@ -90,7 +90,7 @@ describe("evaluateHealth", () => {
   });
 
   it("surfaces pending-review count without penalising health score", async () => {
-    await writeCandidate(env.dir, process.env, {
+    await seedPendingCandidate(env.dir, {
       title: "Pending Concept",
       slug: "pending-concept",
       summary: "Pending.",

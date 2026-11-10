@@ -108,7 +108,6 @@ The server exposes fourteen tools. Every tool takes a required `stackId` naming 
 | `get_context_pack` | Build a token-budgeted evidence pack (primary pages, chunks, graph neighbors, citations, freshness, warnings, suggested actions) | No |
 | `run_eval` | Score wiki quality - fast suite is credential-free; full suite LLM-judges citation samples | Fast: No / Full: Yes |
 | `export_okf` | Export the wiki as an Open Knowledge Format bundle under a project-confined output path | No |
-| `import_okf` | Preview or stage an Open Knowledge Format bundle from a project-confined path as review candidates | No |
 | `list_stacks` | List the Stacks this endpoint can reach, most recently updated first, marking which one this connection is bound to; use it to discover a `stackId`. This is the one tool whose `stackId` is optional - it only chooses which entry is marked current and never narrows the listing | No |
 
 **Tools vs. resources:** MCP resources are not tools and have no input schema, so there is no argument to attach a `stackId` to. The seven `llmwiki://` resources in the next section resolve their Stack from the server environment instead. The required-`stackId` rule above is a property of the tool surface only: a tool call that omits it is refused, while a resource read never asks for it.
@@ -135,7 +134,7 @@ Resources are passive read views of the wiki that agents can attach as context w
 
 The server starts without credentials. Provider credentials are read from the `env` block in your MCP config and forwarded to each pipeline call:
 
-- **Read-only and filesystem-only tools** (`read_page`, `lint_wiki`, `wiki_status`, `ingest_source`, `export_okf`, `import_okf`) - always work, no credentials needed.
+- **Read-only and filesystem-only tools** (`read_page`, `lint_wiki`, `wiki_status`, `ingest_source`, `export_okf`) - always work, no credentials needed.
 - **LLM-dependent tools** (`compile_wiki`, `query_wiki`, `search_pages`) - require a valid provider credential (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.) in the environment at call time.
 - **`get_context_pack`** - credential-free by default. When embeddings are available and provider credentials are present, semantic retrieval is used. Without credentials or an embedding store, the tool falls back to lexical ranking and surfaces an `embedding-store-missing` or `query-embedding-unavailable` warning in the response - it does not fail.
 - **`run_eval`** - the `fast` suite (health score, citation coverage, corpus stats) runs without any credentials. The `full` suite adds LLM-judged citation scoring and requires a provider.
@@ -160,11 +159,11 @@ The server starts without credentials. Provider credentials are read from the `e
 
 ## OKF tools
 
-`export_okf` and `import_okf` give agents structured Open Knowledge Format access without parsing CLI output. Both take a required `stackId`.
+`export_okf` gives agents structured Open Knowledge Format access without parsing CLI output. It takes a required `stackId`.
 
 - `export_okf` writes an OKF bundle. Its optional `out` path is confined under the project root.
-- `import_okf` reads an OKF bundle from a project-confined `dir`. It supports `dryRun` and is always staging-only; MCP does not expose the trusted live-write import path.
-- After `import_okf` stages pages, they are held as review candidates under `.llmwiki/candidates/`. This build exposes no surface that promotes or rejects a candidate - there is no SDK method, no MCP tool, and the viewer's review list is read-only - so a staged page stays there.
+- There is **no** `import_okf`. An MCP caller could only ever stage imported documents as review candidates, and staging is retired: no surface promotes or rejects a candidate - there is no SDK method, no MCP tool, and the viewer's review list is read-only - so a staged page could never become a page. A tool that can only fail would advertise something impossible.
+- Importing is an SDK-only, trusted operation: `wiki.importOkf(dir, { trusted: true })`. See the [OKF guide](/guides/open-knowledge-format).
 
 <Tip>
   After an agent calls `compile_wiki`, check `wiki_status` and look at the `pendingCandidates` field. If your wiki has a review policy configured in `.llmwiki/config.json`, some pages are held for review rather than written directly. A non-zero `pendingCandidates` means the agent has queued pages that stay staged under `.llmwiki/candidates/` instead of going live in `wiki/` - this build exposes no surface that promotes or rejects a candidate, so review them there.

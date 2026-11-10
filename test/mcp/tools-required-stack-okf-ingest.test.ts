@@ -1,14 +1,13 @@
 /**
  * @file test/mcp/tools-required-stack-okf-ingest.test.ts
- * @description S1-S3 for the three wiki tools that used to take no Stack at all:
- * `export_okf`, `import_okf` and `ingest_source`.
+ * @description S1-S3 for the two wiki tools that used to take no Stack at all:
+ * `export_okf` and `ingest_source`.
  *
  * ## Why these three needed their own suite
  *
  * The other Stack-scoped tools already had a schema argument; these three resolved a
  * backend from the ambient environment and nothing else. `export_okf` read pages
- * through `withRawPageSource(root, process.env, …)`, `import_okf` wrote through
- * `withPageSeams(process.env, …)` and `ingest_source` called
+ * through `withRawPageSource(root, process.env, …)` and `ingest_source` called
  * `resolveStackForCommand(db, env)`, which PROVISIONS a default Stack when none is
  * configured. A caller could therefore get one tenant's rows back while believing it
  * had asked about no tenant in particular.
@@ -55,7 +54,7 @@ import { withRowsStack } from "../fixtures/rows-only-stack.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 /** The three tools under test. */
-const TOOLS = ["export_okf", "import_okf", "ingest_source"] as const;
+const TOOLS = ["export_okf", "ingest_source"] as const;
 
 /** Slug of the page only rows can reach. */
 const SLUG = "stack-only";
@@ -224,12 +223,11 @@ async function seedBundle(root: string): Promise<void> {
 /** The three calls that omit `stackId`, each with the other arguments it needs. */
 const MISSING_STACK_CALLS: ReadonlyArray<{ name: string; args: Record<string, unknown> }> = [
   { name: "export_okf", args: {} },
-  { name: "import_okf", args: { dir: "kb" } },
   { name: "ingest_source", args: { source: "fixture.txt" } },
 ];
 
 describe("S1: the OKF and ingest tools declare stackId required", () => {
-  it("lists stackId in the required array of all three tools", async () => {
+  it("lists stackId in the required array of both tools", async () => {
     await withTools("req-okf-s1", async ({ list }) => {
       const listed = await list();
       for (const name of TOOLS) {
@@ -331,30 +329,14 @@ describe("a call that names the Stack explicitly", () => {
   });
 
   it("refuses a Stack id that does not exist instead of falling back", async () => {
-    await withTools("req-okf-unknown-stack", async ({ client, root }) => {
-      await seedBundle(root);
-
+    await withTools("req-okf-unknown-stack", async ({ client }) => {
       const result = await client.callTool({
-        name: "import_okf",
-        arguments: { dir: "kb", stackId: randomUUID() },
+        name: "export_okf",
+        arguments: { stackId: randomUUID() },
       });
 
       expect(result.isError).toBe(true);
       expect(textOf(result)).toContain("No Stack");
-    });
-  });
-
-  it("import_okf stages the bundle for the named Stack", async () => {
-    await withTools("req-okf-import-ok", async ({ client, root, harness }) => {
-      await seedBundle(root);
-
-      const result = await client.callTool({
-        name: "import_okf",
-        arguments: { dir: "kb", stackId: harness.stackId },
-      });
-
-      expect(result.isError).toBeFalsy();
-      expect(payloadOf(result)).toMatchObject({ mode: "staged", imported: 1 });
     });
   });
 

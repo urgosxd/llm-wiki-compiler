@@ -1,16 +1,13 @@
 // src/mcp/okf-tools.ts
-/** @file MCP OKF tools: export_okf (confined) + import_okf (staging-only, confined, queue-capped). Extracted from tools.ts to stay under the file-size limit. */
+/** @file MCP OKF tool: export_okf (confined). Extracted from tools.ts to stay under the file-size limit. */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { runOkfExport } from "../export/okf/run.js";
-import { runOkfImport } from "../import/run.js";
 import { withQuiet } from "../utils/output.js";
 import { confineUnderRoot } from "../utils/path-confine.js";
 import { jsonResult, errorResult } from "./result.js";
 import { STACK_ARG_REQUIRED_NOTE, STACK_ID_SCHEMA } from "./stack-arg.js";
 import { isRefusal, refusalResult, withRequestEnv } from "./tenant-db.js";
-
-const MAX_MCP_PENDING_CANDIDATES = 200;
 
 /** Bundle directory used when the caller names none, relative to the project root. */
 const DEFAULT_EXPORT_OUT = "dist/exports/okf";
@@ -38,51 +35,17 @@ async function exportBundle(root: string, out: string | undefined, env: NodeJS.P
   });
 }
 
-/**
- * Import an OKF bundle into ONE Stack and shape the tool payload.
- *
- * Staging is always untrusted here, so nothing becomes live; the `env` still decides
- * which Stack the staged candidates and (on a trusted run) the page rows belong to.
- *
- * @param root - Project root; `dir` is confined under it.
- * @param dir - Bundle directory inside the project.
- * @param dryRun - Preview only, staging nothing.
- * @param maxPending - Queue cap enforced by the import core.
- * @param env - Environment pointing the page seams at the requested Stack.
- * @returns The MCP success envelope.
- */
-async function importBundle(
-  root: string,
-  dir: string,
-  dryRun: boolean | undefined,
-  maxPending: number,
-  env: NodeJS.ProcessEnv,
-) {
-  const bundle = await confineUnderRoot(dir, root, { mustExist: true });
-  const report = await runOkfImport(root, bundle, { trusted: false, dryRun, maxNewCandidates: maxPending, env });
-  return jsonResult({
-    mode: report.mode,
-    imported: report.pages.length,
-    pages: report.pages,
-    skipped: report.skipped,
-    warnings: report.warnings,
-    nextAction: report.mode === "dry-run"
-      ? "Preview only — re-run without dryRun to stage these as candidates."
-      : "Imported docs are STAGED as candidates under .llmwiki/candidates/ — no surface promotes them into the wiki.",
-  });
-}
-
-/** The envelope shape both OKF cores are wrapped in. */
+/** The envelope shape the OKF cores are wrapped in. */
 type OkfEnvelope = ReturnType<typeof jsonResult>;
 
 /**
  * Run one OKF tool body under the Stack the call named.
  *
- * Both registrations need the same four things around their core call, and each one
- * was a separate chance to get it wrong: the request env from `withRequestEnv` (so the
- * page seams read the NAMED Stack), `withQuiet` (the cores print via `output.status`,
- * which on the stdio transport would land on the JSON-RPC stream and corrupt it), the
- * refusal translation, and the error envelope.
+ * The registration needs four things around its core call, and each one was a separate
+ * chance to get it wrong: the request env from `withRequestEnv` (so the page seams read
+ * the NAMED Stack), `withQuiet` (the cores print via `output.status`, which on the stdio
+ * transport would land on the JSON-RPC stream and corrupt it), the refusal translation,
+ * and the error envelope.
  *
  * @param stackId - The Stack the caller passed as the tool argument.
  * @param body - The core call, given the environment pointing at that Stack.
@@ -102,8 +65,15 @@ async function runOkfTool(
   });
 }
 
-/** Register the OKF export/import tools. Both confine agent-supplied paths under `root`. `maxPending` is injectable so a test can prove the cap is actually wired into import_okf (default keeps production behavior). */
-export function registerOkfTools(server: McpServer, root: string, maxPending: number = MAX_MCP_PENDING_CANDIDATES): void {
+/**
+ * Register the OKF export tool. It confines the agent-supplied path under `root`.
+ *
+ * There is no `import_okf`. It hardcoded `trusted: false` and its schema had no
+ * `trusted` field, so an MCP caller could only ever stage — and staging is retired,
+ * because no surface promotes a candidate into the wiki. A tool that can only return
+ * a refusal advertises something impossible, so it is not registered at all.
+ */
+export function registerOkfTools(server: McpServer, root: string): void {
   server.registerTool(
     "export_okf",
     {
@@ -120,25 +90,5 @@ export function registerOkfTools(server: McpServer, root: string, maxPending: nu
     // withQuiet: the export core can print skipped-reference warnings via output.status;
     // on the MCP stdio transport those would land on the JSON-RPC stream and corrupt it.
     async ({ out, stackId }) => runOkfTool(stackId, (env) => exportBundle(root, out, env)),
-  );
-
-  server.registerTool(
-    "import_okf",
-    {
-      title: "Import OKF bundle (staging only)",
-      description: "Import an OKF bundle from a path INSIDE the project as candidates for " +
-        "the Stack named by `stackId`. Always staging-only — the docs are written under " +
-        ".llmwiki/candidates/ and no surface promotes a candidate into the wiki. " +
-        "Use dryRun to preview. " +
-        STACK_ARG_REQUIRED_NOTE,
-      inputSchema: {
-        dir: z.string().describe("Bundle directory (must resolve inside the project root)"),
-        dryRun: z.boolean().optional().describe("Preview only — stage nothing"),
-        stackId: STACK_ID_SCHEMA,
-      },
-    },
-    // withQuiet: same stdio-stream guard as export_okf (the import core may emit warnings).
-    async ({ dir, dryRun, stackId }) =>
-      runOkfTool(stackId, (env) => importBundle(root, dir, dryRun, maxPending, env)),
   );
 }

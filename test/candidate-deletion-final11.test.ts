@@ -10,9 +10,6 @@ import { describe, expect, it } from "vitest";
 import {
   deleteCandidate,
   deleteCandidateBySlug,
-  writeCandidate,
-  type CandidateDraft,
-  type FreshCandidateWriteOptions,
 } from "../packages/wiki/src/compiler/candidates.js";
 import { CandidateCustodyUnavailableError } from "../packages/wiki/src/compiler/candidate-custody.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
@@ -32,13 +29,6 @@ type DeleteSlugWithHooks = (
   slug: string,
   hooks?: DeletionTestHooks,
 ) => Promise<boolean>;
-type WriteWithHooks = (
-  root: string,
-  env: NodeJS.ProcessEnv,
-  draft: CandidateDraft,
-  options?: FreshCandidateWriteOptions & DeletionTestHooks,
-) => ReturnType<typeof writeCandidate>;
-
 /** One target-sharing candidate record with deterministic selection order. */
 function candidateRecord(id: string, generatedAt: string, body = id): string {
   return JSON.stringify({
@@ -60,11 +50,6 @@ async function plant(id: string, order: number): Promise<string> {
 async function replaceSelected(leaf: string): Promise<void> {
   await rm(leaf);
   await writeFile(leaf, REPLACEMENT);
-}
-
-/** Minimal same-target canonical revision. */
-function revisionDraft(): CandidateDraft {
-  return { title: "Shared", slug: "shared", summary: "", sources: [], body: "revised" };
 }
 
 describe("Decision 20 direct candidate deletion authority", () => {
@@ -101,21 +86,5 @@ describe("Decision 20 selected candidate deletion authority", () => {
     await expect(deleting).rejects.toBeInstanceOf(CandidateCustodyUnavailableError);
     await expect(access(first)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(last, "utf8")).toBe(REPLACEMENT);
-  });
-
-  it("canonical cleanup preserves a later replacement after an earlier unlink", async () => {
-    const canonical = await plant("canonical", 0);
-    const firstDuplicate = await plant("duplicate-first", 1);
-    const lastDuplicate = await plant("duplicate-last", 2);
-    const writing = (writeCandidate as WriteWithHooks)(root.dir, process.env, revisionDraft(), {
-      afterCandidateDeleteForTest: async (_id, index) => {
-        if (index === 0) await replaceSelected(lastDuplicate);
-      },
-    });
-
-    await expect(writing).rejects.toBeInstanceOf(CandidateCustodyUnavailableError);
-    expect(JSON.parse(await readFile(canonical, "utf8")).body).toBe("revised");
-    await expect(access(firstDuplicate)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await readFile(lastDuplicate, "utf8")).toBe(REPLACEMENT);
   });
 });

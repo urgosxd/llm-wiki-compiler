@@ -7,7 +7,7 @@ description: "Export llmwiki projects as Open Knowledge Format bundles, import e
 Open Knowledge Format (OKF) is a markdown-bundle shape for sharing compiled knowledge between tools. llmwiki can act as both a producer and a consumer:
 
 - `wiki.exportOkf()` writes a portable OKF bundle from your compiled wiki, and the MCP tool `export_okf` does the same over the wire.
-- `wiki.importOkf(dir)` reads an OKF bundle and stages its documents for review by default; the MCP tool `import_okf` is always staging-only.
+- `wiki.importOkf(dir, { trusted: true })` reads an OKF bundle and writes its documents into the wiki; an import that does not name `trusted: true` refuses instead of staging, because no surface promotes a staged candidate.
 - Re-export preserves foreign producer keys, raw foreign types, and safe original bundle paths while refreshing llmwiki's own metadata.
 - A bundle written by an earlier version may carry a bundle-level `x-llmwiki` block with profile identity and relation entries; the importer still parses it, and this build does not write one.
 - SDK and MCP callers can export/import OKF without shelling out.
@@ -60,25 +60,17 @@ The body is markdown. llmwiki rewrites `[[wikilinks]]` to OKF-style links and ap
 
 ---
 
-## Import a bundle safely
+## Importing is a trusted operation
 
 ```ts
-const staged = await wiki.importOkf("./dist/knowledge-bundle");
+const written = await wiki.importOkf("./dist/knowledge-bundle", { trusted: true });
 ```
 
-Default import is review-gated. This is the right mode for third-party bundles, partner bundles, and any bundle whose contents you have not independently verified.
+Importing used to be review-gated by default: an untrusted import staged every document as a review candidate under `.llmwiki/candidates/`. Staging is **retired**, because no surface promotes a candidate into the wiki — there is no approve command, no SDK method and no MCP tool — so a staged document could never become a page.
 
-Imported candidates show:
+An import that does not name `trusted: true` therefore **refuses** with a typed error rather than staging. That leaves `dryRun` for inspection and `trusted: true` for the real write, both covered below.
 
-- The candidate ID and slug
-- `reviewMode: imported`
-- The `imported-okf` hold reason
-- The original OKF path
-- The mapped page body
-
-The staged candidates are written under `.llmwiki/candidates/` and are listed
-read-only in the viewer's review list. There is no approve command or tool, so a
-reviewed candidate enters the wiki only through a trusted import.
+Candidate files written by an earlier version are still readable: the viewer's review list and `wiki_status`'s `pendingCandidates` count keep listing `.llmwiki/candidates/*.json`, and nothing deletes them. They simply have no producer and no consumer left.
 
 ---
 
@@ -98,10 +90,10 @@ Dry run is useful for evaluating an unfamiliar bundle. It reports the pages that
 const written = await wiki.importOkf("./internal-bundle", { trusted: true });
 ```
 
-`trusted: true` writes pages directly into `wiki/` and refreshes links and indexes. Use it only for bundles whose content and provenance you already trust. The MCP `import_okf` tool has no trusted mode: over MCP, import is always staging-only.
+`trusted: true` writes pages directly into `wiki/` and refreshes links and indexes. Use it only for bundles whose content and provenance you already trust. It is the only surviving import arm, and it is not reachable over MCP: the server exposes no import tool at all.
 
 <Warning>
-  OKF import reads external markdown and frontmatter. For untrusted bundles, use the default review-gated import path. `trusted: true` bypasses the human review queue.
+  OKF import reads external markdown and frontmatter. There is no review queue to catch a bad page: `trusted: true` writes straight into the wiki. Preview an unfamiliar bundle with `dryRun` first.
 </Warning>
 
 ---
@@ -133,11 +125,10 @@ Use the SDK when your application owns the trust decision:
 ```ts
 const bundle = await wiki.exportOkf({ out: "./dist/okf" });
 const preview = await wiki.importOkf("./partner-bundle", { dryRun: true });
-const staged = await wiki.importOkf("./partner-bundle");
 const written = await wiki.importOkf("./internal-bundle", { trusted: true });
 ```
 
-Use MCP when an agent needs structured OKF access. The MCP server exposes `export_okf` and `import_okf`; both take a required `stackId`, and `import_okf` is always staging-only and supports `dryRun`, so an agent can inspect and stage imported knowledge but cannot write it into the live wiki.
+MCP is export-only. The MCP server exposes `export_okf`, which takes a required `stackId`; it exposes no import tool, because an MCP caller could only ever stage imported documents and staging is retired. An agent that needs a bundle written into the wiki has to go through the SDK.
 
 ---
 

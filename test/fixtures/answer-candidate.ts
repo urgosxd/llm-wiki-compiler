@@ -5,18 +5,18 @@
 import { writeFile } from "fs/promises";
 import path from "path";
 import { sha256Text } from "../../packages/wiki/src/connectors/hash.js";
-import type { CandidateDraft } from "../../packages/wiki/src/compiler/candidates.js";
+import type { PendingCandidateSeed } from "./candidate-queue.js";
 
-/** Build an answer proposal without invoking generation or publication. */
+/** Build an answer proposal as a pending record, without invoking generation or publication. */
 export function answerDraft() {
   return { title: "Answer", slug: "answer", summary: "Summary", sources: [], body: "Answer body.",
     targetDirectory: "queries", reviewMode: "forced",
     candidateKind: { name: "validated-answer", version: 1 },
     citationManifest: { version: 1, bodyDigest: sha256Text("Answer body."), citations: [] },
-  } satisfies CandidateDraft;
+  } satisfies PendingCandidateSeed;
 }
 
-/** Replace candidate bytes directly, bypassing the writer's admission checks. */
+/** Replace candidate bytes directly, bypassing the store's admission checks. */
 export async function replaceCandidate(root: string, id: string, value: unknown): Promise<string> {
   const raw = JSON.stringify(value, null, 2) + "\n";
   await writeFile(path.join(root, ".llmwiki/candidates", `${id}.json`), raw);

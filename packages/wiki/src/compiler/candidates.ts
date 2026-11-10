@@ -1,48 +1,30 @@
 /**
- * Review candidate persistence for the compile pipeline.
+ * Candidate store: deletion, archive and the shared path/read re-exports.
  *
- * When a compile runs with the `review` option, generated wiki pages are routed
- * here as JSON candidate records under `.llmwiki/candidates/` instead of
- * being written directly to `wiki/`. Nothing promotes a candidate into the wiki:
- * no registered MCP tool, SDK method or command reads these back for approval,
- * so a staged candidate stays staged.
+ * ## What this module no longer does
  *
- * Candidates are deliberately kept as standalone JSON so they survive across
- * compile runs and can be inspected as plain files. Each record
- * stores the full page body so a future promotion would be a pure copy — the LLM is never
- * called again at promotion time.
+ * It used to own the WRITE half of the store as well: `writeCandidate` persisted a new
+ * record, canonicalised duplicates, allocated an id exclusively and captured custody.
+ * Nothing ever promoted a candidate into the wiki, so the stagers were dead ends and are
+ * retired; a new candidate record has no producer any more.
  *
- * This module owns the WRITE/dedup/identity/delete/archive half of the store.
- * The READ/list/sanitize/validate half lives in {@link file://./candidate-read.ts}
- * and the shared path resolvers in {@link file://./candidate-paths.ts}; both are
- * RE-EXPORTED below so existing importers of `candidates.ts` are unchanged.
+ * ## What survives, and why
+ *
+ * Records already on disk stay READABLE. `.llmwiki/candidates/*.json` is inert data, not
+ * deleted data: the viewer lists it, `review show` renders it, and the deletion and archive
+ * paths below still consume it under exact custody receipts. The read/list/sanitize/validate
+ * half lives in {@link file://./candidate-read.ts} and the shared path resolvers in
+ * {@link file://./candidate-paths.ts}; both are RE-EXPORTED below so existing importers of
+ * `candidates.ts` are unchanged.
  */
 
-import { realpath, unlink } from "fs/promises";
-import { atomicWrite } from "../utils/markdown.js";
-import { withCandidateSource, type CandidateRowsSource } from "../dimensions/wiki/candidate-source.js";
-import {
-  assertCandidateSlug,
-  assertWritableCandidateId,
-  candidatePath,
-} from "./candidate-paths.js";
-import {
-  listCandidates,
-  countCandidates,
-  DEFAULT_HELD_REASONS,
-  type CandidateFileEntry,
-} from "./candidate-read.js";
+import { unlink } from "fs/promises";
+import { withCandidateSource } from "../dimensions/wiki/candidate-source.js";
+import { assertCandidateSlug, candidatePath } from "./candidate-paths.js";
 import {
   candidateTargetKey,
   selectReadableCandidateEntriesForMutation,
 } from "./candidate-selection.js";
-import type { ReviewCandidate, SourceState } from "../utils/types.js";
-import { assertAnswerCandidateMetadata } from "../citations/answer-manifest.js";
-import type { AnswerCitationManifest, ValidatedAnswerKind } from "../citations/answer-manifest.js";
-import type { HeldReason, ReviewMode } from "../review/policy.js";
-import type { LintResult } from "../linter/types.js";
-import type { TrustDecision } from "../trust/decision.js";
-import type { ConnectorProvenance } from "../connectors/types.js";
 import {
   assertCandidateNamespacesHealthy,
   captureCandidateCustody,
@@ -52,12 +34,6 @@ import {
   type CandidateCustodyReceipt,
 } from "./candidate-custody.js";
 import { captureCandidateCustodyReceipt } from "./candidate-custody-snapshot.js";
-import {
-  publishFreshCandidate,
-  writableCandidateId,
-  type CandidatePublication,
-  type FreshCandidateWriteOptions,
-} from "./candidate-publication.js";
 
 // Re-export the read/list/sanitize half and shared path symbols so every
 // existing importer of `candidates.ts` keeps working without churn.
@@ -76,316 +52,11 @@ export { UnsafeCandidateIdError } from "./candidate-paths.js";
 export {
   CandidateIdentityMismatchError,
 } from "./candidate-selection.js";
-export { FreshCandidateIdExhaustedError } from "./candidate-publication.js";
-export type { FreshCandidateWriteOptions } from "./candidate-publication.js";
-
-/** Input shape for creating a new candidate (id + timestamp generated here). */
-export interface CandidateDraft {
-  /** Exclusive reviewed-answer discriminator and proposal audit metadata. */
-  candidateKind?: ValidatedAnswerKind;
-  citationManifest?: AnswerCitationManifest;
-  title: string;
-  slug: string;
-  summary: string;
-  sources: string[];
-  body: string;
-  /**
-   * Per-source state entries to persist into `.llmwiki/state.json` when this
-   * candidate is approved. Keyed by source filename. Optional so callers that
-   * never need incremental tracking (legacy / tests) can omit it.
-   */
-  sourceStates?: Record<string, SourceState>;
-  /**
-   * Digest of the prompt modifiers this candidate was generated under, so
-   * compile can tell a candidate that already covers this run's work from one
-   * whose wording predates a modifier change.
-   */
-  promptModifiers?: string;
-  /**
-   * Schema lint violations for the candidate body detected at compile time.
-   * Omit (or pass `undefined`) when the candidate body is clean.
-   */
-  schemaViolations?: LintResult[];
-  /**
-   * Provenance lint violations for the candidate body — malformed claim
-   * citations, out-of-bounds spans, or missing source files. Surfaced
-   * alongside schema violations so reviewers see citation issues before
-   * approving.
-   */
-  provenanceViolations?: LintResult[];
-  /** Whether this candidate was forced by --review or held by policy. */
-  reviewMode?: ReviewMode;
-  /** Structured reasons for holding this candidate. */
-  heldReasons?: HeldReason[];
-  /**
-   * Wiki subdir the approved page is written to; defaults to concepts.
-   * OKF query docs set `queries` to round-trip back into the right subdir.
-   */
-  targetDirectory?: "concepts" | "queries";
-  /** Original OKF bundle-relative path, for imported candidates. */
-  okfPath?: string;
-  /**
-   * SHA-256 (hex) of the target page at propose time — the stale-state guard for
-   * a candidate that UPDATES an existing page (see {@link ReviewCandidate.expectedTargetHash}).
-   */
-  expectedTargetHash?: string;
-  /**
-   * The complementary CLOSED precondition: the proposal expected NO page at the
-   * target (see {@link ReviewCandidate.expectTargetAbsent}). Mutually exclusive
-   * with {@link expectedTargetHash}.
-   */
-  expectTargetAbsent?: boolean;
-  /** Host-authored provenance for connector-fetched candidates. */
-  connectorProvenance?: ConnectorProvenance;
-  /** Confidence parsed from the generated page frontmatter, for display. */
-  confidence?: number;
-  /** True when the generated page frontmatter declares contradictions. */
-  contradicted?: boolean;
-  /**
-   * Typed entity directory the approved page routes to under a configurable
-   * profile (e.g. `"papers"`). Phase-2 typed-staging metadata; OMITTED for
-   * default-profile candidates, so default candidate JSON stays byte-identical.
-   */
-  targetEntityType?: string;
-  /**
-   * Trust Guard decision attached to this candidate at generation time, so
-   * reviewers see how the write was routed. Phase-2 typed-staging metadata;
-   * OMITTED for default-profile candidates, so default candidate JSON stays
-   * byte-identical.
-   */
-  trustDecision?: TrustDecision;
-}
 
 /** Deterministic seams for custody replacement tests; normal callers omit them. */
 export interface CandidateDeletionHooks {
   afterCustodyForTest?: (fileId: string) => Promise<void>;
   afterCandidateDeleteForTest?: (fileId: string, index: number) => Promise<void>;
-}
-
-/** Generic candidate-write options, including duplicate-cleanup test seams. */
-export type CandidateWriteOptions = FreshCandidateWriteOptions & CandidateDeletionHooks;
-
-/**
- * The FULL target identity of a candidate: the tuple of where the approved page
- * lands AND its slug. Two candidates are duplicates only when BOTH components
- * match. For a DEFAULT concepts candidate the type component is the constant
- * `"concepts"`, so dedup on this key behaves EXACTLY as a slug-only dedup did —
- * default candidate behavior stays byte-identical. A typed candidate
- * (`targetEntityType`) or an OKF query candidate (`targetDirectory`) keys on its
- * own directory, so `papers/foo` and `ideas/foo` never collapse into one file.
- * @param candidate - The candidate (or draft) whose target identity is built.
- */
-/**
- * Persist a new candidate record and return it. The id is generated from the
- * slug plus a short random suffix so multiple compile runs can co-exist.
- *
- * When multiple candidate files for the same slug already exist (e.g. from a
- * hand-edited state or a legacy run), this canonicalizes to the earliest id and
- * deletes all extra duplicate files so at most one file per slug remains.
- * @param root - Project root directory.
- * @param env - Environment naming the Stack the candidate is stored in. REQUIRED: the
- *   tenant is resolved from THIS environment, so a request that named a Stack stages
- *   the candidate in that Stack rather than in the bound deployment's.
- * @param draft - The candidate fields to persist.
- * @returns The full ReviewCandidate (with id + generatedAt populated).
- */
-export async function writeCandidate(
-  root: string,
-  env: NodeJS.ProcessEnv,
-  draft: CandidateDraft,
-  options: CandidateWriteOptions = {},
-): Promise<ReviewCandidate> {
-  // Rows when a Stack is configured. The whole custody dance below -- target-key
-  // canonicalisation, duplicate reconciliation, exclusive allocation -- exists to
-  // give a DIRECTORY the identity a row has for free. A Stack's queue is keyed by
-  // (stack_id, candidate_id), so the same write is one upsert.
-  const viaRows = await withCandidateSource(env, async (source) => {
-    if (source === undefined) return undefined;
-    return await publishCandidateToRows(source, draft, options);
-  });
-  if (viaRows !== undefined) return viaRows;
-
-  // Validated answers always take a fresh id: a later import or generic write
-  // for the same target must never rewrite an answer under its id or delete it.
-  // A fresh id means the collision-exclusive allocator, without the target-key
-  // canonicalisation the generic path below performs.
-  if (Object.hasOwn(draft, "candidateKind")) {
-    return publishNewCandidate(root, draft, writableCandidateId(draft.slug, 0, options), options);
-  }
-  const generatedId = writableCandidateId(draft.slug, 0, options);
-  const targetKey = candidateTargetKey(draft);
-  const matches = await selectReadableCandidateEntriesForMutation(
-    root,
-    (candidate) => !candidate.candidateKind && candidateTargetKey(candidate) === targetKey,
-  );
-  const [canonical, ...duplicates] = matches;
-  if (canonical) {
-    return replaceCanonicalCandidate(root, draft, canonical.custodyReceipt,
-      duplicates, options);
-  }
-  return publishNewCandidate(root, draft, generatedId, options);
-}
-
-/** Materialize one public candidate publication. */
-function candidatePublication(draft: CandidateDraft, id: string): CandidatePublication<ReviewCandidate> {
-  const candidate = buildCandidate(draft, id);
-  return { candidate, serialized: serializeCandidate(candidate) };
-}
-
-/** Publish a newly allocated candidate through the shared exclusive allocator. */
-function publishNewCandidate(
-  root: string,
-  draft: CandidateDraft,
-  firstId: string,
-  options: FreshCandidateWriteOptions,
-): Promise<ReviewCandidate> {
-  return publishFreshCandidate(
-    root, draft.slug, firstId, (id) => candidatePublication(draft, id), options,
-  );
-}
-
-/** Replace only the exact pending-only canonical custody snapshot. */
-async function replaceCanonicalCandidate(
-  root: string,
-  draft: CandidateDraft,
-  receipt: CandidateCustodyReceipt,
-  duplicates: readonly CandidateFileEntry[],
-  options: CandidateWriteOptions,
-): Promise<ReviewCandidate> {
-  assertWritableCandidateId(receipt.fileId);
-  await options.beforePublishForTest?.(receipt.fileId, 0);
-  if (await observeCandidateCustody(root, receipt, "public") !== "restored") {
-    throw new CandidateCustodyUnavailableError();
-  }
-  const publication = candidatePublication(draft, receipt.fileId);
-  await atomicWrite(await candidatePath(root, receipt.fileId), publication.serialized, {
-    confineRoot: await realpath(root),
-  });
-  await deleteDuplicates(root, duplicates, options);
-  return publication.candidate;
-}
-
-/** Preserve the public writer's serialization without a new record-size cap. */
-function serializeCandidate(candidate: ReviewCandidate): string {
-  return JSON.stringify(candidate, null, 2);
-}
-
-/** Build a ReviewCandidate from a draft and chosen id. */
-/**
- * Publish one candidate straight to a Stack's row queue.
- *
- * ## What this deliberately does NOT do
- *
- * The file path below spends its complexity on making a DIRECTORY behave like an
- * identity: it canonicalises by target key, reconciles duplicate leaves, allocates an
- * id exclusively and captures custody. None of that is a property of the candidate —
- * it is a property of storing one record per file. `(stack_id, candidate_id)` is the
- * identity, so a target-key match is an UPDATE of the row already holding that key,
- * not a search through a directory.
- *
- * A validated answer still takes a FRESH id: it must never overwrite the candidate
- * that produced it, which is the one rule that survives the move unchanged.
- *
- * @param source - The Stack's candidate source.
- * @param draft - The candidate fields to persist.
- * @param options - Write options; `idForAttemptForTest` is honoured for determinism.
- * @returns The candidate as stored.
- */
-async function publishCandidateToRows(
-  source: CandidateRowsSource,
-  draft: CandidateDraft,
-  options: CandidateWriteOptions,
-): Promise<ReviewCandidate> {
-  const isAnswer = Object.hasOwn(draft, "candidateKind");
-  const id = isAnswer
-    ? writableCandidateId(draft.slug, 0, options)
-    : await reuseOrMintRowId(source, draft, options);
-  const candidate = buildCandidate(draft, id);
-  await source.save(candidate);
-  return candidate;
-}
-
-/**
- * Reuse the id of a pending candidate for the same target, or mint a new one.
- *
- * Reusing the id is what makes a re-proposal an UPDATE rather than a second entry in
- * the queue, which is the same outcome the file path reached by searching the
- * directory for a matching target key.
- *
- * @param source - The Stack's candidate source.
- * @param draft - The candidate being written.
- * @param options - Write options.
- * @returns The id to store under.
- */
-async function reuseOrMintRowId(
-  source: CandidateRowsSource,
-  draft: CandidateDraft,
-  options: CandidateWriteOptions,
-): Promise<string> {
-  const targetKey = candidateTargetKey(draft);
-  const existing = await source.list();
-  const match = existing.find(
-    (candidate) => !candidate.candidateKind && candidateTargetKey(candidate) === targetKey,
-  );
-  return match?.id ?? writableCandidateId(draft.slug, 0, options);
-}
-
-function buildCandidate(draft: CandidateDraft, id: string): ReviewCandidate {
-  assertAnswerCandidateMetadata({ ...draft, id, reviewMode: draft.reviewMode ?? "forced" }, id);
-  const candidate: ReviewCandidate = {
-    id,
-    title: draft.title,
-    slug: draft.slug,
-    summary: draft.summary,
-    sources: draft.sources,
-    body: draft.body,
-    generatedAt: new Date().toISOString(),
-    reviewMode: draft.reviewMode ?? "forced",
-    heldReasons: draft.heldReasons ?? DEFAULT_HELD_REASONS,
-  };
-  copyCandidateOptionalFields(candidate, draft);
-  return candidate;
-}
-
-/** Copy optional candidate fields while preserving the legacy omission rules. */
-function copyCandidateOptionalFields(candidate: ReviewCandidate, draft: CandidateDraft): void {
-  setCandidateField(candidate, "sourceStates", draft.sourceStates, draft.sourceStates !== undefined);
-  setCandidateField(candidate, "promptModifiers", draft.promptModifiers, Boolean(draft.promptModifiers));
-  setCandidateField(candidate, "schemaViolations", draft.schemaViolations, draft.schemaViolations !== undefined);
-  setCandidateField(candidate, "provenanceViolations", draft.provenanceViolations, draft.provenanceViolations !== undefined);
-  setCandidateField(candidate, "confidence", draft.confidence, draft.confidence !== undefined);
-  setCandidateField(candidate, "contradicted", draft.contradicted, draft.contradicted !== undefined);
-  setCandidateField(candidate, "targetDirectory", draft.targetDirectory, Boolean(draft.targetDirectory));
-  setCandidateField(candidate, "okfPath", draft.okfPath, Boolean(draft.okfPath));
-  setCandidateField(candidate, "expectedTargetHash", draft.expectedTargetHash, Boolean(draft.expectedTargetHash));
-  setCandidateField(candidate, "expectTargetAbsent", draft.expectTargetAbsent, draft.expectTargetAbsent === true);
-  setCandidateField(candidate, "candidateKind", draft.candidateKind, draft.candidateKind !== undefined);
-  setCandidateField(candidate, "citationManifest", draft.citationManifest, draft.citationManifest !== undefined);
-  setCandidateField(candidate, "connectorProvenance", draft.connectorProvenance, draft.connectorProvenance !== undefined);
-  setCandidateField(candidate, "targetEntityType", draft.targetEntityType, Boolean(draft.targetEntityType));
-  setCandidateField(candidate, "trustDecision", draft.trustDecision, Boolean(draft.trustDecision));
-}
-
-/** Assign one optional field to a candidate when its legacy include condition is met. */
-function setCandidateField<K extends keyof ReviewCandidate>(
-  candidate: ReviewCandidate,
-  key: K,
-  value: ReviewCandidate[K] | undefined,
-  include: boolean,
-): void {
-  if (include) candidate[key] = value as ReviewCandidate[K];
-}
-
-/** Delete exact selected duplicates in deterministic order. */
-async function deleteDuplicates(
-  root: string,
-  entries: readonly CandidateFileEntry[],
-  hooks: CandidateDeletionHooks,
-): Promise<void> {
-  for (const [index, entry] of entries.entries()) {
-    await deleteCandidateWithCustody(root, entry.custodyReceipt);
-    await hooks.afterCandidateDeleteForTest?.(entry.fileId, index);
-  }
 }
 
 /** Remove only the exact pending object authorized by one custody receipt. */

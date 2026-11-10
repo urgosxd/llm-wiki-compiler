@@ -2,8 +2,9 @@
  * Subprocess integration tests for the read-only `/api/reviews` viewer route.
  *
  * These spin up the compiled `llmwiki view` binary against a temp project whose
- * candidates were seeded through the project's own `writeCandidate`, then GET
- * `/api/reviews` and assert the projection contract.
+ * candidates are PLANTED through the shared seed fixture — the store outlives the
+ * writers that produced its records — then GET `/api/reviews` and assert the
+ * projection contract.
  *
  * Two of the four tests exist because of real defects on this branch rather
  * than for coverage:
@@ -20,9 +21,7 @@
 import { describe, it, expect } from "vitest";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
-import { seedPendingCandidates } from "./fixtures/candidate-queue.js";
-import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
-import type { CandidateDraft } from "../packages/wiki/src/compiler/candidates.js";
+import { seedPendingCandidate, seedPendingCandidates, type PendingCandidateSeed } from "./fixtures/candidate-queue.js";
 import { REVIEW_LIST_LIMIT } from "../packages/wiki/src/viewer/reviews.js";
 import { useViewerProcessLifecycle } from "./fixtures/run-cli-server.js";
 import { fetchJson } from "./fixtures/viewer-fetch.js";
@@ -70,10 +69,10 @@ async function seedQueue(root: string, count: number): Promise<void> {
   await seedPendingCandidates(root, seeds);
 }
 
-/** Seed one pending candidate through the project's own writer, so the on-disk
- *  format cannot drift from what the compile pipeline actually produces. */
-function seedCandidate(root: string, overrides: Partial<CandidateDraft> = {}) {
-  return writeCandidate(root, process.env, {
+/** Plant one pending candidate through the shared fixture, so the on-disk format the
+ *  viewer reads has a single definition in the test tree. */
+function seedCandidate(root: string, overrides: PendingCandidateSeed | Partial<PendingCandidateSeed> = {}) {
+  return seedPendingCandidate(root, {
     title: "Transformer attention",
     slug: "transformer-attention",
     summary: "Every token is weighted against every other token.",
@@ -82,7 +81,7 @@ function seedCandidate(root: string, overrides: Partial<CandidateDraft> = {}) {
     reviewMode: "policy",
     heldReasons: [{ code: "low-confidence", detail: "confidence 0.4 < 0.6" }],
     ...overrides,
-  });
+  } as PendingCandidateSeed);
 }
 
 /** Every string anywhere in `value` that reads as an absolute filesystem path. */

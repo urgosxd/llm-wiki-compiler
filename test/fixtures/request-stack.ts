@@ -50,7 +50,9 @@ import { rm } from "node:fs/promises";
 
 import { afterEach, beforeEach, expect, vi } from "vitest";
 
-import type { CandidateDraft } from "../../packages/wiki/src/compiler/candidates.js";
+import { saveStoredCandidate } from "../../packages/wiki/src/dimensions/wiki/candidate-store.js";
+import type { ReviewCandidate } from "../../packages/wiki/src/utils/types.js";
+import type { PendingCandidateSeed } from "./candidate-queue.js";
 import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
 import { lockRegistry } from "../../packages/wiki/src/utils/lock-postgres.js";
 import { scratchProjectRoot } from "./host-scratch.js";
@@ -249,14 +251,43 @@ export async function seedSharedPage(
 }
 
 /**
- * A minimal draft for seeding one tenant's candidate queue directly, bypassing a compile.
+ * A minimal record for seeding one tenant's candidate queue directly, bypassing a compile.
  *
  * @param title - The candidate's title.
  * @param slug - The candidate's slug, which is also what `readCandidateBySlug` looks up.
- * @returns A draft `writeCandidate` accepts.
+ * @returns A pending record the store's validator accepts.
  */
-export function draftFor(title: string, slug: string): CandidateDraft {
+export function draftFor(title: string, slug: string): PendingCandidateSeed {
   return { title, slug, summary: "S.", sources: ["ref.md"], body: `# ${title}\n\nbody\n` };
+}
+
+/**
+ * Plant one pending candidate straight into a Stack's ROW queue.
+ *
+ * The row store is writable only through `saveStoredCandidate`, and the production
+ * writer that used to call it is retired. Seeding through the dimensions store keeps
+ * each case's subject the seam it measures — which tenant's queue is read — without a
+ * writer, and without a file the row-backed store would never look at.
+ *
+ * @param harness - The Stack's provisioned harness, whose `db` the row is written to.
+ * @param stackId - The Stack that owns the candidate.
+ * @param seed - The record's fields; `id` defaults to the slug plus a row marker.
+ * @returns The record exactly as stored, including its id.
+ */
+export async function seedCandidateRow(
+  harness: KgPostgresHarness,
+  stackId: string,
+  seed: PendingCandidateSeed,
+): Promise<ReviewCandidate> {
+  const candidate: ReviewCandidate = {
+    ...seed,
+    id: seed.id ?? `${seed.slug}-row`,
+    generatedAt: seed.generatedAt ?? "2026-01-01T00:00:00.000Z",
+    reviewMode: seed.reviewMode ?? "forced",
+    heldReasons: seed.heldReasons ?? [{ code: "manual-review-requested" }],
+  };
+  await saveStoredCandidate(harness.db, stackId, candidate);
+  return candidate;
 }
 
 /**

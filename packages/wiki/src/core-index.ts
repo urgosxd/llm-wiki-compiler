@@ -37,7 +37,7 @@ export type { SourceRecord, ListSourcesOptions, ListSourcesResult } from "./sour
 export type { WriteStatus } from "./utils/types.js";
 export type { OkfExportReport } from "./export/okf/run.js";
 export type { OkfImportReport, OkfImportSkip, OkfImportedPage } from "./import/run.js";
-export { LockUnavailableError, QueueFullError } from "./import/run-errors.js";
+export { LockUnavailableError } from "./import/run-errors.js";
 
 export type {
   StagedChange,

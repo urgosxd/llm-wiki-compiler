@@ -1,31 +1,31 @@
 /**
- * MCP-over-stdio integration tests for the OKF tools.
+ * MCP-over-stdio integration tests for the OKF export tool.
  *
  * Mirrors `test/mcp-stdio.test.ts`: each test spawns the actual
  * `llmwiki serve --root <tmp>` binary over stdio, connects an SDK Client via
  * StdioClientTransport, and drives a tool through the full JSON-RPC stack.
- * Covers `export_okf` (happy path), and `import_okf` staging, path-confinement
- * rejection, and dry-run — the paths a fake in-process `registerTool` can't
- * exercise. None of these tools call an LLM, so no API key is required.
+ * Covers `export_okf` (happy path) and its path confinement — the paths a fake
+ * in-process `registerTool` can't exercise. Neither calls an LLM, so no API key is
+ * required.
+ *
+ * There is no `import_okf` to cover: it hardcoded `trusted: false` and its schema had
+ * no `trusted` field, so it could only ever stage, and staging is retired because no
+ * surface promotes a candidate into the wiki.
  *
  * Root isolation: each `describe` owns its OWN `useMcpRoot` handle, and
  * `useMcpRoot` reassigns the root via `beforeEach` so every `it` gets a fresh
- * temp dir. The staging test (writes a candidate) and the dry-run test (asserts
- * zero candidates) therefore never share a root.
+ * temp dir.
  *
- * ONE Stack per FILE, named in every call. Both tools require the argument, and a
+ * ONE Stack per FILE, named in every call. The tool requires the argument, and a
  * Stack id is only usable when a row carries it, so the suite provisions one and
- * shares it: it holds no state of its own (the export case seeds it, the import
- * cases only need it to exist), and the subprocess reaches the same database the
- * fixture does. The cases are skipped, not softened, when no test database is up —
+ * shares it. The cases are skipped, not softened, when no test database is up —
  * an absent Stack would make every call a refusal and prove nothing.
  */
 
 import { describe, it, expect, afterAll } from "vitest";
-import { stat, writeFile, mkdir, readdir } from "fs/promises";
+import { stat } from "fs/promises";
 import path from "path";
 import { useMcpRoot, connectMcpClient } from "./fixtures/mcp-test-env.js";
-import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
 import { createPageWriteSink } from "../packages/wiki/src/dimensions/wiki/page-write-sink.js";
 import { createProbeStack } from "./dimensions/harness-lifecycle.js";
 
@@ -51,17 +51,6 @@ async function seedStackPage(): Promise<void> {
   });
 }
 
-/** Write a foreign OKF bundle under `<root>/kb` with one valid concept doc. */
-async function writeBundle(root: string): Promise<void> {
-  await mkdir(path.join(root, "kb/concepts"), { recursive: true });
-  await writeFile(path.join(root, "kb/concepts/a.md"), "---\ntype: concept\ntitle: A\n---\n\nBody.\n", "utf-8");
-}
-
-/** Read the JSON payload a tool returned via `jsonResult` (structuredContent.result). */
-function payloadOf(result: Awaited<ReturnType<Awaited<ReturnType<typeof connectMcpClient>>["client"]["callTool"]>>): Record<string, unknown> {
-  return (result.structuredContent as { result: Record<string, unknown> }).result;
-}
-
 describe("MCP stdio: export_okf produces a bundle", () => {
   const rootHandle = useMcpRoot("okf-mcp-stdio-export");
   it.skipIf(needsStack)("writes an OKF bundle to disk and returns a non-error response", async () => {
@@ -82,62 +71,15 @@ describe("MCP stdio: export_okf produces a bundle", () => {
   }, 30_000);
 });
 
-describe("MCP stdio: import_okf stages candidates", () => {
-  const rootHandle = useMcpRoot("okf-mcp-stdio-import");
-  it.skipIf(needsStack)("stages a candidate and conveys the review gate over the wire", async () => {
-    const root = rootHandle.value;
-    await writeBundle(root);
-
-    const { client, transport } = await connectMcpClient(root);
-    try {
-      const result = await client.callTool({ name: "import_okf", arguments: { dir: "kb", stackId } });
-      expect(result.isError).toBeFalsy();
-      // S11: asserts the INTENDED effect — the candidate is staged on the Stack the call
-      // NAMED (read back with that Stack's env) and the ambient file queue stays empty.
-      // The old `listCandidates(root).length === 1` counted the leak instead: staged with
-      // no request Stack id, the write fell through to `.llmwiki/candidates`.
-      const staged = await listCandidates(root, {}, { ...process.env, ...stack.env() });
-      expect(staged.map((c) => c.slug)).toEqual(["a"]);
-      expect(await readdir(path.join(root, ".llmwiki/candidates")).catch(() => [])).toEqual([]);
-      expect(payloadOf(result).nextAction).toMatch(/review|approve|staged/i);
-    } finally {
-      await client.close();
-      await transport.close();
-    }
-  }, 30_000);
-});
-
-describe("MCP stdio: OKF tools confine agent-supplied paths", () => {
+describe("MCP stdio: export_okf confines agent-supplied paths", () => {
   const rootHandle = useMcpRoot("okf-mcp-stdio-confine");
-  it.skipIf(needsStack)("rejects an import dir and an export out that escape the root", async () => {
+  it.skipIf(needsStack)("rejects an export out that escapes the root", async () => {
     const root = rootHandle.value;
 
     const { client, transport } = await connectMcpClient(root);
     try {
-      const importEscape = await client.callTool({ name: "import_okf", arguments: { dir: "/etc", stackId } });
-      expect(importEscape.isError).toBe(true);
       const exportEscape = await client.callTool({ name: "export_okf", arguments: { out: "../escape", stackId } });
       expect(exportEscape.isError).toBe(true);
-    } finally {
-      await client.close();
-      await transport.close();
-    }
-  }, 30_000);
-});
-
-describe("MCP stdio: import_okf dry-run stages nothing", () => {
-  const rootHandle = useMcpRoot("okf-mcp-stdio-dryrun");
-  it.skipIf(needsStack)("previews without staging and reports dry-run over the wire", async () => {
-    const root = rootHandle.value;
-    await writeBundle(root);
-
-    const { client, transport } = await connectMcpClient(root);
-    try {
-      const result = await client.callTool({ name: "import_okf", arguments: { dir: "kb", dryRun: true, stackId } });
-      expect(result.isError).toBeFalsy();
-      expect(payloadOf(result).mode).toBe("dry-run");
-      expect((await listCandidates(root)).length).toBe(0);
-      expect(payloadOf(result).nextAction).toMatch(/preview|re-run|dryRun/i);
     } finally {
       await client.close();
       await transport.close();

@@ -24,7 +24,10 @@ describe("runOkfImport lock contention is silent", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(runOkfImport(dir, b, {})).rejects.toBeInstanceOf(LockUnavailableError);
+    // `trusted: true` is the only surviving import arm, so it is the one that takes
+    // the lock; an untrusted call refuses before asking for it (pinned in
+    // `test/okf-import-untrusted-refuses.test.ts`).
+    await expect(runOkfImport(dir, b, { trusted: true })).rejects.toBeInstanceOf(LockUnavailableError);
     expect(log).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();

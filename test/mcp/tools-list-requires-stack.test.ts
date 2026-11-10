@@ -15,7 +15,7 @@
  *
  * ## Why the inventory is asserted in full
  *
- * `ingest_source`, `export_okf` and `import_okf` used to take no Stack argument at all.
+ * `ingest_source` and `export_okf` used to take no Stack argument at all.
  * All three now declare a required `stackId`, verified through the same real handshake:
  * the exemption that once covered them is gone, so the ONE tool allowed to omit the
  * required Stack is `list_stacks`, by S8. The full-inventory case below walks every
@@ -62,7 +62,7 @@ const STACK_SCOPED_TOOLS = [
  *
  * Exactly one: `list_stacks` takes `stackId` but keeps it optional by ruling (S8) — a
  * discovery tool cannot require the identifier of the thing it discovers. It is the
- * only remaining exemption; `ingest_source`, `export_okf` and `import_okf` all require
+ * only remaining exemption; `ingest_source` and `export_okf` both require
  * `stackId` now.
  */
 const STACK_ARG_NOT_REQUIRED = ["list_stacks"] as const;
@@ -154,7 +154,7 @@ describe("tools/list declares the Stack argument required", () => {
     // rule below without pinning anything, so every tool whose required Stack this
     // case claims to cover has to be in the walked inventory.
     const walked = inventory.map((tool) => tool.name);
-    for (const name of [...STACK_SCOPED_TOOLS, "ingest_source", "export_okf", "import_okf"]) {
+    for (const name of [...STACK_SCOPED_TOOLS, "ingest_source", "export_okf"]) {
       expect(walked, `${name} must be in the walked inventory`).toContain(name);
     }
 
@@ -172,8 +172,8 @@ describe("tools/list declares the Stack argument required", () => {
     // The guard that keeps THIS file from going blind: every case above walks the
     // shared fixture, so if that fixture ever stops registering a tool the production
     // factory serves, the coverage they assert quietly shrinks. Both builders are
-    // walked here and compared, with the two OKF tools named explicitly because they
-    // are the ones a required-Stack regression would break first.
+    // walked here and compared, with the OKF export tool named explicitly because it
+    // is one a required-Stack regression would break first.
     const fixtureTools = await withListedTools((tools) => [...tools.keys()].sort());
     const productionTools = await withListedTools(
       (tools) => [...tools.keys()].sort(),
@@ -181,7 +181,7 @@ describe("tools/list declares the Stack argument required", () => {
     );
 
     expect(fixtureTools).toEqual(productionTools);
-    for (const name of ["export_okf", "import_okf"]) {
+    for (const name of ["export_okf"]) {
       expect(fixtureTools, `${name} must be in the fixture walk`).toContain(name);
     }
   });

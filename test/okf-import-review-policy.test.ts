@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { writeCandidate, listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import { listCandidates } from "../packages/wiki/src/compiler/candidates.js";
+import { seedPendingCandidate } from "./fixtures/candidate-queue.js";
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
@@ -10,7 +11,10 @@ afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true })
 describe("imported mode/reason survive candidate sanitization", () => {
   it("keeps reviewMode=imported and code=imported-okf after listCandidates", async () => {
     dir = await mkdtemp(path.join(tmpdir(), "okf-mode-"));
-    await writeCandidate(dir, process.env, {
+    // The record is planted, not written: the OKF stager that used to produce it is
+    // retired, but records it already wrote must still sanitize without losing the
+    // mode or the hold reason that explain where they came from.
+    await seedPendingCandidate(dir, {
       title: "A", slug: "a", summary: "s", sources: ["okf:b"], body: "---\ntitle: A\n---\n\nx\n",
       reviewMode: "imported", heldReasons: [{ code: "imported-okf" }],
     });

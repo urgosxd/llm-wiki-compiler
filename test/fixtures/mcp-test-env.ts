@@ -14,7 +14,7 @@
  *     surviving executable (`dist/api.js serve --root <root>`) over a
  *     `StdioClientTransport`, so the JSON-RPC framing is exercised for real.
  *   - `buildServer(root)` returns a fresh `McpServer` with the wiki tools,
- *     the resources, and both OKF tools — the same inventory the
+ *     the resources, and the OKF export tool — the same inventory the
  *     production factory serves.
  *   - `callTool(server, name, args)` invokes a registered tool's
  *     handler directly (no stdio transport) and returns its raw
@@ -117,14 +117,14 @@ export function parseToolPayload<T>(result: CallToolResult): T {
 }
 
 /**
- * Build a fresh McpServer with the wiki tools, the resources and the OKF tools.
+ * Build a fresh McpServer with the wiki tools, the resources and the OKF tool.
  *
- * The OKF tools (`export_okf`, `import_okf`) are registered here rather than left
- * out: a `tools/list` walk over this fixture is what most suites assert the tool
- * contract against, and omitting two tools made every such walk blind to exactly
- * the pair a lost required Stack would break first. The inventory therefore
- * matches `createWikiMcpServer`, and `test/mcp/tools-list-requires-stack.test.ts`
- * pins that parity so the two cannot drift apart again.
+ * The OKF export tool (`export_okf`) is registered here rather than left out: a
+ * `tools/list` walk over this fixture is what most suites assert the tool contract
+ * against, and omitting it made every such walk blind to exactly the tool a lost
+ * required Stack would break first. The inventory therefore matches
+ * `createWikiMcpServer`, and `test/mcp/tools-list-requires-stack.test.ts` pins that
+ * parity so the two cannot drift apart again.
  *
  * Registration only: the OKF handlers still reach their seams when CALLED, so a
  * suite that drives an OKF tool through here needs the Stack rows those seams

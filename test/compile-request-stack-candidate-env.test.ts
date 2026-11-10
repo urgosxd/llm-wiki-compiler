@@ -59,7 +59,6 @@ import {
   listCandidatePage,
   readCandidate,
   readCandidateBySlug,
-  writeCandidate,
 } from "../packages/wiki/src/compiler/candidates.js";
 import { lint } from "../packages/wiki/src/linter/index.js";
 import { createPageWriteSink } from "../packages/wiki/src/dimensions/wiki/page-write-sink.js";
@@ -71,6 +70,7 @@ import { EMPTY_CATEGORY_ANSWER, isCategoryAssignmentCall } from "./fixtures/prov
 import {
   draftFor,
   PROVENANCE_CITED_SOURCE,
+  seedCandidateRow,
   seedConceptPage,
   seedSharedPage,
   useRequestStacks,
@@ -87,7 +87,7 @@ const SOURCE = {
 /** The concept the stub extraction returns, and so the candidate's title. */
 const CONCEPT = "Candidate Env Topic";
 
-/** The slug `writeCandidate` derives from a concept of that title. */
+/** The slug the compile derives from a concept of that title. */
 const SLUG = "candidate-env-topic";
 
 /** The page slug seeded into both tenants for the read case, under different titles. */
@@ -177,8 +177,8 @@ describe("the review candidate follows the request's Stack", () => {
     // SEEDED IN B ONLY, then read with env naming A. Both directions are asserted:
     // the row IS readable when B is named, so the `null` below is a statement about
     // the environment rather than about a candidate nobody ever stored.
-    const ambientOnly = await writeCandidate(
-      stacks.root, stacks.ambientEnv, draftFor("Ambient Only", "ambient-only"),
+    const ambientOnly = await seedCandidateRow(
+      stacks.ambient.harness, stacks.ambientStackId, draftFor("Ambient Only", "ambient-only"),
     );
     const before = await ambientSnapshot();
     expect(await readCandidate(stacks.root, stacks.ambientEnv, ambientOnly.id)).not.toBeNull();
@@ -186,8 +186,8 @@ describe("the review candidate follows the request's Stack", () => {
 
     // POSITIVE CONTROL: A's own candidate IS returned when A is named, and B cannot
     // see it either — so neither an always-ambient read nor an always-empty read passes.
-    const requestOnly = await writeCandidate(
-      stacks.root, stacks.env, draftFor("Request Only", "request-only"),
+    const requestOnly = await seedCandidateRow(
+      stacks.request.harness, stacks.requestStackId, draftFor("Request Only", "request-only"),
     );
     expect((await readCandidate(stacks.root, stacks.env, requestOnly.id))?.slug).toBe("request-only");
     expect(await readCandidate(stacks.root, stacks.ambientEnv, requestOnly.id)).toBeNull();
@@ -196,8 +196,8 @@ describe("the review candidate follows the request's Stack", () => {
   });
 
   it("T3.b pages the queue of the Stack the env names, not the ambient one", async () => {
-    const ambientOnly = await writeCandidate(
-      stacks.root, stacks.ambientEnv, draftFor("Ambient Queue", "ambient-queue"),
+    const ambientOnly = await seedCandidateRow(
+      stacks.ambient.harness, stacks.ambientStackId, draftFor("Ambient Queue", "ambient-queue"),
     );
     expect(ambientOnly.slug).toBe("ambient-queue");
     const before = await ambientSnapshot();
@@ -211,7 +211,9 @@ describe("the review candidate follows the request's Stack", () => {
     expect((await listCandidatePage(stacks.root, stacks.env, 10)).total).toBe(0);
 
     // POSITIVE CONTROL: A's own candidate is served, and B's queue is still its own.
-    await writeCandidate(stacks.root, stacks.env, draftFor("Request Queue", "request-queue"));
+    await seedCandidateRow(
+      stacks.request.harness, stacks.requestStackId, draftFor("Request Queue", "request-queue"),
+    );
     expect((await listCandidatePage(stacks.root, stacks.env, 10)).candidates.map((entry) => entry.slug))
       .toEqual(["request-queue"]);
     expect((await listCandidatePage(stacks.root, stacks.ambientEnv, 10)).candidates.map((entry) => entry.slug))
@@ -227,8 +229,12 @@ describe("the review candidate follows the request's Stack", () => {
     await createPageWriteSink(stacks.request.harness.db, stacks.requestStackId)({
       directory: "concepts", slug: "linker", body: LINKER_BODY,
     });
-    await writeCandidate(stacks.root, stacks.env, draftFor("Alpha Target", "alpha-target"));
-    await writeCandidate(stacks.root, stacks.ambientEnv, draftFor("Beta Target", "beta-target"));
+    await seedCandidateRow(
+      stacks.request.harness, stacks.requestStackId, draftFor("Alpha Target", "alpha-target"),
+    );
+    await seedCandidateRow(
+      stacks.ambient.harness, stacks.ambientStackId, draftFor("Beta Target", "beta-target"),
+    );
     const before = await ambientSnapshot();
 
     const summary = await lint(stacks.root, stacks.env);
@@ -256,10 +262,14 @@ describe("the review candidate follows the request's Stack", () => {
 
     // The candidate the live write must clear, in the REQUEST's Stack. Its slug is the one
     // the generated page is published under, which is the only slug the delete names.
-    const stale = await writeCandidate(stacks.root, stacks.env, draftFor("Stale Candidate", SLUG));
+    const stale = await seedCandidateRow(
+      stacks.request.harness, stacks.requestStackId, draftFor("Stale Candidate", SLUG),
+    );
     // The SAME slug staged in the AMBIENT Stack, so a delete displaced onto B is observable
     // as a REMOVAL there and not as "nothing happened at B either".
-    await writeCandidate(stacks.root, stacks.ambientEnv, draftFor("Ambient Twin", SLUG));
+    await seedCandidateRow(
+      stacks.ambient.harness, stacks.ambientStackId, draftFor("Ambient Twin", SLUG),
+    );
     await seedConceptPage(stacks.ambient.harness, stacks.ambientStackId, SHARED_SLUG, "Ambient Only");
     const before = await ambientSnapshot();
     // Not a comparison of empties, for the reason T2.a gives — and the candidate row has to
@@ -304,11 +314,11 @@ describe("the review candidate follows the request's Stack", () => {
   });
 
   it("T9.b reads a candidate by slug through the Stack the env names", async () => {
-    const ambientOnly = await writeCandidate(
-      stacks.root, stacks.ambientEnv, draftFor("Ambient Only", "ambient-only"),
+    const ambientOnly = await seedCandidateRow(
+      stacks.ambient.harness, stacks.ambientStackId, draftFor("Ambient Only", "ambient-only"),
     );
-    const requestOnly = await writeCandidate(
-      stacks.root, stacks.env, draftFor("Request Only", "request-only"),
+    const requestOnly = await seedCandidateRow(
+      stacks.request.harness, stacks.requestStackId, draftFor("Request Only", "request-only"),
     );
     const before = await ambientSnapshot();
 

@@ -1,10 +1,9 @@
 /**
- * @file Shared in-process harness for the MCP OKF tools.
+ * @file Shared in-process harness for the MCP OKF tool.
  *
- * Both the OKF tool suite and the queue-cap test register `registerOkfTools`
- * against a fake `McpServer` that just captures each tool's handler by name.
- * The precise `ToolHandler` type means a drift in the result envelope fails at
- * tsc rather than silently at runtime.
+ * The OKF tool suite registers `registerOkfTools` against a fake `McpServer` that
+ * just captures the tool's handler by name. The precise `ToolHandler` type means a
+ * drift in the result envelope fails at tsc rather than silently at runtime.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerOkfTools } from "../../packages/wiki/src/mcp/okf-tools.js";
@@ -16,14 +15,15 @@ export type ToolHandler = (
 
 /**
  * Register the OKF tools against a fake server and return their handlers by name.
- * `maxPending` is forwarded so a test can inject a cap (e.g. 0) to prove it is wired.
+ *
+ * @param root - Project root the handlers are bound to.
+ * @returns The registered handlers, keyed by tool name.
  */
-export function collectOkfHandlers(root: string, maxPending?: number): Map<string, ToolHandler> {
+export function collectOkfHandlers(root: string): Map<string, ToolHandler> {
   const handlers = new Map<string, ToolHandler>();
   const fake = {
     registerTool: (name: string, _def: unknown, handler: ToolHandler) => handlers.set(name, handler),
   } as unknown as McpServer;
-  if (maxPending === undefined) registerOkfTools(fake, root);
-  else registerOkfTools(fake, root, maxPending);
+  registerOkfTools(fake, root);
   return handlers;
 }

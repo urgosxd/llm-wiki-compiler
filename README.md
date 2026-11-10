@@ -87,7 +87,7 @@ If an agent is scanning this README, these are the high-signal entry points:
 | Drive llmwiki from an agent | the container's default mode, MCP over stdio |
 | Drive llmwiki from TypeScript | `createWiki({ root })` |
 | Export for another system | `wiki.exportJson()`, or MCP `export_okf` |
-| Import an Open Knowledge Format bundle | `wiki.importOkf(dir, { dryRun: true })`, or MCP `import_okf` |
+| Import an Open Knowledge Format bundle | `wiki.importOkf(dir, { dryRun: true })` to preview, `wiki.importOkf(dir, { trusted: true })` to write |
 | Remove a bad source and its derived pages | not available — see [The `llmwiki` CLI is gone](#the-llmwiki-cli-is-gone) |
 
 ## Quick start

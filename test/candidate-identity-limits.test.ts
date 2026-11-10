@@ -2,6 +2,11 @@
  * @file test/candidate-identity-limits.test.ts
  * @description Candidate filename limits preserve atomic-write headroom and
  * reject oversized slugs or legacy identifiers before store mutation.
+ *
+ * `deleteCandidateBySlug` is the surviving mutation entry point, so the slug ceiling
+ * is pinned there. The writer-side cases — the draft that mints an id, and the atomic
+ * replacement of a legacy record — went with `writeCandidate`: nothing mints a
+ * candidate identity any more.
  */
 
 import { existsSync } from "node:fs";
@@ -10,7 +15,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   UnsafeCandidateIdError,
-  writeCandidate,
+  deleteCandidateBySlug,
   readCandidate,
   archiveCandidate,
 } from "../packages/wiki/src/compiler/candidates.js";
@@ -22,14 +27,13 @@ import {
   MAX_WRITABLE_CANDIDATE_ID_BYTES,
 } from "../packages/wiki/src/compiler/candidate-paths.js";
 import { CANDIDATES_DIR } from "../packages/wiki/src/utils/constants.js";
-import { snapshotCandidateQueue } from "./fixtures/candidate-queue.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();
 const ATOMIC_TEMP_SUFFIX = `.${"a".repeat(16)}.tmp`;
 const SECRET_SENTINEL = "SAFE_ASCII_LIMIT_SENTINEL";
 
-/** Build the smallest complete candidate draft for one physical slug. */
+/** Build the smallest complete candidate record body for one physical slug. */
 function draftFor(slug: string) {
   return {
     title: "Candidate limit fixture",
@@ -54,9 +58,9 @@ async function plantLegacyCandidate(id: string): Promise<void> {
   await writeFile(path.join(dir, `${id}.json`), JSON.stringify(candidate));
 }
 
-/** Assert a draft refusal is typed and creates no candidate-store directory. */
-async function expectDraftRefusal(slug: string): Promise<void> {
-  await expect(writeCandidate(root.dir, process.env, draftFor(slug))).rejects.toBeInstanceOf(
+/** Assert a slug refusal is typed and creates no candidate-store directory. */
+async function expectSlugRefusal(slug: string): Promise<void> {
+  await expect(deleteCandidateBySlug(root.dir, process.env, slug)).rejects.toBeInstanceOf(
     UnsafeCandidateIdError,
   );
   expect(existsSync(path.join(root.dir, CANDIDATES_DIR))).toBe(false);
@@ -72,23 +76,12 @@ describe("candidate physical identity ceilings", () => {
     expect(MAX_CANDIDATE_ID_BYTES + extensionBytes).toBe(255);
   });
 
-  it.each([219, 220])("accepts a %i-byte ASCII draft slug", async (bytes) => {
-    const created = await writeCandidate(root.dir, process.env, draftFor("a".repeat(bytes)));
-
-    expect(Buffer.byteLength(created.slug, "utf8")).toBe(bytes);
-    expect(Buffer.byteLength(created.id, "utf8")).toBe(bytes + 9);
+  it("rejects a 221-byte ASCII slug before store access", async () => {
+    await expectSlugRefusal("a".repeat(221));
   });
 
-  it("rejects a 221-byte ASCII draft slug before store access", async () => {
-    await expectDraftRefusal("a".repeat(221));
-  });
-
-  it("accepts and rejects exact multibyte slug boundaries", async () => {
-    const accepted = "é".repeat(110);
-    const rejected = `${accepted}a`;
-
-    await expect(writeCandidate(root.dir, process.env, draftFor(accepted))).resolves.toMatchObject({ slug: accepted });
-    await expect(writeCandidate(root.dir, process.env, draftFor(rejected))).rejects.toBeInstanceOf(UnsafeCandidateIdError);
+  it("rejects a slug one byte past the multibyte boundary", async () => {
+    await expectSlugRefusal(`${"é".repeat(110)}a`);
   });
 
   it.each([228, 229, 230, 250])("accepts a direct %i-byte candidate id", async (bytes) => {
@@ -118,22 +111,11 @@ describe("candidate physical identity ceilings", () => {
     const slug = `${"a".repeat(10_000)}${SECRET_SENTINEL}`;
     let caught: unknown;
 
-    try { await writeCandidate(root.dir, process.env, draftFor(slug)); } catch (error) { caught = error; }
+    try { await deleteCandidateBySlug(root.dir, process.env, slug); } catch (error) { caught = error; }
 
     expect(caught).toBeInstanceOf(UnsafeCandidateIdError);
     expect((caught as Error).message).not.toContain(SECRET_SENTINEL);
     expect(existsSync(path.join(root.dir, CANDIDATES_DIR))).toBe(false);
-  });
-
-  it("does not atomically replace a legacy record without temporary-file headroom", async () => {
-    const id = "a".repeat(230);
-    await plantLegacyCandidate(id);
-    const before = await snapshotCandidateQueue(root.dir);
-
-    await expect(writeCandidate(root.dir, process.env, draftFor("legacy-over-cap")))
-      .rejects.toBeInstanceOf(UnsafeCandidateIdError);
-
-    expect(await snapshotCandidateQueue(root.dir)).toEqual(before);
   });
 
   it("reads and archives a valid legacy filename without needing write-temp headroom", async () => {

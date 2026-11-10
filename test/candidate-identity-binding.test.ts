@@ -2,7 +2,12 @@
  * @file test/candidate-identity-binding.test.ts
  * @description Mutation-authority tests for pending candidate filename and
  * embedded-record identity binding. A record assertion must never redirect a
- * write or deletion away from its store-owned filename locator.
+ * mutation away from its store-owned filename locator.
+ *
+ * The mutation entry point is `deleteCandidateBySlug`: it is the surviving consumer
+ * of the selection authority, so the refusals are pinned there. The two
+ * canonicalisation cases went with `writeCandidate` — nothing reconciles duplicate
+ * files any more, because nothing writes one.
  */
 
 import { existsSync } from "node:fs";
@@ -12,7 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   CandidateIdentityMismatchError,
   UnsafeCandidateIdError,
-  writeCandidate,
+  deleteCandidateBySlug,
 } from "../packages/wiki/src/compiler/candidates.js";
 import { CANDIDATES_DIR } from "../packages/wiki/src/utils/constants.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
@@ -30,7 +35,7 @@ interface PlantedCandidate {
   readonly generatedAt?: string;
 }
 
-/** Build the target draft used for every mutation attempt. */
+/** Build the target record used for every mutation attempt. */
 function targetDraft() {
   return {
     title: "Target",
@@ -77,7 +82,7 @@ async function expectMismatchRefusal(
   const before = await snapshotQueueFiles();
   let caught: unknown;
   try {
-    await writeCandidate(root.dir, process.env, targetDraft());
+    await deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG);
   } catch (error) {
     caught = error;
   }
@@ -124,43 +129,9 @@ describe("candidate mutation identity binding", () => {
     await expectMismatchRefusal();
   });
 
-  it("canonicalizes bound candidates using their filename locators", async () => {
-    await plantCandidate({ fileId: "canonical" });
-    await plantCandidate({ fileId: "valid-extra", generatedAt: "2026-01-02T00:00:00.000Z" });
-    await plantCandidate({ fileId: "unrelated-file", slug: UNRELATED_SLUG });
-    const before = await snapshotQueueFiles();
-
-    const created = await writeCandidate(root.dir, process.env, targetDraft());
-    const after = await snapshotQueueFiles();
-
-    expect(created.id).toBe("canonical");
-    expect(JSON.parse(await readFile(candidateFile("canonical"), "utf8")).body).toBe(TARGET_BODY);
-    expect(existsSync(candidateFile("valid-extra"))).toBe(false);
-    expect(after["unrelated-file.json"]).toBe(before["unrelated-file.json"]);
-  });
-
-  it("leaves an unrelated-target mismatch nonblocking and byte-identical", async () => {
-    await plantCandidate({
-      fileId: "other-mismatch", recordId: "other-record", slug: UNRELATED_SLUG,
-    });
-    const before = await snapshotQueueFiles();
-
-    const created = await writeCandidate(root.dir, process.env, targetDraft());
-    const after = await snapshotQueueFiles();
-
-    expect(created.id).toMatch(/^target-topic-[0-9a-f]{8}$/);
-    expect(after["other-mismatch.json"]).toBe(before["other-mismatch.json"]);
-    expect(Object.keys(after)).toHaveLength(2);
-  });
-
   it("classifies an oversized embedded id before ordinary mismatch comparison", async () => {
     await plantCandidate({ fileId: "mismatch", recordId: "\u0000".repeat(10_000) });
 
     await expectMismatchRefusal(UnsafeCandidateIdError);
   });
 });
-
-/** Resolve one pending candidate file in the current test root. */
-function candidateFile(id: string): string {
-  return path.join(root.dir, CANDIDATES_DIR, `${id}.json`);
-}

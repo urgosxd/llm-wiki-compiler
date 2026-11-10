@@ -12,7 +12,7 @@ import path from "path";
 import { execFileSync } from "node:child_process";
 import { repairLinks } from "../packages/wiki/src/compiler/link-repair.js";
 import { applyCompilePageWritesLocked } from "../packages/wiki/src/compiler/compile-write.js";
-import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import { seedPendingCandidate } from "./fixtures/candidate-queue.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 import { writePage as writeFixturePage } from "./fixtures/write-page.js";
 
@@ -71,7 +71,7 @@ describe("repairLinks", () => {
   it("counts pending prefixes when refusing ambiguity", async () => {
     await writePage("argo-cd-guide", "Details.");
     await writePage("deployment", "See [[Argo CD]].");
-    await writeCandidate(tmpDir, process.env, {
+    await seedPendingCandidate(tmpDir, {
       slug: "argo-cd-ownership", title: "Ownership", summary: "Pending", sources: [], body: "Pending body.",
     });
     expect(await repairLinks(tmpDir, process.env)).toEqual([]);

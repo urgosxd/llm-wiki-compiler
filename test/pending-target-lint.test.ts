@@ -9,7 +9,7 @@
 import { describe, it, expect } from "vitest";
 import { lint } from "../packages/wiki/src/linter/index.js";
 import { evaluateHealth } from "../packages/wiki/src/eval/health.js";
-import { writeCandidate } from "../packages/wiki/src/compiler/candidates.js";
+import { seedPendingCandidate } from "./fixtures/candidate-queue.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 
 const env = useLintTempRoot("pending-target-lint");
@@ -44,7 +44,7 @@ const FOO_LINK_PAGE = [
 describe("pending-target lint", () => {
   it("reports pending-target instead of broken-wikilink and does not penalize health", async () => {
     await env.writeConcept("live-page", LIVE_PAGE);
-    await writeCandidate(env.dir, process.env, {
+    await seedPendingCandidate(env.dir, {
       title: "Pending Page",
       slug: "pending-page",
       summary: "Pending.",
@@ -67,7 +67,7 @@ describe("pending-target lint", () => {
 
   it("does NOT suppress a broken wikilink for a TYPED pending candidate", async () => {
     await env.writeConcept("foo-linker", FOO_LINK_PAGE);
-    await writeCandidate(env.dir, process.env, {
+    await seedPendingCandidate(env.dir, {
       title: "Foo",
       slug: "foo",
       summary: "Typed foo.",
@@ -83,7 +83,7 @@ describe("pending-target lint", () => {
 
   it("still demotes a broken wikilink for a DEFAULT pending candidate", async () => {
     await env.writeConcept("foo-linker", FOO_LINK_PAGE);
-    await writeCandidate(env.dir, process.env, {
+    await seedPendingCandidate(env.dir, {
       title: "Foo",
       slug: "foo",
       summary: "Default foo.",
