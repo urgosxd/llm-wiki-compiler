@@ -22,11 +22,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   experiences. A query can no longer put a record under `.llmwiki/candidates/`:
   the saved-answer proposer (`stageQueryProposal`) is gone, and with it the
   `"Query review requires save."` guard that only made sense while a proposal
-  could be requested. The publication result no longer carries `candidateId`, so
-  a result that used to report a staged proposal now reports `saved` and a
-  written page instead. And a TypeScript caller passing `review` stops
-  compiling, while an untyped caller passing it is silently ignored rather than
-  staged.
+  could be requested. The publication result no longer carries `candidateId`, and
+  the field is gone from `QueryResult` itself rather than left declared on it
+  with no producer, so a result that used to report a staged proposal now
+  reports `saved` and a written page instead.
+
+  What a caller passing `review` experiences depends on how it passes it. An
+  inline object literal — `wiki.query(question, { save: true, review: true })` —
+  is rejected by the type checker, because `review` is no longer a member of the
+  option type and excess-property checking applies to a fresh literal. A value
+  passed through a typed variable still compiles: the facade forwards options by
+  spreading them (`generateAnswer(root, question, { ...opts, registrySource })`),
+  and a spread source is not a fresh literal, so nothing is checked and the
+  `review` key travels through and is ignored. An untyped caller is ignored the
+  same way. Neither shape is staged.
 
   This is not a rename or a re-flagging. Query review candidates are retired, not
   softened: nothing reproduces that behaviour elsewhere, and no replacement

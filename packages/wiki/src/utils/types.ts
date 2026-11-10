@@ -466,8 +466,6 @@ export interface QueryResult {
    * older producers); an available report with no recognized links has citations: [].
    */
   answerCitations?: AnswerCitationReport;
-  /** Fresh reviewed proposal identity; staging does not set saved. */
-  candidateId?: string;
   /** Requested publication was refused; the generated answer remains available. */
   publicationRefusal?: {
     code: "pending" | "broken" | "unavailable" | "profile-disabled";

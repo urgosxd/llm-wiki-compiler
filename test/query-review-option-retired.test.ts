@@ -61,4 +61,16 @@ describe("retired query review option", () => {
       expect(Object.keys(publicationModule)).not.toContain(symbol);
     }
   });
+
+  it("declares no review option on the surviving query surfaces", async () => {
+    const coreTypes = await readFile(path.join(SRC_ROOT, "sdk", "core-types.ts"), "utf8");
+    expect(coreTypes).not.toMatch(/query\(question: string, opts\?: \{[^}]*review/u);
+    const querySource = await readFile(path.join(SRC_ROOT, "commands", "query.ts"), "utf8");
+    expect(querySource).not.toMatch(/review\?: boolean/u);
+  });
+
+  it("publishes no candidate identity from a saved answer", async () => {
+    const publication = await readFile(path.join(SRC_ROOT, "commands", "query-publication.ts"), "utf8");
+    expect(publication).not.toContain("candidateId");
+  });
 });
