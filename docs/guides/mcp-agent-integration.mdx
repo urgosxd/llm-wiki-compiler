@@ -111,7 +111,7 @@ The server exposes fourteen tools. Every tool takes a required `stackId` naming 
 | `import_okf` | Preview or stage an Open Knowledge Format bundle from a project-confined path as review candidates | No |
 | `list_stacks` | List the Stacks this endpoint can reach, most recently updated first, marking which one this connection is bound to; use it to discover a `stackId`. This is the one tool whose `stackId` is optional - it only chooses which entry is marked current and never narrows the listing | No |
 
-**Tools vs. resources:** MCP resources are not tools and have no input schema, so there is no argument to attach a `stackId` to. The seven `llmwiki://` resource templates in the next section resolve their Stack from the server environment instead. The required-`stackId` rule above is a property of the tool surface only: a tool call that omits it is refused, while a resource read never asks for it.
+**Tools vs. resources:** MCP resources are not tools and have no input schema, so there is no argument to attach a `stackId` to. The seven `llmwiki://` resources in the next section resolve their Stack from the server environment instead. The required-`stackId` rule above is a property of the tool surface only: a tool call that omits it is refused, while a resource read never asks for it.
 
 **`get_context_pack` vs `query_wiki`:** these tools serve different purposes. `get_context_pack` *packages evidence* - it assembles a structured JSON envelope of relevant pages, semantic chunks, and citations that the agent uses for its own reasoning. `query_wiki` *generates an answer* - it calls the LLM and returns prose. Use `get_context_pack` when the agent needs grounded source material to reason over; use `query_wiki` when you want a finished answer.
 
@@ -164,10 +164,10 @@ The server starts without credentials. Provider credentials are read from the `e
 
 - `export_okf` writes an OKF bundle. Its optional `out` path is confined under the project root.
 - `import_okf` reads an OKF bundle from a project-confined `dir`. It supports `dryRun` and is always staging-only; MCP does not expose the trusted live-write import path.
-- After `import_okf` stages pages, they are held as review candidates under `.llmwiki/candidates/` until an operator approves them.
+- After `import_okf` stages pages, they are held as review candidates under `.llmwiki/candidates/`. This build exposes no surface that promotes or rejects a candidate - there is no SDK method, no MCP tool, and the viewer's review list is read-only - so a staged page stays there.
 
 <Tip>
-  After an agent calls `compile_wiki`, check `wiki_status` and look at the `pendingCandidates` field. If your wiki has a review policy configured in `.llmwiki/config.json`, some pages may be held for human review rather than written directly. A non-zero `pendingCandidates` means the agent has queued work that needs your approval before those pages go live; the candidates are held under `.llmwiki/candidates/`.
+  After an agent calls `compile_wiki`, check `wiki_status` and look at the `pendingCandidates` field. If your wiki has a review policy configured in `.llmwiki/config.json`, some pages are held for review rather than written directly. A non-zero `pendingCandidates` means the agent has queued pages that stay staged under `.llmwiki/candidates/` instead of going live in `wiki/` - this build exposes no surface that promotes or rejects a candidate, so review them there.
 </Tip>
 
 ## Next steps

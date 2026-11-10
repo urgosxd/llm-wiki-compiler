@@ -4,17 +4,14 @@ sidebarTitle: "SDK"
 description: "Use createWiki() to drive llmwiki in-process from TypeScript or JavaScript - ingest, compile, query, lint, and export without shelling out."
 ---
 
-The llmwiki SDK lets you drive the entire wiki pipeline from inside your own TypeScript or JavaScript application. Instead of spawning a child process and scraping CLI output, you import `createWiki` directly from the package and call methods that return typed results. Every method runs silently - no console output, no global state - and concurrent calls are fully isolated via `AsyncLocalStorage`.
+The llmwiki SDK lets you drive the entire wiki pipeline from inside your own TypeScript or JavaScript application. Instead of spawning a child process and scraping CLI output, you import `createWiki` directly from the package and call methods that return structured results. Every method runs silently - no console output, no global state - and concurrent calls are fully isolated via `AsyncLocalStorage`.
 
 Use the SDK when you are embedding llmwiki in your own tooling: a build script, a CI harness, a REST API, a test suite, or any context where you want structured results and clean composability. Use the MCP server when you want AI agents to drive the pipeline - see [MCP Integration](/guides/mcp-agent-integration).
 
 ## Installation
 
-The standard installation below preserves the complete SDK, including existing
-experimental local workflows. For an engine-free application dependency, see
-[SDK packages and ownership](/guides/sdk-packages). Check the
-[SDK upgrade notes](/guides/sdk-upgrade) before adopting the development candidate;
-experimental type and workflow changes are not a promise of full source compatibility.
+For the packages behind the SDK, see [SDK packages and ownership](/guides/sdk-packages).
+Check the [SDK upgrade notes](/guides/sdk-upgrade) before adopting the development candidate.
 
 The SDK is the package's entry point. No separate install is needed:
 
@@ -64,74 +61,31 @@ console.log(`${status.pages.total} pages, ${status.sources} sources`);
 
 ## Method reference
 
-### Core versus workflow methods
+### The standard facade and the core surface
 
-Applications should import only `llm-wiki-compiler`. Scoped core and engine
-exports are internal composition contracts, not separately supported consumer APIs.
+`createWiki` from `llm-wiki-compiler` returns the standard `Wiki` facade.
+`createWikiCore` from `@atomicstrata/llmwiki-core` returns `WikiCore`. `Wiki`
+extends `WikiCore` without adding a method, so both expose the same seventeen
+methods documented below; the difference is the import surface, not the
+capability.
 
-`createWiki` returns the standard `Wiki` facade. `createWikiCore` from
-`@atomicstrata/llmwiki-core` returns `WikiCore`: knowledge compilation, profiles, domain records,
-artifacts, preparations, product actions and operation proposals, without local
-workflow execution methods. The standard facade includes these core capabilities
-and adds the existing experimental workflow facade. Neither constructor grants
-authority merely because the caller can import it.
-
-### External orchestration and operation authority
-
-An external coordinator (your own application or orchestration platform) owns
-process sequencing, human interaction and revision policy. It calls core
-services for retained data and authorized effects; it does not replace the
-compiler's authority checks. It is the tier above the compiler-local workflow
-engine, not a replacement for it: the local engine remains the supported way to
-advance a profile-declared workflow through local invocations, retaining its
-state and pending human gates between sessions.
-
-Use `wiki.operations` to prepare, observe and retire operation proposals. The SDK
-deliberately exposes no operation apply method. The separately authorized local
-operator inspects and applies the exact proposed manifest:
-
-```ts
-import { createWiki, type RecordIntentV1 } from "llm-wiki-compiler";
-
-// The trusted application host chooses this identity and grant, not a model.
-async function prepareForReview(root: string, intent: RecordIntentV1) {
-  const wiki = createWiki({
-    root,
-    operations: {
-      id: "process-coordinator",
-      grants: ["operation-bundle.prepare"],
-    },
-  });
-  // The caller must handle prepared, refused and unavailable results.
-  // A prepared reference is neither approval nor proof of application.
-  return wiki.operations.prepareRecord(intent);
-}
-```
-
-The operator then reviews the proposed manifest before anything is applied.
-
-An embedder trusted-write or preparation grant is not an operation-approval
-grant. Approval in an external workflow is not, by itself, compiler authorization.
-If an apply result or receipt read is uncertain, keep the outcome unknown and
-reconcile it before retrying; do not infer that nothing was written.
-
-Keep product-specific decisions and providers outside core. A Newsroom profile
-declares editorial data contracts; the editorial application's policies and
-orchestration are separate. The same distinction applies to AutoSci and other
-products.
+Every method is declared as returning `Promise<unknown>`. The shapes named below
+are the objects the implementation returns, and those interfaces are exported as
+types from `@atomicstrata/llmwiki-core`.
 
 ### Read-only domain observations
 
-The experimental package exports `activeProfileDigest(root)`,
+The package exports `activeProfileDigest(root)`,
 `loadNonDefaultProfile(root)`, and
 `readConfinedCappedBuffer(root, leaf, expectedDir, maxBytes)` for external
-coordinators. These require no write grant and do not mutate the project.
+coordinators. They take no authority and do not mutate the project.
 
-`activeProfileDigest` returns the compiler's bare SHA-256 profile digest,
-including for the built-in default. `loadNonDefaultProfile` returns the validated
-`LoadedProfile`, or `undefined` for that built-in default. Both reject an invalid
-active profile rather than silently falling back. A digest is an observation,
-not a lock against later profile changes or permission to mutate records.
+`activeProfileDigest` returns the compiler's bare SHA-256 profile digest for the
+active profile. `loadNonDefaultProfile` returns `undefined`: there is one fixed
+profile, so there is no non-default profile to load, and the signature survives
+because its callers' early-return branch is now the only behaviour. A digest is
+an observation, not a lock against later profile changes or permission to mutate
+records.
 
 The byte reader accepts a direct leaf of an existing canonical directory under
 the supplied root. It rejects symlinked leaves/parents, out-of-root or mismatched
@@ -143,49 +97,25 @@ less than `Number.MAX_SAFE_INTEGER`; reading is bounded even if the file grows.
 Reads are point-in-time observations, not transactional snapshots of concurrent
 in-place file edits. Use compiler mutation APIs for authority and preconditions.
 
-### Verified artifact reads and discovery
-
-`wiki.readVerifiedArtifactBody(ref)` returns `{ health, bytes? }`. Bytes are returned only when the current profile, manifest, content hash, and body contract verify successfully. It returns the same verified UTF-8 body snapshot without reopening the file. For a member-bearing artifact, this body is the JSON member manifest, not the files packed together; all members must also verify before the manifest is returned.
-
-`wiki.discoverArtifact({ artifactType, slug })` locates one exact artifact and returns `{ status: "found", ref }` only after fresh verification. The selector must contain exactly those two own data properties with safe identifiers. Invalid selectors throw `TypeError`; missing, unhealthy, or unreadable artifacts return `{ status: "unavailable" }`.
-
-Both methods require an active non-default profile declaring artifact types, otherwise they throw `ArtifactVerifyUnavailableError`. Neither requires an artifact-write grant or modifies the wiki. An unavailable discovery result does **not** prove that a previous write did not occur; a found reference does **not** authenticate a workflow occurrence or authorize an operation.
-
-### Binary files in artifact bundles
-
-A profile artifact type can declare a `members` policy instead of `metadata`. Its `contentKind` must be `json`; its declared file holds a compiler-generated manifest. The policy specifies `maxCount`, `maxMemberBytes`, and `maxTotalBytes`, with optional `allowedExtensions`, `requiredNames`, and `exactNames`.
-
-```ts
-const { ref } = await wiki.writeArtifact({
-  artifactType: "edition-assets", // declared by the active profile
-  slug: "issue-01",
-  memberFiles: [{ fileName: "cover.jpg", bytes: jpegBytes }],
-});
-```
-
-Supply exactly one of `body` or `memberFiles`. Member bytes are copied synchronously, hashed, sorted by name, and bound into the manifest; callers cannot supply their own manifest hashes. The existing operator-configured artifact-write grant is still required. Reads require no write grant.
-
-Replacement journals the previous manifest and binary files before writing or removing obsolete members. Verification rejects changed or missing members and unexpected directory entries. Case/Unicode-aliasing names are refused conservatively. Bundle verification is a point-in-time check, not a filesystem snapshot held for future reads. This port adds no member-download API or product workflow.
-
 ### Ingest
 
-<ParamField body="wiki.ingest({ source })" type="Promise<IngestResult>">
+<ParamField body="wiki.ingest({ source })">
   Fetch a URL or read a local file path into `sources/`. Does not require LLM credentials.
 
   **Trusted input only.** This method performs a server-side fetch and local file read - it is an SSRF and path-traversal primitive. Pass only URLs and paths you control. For untrusted or user-supplied content, use `ingestText` instead.
 </ParamField>
 
-<ParamField body="wiki.ingestText({ title, text })" type="Promise<IngestResult>">
+<ParamField body="wiki.ingestText({ title, text })">
   Ingest raw text directly as a source document. Does not require LLM credentials, and performs no network fetch or file read - making it the safe path for untrusted content.
 
   Note: ingested content is later sent to the LLM during `compile`, so adversarially crafted text is still a prompt-injection vector at that stage.
 </ParamField>
 
-Both methods return `IngestResult` with `filename`, `chars`, and `truncated` fields.
+Both methods return `IngestResult` with `filename`, `charCount`, `truncated`, `source`, and `writeStatus` fields.
 
 ### Compile
 
-<ParamField body="wiki.compile(options?)" type="Promise<CompileResult>">
+<ParamField body="wiki.compile(options?)">
   Run the incremental compile pipeline. Extracts concepts from new or changed sources, generates typed wiki pages, resolves `[[wikilinks]]`, and rebuilds the index. **Requires LLM credentials.**
 
   - `options.review` - when `true`, writes generated pages to `.llmwiki/candidates/` for review instead of directly to `wiki/`.
@@ -203,7 +133,7 @@ Both methods return `IngestResult` with `filename`, `chars`, and `truncated` fie
 
 ### Query and search
 
-<ParamField body="wiki.query(question, options?)" type="Promise<QueryResult>">
+<ParamField body="wiki.query(question, options?)">
   Generate a grounded answer from the compiled wiki. **Requires LLM credentials.**
 
   - `options.save` - request publication in `wiki/queries/` after fresh citation validation and the direct-save profile gate.
@@ -213,7 +143,7 @@ Both methods return `IngestResult` with `filename`, `chars`, and `truncated` fie
   Returns `QueryResult` with `answer`, legacy display slugs in `selectedPages`, qualified grounding identities in `pageIds` and `refs`, `reasoning`, and `answerCitations` when collection succeeds. When requested, `debug` contains retrieval details. `saved` identifies a published query slug; `candidateId` identifies a staged proposal; `publicationRefusal` describes a refused save or staging request. These publication fields are mutually exclusive and absent when neither publication/staging nor refusal occurs, such as a query without saving or without grounding.
 </ParamField>
 
-`answerCitations` is a version-1 report of unique, normalized answer-body wikilink targets in first-occurrence order. Successful collection returns it, including `{ version: 1, citations: [] }` when no links are recognized; a query with no grounding also returns an empty report. If collection fails, the field is absent, meaning citations are unavailable. The answer remains available; any requested publication performs its own fresh check and may succeed or return a refusal. SDK calls remain quiet, including warnings and refusals. Optional fields keep older `QueryResult` producers compatible. Import `QueryResult`, `AnswerCitation`, and `AnswerCitationReport` from the package entry point.
+`answerCitations` is a version-1 report of unique, normalized answer-body wikilink targets in first-occurrence order. Successful collection returns it, including `{ version: 1, citations: [] }` when no links are recognized; a query with no grounding also returns an empty report. If collection fails, the field is absent, meaning citations are unavailable. The answer remains available; any requested publication performs its own fresh check and may succeed or return a refusal. SDK calls remain quiet, including warnings and refusals. Optional fields keep older `QueryResult` producers compatible. Import `QueryResult`, `AnswerCitation`, and `AnswerCitationReport` from `@atomicstrata/llmwiki-core`.
 
 ```ts
 const result = await wiki.query("How does attention work?");
@@ -247,45 +177,45 @@ if (result.publicationRefusal) {
 
 Review candidates require fresh approval after all pending targets are published. Body edits require regeneration/restaging, and so does a target page that changed, appeared, or was deleted after staging; frontmatter-only title/summary edits are outside the audit digest. Existing MCP `query_wiki` callers using `save: true` receive the same answer-preserving refusal in the JSON result, with no saved slug. MCP has no review option; its no-save behavior stays unchanged.
 
-<ParamField body="wiki.search(question)" type="Promise<PageRecord[]>">
+<ParamField body="wiki.search(question)">
   Select and hydrate the most relevant page records for a question. Uses semantic embeddings when available, falls back to LLM-based index selection. **Requires LLM credentials.**
 
-  Returns an array of full `PageRecord` objects including frontmatter and body.
+  Returns an array of `PageRecord` objects, each carrying `slug`, `title`, `summary`, and `body`.
 </ParamField>
 
 ### Pages and sources
 
-<ParamField body="wiki.getPage(ref)" type="Promise<Page | null>">
+<ParamField body="wiki.getPage(ref)">
   Read a single wiki page by directory and slug reference. Returns `null` if not found. No credentials required.
 </ParamField>
 
-<ParamField body="wiki.listPages(options?)" type="Promise<ListPagesResult>">
+<ParamField body="wiki.listPages(options?)">
   List wiki pages with optional filters and cursor-based pagination. No credentials required.
 </ParamField>
 
-<ParamField body="wiki.listSources(options?)" type="Promise<ListSourcesResult>">
+<ParamField body="wiki.listSources(options?)">
   List ingested source files under `sources/` with optional cursor pagination. Bodies are opt-in via `includeBody`. No credentials required.
 </ParamField>
 
-<ParamField body="wiki.getSource(id)" type="Promise<SourceRecord | null>">
+<ParamField body="wiki.getSource(id)">
   Read a single source record by its basename (e.g. `"note.md"` - the `filename` field from `IngestResult`). Always includes body. Returns `null` if the source does not exist. No credentials required.
 </ParamField>
 
 ### Status and quality
 
-<ParamField body="wiki.status()" type="Promise<WikiStatus>">
+<ParamField body="wiki.status()">
   Return a read-only snapshot of the wiki - page counts, source counts, last compile time, stale and orphaned pages, pending changes, and `pendingCandidates`. No credentials required.
 
   **Performance note:** each call hashes the full source corpus (O(total source bytes)) with no cross-call caching. Do not call `status()` in a hot loop.
 </ParamField>
 
-<ParamField body="wiki.lint()" type="Promise<LintSummary>">
+<ParamField body="wiki.lint()">
   Run all lint rules and return a severity-counted summary - broken wikilinks, orphaned pages, duplicate concepts, empty pages, broken citations, stale pages, and more. No credentials required.
 
   **Performance note:** same per-call corpus-hashing cost as `status()`. Avoid hot loops.
 </ParamField>
 
-<ParamField body="wiki.lintByTier()" type="Promise<TieredLintReportV1>">
+<ParamField body="wiki.lintByTier()">
   The same check as `lint()`, split by the kind of claim each finding makes. `deterministic` holds facts the checker can prove; `providerJudgement` holds a model's stored assessment, worth reading but never authoritative; `derivedView` holds regenerable artifacts that are out of date. `deterministicErrors` counts only deterministic errors, the number that means something is actually wrong. No credentials required, no provider request, and one collection pass.
 
   ```ts
@@ -296,12 +226,12 @@ Review candidates require fresh approval after all pending targets are published
 
   Findings are the same objects `lint()` returns, in the same order within each tier; none gains a `tier` field. `low-confidence`, `contradicted-page`, and `excess-inferred-paragraphs` interpret stored judgments or citation coverage and are filed under `providerJudgement`. Profile confidence checks require a declared numeric field and flag finite values strictly below `0.5`; missing required or invalid values remain schema findings, and an absent optional value produces no confidence judgment. These labels do not prove model authorship or validate factual support.
 
-  Import `TieredLintReportV1` and `LintTierV1` from `llm-wiki-compiler` when you need to name these types.
+  Import `TieredLintReportV1` and `LintTierV1` from `@atomicstrata/llmwiki-core` when you need to name these types.
 
   **Performance note:** same per-call corpus-hashing cost as `lint()`. Avoid hot loops.
 </ParamField>
 
-<ParamField body="wiki.runEval({ mode, record? })" type="Promise<EvalReport>">
+<ParamField body="wiki.runEval({ mode, record? })">
   Run the wiki quality eval harness.
 
   - `mode: "fast"` - health score, citation coverage, corpus stats. **No credentials required.**
@@ -313,7 +243,7 @@ Review candidates require fresh approval after all pending targets are published
 
 ### Context and export
 
-<ParamField body="wiki.getContextPack(options)" type="Promise<ContextPack>">
+<ParamField body="wiki.getContextPack(options)">
   Build a v1 context pack - the same JSON envelope the MCP `get_context_pack` tool returns. Returns primary pages, semantic chunks, graph neighbors, citations, per-page freshness, warnings, and suggested actions.
 
   - `options.prompt` *(required)* - free-text task or question
@@ -325,13 +255,13 @@ Review candidates require fresh approval after all pending targets are published
   Semantic retrieval is opportunistic - when embeddings are not available the pack falls back to lexical ranking with a warning. No credentials required.
 </ParamField>
 
-<ParamField body="wiki.exportJson(options?)" type="Promise<JsonExportDocument>">
+<ParamField body="wiki.exportJson(options?)">
   Export the compiled wiki as a structured JSON document. No credentials required.
 
   **Performance note:** same per-call corpus-hashing cost as `status()` and `lint()`. Avoid hot loops.
 </ParamField>
 
-<ParamField body="wiki.exportOkf(options?)" type="Promise<OkfExportReport>">
+<ParamField body="wiki.exportOkf(options?)">
   Export the compiled wiki as an Open Knowledge Format bundle. No credentials required.
 
   - `options.out` - optional output directory. Defaults to `dist/exports/okf` under the wiki root.
@@ -339,7 +269,7 @@ Review candidates require fresh approval after all pending targets are published
   The report includes the output directory, written paths, and warnings such as cited sources that could not be bundled. Imported foreign pages re-export at their original safe bundle paths when possible.
 </ParamField>
 
-<ParamField body="wiki.importOkf(dir, options?)" type="Promise<OkfImportReport>">
+<ParamField body="wiki.importOkf(dir, options?)">
   Import an Open Knowledge Format bundle without calling an LLM. By default, imported pages are staged as review candidates.
 
   - `dir` - path to the OKF bundle directory.
@@ -371,9 +301,9 @@ try {
 }
 ```
 
-## Exported result types
+## Result types
 
-All result types are exported from the package for typed consumption in your own code:
+The result interfaces named above are exported as types from `@atomicstrata/llmwiki-core`:
 
 ```ts
 import type {
@@ -385,7 +315,7 @@ import type {
   EvalReport,
   OkfExportReport,
   OkfImportReport,
-} from "llm-wiki-compiler";
+} from "@atomicstrata/llmwiki-core";
 ```
 
 ## Performance notes

@@ -1,6 +1,6 @@
 ---
 title: "SDK packages and ownership"
-description: "Choose the standard compiler, engine-free SDK, or explicit local workflow composition."
+description: "Which package publishes what, and which specifier to import."
 ---
 
 The package split described here belongs to the `1.4.0-dev.20260919` development
@@ -14,21 +14,28 @@ The scoped packages below are publicly downloadable implementation dependencies,
 not separately supported consumer APIs. Direct exports are for compiler maintainers.
 Scoping does not make them private or establish a security boundary.
 
-## Internal package responsibilities
+## What each package publishes
 
 | Need | Package | Entry point |
 | --- | --- | --- |
-| Existing CLI or complete SDK | `llm-wiki-compiler` | `createWiki` |
-| Knowledge and domain services without local execution | `@atomicstrata/llmwiki-core` | `createWikiCore` |
-| Explicit compiler-local workflow composition | `@atomicstrata/llmwiki-local-workflows` plus matching core | `createLocalWorkflowRuntime` with an explicit host |
+| Existing SDK | `llm-wiki-compiler` | `createWiki` |
+| The same methods, composed directly | `@atomicstrata/llmwiki-core` | `createWikiCore` |
 | Product-wide process coordination | Your own application or orchestration platform | Application-owned orchestration calling the standard package |
 
-The standard package requires both core and the local engine at exact matching
-versions. Existing users do not need to select or construct a host. The engine
-can be omitted in internal core-only composition, but is not an optional dependency of the standard
-distribution.
+`llm-wiki-compiler` is built from `packages/wiki/src/index.ts`, which exports `createWiki`
+and the `Wiki` type. `Wiki` is declared as `interface Wiki extends WikiCore {}`, so the two
+constructors return the same seventeen methods; both names survive because the core package
+is also usable on its own.
 
-## Engine-free implementation
+`@atomicstrata/llmwiki-core` publishes two entry points, `.` and `./compiler-sdk`. The `.`
+entry exports `createWikiCore`, the `WikiCore` type, `startViewer`, and the result and error
+types a caller needs in order to name what comes back. The `./compiler-sdk` entry carries
+the composition surface the standard facade is assembled from. Neither entry is the
+recommended application entry point.
+
+The standard package requires the core package at an exact matching version.
+
+## Composing the core surface directly
 
 For compiler maintainers, internal composition uses:
 
@@ -39,30 +46,13 @@ const wiki = createWikiCore({ root: "./my-wiki" });
 const status = await wiki.status();
 ```
 
-Core owns knowledge compilation, profiles, records, relations, retained artifacts,
-provenance, preparations and authorized effects. It can read authenticated local
-workflow history without loading the local execution engine. `WikiCore` does not
-offer `startWorkflow` or the other execution methods of the standard `Wiki` facade.
+Core owns knowledge compilation, profiles, records, relations, provenance, and the
+read-only domain observations. Every method is declared as returning `Promise<unknown>`;
+the concrete shapes are the interfaces exported as types from the same entry point. See
+[the SDK method reference](/guides/sdk#the-standard-facade-and-the-core-surface).
 
-An external coordinator owns process state and decisions. Retaining data or
-preparing a change does not approve or apply that change. See the
-[SDK authority boundary](/guides/sdk#external-orchestration-and-operation-authority).
-
-## Local workflow composition
-
-The local engine requires an explicit host supplied by trusted application code.
-Core's host enforces confinement, locks, retained-state integrity and compiler
-mutation authority. The engine cannot manufacture a default host or extra grants.
-Host composition is an in-process trust boundary, not a sandbox for untrusted code.
-
-Applications should use the standard package. For internal composition, import the host and contracts
-from the core package's entry point rather than private source paths. Use a single core module
-instance: duplicate-core composition is rejected before I/O.
-
-The core package publishes two entry points, `.` and `./compiler-sdk`, which support the standard
-package's composition and compatibility. They are not the recommended application entry points.
-In particular, legacy locked-start composition assumes the caller already holds the required lock;
-it does not establish that lock.
+An external coordinator owns process state and decisions. Retaining data or preparing a
+change does not approve or apply that change.
 
 ## Product boundaries
 
@@ -73,38 +63,48 @@ research or creative-asset modules likewise do not belong in compiler core.
 
 New reusable record, verification and authority mechanisms belong in core.
 Product sequencing, human decisions and revision strategy belong in the external
-coordinator. Existing compiler-local workflows remain supported on their
-experimental terms; they are not silently rerouted through an external coordinator.
+coordinator.
 
-The two are tiers, not a migration path. The local engine executes locally per
-invocation and retains run state and pending human gates between sessions.
-Reach for an external coordinator for automatic scheduling, worker recovery,
-distributed execution, managed approval routing or cross-project coordination.
+The two are tiers, not a migration path. Reach for an external coordinator when several
+projects, several hosts, or work that outlives one invocation share state that a single
+in-process SDK instance cannot own.
 
 ## Distribution requirements
 
-The release workflow publishes a matching set from one commit: core, then the
-engine, then the standard facade, so the facade is never on the registry while
-a version it requires is missing. It verifies each package's version, exact
-internal pins and source commit, and finishes with a fresh installation.
-Prerelease versions publish to a non-`latest` dist-tag (`next` by default).
+The release workflow publishes a matching set from one commit:
+`@atomicstrata/llmwiki-core` first, then `llm-wiki-compiler`, so the facade is never on
+the registry while a version it requires is missing. `PACKAGE_DIRS` in
+`.github/workflows/publish.yml` names exactly those two directories. The workflow verifies
+each package's version, exact internal pins and source commit, and finishes with a fresh
+installation. Prerelease versions publish to a non-`latest` dist-tag (`next` by default).
 
 Scope ownership and trusted publishing access are release prerequisites; the
-naming change does not establish them. Each of the three packages needs its own
+naming change does not establish them. Each of the two packages needs its own
 trusted-publisher configuration before the first registry release.
+
+## Workspace members
+
+The root workspace declares five members: `@repo/api`, `@repo/foundation`,
+`@atomicstrata/llmwiki-core`, `@repo/kg` and `@repo/wiki`. The four `@repo/*` members are
+`private`; among the members only `@atomicstrata/llmwiki-core` is published, and it ships
+alongside the root `llm-wiki-compiler` package. The `@repo/*` packages publish raw
+TypeScript paths, so the root bundles include them rather than depending on them at
+runtime.
+
+`@repo/wiki` holds the source the standard package is built from: `createWiki`, the MCP
+server, the viewer, and the core services. `@repo/api` supplies the container entry point.
 
 ## Contributing across packages
 
 Use one repository and one PR, including for cross-package changes. Root-level
-`pnpm install --frozen-lockfile` links workspace packages; `pnpm run build` builds core, engine and facade
-in order. Local development requires no publishing. Source directory names are
-unchanged. No new public `core` subpath is introduced.
+`pnpm install --frozen-lockfile` links workspace packages; `pnpm run build` builds
+`@atomicstrata/llmwiki-core` first and then the two root `tsup` entries, because the
+standard facade and the container entry are declared at the repository root rather than in
+a package. Local development requires no publishing. No new public `core` subpath is
+introduced.
 
-- Knowledge and authority changes belong in the relevant `src/` subsystem.
-- Local workflow execution belongs in `src/local-workflows/`.
-- Public SDK composition belongs in `src/sdk/` and `src/index.ts`.
-- Shared engine contracts belong in `src/local-workflow-host/`.
+- Knowledge and authority changes belong in the relevant `packages/wiki/src/` subsystem.
+- Public SDK composition belongs in `packages/wiki/src/sdk/` and `packages/wiki/src/index.ts`.
 
 Run focused tests for behavior changes. After building, `pnpm run test:pack`
 checks fresh installation and TypeScript consumption without workspace aliases.
-Package-boundary tests prevent the engine from embedding compiler implementation.
