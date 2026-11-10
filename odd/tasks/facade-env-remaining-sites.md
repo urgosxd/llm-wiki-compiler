@@ -30,17 +30,19 @@ HIGH-RISK: tenant isolation — `lint`/`lintByTier` on a Stack-bound handle can 
 
 ## Tasks
 
-- [ ] T1 · S1,S2,S11 · feature document (this file) · route: gentle-ai-worker · commit: tbd
+- [x] T1 · S1,S2,S11 · feature document (this file) · route: gentle-ai-worker · commit: ba18dca1f6a06ab092557e0a7f67bfe399dc7815
 - [ ] T2 · S3,S6 · `getSource`: inert-or-real verdict, the comment recording it, and a test pinning it · route: gentle-ai-worker · commit: tbd
 - [ ] T3 · S3,S4,S5 · `lint`/`lintByTier`: measured RED, then thread `env` for GREEN · route: gentle-ai-worker · commit: tbd
 - [ ] T4 · S11 · `CHANGELOG.md` entry for any new database requirement this slice introduces · route: gentle-ai-worker · commit: tbd
 - [ ] T5 · S7 · non-goals held: nothing widened beyond the three sites · route: lead (review) · commit: n/a
 - [ ] T6 · S9,S10 · gates and evidence · route: lead · commit: tbd
 
-Tracker: T1 in progress · base `c59228b38ae4bb7fd40d2f0ea3e85c05ad610389`
+Tracker: T1 done (`ba18dca1f6a06ab092557e0a7f67bfe399dc7815`) · T2–T6 pending · base `c59228b38ae4bb7fd40d2f0ea3e85c05ad610389`
 
 ## Log
 
 L1 — Assignment verbatim (opening clause): "Finish the `env`-threading family in the published SDK facade." The normative clauses follow verbatim in S1–S11.
 
 L2 — Lead recon evidence, recorded as the starting point every task must re-derive per site rather than trust: `packages/wiki/src/sdk/core.ts:86` resolves `const env = options.env ?? process.env;` once; `:147` is `getSource: (id) => runQuiet(() => getSource(root, id)),`; `:164` is `lint: () => runQuiet(() => lint(root)),`; `:166` is `lintByTier: () => runQuiet(() => lintByTier(root)),`. The callee `packages/wiki/src/linter/index.ts` ALREADY accepts the parameter — `:243-246` `lint(root, env: NodeJS.ProcessEnv = process.env)` and `:280-283` `lintByTier(root, env: NodeJS.ProcessEnv = process.env)` — and `collectGroupsInScope(root, scope, env)` at `:207-211` already resolves both snapshot halves from that `env`, so the dropped facade argument is the only gap. `test/sdk/facade-env-threading.test.ts` (256 lines) covers `compile`/`status` ONLY — neither `getSource` nor `lint`/`lintByTier` has any test, which is how the defect survived.
+
+L3 — T1 record committed as `ba18dca1f6a06ab092557e0a7f67bfe399dc7815` `docs(odd): record the facade-env-remaining-sites feature document` (full 40-character SHA), touching only `odd/tasks/facade-env-remaining-sites.md` (new, 46 lines) and one appended tracker-continuation line in `odd/tasks/getpage-sql-error.md`; no source, test or `CHANGELOG.md` file was touched in this slice. Pre-commit hooks (`fallow:ci`, `tsc --noEmit`) ran with hooks enabled on Node v24.21.0 and exited 0 with no output.
