@@ -81,9 +81,12 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
   const env = options.env ?? process.env;
 
   return {
-    ingest: ({ source }) => runQuiet(() => ingestSource(root, source)),
+    // `env` is forwarded, not merely computed: an environment this boundary captured
+    // but did not pass on silently retargets the write to the AMBIENT Stack, which is
+    // a wrong-tenant write under the contract the resolution above promises.
+    ingest: ({ source }) => runQuiet(() => ingestSource(root, source, undefined, env)),
 
-    ingestText: (input) => runQuiet(() => ingestTextSource(root, input)),
+    ingestText: (input) => runQuiet(() => ingestTextSource(root, input, env)),
 
     compile: (opts: SdkCompileOptions = {}) =>
       runQuiet(() => {

@@ -300,6 +300,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`createWiki({ root, env })` now writes its rows to the Stack `env` names,
+  instead of the one the process is bound to.** This is a fix, not a breaking
+  change — nothing an embedder passes has changed shape — but **row placement
+  changes for embedders that were already passing `CreateWikiOptions.env`**, and
+  that change is the fix. `ingest` and `ingestText` ignored the environment
+  `createWiki` had already resolved and fell back to `process.env`, so a host
+  serving several Stacks wrote the request's pages, and their journal entries,
+  into its own deployment's tenant: a wrong-tenant write of stored data that
+  survives the call instead of a wrong read that does not. Both methods now
+  forward the resolved environment, so a single-deployment embedder that passes
+  nothing keeps addressing exactly the Stack it always addressed.
+
 - **A `.pdf` with no extractable text is now an error instead of a silent empty
   ingest.** `pdf-parse` emits a `-- N of M --` marker per page, so a scanned or
   image-only PDF extracted to marker text, cleared the shared minimum-content

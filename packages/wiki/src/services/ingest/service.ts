@@ -297,10 +297,18 @@ export async function ingestSource(
  *
  * @param root - Absolute path to the wiki root directory.
  * @param input - Title, raw text body, and optional explicit source identity.
+ * @param env - Environment naming the Stack this ingest writes to; `process.env` when
+ *   omitted. A caller that resolved the request environment must pass it, or the
+ *   document and its journal entry land in the AMBIENT Stack instead of the one the
+ *   request named.
  * @returns Structured ingest result with filename, char count, and source URI.
  * @throws {LockBusyError} When another mutation holds the project lock.
  */
-export async function ingestTextSource(root: string, input: IngestTextInput): Promise<IngestResult> {
+export async function ingestTextSource(
+  root: string,
+  input: IngestTextInput,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<IngestResult> {
   const digest = createHash("sha256")
     .update(`${input.title.length}\n`)
     .update(input.title)
@@ -310,16 +318,19 @@ export async function ingestTextSource(root: string, input: IngestTextInput): Pr
   const result = enforceCharLimit(input.text);
   enforceMinContent(result.content);
   const document = buildDocument(input.title, source, result, "file");
+  // `env` keeps the position it has in `ingestSource`, and is forwarded rather than
+  // dropped: omitting it here made this path resolve the tenant from the ambient
+  // environment, so a request for one Stack wrote into the deployment's.
   const { savedPath, writeStatus } = await writeToDimensions(root, {
     title: input.title,
     source,
     document,
     body: result.content,
-  });
+  }, undefined, env);
 
   // Journal only real writes — a no-op re-ingest must not append a log line.
   if (writeStatus !== "unchanged") {
-    await journalIngest(root, input.title, source, savedPath, result.content.length);
+    await journalIngest(root, input.title, source, savedPath, result.content.length, env);
   }
 
   return {
