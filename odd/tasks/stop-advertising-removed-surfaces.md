@@ -18,11 +18,11 @@ S6. Test-first: each behavior change observes RED before the fix and returns GRE
 
 ## Tasks
 
-- T1 | S3, S5 | worker | guard test for the instructions half, then `mcp/server.ts` + new `packages/wiki/src/mcp/tool-names.ts` | -
-- T2 | S1, S2, S5 | worker | `recommendations.ts` + `context/build.ts` + the tests pinning the old shape | -
-- T3 | S4 | worker | the six runtime-string sites + the viewer asset + the viewer test | -
-- T4 | S1-S5 | verify | independent verification, verdict per S# | -
-- T5 | all | worker (lead cannot run shell) | gates, then work-unit commits with full SHAs recorded back into this document | -
+- T1 | S3, S5 | worker | guard test for the instructions half, then `mcp/server.ts` + new `packages/wiki/src/mcp/tool-names.ts` | d26a8f1fc4ff1f3d1eb20ef0c1a87304bf4e42a6
+- T2 | S1, S2, S5 | worker | `recommendations.ts` + `context/build.ts` + the tests pinning the old shape | d26a8f1fc4ff1f3d1eb20ef0c1a87304bf4e42a6
+- T3 | S4 | worker | the six runtime-string sites + the viewer asset + the viewer test | a70aadb07202236b6799c296168eda3305647a79
+- T4 | S1-S5 | verify | independent verification, verdict per S# | a70aadb07202236b6799c296168eda3305647a79
+- T5 | all | worker (lead cannot run shell) | gates, then work-unit commits with full SHAs recorded back into this document | a70aadb07202236b6799c296168eda3305647a79
 
 ## Non-goals
 
@@ -43,3 +43,11 @@ L2 — the Manager ruled the assignment splits; this document covers only the fi
 L3 — the Manager's ruling on item 1: do not empty the phantom field — a recommendation must name an MCP tool with its input shape, or an SDK method, never a binary path or command line; and a test must assert advertised ⊂ registered and recommended ⊂ registered.
 
 L4 — measured census facts, recorded so they are not re-derived: no `bin` in any of the 7 package.json files; `test/mcp-server.test.ts:81-102` hand-maintains the 14 registered names (the drift shape to replace, not extend); no single source of truth for tool names exists; SDK is `@modelcontextprotocol/sdk` 1.32.1 supporting `listTools()` and `getInstructions()`; the 16-file `review`-option census lives in the Manager's separate brief, not here.
+
+L5 — Manager's ruling, restated as the standing scope of this document: the assignment splits in two, and this document covers the findings half only. The `review` compile option is a separate slice with its own brief.
+
+L6 — the sweep record, because the first census was short. The earlier string census undercounted; the verifier's grep over the tree found 92 lines carrying command tokens. Two writers then swept in parallel, one over backend sites and one over the viewer, and a third widened the guard from 6 files to all 475 files under `packages/wiki/src` and `packages/api/src`, measuring 132 offenders across 474 files at base `0cecbee5` and 0 across 475 after the change.
+
+L7 — two decisions worth the ink. `RECOMPILE_HINT` was deleted rather than re-pointed at `compile_wiki`: scoped recompilation is reachable from nothing callable, since `compileRecompiling` is exported by no package entry and no MCP tool takes a `pages` input, so a tool name there would promise what incremental compile does not do. And `query_wiki`'s required input field is `question`, not `query`.
+
+L8 — gate results, all exit 0 on this tree: `gates:static`; `build`; `vitest run test/artifact` (20 tests); `pnpm test` (6147 passed, 4 skipped, 352.66 s). Lint is unchanged at the zero-headroom baseline: 566 violations in 402 files across 429 rule/file entries. The known flake `test/main-subcommand-flags.test.ts:147` did not appear in this run.
