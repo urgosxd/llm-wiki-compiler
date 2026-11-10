@@ -65,15 +65,15 @@
 
 ## Tasks
 
-- [x] T1 — author this feature document — S: none — route: gentle-ai-worker — commit: pending
-- [x] T2 — RED: write the two retire tests plus the already-absent coverage in `test/compiler/graph-retirement-retires-source.test.ts`, observe and record the failing assertion — S1, S2, S3 — route: gentle-ai-worker — commit: pending
-- [x] T3 — GREEN: capture identities before orphaning and make `forgetDeletedSources` consume them — S5 — route: gentle-ai-worker — commit: pending
-- [x] T4 — correct the `forgetDeletedSources` docstring — S4 — route: gentle-ai-worker — commit: pending
-- [x] T5 — CHANGELOG bullet — S6 — route: gentle-ai-worker — commit: pending
-- [x] T6 — prove the mutation fails S2's test, then restore — S2 — route: gentle-ai-worker — commit: pending
-- [x] T7 — base-vs-head database differential and tenant-boundary assertion — S7 — route: gentle-ai-worker — commit: pending
-- [x] T8 — run every gate and record each exit code — S8 — route: gentle-ai-worker — commit: pending
-- [x] T9 — pin the tenant boundary as a committed DB-backed test (`graph-retirement-tenant-scope.test.ts`), prove it non-vacuous by mutation, and correct the CHANGELOG bullet for the deselected-source path — S6, S7 — route: gentle-ai-worker — commit: pending
+- [x] T1 — author this feature document — S: none — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
+- [x] T2 — RED: write the two retire tests plus the already-absent coverage in `test/compiler/graph-retirement-retires-source.test.ts`, observe and record the failing assertion — S1, S2, S3 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
+- [x] T3 — GREEN: capture identities before orphaning and make `forgetDeletedSources` consume them — S5 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
+- [x] T4 — correct the `forgetDeletedSources` docstring — S4 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
+- [x] T5 — CHANGELOG bullet — S6 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
+- [x] T6 — prove the mutation fails S2's test, then restore — S2 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
+- [x] T7 — base-vs-head database differential and tenant-boundary assertion — S7 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
+- [x] T8 — run every gate and record each exit code — S8 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
+- [x] T9 — pin the tenant boundary as a committed DB-backed test (`graph-retirement-tenant-scope.test.ts`), prove it non-vacuous by mutation, and correct the CHANGELOG bullet for the deselected-source path — S6, S7 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
 
 ## Log
 
@@ -712,3 +712,31 @@ stopped and removed (`docker ps` now shows only `hardcore_borg`,
 `llmwiki-kg-db-1` and `buildx_buildkit_multibuilder0` — the same set that pre-dated
 this task). This task's own scratch (`/tmp/tenant-mutation-yRPmdOye`, the suite log) was
 removed too. Nothing was committed.
+
+**L20 (measured) — the slice is committed as `9c636d32ccc1fcc66771911c050f06c5b85100d2`,
+and that commit holds exactly the six files the gate runs in `L18`/`L19` measured.**
+
+Files in the commit (`git show --name-only --format= 9c636d32`): `CHANGELOG.md`,
+`packages/wiki/src/compiler/index.ts`,
+`test/compiler/graph-retirement-port-invocation.test.ts`,
+`odd/tasks/graph-retirement-live.md`,
+`test/compiler/graph-retirement-retires-source.test.ts` and
+`test/compiler/graph-retirement-tenant-scope.test.ts`. `git diff --numstat` at staging
+reported `19/0` CHANGELOG, `58/16` `compiler/index.ts`, `9/7` `port-invocation`, `714/0`
+this document, `300/0` `retires-source` and `177/0` `tenant-scope`; the commit itself
+reports `6 files changed, 1277 insertions(+), 23 deletions(-)`. No file outside those six
+entered the commit, so `packages/llmwiki-kg/ts/src/core/document-consolidation.ts` (the
+`S7` mutation experiment's target) and `odd/tasks/compile-port-threading.md` are absent
+from it and byte-untouched.
+
+**The gate run in `L18`/`L19` was performed on this exact content.** Nothing was edited
+between the `T8`/`T9` gate runs and the commit: `git status --short` before staging listed
+precisely those six paths and nothing else, the staging step named those six paths
+individually rather than using `git add -A`, and `git status --short` is empty after the
+commit. The pre-commit hook therefore re-measured the same tree under Node `v24.21.0` and
+exited **0**: `pnpm run fallow:ci` reported `Fallow CI: 0 dead-code, 0 complexity, 0
+duplication introduced since main (verdict pass; 0 dead-code, 0 complexity, 0 duplication
+inherited, not counted)` against base ref local `main`, and `pnpm exec tsc --noEmit`
+printed nothing and exited 0. The full suite was NOT re-run for this commit; `L18`'s
+`pnpm test` result (`Test Files 814 passed | 3 skipped (817)`, `Tests 6135 passed | 4
+skipped (6139)`) stands as the record for this content.
