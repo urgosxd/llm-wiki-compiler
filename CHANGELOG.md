@@ -197,6 +197,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   candidate, which is the reason the option is gone rather than something to
   route around, and the removal is final.
 
+  `review.forced` on a compile result is now always empty, because the forced
+  path was the option's own and left with it: an embedder that receives `[]`
+  should read that as "forced review no longer exists", not as "nothing was
+  forced on this run". The field is deliberately kept, since deleting it would
+  change the public result shape a second time in one release, and a follow-on
+  decides between removing it and giving it a producer.
+
 ### Added
 
 - **`llmwiki ingest` accepts `.docx`, and refuses `.doc` and `.xlsx` with a named
