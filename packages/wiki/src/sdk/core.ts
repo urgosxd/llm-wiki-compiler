@@ -169,9 +169,15 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
         ),
       ),
 
-    lint: () => runQuiet(() => lint(root)),
+    // `env` is forwarded for the reason `compile` states, and lint has a row-aware
+    // path for it to reach: `resolveLintCorpus` resolves the run's pages through
+    // `withRawPageSource(root, env, …)`. Dropping it made a handle bound to Stack B
+    // read the AMBIENT Stack's pages when the process served one (a wrong-tenant
+    // verdict), and fall back to walking `wiki/` on disk when it served none — a tree
+    // a Stack does not have, so a clean report for a corpus nobody read.
+    lint: () => runQuiet(() => lint(root, env)),
 
-    lintByTier: () => runQuiet(() => lintByTier(root)),
+    lintByTier: () => runQuiet(() => lintByTier(root, env)),
 
     // buildContextPack uses `prompt`/`budget` field names (NOT question/tokenBudget).
     // Semantic retrieval is opportunistic: falls back to lexical when no embeddings

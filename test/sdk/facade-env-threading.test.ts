@@ -1,7 +1,7 @@
 /**
  * @file test/sdk/facade-env-threading.test.ts
  * @description `CreateWikiOptions.env` decides the tenant the SDK facade COMPILES
- * into and the tenant its STATUS describes.
+ * into, the tenant its STATUS describes, and the corpus its LINT inspects.
  *
  * ## The condition this pins
  *
@@ -25,7 +25,11 @@
  *    invariant `status().pages.total === listPages().pages.length` and
  *    `status().sources === listSources().sources.length`, checked on BOTH handles
  *    against corpora of different sizes so an ambient read cannot satisfy it by
- *    coincidence.
+ *    coincidence;
+ *  - `lint()`/`lintByTier()` name the empty page of the handle's OWN Stack under both
+ *    ambient conditions that used to break them: a process serving another Stack
+ *    (which answered with that Stack's page) and a process serving none (which walked
+ *    an empty `wiki/` and reported nothing).
  *
  * ## Why the two Stacks are provisioned per test
  *
@@ -43,6 +47,8 @@ import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
 import type { WikiStatus } from "../../packages/wiki/src/status/collect.js";
 import type { Page } from "../../packages/wiki/src/pages/list.js";
 import type { SourceRecord } from "../../packages/wiki/src/sources/store.js";
+import type { LintResult, LintSummary } from "../../packages/wiki/src/linter/types.js";
+import type { TieredLintReportV1 } from "../../packages/wiki/src/linter/tiers.js";
 import { AKS_STACK_ID_ENV_VAR } from "../../packages/wiki/src/dimensions/activation.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";
@@ -99,6 +105,24 @@ async function rowsOf(stack: ProbeStack, table: string): Promise<number> {
     `select count(*)::int as n from ${table} where stack_id = '${stack.harness.stackId}'`,
   );
   return Number((row as { n: number }).n);
+}
+
+/**
+ * A page body SHORT enough that the `empty-page` rule fires on it.
+ *
+ * The rule's threshold is 50 characters, so `short` is below it and a page seeded with
+ * this body is one deterministic finding the test can name.
+ */
+function hollowPageBody(title: string): string {
+  return `---\ntitle: ${title}\nsummary: ${title} summary\n---\n\nshort\n`;
+}
+
+/** The page slugs `empty-page` findings name, read from the path a rule reports. */
+function emptyPageSlugs(results: readonly LintResult[]): string[] {
+  return results
+    .filter((result) => result.rule === "empty-page")
+    .map((result) => path.basename(result.file, ".md"))
+    .sort();
 }
 
 /** Run `fn` with the shipped keyless provider selected, restoring the selection after. */
@@ -189,6 +213,24 @@ async function fill(wiki: Wiki, stack: ProbeStack, titles: string[]): Promise<vo
 let tenants: Tenants;
 let saved: NodeJS.ProcessEnv;
 
+/**
+ * Both tenant handles, with the process bound to the Stack a single-tenant deployment
+ * would serve.
+ *
+ * Every test here needs the SAME arrangement — the ambient Stack is A, the handles
+ * address A and B — and each copy is a chance to bind the wrong one, which is exactly
+ * how a test of this defect can pass while measuring nothing.
+ *
+ * @returns A handle for the ambient Stack A and a handle for the requested Stack B.
+ */
+function handlesBoundToAmbientA(): { stackA: Wiki; stackB: Wiki } {
+  Object.assign(process.env, tenants.bound.env());
+  return {
+    stackA: wikiFor(tenants.boundRoot, tenants.bound),
+    stackB: wikiFor(tenants.requestedRoot, tenants.requested),
+  };
+}
+
 beforeEach(async () => {
   tenants = await provisionTenants();
   saved = { ...process.env };
@@ -215,9 +257,7 @@ describe("SDK facade compile and status honour CreateWikiOptions.env", () => {
   }, 180_000);
 
   it("describes one Stack: status agrees with the handle's own listings", async () => {
-    Object.assign(process.env, tenants.bound.env());
-    const stackA = wikiFor(tenants.boundRoot, tenants.bound);
-    const stackB = wikiFor(tenants.requestedRoot, tenants.requested);
+    const { stackA, stackB } = handlesBoundToAmbientA();
     // Different corpora, so a read of the ambient Stack answers a different number
     // than this handle's own listings do.
     await fill(stackA, tenants.bound, ["Alpha"]);
@@ -253,6 +293,44 @@ describe("SDK facade with no env and no Stack configured", () => {
     expect(status.sources).toBe(1);
     expect((await sourcesOf(wiki)).length).toBe(1);
     expect(status.pages.total).toBe((await pagesOf(wiki)).length);
+
+    // `lint` keeps reading the file corpus too: one page written to disk, named as
+    // the only empty page, and no database anywhere in the answer.
+    await mkdir(path.join(tenants.boundRoot, "wiki", "concepts"), { recursive: true });
+    const hollowPath = path.join(tenants.boundRoot, "wiki", "concepts", "hollow.md");
+    await writeFile(hollowPath, hollowPageBody("Hollow"), "utf-8");
+    expect(emptyPageSlugs(((await wiki.lint()) as LintSummary).results)).toEqual(["hollow"]);
+  }, 180_000);
+});
+
+// `lint`/`lintByTier` DO have a row-aware path — `resolveLintCorpus` resolves the run's
+// pages through `withRawPageSource(root, env, …)` — so a dropped `env` is a real defect,
+// not an inert argument. Both ambient conditions are pinned because they fail
+// DIFFERENTLY: an ambient Stack makes the handle answer for another tenant, and no
+// ambient Stack falls back to a `wiki/` tree the Stack does not have.
+describe("SDK facade lint honours CreateWikiOptions.env", () => {
+  it("reports the empty pages of the Stack the handle names, not the ambient one", async () => {
+    const { stackA, stackB } = handlesBoundToAmbientA();
+    await seedConceptPage(tenants.bound.harness, "hollow-a", hollowPageBody("Hollow A"));
+    await seedConceptPage(tenants.requested.harness, "hollow-b", hollowPageBody("Hollow B"));
+
+    for (const [label, wiki, own] of [
+      ["A", stackA, "hollow-a"],
+      ["B", stackB, "hollow-b"],
+    ] as const) {
+      const summary = (await wiki.lint()) as LintSummary;
+      expect({ stack: label, slugs: emptyPageSlugs(summary.results) }).toEqual({ stack: label, slugs: [own] });
+      const tiered = (await wiki.lintByTier()) as TieredLintReportV1;
+      expect({ stack: label, slugs: emptyPageSlugs(tiered.deterministic) }).toEqual({ stack: label, slugs: [own] });
+    }
+  }, 180_000);
+
+  it("reports the Stack the handle names when the ambient names no Stack", async () => {
+    delete process.env.AKS_STACK_ID;
+    const stackB = wikiFor(tenants.requestedRoot, tenants.requested);
+    await seedConceptPage(tenants.requested.harness, "hollow-b", hollowPageBody("Hollow B"));
+
+    expect(emptyPageSlugs(((await stackB.lint()) as LintSummary).results)).toEqual(["hollow-b"]);
   }, 180_000);
 });
 
