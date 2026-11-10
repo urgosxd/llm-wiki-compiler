@@ -41,7 +41,6 @@ export { registerRulesCommand } from "./commands/rules-register.js";
 export { schemaInitCommand, schemaShowCommand } from "./commands/schema.js";
 export { default as statusCommand } from "./commands/status.js";
 export { default as viewCommand } from "./commands/view.js";
-export { default as hostCommand } from "./commands/host.js";
 export { default as visualizeCommand } from "./commands/visualize.js";
 export type { VisualizeOptions } from "./commands/visualize.js";
 export { default as watchCommand } from "./commands/watch.js";

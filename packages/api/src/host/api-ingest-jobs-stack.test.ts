@@ -1,5 +1,5 @@
 /**
- * @file test/host/api-ingest-jobs-stack.test.ts
+ * @file packages/api/src/host/api-ingest-jobs-stack.test.ts
  * @description `?stackId=` on the job reads: the two ways it could LIE.
  *
  * ## Why these cases exist
@@ -17,11 +17,11 @@
  *      than invent a 404 for a Stack it never checked.
  */
 import { describe, expect, it } from "vitest";
-import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
-import { startHost } from "../../packages/wiki/src/host/server.js";
-import { createJobRegistry } from "../../packages/wiki/src/services/ingest/jobs/registry.js";
-import { scratchProjectRoot } from "../fixtures/host-scratch.js";
-import { useStackEnv } from "../fixtures/stack-env.js";
+import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
+import { startHost } from "./server.js";
+import { createJobRegistry } from "@repo/wiki/job-registry";
+import { scratchProjectRoot } from "../../../../test/fixtures/host-scratch.js";
+import { useStackEnv } from "../../../../test/fixtures/stack-env.js";
 
 /** A Stack id the fake durable store considers real. */
 const KNOWN = "11111111-1111-4111-8111-111111111111";

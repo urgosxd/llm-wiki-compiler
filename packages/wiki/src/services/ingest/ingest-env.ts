@@ -1,14 +1,22 @@
 /**
- * @file src/host/ingest-env.ts
+ * @file src/services/ingest/ingest-env.ts
  * @description Resolve the environment one ingest request should run under.
  *
  * ## Why this is a module instead of two local helpers
  *
- * The same three lines were written twice — once in `host/api.ts` for the synchronous
- * route and once in `services/ingest/jobs/run.ts` for the background job — because the
- * request and the job live on opposite sides of an HTTP response. Two copies is fine;
- * two copies that could drift on WHICH environment variable they set is not, since a
- * drift would silently send one route's pages to the wrong tenant.
+ * The same three lines were written twice — once in the host's `/api/ingest` route
+ * (`packages/api`'s `host/api.ts` today) and once in `services/ingest/jobs/run.ts` for
+ * the background job — because the request and the job live on opposite sides of an
+ * HTTP response. Two copies is fine; two copies that could drift on WHICH environment
+ * variable they set is not, since a drift would silently send one route's pages to the
+ * wrong tenant.
+ *
+ * ## Why it lives in `@repo/wiki` and not beside the host that calls it
+ *
+ * Both sides need it and neither may import the other: `wiki → api` is forbidden, so a
+ * copy under `packages/api` would force the wiki-side job runner to import the joining
+ * package. It is reached as `@repo/wiki/ingest-env`, which is an `api → wiki` edge —
+ * the permitted direction.
  *
  * ## Why it returns a copy rather than mutating
  *
@@ -21,7 +29,7 @@
  * When no Stack is named the process environment is returned as-is, so a single-Stack
  * deployment keeps the exact behaviour it had.
  */
-import { AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+import { AKS_STACK_ID_ENV_VAR } from "../../dimensions/activation.js";
 
 /**
  * The environment an ingest should resolve its Stack from.

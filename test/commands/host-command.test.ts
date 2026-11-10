@@ -1,134 +1,79 @@
 /**
  * @file test/commands/host-command.test.ts
- * @description `llmwiki host` must actually bind a listener that serves the
+ * @description The `host` mode must actually bind a listener that serves the
  * mutation endpoints.
  *
- * WHY THIS EXISTS. Before this command, NOTHING started the unified host:
+ * WHY THIS EXISTS. Before a `host` mode existed, NOTHING started the unified host:
  * `llmwiki view` started the older viewer-only server, `llmwiki serve` is MCP over
- * stdio, and `startHost` was reachable only from tests. A surface no command can
- * start is not a product surface, and a test that only asserted "the function
- * exists" would not have caught that.
+ * stdio, and `startHost` was reachable only from tests. A surface no entry can start
+ * is not a product surface, and a test that only asserted "the function exists"
+ * would not have caught that.
  *
- * Each case therefore drives the COMMAND and speaks HTTP to whatever it bound,
- * rather than calling `startHost` directly — the command is the thing made of new
- * behaviour.
+ * WHY IT NOW SPAWNS THE SHIPPED ENTRY INSTEAD OF IMPORTING A COMMAND. This suite
+ * used to import `packages/wiki/src/commands/host.ts`, the CLI's dispatcher for
+ * `startHost`. That command is deleted: the dispatch moved into `@repo/api`'s
+ * launcher, which is the process `docker/entry.sh` execs, so the subject worth
+ * testing is the entry that ships — `node dist/api.js host --no-graph`. The spawn
+ * goes through the shared `run-cli-server` fixture, which is the one place that
+ * waits for the readiness line and tears the child down.
+ *
+ * Every assertion the in-process version made is kept: a real listener, the
+ * mutation routes answering 200, the `--no-graph` opt-out leaving the graph routes
+ * unmounted, and the privacy gate rejecting a lone `--host`. `--no-graph` is not a
+ * new narrowing here — the command was already invoked with `noGraph: true` in this
+ * suite before the move. The exit code on a rejected bind is asserted from the
+ * fixture's own early-exit report, which a rejected promise could not show.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { useStackEnv } from "../fixtures/stack-env.js";
+import { useViewerProcessLifecycle } from "../fixtures/run-cli-server.js";
 
-/** Roots created by this suite, so each test cleans up after itself. */
-const created: string[] = [];
-
-/** A scratch project to stand in as the CLI's working directory. */
+/** A scratch project to stand in as the launcher's working directory. */
 async function scratchProject(): Promise<string> {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "host-command-")));
   await mkdir(path.join(root, "sources"), { recursive: true });
-  created.push(root);
   return root;
 }
 
-/** Capture the readiness line instead of letting it reach the test output. */
-function captureStdout(): { lines: string[]; restore: () => void } {
-  const lines: string[] = [];
-  const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-    lines.push(String(chunk));
-    return true;
-  });
-  return { lines, restore: () => spy.mockRestore() };
-}
-
-/** Extract the bound URL from the command's readiness line. */
-function readyUrl(lines: readonly string[]): string {
-  const line = lines.find((entry) => entry.includes("Host ready at"));
-  if (line === undefined) throw new Error(`no readiness line in: ${lines.join("")}`);
-  return (line.match(/http:\/\/\S+/) ?? [])[0] ?? "";
-}
-
-/**
- * The real `process.exit` for the duration of one case.
- *
- * A CLI shutdown ends in `process.exit`, which is correct in production and fatal
- * in a worker: Vitest replaces `process.exit` with a stub that THROWS, and an
- * escaping throw is an unhandled error, so `test:affected` exits non-zero on a
- * suite whose every assertion passed. The spy is held here so `stop()` can wait
- * until the shutdown actually reached it — restoring it on a timer would race a
- * fire-and-forget signal handler and let the real exit run.
- */
-let exitSpy: ReturnType<typeof vi.spyOn>;
-
-beforeEach(() => {
-  exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
-});
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
-
-/**
- * Start the host command on a free port and hand back its URL.
- *
- * Kept as one helper so both cases drive the command the same way: the point of the
- * suite is the command's behaviour, and duplicating the boot dance in each case
- * would let the two drift onto different setups.
- */
-async function startHostCommand(): Promise<{ url: string; stop: () => Promise<void> }> {
-  const { default: hostCommand } = await import("../../packages/wiki/src/commands/host.js");
-  const out = captureStdout();
-  // Kept un-awaited: the command resolves only when the process is asked to stop.
-  const running = hostCommand({ port: 0, noGraph: true });
-  await vi.waitFor(() => expect(() => readyUrl(out.lines)).not.toThrow(), { timeout: 20_000 });
-  const url = readyUrl(out.lines);
-  out.restore();
-  return {
-    url,
-    stop: async () => {
-      process.emit("SIGTERM");
-      await running.catch(() => undefined);
-      // `registerShutdown` installs with `process.once` and closes the listener
-      // asynchronously, so the exit is not synchronous with the signal. Waiting for
-      // the spy to be reached is what keeps the mock installed exactly until the
-      // last thing the shutdown does, instead of guessing with a timeout.
-      await vi.waitFor(() => expect(exitSpy).toHaveBeenCalled(), { timeout: 20_000 });
-    },
-  };
-}
-
-describe("the host command", () => {
-  // Every dimension is Postgres-backed: `host` cannot start without a tenant.
+describe("the host mode of the surviving entry", () => {
+  // Every dimension is Postgres-backed: `host` cannot start without a tenant. The
+  // Stack is installed into `process.env`, which the spawned child inherits.
   useStackEnv("host-command");
+  const { start } = useViewerProcessLifecycle();
+
   it("binds a listener and serves the mutation endpoints", async () => {
-    process.chdir(await scratchProject());
-    const host = await startHostCommand();
+    const host = await start(await scratchProject());
+    const base = `http://${host.host}:${host.port}`;
     try {
-      // The endpoint exists and answers like a real API, not a 404.
-      expect((await fetch(`${host.url}/api/health`)).status).toBe(200);
-      expect((await fetch(`${host.url}/api/compile`, { method: "POST" })).status).toBe(200);
+      // The endpoints exist and answer like a real API, not a 404.
+      expect((await fetch(`${base}/api/health`)).status).toBe(200);
+      expect((await fetch(`${base}/api/compile`, { method: "POST" })).status).toBe(200);
     } finally {
-      await host.stop();
+      await host.kill();
     }
   }, 60_000);
 
   it("omits the graph routes when the graph is disabled", async () => {
-    process.chdir(await scratchProject());
-    const host = await startHostCommand();
+    const host = await start(await scratchProject());
+    const base = `http://${host.host}:${host.port}`;
     try {
       // `--no-graph` is an explicit opt-out, so its routes must be absent rather
       // than failing at request time.
-      expect((await fetch(`${host.url}/health`)).status).toBe(404);
+      expect((await fetch(`${base}/health`)).status).toBe(404);
     } finally {
-      await host.stop();
+      await host.kill();
     }
   }, 60_000);
 
   it("rejects a host flag supplied without --allow-lan", async () => {
-    const { default: hostCommand } = await import("../../packages/wiki/src/commands/host.js");
-    // The privacy gate is shared with `view`; this proves the host did not
-    // grow its own, weaker copy.
-    await expect(hostCommand({ port: 0, host: "192.168.1.10" })).rejects.toThrow(
-      /--host and --allow-lan must be supplied together/,
+    // The privacy gate is shared with the viewer command; this proves the host did
+    // not grow its own, weaker copy. A rejected bind never becomes ready, so the
+    // fixture reports the child's exit instead of a URL.
+    await expect(start(await scratchProject(), ["--port", "0", "--host", "192.168.1.10"])).rejects.toThrow(
+      /code=1[\s\S]*--host and --allow-lan must be supplied together/,
     );
   }, 30_000);
 });

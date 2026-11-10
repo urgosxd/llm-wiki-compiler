@@ -32,7 +32,7 @@
 import { LockBusyError } from "../../../utils/lock.js";
 import { compileAndReport } from "../../../compiler/index.js";
 import { ingestSource } from "../service.js";
-import { buildIngestEnv } from "../../../host/ingest-env.js";
+import { buildIngestEnv } from "../ingest-env.js";
 import { recordJobFailure } from "./failure-log.js";
 import type { JobRegistry } from "./registry.js";
 import type {

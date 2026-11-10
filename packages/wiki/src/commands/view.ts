@@ -13,7 +13,7 @@
 
 import { spawn } from "child_process";
 import { startViewer } from "../viewer/server.js";
-import { buildReadyUrl, registerShutdown, resolveBindConfig } from "./serve-bind.js";
+import { buildReadyUrl, registerShutdown, resolveBindConfig } from "../serve-bind.js";
 
 /** Parsed CLI options. */
 interface ViewCommandOptions {

@@ -43,20 +43,20 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
-import { writeJson, writeJsonError } from "../viewer/respond.js";
-import { ingestSource } from "../services/ingest/service.js";
-import { compileAndReport } from "../compiler/index.js";
-import { LockBusyError } from "../utils/lock.js";
-import { applySecurityHeaders, validateOriginHeaders } from "../viewer/server.js";
-import type { ViewerServerConfig } from "../viewer/server.js";
-import type { JobRegistry } from "../services/ingest/jobs/registry.js";
-import { runIngestJob } from "../services/ingest/jobs/run.js";
-import type { IngestJobAccepted } from "../services/ingest/jobs/types.js";
-import type { CompileResult, IngestResult } from "../utils/types.js";
+import { writeJson, writeJsonError } from "@repo/wiki/viewer-respond";
+import { ingestSource } from "@repo/wiki/ingest-service";
+import { compileAndReport } from "@repo/wiki/compiler";
+import { LockBusyError } from "@repo/wiki/utils-lock";
+import { applySecurityHeaders, validateOriginHeaders } from "@repo/wiki/viewer-server";
+import type { ViewerServerConfig } from "@repo/wiki/viewer-server";
+import type { JobRegistry } from "@repo/wiki/job-registry";
+import { runIngestJob } from "@repo/wiki/job-run";
+import type { IngestJobAccepted } from "@repo/wiki/job-types";
+import type { CompileResult, IngestResult } from "@repo/wiki/utils-types";
 import { stackIdProblem } from "@repo/foundation";
-import { buildIngestEnv } from "./ingest-env.js";
-import { AKS_DATABASE_URL_ENV_VAR, createDimensionsDatabase } from "../dimensions/activation.js";
-import { stackExists } from "../services/stacks/stack-store.js";
+import { buildIngestEnv } from "@repo/wiki/ingest-env";
+import { AKS_DATABASE_URL_ENV_VAR, createDimensionsDatabase } from "@repo/wiki/dimensions-activation";
+import { stackExists } from "@repo/wiki/stack-store";
 
 /** Largest request body these endpoints accept, in bytes. */
 const MAX_BODY_BYTES = 1024 * 64;

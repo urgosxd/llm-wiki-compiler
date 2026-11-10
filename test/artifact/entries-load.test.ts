@@ -140,7 +140,6 @@ const COMPILER_CLI_ENTRY: PublishedEntry = {
     compileAndReport: "function",
     lint: "function",
     compileCommand: "function",
-    hostCommand: "function",
     DEFAULT_SAMPLE_SIZE: "number",
     STATE_FILE: "string",
     output: "object",

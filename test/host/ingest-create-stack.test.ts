@@ -20,7 +20,7 @@
  * code: a 202 proves the request was accepted, never that it was routed.
  */
 import { describe, it, expect } from "vitest";
-import { buildIngestEnv } from "../../packages/wiki/src/host/ingest-env.js";
+import { buildIngestEnv } from "../../packages/wiki/src/services/ingest/ingest-env.js";
 
 const HOST_STACK = "b8b8e801-b423-4a32-ab0b-e1ea2d82ead8";
 const OTHER_STACK = "d61bf181-efb1-4a9c-a39b-1b986313e5c1";

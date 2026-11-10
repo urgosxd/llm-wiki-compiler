@@ -1,5 +1,5 @@
 /**
- * @file test/fixtures/running-host.ts
+ * @file packages/api/src/host/running-host.ts
  * @description Start a real host on a scratch root and hand back its base URL.
  *
  * ## Why this is shared rather than written twice
@@ -17,8 +17,8 @@
 import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
-import { startHost, type HostHandle } from "../../packages/wiki/src/host/server.js";
+import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
+import { startHost, type HostHandle } from "./server.js";
 
 /** A running host plus the base URL to reach it. */
 export interface RunningHost {

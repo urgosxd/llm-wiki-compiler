@@ -1,12 +1,24 @@
 /**
- * @file src/commands/serve-bind.ts
- * @description Shared bind/readiness/shutdown plumbing for the commands that
- * start a long-lived HTTP listener (`view` and `host`).
+ * @file src/serve-bind.ts
+ * @description Shared bind/readiness/shutdown plumbing for the modules that
+ * start a long-lived HTTP listener (the `view` command and the joining package's
+ * `host` mode).
  *
- * Extracted from `src/commands/view.ts` so a SECOND listener command does not
- * duplicate the privacy gate. That duplication is the risk worth avoiding: the
+ * Extracted from `src/commands/view.ts` so a SECOND listener does not duplicate
+ * the privacy gate. That duplication is the risk worth avoiding: the
  * `--host`/`--allow-lan` symmetry and the wildcard rejection are security rules,
  * and two copies of a security rule eventually disagree. One module owns them.
+ *
+ * ## Why it sits at the package root and not under `commands/`
+ *
+ * The launcher that starts the second listener lives in the joining package
+ * (`packages/api`), and the
+ * `commands/**` tree is CLI-only surface that leaves with the CLI. A gate shared
+ * by the launcher and a surviving command is neither CLI-only nor the launcher's:
+ * moving it into `packages/api` would force the `view` command to import the joining
+ * package (`wiki → api`, forbidden by the topology), and copying it would recreate
+ * the duplicated security rule this module exists to prevent. So it stays in
+ * `@repo/wiki`, reachable from both sides as `@repo/wiki/serve-bind`.
  *
  * Nothing here is viewer-specific; the names were the only viewer-ish thing about
  * it.

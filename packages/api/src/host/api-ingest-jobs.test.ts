@@ -1,5 +1,5 @@
 /**
- * @file test/host/api-ingest-jobs.test.ts
+ * @file packages/api/src/host/api-ingest-jobs.test.ts
  * @description The async contract: 202 with a job id, and real reads afterwards.
  *
  * WHY THESE ASSERTIONS. `{"async": true}` changes WHEN the work happens, so the
@@ -13,11 +13,11 @@
  *      the reason they are registered there and not beside the mutation route.
  */
 import { describe, expect, it } from "vitest";
-import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
-import { startHost } from "../../packages/wiki/src/host/server.js";
-import { createJobRegistry } from "../../packages/wiki/src/services/ingest/jobs/registry.js";
-import { scratchProjectRoot } from "../fixtures/host-scratch.js";
-import { useStackEnv } from "../fixtures/stack-env.js";
+import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
+import { startHost } from "./server.js";
+import { createJobRegistry } from "@repo/wiki/job-registry";
+import { scratchProjectRoot } from "../../../../test/fixtures/host-scratch.js";
+import { useStackEnv } from "../../../../test/fixtures/stack-env.js";
 
 /** A scratch project with the sources/ directory the services expect. */
 const projectRoot = () => scratchProjectRoot("host-jobs-");

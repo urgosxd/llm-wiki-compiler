@@ -28,8 +28,8 @@
  * failure is reported to THAT request without affecting its neighbours.
  */
 
-import type { ViewerSnapshot } from "../viewer/types.js";
-import { buildViewerSnapshot } from "../viewer/snapshot.js";
+import type { ViewerSnapshot } from "@repo/wiki/viewer-types";
+import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
 
 /** One project the host serves. */
 export interface TenantEntry {

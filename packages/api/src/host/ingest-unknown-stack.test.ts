@@ -1,5 +1,5 @@
 /**
- * @file test/host/ingest-unknown-stack.test.ts
+ * @file packages/api/src/host/ingest-unknown-stack.test.ts
  * @description An ingest naming a Stack that does not exist is refused, not queued.
  *
  * ## The defect
@@ -26,11 +26,11 @@
  * deleted. `withStackEnv` provisions one, and the absent case is a well-formed UUID.
  */
 import { describe, it, expect } from "vitest";
-import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
-import { startHost } from "../../packages/wiki/src/host/server.js";
-import { createJobRegistry } from "../../packages/wiki/src/services/ingest/jobs/registry.js";
-import { scratchProjectRoot } from "../fixtures/host-scratch.js";
-import { withStackEnv } from "../fixtures/stack-env.js";
+import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
+import { startHost } from "./server.js";
+import { createJobRegistry } from "@repo/wiki/job-registry";
+import { scratchProjectRoot } from "../../../../test/fixtures/host-scratch.js";
+import { withStackEnv } from "../../../../test/fixtures/stack-env.js";
 
 /** A well-formed UUID that names no Stack. */
 const ABSENT_STACK = "00000000-0000-4000-8000-000000000000";

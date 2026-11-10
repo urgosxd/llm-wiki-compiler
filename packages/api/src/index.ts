@@ -27,10 +27,18 @@
  * from the published facade that it does not own, and ships only as part of the
  * root bundle.
  *
- * ## No exports yet
+ * ## What is here today
  *
- * The package exists so the topology can be stated, linted and gated before
- * anything moves into it. The moves that populate it are separate work units;
- * until then an empty entry point is the honest state, not a placeholder to
- * fill with a speculative API.
+ * `main.ts` is the container launcher (`host` and `serve`), and `host/` is the
+ * unified listener it dispatches to: one HTTP server mounting the wiki viewer, the
+ * wiki mutation endpoints and the KG graph sub-app, plus the MCP-over-HTTP mount
+ * and the tenant resolver. `serve-bind.ts` is NOT here: the bind/readiness/privacy
+ * gate is shared with the surviving `view` command and lives in `@repo/wiki`, so
+ * moving it would have created a `wiki → api` edge. The modules the listener needs
+ * from the wiki side are reached through that package's explicit `exports`
+ * subpaths; nothing here is a re-export barrel.
+ *
+ * This is a private, bundled entry: `tsup` emits it as the root `dist/api.js`, so
+ * the package declares no public API and its `exports` map names only `.` for the
+ * topology statement.
  */

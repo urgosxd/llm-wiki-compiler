@@ -1,5 +1,5 @@
 /**
- * @file test/host/host-server.test.ts
+ * @file packages/api/src/host/host-server.test.ts
  * @description One listener, two sub-apps, two security regimes — proven by
  * talking to the running host instead of asserting on internals.
  *
@@ -16,7 +16,7 @@
  *     reachable without credentials (fail-open), in the same process.
  */
 import { describe, expect, it } from "vitest";
-import { runningHost as startRunningHost, type RunningHost } from "../fixtures/running-host.js";
+import { runningHost as startRunningHost, type RunningHost } from "./running-host.js";
 
 /**
  * Start a host on a scratch project root.

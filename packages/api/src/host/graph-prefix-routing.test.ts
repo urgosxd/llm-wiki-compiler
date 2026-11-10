@@ -1,5 +1,5 @@
 /**
- * @file test/host/graph-prefix-routing.test.ts
+ * @file packages/api/src/host/graph-prefix-routing.test.ts
  * @description The host decides sub-app ownership by PREFIX, and nothing pinned
  * that decision for a prefix the oracle does not know about.
  *
@@ -24,7 +24,7 @@
  * FastAPI's `{detail}`.
  */
 import { describe, expect, it } from "vitest";
-import { runningHost } from "../fixtures/running-host.js";
+import { runningHost } from "./running-host.js";
 
 /** A UUID that resolves to no Stack, so the graph app fails INSIDE the handler. */
 const UNKNOWN_STACK = "00000000-0000-0000-0000-000000000000";

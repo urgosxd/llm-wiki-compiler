@@ -25,13 +25,14 @@
  *    the only form Node resolves at runtime, so such a specifier makes the
  *    shipped bundle import raw TypeScript that is not on the consumer's disk: the
  *    failure that broke the build twice. Asserted at ZERO.
- * 2. as DEAD DATA — the private `packages/wiki/package.json` manifest, inlined by
- *    esbuild from `packages/wiki/src/commands/host.ts:76`'s
- *    `require("../../package.json")`. It is serialized into the bundle as an
- *    object literal and never enters module resolution. Its TOTAL occurrence count
- *    is RATCHETED instead of zeroed, because a literal zero-match is not reachable
- *    without touching a consumer-visible version-reporting path that is about to
- *    move (see the pin's own comment).
+ * 2. as DEAD DATA — a private manifest serialized into a bundle as an object
+ *    literal, which never enters module resolution. The count is RATCHETED instead
+ *    of only zeroed, because an assembled specifier (`"@repo/" + "kg"`) leaves the
+ *    bare `@repo/` in the text and shows up here as a rise. This shape is currently
+ *    EMPTY: the one site that produced it, `packages/wiki/src/commands/host.ts`'s
+ *    inlined `packages/wiki/package.json`, left with the CLI removal, and the pin is
+ *    now 0 rather than a frozen copy of whatever the tree then held (see the pin's
+ *    own comment).
  *
  * ## Fail closed, per root
  *
@@ -153,24 +154,28 @@ const INJECTED_SOURCE_SUFFIX = '\nimport "@repo/kg";\n';
 const INJECTED_SPECIFIER = "@repo/kg";
 
 /**
- * The pinned TOTAL count of `@repo/` occurrences across both build trees: 2,
- * measured, both in `packages/llmwiki-core/dist/compiler-cli.js`.
+ * The pinned TOTAL count of `@repo/` occurrences across both build trees: 0.
  *
- * WHY THE COUNT EXISTS, AND WHY IT MUST BE LOWERED TO 0. Both occurrences are a
- * serialized `packages/wiki/package.json` (`name: "@repo/wiki"` and
- * `"@repo/foundation": "workspace:*"`), which esbuild inlines as DEAD DATA from
+ * WHY THE COUNT EXISTS. `@repo/` can reach a bundle in two shapes and only one of
+ * them is a runtime bug: an IMPORT-POSITION specifier (asserted at zero above, the
+ * one that bites) and DEAD DATA serialized into the bundle as an object literal,
+ * which never enters module resolution. The total is RATCHETED on top of the zero
+ * assertion so the second shape cannot grow unobserved — an assembled specifier
+ * such as `"@repo/" + "kg"` leaves the literal `@repo/` in the text and shows up
+ * here as a rise, which the import-position assertion cannot see.
+ *
+ * WHY IT IS 0, AND WHY IT WAS 2 UNTIL THE CLI REMOVAL. Both former occurrences were
+ * a serialized `packages/wiki/package.json` (`name: "@repo/wiki"` and
+ * `"@repo/foundation": "workspace:*"`), inlined by esbuild as dead data from
  * `packages/wiki/src/commands/host.ts:76`'s `require("../../package.json")`. That
- * data never enters module resolution, so it cannot break a consumer's install the
- * way an import-position specifier does — which is exactly why the zero assertion
- * above is the one that bites and this count is only ratcheted.
- *
- * `packages/wiki/src/commands/host.ts` is group A: it leaves with the CLI removal,
- * and its `host` entry moves into `@repo/api`. WHEN IT LEAVES, LOWER THIS PIN TO 0
- * rather than re-baselining it to whatever the tree then holds. A frozen count
- * with no explanation is how a ratchet becomes permanent, so the reason lives
- * here, where the next reader meets it, instead of in an archaeology session.
+ * command was the CLI's dispatcher for `startHost`; deleting it moved the `host`
+ * mode into `@repo/api`, whose launcher reads the version with a runtime
+ * `new URL("../package.json", import.meta.url)` instead of an inlined manifest, so
+ * nothing private is serialized any more. The pin was lowered to 0, as the comment
+ * here instructed, rather than re-baselined to whatever the tree then held: a
+ * frozen count with no explanation is how a ratchet becomes permanent.
  */
-const PINNED_TOTAL_PRIVATE_OCCURRENCES = 2;
+const PINNED_TOTAL_PRIVATE_OCCURRENCES = 0;
 
 /** One private specifier found in import position, with the file that holds it. */
 interface ImportPositionViolation {

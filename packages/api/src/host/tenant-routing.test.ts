@@ -1,5 +1,5 @@
 /**
- * @file test/host/tenant-routing.test.ts
+ * @file packages/api/src/host/tenant-routing.test.ts
  * @description One listener, several projects — and each project's requests are
  * answered from ITS OWN snapshot.
  *
@@ -17,9 +17,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
-import { startHost } from "../../packages/wiki/src/host/server.js";
-import { clearTenantSnapshots, tenantSlugOf } from "../../packages/wiki/src/host/tenants.js";
+import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
+import { startHost } from "./server.js";
+import { clearTenantSnapshots, tenantSlugOf } from "./tenants.js";
 
 /** A project whose single concept page is named after `label`. */
 async function projectNamed(label: string): Promise<string> {

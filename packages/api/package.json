@@ -14,6 +14,8 @@
     "dotenv": "^17.4.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@repo/foundation": "workspace:*",
     "@repo/kg": "workspace:*",
     "@repo/wiki": "workspace:*"
   }

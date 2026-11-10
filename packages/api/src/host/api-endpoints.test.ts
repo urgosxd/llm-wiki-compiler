@@ -1,5 +1,5 @@
 /**
- * @file test/host/api-endpoints.test.ts
+ * @file packages/api/src/host/api-endpoints.test.ts
  * @description The official mutation endpoints must answer the status codes a
  * client can act on, not just "something went wrong".
  *
@@ -17,10 +17,10 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildViewerSnapshot } from "../../packages/wiki/src/viewer/snapshot.js";
-import { startHost } from "../../packages/wiki/src/host/server.js";
-import { acquireLock, releaseLock } from "../../packages/wiki/src/utils/lock.js";
-import { useStackEnv } from "../fixtures/stack-env.js";
+import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
+import { startHost } from "./server.js";
+import { acquireLock, releaseLock } from "@repo/wiki/utils-lock";
+import { useStackEnv } from "../../../../test/fixtures/stack-env.js";
 
 /** A scratch project with the sources/ directory the services expect. */
 async function projectRoot(): Promise<string> {

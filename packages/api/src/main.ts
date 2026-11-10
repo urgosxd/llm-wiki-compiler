@@ -16,9 +16,11 @@
  * ## It is a dispatcher, not a second implementation
  *
  * Every behaviour below is reached through the module that already owns it:
- * `startHost` builds the listener, `buildViewerSnapshot` freezes the served
- * surface, `resolveBindConfig` owns the `--host`/`--allow-lan` privacy gate and
- * the wildcard rejection, and the MCP server owns its own tools and transport.
+ * `startHost` builds the listener (now in-package, at `./host/server.ts`, because
+ * the listener is the one module that mounts the knowledge graph and therefore the
+ * one place the wiki and kg dimensions meet), `buildViewerSnapshot` freezes the
+ * served surface, `resolveBindConfig` owns the `--host`/`--allow-lan` privacy gate
+ * and the wildcard rejection, and the MCP server owns its own tools and transport.
  * Re-implementing any of those here would let the container and an in-process
  * caller drift, and the privacy gate is a security rule that must have ONE copy.
  *
@@ -59,7 +61,7 @@ import "./load-environment.js";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createWikiMcpServer, startMCPServer } from "@repo/wiki/mcp";
-import { startHost } from "@repo/wiki/host";
+import { startHost } from "./host/server.js";
 import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
 import { buildReadyUrl, registerShutdown, resolveBindConfig, type BindOptions } from "@repo/wiki/serve-bind";
 

@@ -46,30 +46,43 @@
  * sole ingest mechanism, so a boot has nothing pending to finish. Startup used to
  * reconcile an `ingest_outbox` row under the mutation lock; both the table and the
  * reconciler are gone, and the returned outcome was discarded anyway.
+ *
+ * ## Why this module lives in `@repo/api`
+ *
+ * It mounts the knowledge graph, so it is the one place in the listener stack that
+ * names BOTH dimensions: `createApp` comes from `@repo/kg/server` while the viewer,
+ * the mutation endpoints and the ingest job machinery come from `@repo/wiki`. While
+ * this file sat in `packages/wiki/src/host/`, that join lived inside `@repo/wiki`
+ * and the topology said the opposite — `wiki ↔ kg` is forbidden in both directions
+ * and only `@repo/api` may hold both. Moving the directory moved the edge, not the
+ * behaviour: every line of listener logic is unchanged. `api.ts`, `mcp-http.ts` and
+ * `tenants.ts` moved with it because they are parts of the same listener rather than
+ * CLI-only surface, and the wiki modules they need are reached through the explicit
+ * `@repo/wiki/*` subpaths in that package's `exports` map.
  */
 import http from "node:http";
-import { listenOn } from "../utils/http-listen.js";
+import { listenOn } from "@repo/wiki/http-listen";
 import type { AddressInfo } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createApp } from "@repo/kg/server";
 
 /** The graph sub-app type, derived so this module needs no direct express import. */
 type GraphApp = ReturnType<typeof createApp>;
-import { createViewerHandler, type ViewerRequestHandler } from "../viewer/server.js";
+import { createViewerHandler, type ViewerRequestHandler } from "@repo/wiki/viewer-server";
 import { handleApiRequest, type ApiDeps } from "./api.js";
 import { handleMcpHttp, isMcpHttpPath } from "./mcp-http.js";
-import { createJobRegistry, type JobRegistry } from "../services/ingest/jobs/registry.js";
-import { createDurableJobRegistry } from "../services/ingest/jobs/durable-registry.js";
-import { listIngestJobs, readIngestJob } from "../services/ingest/jobs/job-store.js";
-import { stackExists } from "../services/stacks/stack-store.js";
-import type { DurableJobReads } from "../viewer/api-ingest-jobs.js";
+import { createJobRegistry, type JobRegistry } from "@repo/wiki/job-registry";
+import { createDurableJobRegistry } from "@repo/wiki/job-durable-registry";
+import { listIngestJobs, readIngestJob } from "@repo/wiki/job-store";
+import { stackExists } from "@repo/wiki/stack-store";
+import type { DurableJobReads } from "@repo/wiki/viewer-api-ingest-jobs";
 import {
   AKS_STACK_ID_ENV_VAR,
   createDimensionsDatabase,
-} from "../dimensions/activation.js";
+} from "@repo/wiki/dimensions-activation";
 import { resolveTenant, tenantSlugOf, type TenantEntry } from "./tenants.js";
-import { writeJsonError } from "../viewer/respond.js";
-import type { ViewerSnapshot } from "../viewer/types.js";
+import { writeJsonError } from "@repo/wiki/viewer-respond";
+import type { ViewerSnapshot } from "@repo/wiki/viewer-types";
 
 /** Default port when the caller does not pin one. `0` asks the OS for a free port. */
 const DEFAULT_HOST_PORT = 4173;

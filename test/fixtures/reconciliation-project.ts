@@ -4,7 +4,7 @@
  * progress output. Keep those two side effects stubbed consistently while each
  * suite controls its own extraction and page-generation responses.
  */
-import { beforeEach, vi } from "vitest";
+import { beforeEach, vi, type MockInstance } from "vitest";
 import { AnthropicProvider } from "../../packages/wiki/src/providers/anthropic.js";
 import * as embeddings from "../../packages/wiki/src/utils/embeddings.js";
 import { useCompileProject, type CompileProjectCtx, type CompileProjectOptions } from "./compile-project.js";
@@ -20,7 +20,10 @@ export function useReconciliationProject(options: CompileProjectOptions): Compil
 }
 
 /** Let each regression control extraction and generation independently. */
-export function mockReconciliationProvider() {
+export function mockReconciliationProvider(): {
+  toolCall: MockInstance<typeof AnthropicProvider.prototype.toolCall>;
+  complete: MockInstance<typeof AnthropicProvider.prototype.complete>;
+} {
   return {
     toolCall: vi.spyOn(AnthropicProvider.prototype, "toolCall"),
     complete: vi.spyOn(AnthropicProvider.prototype, "complete"),

@@ -26,7 +26,8 @@
  * injected. A static edge closed one: `host/server.ts -> mcp-http.ts ->
  * mcp/server.ts -> mcp/tools.ts -> compiler-cli.ts -> commands/host.ts ->
  * host/server.ts`. The chain ran through `compiler-cli.ts`, a public barrel that
- * re-exports `hostCommand`, so any import path from the host into the MCP tools
+ * re-exported `hostCommand` (since deleted, together with the `host` command the
+ * launcher replaced), so any import path from the host into the MCP tools
  * re-entered the host module. `fallow` reported exactly those three cycles (one
  * per tools barrel: tools, okf-tools, resources) the moment the static import
  * existed, and a dynamic `import()` did not help because the cycle is still visible
