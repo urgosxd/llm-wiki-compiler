@@ -30,7 +30,7 @@ S12. The graph must be *proven*, not asserted: a checked-in test asserts the cac
 
 ## Tasks
 
-- T0 | S1-S12 | worker | record the decline decision with its measurements | <sha>
+- T0 | S1-S12 | worker | record the decline decision with its measurements | 3e0ed441d59b6582c8e784d7b2ddde967c9bf762
 - T1 | S1, S2, S3, S4, S5, S12 | worker | feature document, then the contract test | dropped (adoption declined — turbo would run no gate and would narrow the collected test set)
 - T2 | S1, S2, S3, S4, S6, S12 | worker | `turbo.json`, the `turbo` devDependency, the additive `graph` script, `docs/turborepo.md`, the `AGENTS.md` subsection, the resolved dry-run proof | dropped (adoption declined — turbo would run no gate and would narrow the collected test set)
 - T3 | S4, S5, S8, S9 | worker | focused gates (`tsc`, `typecheck:tests`, `lint`, `fallow:ci`, `test:affected`) with literal exit codes | dropped (adoption declined — turbo would run no gate and would narrow the collected test set)
