@@ -118,6 +118,7 @@ T9 | S5, S6, S7 | worker | done (d1441ba32dca6b7dc2a04067b102c57500db16e7) — D
 T10 | S11 | worker | done (d1441ba32dca6b7dc2a04067b102c57500db16e7) — `CHANGELOG.md` Unreleased/Changed entry for the removal and the throwing guard it leaves behind.
 T11 | S12, S13 | verify | done (d1441ba32dca6b7dc2a04067b102c57500db16e7) — Final independent verification pass over the committed tree: full suite, every static gate, executed guard proof, docs census. Measurements in L6.
 T12 | S14 | — | done — PQ1 recorded as an open product question in L7 with the ruling that keeps the query option.
+T13 | S12, S13 | worker | done (4c7fde21 + c4cb0b70 + this docs(odd) commit) — Authorised lint-decrease rebaseline (`eslint-baseline.json`, one number, ratchet now 565), the `review.forced` CHANGELOG sentence, and the twelve-item census-error record in L8. The viewer advert was NOT edited here: `fix/stop-advertising-removed-surfaces` already rewrites the same lines to the same effect.
 
 ## Log
 
@@ -140,3 +141,28 @@ PQ1 — the query `review` option is named after a workflow this product does no
 This is a QUESTION, not a declined defect. Nothing here is a bug this slice chose not to fix, and nothing here is a guard target: the option behaves exactly as documented and the human ruled that it stays. What a follow-on must decide, and only the human can: rename the option to what it actually does (stage a saved answer as a candidate), remove it, or build the promotion surface the candidates directory has always implied. Each answer implies a different slice and none is authorized by this branch.
 
 Two facts a follow-on must not lose. First, the query guard `"Query review requires save."` (`packages/wiki/src/commands/query-publication.ts:45`) is intact and asserted by `test/query-publication-sdk-mcp.test.ts:109-116`. Second, `stageQueryProposal` and `writeFreshCandidate` are reachable BECAUSE of this option — removing it would orphan them, which is why folding the query option into this slice would have manufactured exactly the new dead code S9 forbids. That is also why the two mechanisms are not interchangeable and must not be treated as one: the compile option held every page with no promotion surface and is gone; the query option stages one answer as a candidate and stays, by ruling.
+
+L8 (T13 — twelve census errors re-derived, plus two independent fixes. This is the census record the Supervisor asked for; every count below is a concrete hit from this session, not an estimate.)
+
+The brief's census for this slice was re-derived path by path, and it was wrong twelve ways. Each one, with its concrete correction:
+
+E1 — the brief said `compiler/index.ts:1223`; the read is at `1229`.
+E2 — the brief said `compiler/index.ts:1301`; the read is at `1307`.
+E3 — the brief cited `review-pipeline.ts:55-60` as an option read; that range is prose, and the actual read is `:90`.
+E4 — the brief's claim that the `review?: boolean` doc comment at `utils/types.ts:230` had been "already cleaned" was FALSE: the comment was present at `:228-231`.
+E5 — that same claim covered only one path; `sdk/core-types.ts:20` still carried its doc comment as well.
+E6 — the brief's "6 test files" undercounted: `test/compile-candidate-preflight.test.ts` was missing from the list entirely.
+E7 — that missing file's `it.each([false, true])` was invisible to a `review:` grep because it passed the shorthand `{ review }`; `typecheck:tests` caught it, not a grep.
+E8 — `test/compile-request-stack-candidate-env.test.ts`'s `review: false` site was missing from the count too.
+E9 — the dead-code premise was half false: OKF import reaches `writeCandidate` and query proposals reach `writeFreshCandidate`, so only the policy branch reaches `persistReviewCandidate`.
+E10 — `CHANGELOG.md` was absent from the docs census, although the repository's own convention carries a removed option there.
+E11 — the census ledger said "16 files" while enumerating 5 source + 6 tests + 6 docs, which is 17.
+E12 — `packages/wiki/src/viewer/assets/viewer-reviews.js` rendered the removed option to users and was not in the census at all.
+
+What that count is evidence FOR, stated plainly: the gates and the type checker found sets that greps could not see — a shorthand `{ review }` is invisible to a search for `review:`, and a rendered asset string is invisible to a census that never opened the asset. The census is therefore a starting hypothesis and never the authority. Re-derivation against the tree is the authority, and this list is what it costs to trust the census instead.
+
+One disclosure about the work-unit commit's message, because a later reader will meet that sentence there. That message contains "Review holds stay reachable through the `review.hold` policy". The sentence is FACTUALLY TRUE: `packages/wiki/src/compiler/review-pipeline.ts:91-92` still reaches `persistReviewCandidate`. What is wrong is only the implication a reader may draw from it, since that policy leads to the same candidate record. The correction for that is not history rewriting; it is the guard message and the CHANGELOG bullet, which is what constrains the wording of both.
+
+The promotion question — whether any surface can promote a staged candidate — was under measurement by another agent while this entry was written, and that is load-bearing: if it comes back showing a promotion path exists, the guard message, its two test literals and the CHANGELOG bullet must all change before merge. That is why the removal bullet's "no surface promotes" claim was not strengthened in PART 4 and no second assertion of it was added; the correction, if any, arrives as its own commit.
+
+L8 also closes the owner question L4 left open. `packages/wiki/src/viewer/assets/viewer-reviews.js` was NOT edited on this branch: `fix/stop-advertising-removed-surfaces` (local, base `8c8d86ff`, not merged into `main`) already rewrites the same lines to the same effect — the empty state stops naming `compile --review`, and `FULL_QUEUE_COMMAND = "llmwiki review list"` becomes `FULL_QUEUE_NOTE = "the viewer shows a bounded slice of the queue"`. That branch carries the matching `test/viewer-reviews-route.test.ts` update too, so the advert is paid there and a second coat here would collide line for line. This branch's tree left the file byte-identical to `1db4666d`. The two commits landed beside this entry are `4c7fde21c37b98584946c8f716e4702f3a43c81e` (`eslint-baseline.json`, the one-number decrease) and `c4cb0b7094e7526c7436eb04f22c4dddf88bd1cb` (the `review.forced` CHANGELOG sentence).
