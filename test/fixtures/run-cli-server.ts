@@ -1,20 +1,34 @@
 /**
- * Long-lived CLI subprocess helper for tests that need to wait for the
- * viewer readiness line and then shut down a still-running CLI process.
+ * Long-lived server subprocess helper for tests that need to wait for the
+ * HTTP readiness line and then shut down a still-running server process.
  *
  * Built as a deliberate sibling to `run-cli.ts` rather than as an
  * extension of `runCLI`: `runCLI` uses `execFile` for short-lived
  * commands that exit on their own, while the viewer / quickstart-handoff
- * paths spawn a CLI that keeps the event loop alive via a listening
+ * paths spawn a server that keeps the event loop alive via a listening
  * socket, parse stdout to discover the OS-assigned port, hand control
  * back to the test, then send SIGTERM to shut down. Combining both
  * shapes in one helper would just blur the API.
  *
- * Two entry points share one spawn-and-await-readiness implementation:
- * `startViewerCLI` for `llmwiki view ...` and `startQuickstartCLI` for
- * `llmwiki quickstart ...`. Both rely on the same `Viewer ready at`
- * line — quickstart's foreground handoff delegates to viewCommand which
- * emits the same readiness line.
+ * ## Which entry, and which subcommand, the viewer suites now measure
+ *
+ * The suite used to spawn `node dist/cli.js view`, the CLI's viewer-only
+ * mode. That entry is retired, and `view` was never a separate surface in
+ * the shipped product: the container entry serves the viewer from `host`,
+ * on the same listener, alongside the graph and the mutation mounts. So the
+ * subprocess is now `node dist/api.js host --no-graph …` — the surviving
+ * executable, with the graph deliberately unmounted because `view` never
+ * mounted one. Everything these suites assert (CSP and origin policy on
+ * every response, the `/api/**` envelopes, asset confinement, Host/Origin
+ * rejection, SIGTERM shutdown) is the viewer handler's own behaviour, and
+ * `host` mounts that same handler unchanged; the readiness line is the one
+ * observable difference, and it is `Host ready at …`.
+ *
+ * `startQuickstartCLI` is kept for caller stability only. Its three callers
+ * are retired `it.skip` cases in `quickstart-integration`, and `quickstart`
+ * does not exist as a subcommand of the launcher, so its argv is rejected at
+ * startup rather than served — a fast, loud failure instead of a 30s
+ * readiness timeout.
  */
 
 import { ChildProcess, spawn } from "child_process";
@@ -22,10 +36,15 @@ import path from "path";
 import { afterEach } from "vitest";
 import { testDotenvEnv } from "./test-dotenv.js";
 
-const CLI = path.resolve("dist/cli.js");
+/** The surviving executable: the container launcher, which dispatches `host` and `serve`. */
+const ENTRY = path.resolve("dist/api.js");
+// The viewer-only CLI mode is gone; `host` mounts the same viewer handler. The
+// graph sub-app is unmounted to reproduce `view`'s surface exactly — `view` never
+// had one, and leaving it mounted would put a second trust boundary in the test.
+const VIEWER_ARGV = ["host", "--no-graph"];
 // Parses either `http://127.0.0.1:PORT` or the bracketed-IPv6 form
 // `http://[::1]:PORT` — group 1 captures the host without the brackets.
-const READINESS_RE = /Viewer ready at http:\/\/(?:\[([^\]]+)\]|([^\s:]+)):(\d+)/;
+const READINESS_RE = /Host ready at http:\/\/(?:\[([^\]]+)\]|([^\s:]+)):(\d+)/;
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 
 /** Handle returned by {@link startViewerCLI}. */
@@ -43,9 +62,9 @@ export interface ViewerProcessHandle {
 }
 
 /**
- * Spawn `node dist/cli.js view <args>` in `cwd`, wait for the readiness
- * line, and resolve with a handle. Thin wrapper around the shared
- * `spawnAwaitingReadiness` core so the viewer and quickstart paths
+ * Spawn the launcher's viewer-bearing mode (`host --no-graph`) in `cwd`, wait
+ * for the readiness line, and resolve with a handle. Thin wrapper around the
+ * shared `spawnAwaitingReadiness` core so the viewer and quickstart paths
  * share one timeout/stderr-capture/cleanup story.
  */
 export async function startViewerCLI(
@@ -53,14 +72,17 @@ export async function startViewerCLI(
   cwd: string,
   timeoutMs: number = DEFAULT_READY_TIMEOUT_MS,
 ): Promise<ViewerProcessHandle> {
-  return spawnAwaitingReadiness(["view", ...args], cwd, timeoutMs, "viewer", { env: { ...process.env, ...testDotenvEnv() } });
+  return spawnAwaitingReadiness([...VIEWER_ARGV, ...args], cwd, timeoutMs, "viewer", { env: { ...process.env, ...testDotenvEnv() } });
 }
 
 /**
- * Spawn `node dist/cli.js quickstart <args>` in `cwd`, wait for the
- * readiness line emitted by quickstart's viewer handoff, and resolve
- * with a handle. `envOverrides` is merged on top of `process.env` so
- * tests can inject aimock credentials the same way `runCLI` does.
+ * Spawn `<launcher> quickstart <args>` in `cwd`, wait for the readiness line
+ * that `quickstart`'s viewer handoff used to emit, and resolve with a handle.
+ * `envOverrides` is merged on top of `process.env` so tests can inject
+ * aimock credentials the same way `runCLI` does.
+ *
+ * Retained for caller stability only: see this file's header. `quickstart` is
+ * not a launcher subcommand, so the argv is rejected at startup.
  */
 export async function startQuickstartCLI(
   args: string[],
@@ -83,9 +105,9 @@ interface SpawnOptions {
 }
 
 /**
- * Spawn `node dist/cli.js <argv>` and resolve once the viewer readiness
- * line is observed on stdout. Rejects on early exit or timeout so tests
- * fail fast with captured stderr instead of hanging.
+ * Spawn `node dist/api.js <argv>` and resolve once the readiness line is
+ * observed on stdout. Rejects on early exit or timeout so tests fail fast with
+ * captured stderr instead of hanging.
  */
 async function spawnAwaitingReadiness(
   argv: string[],
@@ -94,7 +116,7 @@ async function spawnAwaitingReadiness(
   label: string,
   options: SpawnOptions,
 ): Promise<ViewerProcessHandle> {
-  const child = spawn("node", [CLI, ...argv], {
+  const child = spawn("node", [ENTRY, ...argv], {
     cwd,
     env: options.env,
     stdio: ["ignore", "pipe", "pipe"],

@@ -25,6 +25,17 @@ describe("spawnsChildProcess", () => {
     ["execFile", 'await execFile("node", [])'],
     ["npm pack", 'await run("npm pack")'],
     ["cli-runner helper import", 'import { exec } from "./fixtures/cli-runner.js"'],
+    // The two shared fixtures that spawn on the caller's behalf. A file whose
+    // only child-process construct is one of these imports is still a spawning
+    // file: the spawn is real, it just lives one module away from the test.
+    [
+      "run-cli-server fixture import",
+      'import { startViewerCLI } from "./fixtures/run-cli-server.js"',
+    ],
+    [
+      "mcp-test-env fixture import",
+      'import { connectMcpClient } from "./fixtures/mcp-test-env.js"',
+    ],
   ])("detects %s", (_label, source) => {
     expect(spawnsChildProcess(source)).toBe(true);
   });
@@ -95,6 +106,11 @@ describe("classifyTests", () => {
       // into the fast unit loop; if the classifier stops matching `runCLI(`, this
       // fails by name instead of the parity signal being skipped without a trace.
       "test/parity-default.test.ts",
+      // Spawns `node dist/api.js host --no-graph` once per case through
+      // `fixtures/run-cli-server`, and its source names no child-process API of
+      // its own — so it is the fixture-import rule this file exists to hold. It
+      // was classified `unit` until the pattern list learned about the fixture.
+      "test/viewer-server.test.ts",
     ];
     // Filtered instead of asserted per entry: `toContain` reports only the first
     // file that fell out of the tier, which hides the rest of the regression.

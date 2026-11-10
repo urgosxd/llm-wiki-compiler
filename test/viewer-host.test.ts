@@ -1,5 +1,5 @@
 /**
- * Host-handling regression tests for `llmwiki view`.
+ * Host-handling regression tests for the viewer surface.
  *
  * Covers the PR review findings around bind addresses:
  *   - `--host ::1` actually works: server starts, accepts the bracketed
@@ -7,7 +7,7 @@
  *     as an alias when the OS resolves it to `::1`.
  *   - Same-origin Origin parsing handles bracketed IPv6 hostnames.
  *   - Wildcard binds (`0.0.0.0`, `::`, `0:0:0:0:0:0:0:0`, `*`) are
- *     rejected at the CLI with a clear error rather than starting an
+ *     rejected at the launcher with a clear error rather than starting an
  *     insecure surface.
  *
  * The IPv6 cases skip gracefully when the host kernel doesn't have a
@@ -28,7 +28,7 @@ import {
 } from "./fixtures/run-cli-server.js";
 
 const exec = promisify(execCb);
-const CLI = path.resolve("dist/cli.js");
+const LAUNCHER = path.resolve("dist/api.js");
 const CLI_REJECTION_TIMEOUT_MS = 30_000;
 
 let ipv6Available = false;
@@ -80,16 +80,16 @@ function rawHttpRequestStatus(
 
 const { start: startViewer } = useViewerProcessLifecycle();
 
-describe("CLI — wildcard host rejection", () => {
+describe("launcher — wildcard host rejection", () => {
   it.each(["0.0.0.0", "::", "0:0:0:0:0:0:0:0", "*"])("rejects --host %s with a clear error", async (host) => {
     const root = await makeTempRoot(`viewer-host-wildcard-${host.replace(/[:.*]/g, "-")}`);
     let stderr = "";
     try {
-      await exec(`node "${CLI}" view --port 0 --allow-lan --host "${host}"`, {
+      await exec(`node "${LAUNCHER}" host --no-graph --port 0 --allow-lan --host "${host}"`, {
         cwd: root,
         timeout: CLI_REJECTION_TIMEOUT_MS,
       });
-      throw new Error("expected CLI to exit non-zero for wildcard host");
+      throw new Error("expected the launcher to exit non-zero for wildcard host");
     } catch (err) {
       stderr = String((err as { stderr?: string }).stderr ?? "");
     }

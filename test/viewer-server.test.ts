@@ -1,8 +1,8 @@
 /**
- * Subprocess integration tests for `llmwiki view`.
+ * Subprocess integration tests for the viewer surface.
  *
- * These exercise the full CLI → snapshot → HTTP server path: we spawn
- * the compiled binary in a temp wiki, wait for the readiness line,
+ * These exercise the full launcher → snapshot → HTTP server path: we spawn
+ * the compiled entry in a temp wiki, wait for the readiness line,
  * issue real fetches against `127.0.0.1`, and assert response shapes
  * match the Slice 2 contract. SIGINT/SIGTERM shutdown is also covered
  * here so the test fixture proves the signal handlers actually fire.
@@ -36,7 +36,7 @@ describe("llmwiki view — readiness and snapshot", () => {
     const handle = await startViewer(root);
     expect(handle.port).toBeGreaterThan(0);
     expect(handle.host).toBe("127.0.0.1");
-    expect(handle.stdout).toMatch(/Viewer ready at http:\/\/127\.0\.0\.1:\d+/);
+    expect(handle.stdout).toMatch(/Host ready at http:\/\/127\.0\.0\.1:\d+/);
   });
 
   it("/api/pages returns the project envelope with frozen counts", async () => {

@@ -10,6 +10,9 @@
  *   - `useMcpRoot(prefix)` registers beforeEach/afterEach and
  *     returns a `{ value: string }` so each test reads the current
  *     temp root via `root.value`.
+ *   - `connectMcpClient(root)` spawns the real stdio server from the
+ *     surviving executable (`dist/api.js serve --root <root>`) over a
+ *     `StdioClientTransport`, so the JSON-RPC framing is exercised for real.
  *   - `buildServer(root)` returns a fresh `McpServer` with the wiki tools,
  *     the resources, and both OKF tools — the same inventory the
  *     production factory serves.
@@ -33,7 +36,17 @@ import { testDotenvEnv } from "./test-dotenv.js";
 import { registerWikiTools } from "../../packages/wiki/src/mcp/tools.js";
 import { registerOkfTools } from "../../packages/wiki/src/mcp/okf-tools.js";
 import { registerWikiResources } from "../../packages/wiki/src/mcp/resources.js";
-import { CLI } from "./run-cli.js";
+
+/**
+ * The surviving executable, whose `serve` subcommand IS the stdio MCP server.
+ *
+ * Spelled here rather than imported from `fixtures/run-cli.ts`: that helper's
+ * `CLI` names the retired CLI bundle, and every other spawner still legitimately
+ * uses it for the CLI-only commands. `dist/api.js` dispatches `serve` to the same
+ * `startMCPServer` the CLI's `serve` command called, with the same `--root`
+ * handling, so the JSON-RPC surface under test is unchanged.
+ */
+const MCP_ENTRY = path.resolve("dist/api.js");
 
 /** Live container for the current test's temp root path. */
 export interface McpRootHandle {
@@ -70,13 +83,13 @@ export interface McpClientHandle {
 }
 
 /**
- * Spawn `llmwiki serve --root <root>` over stdio and connect an SDK Client
+ * Spawn the launcher's `serve` subcommand over stdio and connect an SDK Client
  * through the full JSON-RPC stack. Shared by every MCP stdio integration test.
  */
 export async function connectMcpClient(root: string): Promise<McpClientHandle> {
   const transport = new StdioClientTransport({
     command: "node",
-    args: [CLI, "serve", "--root", root],
+    args: [MCP_ENTRY, "serve", "--root", root],
     stderr: "ignore",
     cwd: path.resolve("."),
     // The SDK inherits only a handful of variables, so the corpus override has to be

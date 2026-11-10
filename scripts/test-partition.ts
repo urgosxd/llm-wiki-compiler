@@ -80,6 +80,17 @@ const SKIPPED_DIRS: ReadonlySet<string> = new Set([
  * through the shared helper which does. Deliberately narrow: matching the bare
  * word `exec` would also catch `regex.exec`, and `spawn` alone would match the
  * prose in comments.
+ *
+ * The three path entries are the other half of the same rule: A SPAWN HIDDEN IN
+ * A SHARED FIXTURE IS STILL A SPAWN. `cli-runner`, `run-cli-server` and
+ * `mcp-test-env` all fork a real subprocess on the caller's behalf, so the file
+ * importing one pays that cold start without ever naming `spawn`. Reading only
+ * each file's own source therefore classified every viewer and MCP stdio suite
+ * as `unit` while they spawned — the fast tier was a lie for as long as this
+ * list was short. Matching the import is the conservative direction on purpose:
+ * a false positive costs a spawn test nothing but a slower tier, while a false
+ * negative puts a spawning file back in the loop the partition exists to keep
+ * fast.
  */
 const SPAWN_PATTERNS: readonly RegExp[] = [
   /\brunCLI\s*\(/,
@@ -90,6 +101,8 @@ const SPAWN_PATTERNS: readonly RegExp[] = [
   /\bexecSync\s*\(/,
   /\bnpm\s+pack\b/,
   /fixtures\/cli-runner/,
+  /fixtures\/run-cli-server/,
+  /fixtures\/mcp-test-env/,
 ];
 
 /** One classified test file. */
