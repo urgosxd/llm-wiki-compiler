@@ -345,6 +345,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`createWiki({ root, env }).compile()` and `.status()` now use the Stack `env` names, instead of the one the process is bound to.** A handle could record its compile state under the process' Stack and then answer `status` from a different one, so a single status object could describe two deployments. **`status()` on a Stack-bound handle now requires a reachable database**: an embedder whose database is briefly unavailable used to get a degraded status and now gets an exception.
 
+- **`createWiki({ root, env }).lint()` and `.lintByTier()` now use the Stack `env` names, instead of the one the process is bound to.** A handle naming one Stack could report the findings of another, and a process bound to no Stack got the findings of the files on disk. **`lint()` and `lintByTier()` on a Stack-bound handle now require a reachable database**: an embedder whose database is briefly unavailable gets an exception instead of filesystem-based results.
+
 ## [1.3.0] - 2026-09-11
 
 ### Highlights
