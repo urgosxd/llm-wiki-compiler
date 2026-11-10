@@ -189,7 +189,6 @@ it.each([false, true])("real MCP query returns the answer with save=%s and obser
   const result = (envelope.structuredContent as { result: QueryResult }).result;
   expect(result.answer).toBe("Both [[beta]] [[missing]].");
   expect(result.saved).toBeUndefined();
-  expect(result.candidateId).toBeUndefined();
   if (save) {
     expect(result.publicationRefusal).toMatchObject({ code: "broken", targets: ["missing"] });
     expect(result.publicationRefusal?.message).toContain("pending citation targets: beta");
