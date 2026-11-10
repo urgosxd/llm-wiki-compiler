@@ -4,7 +4,7 @@ Branch `fix/packed-manifest-guard`, base `2c81bfcfed05cb8b9d2fe183f1ce213df234f0
 
 ## Specs
 
-Spec IDs are `S1`–`S5`; task IDs are `T1`–`T5`. Lines marked `Consequence:` are derived, not quoted.
+Spec IDs are `S1`–`S5`; task IDs are `T1`–`T6`. Lines marked `Consequence:` are derived, not quoted.
 
 S1. THE GUARD ASSERTS THE `dependencies` BLOCK, NOT THE WHOLE MANIFEST. Manager ruling, verbatim: "That criterion was **mine and it was wrong**: no package manager installs the `devDependencies` of a package you install" and "What actually protects embedders is **no `workspace:*` under `dependencies`**, and that block is clean (20 registry ranges, zero `workspace:`)." Measured at base `2c81bfcf`: root `package.json` `dependencies` holds **20** entries and **0** of them contain `workspace:`. The guard's subject is that block and nothing else.
 
@@ -30,9 +30,9 @@ Consequence: `test:pack` proves published types DB-free; the artefact tier prove
 
 T1 · S1-S3 · route: gentle-ai-worker · the manifest guard + correction of the guard scope · commit: 96fdcbc6f65fd3df232a0a1e88d004d351205a81
 T2 · S4 · route: gentle-ai-worker · the container probe carrying the container's own `Host` · commit: 1ed7e1469d569ad4d4d1e94113baf4b9e512644e
-T3 · S5 · route: gentle-ai-verify · the one-off tarball+DB measurement, recorded not committed · measured at base `2c81bfcf` and recorded in `L5`/`L6` below: PASS on the packed-vs-source comparison, with the public read-back open to the extent of `listPages()` · commit: pending (this documentation commit; a commit cannot carry its own SHA, so the full SHA is filled by the next tracker update)
-T4 · S1-S5 · route: gentle-ai-verify · independent verification against the specs · commit: pending (verification runs after these commits)
-T5 · S1-S5 · route: gentle-ai-worker · promote the record to `odd/tasks/published-entry-port.md` ([published-entry-port.md](published-entry-port.md)) · commit: pending (this documentation commit; a commit cannot carry its own SHA, so the full SHA is filled by the next tracker update)
+T3 · S5 · route: gentle-ai-verify · the one-off tarball+DB measurement, recorded not committed · measured at base `2c81bfcf` and recorded in `L5`/`L6` below: PASS on the packed-vs-source comparison, with the public read-back open to the extent of `listPages()` · commit: 7f6e0f5fd5bbf7050f235de0638a906fc26bb602
+T4 · S1-S5 · route: gentle-ai-verify · independent verification against the specs · every spec `S1`–`S5` PASS with zero blockers, three advisories and two precision nits recorded in `L8` · commit: dbbd24f7a2f3011154585e7c03273dc3352d0722
+T5 · S1-S5 · route: gentle-ai-worker · promote the record to `odd/tasks/published-entry-port.md` ([published-entry-port.md](published-entry-port.md)) · commit: 7f6e0f5fd5bbf7050f235de0638a906fc26bb602
 T6 · — · route: blocked · unblock condition: Manager schedules the F1–F4 slices (recorded in `L7`, not absorbed here) · commit: pending
 
 ## Log
@@ -120,3 +120,30 @@ Reproduce: ingest one source, compare `status.sources` against `listSources().le
 
 **F4 — hardcoded container port in a committed document.**
 `odd/tasks/stack-scoped-compile-lock.md:87` records the shared container at `localhost:32782`; the real host port is Docker-assigned per recreation and was `32768`. Same class as the `Host`-header 403: a reader trusting a document over the system. This file is NOT edited by this slice. Standing rule recorded here: read the port with `docker port kind_kirch 5432/tcp`, never hardcode it.
+
+L8 — independent verification (`T4`) and its corrections. Verdict: **every spec `S1`–`S5` PASSes with zero blockers** on the tree at `7f6e0f5f`. The verification left three advisories and two precision nits; the three advisories are corrected here, and the two nits are recorded rather than acted on where acting would mean editing append-only text.
+
+**THE THREE CORRECTIONS.**
+
+**(1) The packed assertion is unreachable for the condition it guards — the measured limit of the guard, NOT a defect to fix.** The negative half of the packed guard cannot fire: a scratch package carrying `workspace:*` in `dependencies`, packed and installed, fails `npm install --ignore-scripts` with `npm error code EUNSUPPORTEDPROTOCOL` / `Unsupported URL Type "workspace:": workspace:*` (**exit 1**) BEFORE `verifyInstalledManifest` ever runs. Independently confirmed. So the negative half is **defensive only** — it states intent, it does not bite. The **reachable bite is the positive half**: every range registry-ranged or URL-shaped. Read the guard in that order, and do not delete the negative half because npm already refuses the tarball: it is the written statement of what the guard exists to prevent.
+
+**(2) The committed guard was vacuous-prone.** `findUninstallableDependencies(ROOT.dependencies)` equal to `[]` also passes when the predicate accepts everything — `[] === []` is satisfied by an accept-all predicate, and equally by an empty or mangled block. `test/manifest-dependencies-grammar.test.ts` closes that hole: it pins the accept side (registry ranges and fetchable URLs), the reject side (every local protocol), and the by-name reporting path — directly, on the predicate, with no tarball in the loop. It also pins that the **same predicate goes RED on `devDependencies`**, which is what makes `S1`/`S2`'s `dependencies` scope **load-bearing rather than incidental**: the four `workspace:*` occurrences at `package.json:103-106` are a real, measured counterexample living inside the very manifest the guard reads.
+
+**(3) The false Docker claim.** `test/viewer-server-security.test.ts:171` said "no committed test spawns Docker". That is **factually wrong**: `test/fixtures/testcontainers-postgres.ts:184,192` call `containerBuilder().start()`, and `test/global-setup.ts` drives that fixture, so DB-backed suites **do** spawn a pgvector container when no reusable one exists. The sentence now states the claim that actually holds — no committed test spawns a container **for this check**, and CI has no Docker at all, so this gate pair cannot be a container test — and names the two spawning lines. The rest of that comment is intact.
+
+**THE TWO PRECISION NITS (recorded, not acted on).**
+
+1. The unreachability measured in (1): recorded as the guard's **limit**, not repaired, because the remedy is a different proof and not a smaller guard.
+2. `L1` cites `test/sdk/pack-distribution.ts:39` for the `PACK_DISTRIBUTION` export; the export is at **`:32`**. `L1` is verbatim user text inside an append-only Log — **verbatim source text, not corrected**. The same standard applied differently one file over: `published-entry-port.md` `S3` said `packages/api/src/index.ts` was a "**44**-line docstring"; measured it is **45** lines with zero exports, so that `S3` figure **is** corrected (a spec is authored, a Log is quoted) and the correction is recorded in that file's `L7` while its `L1` stays verbatim.
+
+**TRACKER CORRECTION.** The header read `task IDs are T1–T5` while `## Tasks` carries `T1`–`T6`; corrected to `T1`–`T6`.
+
+**GATE EVIDENCE, at `7f6e0f5f` plus these corrections.**
+
+- `corepack pnpm exec vitest run test/manifest-dependencies-grammar.test.ts` → exit **0**, **5 passed**.
+- `corepack pnpm exec vitest run test/viewer-server-security.test.ts` → exit **0**, **17 passed**.
+- `corepack pnpm run gates:static` → exit **0**, all 6 static gates passed; lint ratchet **unchanged at the ceiling**: `566 baseline violations in 402 files across 429 rule/file entries`.
+- `corepack pnpm run build` → exit **0**.
+- `corepack pnpm test` (full, alone) → exit **0**: **804 files passed / 3 skipped (807)**, **6110 tests passed / 4 skipped (6114)**, 302.44 s.
+- `git ls-files '*.test.ts' | wc -l` → **808** (the new file). The census history is now 799, 800, 803, 807, 808 across five slices; the **808** is measured after the file was tracked, not carried.
+- One earlier full-suite run on the same tree exited **1** on exactly one test, `scripts/pnpm-invocation.test.ts`, because it ran under the ambient **Node v22.23.2**: `.husky/pre-commit` refuses a non-24 major and that test asserts the hook's pnpm-resolution failure text, so the assertion receives the Node-major refusal instead. The same file passes **13/13** under Node v24.21.0 and the full suite is green there. Recorded as a property of the runner's `PATH`, **not** of this diff.

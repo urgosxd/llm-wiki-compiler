@@ -14,7 +14,7 @@ S2. THE ENGINE REACHES EMBEDDERS THROUGH THAT SECOND PUBLISHED ARTEFACT. `tsup.c
 
 Consequence: any change to the engine's published surface is a **two-package** release, because the artefact consumers actually load is not the root one.
 
-S3. THE COST WAS ALWAYS LARGER THAN A FILE MOVE. `packages/api/src/index.ts` is a 44-line docstring with **zero exports**, so a composing entry could not reuse `"."` as-is.
+S3. THE COST WAS ALWAYS LARGER THAN A FILE MOVE. `packages/api/src/index.ts` is a **45-line** docstring with **zero exports** — 45 as measured, correcting the `44` quoted in `L1` (see `L7`) — so a composing entry could not reuse `"."` as-is.
 
 Consequence: the parked work is not "point the entry somewhere else"; a composing entry needs an entry that actually exports something to compose.
 
@@ -59,3 +59,9 @@ L4 — first correction to the composition record: this document supersedes `S10
 L5 — cross-reference: the slice that produces this measurement is [packed-manifest-guard.md](packed-manifest-guard.md), whose `T5` promotes this record. `S1`–`S4` here are its `L1` item 4 verbatim; nothing in that document changes the facts above.
 
 L6 — re-measurement: a fresh build of base `2c81bfcfed05cb8b9d2fe183f1ce213df234f0ab` measures the engine chunk at **849,299 B** (`packages/llmwiki-core/dist/chunk-EASDPJWH.js`), against the **848,656 B** recorded in `S1` at `0aa74938`; `S1` now carries both figures because the size moves with the build. `dist/index.js` measured **108,001 B**, confirming `S1`'s root-entry figure unchanged. And `packages/llmwiki-core/dist` was **byte-identical across 41 files** (sha256 over every `dist/*.js` and `*.d.ts`) between the repo build and the same code installed from the packed tarball — which is the mechanical reason `S2`'s "second published artefact" claim holds: the artefact consumers load is not re-derived from the root entry, it is the same bytes that the workspace build produced.
+
+L7 — figure correction in `S3`: it described `packages/api/src/index.ts` as a "**44**-line docstring". **Measured: the file is 45 lines** and carries **zero exports** — every line falls inside the `/** … */` header or is blank, so a grep on non-comment, non-blank lines returns nothing. `S3` now states **45**.
+
+`L1` (item 4, quoted verbatim above) still says 44. That is deliberate: `L1` is user text inside an append-only Log, and a Log is not edited to agree with a later measurement — the **spec** is the authoritative figure, the Log is what was said. A reader finding 44 in `L1` and 45 in `S3` should read the spec.
+
+Source: the `T4` verification recorded in `L8` of [packed-manifest-guard.md](packed-manifest-guard.md), which also lists the same class of nit left **uncorrected** — `L1` there cites `test/sdk/pack-distribution.ts:39` where `PACK_DISTRIBUTION` is exported at `:32` — because that citation is verbatim source text, not an authored claim.
