@@ -16,13 +16,20 @@
  * ## Scope: the whole source tree, not a hand-maintained list
  *
  * The first version of this guard scanned six explicit files. A guard named "no removed
- * CLI adverts" that inspects 6 of ~475 source files makes a claim about itself it cannot
+ * CLI adverts" that inspects 6 of ~487 source files makes a claim about itself it cannot
  * support: a green run meant "these six are clean", and a seventh file could carry the
  * same advert forever. This version walks `packages/wiki/src` and `packages/api/src`
- * recursively and reads every `.ts`, `.js` and `.css` file in them. The adverts live in
- * MCP tool payloads, terminal report lines, doc comments and browser assets that no unit
- * test renders; a text scan is the only assertion that covers all of those shapes at
- * once, and it costs milliseconds because nothing is built, spawned, or rendered.
+ * recursively and reads every `.ts`, `.js`, `.css` and `.sql` file in them. The adverts
+ * live in MCP tool payloads, terminal report lines, doc comments, SQL migration headers
+ * and browser assets that no unit test renders; a text scan is the only assertion that
+ * covers all of those shapes at once, and it costs milliseconds because nothing is
+ * built, spawned, or rendered.
+ *
+ * `.sql` was left outside that walk for one commit, and the omission was not cosmetic: a
+ * migration header explained the job table by naming two processes that no longer exist
+ * as subcommands. A guard that claims to cover the tree inherits the same defect as the
+ * string it hunts the moment it draws the boundary by extension instead of by "can a
+ * user read this?". A migration header is read by every maintainer who opens the file.
  *
  * ## Why the pattern names subcommands instead of accepting any lowercase word
  *
@@ -35,11 +42,18 @@
  *
  * So the pattern below names the subcommands the retired binary actually accepted:
  * `compile`, `query`, `ingest`, `lint`, `review`, `view`, `export`, `import`,
- * `quickstart`, `workflow`, `next`, `recover`, `eval`, `serve`. Those tokens after
+ * `quickstart`, `workflow`, `next`, `recover`, `eval`, `serve`, `host`. Those tokens after
  * `llmwiki ` are adverts by construction — no sentence in this repository needs to say
  * "llmwiki compile" for any other reason — while the product noun and the dot-paths are
  * left alone. The listed words are the entire removed surface; a new subcommand cannot
  * appear without a deliberate edit here.
+ *
+ * `host` is in the list even though the server entry still HAS a `host` mode: what is
+ * retired is the binary name in front of it. `llmwiki host` instructs a reader to run an
+ * executable no package ships, and the mode is reachable through the launcher, not
+ * through that word. Leaving it out while catching `llmwiki serve` would have been the
+ * same extension-shaped gap that `.sql` was: one live advert kept out by a list that
+ * looked complete.
  *
  * ## Why comments are in scope
  *
@@ -56,11 +70,20 @@
  * true advert shape, and it must leave the negative neighbours alone, so nobody re-widens
  * it to force a file through.
  *
- * The historical proof is out of band: at the base commit this feature started from
- * (`0cecbee5`), the same pattern over the same walk reported 132 offenders across 474
- * files. That run is deliberately NOT part of this file — a committed test must not read
- * git history, or it fails for anyone without those commits and passes for the wrong
- * reason.
+ * The historical proof is out of band. Measured with this exact walk and this exact
+ * pattern, the base commit this feature started from (`0cecbee5`) carried 136 offenders:
+ * 487 paths walked, 486 readable — `packages/wiki/src/mcp/tool-names.ts` does not exist at
+ * that commit — of which 12 are `.sql`, and 2 of the 136 offenders were in `.sql`
+ * (`dimensions/wiki/migration_wiki_jobs.sql:13` `llmwiki serve` and `:14` `llmwiki host`,
+ * the same sentence naming both retired processes). Three narrower scopes each reported a
+ * smaller number, and each was a lie of omission: `.ts`/`.js`/`.css` only reported 132
+ * offenders across 474 files, which left the two `.sql` adverts unread, and catching
+ * `serve` without `host` reported 133, which left the second one unread. This tree now
+ * walks 487 files (12 of them `.sql`) and reports 0. The tree was never clean, it was
+ * unexamined.
+ *
+ * That run is deliberately NOT part of this file — a committed test must not read git
+ * history, or it fails for anyone without those commits and passes for the wrong reason.
  */
 
 import { readdir, readFile } from "node:fs/promises";
@@ -80,7 +103,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const SCAN_ROOTS = ["packages/wiki/src", "packages/api/src"] as const;
 
 /** File types whose contents a user or an agent can end up reading. */
-const SCAN_EXTENSIONS = new Set([".ts", ".js", ".css"]);
+const SCAN_EXTENSIONS = new Set([".ts", ".js", ".css", ".sql"]);
 
 /** Directories that can never contain first-party source, skipped so the walk stays cheap. */
 const SKIPPED_DIRECTORIES = new Set(["node_modules"]);
@@ -92,7 +115,7 @@ const SKIPPED_DIRECTORIES = new Set(["node_modules"]);
  * state leaks between files and one line carrying two adverts reports both.
  */
 const REMOVED_SUBCOMMAND_PATTERN =
-  /llmwiki\s+(compile|query|ingest|lint|review|view|export|import|quickstart|workflow|next|recover|eval|serves?)\b/;
+  /llmwiki\s+(compile|query|ingest|lint|review|view|export|import|quickstart|workflow|next|recover|eval|serves?|host)\b/;
 
 /** Global copy for `matchAll`; `findAdverts` resets it per line. */
 const ADVERT_PATTERN_GLOBAL = new RegExp(REMOVED_SUBCOMMAND_PATTERN.source, "g");
@@ -101,7 +124,7 @@ const ADVERT_PATTERN_GLOBAL = new RegExp(REMOVED_SUBCOMMAND_PATTERN.source, "g")
  * Every scanned production file under `relative`, repository-relative.
  *
  * @param relative - Repository-relative directory to walk.
- * @returns Paths of the `.ts`, `.js` and `.css` files found beneath it.
+ * @returns Paths of the `.ts`, `.js`, `.css` and `.sql` files found beneath it.
  */
 async function listScannedFiles(relative: string): Promise<string[]> {
   const found: string[] = [];
@@ -194,6 +217,9 @@ describe("no runtime string advertises a removed `llmwiki <subcommand>`", () => 
     expect(findAdverts("x.ts", "llmwiki ingest then llmwiki lint")).toHaveLength(2);
     // `serve` is the launcher that used to exist as a subcommand and no longer does.
     expect(findAdverts("x.ts", "start with llmwiki serve")).toHaveLength(1);
+    // `host` is retired as a SUBCOMMAND while the mode survives, so the binary name in
+    // front of it is still an instruction to run something that does not exist.
+    expect(findAdverts("x.ts", "start with llmwiki host")).toHaveLength(1);
   });
 
   it("leaves the product noun, dot-paths and schema keys alone", () => {

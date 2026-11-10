@@ -10,9 +10,11 @@
 -- transaction that has not opened.
 --
 -- It stops being right the moment a SECOND process needs to answer "how is my
--- ingest going". The MCP server is that process: it is a separate `llmwiki serve`
--- over stdio, it shares no memory with `llmwiki host`, and an agent driving the
--- product through MCP is exactly the caller who wants to poll rather than block.
+-- ingest going". The MCP server is that process: `createWikiMcpServer` wired to a
+-- stdio transport — the server entry's `serve` mode — runs in its own process, it
+-- shares no memory with the host process that owns the HTTP listener, and an agent
+-- driving the product through MCP is exactly the caller who wants to poll rather
+-- than block.
 --
 -- ## Why one row per job, rewritten whole
 --

@@ -168,6 +168,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them) go while the file stays. Reselecting it and compiling registers its rows
   again; nothing restores the rows that were already removed.
 
+- **`RecommendedAction.executable` names a registered MCP tool and that tool's
+  input fields, not a binary and its flags.** Every action emitted into
+  `get_context_pack`'s `suggestedActions` used to carry
+  `executable.binary: "llmwiki"` with an argv-style `executable.args` list — an
+  instruction to run a binary no package in this repository ships — and the
+  review and viewer actions (`llmwiki review list`,
+  `llmwiki review approve <id>`, `llmwiki view --open`) are removed rather than
+  reworded, because review does not come back and no registered MCP tool serves
+  the viewer. What a recommendation carries now is a tool name plus the input
+  object that tool's `inputSchema` admits.
+
+  **RecommendedAction.executable now names a registered MCP tool and that tool's
+  input fields, so JavaScript callers reading the removed `executable.binary` or
+  `executable.args` get `undefined` silently while TypeScript callers fail to
+  compile**.
+
 ### Added
 
 - **`llmwiki ingest` accepts `.docx`, and refuses `.doc` and `.xlsx` with a named
