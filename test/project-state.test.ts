@@ -23,10 +23,10 @@ import {
   QUERIES_DIR,
   LLMWIKI_DIR,
   LAST_LINT_FILE,
-  CANDIDATES_DIR,
   INDEX_FILE,
 } from "../packages/wiki/src/utils/constants.js";
 import { expectFreshDirUnchanged } from "./fixtures/project-state-helpers.js";
+import { seedPendingCandidate as seedCandidate, touchMarkdown } from "./fixtures/project-seeding.js";
 
 let tmpDir: string;
 
@@ -37,28 +37,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true });
 });
-
-/** Write an empty `.md` file under `dir` and ensure parents exist. */
-async function touchMarkdown(dir: string, name: string, body = "# stub"): Promise<void> {
-  await mkdir(dir, { recursive: true });
-  await writeFile(path.join(dir, name), body, "utf-8");
-}
-
-/** Write a candidate JSON file directly so we don't depend on the compile pipeline. */
-async function seedCandidate(root: string, id: string): Promise<void> {
-  const dir = path.join(root, CANDIDATES_DIR);
-  await mkdir(dir, { recursive: true });
-  const body = {
-    id,
-    title: "Stub",
-    slug: id,
-    summary: "stub",
-    sources: ["x.md"],
-    body: "stub",
-    generatedAt: new Date().toISOString(),
-  };
-  await writeFile(path.join(dir, `${id}.json`), JSON.stringify(body), "utf-8");
-}
 
 /** Collect state and return just the otherActions `executable.args` lists. */
 async function otherActionArgs(root: string): Promise<(string[] | undefined)[]> {
