@@ -68,8 +68,8 @@ scope you ran. Report the scope and the result together.
 **`pnpm run test:integration`** is the remaining tier: `scripts/test-partition.ts`
 classifies a test as integration when it spawns a child process — `runCLI(`,
 `spawnSync(`, `spawn(`, `execFileSync(`, `execFile(`, `execSync(`, `npm pack`,
-`fixtures/run-cli-server`, `fixtures/mcp-test-env` — so it covers the built command
-surface end to end rather than behaviour reached in process. `test:unit` takes
+`fixtures/run-cli-server`, `fixtures/mcp-test-env` — so it covers spawned process
+behaviour end to end rather than behaviour reached in process. `test:unit` takes
 everything that does not spawn, and `pnpm test` is plain `vitest run`, which
 collects both tiers.
 `test/sdk/packaging.test.ts` spawns too but `vitest.config.ts` excludes it from

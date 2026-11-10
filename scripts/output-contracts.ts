@@ -65,11 +65,12 @@ export interface VitestInvocation {
  * spawn cost twice for the same result.
  *
  * @param selected - Files the tier selection chose, in their order.
+ * @param contracts - The output-contract files to merge in, in their order.
  * @returns The merged list, plus the contracts this merge had to add.
  */
-function mergeOutputContracts(selected: readonly string[]): { files: string[]; added: string[] } {
+function mergeOutputContracts(selected: readonly string[], contracts: readonly string[]): { files: string[]; added: string[] } {
   const present = new Set(selected);
-  const added = OUTPUT_CONTRACT_TESTS.filter((file) => !present.has(file));
+  const added = contracts.filter((file) => !present.has(file));
   return { files: [...selected, ...added], added };
 }
 
@@ -91,11 +92,17 @@ function excludeFlag(file: string): string {
  *
  * @param scope - The tier decision from `scripts/test-affected.ts`.
  * @param unitFiles - Unit tier file list; only read for a `global` scope.
+ * @param contracts - The output-contract files to guarantee. Defaults to
+ *   {@link OUTPUT_CONTRACT_TESTS}, which is what every caller in production
+ *   passes by omission; `scripts/output-contracts.test.ts` supplies its own list
+ *   so the add/exclude/de-duplicate branches stay provable while the real list is
+ *   empty.
  * @returns Zero or more invocations, in the order they should run.
  */
 export function planAffectedInvocations(
   scope: AffectedScope,
   unitFiles: readonly string[],
+  contracts: readonly string[] = OUTPUT_CONTRACT_TESTS,
 ): VitestInvocation[] {
   // An `unresolved` scope plans nothing: the change set was never computed, so
   // there is nothing to plan. The branch is behaviour-neutral rather than dead:
@@ -105,17 +112,17 @@ export function planAffectedInvocations(
   // `files` path and plan a `related` run for a computation that never happened.
   if (scope.kind === "none" || scope.kind === "unresolved") return [];
   if (scope.kind === "global") {
-    const { files, added } = mergeOutputContracts(unitFiles);
+    const { files, added } = mergeOutputContracts(unitFiles, contracts);
     return [{ argv: ["run", ...files], addedContracts: added }];
   }
   // `related` sets `passWithNoTests`, so an all-excluded selection still exits 0.
   const related: VitestInvocation = {
-    argv: ["related", ...OUTPUT_CONTRACT_TESTS.map(excludeFlag), ...scope.files],
+    argv: ["related", ...contracts.map(excludeFlag), ...scope.files],
     addedContracts: [],
   };
-  if (OUTPUT_CONTRACT_TESTS.length === 0) return [related];
+  if (contracts.length === 0) return [related];
   return [
     related,
-    { argv: ["run", ...OUTPUT_CONTRACT_TESTS], addedContracts: [...OUTPUT_CONTRACT_TESTS] },
+    { argv: ["run", ...contracts], addedContracts: [...contracts] },
   ];
 }

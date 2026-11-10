@@ -25,8 +25,14 @@
  * caller drift, and the privacy gate is a security rule that must have ONE copy.
  *
  * The flags are the ones `docker/entry.sh` passes today — `host --port …`
- * optionally with `--host … --allow-lan`, and `serve` — plus `--root` and
- * `--no-graph`, which those two commands already accept. Nothing is invented.
+ * optionally with `--host … --allow-lan`, and `serve` — plus `serve --root` and
+ * `host --no-graph`, which those two commands already accept. Nothing is invented.
+ *
+ * Each flag is accepted by the ONE subcommand that can honour it: `--port`,
+ * `--host`, `--allow-lan` and `--no-graph` shape the listener, and `--root` roots
+ * the stdio server. The other subcommand REJECTS it as an unknown option, because
+ * a dropped flag is worse than a refused one — `host --root /data` served the
+ * process's working directory instead of `/data`, bound its port, and exited 0.
  *
  * ## The two modes, and why one bundle carries both
  *
@@ -43,7 +49,9 @@
  * composition root. Unknown options and unknown commands are REJECTED rather than
  * ignored: an operator who typos `--prot` must not get a silently defaulted bind,
  * and `LLMWIKI_MODE=host` with a stray flag must fail loudly rather than serve a
- * surface nobody asked for.
+ * surface nobody asked for. The same holds for an option the OTHER subcommand
+ * owns: tokenizing needs the union of both flag sets, but acceptance is decided
+ * per subcommand against the table in `COMMANDS`, before anything binds.
  *
  * ## Exit contract
  *
@@ -71,10 +79,15 @@ const HOST_COMMAND = "host";
 /** The subcommand that starts MCP over stdio. */
 const SERVE_COMMAND = "serve";
 
-/** Options that consume the argument after them, or take one after `=`. */
+/**
+ * Options that consume the argument after them, or take one after `=`, ACROSS
+ * both subcommands: the union the TOKENIZER needs, not the set anything accepts.
+ * It must know that `--root <dir>` is a flag plus its value before the subcommand
+ * is known; which subcommand accepts which name is decided afterwards.
+ */
 const VALUE_OPTIONS: ReadonlySet<string> = new Set(["--port", "--host", "--root"]);
 
-/** Options that are their own value. */
+/** Boolean options across both subcommands, tokenized by the same union rule as {@link VALUE_OPTIONS}. */
 const BOOLEAN_OPTIONS: ReadonlySet<string> = new Set(["--allow-lan", "--no-graph", "--help", "-h"]);
 
 /** The bind flag whose presence unlocks a non-loopback listen. */
@@ -82,6 +95,10 @@ const ALLOW_LAN = "--allow-lan";
 
 /** The graph opt-out, mirroring the `--no-graph` the host command already accepts. */
 const NO_GRAPH = "--no-graph";
+
+/** The option that asks for the usage text, in its long and short spellings. */
+const HELP = "--help";
+const HELP_SHORT = "-h";
 
 /** Reported to MCP clients when this module cannot read a version, never invented. */
 const UNKNOWN_VERSION = "unknown";
@@ -117,6 +134,8 @@ interface LauncherArguments {
   readonly values: ReadonlyMap<string, string>;
   /** Boolean options that were present. */
   readonly flags: ReadonlySet<string>;
+  /** Every option name given, in argv order, so a rejection can name the first offender. */
+  readonly supplied: readonly string[];
 }
 
 /**
@@ -137,6 +156,8 @@ interface ArgumentAccumulator {
   readonly values: Map<string, string>;
   /** Boolean options that were present. */
   readonly flags: Set<string>;
+  /** Every option name read so far, in argv order. */
+  readonly supplied: string[];
   /** Operands, in the order they appeared. */
   readonly positional: string[];
 }
@@ -180,9 +201,13 @@ function readToken(accumulator: ArgumentAccumulator, argv: readonly string[], in
   const [name, inlineValue] = splitOption(token);
   if (BOOLEAN_OPTIONS.has(name)) {
     accumulator.flags.add(name);
+    accumulator.supplied.push(name);
     return index;
   }
-  if (VALUE_OPTIONS.has(name)) return readValuedOption(accumulator, argv, index, name, inlineValue);
+  if (VALUE_OPTIONS.has(name)) {
+    accumulator.supplied.push(name);
+    return readValuedOption(accumulator, argv, index, name, inlineValue);
+  }
   if (token.startsWith("-")) throw new UsageError(`unknown option: ${name}`);
   accumulator.positional.push(token);
   return index;
@@ -196,12 +221,12 @@ function readToken(accumulator: ArgumentAccumulator, argv: readonly string[], in
  * @throws {UsageError} On an unknown option, a missing value, or an extra operand.
  */
 function parseArguments(argv: readonly string[]): LauncherArguments {
-  const accumulator: ArgumentAccumulator = { values: new Map(), flags: new Set(), positional: [] };
+  const accumulator: ArgumentAccumulator = { values: new Map(), flags: new Set(), supplied: [], positional: [] };
   let index = 0;
   while (index < argv.length) index = readToken(accumulator, argv, index) + 1;
   const extra = accumulator.positional[1];
   if (extra !== undefined) throw new UsageError(`unexpected operand: ${extra}`);
-  return { command: accumulator.positional[0], values: accumulator.values, flags: accumulator.flags };
+  return { command: accumulator.positional[0], values: accumulator.values, flags: accumulator.flags, supplied: accumulator.supplied };
 }
 
 /**
@@ -279,45 +304,79 @@ async function runServe(parsed: LauncherArguments): Promise<void> {
   await startMCPServer({ root: parsed.values.get("--root") ?? process.cwd(), version: resolveVersion() });
 }
 
+/** A subcommand: the function that runs it, and the options it honours. */
+interface CommandSpec {
+  /** The function that runs this subcommand. */
+  readonly handler: CommandHandler;
+  /** Every option name this subcommand honours, valued and boolean, help included. */
+  readonly options: ReadonlySet<string>;
+}
+
+/** Options `host` accepts. `--root` is absent, because `runHost` serves the process's own directory. */
+const HOST_OPTIONS: ReadonlySet<string> = new Set(["--port", "--host", ALLOW_LAN, NO_GRAPH, HELP, HELP_SHORT]);
+
+/** Options `serve` accepts. Bind flags are absent, because `serve` opens no listener. */
+const SERVE_OPTIONS: ReadonlySet<string> = new Set(["--root", HELP, HELP_SHORT]);
+
 /**
  * The subcommands this launcher dispatches, by name.
  *
  * A table rather than an if-chain so the accepted set is one readable value, and
- * so an added mode cannot ship without a name here.
+ * so an added mode cannot ship without a name and an option table here.
  */
-const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler | undefined>> = {
-  [HOST_COMMAND]: runHost,
-  [SERVE_COMMAND]: runServe,
+const COMMANDS: Readonly<Record<string, CommandSpec | undefined>> = {
+  [HOST_COMMAND]: { handler: runHost, options: HOST_OPTIONS },
+  [SERVE_COMMAND]: { handler: runServe, options: SERVE_OPTIONS },
 };
 
 /**
  * The subcommand one name resolves to, or a usage failure.
  *
  * @param parsed - What the caller supplied.
- * @returns The handler for the named subcommand.
+ * @returns The specification for the named subcommand.
  * @throws {UsageError} When no command, or no known command, was given.
  */
-function resolveCommand(parsed: LauncherArguments): CommandHandler {
+function resolveCommand(parsed: LauncherArguments): CommandSpec {
   const name = parsed.command;
   if (name === undefined) throw new UsageError("no command given");
-  const handler = COMMAND_HANDLERS[name];
-  if (handler === undefined) throw new UsageError(`unknown command: ${name}`);
-  return handler;
+  const spec = COMMANDS[name];
+  if (spec === undefined) throw new UsageError(`unknown command: ${name}`);
+  return spec;
+}
+
+/**
+ * Reject the first option the resolved subcommand does not honour.
+ *
+ * This is why the tables are per subcommand: an option the OTHER mode owns is
+ * refused with exit 1 instead of parsed and dropped, and the two outcomes look
+ * nothing alike to an operator. `--help` is exempt, since it is answered before
+ * the command is known and describes the launcher as a whole.
+ *
+ * @param supplied - Option names the caller gave, in argv order.
+ * @param accepted - The resolved subcommand's own option table.
+ * @throws {UsageError} Naming the first supplied option the table does not hold.
+ */
+function assertOptionsAccepted(supplied: readonly string[], accepted: ReadonlySet<string>): void {
+  const rejected = supplied.find((name) => name !== HELP && name !== HELP_SHORT && !accepted.has(name));
+  if (rejected !== undefined) throw new UsageError(`unknown option: ${rejected}`);
 }
 
 /**
  * Dispatch one argv array to its subcommand.
  *
  * @param argv - The process arguments, without the node binary and script path.
- * @throws {UsageError} When the arguments name no subcommand this launcher has.
+ * @throws {UsageError} When the arguments name no subcommand this launcher has,
+ *   or carry an option that subcommand does not accept.
  */
 async function main(argv: readonly string[]): Promise<void> {
   const parsed = parseArguments(argv);
-  if (parsed.flags.has("--help") || parsed.flags.has("-h")) {
+  if (parsed.flags.has(HELP) || parsed.flags.has(HELP_SHORT)) {
     process.stdout.write(USAGE);
     return;
   }
-  await resolveCommand(parsed)(parsed);
+  const spec = resolveCommand(parsed);
+  assertOptionsAccepted(parsed.supplied, spec.options);
+  await spec.handler(parsed);
 }
 
 /**
