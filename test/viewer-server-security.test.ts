@@ -168,9 +168,13 @@ describe("origin and host validation", () => {
    * so that 403 is not a regression from this or any recent change.
    *
    * These two assertions are the permanent, CI-runnable form of a container probe
-   * CI cannot run — no committed test spawns Docker. DO NOT replace them with a
-   * container-dependent test: that trades a hermetic check for one that skips
-   * exactly where the gate needs watching.
+   * CI cannot run — no committed test spawns a container FOR THIS CHECK, and CI
+   * has no Docker at all, so this gate pair cannot be a container test. (Docker
+   * does appear elsewhere in the suite: `test/fixtures/testcontainers-postgres.ts:184,192`
+   * start a pgvector container that `test/global-setup.ts` uses, so DB suites do
+   * spawn one when no reusable container exists — that is a different subject.)
+   * DO NOT replace these assertions with a container-dependent test: that trades a
+   * hermetic check for one that skips exactly where the gate needs watching.
    *
    * OPERATIONAL RULE for any future container check, learned twice now: resolve
    * the mapped port by inspecting the running container at run time
