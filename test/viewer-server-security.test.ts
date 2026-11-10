@@ -68,6 +68,16 @@ function rawHttpRequestStatus(
   });
 }
 
+/**
+ * The `Host` value the viewer accepts for a handle's bind: IPv6 literals are
+ * bracketed (RFC 3986/7230), which is the form the server's acceptable-host
+ * list builds. IPv4 and named hosts go in bare.
+ */
+function boundHostHeader(handle: ViewerProcessHandle): string {
+  const host = handle.host.includes(":") ? `[${handle.host}]` : handle.host;
+  return `${host}:${handle.port}`;
+}
+
 describe("security headers", () => {
   it.each([
     ["/", 200],
@@ -137,5 +147,51 @@ describe("origin and host validation", () => {
     const handle = await startViewer();
     const res = await rawFetch(handle, "/nope", { Origin: "https://evil.example.com" });
     expect(res.status).toBe(403);
+  });
+
+  /**
+   * THE CONTRACT BEHIND A 403 ON `/`.
+   *
+   * `/` answers **200** when the request carries the address the server bound and
+   * **403** when it carries any other `Host`. That 403 is the viewer's fail-CLOSED
+   * origin gate working: `packages/api/src/host/server.ts:13-14` states the trust
+   * boundary and `server.ts:426-432` records why the bound address is what the
+   * comparison uses; the predicate is `validateOriginHeaders` in
+   * `packages/wiki/src/viewer/server.ts`.
+   *
+   * Measured on a real container: `/` returned 403 under a literal probe and 200
+   * with the container's own `Host: <eth0>:4173`. Under `-p 4173:4173` the
+   * container binds its own bridge address, so a request arriving through the
+   * published port carries `Host: 127.0.0.1:4173` and is correctly refused —
+   * `docker-compose.yml:68-77` records both the refused and the accepted shape.
+   * `docker/` and `packages/api/src/host/` are byte-identical to the base commit,
+   * so that 403 is not a regression from this or any recent change.
+   *
+   * These two assertions are the permanent, CI-runnable form of a container probe
+   * CI cannot run — no committed test spawns Docker. DO NOT replace them with a
+   * container-dependent test: that trades a hermetic check for one that skips
+   * exactly where the gate needs watching.
+   *
+   * OPERATIONAL RULE for any future container check, learned twice now: resolve
+   * the mapped port by inspecting the running container at run time
+   * (`docker port <container> 5432/tcp`-style), never from a hardcoded number and
+   * never from a document. `odd/tasks/stack-scoped-compile-lock.md:87` recorded
+   * `32782` where the truth was `32768`, and a stale document is indistinguishable
+   * from a broken service.
+   */
+  describe("/ origin gate: bound Host is served, any other Host is refused", () => {
+    it("returns 200 for / when Host matches the bound address", async () => {
+      const handle = await startViewer();
+      const status = await rawHttpRequestStatus(handle, "/", { Host: boundHostHeader(handle) });
+      expect(status).toBe(200);
+    });
+
+    it("returns 403 for / when Host is a published-port style mismatch", async () => {
+      const handle = await startViewer();
+      const status = await rawHttpRequestStatus(handle, "/", {
+        Host: `127.0.0.1:${handle.port + 1}`,
+      });
+      expect(status).toBe(403);
+    });
   });
 });
