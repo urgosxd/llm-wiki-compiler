@@ -22,11 +22,59 @@
  * working configuration.
  */
 import { describe, expect, it } from "vitest";
+import type { DatabaseHandle } from "./index.js";
 import { MissingDimensionsPortError, requireDimensionsPort } from "./dimensions-port.js";
-import type { DimensionsPort } from "./dimensions-port.js";
+import type { DimensionsPort, DimensionsRequest } from "./dimensions-port.js";
 
 /** A port that resolves the names it was built with; enough to prove identity. */
 const STAND_IN_PORT: DimensionsPort<string> = { resolve: () => ["wiki"] };
+
+/**
+ * A handle no test in this file queries.
+ *
+ * The request has to CARRY a `DatabaseHandle` because the two real consumers both
+ * hold one, and this seam forwards it rather than re-resolving anything. Nothing
+ * here issues a statement, so both members reject instead of pretending to answer.
+ */
+const UNUSED_DB: DatabaseHandle = {
+  execute: () => Promise.reject(new Error("the request is forwarded, never executed")),
+  transaction: () => Promise.reject(new Error("the request is forwarded, never executed")),
+};
+
+/**
+ * The request a real consumer states: the narrowing, one environment, the root it
+ * is bound to, its handle, and the Stack it already resolved itself.
+ *
+ * A factory rather than a literal so the tests can assert the port received THIS
+ * object: identity is what "passed through unchanged" means, while a structural
+ * comparison would also pass for a copy the seam silently rebuilt.
+ *
+ * @returns A fresh request.
+ */
+function dimensionsRequest(): DimensionsRequest {
+  return {
+    only: ["wiki"],
+    env: { LLMWIKI_DIMENSIONS: "wiki" },
+    root: "/tmp/dimensions-port-project",
+    db: UNUSED_DB,
+    stackId: "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  };
+}
+
+/**
+ * A port that records the request it was handed.
+ *
+ * @param received - The list the port appends each request to.
+ * @returns A port resolving one name, so the caller's assertions are about identity.
+ */
+function recordingPort(received: DimensionsRequest[]): DimensionsPort<string> {
+  return {
+    resolve: (request) => {
+      received.push(request);
+      return ["wiki"];
+    },
+  };
+}
 
 /**
  * Run `call` and return the error it threw.
@@ -66,6 +114,22 @@ describe("requireDimensionsPort", () => {
     expect(both).toContain('"wiki"');
     expect(both).toContain('"kg"');
     expect(both).toContain("no DimensionsPort was supplied");
+  });
+
+  it("hands the request to the port's resolve unchanged", () => {
+    const received: DimensionsRequest[] = [];
+    const stated = dimensionsRequest();
+
+    const port = requireDimensionsPort(recordingPort(received), stated.only);
+    expect(port.resolve(stated)).toEqual(["wiki"]);
+
+    // The seam is a pass-through: it forwards what the caller stated, including
+    // the root and the handle, and never re-resolves them into a second answer.
+    expect(received).toHaveLength(1);
+    expect(received[0]).toBe(stated);
+    expect(received[0]?.root).toBe(stated.root);
+    expect(received[0]?.db).toBe(stated.db);
+    expect(received[0]?.stackId).toBe(stated.stackId);
   });
 
   it("refuses an empty request instead of resolving nothing", () => {

@@ -51,37 +51,51 @@
  * ## What this seam is not
  *
  * It carries no registry, no dimension names, no environment parsing and no default.
- * `only`, `stackId` and `kgDryRun` are forwarded to the implementation as the caller
- * stated them; the meaning of the switch stays where the switch is read. The type
- * parameter is the dimension type of whichever side implements the port, because
+ * `only`, `root`, `db`, `env` and `stackId` are forwarded to the implementation as the
+ * caller stated them; the meaning of the switch stays where the switch is read. The
+ * type parameter is the dimension type of whichever side implements the port, because
  * this package may not name a wiki or a KG type — naming one would make the bottom
  * layer depend on a layer above it, the single edge the split forbids outright.
+ *
+ * ## The request is what the two real consumers need, and nothing else
+ *
+ * The seam was first declared with `{ only, env }` alone, and its first consumer
+ * proved that shape wrong: BOTH call sites already hold the project root and the
+ * caller's database handle, and one of them resolves the Stack itself through an
+ * async, database-touching pre-check. A request that could not carry those would
+ * force the port to re-resolve a Stack both call sites explicitly refuse to ask
+ * twice — two answers to one question, which is the defect class this whole split
+ * exists to remove. So `root` and `db` are required here, and `stackId` is carried
+ * when the caller resolved one. `kgDryRun` is deliberately absent: no consumer of
+ * the port asks for it, and an unused field on a seam is the same dead configuration
+ * as an unused setting.
  */
 import type { DatabaseHandle } from "./index.js";
 
 /**
  * One resolution request, as the caller who needs the dimensions states it.
  *
- * The fields `resolveDimensions` already takes, with one deliberate difference:
- * `env` is REQUIRED here, because a port free to fall back to `process.env` would
- * answer differently in a test and in production through an input it never stated.
- * `only` is `readonly string[]` rather than a dimension-name union for the reason in
- * the file header — the union belongs to the dimension that defines it, and this
- * package may not name it.
+ * Every field the two production call sites already hold when they need a dimension
+ * set, and no field they would have to go and find. Two deliberate differences from
+ * `ResolveDimensionsOptions`: `env` is REQUIRED here, because a port free to fall
+ * back to `process.env` would answer differently in a test and in production through
+ * an input it never stated; and `only` is REQUIRED, because a resolution that does
+ * not state which dimensions it may return has lost the configuration it was
+ * supposed to pass. `only` is `readonly string[]` rather than a dimension-name union
+ * for the reason in the file header — the union belongs to the dimension that
+ * defines it, and this package may not name it.
  */
 export interface DimensionsRequest {
-  /** Project root, used to locate project state; not a storage medium for pages. */
-  readonly root: string;
-  /** The database handle the dimensions are bound to. */
-  readonly db: DatabaseHandle;
-  /** Source of the environment values the switch is read from. */
+  /** Dimension names the caller may receive; never enables one the environment disabled. */
+  readonly only: readonly string[];
+  /** The one environment this resolution reads. Required: no ambient default. */
   readonly env: NodeJS.ProcessEnv;
-  /** Stack the dimensions are bound to, when the caller already resolved one. */
+  /** Project root the dimensions are bound to. */
+  readonly root: string;
+  /** Database handle the dimensions are backed by. */
+  readonly db: DatabaseHandle;
+  /** Stack the caller already resolved, when it did. */
   readonly stackId?: string;
-  /** Restrict resolution to these dimensions, intersected with the switch. */
-  readonly only?: readonly string[];
-  /** Detect-only graph mode, forwarded to the KG dimension. */
-  readonly kgDryRun?: boolean;
 }
 
 /**
