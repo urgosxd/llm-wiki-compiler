@@ -343,6 +343,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose rows and `sources/` tree disagree — an excluded source, or one whose
   projected file was deleted — reports what a caller can actually list and read.
 
+- **`createWiki({ root, env }).compile()` and `.status()` now use the Stack `env` names, instead of the one the process is bound to.** A handle could record its compile state under the process' Stack and then answer `status` from a different one, so a single status object could describe two deployments. **`status()` on a Stack-bound handle now requires a reachable database**: an embedder whose database is briefly unavailable used to get a degraded status and now gets an exception.
+
 ## [1.3.0] - 2026-09-11
 
 ### Highlights

@@ -39,7 +39,12 @@ import {
 import { collectStatus } from "../status/collect.js";
 import { pickSearchRefs, loadSelectedRefs } from "../search/retrieval.js";
 import { getPage, listPages } from "../pages/list.js";
-import { withPageSource, withRegistrySource } from "../dimensions/wiki/page-source-seam.js";
+import {
+  withPageScan,
+  withPageSource,
+  withRegistrySource,
+  withSourceDocuments,
+} from "../dimensions/wiki/page-source-seam.js";
 import { listSources, getSource } from "../sources/store.js";
 import { runOkfExport } from "../export/okf/run.js";
 import { runOkfImport } from "../import/run.js";
@@ -94,10 +99,15 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     ingestText: (input) =>
       runQuiet(() => ingestTextSource(root, input, env, options.dimensionsPort)),
 
+    // `env` is forwarded here for the same reason it is forwarded by `ingest`: every
+    // storage seam inside the run takes an environment, and `compileAndReport`
+    // resolves an omitted one to `process.env`. A compile that named Stack B while
+    // the process served Stack A therefore recorded B's compile state under A — or
+    // under the process' own state file when it served no Stack at all.
     compile: (opts: SdkCompileOptions = {}) =>
       runQuiet(() => {
         ensureCompileProviderAvailable(opts.embeddings !== false);
-        return compileAndReport(root, opts);
+        return compileAndReport(root, { ...opts, env });
       }),
 
     search: (question, opts = {}) =>
@@ -136,7 +146,20 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
 
     getSource: (id) => runQuiet(() => getSource(root, id)),
 
-    status: () => runQuiet(() => collectStatus(root)),
+    // Status is built from TWO answer sources, and both are resolved here: the row
+    // seams supply the page and source corpora, and `env` supplies the compile state.
+    // Omitting either made one object describe two deployments — a handle bound to
+    // Stack B reported B's corpus beside the ambient Stack's `lastCompiledAt` and
+    // `pendingChanges`. With no Stack configured both seams answer `undefined` and
+    // the on-disk reads this call has always done are unchanged.
+    status: () =>
+      runQuiet(() =>
+        withPageScan(env, (pageScan) =>
+          withSourceDocuments(env, (sourceDocuments) =>
+            collectStatus(root, { pageScan, sourceDocuments, env }),
+          ),
+        ),
+      ),
 
     lint: () => runQuiet(() => lint(root)),
 
