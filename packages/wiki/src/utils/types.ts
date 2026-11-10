@@ -197,7 +197,7 @@ export interface CompileResult {
   concepts: string[];
   pages: string[];
   errors: string[];
-  /** Candidate IDs created by --review or policy-held compile outputs. */
+  /** Candidate IDs created by compile outputs the `review.hold` policy held. */
   candidates?: string[];
   /** Structured review split for candidates created by the compile run. */
   review?: {
