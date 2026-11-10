@@ -320,7 +320,7 @@ Three limits are worth knowing before you rely on that:
   `wiki.categories` and `wiki.category_members` — the rows the compile wrote — and on a
   project with no Stack from `wiki/categories/*.md`. A Stack that is addressed but
   unreachable makes them fail rather than answer from whatever files the checkout happens
-  to hold. See [`category` & `categories-here`](/cli/category).
+  to hold.
 - **`--recompile` writes no categories, on either storage.** Category assignment changes
   objects the run did not name, so a scoped regeneration skips it. That is the promise of
   the lever, not a missing backend: a full compile writes categories on both.

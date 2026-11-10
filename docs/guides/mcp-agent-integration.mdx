@@ -10,7 +10,7 @@ This guide walks you through starting the server, wiring it into Claude Desktop 
 
 ## Prerequisites
 
-- llmwiki installed globally: `npm install -g llm-wiki-compiler`
+- A container image built from this repository (`docker build -t llmwiki .`), or a source checkout where `pnpm run build` has produced `dist/api.js`
 - A wiki project directory (or an empty directory where one will be created)
 - An LLM provider configured for tools that need one (see the provider configuration docs for `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.)
 
@@ -18,24 +18,24 @@ This guide walks you through starting the server, wiring it into Claude Desktop 
 
 <Steps>
   <Step title="Start the MCP server">
-    Run `llmwiki serve` from anywhere, pointing `--root` at your wiki project directory. The server uses stdio transport and requires no credentials at startup - read-only tools work immediately.
+    The launcher's `serve` mode speaks MCP over stdio, and it is the container's default mode. The container roots the server at `/work`, so mount your wiki project there. The server requires no credentials at startup - read-only tools work immediately.
 
     ```bash
-    llmwiki serve --root /path/to/wiki-project
+    docker run -i -v /path/to/wiki-project:/work llmwiki
     ```
 
-    The process stays running and speaks the MCP protocol over stdin/stdout. Your MCP client manages the lifecycle.
+    From a source checkout the same server runs as `node dist/api.js serve --root /path/to/wiki-project`. Either way the process stays running and speaks the MCP protocol over stdin/stdout. Your MCP client manages the lifecycle.
   </Step>
 
   <Step title="Add to Claude Desktop">
-    Open your Claude Desktop MCP configuration file (`claude_desktop_config.json`) and add an `llmwiki` entry under `mcpServers`. The `npx` invocation launches the server on demand - you do not need to keep a separate terminal session open.
+    Open your Claude Desktop MCP configuration file (`claude_desktop_config.json`) and add an `llmwiki` entry under `mcpServers`. Docker launches the server on demand - you do not need to keep a separate terminal session open.
 
     ```json
     {
       "mcpServers": {
         "llmwiki": {
-          "command": "npx",
-          "args": ["llm-wiki-compiler", "serve", "--root", "/path/to/wiki-project"],
+          "command": "docker",
+          "args": ["run", "--rm", "-i", "-v", "/path/to/wiki-project:/work", "llmwiki"],
           "env": {
             "ANTHROPIC_API_KEY": "sk-ant-..."
           }
@@ -54,8 +54,8 @@ This guide walks you through starting the server, wiring it into Claude Desktop 
     {
       "mcpServers": {
         "llmwiki": {
-          "command": "npx",
-          "args": ["llm-wiki-compiler", "serve", "--root", "/path/to/wiki-project"],
+          "command": "docker",
+          "args": ["run", "--rm", "-i", "-v", "/path/to/wiki-project:/work", "llmwiki"],
           "env": {
             "ANTHROPIC_API_KEY": "sk-ant-..."
           }
@@ -115,7 +115,7 @@ The server exposes fourteen tools. Every tool takes a required `stackId` naming 
 
 **`get_context_pack` vs `query_wiki`:** these tools serve different purposes. `get_context_pack` *packages evidence* - it assembles a structured JSON envelope of relevant pages, semantic chunks, and citations that the agent uses for its own reasoning. `query_wiki` *generates an answer* - it calls the LLM and returns prose. Use `get_context_pack` when the agent needs grounded source material to reason over; use `query_wiki` when you want a finished answer.
 
-`query_wiki` has no review option. Its existing no-save path returns the answer and advisory citations without publication checks. See [publication policy and recovery](/cli/query#publication-and-review-policy) before using `save: true`.
+`query_wiki` has no review option. Its existing no-save path returns the answer and advisory citations without publication checks. Read [review policy configuration](/configuration/review-policy) before using `save: true`.
 
 ### MCP resources
 
@@ -164,13 +164,12 @@ The server starts without credentials. Provider credentials are read from the `e
 
 - `export_okf` writes an OKF bundle. Its optional `out` path is confined under the project root.
 - `import_okf` reads an OKF bundle from a project-confined `dir`. It supports `dryRun` and is always staging-only; MCP does not expose the trusted live-write import path.
-- After `import_okf` stages pages, approve them with `llmwiki review list`, `llmwiki review show`, and `llmwiki review approve`.
+- After `import_okf` stages pages, they are held as review candidates under `.llmwiki/candidates/` until an operator approves them.
 
 <Tip>
-  After an agent calls `compile_wiki`, check `wiki_status` and look at the `pendingCandidates` field. If your wiki has a review policy configured in `.llmwiki/config.json`, some pages may be held for human review rather than written directly. A non-zero `pendingCandidates` means the agent has queued work that needs your approval before those pages go live - run `llmwiki review list` to inspect them.
+  After an agent calls `compile_wiki`, check `wiki_status` and look at the `pendingCandidates` field. If your wiki has a review policy configured in `.llmwiki/config.json`, some pages may be held for human review rather than written directly. A non-zero `pendingCandidates` means the agent has queued work that needs your approval before those pages go live; the candidates are held under `.llmwiki/candidates/`.
 </Tip>
 
 ## Next steps
 
-- See [CLI reference: llmwiki serve](/cli/serve) for all server flags and transport options.
 - For programmatic in-process control from TypeScript, see the [SDK guide](/guides/sdk).

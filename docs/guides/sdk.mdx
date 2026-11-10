@@ -6,7 +6,7 @@ description: "Use createWiki() to drive llmwiki in-process from TypeScript or Ja
 
 The llmwiki SDK lets you drive the entire wiki pipeline from inside your own TypeScript or JavaScript application. Instead of spawning a child process and scraping CLI output, you import `createWiki` directly from the package and call methods that return typed results. Every method runs silently - no console output, no global state - and concurrent calls are fully isolated via `AsyncLocalStorage`.
 
-Use the SDK when you are embedding llmwiki in your own tooling: a build script, a CI harness, a REST API, a test suite, or any context where you want structured results and clean composability. Use the CLI when you are working interactively from the terminal. Use the MCP server when you want AI agents to drive the pipeline - see [MCP Integration](/guides/mcp-agent-integration).
+Use the SDK when you are embedding llmwiki in your own tooling: a build script, a CI harness, a REST API, a test suite, or any context where you want structured results and clean composability. Use the MCP server when you want AI agents to drive the pipeline - see [MCP Integration](/guides/mcp-agent-integration).
 
 ## Installation
 
@@ -16,7 +16,7 @@ experimental local workflows. For an engine-free application dependency, see
 [SDK upgrade notes](/guides/sdk-upgrade) before adopting the development candidate;
 experimental type and workflow changes are not a promise of full source compatibility.
 
-The SDK is part of the same package as the CLI. No separate install is needed:
+The SDK is the package's entry point. No separate install is needed:
 
 ```bash
 npm install llm-wiki-compiler
@@ -108,12 +108,7 @@ async function prepareForReview(root: string, intent: RecordIntentV1) {
 }
 ```
 
-The operator then reviews the proposed manifest through the standard CLI:
-
-```bash
-llmwiki operation inspect <digest>
-llmwiki product apply <digest>
-```
+The operator then reviews the proposed manifest before anything is applied.
 
 An embedder trusted-write or preparation grant is not an operation-approval
 grant. Approval in an external workflow is not, by itself, compiler authorization.
@@ -193,7 +188,7 @@ Both methods return `IngestResult` with `filename`, `chars`, and `truncated` fie
 <ParamField body="wiki.compile(options?)" type="Promise<CompileResult>">
   Run the incremental compile pipeline. Extracts concepts from new or changed sources, generates typed wiki pages, resolves `[[wikilinks]]`, and rebuilds the index. **Requires LLM credentials.**
 
-  - `options.review` - when `true`, writes generated pages to `.llmwiki/candidates/` for review instead of directly to `wiki/`. Same behavior as `llmwiki compile --review`.
+  - `options.review` - when `true`, writes generated pages to `.llmwiki/candidates/` for review instead of directly to `wiki/`.
   - `options.systemPolicy` - extra instructions appended to the built-in compile prompts, for deployment-specific editorial or publication guidance without forking the prompts. Additive: it never replaces a built-in instruction, and it is placed before the source material. Blank or omitted leaves the prompt unchanged.
 
     It is **advisory, not enforceable**. A policy makes the model more likely to follow a rule; it cannot make it obey one, and nothing verifies that it did. Anything that must hold belongs in a lint rule or a trust gate.
@@ -250,7 +245,7 @@ if (result.publicationRefusal) {
 }
 ```
 
-Review candidates require fresh approval after all pending targets are published. Body edits require regeneration/restaging, and so does a target page that changed, appeared, or was deleted after staging; frontmatter-only title/summary edits are outside the audit digest. See the [policy matrix and snapshot limits](/cli/query#publication-and-review-policy) and [review recovery and sibling cleanup](/cli/review#validated-answer-candidates). Existing MCP `query_wiki` callers using `save: true` receive the same answer-preserving refusal in the JSON result, with no saved slug. MCP has no review option; its no-save behavior stays unchanged.
+Review candidates require fresh approval after all pending targets are published. Body edits require regeneration/restaging, and so does a target page that changed, appeared, or was deleted after staging; frontmatter-only title/summary edits are outside the audit digest. Existing MCP `query_wiki` callers using `save: true` receive the same answer-preserving refusal in the JSON result, with no saved slug. MCP has no review option; its no-save behavior stays unchanged.
 
 <ParamField body="wiki.search(question)" type="Promise<PageRecord[]>">
   Select and hydrate the most relevant page records for a question. Uses semantic embeddings when available, falls back to LLM-based index selection. **Requires LLM credentials.**
@@ -276,10 +271,6 @@ Review candidates require fresh approval after all pending targets are published
   Read a single source record by its basename (e.g. `"note.md"` - the `filename` field from `IngestResult`). Always includes body. Returns `null` if the source does not exist. No credentials required.
 </ParamField>
 
-<ParamField body="wiki.deleteSource(id)" type="Promise<boolean>">
-  Remove a source file from `sources/`. Returns `true` if deleted, `false` if not found. The compiled page in `wiki/` is not removed immediately - reconciliation happens on the next `compile()`. No credentials required.
-</ParamField>
-
 ### Status and quality
 
 <ParamField body="wiki.status()" type="Promise<WikiStatus>">
@@ -303,7 +294,7 @@ Review candidates require fresh approval after all pending targets are published
   console.log(report.providerJudgement);
   ```
 
-  Findings are the same objects `lint()` returns, in the same order within each tier; none gains a `tier` field. `low-confidence`, `contradicted-page`, and `excess-inferred-paragraphs` interpret stored judgments or citation coverage and are filed under `providerJudgement`. Profile confidence checks require a declared numeric field and flag finite values strictly below `0.5`; missing required or invalid values remain schema findings, and an absent optional value produces no confidence judgment. See [profile confidence checks](/cli/lint-eval#profile-confidence). These labels do not prove model authorship or validate factual support.
+  Findings are the same objects `lint()` returns, in the same order within each tier; none gains a `tier` field. `low-confidence`, `contradicted-page`, and `excess-inferred-paragraphs` interpret stored judgments or citation coverage and are filed under `providerJudgement`. Profile confidence checks require a declared numeric field and flag finite values strictly below `0.5`; missing required or invalid values remain schema findings, and an absent optional value produces no confidence judgment. These labels do not prove model authorship or validate factual support.
 
   Import `TieredLintReportV1` and `LintTierV1` from `llm-wiki-compiler` when you need to name these types.
 
@@ -323,7 +314,7 @@ Review candidates require fresh approval after all pending targets are published
 ### Context and export
 
 <ParamField body="wiki.getContextPack(options)" type="Promise<ContextPack>">
-  Build a v1 context pack - the same JSON envelope as `llmwiki context --json` and the MCP `get_context_pack` tool. Returns primary pages, semantic chunks, graph neighbors, citations, per-page freshness, warnings, and suggested actions.
+  Build a v1 context pack - the same JSON envelope the MCP `get_context_pack` tool returns. Returns primary pages, semantic chunks, graph neighbors, citations, per-page freshness, warnings, and suggested actions.
 
   - `options.prompt` *(required)* - free-text task or question
   - `options.budget` - approximate output token budget
@@ -335,13 +326,13 @@ Review candidates require fresh approval after all pending targets are published
 </ParamField>
 
 <ParamField body="wiki.exportJson(options?)" type="Promise<JsonExportDocument>">
-  Export the compiled wiki as a structured JSON document - the same shape as `llmwiki export --target json`. No credentials required.
+  Export the compiled wiki as a structured JSON document. No credentials required.
 
   **Performance note:** same per-call corpus-hashing cost as `status()` and `lint()`. Avoid hot loops.
 </ParamField>
 
 <ParamField body="wiki.exportOkf(options?)" type="Promise<OkfExportReport>">
-  Export the compiled wiki as an Open Knowledge Format bundle - the same bundle written by `llmwiki export --target okf`. No credentials required.
+  Export the compiled wiki as an Open Knowledge Format bundle. No credentials required.
 
   - `options.out` - optional output directory. Defaults to `dist/exports/okf` under the wiki root.
 
@@ -349,7 +340,7 @@ Review candidates require fresh approval after all pending targets are published
 </ParamField>
 
 <ParamField body="wiki.importOkf(dir, options?)" type="Promise<OkfImportReport>">
-  Import an Open Knowledge Format bundle without calling an LLM. By default, imported pages are staged as review candidates, matching `llmwiki import --okf`.
+  Import an Open Knowledge Format bundle without calling an LLM. By default, imported pages are staged as review candidates.
 
   - `dir` - path to the OKF bundle directory.
   - `options.dryRun` - preview pages, skips, and warnings without writing.

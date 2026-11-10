@@ -23,9 +23,7 @@
             "group": "Get Started",
             "pages": [
               "introduction",
-              "quickstart",
               "installation",
-              "upgrading-to-1-0",
               "guides/open-knowledge-format"
             ]
           },
@@ -40,37 +38,6 @@
               "concepts/citations",
               "concepts/tenant-isolation",
               "concepts/kg-open-classification"
-            ]
-          },
-          {
-            "group": "CLI Reference",
-            "pages": [
-              "cli/ingest",
-              "cli/compile",
-              "cli/rm",
-              "cli/query",
-              "cli/view",
-              "cli/links-here",
-              "cli/race",
-              "cli/graph-health",
-              "cli/category",
-              "cli/status",
-              "cli/lint-eval",
-              "cli/export",
-              "cli/import",
-              {
-                "group": "Configurable Lifecycle Profiles",
-                "expanded": false,
-                "pages": [
-                  "cli/profile",
-                  "cli/workflow",
-                  "cli/artifact",
-                  "cli/connector",
-                  "cli/template"
-                ]
-              },
-              "cli/review",
-              "cli/serve"
             ]
           },
           {
@@ -104,7 +71,6 @@
               "guides/sdk-packages",
               "guides/sdk-upgrade",
               "guides/atomic-memory-bridge",
-              "guides/ci-quality-gates",
               "guides/row-backed-wiring-reachability",
               "guides/wiki-db-parity-migration",
               "guides/kg-classification-migration",
@@ -124,8 +90,7 @@
             "group": "Troubleshooting",
             "pages": [
               "troubleshooting/faq",
-              "troubleshooting/stale-pages",
-              "troubleshooting/state-recovery"
+              "troubleshooting/stale-pages"
             ]
           }
         ]

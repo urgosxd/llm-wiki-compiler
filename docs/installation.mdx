@@ -1,10 +1,10 @@
 ---
 title: "Installing llmwiki: npm Setup and Provider Configuration"
 sidebarTitle: "Installation"
-description: "Install llmwiki globally with npm and configure Anthropic, OpenAI-compatible, Ollama, GitHub Copilot, or Claude Agent SDK."
+description: "Install the llm-wiki-compiler library with npm, run the launcher from the container, and configure Anthropic, OpenAI-compatible, Ollama, GitHub Copilot, or Claude Agent SDK."
 ---
 
-llmwiki is a Node.js CLI that you install once globally with npm. After installation, you point it at an LLM provider by setting a handful of environment variables - or in some cases, no variables at all if you're already logged into Claude Code. This page covers the full installation process and every supported provider.
+llmwiki is a library and a container-delivered launcher. `npm install llm-wiki-compiler` gives you the TypeScript API; the `llmwiki` executable it used to install is retired, so there is no global binary to put on your `PATH`. After installation, you point it at an LLM provider by setting a handful of environment variables - or in some cases, no variables at all if you're already logged into Claude Code. This page covers the full installation process and every supported provider.
 
 ## Requirements
 
@@ -35,23 +35,31 @@ including offline template verification and anchored tap-key reads, refuses
 operation where the required directory flags are unavailable. Continue using
 Linux for untrusted projects; the Windows CI work remains open.
 
-Install the `llm-wiki-compiler` package globally. The package registers the `llmwiki` binary on your `PATH`:
+Install the `llm-wiki-compiler` package. The package exports the SDK; it does not register an `llmwiki` binary:
 
 ```bash
-npm install -g llm-wiki-compiler
+npm install llm-wiki-compiler
 ```
 
-Verify the installation:
+```ts
+import { createWiki } from "llm-wiki-compiler";
+
+const wiki = createWiki({ root: "./my-wiki" });
+```
+
+To run the launcher instead - `serve` for MCP over stdio, or `host` for the viewer, the graph and `/api/ingest` - build the image from this repository and run it:
 
 ```bash
-llmwiki --version
-# or
-llmwiki --help
+docker build -t llmwiki .
+docker run -i -v "$PWD:/work" llmwiki                        # MCP over stdio, the default mode
+docker run --rm --network host -e LLMWIKI_MODE=host -e LLMWIKI_HOST=127.0.0.1 llmwiki  # host mode
 ```
+
+From a source checkout, `pnpm run build` followed by `node dist/api.js serve` (or `node dist/api.js host --port 4173`) runs the same two modes.
 
 ## Provider Setup
 
-llmwiki calls an LLM during the compile and query phases. It does **not** require credentials for `ingest`, `view`, `lint`, `status`, or any other read-only operation. Configure your provider by setting the environment variables below - or place them in a `.env` file in your project directory and llmwiki will load them automatically.
+llmwiki calls an LLM during the compile and query phases. It does **not** require credentials for ingest, the viewer, lint, status, or any other read-only operation. Configure your provider by setting the environment variables below - or place them in a `.env` file in your project directory and llmwiki will load them automatically.
 
 <Tabs>
   <Tab title="Anthropic (default)">
@@ -70,7 +78,7 @@ llmwiki calls an LLM during the compile and query phases. It does **not** requir
     export ANTHROPIC_BASE_URL=https://proxy.example.com
     ```
 
-    **Zero-export shortcut.** If you already have Claude Code configured, llmwiki falls back to reading `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, and `ANTHROPIC_MODEL` from `~/.claude/settings.json` (the `env` block). If those values are present there, you can run `llmwiki compile` with no exports at all.
+    **Zero-export shortcut.** If you already have Claude Code configured, llmwiki falls back to reading `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, and `ANTHROPIC_MODEL` from `~/.claude/settings.json` (the `env` block). If those values are present there, you can compile with no exports at all.
 
     **Configuration precedence:**
     1. Shell environment / local `.env`
@@ -84,12 +92,11 @@ llmwiki calls an LLM during the compile and query phases. It does **not** requir
     ```bash
     export LLMWIKI_PROVIDER=claude-agent
     export LLMWIKI_MODEL=claude-sonnet-4-6  # optional; this is the default
-    llmwiki compile
     ```
 
     **Notes:**
     - Compile and structured extraction work off the local login with no extra credentials.
-    - `llmwiki query` uses semantic embeddings, which the Claude Agent SDK does not provide. Set `VOYAGE_API_KEY` to enable embeddings; otherwise `query` falls back to lexical ranking.
+    - Query uses semantic embeddings, which the Claude Agent SDK does not provide. Set `VOYAGE_API_KEY` to enable embeddings; otherwise query falls back to lexical ranking.
     - Set `LLMWIKI_DEBUG=1` for a concise per-message trace, or `LLMWIKI_DEBUG=verbose` for the SDK's full verbose logging.
 
     <Warning>
@@ -160,7 +167,7 @@ llmwiki calls an LLM during the compile and query phases. It does **not** requir
     Available models (use dots, not dashes in names): `gpt-4o`, `gpt-4o-mini`, `claude-sonnet-4.5`, `claude-sonnet-4.6`, `claude-opus-4.5`, `gemini-2.5-pro`, and others - availability depends on your Copilot plan.
 
     <Note>
-      The GitHub Copilot API does not expose an embeddings endpoint. `llmwiki query` will fall back to full-index lexical selection without semantic ranking. For embedding-dependent workflows, switch to the `openai` provider and supply `OPENAI_API_KEY`.
+      The GitHub Copilot API does not expose an embeddings endpoint. Query falls back to full-index lexical selection without semantic ranking. For embedding-dependent workflows, switch to the `openai` provider and supply `OPENAI_API_KEY`.
     </Note>
   </Tab>
 </Tabs>
@@ -178,7 +185,7 @@ export LLMWIKI_EMBEDDING_MODEL=<your-local-embedding-model>
 
 A self-hosted endpoint needs no API key. Without `OPENAI_EMBEDDINGS_BASE_URL`, you must set `OPENAI_API_KEY`. If the endpoint belongs to a hosted service rather than your own machine, set `OPENAI_EMBEDDINGS_API_KEY` too - otherwise your `OPENAI_API_KEY` is sent there.
 
-Switching an existing project to a different embedding backend re-embeds every page on the next `llmwiki compile`, because vectors from different backends are not comparable.
+Switching an existing project to a different embedding backend re-embeds every page on the next `compile`, because vectors from different backends are not comparable.
 
 See [Environment Variables](/configuration/environment-variables) for the full `LLMWIKI_EMBEDDING_PROVIDER` credential reference.
 
@@ -194,7 +201,7 @@ This works with any provider and is applied globally to all compile and query ca
 
 ## Using a .env File
 
-You can store provider configuration in a `.env` file at the root of your wiki project directory. llmwiki loads it automatically on every command:
+You can store provider configuration in a `.env` file at the root of your wiki project directory. llmwiki loads it automatically on every run:
 
 ```bash
 # .env (in your wiki project directory)
@@ -206,9 +213,6 @@ Variables in the shell environment take precedence over `.env` values.
 
 ## Next Steps
 
-Upgrading an existing 0.11 project? Follow [Upgrading from 0.11 to 1.0](/upgrading-to-1-0)
-for the compatibility checks and one-time embedding index transition.
-
 For a full reference on every provider option, proxy configuration, request timeouts, and output language settings, see [Provider Configuration](/configuration/providers).
 
-Ready to compile your first wiki? Head to the [Quickstart](/quickstart).
+For the full API - ingest, compile, query, lint, export and OKF exchange - see the [SDK guide](/guides/sdk). To give agents the same capabilities over MCP, see [MCP Integration](/guides/mcp-agent-integration).

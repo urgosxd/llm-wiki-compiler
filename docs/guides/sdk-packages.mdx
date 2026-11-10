@@ -26,7 +26,7 @@ Scoping does not make them private or establish a security boundary.
 The standard package requires both core and the local engine at exact matching
 versions. Existing users do not need to select or construct a host. The engine
 can be omitted in internal core-only composition, but is not an optional dependency of the standard
-distribution. No existing CLI command is removed by choosing the standard package.
+distribution.
 
 ## Engine-free implementation
 
@@ -55,15 +55,14 @@ Core's host enforces confinement, locks, retained-state integrity and compiler
 mutation authority. The engine cannot manufacture a default host or extra grants.
 Host composition is an in-process trust boundary, not a sandbox for untrusted code.
 
-Applications should use the standard package. For internal composition, import
-the host and contracts through `@atomicstrata/llmwiki-core/local-workflow-host` and
-`@atomicstrata/llmwiki-core/local-workflow-contracts`, rather than private source paths. Use a
-single core module instance: duplicate-core composition is rejected before I/O.
+Applications should use the standard package. For internal composition, import the host and contracts
+from the core package's entry point rather than private source paths. Use a single core module
+instance: duplicate-core composition is rejected before I/O.
 
-The `compiler-cli`, `compiler-sdk` and `compiler-legacy-workflows` subpaths support
-the standard package's composition and compatibility. They are not the recommended
-application entry points. In particular, legacy locked-start composition assumes
-the caller already holds the required lock; it does not establish that lock.
+The core package publishes two entry points, `.` and `./compiler-sdk`, which support the standard
+package's composition and compatibility. They are not the recommended application entry points.
+In particular, legacy locked-start composition assumes the caller already holds the required lock;
+it does not establish that lock.
 
 ## Product boundaries
 
@@ -80,8 +79,7 @@ experimental terms; they are not silently rerouted through an external coordinat
 The two are tiers, not a migration path. The local engine executes locally per
 invocation and retains run state and pending human gates between sessions.
 Reach for an external coordinator for automatic scheduling, worker recovery,
-distributed execution, managed approval routing or cross-project coordination; see
-[When to use the local engine](/cli/workflow#when-to-use-the-local-engine).
+distributed execution, managed approval routing or cross-project coordination.
 
 ## Distribution requirements
 
