@@ -1,5 +1,5 @@
 /**
- * Graph health evaluator for the llmwiki eval harness.
+ * Graph health evaluator for the eval harness.
  *
  * Builds on the existing viewer graph path (collectViewerPages +
  * buildGraphData) so there is one source of truth for wikilink resolution,

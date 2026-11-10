@@ -26,7 +26,7 @@ import {
   type FetchResponder,
 } from "./fixtures/viewer-jsdom.js";
 
-/** A run parked on an agent gate: it needs `workflow gate approve` to move. */
+/** A run parked on an agent gate: it waits for gate `edited` to be approved. */
 const PARKED_ON_GATE = {
   runId: "run-0001",
   classification: "current",
@@ -37,9 +37,10 @@ const PARKED_ON_GATE = {
 };
 
 /**
- * A run parked needing a stage output: it needs `workflow submit` to move. The
- * two `nextSubmit*` hints ride along exactly as the classifier sets them — a
- * write-declaring stage always names a concrete `--entity-type`.
+ * A run parked needing a stage output. The two `nextSubmit*` hints ride along
+ * exactly as the classifier sets them — and the renderer deliberately ignores
+ * them: no command is printed for a park, so the declared kind cannot change
+ * the copy. They are kept here so that stays true rather than untested.
  */
 const PARKED_ON_OUTPUT = {
   runId: "run-0002",
@@ -51,7 +52,7 @@ const PARKED_ON_OUTPUT = {
   nextSubmitEntityType: "articles",
 };
 
-/** A run parked on an artifact-only stage: it submits `--kind artifact`, not `--kind page`. */
+/** A run parked on an artifact-only stage: its stage declares no entity write. */
 const PARKED_ON_ARTIFACT = {
   runId: "run-0004",
   classification: "current",
@@ -64,8 +65,8 @@ const PARKED_ON_ARTIFACT = {
 
 /**
  * A run parked on a `trust:` gate. It looks like a gate park and is NOT one:
- * `gate approve` throws `TrustGateNotHereError`, and only the trusted-write
- * grant plus a re-submit clears it.
+ * it is cleared only by the profile's trusted-write grant on a successful
+ * write, never by approving a step.
  */
 const PARKED_ON_TRUST_GATE = {
   runId: "run-0005",
@@ -170,36 +171,49 @@ describe("#/workflows — parked runs are the reason the route exists", () => {
   });
 });
 
-describe("#/workflows — the CLI that unparks a run", () => {
-  // The viewer is a read-only snapshot with no write path, so a row NAMES the
-  // command that moves the run. It never offers a control that implies the
-  // viewer could run it.
-  it("names `workflow gate approve` for a gate-parked run, with its run and gate id", async () => {
+describe("#/workflows — what a parked run says", () => {
+  // The viewer is a read-only snapshot with no write path, and there is no
+  // surface anywhere else either: no package.json in this repository declares a
+  // `bin`, and no registered MCP tool approves a gate or submits a stage output.
+  // So a row STATES the wait, names the run and gate ids, and says plainly that
+  // nothing in this build clears it. It never prints a command line — the old
+  // pasteable `workflow …` lines named a deleted CLI — and every assertion here
+  // pins both the statement and the absence of an executable shape.
+  it("states the gate wait with its run and gate id, and reads as no command", async () => {
     const main = await mountWorkflows(RUNS);
     const next = rowFor(main, "run-0001")?.querySelector(".workflow-next");
-    expect(next?.textContent).toBe("$ llmwiki workflow gate approve run-0001 edited");
+    expect(next?.textContent).toBe(
+      'Run run-0001 is waiting for gate "edited" to be approved. No surface in this build approves a gate.',
+    );
+    // The property that matters: no prompt sigil, no argv-shaped flags, nothing
+    // a reader could mistake for a line to paste.
+    expect(next?.textContent ?? "").not.toMatch(/[$`]|--\w/);
   });
 
-  // `workflow submit` requires `--kind` before anything else — `buildStageOutput`
-  // calls `requireOption(options.kind, "--kind")` first — so a bare
-  // `workflow submit <run-id>` fails the moment it is pasted. The stage's own
-  // declared write type is what makes the printed command runnable.
-  it("names `workflow submit` for an output-parked run, with the kind and type it needs", async () => {
+  // The declared write kind used to select which `workflow submit` line was
+  // printed. No line is printed for either kind now, so both parks must read
+  // identically — that is the surviving property, and the `nextSubmit*` hints
+  // staying inert is what this pins.
+  it("states the stage-output wait, with no submit command and no argv", async () => {
     const main = await mountWorkflows(RUNS);
     const next = rowFor(main, "run-0002")?.querySelector(".workflow-next");
     expect(next?.textContent).toBe(
-      "$ llmwiki workflow submit run-0002 --kind page --entity-type articles --slug <slug> --body-file <path>",
+      "Run run-0002 is waiting for its stage output to be submitted. No surface in this build submits one.",
     );
+    expect(next?.textContent ?? "").not.toMatch(/[$`]|--\w/);
   });
 
-  it("submits `--kind artifact` for a stage declaring only an artifact write", async () => {
+  it("states the same wait for a stage declaring only an artifact write", async () => {
     const main = await mountWorkflows([PARKED_ON_ARTIFACT]);
     const next = rowFor(main, "run-0004")?.querySelector(".workflow-next");
     expect(next?.textContent).toBe(
-      "$ llmwiki workflow submit run-0004 --kind artifact --artifact-type result --slug <slug> --body-file <path>",
+      "Run run-0004 is waiting for its stage output to be submitted. No surface in this build submits one.",
     );
+    expect(next?.textContent ?? "").not.toMatch(/[$`]|--\w/);
   });
+});
 
+describe("#/workflows — a parked row offers nothing a reader could run", () => {
   it("offers read-only detail links but no mutating buttons or forms", async () => {
     const main = await mountWorkflows(RUNS, true);
     expect(main.querySelector(".list-row button")).toBeNull();
@@ -222,9 +236,11 @@ describe("#/workflows — the CLI that unparks a run", () => {
 });
 
 describe("#/workflows — a trust gate is not an approvable gate", () => {
-  // `vouchGate` throws `TrustGateNotHereError` for a `trust:` gate: the Trust
-  // Guard clears it on a successful write, so the row must send the reader to
-  // the grant and a re-submit, never to an approval that cannot work.
+  // A `trust:` gate is cleared by the profile's trusted-write grant on a
+  // successful write, never by approving a step. The row must name the grant as
+  // the missing piece — it is a real, out-of-workspace mechanism
+  // (`src/trust/trusted-write.ts`) — and must not suggest an approval that
+  // cannot work.
   it("offers no `gate approve` command line for a trust-gated run", async () => {
     const main = await mountWorkflows([PARKED_ON_TRUST_GATE]);
     const commands = Array.from(
@@ -233,13 +249,17 @@ describe("#/workflows — a trust gate is not an approvable gate", () => {
     expect(commands.some((c) => c.includes("gate approve"))).toBe(false);
   });
 
-  it("names the trusted-write grant and the re-submit that clears it", async () => {
+  it("names the trusted-write grant, and promises no submit line", async () => {
     const main = await mountWorkflows([PARKED_ON_TRUST_GATE]);
     const row = rowFor(main, "run-0005");
     expect(row?.querySelector(".workflow-note")?.textContent).toContain("LLMWIKI_TRUSTED_WRITE");
-    expect(row?.querySelector(".workflow-next")?.textContent).toContain(
-      "workflow submit run-0005 --kind page --entity-type articles",
+    // Deleting the command left a true statement behind, not silence: the wait
+    // is stated, and the slot still carries nothing pasteable.
+    const next = row?.querySelector(".workflow-next")?.textContent ?? "";
+    expect(next).toBe(
+      "Run run-0005 is waiting for its stage output to be submitted. No surface in this build submits one.",
     );
+    expect(next).not.toMatch(/[$`]|--\w/);
   });
 
   it("labels the park a trust gate, not the approvable kind", async () => {
@@ -251,12 +271,12 @@ describe("#/workflows — a trust gate is not an approvable gate", () => {
     expect(flags).not.toContain("Waiting for approval · trusted-write");
   });
 
-  it("still prints `gate approve` for an ordinary gate park", async () => {
+  it("still states the wait for an ordinary gate park, with no approve line", async () => {
     const main = await mountWorkflows([PARKED_ON_GATE]);
     const row = rowFor(main, "run-0001");
     expect(row?.querySelector(".workflow-note")).toBeNull();
     expect(row?.querySelector(".workflow-next")?.textContent).toBe(
-      "$ llmwiki workflow gate approve run-0001 edited",
+      'Run run-0001 is waiting for gate "edited" to be approved. No surface in this build approves a gate.',
     );
   });
 });
@@ -296,13 +316,15 @@ describe("#/workflows — a problem row", () => {
 });
 
 describe("#/workflows — no runs", () => {
-  it("renders the design system's empty state with the real CLI command", async () => {
+  it("renders the design system's empty state naming the run directory, not a command", async () => {
     const main = await mountWorkflows([]);
     const state = main.querySelector(".empty-state");
     expect(state?.querySelector(".empty-state-title")?.textContent).toBe("No workflow runs");
-    expect(state?.querySelector(".empty-state-command")?.textContent).toBe(
-      "$ llmwiki workflow list",
-    );
+    const chip = state?.querySelector(".empty-state-command")?.textContent ?? "";
+    // A real path runs are read from, checked against the renderer's own
+    // constant rather than a paraphrase of it.
+    expect(chip).toBe(".llmwiki/workflows/runs/");
+    expect(chip).not.toMatch(/[$`]|--\w/);
   });
 
   it("explains that workflows come from a profile, since most projects have none", async () => {

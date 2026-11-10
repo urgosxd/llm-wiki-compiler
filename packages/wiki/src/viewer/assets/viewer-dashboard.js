@@ -16,12 +16,15 @@
  * wiki HAS, two report what needs a human. "Needs attention" is derived from
  * dangling links plus unresolved citations — both always present in the
  * snapshot — rather than from the lint cache, which is null until the first
- * `llmwiki lint` run and would leave the focal card blank on a new project.
+ * `lint_wiki` run and would leave the focal card blank on a new project.
  * Lint instead appears in the receipt and next actions, where "never run"
  * reads naturally.
  *
  * Next actions are informational. The viewer is read-only and cannot run any
- * of them, so each names the CLI command rather than offering a dead button.
+ * of them, so each names the registered MCP tool that does the work rather
+ * than offering a dead button. None may name a CLI subcommand: no package.json
+ * in this repository declares a `bin`, so a rendered `llmwiki <command>` is a
+ * line nobody can paste anywhere.
  *
  * A panel (`buildPanel`, `buildGraphPanel`) is a bordered shell with NO
  * padding of its own — a head band, a body, and (where the mockup shows
@@ -275,7 +278,7 @@ function buildSplit(model) {
  * A default project's pages ARE compiled — the LLM pipeline writes them — so
  * the mockup's "Recently compiled" (tree line 160) is accurate there and stays
  * verbatim. A profile's typed entity pages are AUTHORED by hand under their
- * entity directory; `llmwiki compile` never produces one. "Updated" is the term
+ * entity directory; `compile_wiki` never produces one. "Updated" is the term
  * true of both, so the profile branch uses it rather than describing authored
  * pages as compiled. Same distinction `noTypedPagesState` already draws in
  * viewer-lists.js.
@@ -285,18 +288,20 @@ function recentPanelTitle(model) {
 }
 
 /**
- * The panel's empty state. The default branch is the mockup's copy verbatim,
- * command included. The profile branch names no command at all: there is
- * nothing for the CLI to run, because the reader authors these pages
- * themselves — offering `llmwiki compile` would send them to a command that
- * cannot produce what the panel is waiting for.
+ * The panel's empty state. The default branch keeps the mockup's copy verbatim
+ * and names `compile_wiki` in the slot that used to hold the removed compile
+ * command line — the registered MCP tool the LLM pipeline
+ * runs under is the surface that actually compiles these pages. The profile
+ * branch names no surface at all: nothing compiles an entity page, because the
+ * reader authors these by hand, so naming a tool there would send them to one
+ * that cannot produce what the panel is waiting for.
  */
 function recentEmptyState(model) {
   if (!model.vocabulary) {
     return emptyState(
       "Nothing compiled yet",
       "Compiled pages appear here newest first, each with its citation count and freshness.",
-      "$ llmwiki compile",
+      "compile_wiki",
     );
   }
   return emptyState(
@@ -483,16 +488,18 @@ function buildGraphLegend() {
 
 /**
  * Build the rail's closing note: the viewer is a frozen, not live, snapshot.
- * The "llmwiki view" command is its own span (mockup tree line 368) so it can
- * carry the accent colour the surrounding sentence doesn't.
+ * It says what re-reads that snapshot — a restart of the viewer process, the
+ * only thing that rebuilds it — and names no command: the surface that starts
+ * this server is `dist/api.js`, a launcher with no subcommands, so a rendered
+ * `view` subcommand would be a line that does not exist.
  */
 function buildSnapshotNote() {
   const note = el("div", "snapshot-note");
   note.appendChild(
-    document.createTextNode("The viewer serves a frozen snapshot. Changes on disk appear after "),
+    document.createTextNode(
+      "The viewer serves a frozen snapshot. Changes on disk appear after a restart.",
+    ),
   );
-  note.appendChild(el("span", "snapshot-command", "llmwiki view"));
-  note.appendChild(document.createTextNode(" restarts."));
   return note;
 }
 
@@ -598,6 +605,10 @@ function buildActionRow({ glyph, title, hint }) {
  * entry's glyph matches the mockup's fixed glyph-per-action-kind (dangling
  * ⌗, recompile ↻, lint ✓, export ⇩) — not per-position, so a future action
  * inserted between these would not need to guess a new symbol.
+ *
+ * Each hint is the name of the REGISTERED MCP tool that performs the action
+ * (`compile_wiki`, `lint_wiki`, `export_okf`), never a CLI command: no
+ * package.json here declares a `bin`, so `llmwiki <command>` names nothing.
  */
 // Three independent, non-nested guard conditions each appending one row
 // inflate cyclomatic count for what stays a flat action list
@@ -616,11 +627,11 @@ function nextActionRows(model) {
     rows.push({
       glyph: "↻",
       title: `Recompile ${plural(model.counts.stale, "stale page")}`,
-      hint: "llmwiki compile",
+      hint: "compile_wiki",
     });
   }
-  if (!model.lint) rows.push({ glyph: "✓", title: "Run lint", hint: "llmwiki lint" });
-  rows.push({ glyph: "⇩", title: "Export for agents", hint: "llmwiki export" });
+  if (!model.lint) rows.push({ glyph: "✓", title: "Run lint", hint: "lint_wiki" });
+  rows.push({ glyph: "⇩", title: "Export for agents", hint: "export_okf" });
   return rows;
 }
 

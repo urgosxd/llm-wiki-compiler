@@ -1,5 +1,5 @@
 /**
- * @file Shared, reversible OKF<->llmwiki mapping core (used by export and the
+ * @file Shared, reversible OKF<->wiki mapping core (used by export and the
  * later import plan): canonical body + hashing, frontmatter mapping, link rewrite.
  */
 import { createHash } from "node:crypto";
@@ -38,7 +38,7 @@ export function safeRefName(file: string): string {
 }
 
 /**
- * Optional x-llmwiki fields, each paired with how to read its value off a page.
+ * Optional `x-llmwiki` extension fields, each paired with how to read its value off a page.
  * Table-driven so {@link buildXLlmwiki} stays a single flat copy loop (no branch
  * per field) — a non-empty value is copied, everything else is dropped.
  */
@@ -58,7 +58,7 @@ function isPresent(value: unknown): boolean {
   return Array.isArray(value) ? value.length > 0 : true;
 }
 
-/** Build the refreshed x-llmwiki provenance block for a page (contentHash recomputed from the current body). */
+/** Build the refreshed `x-llmwiki` provenance block for a page (contentHash recomputed from the current body). */
 function buildXLlmwiki(page: ExportPage): XLlmwiki {
   const x: XLlmwiki = {
     schemaVersion: "0.1",
@@ -79,7 +79,7 @@ const RECONSTRUCT_STRIP = ["type", "title", "description", "tags", "timestamp", 
 
 /** OKF `type` used when nothing better is known about a document. */
 const DEFAULT_OKF_TYPE = "concept";
-/** OKF `type` for a page living in `wiki/queries/` — a saved `llmwiki query` answer. */
+/** OKF `type` for a page living in `wiki/queries/` — a saved `query_wiki` answer. */
 const QUERY_OKF_TYPE = "query";
 
 /** Overlay the OKF standard fields from the CURRENT page so local edits are always reflected. */

@@ -133,6 +133,27 @@ describe("journal health surfaces — ok adds nothing (parity-safe)", () => {
   }
 });
 
+describe("journal health surfaces — the copy names a callable surface", () => {
+  it("the pending message names the compile_wiki tool and no removed command", async () => {
+    await plantPending();
+    const warning = (await collectStatus(root)).warnings?.find(
+      (w) => w.code === INCOMPLETE_COMPILE_CODE,
+    );
+    expect(warning?.message).toContain("compile_wiki");
+    expect(warning?.message).not.toContain("llmwiki ");
+  });
+
+  it("the unavailable message names the journal path and the compile_wiki tool", async () => {
+    await plantUnavailable();
+    const warning = (await collectStatus(root)).warnings?.find(
+      (w) => w.code === JOURNAL_UNAVAILABLE_CODE,
+    );
+    expect(warning?.message).toContain(".llmwiki/journal/");
+    expect(warning?.message).toContain("compile_wiki");
+    expect(warning?.message).not.toContain("llmwiki ");
+  });
+});
+
 describe("journal health surfaces — threading stays read-only", () => {
   it("does not materialize .llmwiki on a clean read across every surface", async () => {
     for (const surface of SURFACES) await surfaceWarningCodes[surface]();

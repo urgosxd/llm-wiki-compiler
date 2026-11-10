@@ -1,5 +1,5 @@
 /**
- * Shared types for the llmwiki export subsystem.
+ * Shared types for the export subsystem.
  *
  * ExportPage is the normalised in-memory representation of a wiki page used
  * by every export format. It is derived from the page's YAML frontmatter plus
@@ -21,7 +21,7 @@ import type { DurableConnectorBlock } from "../connectors/types.js";
 
 /**
  * Flat citation shape exported alongside each page. Identical to the
- * normalized `FlatCitation` used by `llmwiki context` so adapters that
+ * normalized `FlatCitation` used by `get_context_pack` so adapters that
  * consume both surfaces share one shape. Paragraph-only citations omit
  * `start` and `end`; claim-level citations carry the parsed line range.
  */
@@ -29,7 +29,7 @@ export type ExportCitation = FlatCitation;
 
 /** Snapshot of an imported doc's original OKF frontmatter, captured at import. Present ONLY on imported pages; drives verbatim re-export of foreign frontmatter. */
 export interface XOkfSnapshot {
-  /** Raw OKF `type` when it wasn't a known llmwiki kind (absent for known kinds). */
+  /** Raw OKF `type` when it wasn't a known wiki kind (absent for known kinds). */
   type?: string;
   /** Bundle-relative source path of the original OKF doc; durable across approval, for diagnosis. */
   okfPath?: string;
@@ -207,12 +207,12 @@ export const EXPORT_TARGETS: readonly ExportTarget[] = [
 ];
 
 /**
- * Targets produced by a plain `llmwiki export` (no `--target`).
+ * Targets produced by a plain export run (no `target` option).
  *
  * Deliberately the six single-file formats only — OKF is excluded because it
  * writes a whole directory bundle, which would be surprising as a default.
- * OKF stays reachable explicitly via `--target okf` (it remains in
- * {@link EXPORT_TARGETS} so that flag still validates).
+ * OKF stays reachable explicitly via `target: "okf"` (it remains in
+ * {@link EXPORT_TARGETS} so that option still validates).
  */
 export const DEFAULT_EXPORT_TARGETS: readonly ExportTarget[] = [
   "llms-txt",

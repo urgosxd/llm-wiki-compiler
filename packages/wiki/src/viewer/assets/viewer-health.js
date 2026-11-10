@@ -398,7 +398,7 @@ function unverifiedNote(model, total) {
     model.unverifiedPages === total
       ? "Freshness could not be checked for any page"
       : `Freshness could not be checked for ${plural(model.unverifiedPages, "page")}`;
-  return `${scope} — state.json is missing or unreadable. Run \`llmwiki compile\` to restore it.`;
+  return `${scope} — state.json is missing or unreadable. The compile_wiki tool writes it.`;
 }
 
 /**
@@ -472,11 +472,14 @@ function traceNote(model) {
  * run. Page and graph data ARE frozen at startup, but saying so here would
  * attach a true caveat to the wrong fact and send the reader to restart a
  * server that did not need it.
+ *
+ * The refresh is named by its registered MCP tool, `lint_wiki`, not by a CLI
+ * command: no package.json in this repository declares a `bin`.
  */
 function buildCacheNote() {
   const note = el("div", "cache-note");
-  note.appendChild(el("span", undefined, "Lint results are cached from the last run. Re-run "));
-  note.appendChild(el("code", undefined, "llmwiki lint"));
+  note.appendChild(el("span", undefined, "Lint results are cached from the last run. Run "));
+  note.appendChild(el("code", undefined, "lint_wiki"));
   note.appendChild(el("span", undefined, " and reload this page to refresh."));
   return note;
 }

@@ -313,7 +313,7 @@ const BANNER_STATE_STATUSES = new Set(["corrupt", "too-new"]);
 /** Banner copy keyed by the state.json classification that triggers it. */
 const STATE_BANNER_MESSAGES = {
   corrupt:
-    "Warning: state.json is corrupt. Freshness data is unavailable. Re-run `llmwiki compile` to restore.",
+    "Warning: state.json is corrupt. Freshness data is unavailable. The `compile_wiki` tool rewrites it.",
   "too-new":
     "Warning: this wiki's state was written by a newer version of llmwiki. Update llmwiki to view it safely.",
 };
@@ -393,7 +393,7 @@ function handleIndexError(main, err) {
     return;
   }
   main.innerHTML = "";
-  main.appendChild(placeholder("wiki/index.md is not available. Run `llmwiki compile`."));
+  main.appendChild(placeholder("wiki/index.md is not available. The `compile_wiki` tool writes it."));
 }
 
 /** Fetch /api/page/:dir/:slug and render. */

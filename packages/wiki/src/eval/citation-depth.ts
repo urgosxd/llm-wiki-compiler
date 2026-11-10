@@ -1,5 +1,5 @@
 /**
- * Citation depth evaluator for the llmwiki eval harness.
+ * Citation depth evaluator for the eval harness.
  *
  * Measures how precise citations are. A bare ^[file.md] says "this paragraph
  * came from somewhere in that source" — useful but vague. A claim-level

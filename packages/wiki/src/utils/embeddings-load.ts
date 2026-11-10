@@ -414,7 +414,7 @@ async function gateActiveStore(
   if (result.kind === "unavailable") return degraded("embedding-store-unavailable", result.reason);
   const parsed = result.parsed;
   if (parsed.version !== 3) {
-    return degraded("embedding-index-outdated", "Embedding index is an older version; rebuild with 'llmwiki compile'.");
+    return degraded("embedding-index-outdated", "Embedding index is an older version; rebuild with the MCP tool `compile_wiki`.");
   }
   const validation = validateV3ForSearch(parsed);
   if (!validation.available) {
@@ -423,7 +423,7 @@ async function gateActiveStore(
   if (isStaleConfiguration(parsed.store)) {
     return degraded(
       "embedding-index-outdated",
-      "Embedding index was built with a different embedding configuration; rebuild with 'llmwiki compile'.",
+      "Embedding index was built with a different embedding configuration; rebuild with the MCP tool `compile_wiki`.",
     );
   }
   return { store: parsed.store as unknown as EmbeddingStoreV3, warnings: [], stalePageIds: [] };

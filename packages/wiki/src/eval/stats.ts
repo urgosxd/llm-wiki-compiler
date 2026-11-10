@@ -1,5 +1,5 @@
 /**
- * Corpus size stats collector for the llmwiki eval harness.
+ * Corpus size stats collector for the eval harness.
  *
  * Snapshots source count, page count, total wiki character count, and
  * embedding counts. Each run appends one JSON line to .llmwiki/eval/history.jsonl

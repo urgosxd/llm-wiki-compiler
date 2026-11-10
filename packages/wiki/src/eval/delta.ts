@@ -1,5 +1,5 @@
 /**
- * Regression detection for the llmwiki eval harness.
+ * Regression detection for the eval harness.
  *
  * Computes signed metric deltas between the current eval report and the
  * previous one from history.jsonl. Positive = improvement, negative = regression.

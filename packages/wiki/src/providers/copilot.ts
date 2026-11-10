@@ -27,7 +27,7 @@ export class CopilotProvider extends OpenAIProvider {
   override async embed(_text: string): Promise<number[]> {
     throw new Error(
       "GitHub Copilot does not support embeddings.\n" +
-      "  For semantic search (llmwiki query), route embeddings to another backend\n" +
+      "  For semantic search (the query_wiki tool), route embeddings to another backend\n" +
       "  and keep Copilot for chat:\n" +
       "    export LLMWIKI_EMBEDDING_PROVIDER=openai\n" +
       "    export OPENAI_EMBEDDINGS_API_KEY=sk-...",

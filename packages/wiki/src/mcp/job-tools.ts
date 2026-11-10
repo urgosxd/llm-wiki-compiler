@@ -5,10 +5,10 @@
  *
  * ## Why these read Postgres and not the registry
  *
- * `JobRegistry` lives in the memory of the process that owns the job. `llmwiki serve`
- * is a different process — MCP is stdio, and the host that runs async ingests is a
- * separate `llmwiki host` — so the registry is invisible here by construction, not
- * by oversight. `wiki.ingest_job` is the copy the host writes on every transition
+ * `JobRegistry` lives in the memory of the process that owns the job. The MCP server
+ * is a different process — MCP is stdio, and the host that runs async ingests is its
+ * own launch of the server entry — so the registry is invisible here by construction,
+ * not by oversight. `wiki.ingest_job` is the copy the host writes on every transition
  * precisely so this side can read it.
  *
  * ## Why there is no `ingest_source_async` here

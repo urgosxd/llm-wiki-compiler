@@ -1,15 +1,15 @@
 /**
- * Commander action for `llmwiki ingest <source>`.
+ * Ingest entry points used by the SDK and the `ingest_source` MCP tool.
  *
  * This module is now TRANSPORT ONLY. The ingest pipeline — source detection,
  * fetching, truncation, the dimension transaction, and journaling — lives in
- * `src/services/ingest/`, so the CLI, the MCP server, and the HTTP host all reach
+ * `src/services/ingest/`, so the SDK, the MCP server, and the HTTP host all reach
  * the same code. That is not tidiness: ingest writes across a markdown file and
  * Postgres, which share no transaction manager, so a client that bypassed the
  * service would silently lose the synchronization guarantee.
  *
- * What remains here is the CLI's own presentation: read `process.cwd()`, print
- * the saved path, and suggest the next command.
+ * What remains here is the presentation of a save: read `process.cwd()`, print
+ * the saved path, and name the surface that compiles it.
  *
  * The pipeline helpers are RE-EXPORTED so existing consumers keep their import
  * paths. Moving a definition and its consumers in one step would have made this
@@ -39,5 +39,5 @@ export default async function ingest(source: string): Promise<void> {
     "+",
     output.success(`Saved ${output.bold(result.filename)} → ${output.source(savedPath)}`)
   );
-  output.status("→", output.dim("Next: llmwiki compile"));
+  output.status("→", output.dim("Next: call the compile_wiki tool"));
 }

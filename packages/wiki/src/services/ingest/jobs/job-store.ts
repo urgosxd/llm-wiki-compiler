@@ -9,9 +9,9 @@
  * all in one process. That is the right shape for the host that owns the job, and
  * it stays exactly as it is — this module does not replace it.
  *
- * What it could not do is be read by `llmwiki serve`. The MCP server is a separate
- * process over stdio, it shares no memory with `llmwiki host`, and an agent driving
- * the product through MCP is the caller who wants to poll instead of block. So the
+ * What it could not do is be read by the MCP server. That is a separate process over
+ * stdio, it shares no memory with the host, and an agent driving the product through
+ * MCP is the caller who wants to poll instead of block. So the
  * host mirrors every transition here and the MCP reads from here.
  *
  * ## Why the payload is stored whole

@@ -41,9 +41,8 @@ async function exportBundle(root: string, out: string | undefined, env: NodeJS.P
 /**
  * Import an OKF bundle into ONE Stack and shape the tool payload.
  *
- * Staging is always untrusted here, so nothing becomes live without review; the
- * `env` still decides which Stack the review candidates and (on a trusted run) the
- * page rows belong to.
+ * Staging is always untrusted here, so nothing becomes live; the `env` still decides
+ * which Stack the staged candidates and (on a trusted run) the page rows belong to.
  *
  * @param root - Project root; `dir` is confined under it.
  * @param dir - Bundle directory inside the project.
@@ -68,8 +67,8 @@ async function importBundle(
     skipped: report.skipped,
     warnings: report.warnings,
     nextAction: report.mode === "dry-run"
-      ? "Preview only — re-run without dryRun to stage these as review candidates."
-      : "Imported docs are STAGED as review candidates — approve them via `llmwiki review` (human gate) before they enter the wiki.",
+      ? "Preview only — re-run without dryRun to stage these as candidates."
+      : "Imported docs are STAGED as candidates under .llmwiki/candidates/ — no surface promotes them into the wiki.",
   });
 }
 
@@ -126,10 +125,11 @@ export function registerOkfTools(server: McpServer, root: string, maxPending: nu
   server.registerTool(
     "import_okf",
     {
-      title: "Import OKF bundle (staged for review)",
-      description: "Import an OKF bundle from a path INSIDE the project as review candidates for " +
-        "the Stack named by `stackId`. Always staging-only — imported knowledge requires human " +
-        "review/approval before it enters the wiki. Use dryRun to preview. " +
+      title: "Import OKF bundle (staging only)",
+      description: "Import an OKF bundle from a path INSIDE the project as candidates for " +
+        "the Stack named by `stackId`. Always staging-only — the docs are written under " +
+        ".llmwiki/candidates/ and no surface promotes a candidate into the wiki. " +
+        "Use dryRun to preview. " +
         STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         dir: z.string().describe("Bundle directory (must resolve inside the project root)"),

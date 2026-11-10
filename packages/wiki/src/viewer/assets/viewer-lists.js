@@ -135,7 +135,7 @@ export function renderSourcesList(main, envelope) {
       emptyState(
         "No sources yet",
         "Sources are the raw files the compiler reads. Every claim on a page traces back to a span in one of them.",
-        "$ llmwiki ingest <source>",
+        "ingest_source",
       ),
     );
     return;
@@ -204,7 +204,7 @@ function noConceptsState() {
   return emptyState(
     "No concepts yet",
     "Concepts are compiled pages — knowledge extracted once from your sources and kept with its citations.",
-    "$ llmwiki compile",
+    "compile_wiki",
   );
 }
 
@@ -213,7 +213,7 @@ function noQueriesState() {
   return emptyState(
     "No saved queries yet",
     "Queries are compiled pages too — ask once and the answer is kept with its citations.",
-    '$ llmwiki query "<question>"',
+    "query_wiki",
   );
 }
 

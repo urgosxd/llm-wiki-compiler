@@ -32,13 +32,15 @@ export type JournalWarningCode =
 
 /** Human-readable copy for the `pending` (incomplete-compile) warning. */
 const INCOMPLETE_COMPILE_MESSAGE =
-  "A prior project mutation did not finish; run `llmwiki recover` to recover. " +
+  "A prior project mutation did not finish; the pending batch under `.llmwiki/journal/` " +
+  "is reverted by the next compile (MCP tool `compile_wiki`). " +
   "The wiki may reflect partial, post-crash state.";
 
 /** Human-readable copy for the `unavailable` (journal-unavailable) warning. */
 const JOURNAL_UNAVAILABLE_MESSAGE =
   "The project mutation journal is unavailable (corrupt, unreadable, or escaping the " +
-  "project root); content may be partial or tampered. Run `llmwiki recover` to recover.";
+  "project root); content may be partial or tampered. Inspect `.llmwiki/journal/` — " +
+  "compile (MCP tool `compile_wiki`) refuses to run until it is settled.";
 
 /**
  * A neutral read-surface warning: a stable, scriptable `code` plus a

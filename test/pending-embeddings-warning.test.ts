@@ -78,6 +78,10 @@ describe("pendingEmbeddingsWarning", () => {
     const warning = await pendingEmbeddingsWarning(root);
     expect(warning?.code).toBe(PENDING_EMBEDDINGS_PENDING_CODE);
     expect(warning?.message).toContain("3 page(s)");
+    // The remedy has to name something a caller can actually do: the registered
+    // `compile_wiki` tool, never the binary this product does not ship.
+    expect(warning?.message).toContain("compile_wiki");
+    expect(warning?.message).not.toContain("llmwiki ");
   });
 
   it("returns the unavailable warning for a CORRUPT marker (invalid JSON)", async () => {
@@ -85,6 +89,8 @@ describe("pendingEmbeddingsWarning", () => {
     const warning = await pendingEmbeddingsWarning(root);
     expect(warning?.code).toBe(PENDING_EMBEDDINGS_UNAVAILABLE_CODE);
     expect(warning?.message).toContain(".llmwiki/pending-embeddings.json");
+    expect(warning?.message).toContain("compile_wiki");
+    expect(warning?.message).not.toContain("llmwiki ");
   });
 
   it.each(["{}", '{"entries":["concepts/a"]}', '"x"', "123", "true", "null"])(

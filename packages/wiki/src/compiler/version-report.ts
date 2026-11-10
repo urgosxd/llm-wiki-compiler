@@ -19,10 +19,12 @@
  * re-rooted, and no source is re-extracted. A prompt tweak must not rewrite the corpus on
  * a deploy, because regeneration is a paid model call per page and a mass rewrite would
  * re-root the anchor of every curated link the wiki has accumulated. Staleness is
- * therefore REPORTED, and the operator decides — `llmwiki compile --recompile <page>`
- * regenerates one page (or `--recompile all` a whole stack) at the current version.
- * Observability without that lever would be a dashboard nobody can act on, which is why
- * the printed line names it whenever a page is behind.
+ * therefore REPORTED, and the operator decides. A scoped regeneration exists as an
+ * exported function (`compileRecompiling` in `compiler/index.ts`), which rewrites one
+ * named page — or, with `["all"]`, every page the wiki stores — at the current version;
+ * no registered MCP tool and no SDK method exposes it. The printed line therefore reports
+ * the split and names NO way to run it: a remedy string nobody can execute is worse than
+ * a count without one.
  *
  * ## The standing standard for any future version-shaped state
  *
@@ -30,8 +32,10 @@
  * schema version, a linker version — must be observable BY THIS SAME STANDARD: it is
  * aggregated over what the wiki stores, reported on a normal run without a verbose flag
  * (plainly when it is uniform, with the counts when it is not), and paired with a
- * documented, bounded way to regenerate one artifact at the current value. Silent
- * version-shaped state is indistinguishable from broken state, so it is not allowed here.
+ * documented, bounded way to regenerate one artifact at the current value. That way is
+ * recorded here as the exported `compileRecompiling` rather than advertised as a command:
+ * no surface runs it today, and saying otherwise would be the advert this module removed.
+ * Silent version-shaped state is indistinguishable from broken state, so it is not allowed here.
  *
  * ## Bounded, and no silent limits
  *
@@ -75,12 +79,9 @@ export interface VersionSplit {
   readonly versions: readonly VersionTally[];
   /** Pages with no recorded version at all. */
   readonly unversioned: number;
-  /** Pages not at {@link current}: the ones the lever exists for. */
+  /** Pages not at {@link current}: the ones a scoped regeneration would rewrite. */
   readonly stalePages: number;
 }
-
-/** How a caller is told to refresh a stale page. Printed with every stale report. */
-const RECOMPILE_HINT = "regenerate a stale page with `llmwiki compile --recompile <page-id>`";
 
 /** `v<number>` shape used to compare versions numerically instead of lexically. */
 const NUMBERED_VERSION = /^v(\d+)$/;
@@ -165,14 +166,14 @@ export function describeVersionSplit(split: VersionSplit): string {
   }
   if (only !== undefined && split.unversioned === 0) {
     return `Synthesis version: ${only.pages} page(s) compiled at ${only.version} ` +
-      `(the current version is ${split.current}) — ${RECOMPILE_HINT}.`;
+      `(the current version is ${split.current}).`;
   }
   const tallies = split.versions
     .map((tally) =>
       `${tally.pages} page(s) compiled at ${tally.version}${tally.current ? " (the current version)" : ""}`)
     .join(", ");
   const head = split.versions.length <= 1 ? "Synthesis version" : "Synthesis version split";
-  return `${head}: ${tallies}${unversioned} — ${RECOMPILE_HINT}.`;
+  return `${head}: ${tallies}${unversioned}.`;
 }
 
 /** Every concept page slug the wiki stores, in code-unit order. */
@@ -228,13 +229,15 @@ export async function readVersionSplit(
 
 /*
  * ---------------------------------------------------------------------------
- * The LEVER: planning a scoped `llmwiki compile --recompile` run.
+ * THE SCOPED-RECOMPILE PLAN.
  *
  * A page is stamped with the version that produced it, and the report above says
- * which pages are behind. This half turns that report into an action: which pages
+ * which pages are behind. This half turns that report into an ordering: which pages
  * a request names, which sources can regenerate them, and what a run must do to
  * change NOTHING else. It lives beside the report because the two are one rule --
- * version-shaped state is observable only if it is also actionable.
+ * version-shaped state is observable only if it is also actionable. Its entry point,
+ * `compileRecompiling`, is exported for programmatic callers; no MCP tool, SDK method
+ * or command runs it today.
  * ---------------------------------------------------------------------------
  */
 

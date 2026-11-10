@@ -1,5 +1,5 @@
 /**
- * Type definitions for the llmwiki eval harness.
+ * Type definitions for the eval harness.
  *
  * Four metric families:
  *  - HealthResult: aggregated lint score (0–100)

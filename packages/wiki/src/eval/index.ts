@@ -1,5 +1,5 @@
 /**
- * Report assembly for the llmwiki eval harness.
+ * Report assembly for the eval harness.
  *
  * Combines evaluated components (health, citation coverage, stats, citation support)
  * into a final EvalReport with delta tracking and threshold validation.

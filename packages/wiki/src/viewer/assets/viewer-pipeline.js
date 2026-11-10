@@ -55,12 +55,16 @@ export function renderPipeline(main, envelope) {
  * Shown when the envelope carries no pipeline at all. Only a profile declares
  * entity types and lifecycles, so this is the default project's normal state —
  * a fact about the project, not a failure — and it gets the teaching card.
+ *
+ * The card names no surface: the slot here used to print the removed
+ * `template init` command, and no registered MCP tool creates a profile either
+ * — `list_stacks` lists Stacks and creates nothing. The body states the fact
+ * and stops.
  */
 function emptyPipelineState() {
   return emptyState(
     "No record stages configured",
     "This project does not define categories with tracked stages. You can still browse its pages and source files.",
-    "$ llmwiki template init",
   );
 }
 

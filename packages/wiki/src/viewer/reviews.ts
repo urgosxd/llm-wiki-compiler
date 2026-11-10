@@ -40,16 +40,15 @@ import type { HeldReason } from "../review/policy.js";
  * The route re-reads disk per visit and `heldReasons: "all"` is a real policy
  * code meaning "hold every page", so a 5,000-page corpus compiled under it puts
  * 5,000 files behind a single request. 200 is chosen from both ends: it is far
- * beyond what anyone scrolls through in a read-only queue — `llmwiki review
- * list` is the tool for working a long queue, and the pane says so once the cap
- * bites — while fixing the per-request cost at 200 reads and parses however
- * large the corpus grows.
+ * beyond what anyone scrolls through in a read-only queue — and the pane says the
+ * queue is bounded once the cap bites — while fixing the per-request cost at 200
+ * reads and parses however large the corpus grows.
  */
 export const REVIEW_LIST_LIMIT = 200;
 
 /** A single stable JSON row in the `/api/reviews` envelope. */
 export interface ReviewCandidateRow {
-  /** Candidate id, as `llmwiki review show <id>` takes it. */
+  /** Candidate id — the stable identifier the candidate record carries. */
   id: string;
   /** Proposed page title. */
   title: string;
@@ -68,15 +67,15 @@ export interface ReviewCandidateRow {
   /** Wiki subdir approval writes into; absent when the candidate does not set one. */
   targetDirectory?: string;
   /**
-   * Declared entity type approval routes a TYPED candidate to; absent on a
-   * default candidate.
+   * Declared entity type a TYPED candidate routes to; absent on a default
+   * candidate.
    *
-   * Carried because it, not `targetDirectory`, decides where `review approve`
-   * writes: `routeApprovedPageWrite` sends a candidate with this field through
-   * the typed planner to `wiki/<targetEntityType>/<slug>.md`, and only a
-   * candidate WITHOUT it takes the concepts/queries path. A row projecting the
-   * directory alone therefore names the wrong destination for exactly the
-   * candidates whose destination is not obvious.
+   * Carried because it, not `targetDirectory`, decides the destination: a
+   * candidate carrying this field would land at
+   * `wiki/<targetEntityType>/<slug>.md`, and only a candidate WITHOUT it takes
+   * the concepts/queries path. A row projecting the directory alone therefore
+   * names the wrong destination for exactly the candidates whose destination is
+   * not obvious.
    */
   targetEntityType?: string;
 }

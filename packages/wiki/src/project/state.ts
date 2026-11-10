@@ -1,7 +1,7 @@
 /**
- * Read-only project-state collector for `llmwiki next`.
+ * Read-only project-state collector behind the `get_context_pack` MCP tool.
  *
- * Inspects an llmwiki project root and reports counts, lint cache status,
+ * Inspects a project root and reports counts, lint cache status,
  * and structural warnings without acquiring locks, mutating disk, or
  * running compile/lint. Designed to be cheap on small projects and to
  * stay cheap on large wikis by using directory mtimes as a stale-lint
@@ -10,11 +10,11 @@
  * Stale-lint detection is intentionally approximate per the spec:
  * directory-structure changes after the last lint run produce a
  * `lint-cache-stale` warning. Content-only edits may not trigger it on
- * every filesystem; exact lint freshness belongs to `llmwiki lint`.
+ * every filesystem; exact lint freshness belongs to the `lint_wiki` tool.
  *
  * Candidate reads are race-tolerant: this collector delegates to
- * `countCandidates`, which skips malformed/partial candidate JSON the
- * same way `review list` does.
+ * `countCandidates`, which skips malformed/partial candidate JSON instead of
+ * failing the count.
  */
 
 import { stat, readdir, readFile } from "fs/promises";
@@ -292,7 +292,7 @@ function appendLintWarnings(
   if (lint.present && lint.entry === null) {
     warnings.push({
       code: "lint-cache-unparseable",
-      message: "Lint cache file exists but could not be parsed. Re-run `llmwiki lint`.",
+      message: "Lint cache file exists but could not be parsed. Re-run the `lint_wiki` tool.",
     });
     return;
   }
@@ -326,7 +326,7 @@ function appendStructuralWarnings(
   if (dirs.hasSourcesDir && counts.sourceCount > 0 && !hasPages) {
     warnings.push({
       code: "sources-not-compiled",
-      message: "Sources exist but no wiki pages were found. Run `llmwiki compile`.",
+      message: "Sources exist but no wiki pages were found. Call the MCP tool `compile_wiki`.",
     });
   }
 }
@@ -349,28 +349,28 @@ function appendFreshnessWarnings(
     warnings.push({
       code: "state-unreadable",
       message:
-        ".llmwiki/state.json is corrupt — run `llmwiki compile` to rebuild it (freshness figures shown are from the last lint and may be stale).",
+        ".llmwiki/state.json is corrupt — call the MCP tool `compile_wiki` to rebuild it (freshness figures shown are from the last lint and may be stale).",
     });
   }
   if (stateStatus === "too-new") {
     warnings.push({
       code: "state-too-new",
       message:
-        ".llmwiki/state.json was written by a newer llmwiki version — upgrade llmwiki to read this project (freshness figures shown are from the last lint and may be stale).",
+        ".llmwiki/state.json was written by a newer version of this product, which this build cannot read — run a newer build to read this project (freshness figures shown are from the last lint and may be stale).",
     });
   }
   const f = lint.entry?.freshness;
   if (f && (f.stalePages > 0 || f.orphanedPages > 0)) {
     warnings.push({
       code: "stale-pages",
-      message: `${f.stalePages} stale, ${f.orphanedPages} orphaned page(s) as of the last lint — run \`llmwiki compile\` to refresh.`,
+      message: `${f.stalePages} stale, ${f.orphanedPages} orphaned page(s) as of the last lint — call the MCP tool \`compile_wiki\` to refresh.`,
     });
   }
   if (lint.entry && isFreshnessCacheStale(lint.entry, latestSourceMtimeMs)) {
     warnings.push({
       code: "freshness-cache-stale",
       message:
-        "sources/ changed since the last lint — freshness counts may be out of date; run `llmwiki lint` to refresh.",
+        "sources/ changed since the last lint — freshness counts may be out of date; run the `lint_wiki` tool to refresh.",
     });
   }
 }

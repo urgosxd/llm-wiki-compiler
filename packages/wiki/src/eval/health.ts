@@ -1,5 +1,5 @@
 /**
- * Health score evaluator for the llmwiki eval harness.
+ * Health score evaluator for the eval harness.
  *
  * Aggregates the output of all 10+ lint rules into a single 0–100 score.
  * Errors on critical rules (broken links/citations, duplicates) cost 4 pts
@@ -75,7 +75,7 @@ function aggregateRules(results: LintResult[]): HealthRuleResult[] {
 /**
  * Run all lint rules via the canonical linter orchestrator and return
  * flat results. Delegates to lint() so the rule list stays in sync with
- * llmwiki lint — no manual list to maintain. Used by evaluateHealth and
+ * the linter — no manual list to maintain. Used by evaluateHealth and
  * by page-health-distribution so both see the same diagnostics.
  */
 export async function runAllLintRules(root: string): Promise<LintResult[]> {

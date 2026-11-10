@@ -1,5 +1,5 @@
 /**
- * Source utilization evaluator for the llmwiki eval harness.
+ * Source utilization evaluator for the eval harness.
  *
  * Measures whether every ingested source has been compiled into the wiki.
  * An uncited source means its concepts were either not extracted or not

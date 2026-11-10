@@ -1,5 +1,5 @@
 /**
- * CI threshold gating for the llmwiki eval harness.
+ * CI threshold gating for the eval harness.
  *
  * Reads an optional .llmwiki/eval/thresholds.yaml config and checks whether
  * the current report meets each configured threshold. Returns a list of

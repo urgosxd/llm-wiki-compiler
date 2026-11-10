@@ -113,16 +113,16 @@ function readNonEmptyString(meta: Record<string, unknown>, field: string): strin
  * The instants a page actually declares — never the export run's clock.
  *
  * Stamping `new Date()` on a page that declares no timestamp was reachable in
- * ordinary use (`llmwiki query --save` writes `createdAt` and no `updatedAt`),
- * and it did two kinds of damage: two exports of an unchanged wiki differed,
- * and `llmwiki import --okf` mapped the invented instant back into real
+ * ordinary use (`query_wiki` with `save: true` writes `createdAt` and no
+ * `updatedAt`), and it did two kinds of damage: two exports of an unchanged wiki differed,
+ * and `import_okf` mapped the invented instant back into real
  * frontmatter, where nothing distinguishes it from one the compiler recorded.
  * An undeclared field is therefore OMITTED — the key is absent, not empty —
  * matching how `src/pages/list.ts` reads these same two fields. Emitting `""`
  * would only move the invention downstream: every writer renders these fields,
  * and an empty date is a claim, not a silence.
  *
- * `updatedAt` falls back to `createdAt` — never the reverse. `query --save`
+ * `updatedAt` falls back to `createdAt` — never the reverse. A saved query
  * stamps a fresh `createdAt` on every save and rewrites the whole file through
  * an overwriting `atomicWrite`, so on a saved query `createdAt` genuinely
  * records when the page was last written, which is exactly what `updatedAt`

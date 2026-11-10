@@ -65,8 +65,7 @@ describe("describeVersionSplit — wording", () => {
     const split = summarizeVersions(records("v1", "v1", "v1", PROMPT_VERSION, PROMPT_VERSION), PROMPT_VERSION);
     expect(describeVersionSplit(split)).toBe(
       `Synthesis version split: 3 page(s) compiled at v1, 2 page(s) compiled at ${PROMPT_VERSION} ` +
-        "(the current version) — regenerate a stale page with " +
-        "`llmwiki compile --recompile <page-id>`.",
+        "(the current version).",
     );
   });
 
@@ -80,8 +79,7 @@ describe("describeVersionSplit — wording", () => {
   it("prints plainly and names the current version when every page is stale", () => {
     const split = summarizeVersions(records("v1", "v1"), PROMPT_VERSION);
     expect(describeVersionSplit(split)).toBe(
-      `Synthesis version: 2 page(s) compiled at v1 (the current version is ${PROMPT_VERSION}) — ` +
-        "regenerate a stale page with `llmwiki compile --recompile <page-id>`.",
+      `Synthesis version: 2 page(s) compiled at v1 (the current version is ${PROMPT_VERSION}).`,
     );
   });
 
@@ -91,8 +89,7 @@ describe("describeVersionSplit — wording", () => {
     expect(split.stalePages).toBe(1);
     expect(describeVersionSplit(split)).toBe(
       `Synthesis version: 1 page(s) compiled at ${PROMPT_VERSION} (the current version), ` +
-        "1 page(s) with no recorded version — regenerate a stale page with " +
-        "`llmwiki compile --recompile <page-id>`.",
+        "1 page(s) with no recorded version.",
     );
   });
 

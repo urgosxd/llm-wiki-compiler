@@ -15,8 +15,9 @@
  * viewer to frame its own artifact route. A download link remains available.
  *
  * The module is workflow-GENERIC: it renders whatever the projection returns
- * (verified via a product provider, recorded-only via plain `llmwiki view`)
- * with a separately isolated presentation adapter for archived providers.
+ * (verified via a product provider, recorded-only when the core viewer entry
+ * injects none) with a separately isolated presentation adapter for archived
+ * providers.
  */
 
 import { buildVerifiedStageFacts } from "./viewer-stage-facts.js";

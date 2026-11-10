@@ -265,7 +265,7 @@ export interface GraphData {
  * Snapshot of the entire viewable wiki captured once at startup. Every
  * HTTP endpoint serves from this object — the viewer deliberately does
  * not live-watch the filesystem in v1, so post-startup file changes are
- * not reflected until `llmwiki view` restarts.
+ * not reflected until the viewer process restarts.
  */
 export interface ViewerSnapshot {
   /** Absolute project root the snapshot was captured against. */

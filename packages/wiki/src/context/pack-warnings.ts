@@ -55,8 +55,8 @@ export function appendProjectWarnings(
     warnings.push({
       code: "pending-candidates",
       message:
-        `${state.pendingCandidates} review candidate${state.pendingCandidates === 1 ? "" : "s"} ` +
-        "pending approval. Run `llmwiki review list` to inspect.",
+        `${state.pendingCandidates} candidate${state.pendingCandidates === 1 ? "" : "s"} ` +
+        "staged in .llmwiki/candidates/ — inspect them there.",
     });
   }
   const lintErrors = state.lint.entry?.errors ?? 0;

@@ -1,5 +1,5 @@
 /**
- * Page-level health distribution evaluator for the llmwiki eval harness.
+ * Page-level health distribution evaluator for the eval harness.
  *
  * While the corpus-level health score aggregates all lint findings into one
  * 0-100 number, this evaluator breaks it down per page so maintainers can

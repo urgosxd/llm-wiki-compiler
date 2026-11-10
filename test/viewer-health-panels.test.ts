@@ -184,11 +184,13 @@ describe("profile problems panel — what the collector found, and where", () =>
 });
 
 describe("health screen — cache note and pane sizing", () => {
-  it("explains that lint results are cached and names the refresh command", async () => {
+  it("explains that lint results are cached and names the registered tool that refreshes them", async () => {
     const main = await withPages([conceptPage("a")]);
     const note = textOf(main, ".cache-note");
     expect(note).toContain("cached from the last run");
-    expect(textOf(main, ".cache-note code")).toBe("llmwiki lint");
+    // There is no CLI to name: the registered MCP tool is the callable surface.
+    expect(textOf(main, ".cache-note code")).toBe("lint_wiki");
+    expect(note).not.toContain("llmwiki");
   });
 
   it("asks for a reload, never a restart — the lint cache is re-read per request", async () => {

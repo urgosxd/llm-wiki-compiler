@@ -543,8 +543,6 @@
   font: 400 11px/1.65 var(--font-mono);
   color: var(--fg-dim);
 }
-/* The inline "llmwiki view" command (mockup tree line 368). */
-.snapshot-command { color: var(--accent-text); }
 
 /* ---- Pattern strip: the four-column static explainer ---- */
 

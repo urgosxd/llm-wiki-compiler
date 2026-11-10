@@ -1,5 +1,5 @@
 /**
- * Citation coverage evaluator for the llmwiki eval harness.
+ * Citation coverage evaluator for the eval harness.
  *
  * Measures two things:
  *  - Coverage: what fraction of prose paragraphs contain at least one citation.

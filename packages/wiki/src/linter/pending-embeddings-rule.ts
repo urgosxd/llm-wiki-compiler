@@ -1,8 +1,8 @@
 /**
  * @file src/linter/pending-embeddings-rule.ts
  * @description The `pending-embeddings` lint rule. SURFACES the durable
- * pending-embedding refresh marker as a lint `warning`, so `llmwiki lint` (and the
- * `lint_wiki` MCP tool / SDK `lint`) reports when a compile skipped/failed its
+ * pending-embedding refresh marker as a lint `warning`, so the `lint_wiki`
+ * MCP tool / SDK `lint` reports when a compile skipped/failed its
  * embeddings refresh — making the otherwise-invisible "N pages have stale
  * embeddings pending retry" state discoverable and the "re-run compile" remedy
  * actionable. Threads the SHARED read-only {@link pendingEmbeddingsWarning} mapper

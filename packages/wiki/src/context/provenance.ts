@@ -1,5 +1,5 @@
 /**
- * Provenance helpers for `llmwiki context`.
+ * Provenance helpers for the `get_context_pack` MCP tool.
  *
  * Slice 4 ships two related pieces of work:
  *   1. Flatten `ViewerPage.citations` (`ClaimCitation[]`, each with one
@@ -43,8 +43,8 @@ const CITATION_KEY_SEPARATOR = " <#> ";
  * Flat citation shape consumed by `ContextPrimary.citations[]` AND by
  * the JSON export's `ExportPage.citations[]`. Exported so both
  * surfaces share one normalized shape rather than drifting — consumers
- * can reuse the same flattening rule across `llmwiki context` and
- * `llmwiki export`.
+ * can reuse the same flattening rule across the `get_context_pack` and
+ * `export_okf` MCP tools.
  */
 export interface FlatCitation {
   file: string;

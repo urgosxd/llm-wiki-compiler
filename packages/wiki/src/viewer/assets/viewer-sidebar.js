@@ -83,8 +83,9 @@ const NAV_SECTIONS = [
       // `profileOnly`: workflows are declared BY a profile, so a default-profile
       // project cannot have one — not "has none yet", but cannot. Showing the
       // entry there would advertise a capability the project is structurally
-      // incapable of, and `llmwiki template init` refuses to add a profile to a
-      // project that already has pages, so the empty state would be permanent.
+      // incapable of, and nothing in this build adds a profile to a project
+      // that already has pages (the removed `template init` command was the
+      // only surface that tried), so the empty state would be permanent.
       // The profile-vocabulary design gates it the same way: its default
       // sidebar has no Pipeline row, only the two profile ones do.
       { route: "workflows", href: "#/workflows", label: "Workflows", profileOnly: true },

@@ -207,7 +207,7 @@ function durableJobReadsFor(env: NodeJS.ProcessEnv = process.env): DurableJobRea
  * Build the job registry this host should use.
  *
  * With a Stack configured, the live registry is wrapped so every transition is
- * also written to `wiki.ingest_job`. That is what lets `llmwiki serve` — a separate
+ * also written to `wiki.ingest_job`. That is what lets the MCP server — a separate
  * process over stdio — answer job questions the host is running; the memory view is
  * invisible outside this process.
  *
@@ -439,7 +439,7 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // the mutation mount through `apiDeps` (the 202 route): one store, two readers.
   //
   // The live registry is mirrored into Postgres when a Stack is configured, because
-  // the memory view is readable only by THIS process and `llmwiki serve` (MCP) is a
+  // the memory view is readable only by THIS process and the MCP server is a
   // different one. Without the mirror an agent polling over MCP could never see a
   // job the host is running. A host with no Stack keeps the plain in-memory
   // registry: there is nowhere durable to write, and the read side already answers

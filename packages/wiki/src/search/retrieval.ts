@@ -155,7 +155,7 @@ export function withStaleWarning(base: SearchWarning[], stalePageIds: PageId[]):
     ...base,
     {
       code: "embedding-entry-stale",
-      message: "Some embedding entries are stale (their page changed or was removed); rebuild with 'llmwiki compile'.",
+      message: "Some embedding entries are stale (their page changed or was removed); rebuild with the MCP tool `compile_wiki`.",
     },
   ];
 }

@@ -1,8 +1,8 @@
 /**
  * @file src/linter/journal-rule.ts
  * @description The `journal-health` lint rule. SURFACES a pending/unavailable
- * compile journal as a lint `warning`, so `llmwiki lint` (and the `lint_wiki`
- * MCP tool / SDK `lint`) never reports a project clean while an incomplete or
+ * compile journal as a lint `warning`, so the `lint_wiki`
+ * MCP tool / SDK `lint` never reports a project clean while an incomplete or
  * tampered compile left partial post-crash state on disk. Threads the SHARED
  * read-only {@link journalHealthWarning} mapper into the linter's existing
  * `LintResult` channel — mirroring how the other read surfaces surface the same

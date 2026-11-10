@@ -1,6 +1,12 @@
 /**
  * @file src/sources/removal-plan.ts
- * @description The PURE plan behind `llmwiki rm` — no I/O whatsoever.
+ * @description The PURE plan behind a source removal — no I/O whatsoever.
+ *
+ * No production module imports this file today: the removal path it was written
+ * for (`src/sources/removal.ts`, and the command that drove it) was removed with
+ * the command surface. It survives as pure, unit-tested logic — the split and the
+ * link scan below — and is kept rather than deleted because that is a separate
+ * decision from this one.
  *
  * Given the persisted state, every wiki page's content, and the pending review
  * candidates, this partitions a source's derived concepts into the ones it owns
@@ -11,19 +17,19 @@
  *
  * The exclusive/shared split lives in {@link partitionConcepts}, which delegates
  * to {@link findSharedConcepts} — the SAME function compile's `markOrphaned`
- * uses — so `rm` and `compile` cannot drift on the one rule protecting
+ * uses — so a removal and a compile cannot drift on the one rule protecting
  * multi-source pages from deletion. Reimplementing that rule here would be the
  * single most damaging duplication in this feature.
  *
  * `partitionConcepts` is exported rather than inlined because the split is
  * needed TWICE per removal, against two different reads of state: once here for
- * the pre-lock plan, and once by `applyRemovalLocked` against freshly-read
+ * the pre-lock plan, and once by the removed path's under-lock re-check against freshly-read
  * state under the lock. Those two must be computed the same way to be
  * comparable at all.
  *
  * Also carries the active profile id straight from input to output (see
  * {@link RemovalPlanInput.profileId}) untouched — this module stays pure and
- * never loads the profile itself, but the plan is where the CLI's
+ * never loads the profile itself, but the plan is where the
  * profile-limitation warning gets its signal.
  *
  * Purity is the point: the partition and the link scan are unit-testable with
@@ -58,7 +64,7 @@ export interface BrokenLinkRef {
  * A source's concepts split by whether it owns them alone.
  *
  * Returned by {@link partitionConcepts} and used in TWO places that must never
- * disagree: the pre-lock plan, and `applyRemovalLocked`'s under-lock re-check
+ * disagree: the pre-lock plan, and the removed path's under-lock re-check
  * (`src/sources/removal.ts`). Sharing one shape and one function is the point
  * — the two computing the split differently is precisely how a stale plan
  * survived its own re-verification.
@@ -157,7 +163,7 @@ export interface RemovalPlan {
   /**
    * Carried straight from {@link RemovalPlanInput.sourcePresent}. `false` means
    * this removal is RESUMING one that already deleted the source file, so the
-   * CLI reports that file as already gone rather than claiming to delete it.
+   * The caller reports that file as already gone rather than claiming to delete it.
    */
   sourcePresent: boolean;
 }
@@ -168,11 +174,11 @@ export interface RemovalPlan {
  * source is legitimate — there is simply nothing derived to clean up.
  *
  * The delete/keep split is {@link partitionConcepts}, NOT an expression local
- * to this function, so `applyRemovalLocked`'s under-lock re-check can compute
+ * to this function, so an under-lock re-check can compute
  * the identical split from fresh state and compare the two directly.
  *
  * @param input - State, pages and candidates already read by the caller.
- * @returns The plan; safe to print without applying (`--dry-run`).
+ * @returns The plan; safe to print without applying it.
  */
 export function computeRemovalPlan(input: RemovalPlanInput): RemovalPlan {
   const { sourceFile, state, pages, candidates, profileId, sourcePresent } = input;
@@ -195,7 +201,7 @@ export function computeRemovalPlan(input: RemovalPlanInput): RemovalPlan {
  * Pages being deleted are excluded first — a doomed page linking to another
  * doomed page is not a problem anyone needs to hear about. Targets are slugified
  * with the same {@link slugify} the linter's `broken-wikilink` rule uses, so this
- * warning and `llmwiki lint` agree on what counts as a match.
+ * warning and that lint rule agree on what counts as a match.
  */
 function findBrokenLinks(
   pages: Array<{ filePath: string; content: string }>,

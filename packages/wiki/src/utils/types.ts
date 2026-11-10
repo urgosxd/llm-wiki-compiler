@@ -1,5 +1,5 @@
 /**
- * Core type definitions for the llmwiki knowledge compiler.
+ * Core type definitions for the wiki compiler.
  * All shared interfaces live here to keep the module boundary clean.
  */
 
@@ -227,7 +227,8 @@ export interface ReviewedCandidateRef {
 export interface CompileOptions {
   /**
    * Write generated pages as candidates under .llmwiki/candidates/ instead
-   * of mutating wiki/. Reviewers approve/reject via `llmwiki review`.
+   * of mutating wiki/. Nothing promotes a candidate into the wiki, so a page
+   * written this way stays staged.
    */
   review?: boolean;
   /**

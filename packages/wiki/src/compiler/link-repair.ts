@@ -348,7 +348,7 @@ function namespaceForPage(filePath: string): CompilePageNamespace {
  * Scans all pages rather than only changed ones: a link broken today becomes
  * repairable the moment a later compile creates the page it names, and that
  * page's arrival never touches the file holding the link. The pass reads files
- * and calls no model, so the cost is the same order as `llmwiki lint`.
+ * and calls no model, so the cost is the same order as a lint run.
  *
  * @param root - Absolute project root the reads and writes are confined under.
  * @param env - Environment naming the Stack the pending candidates are read from.

@@ -1,5 +1,6 @@
 /**
- * Commander action for `llmwiki export [--target <name>]`.
+ * Export entry points: `runExport` writes the requested formats and `exportJson`
+ * builds the JSON document the SDK's `Wiki.exportJson` returns.
  *
  * Transforms existing wiki content into portable export artifacts and writes
  * them into dist/exports/ (relative to the project root). Six single-file
@@ -183,7 +184,7 @@ function buildContent(inputs: BuildContentInputs): string {
 }
 
 /**
- * Compute the page count to report in the CLI summary. When marp is the
+ * Compute the page count to report in the export summary. When marp is the
  * only target and --source narrows the deck, report the filtered count so
  * the summary doesn't overstate what was exported. Multi-target runs keep
  * the collected total because non-marp targets always include every page.
@@ -279,9 +280,10 @@ export async function exportJson(
 }
 
 /**
- * CLI action for `llmwiki export`.
+ * Programmatic entry point for an export run: writes the requested formats under
+ * dist/exports/ and prints the summary.
  * @param root - Project root directory (defaults to cwd).
- * @param options - Commander-parsed options.
+ * @param options - Parsed export options.
  */
 export default async function exportCommand(
   root: string,

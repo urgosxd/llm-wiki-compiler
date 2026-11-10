@@ -88,7 +88,7 @@ export function summarizeCompile(
       reviewSummaryLine(generation),
     ));
   } else if (buckets.toCompile.length > 0) {
-    output.status("→", output.dim('Next: llmwiki query "your question here"'));
+    output.status("→", output.dim('Next: ask a question with the query_wiki MCP tool'));
   }
 
   // Dimension-retirement failures ride along with the compile errors: the wiki
@@ -239,7 +239,7 @@ function reportCategoryAssignment(generation: PageGenerationResult): void {
  * prompt changed, so without this line a corpus holding two prompt generations looked
  * exactly like a uniform one. A page behind the current version is printed as a WARNING
  * because it is the actionable case -- the line then names the lever that regenerates one
- * page (`llmwiki compile --recompile <page-id>`).
+ * page.
  *
  * @param split - The counted split of the wiki this run left behind.
  */
@@ -253,9 +253,9 @@ function reviewSummaryLine(generation: PageGenerationResult): string {
   const held = generation.review.held.length;
   const forced = generation.review.forced.length;
   if (held > 0 && forced === 0) {
-    return `Wrote ${generation.writtenPages.length} page(s), held ${held} for review — run \`llmwiki review list\``;
+    return `Wrote ${generation.writtenPages.length} page(s), held ${held} under .llmwiki/candidates/`;
   }
-  return `${generation.candidates.length} candidate(s) awaiting review — run \`llmwiki review list\``;
+  return `${generation.candidates.length} candidate(s) staged under .llmwiki/candidates/`;
 }
 
 /** Print a summary of detected source file changes. */

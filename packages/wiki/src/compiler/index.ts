@@ -1,5 +1,5 @@
 /**
- * Compilation orchestrator for the llmwiki knowledge compiler.
+ * Compilation orchestrator for the wiki compiler.
  *
  * Coordinates the full pipeline: lock acquisition, change detection,
  * concept extraction via LLM, wiki page generation with streaming output,
@@ -189,7 +189,8 @@ import type { WikiStateRowsBackend } from "./compile-state-draft.js";
 /**
  * The pages a SCOPED regeneration was asked for, for the run in the current async tree.
  *
- * `llmwiki compile --recompile <page>` asks for a regeneration that is not driven by a
+ * `compileRecompiling` (exported below, and reachable from no command, MCP tool or SDK
+ * method) asks for a regeneration that is not driven by a
  * source change: the bytes of the owning sources are identical to the ones already
  * recorded, so change detection would classify them as `unchanged` and the run would
  * short-circuit at "Nothing to compile". The request therefore has to travel beside the
@@ -331,7 +332,7 @@ export async function compileAndReport(
   root: string,
   options: CompileOptions = {},
 ): Promise<CompileResult> {
-  output.header("llmwiki compile");
+  output.header("Wiki compile");
 
   // One handle for the whole run, closed in the `finally` below. Pages are rows
   // in Postgres now, so the pipeline needs a connection; building it here rather
@@ -888,7 +889,7 @@ interface LiveOutcomeInput {
    * Extra slugs whose ownership must survive this run although no page was written for
    * them.
    *
-   * Set by a SCOPED regeneration (`llmwiki compile --recompile`), which writes one page
+   * Set by a SCOPED regeneration (`compileRecompiling`), which writes one page
    * out of sources that produced several. The state writer otherwise records only what
    * this run WROTE, so without this a single-page regeneration would leave every sibling
    * page it did not touch with no recorded owner — and the next compile would read those
@@ -1607,7 +1608,7 @@ interface FinalizeFlags {
    */
   scoped?: boolean;
   /**
-   * The run regenerates NAMED pages only (`llmwiki compile --recompile`), so the stages
+   * The run regenerates NAMED pages only (`compileRecompiling`), so the stages
    * that exist to change OTHER pages are skipped — see the call site below.
    */
   regenerateOnly?: boolean;
@@ -1850,7 +1851,7 @@ async function finalizeWiki(
     //      the same link twice. Running it before the resolver would also expose the
     //      edits to a body rewrite the resolver builds from its own earlier read.
     // The reference review and category assignment are SKIPPED by a scoped regeneration
-    // (`llmwiki compile --recompile`), and that is the promise of the lever rather than an
+    // (`compileRecompiling`), and that is the promise of the lever rather than an
     // optimisation: both stages exist to change pages the run did NOT name — the review
     // adds references to earlier pages and the taxonomy records memberships — so running
     // them here would rewrite the wiki around the one page the operator asked for.

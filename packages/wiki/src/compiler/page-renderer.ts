@@ -1,5 +1,5 @@
 /**
- * Wiki page rendering for the llmwiki compile pipeline.
+ * Wiki page rendering for the compile pipeline.
  *
  * Encapsulates the single-page generation step: gather related pages, call
  * the LLM, build frontmatter, and produce the final markdown blob. Splitting

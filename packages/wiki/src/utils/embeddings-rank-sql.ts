@@ -162,7 +162,7 @@ async function assertStoreIntegrityInSql(
     return {
       kind: "degraded",
       code: "embedding-index-outdated",
-      reason: "Embedding index was built with a different embedding configuration; rebuild with 'llmwiki compile'.",
+      reason: "Embedding index was built with a different embedding configuration; rebuild with the MCP tool `compile_wiki`.",
     };
   }
   return null;

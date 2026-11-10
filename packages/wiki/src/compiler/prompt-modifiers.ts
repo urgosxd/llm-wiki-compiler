@@ -162,8 +162,9 @@ export function promptModifiersChanged(recorded: string | undefined): boolean {
  * Promote every `unchanged` source to `changed` when the run's prompt modifiers
  * differ from the ones the last compile recorded.
  *
- * `detectChanges` classifies a source by the SHA-256 of its bytes alone, so
- * `llmwiki compile --lang Japanese` over an already-compiled project reports
+ * `detectChanges` classifies a source by the SHA-256 of its bytes alone, so a
+ * run with a changed prompt modifier (a different language, say) over an
+ * already-compiled project reports
  * "Nothing to compile" and leaves every page in the previous language. The
  * modifier is an input to the page prompt exactly as the source text is, so a
  * change to it invalidates the same pages.

@@ -6,7 +6,7 @@
  * legend, a row-per-rule table, and a footer naming the rule with the most
  * leverage. Everything here is projected from `lint.rules[]` — the per-rule
  * breakdown the linter persists into `.llmwiki/last-lint.json` — so the
- * whole panel degrades to the "run `llmwiki lint`" placeholder when that
+ * whole panel degrades to the "run `lint_wiki`" placeholder when that
  * cache has never been written (`lint === null` is a real, common state, not
  * an error).
  *
@@ -80,7 +80,7 @@ export function buildLintPanel(lint, pageIndex) {
   panel.dataset.lintPanel = "";
   panel.appendChild(buildLintHead(total));
   if (total === null) {
-    panel.appendChild(placeholder("No cached lint summary yet — run `llmwiki lint`."));
+    panel.appendChild(placeholder("No cached lint summary yet — run `lint_wiki`."));
     return panel;
   }
   const rules = rulesOf(lint);

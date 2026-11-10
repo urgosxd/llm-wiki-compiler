@@ -48,8 +48,8 @@ const REVIEWS = [
 ];
 
 /**
- * A TYPED candidate: staged by the typed planner, so `review approve` routes it
- * on `targetEntityType` to `wiki/papers/`. It carries no `targetDirectory` —
+ * A TYPED candidate: staged by the typed planner, so its `targetEntityType` routes it
+ * to `wiki/papers/`. It carries no `targetDirectory` —
  * typed staging sets the entity type, not the directory — which is exactly the
  * shape that used to fall through to the literal "concepts".
  */
@@ -115,13 +115,12 @@ describe("#/reviews", () => {
   });
 });
 
-describe("#/reviews — where approval actually writes", () => {
-  // `routeApprovedPageWrite` branches on `targetEntityType` FIRST: a typed
-  // candidate goes through the profile-validated planner to
+describe("#/reviews — where a candidate's page would land", () => {
+  // The mapping branches on `targetEntityType` FIRST: a typed candidate maps to
   // `wiki/<entityType>/<slug>.md`, and only a candidate without one takes the
-  // concepts/queries path. The review queue is the screen whose whole job is to
-  // tell a reviewer what they are about to accept, so it must name the same
-  // destination approval uses.
+  // concepts/queries path. The candidate queue is the screen whose whole job is to
+  // tell a reader what a candidate is meant to become, so it must name the same
+  // destination the mapping uses.
   it("names the declared entity type for a typed candidate", async () => {
     const main = await mountReviews([TYPED_REVIEW]);
     expect(main.querySelector(".review-sources")?.textContent).toContain("→ wiki/papers/");
@@ -145,14 +144,20 @@ describe("#/reviews — where approval actually writes", () => {
 });
 
 describe("#/reviews — empty queue", () => {
-  it("renders the design system's empty state with the real CLI command", async () => {
+  it("renders the design system's empty state, stating staging and naming no command", async () => {
     const main = await mountReviews([]);
     const state = main.querySelector(".empty-state");
     expect(state).toBeTruthy();
     expect(state?.querySelector(".empty-state-title")?.textContent).toBe("Nothing awaiting review");
-    expect(state?.querySelector(".empty-state-command")?.textContent).toBe(
-      "$ llmwiki compile --review",
+    // The copy states where a candidate waits and that nothing promotes it. It must
+    // not read like a shell line: no `$`, no `--flag`, no backticks, no binary name —
+    // this is a browser page and no shell is ever run from it.
+    expect(state?.querySelector(".empty-state-body")?.textContent).toContain(
+      ".llmwiki/candidates/",
     );
+    const note = state?.querySelector(".empty-state-command")?.textContent ?? "";
+    expect(note).toBe("no surface promotes a candidate into the wiki");
+    expect(note).not.toMatch(/[$`]|--|llmwiki/);
   });
 
   it("is neither the italic loading placeholder nor a blank pane", async () => {
@@ -175,9 +180,11 @@ describe("#/reviews — a queue larger than the endpoint's cap", () => {
     );
   });
 
-  it("names the CLI that shows the whole queue, since the viewer cannot", async () => {
+  it("says the queue is bounded instead of naming a command the viewer cannot run", async () => {
     const main = await mountReviews(REVIEWS, 5000);
-    expect(main.querySelector(".list-caption")?.textContent).toContain("llmwiki review list");
+    const caption = main.querySelector(".list-caption")?.textContent ?? "";
+    expect(caption).toContain("the viewer shows a bounded slice of the queue");
+    expect(caption).not.toMatch(/[$`]|llmwiki/);
   });
 
   it("shows no truncation notice when the whole queue is on screen", async () => {

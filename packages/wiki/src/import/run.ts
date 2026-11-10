@@ -1,5 +1,5 @@
 // src/import/run.ts
-/** @file Output-free OKF import core shared by CLI/SDK/MCP: read→map→collision→validate→stage/write/preview, returning a structured report. Owns the .llmwiki lock. */
+/** @file Output-free OKF import core shared by SDK/MCP: read→map→collision→validate→stage/write/preview, returning a structured report. Owns the mutation lock. */
 import path from "path";
 import { importOkfBundle } from "./okf-import.js";
 import { isWritable } from "../commands/import-core.js"; // leaf created in Task 4 Step 0
@@ -160,7 +160,7 @@ export async function runOkfImport(root: string, dir: string, opts: OkfImportOpt
       skipped: allSkipped,
       warnings,
       ...bundle,
-      nextAction: opts.trusted ? `${valid.length} page(s) written live.` : "Review and approve before it goes live: llmwiki review list.",
+      nextAction: opts.trusted ? `${valid.length} page(s) written live.` : "Staged under .llmwiki/candidates/ — no surface promotes a candidate into the wiki.",
     };
   } finally {
     await releaseLock(root);

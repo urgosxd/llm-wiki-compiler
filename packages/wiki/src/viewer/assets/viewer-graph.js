@@ -643,13 +643,19 @@ function hasRenderableNodes(data) {
   return Boolean(data?.nodes?.length);
 }
 
-/** Show the design system empty state when the wiki has no pages yet. */
+/**
+ * Show the design system empty state when the wiki has no pages yet.
+ *
+ * The slot that used to print the removed compile command line names
+ * `compile_wiki` instead: that MCP tool is registered and does the work, and a
+ * tool name is not a shell line.
+ */
 function renderEmptyState(container) {
   container.appendChild(
     emptyState(
       "Nothing to graph yet",
       "The graph draws links between compiled pages. Compile at least two pages that reference each other to see structure here.",
-      "$ llmwiki compile",
+      "compile_wiki",
     ),
   );
 }

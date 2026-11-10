@@ -1,5 +1,5 @@
 /**
- * LLM citation judge for the llmwiki eval harness.
+ * LLM citation judge for the eval harness.
  *
  * For each cited prose paragraph in the wiki, extracts the (claim, source span)
  * pair and asks an LLM judge whether the source actually supports the claim.

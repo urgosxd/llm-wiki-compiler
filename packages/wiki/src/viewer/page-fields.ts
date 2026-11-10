@@ -5,7 +5,7 @@
  * These exist because the two halves of the system spell the same two concepts
  * differently. The compiler (`src/compiler/page-renderer.ts`,
  * `src/compiler/seed-pages.ts`) stamps `kind` + `createdAt` + `updatedAt`, but
- * `llmwiki query --save` (`src/commands/query-save.ts`) writes only `title`,
+ * the saved-query writer (`src/commands/query-save.ts`) writes only `title`,
  * `summary`, `type: "query"` and `createdAt`. A viewer that reads `kind` and
  * `updatedAt` alone therefore renders every genuinely-saved query with a blank
  * age, a wrong "concept" label, and a permanent last place in the recent list.

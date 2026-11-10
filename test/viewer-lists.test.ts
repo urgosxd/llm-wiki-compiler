@@ -140,12 +140,15 @@ describe("#/sources", () => {
     expect(row.querySelector(".list-dot")).toBeNull();
   });
 
-  it("renders the design system's empty state, with the real CLI command", async () => {
+  it("renders the design system's empty state, naming the registered ingest_source tool", async () => {
     const { dom } = await mountViewerDom(responderWithEnvelope({ sourceFilenames: [] }), "#/sources");
     const main = dom.window.document.querySelector("[data-main-pane]") as HTMLElement;
     const state = main.querySelector(".empty-state");
     expect(state).toBeTruthy();
-    expect(state?.querySelector(".empty-state-command")?.textContent).toBe("$ llmwiki ingest <source>");
+    const chip = state?.querySelector(".empty-state-command")?.textContent ?? "";
+    expect(chip).toBe("ingest_source");
+    // A tool name, not a command line: no prompt sigil, no arguments to paste.
+    expect(chip).not.toMatch(/[$`]/);
   });
 });
 
@@ -160,11 +163,17 @@ describe("empty-state copy", () => {
     expect(doc.querySelector(".empty-state-title")?.textContent).toBe("No pages match this filter");
   });
 
-  it("names only commands the CLI actually registers", async () => {
-    const { dom } = await mountViewerDom(responderWithEnvelope({ pages: [] }), "#/queries");
-    const command = dom.window.document.querySelector(".empty-state-command")?.textContent ?? "";
-    // The design system's own example said `llmwiki ask`, which does not exist.
-    expect(command).not.toContain("llmwiki ask");
-    expect(command).toContain("llmwiki query");
+  it("names the registered MCP tool on each empty list, never a CLI subcommand", async () => {
+    // No package.json declares `bin`, so `llmwiki <subcommand>` names nothing a
+    // reader can run; the registered tool is the only callable surface.
+    for (const [route, expected] of [
+      ["#/concepts", "compile_wiki"],
+      ["#/queries", "query_wiki"],
+    ] as const) {
+      const { dom } = await mountViewerDom(responderWithEnvelope({ pages: [] }), route);
+      const chip = dom.window.document.querySelector(".empty-state-command")?.textContent ?? "";
+      expect(chip, route).toBe(expected);
+      expect(chip, route).not.toMatch(/[$`]/);
+    }
   });
 });

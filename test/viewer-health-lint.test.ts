@@ -321,9 +321,11 @@ describe("lint panel — an internally inconsistent cache degrades to totals onl
 describe("lint panel — degrades when lint has never run", () => {
   it("shows the run-lint placeholder instead of an empty table", async () => {
     const main = await withLint(null);
-    expect(textOf(main, "[data-lint-panel] .placeholder")).toBe(
-      "No cached lint summary yet — run `llmwiki lint`.",
-    );
+    const placeholder = textOf(main, "[data-lint-panel] .placeholder");
+    // The refresh is named by its registered MCP tool, `lint_wiki`: there is no
+    // CLI, so the removed `lint` subcommand names nothing a reader can run.
+    expect(placeholder).toBe("No cached lint summary yet — run `lint_wiki`.");
+    expect(placeholder).not.toMatch(/llmwiki\s+[a-z]/);
   });
 
   it("renders no table, bar, chip or footer without a lint cache", async () => {

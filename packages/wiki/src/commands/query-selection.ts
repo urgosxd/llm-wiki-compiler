@@ -1,5 +1,5 @@
 /**
- * Page-selection half of the `llmwiki query` pipeline (Step 1).
+ * Page-selection half of the `query_wiki` tool's pipeline (Step 1).
  *
  * Extracted from `commands/query.ts` (which keeps the answer-generation half)
  * so each file stays within the size budget. Exposes {@link selectRelevantPages},

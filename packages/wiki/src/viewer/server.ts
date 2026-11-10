@@ -124,7 +124,8 @@ export interface StartViewerOptions {
  * server, threading optional construction-time `deps` (e.g. a product's live
  * verified-stage projection provider). CORE owns snapshot construction here, so a
  * product operator entry injects a provider WITHOUT deep-importing `buildViewerSnapshot`
- * or reproducing snapshot building. The plain `llmwiki view` passes no deps.
+ * or reproducing snapshot building. The core viewer entry (`startViewer`, called
+ * by a product's host process) passes no deps.
  */
 export async function startViewer(
   options: StartViewerOptions,

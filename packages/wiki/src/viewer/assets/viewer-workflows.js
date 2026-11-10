@@ -10,16 +10,16 @@
  * The route exists for the PARKED runs. A run waiting on a gate approval or a
  * stage-output submission is a work item blocked on a human; a run that is
  * merely running or completed needs nothing. So a parked row is marked as such
- * on the row itself and names the CLI command that moves it. Naming a command
- * is as far as this goes: the viewer is a read-only snapshot with no write path,
- * and a button implying otherwise would be a lie.
+ * on the row itself and says which of the two waits it is in — and nothing more.
  *
- * The command has to be the one that WORKS, which is why the row branches on the
- * classifier's hint fields rather than on the park flags alone: a stage-output
- * park names the declared `--kind`/type it submits against, and a `trust:` gate
- * — which no `gate approve` can clear — names the trusted-write grant instead. A
- * command that fails on paste is worse than none, at the moment a reader is
- * least able to tell why.
+ * It names no surface that could move the run, because none exists to name:
+ * there is no CLI (no package.json in this repository declares a `bin`, and the
+ * only launcher, `dist/api.js`, has no subcommands), and no registered MCP tool
+ * approves a gate or submits a stage output. Every row here used to print a
+ * pasteable `workflow …` command line; those lines were deleted rather than
+ * reworded, because a command nobody can run is the same lie as a dead button.
+ * What is left is the state a reader can act on elsewhere: the run id, the gate
+ * id, and which wait it is in.
  *
  * A `problem` row (an unavailable or malformed run store) renders AS a problem.
  * The endpoint deliberately reports a broken store as a fail-visible row rather
@@ -47,34 +47,18 @@ const CLASSIFICATION_LABELS = {
 const NO_STAGE = "no active step";
 
 /**
- * Placeholder for a submit hint whose stage declares no write entity type. The
- * server sends `nextSubmitEntityType` whenever the stage declares one, so this
- * appears only for a stage that declares none — and an angle-bracketed
- * placeholder says "you supply this" where a silently missing flag would leave a
- * command that fails on paste. Same wording as the CLI's `submitCommand`.
- */
-const ENTITY_TYPE_PLACEHOLDER = "<entity-type>";
-
-/** The flags every `workflow submit` needs beyond its kind-specific target. */
-const SUBMIT_TAIL = "--slug <slug> --body-file <path>";
-
-/**
- * What a `trust:` gate actually needs. A trust gate is NOT cleared by
- * `gate approve` — `vouchGate` throws `TrustGateNotHereError` for exactly that
- * call. The Trust Guard clears it on a successful write, so the operator grants
- * the profile's writes and re-submits the SAME run.
+ * What a `trust:` gate actually needs, said as a fact rather than as a command.
+ *
+ * A trust gate is NOT a human approval: the Trust Guard clears it on a
+ * successful write under the profile's trusted-write grant (see
+ * `src/trust/trusted-write.ts`), never by approving a step. Nothing in this
+ * build clears it — no CLI subcommand, no registered MCP tool — so the note
+ * states what the run waits on instead of naming a line to paste.
  */
 const TRUST_GATE_NOTE =
-  "Write permission is required; approving a review step does not grant it. " +
-  "Set LLMWIKI_TRUSTED_WRITE to grant this profile's writes, then re-submit.";
-
-/**
- * The command that lists what the active profile declares. It is the right
- * first command for BOTH readings of an empty list — a profile with no
- * workflows at all (the common one; the default profile declares none) and a
- * profile whose workflows have simply never been run.
- */
-const WORKFLOW_LIST_COMMAND = "$ llmwiki workflow list";
+  "This run waits on the profile's trusted-write grant. A review approval does not grant it; " +
+  "the operator grants it out of workspace through LLMWIKI_TRUSTED_WRITE, and this read-only " +
+  "viewer cannot.";
 
 /**
  * Render the workflow-runs route from an `/api/workflow-runs` payload.
@@ -106,12 +90,17 @@ function runsIn(payload) {
  * are a Configurable Lifecycle Profile feature and the default profile declares
  * none — so this is a normal, common state, not a failure, and it gets the
  * teaching card rather than the italic loading placeholder.
+ *
+ * The slot that used to print the `workflow list` command line names the
+ * directory runs are read from instead: that subcommand does not exist, no
+ * registered MCP tool lists workflows, and the path is a fact the reader can
+ * check on disk.
  */
 function emptyWorkflowsState() {
   return emptyState(
     "No workflow runs",
-    "Workflows organize a task into steps. No runs are recorded here yet. Use the command below to see which workflows this project supports. Runs can wait for approval or for results to be submitted; this viewer only shows their status.",
-    WORKFLOW_LIST_COMMAND,
+    "Workflows organize a task into steps. No runs are recorded here yet, and this viewer cannot show which workflows this project supports: it only reports the runs that exist. A run can wait for approval or for results to be submitted.",
+    ".llmwiki/workflows/runs/",
   );
 }
 
@@ -139,8 +128,9 @@ function buildRunRow(run, journeys) {
 
 /**
  * Head line: the workflow the run belongs to, plus the run id. The workflow is
- * the title because it is what the reader recognises; the id is what the CLI
- * commands below take, so it sits beside it in mono rather than being hidden.
+ * the title because it is what the reader recognises; the id identifies the run
+ * the park notes below name, so it sits beside the title in mono rather than
+ * being hidden.
  */
 function buildRunHead(run, journeys) {
   const head = el("div", "workflow-head");
@@ -215,7 +205,7 @@ function buildFlag(text, parked) {
  *
  * A `trust:` gate is named as one. It parks the run exactly like a human/agent
  * gate but is cleared by a different act entirely, and a chip that called both
- * "Awaiting gate" would send the reader to the command that fails.
+ * "Awaiting gate" would leave the reader with the wrong idea of what is missing.
  */
 function parkLabels(run) {
   const labels = [];
@@ -231,66 +221,66 @@ function gateLabel(run) {
 }
 
 /**
- * Append the unpark guidance: the trust-gate note when one applies, then one
- * command line per parked state. Text only, never a control: this viewer cannot
- * mutate a run, and the row must not imply that it can.
+ * Append the park guidance: the trust-gate note when one applies, then one plain
+ * statement per wait the run is in. Text only, never a control, and never a
+ * command line: this viewer cannot move a run, and no registered MCP tool can
+ * either.
  */
 function appendNextCommands(row, run) {
   if (run.awaitingTrustGate === true) row.appendChild(el("p", "workflow-note", TRUST_GATE_NOTE));
-  for (const command of nextCommands(run)) {
-    row.appendChild(el("p", "workflow-next", command));
+  for (const note of parkNotes(run)) {
+    row.appendChild(el("p", "workflow-next", note));
   }
 }
 
-/**
- * The unpark commands for a run, in the same order as {@link parkLabels} and
- * matching what the CLI's own `next:` hint prints (`workflow-shared.ts`).
- *
- * Two branches are load-bearing rather than cosmetic. `workflow submit` needs
- * `--kind` before anything else — `buildStageOutput` requires it first — so the
- * declared submit target the server sends is spelled out rather than left to the
- * reader. And a `trust:` gate gets a submit line and NO `gate approve` line:
- * that approval throws, and the re-submit the note describes is the act that
- * clears the gate.
- */
-function nextCommands(run) {
-  const runId = String(run.runId ?? "");
-  const commands = [];
-  if (needsSubmit(run)) commands.push(`$ ${submitCommand(run, runId)}`);
-  if (needsGateApproval(run)) {
-    commands.push(`$ llmwiki workflow gate approve ${runId} ${run.awaitingGate}`);
-  }
-  return commands;
+/** The run id, or an empty string when the row carries none. */
+function runIdOf(run) {
+  return String(run.runId ?? "");
+}
+
+/** True when the run waits on a stage output. */
+function waitsOnOutput(run) {
+  return run.awaitingOutput === true;
 }
 
 /**
- * True when the run needs a `workflow submit`: it is parked for a stage output,
- * or parked on a trust gate — which the Trust Guard clears on the next
- * successful write, i.e. on a re-submission of the same run.
+ * True when the run waits on a gate a human or agent could approve. A `trust:`
+ * gate parks the run too, but no approval clears it (see {@link TRUST_GATE_NOTE}),
+ * so it earns no note of its own.
  */
-function needsSubmit(run) {
-  return run.awaitingOutput === true || run.awaitingTrustGate === true;
-}
-
-/** True when the run is parked on a gate `gate approve` can actually clear. */
-function needsGateApproval(run) {
+function waitsOnGate(run) {
   return typeof run.awaitingGate === "string" && run.awaitingTrustGate !== true;
 }
 
+/** The note for a stage-output wait: the wait named, and that nothing here clears it. */
+function outputNote(run) {
+  return `Run ${runIdOf(run)} is waiting for its stage output to be submitted. No surface in this build submits one.`;
+}
+
+/** The note for an approvable gate wait, naming the gate and that nothing here clears it. */
+function gateNote(run) {
+  return `Run ${runIdOf(run)} is waiting for gate "${run.awaitingGate}" to be approved. No surface in this build approves a gate.`;
+}
+
 /**
- * The concrete `workflow submit` for a write-park. A stage declaring an artifact
- * write and no entity write submits `--kind artifact`; every other write-park
- * submits `--kind page`. Mirrors the CLI's `submitCommand` so the two surfaces
- * never print different commands for the same parked run.
+ * The waits a parked run can be in, in the order they must be cleared: a stage
+ * output is submitted before the gate guarding that stage can be approved. Pairing
+ * each predicate with its note keeps that ordering in one place and keeps
+ * {@link parkNotes} free of the branching.
  */
-function submitCommand(run, runId) {
-  const base = `llmwiki workflow submit ${runId}`;
-  const entityType = run.nextSubmitEntityType;
-  if (typeof entityType !== "string" && typeof run.nextSubmitArtifactType === "string") {
-    return `${base} --kind artifact --artifact-type ${run.nextSubmitArtifactType} ${SUBMIT_TAIL}`;
-  }
-  const target = typeof entityType === "string" ? entityType : ENTITY_TYPE_PLACEHOLDER;
-  return `${base} --kind page --entity-type ${target} ${SUBMIT_TAIL}`;
+const PARK_NOTES = [
+  { applies: waitsOnOutput, note: outputNote },
+  { applies: waitsOnGate, note: gateNote },
+];
+
+/**
+ * One statement per wait the run is in, in the same order as {@link parkLabels}:
+ * a stage output before the gate guarding that stage. Each names the id it waits
+ * on and says plainly that this build has nothing that clears it — the honest
+ * form of the command line it replaced, which pointed at a deleted subcommand.
+ */
+function parkNotes(run) {
+  return PARK_NOTES.filter((wait) => wait.applies(run)).map((wait) => wait.note(run));
 }
 
 /**

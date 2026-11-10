@@ -1,5 +1,5 @@
 /**
- * llmwiki viewer — the #/reviews list route.
+ * The viewer's `#/reviews` list route.
  *
  * A peer of #/concepts, #/queries, and #/sources: same `.list-row` language,
  * same empty-state contract. It lives in its own module rather than in
@@ -10,7 +10,8 @@
  *
  * Rows are informational only. The viewer is a read-only snapshot with no
  * write path, so there is no approve/reject affordance here — the row states
- * what is held and why, and the CLI acts on it.
+ * what is held and why, and nothing promotes a candidate from anywhere: no
+ * surface does, and no command is ever run from this page.
  */
 
 import { el, emptyState, heading } from "./viewer-dom.js";
@@ -18,9 +19,9 @@ import { plural, relativeAge } from "./viewer-format.js";
 
 /**
  * Human wording for each policy held-reason code (see `src/review/policy.ts`
- * for the closed set). A reader of the review queue needs to know what to do
- * about a hold; `provenance-violating` does not say that and "Citation problem"
- * does. Unknown codes fall through to the raw code so a reason added later is
+ * for the closed set). A reader of the candidate queue needs to know why a page
+ * was held; `provenance-violating` does not say that and "Citation problem"
+ * does. An unknown code falls through to the raw code so a reason added later is
  * visible-but-ugly rather than silently invisible.
  */
 const HELD_REASON_LABELS = {
@@ -38,11 +39,12 @@ const HELD_REASON_LABELS = {
 const DEFAULT_TARGET_DIRECTORY = "concepts";
 
 /**
- * The command that shows a queue too long for this route. The viewer is
- * read-only and unpaginated, so when the endpoint's cap bites the CLI is where
- * the rest of the queue lives.
+ * The note a queue too long for this route carries. The viewer is read-only and
+ * unpaginated, so when the endpoint's cap bites the pane says the queue is
+ * bounded rather than naming a surface that shows the rest: no such surface
+ * exists, and this page runs no command at all.
  */
-const FULL_QUEUE_COMMAND = "llmwiki review list";
+const FULL_QUEUE_NOTE = "the viewer shows a bounded slice of the queue";
 
 /**
  * Render the review-queue route from an `/api/reviews` payload.
@@ -92,7 +94,7 @@ function totalIn(payload, shownCount) {
 function appendTruncationNotice(main, shownCount, total) {
   if (total <= shownCount) return;
   const shown = `Showing ${shownCount} of ${plural(total, "pending candidate")}`;
-  const notice = `${shown} · ${FULL_QUEUE_COMMAND} shows the whole queue`;
+  const notice = `${shown} · ${FULL_QUEUE_NOTE}`;
   main.appendChild(el("p", "list-caption", notice));
 }
 
@@ -105,14 +107,14 @@ function appendTruncationNotice(main, shownCount, total) {
 function emptyReviewsState() {
   return emptyState(
     "Nothing awaiting review",
-    "Review candidates are pages the compiler held back instead of writing live. Approve one with the CLI and it becomes a wiki page.",
-    "$ llmwiki compile --review",
+    "Candidates are pages the compiler held back instead of writing live; each one waits under .llmwiki/candidates/.",
+    "no surface promotes a candidate into the wiki",
   );
 }
 
 /**
  * Build one candidate row: a head line (title plus how long it has waited),
- * the summary, where it came from and where approval would put it, then the
+ * the summary, where it came from and where its page would land, then the
  * reasons it is held.
  */
 function buildReviewRow(review) {
@@ -144,8 +146,8 @@ function reviewSummaryText(review) {
 
 /**
  * Provenance line: the source filenames behind the candidate and the wiki
- * subdirectory approval writes into, so the reader can see both what it was
- * built from and where it would land.
+ * subdirectory its page would land in, so the reader can see both what it was
+ * built from and where it would go.
  */
 // Optional chaining on `sources` plus the empty-sources fallback inflates
 // cyclomatic count for what is a two-part string projection (cognitive
@@ -158,14 +160,14 @@ function reviewSourcesText(review) {
 }
 
 /**
- * Where approving this candidate actually writes.
+ * The wiki subdirectory this candidate's page maps to.
  *
- * `review approve` routes on `targetEntityType` FIRST: a typed candidate goes
- * through the profile-validated planner to `wiki/<entityType>/`, and only a
- * candidate without one falls to the concepts/queries path. Reading the
- * directory first — or defaulting a typed candidate to `concepts` — would state
- * a destination approval never uses, on the one screen whose job is to tell a
- * reviewer what they are about to accept.
+ * The mapping routes on `targetEntityType` FIRST: a typed candidate belongs in
+ * `wiki/<entityType>/`, and only a candidate without one falls to the
+ * concepts/queries path. Reading the directory first — or defaulting a typed
+ * candidate to `concepts` — would state a destination the candidate does not
+ * have, on the one screen whose job is to tell a reader what the candidate is
+ * meant to become.
  */
 function targetDirectoryOf(review) {
   if (typeof review.targetEntityType === "string" && review.targetEntityType.length > 0) {

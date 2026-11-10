@@ -1,5 +1,5 @@
 /**
- * Commander action for `llmwiki query <question>`.
+ * The query core behind the `query_wiki` MCP tool and the in-process SDK.
  * Two-step LLM-powered wiki query that first selects relevant pages from the
  * wiki index, then streams an answer grounded in those pages. Optionally saves
  * the response as a new page in wiki/queries/.
@@ -193,7 +193,7 @@ export async function generateAnswer(
   // a projection of the pages; requiring it refused a Stack-backed project whose
   // pages are all present but whose filesystem is empty.
   if (!(await hasCompiledPages(root, options.env))) {
-    throw new Error("No compiled pages found. Run `llmwiki compile` first.");
+    throw new Error("No compiled pages found. Run the compile_wiki MCP tool first.");
   }
 
   const scopedOrReview = options.pageScope !== undefined || options.review === true;
@@ -340,7 +340,7 @@ export default async function queryCommand(
 ): Promise<void> {
   assertQuerySaveOptions(options);
   if (!(await hasCompiledPages(root))) {
-    output.status("!", output.error("No compiled pages found. Run `llmwiki compile` first."));
+    output.status("!", output.error("No compiled pages found. Run the compile_wiki MCP tool first."));
     return;
   }
 
@@ -394,8 +394,8 @@ function printPublicationOutcome(result: QueryResult, saveRequested: boolean): v
       process.exitCode = 1;
     }
   } else if (result.candidateId) {
-    output.status("→", output.info(`Staged answer for review: ${result.candidateId}`));
-    output.status("→", output.dim(`Inspect with: llmwiki review show ${result.candidateId}`));
+    output.status("→", output.info(`Staged answer: ${result.candidateId}`));
+    output.status("→", output.dim(`Candidate record: .llmwiki/candidates/${result.candidateId}.json`));
   } else if (result.saved) {
     output.status("→", output.dim("Saved. Future queries will use this answer as context."));
   } else if (!saveRequested) {

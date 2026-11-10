@@ -1,7 +1,7 @@
 /**
- * Persistent cache of the most recent `llmwiki lint` run.
+ * Persistent cache of the most recent lint run.
  *
- * Written by the lint command after a completed run, before any non-zero exit
+ * Written after a completed run, before any non-zero exit
  * for lint findings, so the cache always reflects the run the user just saw.
  * Crashed or partial runs leave the prior cache untouched.
  *

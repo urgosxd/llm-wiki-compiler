@@ -1,5 +1,5 @@
 /**
- * Compile-time citation normalizer for the llmwiki compile pipeline.
+ * Compile-time citation normalizer for the compile pipeline.
  *
  * The LLM occasionally emits a bare line number as a citation marker,
  * e.g. `^[81]` instead of the required `^[filename.md:81]`. This module

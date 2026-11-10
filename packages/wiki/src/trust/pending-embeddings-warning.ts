@@ -5,7 +5,7 @@
  * `{ code, message }` warning — so a compile that ran with no embedding provider /
  * API key (or hit a failure) and SWALLOWED the embeddings refresh is no longer
  * invisible. Without this, the only signal is PR4's per-query degrade-on-read, and
- * the "just re-run `llmwiki compile`" remedy is undiscoverable; this turns the
+ * the "re-run the `compile_wiki` tool" remedy is undiscoverable; this turns the
  * on-disk marker into an actionable status/lint signal, MIRRORING
  * {@link journalHealthWarning} exactly.
  *
@@ -34,7 +34,7 @@ export const PENDING_EMBEDDINGS_UNAVAILABLE_CODE = "embeddings-refresh-unavailab
 function pendingMessage(count: number): string {
   return (
     `${count} page(s) awaiting embedding refresh — configure an embedding provider ` +
-    "and re-run `llmwiki compile` to refresh semantic search."
+    "and call the MCP tool `compile_wiki` to refresh semantic search."
   );
 }
 
@@ -42,7 +42,7 @@ function pendingMessage(count: number): string {
 function unavailableMessage(detail: string): string {
   return (
     `The pending-embedding recovery marker (.llmwiki/pending-embeddings.json) is unreadable ` +
-    `(${detail}); pending refreshes may be lost — re-run \`llmwiki compile\` after removing or fixing it.`
+    `(${detail}); pending refreshes may be lost — fix or remove it, then call the MCP tool \`compile_wiki\`.`
   );
 }
 

@@ -1,15 +1,16 @@
 /**
- * Review candidate persistence for the llmwiki compile pipeline.
+ * Review candidate persistence for the compile pipeline.
  *
- * When `llmwiki compile --review` runs, generated wiki pages are routed
+ * When a compile runs with the `review` option, generated wiki pages are routed
  * here as JSON candidate records under `.llmwiki/candidates/` instead of
- * being written directly to `wiki/`. Reviewers then approve or reject the
- * proposals via the `llmwiki review` subcommands.
+ * being written directly to `wiki/`. Nothing promotes a candidate into the wiki:
+ * no registered MCP tool, SDK method or command reads these back for approval,
+ * so a staged candidate stays staged.
  *
  * Candidates are deliberately kept as standalone JSON so they survive across
- * compile runs and can be inspected manually without the CLI. Each record
- * stores the full page body so approval is a pure copy — the LLM is never
- * called again at approval time.
+ * compile runs and can be inspected as plain files. Each record
+ * stores the full page body so a future promotion would be a pure copy — the LLM is never
+ * called again at promotion time.
  *
  * This module owns the WRITE/dedup/identity/delete/archive half of the store.
  * The READ/list/sanitize/validate half lives in {@link file://./candidate-read.ts}
