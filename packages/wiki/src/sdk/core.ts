@@ -144,6 +144,14 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
 
     listSources: (opts) => runQuiet(() => listSources(root, opts)),
 
+    // `env` is deliberately NOT threaded here: this operation has no row-aware path
+    // for it to reach. `getSource` (`sources/store.ts`) reads the text through
+    // `resolveSourcesDir` → `confinedRegularFile` → `readFile` and takes no
+    // environment at all, so passing one would change no answer while implying a
+    // Stack it never consults. Source text DOES live in rows
+    // (`wiki.source_documents`, reachable only through the compiler's
+    // `SourceContentSource`), so a row-backed single-source read is a capability this
+    // facade lacks — the same recorded gap as `listSources`, not a dropped argument.
     getSource: (id) => runQuiet(() => getSource(root, id)),
 
     // Status is built from TWO answer sources, and both are resolved here: the row

@@ -36,13 +36,14 @@
  * `sources/` files and the compile state are the ones a caller actually gets.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
 import type { WikiStatus } from "../../packages/wiki/src/status/collect.js";
 import type { Page } from "../../packages/wiki/src/pages/list.js";
 import type { SourceRecord } from "../../packages/wiki/src/sources/store.js";
+import { AKS_STACK_ID_ENV_VAR } from "../../packages/wiki/src/dimensions/activation.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";
 import { seedConceptPage } from "../fixtures/mcp-stack-rows.js";
@@ -253,4 +254,30 @@ describe("SDK facade with no env and no Stack configured", () => {
     expect((await sourcesOf(wiki)).length).toBe(1);
     expect(status.pages.total).toBe((await pagesOf(wiki)).length);
   }, 180_000);
+});
+
+// INERT, and pinned as such: `getSource` answers from `sources/` whatever Stack the
+// handle names, because it has no row-aware path a Stack id could reach. Proven
+// through `createWiki` only. A future threading change would have to open a database
+// for the named Stack and answer from it, which this handle's env cannot do.
+describe("SDK facade getSource is inert to CreateWikiOptions.env", () => {
+  it("returns the on-disk source whether or not the handle names a Stack", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "sdk-getsource-inert-"));
+    try {
+      await mkdir(path.join(root, "sources"), { recursive: true });
+      const text = bodyFor("Note");
+      await writeFile(path.join(root, "sources", "note.md"), text, "utf-8");
+
+      const stackBound = createWiki({ root, env: { [AKS_STACK_ID_ENV_VAR]: "no-stack-behind-this-id" } });
+      const fileBound = createWiki({ root });
+
+      const fromStackBound = (await stackBound.getSource("note.md")) as SourceRecord;
+      const fromFileBound = (await fileBound.getSource("note.md")) as SourceRecord;
+
+      expect(fromStackBound).toEqual(fromFileBound);
+      expect(fromStackBound.body).toBe(text);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
