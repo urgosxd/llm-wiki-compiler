@@ -148,7 +148,7 @@ Database discipline for the suite and for the container work is unchanged: fresh
 - [x] T4 — resolve graph-retirement dimensions through the port in `packages/wiki/src/compiler/index.ts`, keeping the Stack pre-check — S1, S4 — route: gentle-ai-worker — commit: eb6b357b537bdfd902ead8c86788ea37c7707c35
 - [x] T5 — pin that an unknown dimension name REFUSES through the real compile path instead of silently skipping graph retirement — S4 — route: gentle-ai-worker — commit: eb6b357b537bdfd902ead8c86788ea37c7707c35
 - [x] T6 — pin that a stackless compile with graph retirement disabled completes and opens NO database — S1, S4 — route: gentle-ai-worker — commit: eb6b357b537bdfd902ead8c86788ea37c7707c35
-- [ ] T7 — gates, artifact tier, full `pnpm test`, both container modes — S5, S8 — route: gentle-ai-worker — commit: (pending)
+- [x] T7 — gates, artifact tier, full `pnpm test`, both container modes — S5, S8 — route: gentle-ai-worker — commit: (pending)
 
 ## Log
 
@@ -260,3 +260,55 @@ MEASURED GAP, NOT FIXED HERE (out of this slice's scope; `S4` requires graph-ret
 Focused, in order: the four new files plus the existing `test/compiler/graph-retirement-dimensions.test.ts` → `Test Files 5 passed (5) / Tests 10 passed (10)`. `corepack pnpm exec vitest related packages/wiki/src/{dimensions/activation.ts,sdk/core.ts,utils/types.ts}` → `Test Files 339 passed (339) / Tests 2131 passed (2131)` in 201.59 s. `corepack pnpm exec vitest related packages/wiki/src/compiler/index.ts` → `Test Files 99 passed (99) / Tests 441 passed (441)` in 71.45 s. `corepack pnpm exec tsc --noEmit` → no output, exit 0. `corepack pnpm run gates:static` → `static gates: all 6 passed in 21.9 s` (tsc, typecheck:kg, typecheck:tests, fallow:ci, fallow:kg, lint; lint printed the unchanged literal triple). `corepack pnpm run build` → `DTS ⚡️ Build success`, `ESM ⚡️ Build success`. The full `pnpm test`, the artifact tier and both container modes are `T7` and were NOT run by this worker.
 
 Work-unit commit holding T2-T6: `eb6b357b537bdfd902ead8c86788ea37c7707c35` (9 files, 590 insertions, 20 deletions), Conventional Commit message, pre-commit hook green and NOT bypassed. The hook's post-commit slice notice reported `134761 authored changed lines in 405 commits on feature/compile-port-threading since origin/main` — a branch-wide figure, not this slice's; recorded here rather than acted on.
+
+**L19 (independent gate verification — `verify-gates-suite`) — every gate, literal exit.**
+Each command was run alone, in the foreground, on `a32b66067c932dba0905ee178ded81692c997bae`:
+
+- `corepack pnpm run gates:static` — **0**, `static gates: all 6 passed in 23.1 s`.
+- `tsc --noEmit` — **0**, no output.
+- `typecheck:tests` — **0**, `240 baseline diagnostics in 86 files; no regression`.
+- `typecheck:kg` — **0**, `0 diagnostics`.
+- `lint` — **0**, literal message: `ESLint ratchet: 1645 files scanned; 566 baseline violations in 402 files across 429 rule/file entries; no regression.` The triple matches the requirement exactly (`566 baseline violations in 402 files across 429 rule/file entries`); zero headroom, and **`lint:update` was not run**.
+- `fallow:ci` — **0**, `0 dead-code, 0 complexity, 0 duplication introduced since main`.
+- `fallow:kg` — **0**, `"verdict": "pass"`.
+- `build` — **0**, `ESM ⚡️ Build success` + `DTS ⚡️ Build success`.
+- `vitest run test/artifact` — **0**, `4 files / 20 tests passed` (note: `package.json` has NO `test:artifact` script; the tier was run as `vitest run test/artifact` and no script was cited).
+- **`pnpm test` alone** — **0**: `Test Files 812 passed | 3 skipped (815)`, `Tests 6130 passed | 4 skipped (6134)`, **312.56 s**. The known flake (`packages/api/src/main-subcommand-flags.test.ts:147` SIGTERM) **did not appear**.
+
+The 3 skipped files are the pre-existing `packages/llmwiki-kg/ts/src/routes/{pages,aks,ingest}-gateway.test.ts` — unrelated to this slice.
+This writer re-ran `corepack pnpm run gates:static` (**0**, `all 6 passed in 22.6 s`, same literal lint triple) and `corepack pnpm run build` (**0**) immediately before committing this record, as the brief requires; nothing was fixed by bypassing a gate.
+
+**L20 (executed acceptance proofs — omission, invocation, differential) — measured, not read.**
+Executed in scratch (`mktemp -d` copy without `.git`), against a **freshly provisioned** pgvector container with the port read via `docker port <name> 5432/tcp` and `TESTCONTAINERS_REUSE_ENABLE=false`:
+
+- `createWiki({ root }).compile({ embeddings: false })` with **no env and no port** → `{compiled:0,skipped:0,deleted:1,errors:[]}`.
+- The **graph-enabled** form (`LLMWIKI_DIMENSIONS=kg`, real database) with the port **omitted** → the same result.
+- **Base-vs-head differential**: `git archive` of base `112e4478` vs head, same probe, same freshly provisioned container → **BYTE-IDENTICAL** for the plain, graph-enabled and `nope` cases, including stdout/stderr `""`, the refusal text `Unknown dimension "nope" in LLMWIKI_DIMENSIONS. Known dimensions: wiki, kg.`, `stateIdentical:true` and `pages:[]`.
+- **`S3`'s pin is non-vacuous, proven by MUTATION**: patching `packages/wiki/src/compiler/index.ts:1402` to `return createDefaultDimensionsPort();` turns it **red** — `expected [] to have a length of 1 but got +0`. The load-bearing assertion is `test/compiler/graph-retirement-port-invocation.test.ts:115 expect(received).toHaveLength(1)`.
+
+**L21 (`S5` container evidence — `verify-container-modes`) — both modes executed inside the image.**
+`docker build` exit **0**, image ID `303014a4ec08`.
+
+- **`host` mode** (`--network host`, the container's own `Host` derived from its own readiness line `Host ready at http://127.0.0.1:4173`, never assumed): `/health` **200** and `/` **200** with `Host: 127.0.0.1:4173`; a wrong `Host: evil.example` on `/` → **403** `{"error":{"code":"forbidden","message":"rejected by origin policy"}}`. Verified again in a bridge configuration with the container-side `Host: 172.17.0.7:4173` (both **200**) while the host-side `127.0.0.1:4174` gave **403**.
+- **`serve` mode**: stdio `initialize` → `serverInfo.name: "llmwiki"`, `SERVE_EXIT=0`, no database needed.
+- **CAVEAT, recorded verbatim in substance**: `/health` returns **200 even with a wrong `Host`**, because `/health` is graph-owned and graph routes deliberately skip the Host gate (`packages/api/src/host/server.ts:400`, `:14-16`). The 403 half of `S5` therefore exists on `/` and `/api/pages` only, not on `/health` — **by design, pre-existing**, not a defect introduced here.
+- Known false start (setup, not image): a `-p`-published bridge with a loopback bind is unreachable through docker-proxy; re-run with host networking, which the repo documents as required.
+
+**L22 (confirmed pre-existing defect, NOT fixed here) — the `forget` gap.**
+Confirmed by object identity, not by inference:
+
+- `packages/wiki/src/compiler/index.ts:1149` — `const state = draft.read();` returns the **live reference** (`packages/wiki/src/compiler/compile-state-draft.ts:80`, whose own comment says "returns the LIVE internal reference, not a copy").
+- `:1186` — `markDeletedAsOrphaned` **mutates that same object** (`packages/wiki/src/compiler/orphan.ts:72` `draft.removeSource` → `packages/wiki/src/utils/state.ts:274` `delete state.sources[...]`).
+- `:1190` — `forgetDeletedSources` receives **the same object**, so `:1499 state.sources[change.file]?.source` is `undefined` and the loop `continue`s.
+- **Provably unreachable**, not merely usually skipped: if the entry exists it was deleted before the lookup; if it does not exist, `orphan.ts:54` early-returns and the lookup misses too. No branch lets `dimension.forget` run.
+- Born in `a91774c9` ("feat(dimensions): add forget, so a deleted source leaves the graph"), so it is **pre-existing**, not change-caused; reproduced at base `112e4478` and unchanged at head.
+
+Both calls sit inside `if (!options.review)`, and the code comment states the rule verbatim: "Graph retirement follows the same review rule: a held-back run must not retire documents the wiki has not stopped serving yet."
+Consequences for whoever fixes it: **review mode must keep retiring nothing**; making non-review retirement live would be a behavioural first (Risk item 1 — irreversible deletion of stored graph rows); so the fix **awaits the manager's explicit decision** and is **NOT in this slice**. The `forget`-asserting regression probe (`graph-retirement-retires-source.test.ts`) is currently RED by construction and must be committed only in the slice that fixes the gap.
+
+**L23 (open caveats carried forward).**
+
+- (a) The invocation test is `describe.skipIf(!harness.reachable)` (`test/compiler/graph-retirement-port-invocation.test.ts:95`) and **can skip silently** on a schema-stale-but-live database. The refusal and absence tests are plain `describe(...)` and cannot skip that way.
+- (b) `S3`'s coverage is exactly "the port is asked, once, with the right request". The retire that would follow it is the `L22` gap, so this slice proves the seam is **load-bearing but not that a source is retired end to end**.
+- (c) The mutation-proven narrowing coverage lives in the **COMMITTED** `test/compiler/default-dimensions-port-narrowing.test.ts` (its own mutation: replacing the throw with `continue` makes it fail), so **no extra test was added**. The compile-path refusal pin stays green under that mutation — it does not cover the port's own narrowing, and it was not made to.
+- (d) Adopted from `verify-gates-suite` as durable-probe candidates, NOT committed here: `compile-port-sdk-omission` and `compile-port-narrowing-contract` (both scratch-only, verifier-owned) plus the optional `scripts/verify-container-modes.sh` for `S5`, which no unit test can cover. Copying them in is a separate, reviewable decision.
