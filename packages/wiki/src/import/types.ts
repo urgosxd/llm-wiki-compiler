@@ -52,7 +52,11 @@ export interface MappedTypedOkfDoc {
   fallbackReason?: string;
 }
 
-/** The per-doc outcome of the typed import leg, surfaced in the import report. */
+/**
+ * The per-doc outcome of the typed collision check: a doc the typed leg drops because its
+ * `wiki/<entityType>/<slug>` target already exists live, is already a pending candidate, or
+ * was claimed earlier in the same bundle.
+ */
 export interface TypedImportOutcome {
   /** Bundle-relative source path. */
   okfPath: string;
@@ -61,13 +65,12 @@ export interface TypedImportOutcome {
   /** Declared entity type, when the doc resolved one. */
   entityType?: string;
   /**
-   * `staged-typed`: staged as a typed review candidate (untrusted, or trusted with
-   * a promotion refusal — see `reason`). `promoted-typed`: staged then promoted
-   * live through the planner. `mismatch-fallback`: routed to untyped staging
-   * (unknown type / contract violation). `skipped`: a collision skip.
+   * `skipped`: a collision skip, and the only arm with a producer. The typed staging and
+   * promotion outcomes that used to be declared here needed a staging path that no longer
+   * exists; an arm nothing can produce describes a surface that is not there.
    */
-  outcome: "staged-typed" | "promoted-typed" | "mismatch-fallback" | "skipped";
-  /** Detail for a fallback (mismatch reason), a skip (collision reason), or a promotion refusal. */
+  outcome: "skipped";
+  /** Why the doc was skipped — the collision reason. */
   reason?: string;
 }
 

@@ -99,6 +99,23 @@
  * requires the flag to END there, so `--reviewer` and a hypothetical `--review-x` are
  * not swept up as adverts of a flag that was never spelled that way.
  *
+ * ## Why a third arm pins RENDERED strings
+ *
+ * The two arms above match a retired surface in its ADVERTISED spelling: a subcommand after
+ * the binary name, or the retired flag. Neither can express a retired REVIEW subcommand
+ * named on its own — `review approve`, `review show`, or the removed MCP tool `import_okf` —
+ * because that shape carries no binary name and no flag. A message telling an operator to
+ * "apply it via `review approve`" would therefore ship silently, which is exactly the
+ * defect this guard exists to stop: benign because nobody has written one YET is not
+ * guarded.
+ *
+ * So this arm asserts a different invariant with a different shape: no RENDERED line in the
+ * scanned tree may name a retired review subcommand or `import_okf`. It SKIPS comment lines,
+ * and the exclusion is deliberate rather than a loophole — a comment records what used to
+ * exist, while a rendered line tells a user or an agent to type something. All twenty
+ * surviving mentions in this tree are internal comments explaining the machinery a removed
+ * command used to reach; they are true, and they stay.
+ *
  * ## Why a green run over a swept tree proves nothing on its own
  *
  * "Found nothing" and "looked nowhere" are indistinguishable, so the inventory is
@@ -251,6 +268,64 @@ async function scanTree(): Promise<string[]> {
 }
 
 /**
+ * A retired review surface named WITHOUT the binary name in front of it.
+ *
+ * `review approve`, `review show` and `import_okf` are the three spellings the advert arms
+ * above cannot see: no preceding `llmwiki `, and no leading `--`. `import_okf` was an MCP
+ * tool name rather than a subcommand, so the binary-name arm could never have caught it
+ * either. The `\b` bounds keep a longer identifier such as `import_okf_preview` out, because
+ * `_` is a word character and a name that merely starts with a retired one is not that one.
+ */
+const RENDERED_RETIRED_SURFACE_PATTERN = /\b(review approve|review show|import_okf)\b/;
+
+/**
+ * Whether `line` opens with a comment rather than with something a run can render.
+ *
+ * Covers the line-leading comment forms this tree actually writes: `//` and `/*`
+ * (JavaScript/TypeScript), `*` (a block-comment continuation) and `--` (SQL). Only a line
+ * whose FIRST token opens a comment is skipped, so a rendered line that carries a trailing
+ * comment is still reported — the direction that matters, since what ships is the string.
+ */
+function isCommentLine(line: string): boolean {
+  return /^\s*(\/\/|\/\*|\*|--)/.test(line);
+}
+
+/**
+ * Every RENDERED mention of a retired review surface in `text`.
+ *
+ * Mirrors {@link findAdverts} so a failure reads the same way, but works line by line on a
+ * NON-global copy of the pattern: the invariant is whether a line names one of these
+ * surfaces at all, so the first match is the whole report and there is no `lastIndex` state
+ * to reset between files.
+ *
+ * @param relative - Path used as the report prefix.
+ * @param text - File contents to scan.
+ * @returns One entry per rendered mention, in file order.
+ */
+function findRenderedRetiredSurfaces(relative: string, text: string): string[] {
+  const offenders: string[] = [];
+  for (const [index, line] of text.split("\n").entries()) {
+    if (isCommentLine(line)) continue;
+    const match = RENDERED_RETIRED_SURFACE_PATTERN.exec(line);
+    if (match) offenders.push(`${relative}:${index + 1}: ${match[0]} — ${line.trim()}`);
+  }
+  return offenders;
+}
+
+/**
+ * Every rendered retired-surface mention in the whole scanned tree.
+ *
+ * @returns `path:line: matched text — line` for each mention, in walk order.
+ */
+async function scanTreeForRenderedRetiredSurfaces(): Promise<string[]> {
+  const offenders: string[] = [];
+  for (const file of await scannedTree()) {
+    offenders.push(...findRenderedRetiredSurfaces(file, await readFile(path.join(REPO_ROOT, file), "utf8")));
+  }
+  return offenders;
+}
+
+/**
  * Assert the inventory is a real tree, not an empty walk that would read as clean.
  *
  * A count floor, one contributing file per root, and no empty reads: any of these failing
@@ -318,5 +393,37 @@ describe("no runtime string advertises a removed `llmwiki <subcommand>`", () => 
     const offenders = await scanTree();
 
     expect(offenders, `${offenders.length} removed-subcommand advert(s):\n${offenders.join("\n")}`).toEqual([]);
+  });
+});
+
+describe("no RENDERED line names a retired review surface", () => {
+  it("flags a retired review surface in a rendered line and skips a comment", () => {
+    // RENDERED: a user or an agent reads this and then types it.
+    expect(findRenderedRetiredSurfaces("x.ts", '  nextAction: "Apply it via review approve <id>.",')).toHaveLength(1);
+    expect(findRenderedRetiredSurfaces("x.ts", '  message: "Run review show <id> to inspect it.",')).toHaveLength(1);
+    expect(findRenderedRetiredSurfaces("x.ts", '  name: "import_okf",')).toHaveLength(1);
+    // NOT RENDERED: a comment records what used to exist; it instructs nobody.
+    expect(findRenderedRetiredSurfaces("x.ts", " * apply it via review approve — see above")).toEqual([]);
+    expect(findRenderedRetiredSurfaces("x.ts", "// review show used to render here")).toEqual([]);
+    expect(findRenderedRetiredSurfaces("x.ts", "-- import_okf was dropped from the schema")).toEqual([]);
+    // The concepts survive the words: an ordinary plural is not a retired surface.
+    expect(findRenderedRetiredSurfaces("x.ts", '  status: "reviews pending"')).toEqual([]);
+  });
+
+  /**
+   * The invariant the two advert arms cannot express, asserted over the whole tree.
+   *
+   * Comments are skipped ON PURPOSE: this asserts what a run can RENDER, and a comment naming
+   * `review approve` is an accurate record of what used to exist, not an instruction. All
+   * twenty surviving mentions in this tree are internal comments explaining the machinery a
+   * removed command used to reach. Do not "fix" the blind spot by scanning comments too —
+   * that fails on twenty true notes and teaches the next reader to add allow-lists.
+   */
+  it("renders no retired review subcommand in a non-comment line", async () => {
+    const offenders = await scanTreeForRenderedRetiredSurfaces();
+
+    expect(offenders, `${offenders.length} rendered retired-surface mention(s):\n${offenders.join("\n")}`).toEqual(
+      [],
+    );
   });
 });
