@@ -47,7 +47,8 @@ export default defineConfig({
   // `Dynamic require of "ajv" is not supported` at import time. The bundle built
   // fine and the CLI died before parsing a single argument; measured with
   // `node dist/cli.js --version`. External so Node resolves the SDK at runtime,
-  // which is how it already runs under `llmwiki serve`.
+  // which is how the shipped launcher already runs it: `dist/api.js` in its
+  // `serve` mode, the stdio MCP server that `createWikiMcpServer` builds.
   //
   // `mammoth` arrives through the `.docx` ingest adapter (`src/ingest/docx.ts`).
   // It is CommonJS-only (`module.exports = ...`, no ESM entry), and its

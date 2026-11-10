@@ -16,20 +16,37 @@
  * ## Scope: the whole source tree, not a hand-maintained list
  *
  * The first version of this guard scanned six explicit files. A guard named "no removed
- * CLI adverts" that inspects 6 of ~487 source files makes a claim about itself it cannot
+ * CLI adverts" that inspects 6 of ~488 source files makes a claim about itself it cannot
  * support: a green run meant "these six are clean", and a seventh file could carry the
- * same advert forever. This version walks `packages/wiki/src` and `packages/api/src`
- * recursively and reads every `.ts`, `.js`, `.css` and `.sql` file in them. The adverts
- * live in MCP tool payloads, terminal report lines, doc comments, SQL migration headers
- * and browser assets that no unit test renders; a text scan is the only assertion that
- * covers all of those shapes at once, and it costs milliseconds because nothing is
- * built, spawned, or rendered.
+ * same advert forever. This version walks every first-party package root this repository
+ * ships — `packages/wiki/src`, `packages/api/src`, and the whole of
+ * `packages/llmwiki-core` — recursively, and reads every `.ts`, `.js`, `.css` and `.sql`
+ * file in them. The adverts live in MCP tool payloads, terminal report lines, doc
+ * comments, SQL migration headers and browser assets that no unit test renders; a text
+ * scan is the only assertion that covers all of those shapes at once, and it costs
+ * milliseconds because nothing is built, spawned, or rendered.
  *
  * `.sql` was left outside that walk for one commit, and the omission was not cosmetic: a
  * migration header explained the job table by naming two processes that no longer exist
  * as subcommands. A guard that claims to cover the tree inherits the same defect as the
  * string it hunts the moment it draws the boundary by extension instead of by "can a
  * user read this?". A migration header is read by every maintainer who opens the file.
+ *
+ * `packages/llmwiki-core` was the third such area, and it failed the same way for the same
+ * reason: the boundary was drawn at `src` subtrees. A published package's build config is
+ * a `.ts` file at the PACKAGE root (`packages/llmwiki-core/tsup.config.ts`), so every walk
+ * that named a `src/` directory left it unread — and it carried a live advert, a comment
+ * explaining why the MCP SDK is external that ended "which is how it already runs under
+ * `llmwiki serve`". Build-config comments are read by every integrator who opens the
+ * package, which makes them the same class of surface as a doc comment, not a lesser one.
+ * The root for that package is therefore the package directory itself.
+ *
+ * `dist` is skipped for exactly one reason: it is gitignored build output, so a walk that
+ * read it would report a file count, and a verdict, that depend on whether this working
+ * tree happened to be built. Nothing authored escapes by that exclusion — `dist` is
+ * regenerated from the source these roots already cover, by the very build config the scan
+ * now reads (`clean: true`, and an `onSuccess` asset copy out of
+ * `packages/wiki/src/viewer/assets`, itself inside a scanned root).
  *
  * ## Why the pattern names subcommands instead of accepting any lowercase word
  *
@@ -71,15 +88,17 @@
  * it to force a file through.
  *
  * The historical proof is out of band. Measured with this exact walk and this exact
- * pattern, the base commit this feature started from (`0cecbee5`) carried 136 offenders:
- * 487 paths walked, 486 readable — `packages/wiki/src/mcp/tool-names.ts` does not exist at
- * that commit — of which 12 are `.sql`, and 2 of the 136 offenders were in `.sql`
+ * pattern, the base commit this feature started from (`0cecbee5`) carried 137 offenders:
+ * 488 paths walked, 487 readable — `packages/wiki/src/mcp/tool-names.ts` does not exist at
+ * that commit — of which 12 are `.sql`. Two of the 137 were in `.sql`
  * (`dimensions/wiki/migration_wiki_jobs.sql:13` `llmwiki serve` and `:14` `llmwiki host`,
- * the same sentence naming both retired processes). Three narrower scopes each reported a
- * smaller number, and each was a lie of omission: `.ts`/`.js`/`.css` only reported 132
- * offenders across 474 files, which left the two `.sql` adverts unread, and catching
- * `serve` without `host` reported 133, which left the second one unread. This tree now
- * walks 487 files (12 of them `.sql`) and reports 0. The tree was never clean, it was
+ * the same sentence naming both retired processes) and one was in `packages/llmwiki-core`
+ * (`tsup.config.ts:29`). Every narrower scope reported a smaller number, and each was a
+ * lie of omission: `.ts`/`.js`/`.css` only reported 132 offenders across 474 files, which
+ * left the two `.sql` adverts unread; catching `serve` without `host` reported 133, which
+ * left the second one unread; and stopping the walk at `src` subtrees reported 136 across
+ * 487 files, which left a published package's build config unread. This tree now walks
+ * 488 files (12 of them `.sql`) and reports 0. The tree was never clean, it was
  * unexamined.
  *
  * That run is deliberately NOT part of this file — a committed test must not read git
@@ -97,16 +116,23 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 /**
  * The source roots every scanned file lives under, repository-relative.
  *
- * Both are asserted to contribute at least one file: a walker bug that silently drops a
- * root would otherwise read as a clean tree.
+ * Each root is asserted to contribute at least one file: a walker bug that silently drops
+ * a root would otherwise read as a clean tree. `packages/llmwiki-core` is listed as a
+ * whole package rather than a subtree because its build config sits at the package root;
+ * see the scope note above.
  */
-const SCAN_ROOTS = ["packages/wiki/src", "packages/api/src"] as const;
+const SCAN_ROOTS = ["packages/wiki/src", "packages/api/src", "packages/llmwiki-core"] as const;
 
 /** File types whose contents a user or an agent can end up reading. */
 const SCAN_EXTENSIONS = new Set([".ts", ".js", ".css", ".sql"]);
 
-/** Directories that can never contain first-party source, skipped so the walk stays cheap. */
-const SKIPPED_DIRECTORIES = new Set(["node_modules"]);
+/**
+ * Directories that can never contain authored, first-party source: vendored dependencies,
+ * and build output (`dist`), which is regenerated from what these roots already cover. A
+ * walk that read `dist` would report a count and a verdict that depend on whether the tree
+ * was built; see the scope note above.
+ */
+const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist"]);
 
 /**
  * A removed CLI subcommand advertised after the binary name.
@@ -237,7 +263,7 @@ describe("no runtime string advertises a removed `llmwiki <subcommand>`", () => 
     await assertRealInventory();
   });
 
-  it("finds no removed-subcommand advert under either source root", async () => {
+  it("finds no removed-subcommand advert under any scanned root", async () => {
     const offenders = await scanTree();
 
     expect(offenders, `${offenders.length} removed-subcommand advert(s):\n${offenders.join("\n")}`).toEqual([]);
