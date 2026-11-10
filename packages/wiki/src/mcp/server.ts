@@ -68,12 +68,7 @@ export function createWikiMcpServer(options: ServerOptions): McpServer {
       "read_page, lint_wiki, wiki_status, and run_eval (fast suite, record: false) work without an API key " +
       "and do not mutate state. " +
       "ingest_job_status and ingest_jobs_list read durable async-ingest job records, so they answer " +
-      "across a host restart. " +
-      "list_workflow_actions, describe_workflow_action, and run_workflow_action expose the workflow " +
-      "harness; MCP actions are hard-capped at staged-write and cannot perform trusted writes or " +
-      "satisfy human gates. " +
-      "verify_artifact checks a hash-pinned artifact ref and returns manifest metadata plus a health " +
-      "verdict, never the body; there is no write or store-wide list tool for artifacts over MCP.",
+      "across a host restart.",
   });
 
   registerWikiTools(server, root, dimensionsPort);

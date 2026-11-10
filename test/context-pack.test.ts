@@ -151,7 +151,7 @@ describe("buildContextPack — empty wiki", () => {
     const pack = await buildContextPack({ root: tmpDir, prompt: "anything" });
     expect(pack.primary).toEqual([]);
     expect(pack.suggestedActions.length).toBeGreaterThan(0);
-    expect(pack.suggestedActions[0].command).toBe("llmwiki quickstart <source>");
+    expect(pack.suggestedActions[0].command).toBe("ingest_source");
   });
 });
 
@@ -211,15 +211,16 @@ describe("buildContextPack — suggestedActions prefix matches recommendNextActi
   it("places recommendNextAction.recommended at index 0", async () => {
     await writePage(path.join(tmpDir, CONCEPTS_DIR), "ready", "Ready");
     const pack = await buildContextPack({ root: tmpDir, prompt: "ready" });
-    expect(pack.suggestedActions[0].command).toBe("llmwiki view --open");
+    expect(pack.suggestedActions[0].executable?.tool).toBe("query_wiki");
   });
 
-  it("appends otherActions in declared order after the primary recommendation", async () => {
+  it("keeps the primary first and does not repeat the same call with new prose", async () => {
     await writePage(path.join(tmpDir, QUERIES_DIR), "q", "QueryPage");
     const pack = await buildContextPack({ root: tmpDir, prompt: "querypage" });
-    const args = pack.suggestedActions.map((a) => a.executable?.args.join(" "));
-    expect(args.slice(0, 1)).toEqual(["view --open"]);
-    expect(args.slice(1)).toContain("query");
+    const tools = pack.suggestedActions.map((a) => a.executable?.tool);
+    // The shared table and the context-specific suffix both name the same call, so the
+    // dedupe keeps one entry instead of suggesting it twice.
+    expect(tools).toEqual(["query_wiki"]);
   });
 });
 
@@ -397,6 +398,23 @@ describe("buildContextPack — Slice 2 semantic retrieval integration", () => {
     });
     const pack = await buildContextPack({ root: tmpDir, prompt: "anything" });
     expect(pack.warnings.map((w) => w.code)).toContain("embedding-store-missing");
+    // The pack is served to agents by `get_context_pack`, so its remedy has to name
+    // the registered `compile_wiki` tool instead of a binary this product does not ship.
+    const warning = pack.warnings.find((w) => w.code === "embedding-store-missing");
+    expect(warning?.message).toContain("compile_wiki");
+    expect(warning?.message).not.toContain("llmwiki ");
+  });
+
+  it("emits embedding-entry-stale naming the compile_wiki tool", async () => {
+    mockedRetrieve.mockResolvedValueOnce({
+      hits: [],
+      warning: null,
+      staleEntriesDetected: true,
+    } as never);
+    const pack = await buildContextPack({ root: tmpDir, prompt: "anything" });
+    const warning = pack.warnings.find((w) => w.code === "embedding-entry-stale");
+    expect(warning?.message).toContain("compile_wiki");
+    expect(warning?.message).not.toContain("llmwiki ");
   });
 
   it("emits query-embedding-unavailable warning when retrieval reports the provider failed", async () => {

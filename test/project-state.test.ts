@@ -38,10 +38,10 @@ afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true });
 });
 
-/** Collect state and return just the otherActions `executable.args` lists. */
-async function otherActionArgs(root: string): Promise<(string[] | undefined)[]> {
+/** Collect state and return just the otherActions `executable.tool` names. */
+async function otherActionTools(root: string): Promise<(string | undefined)[]> {
   const state = await collectProjectState(root);
-  return recommendNextAction(state).otherActions.map((a) => a.executable?.args);
+  return recommendNextAction(state).otherActions.map((a) => a.executable?.tool);
 }
 
 describe("collectProjectState — primary state classification", () => {
@@ -181,40 +181,42 @@ describe("recommendNextAction — broken-project recommendation shape", () => {
 });
 
 describe("recommendNextAction — per-state otherActions table", () => {
-  it("fresh -> ingest, quickstart", async () => {
-    expect(await otherActionArgs(tmpDir)).toEqual([["ingest"], ["quickstart"]]);
+  // Both `fresh` entries resolve to the same registered call now: there is no single
+  // tool that ingests AND compiles, so the pair differs only in the reason it gives.
+  it("fresh -> the ingest call, framed as ingest and as quickstart", async () => {
+    expect(await otherActionTools(tmpDir)).toEqual(["ingest_source", "ingest_source"]);
   });
 
-  it("sources-only -> compile, quickstart", async () => {
+  it("sources-only -> compile_wiki, ingest_source", async () => {
     await touchMarkdown(path.join(tmpDir, SOURCES_DIR), "a.md");
-    expect(await otherActionArgs(tmpDir)).toEqual([["compile"], ["quickstart"]]);
+    expect(await otherActionTools(tmpDir)).toEqual(["compile_wiki", "ingest_source"]);
   });
 
-  it("empty-wiki -> compile, ingest", async () => {
+  it("empty-wiki -> compile_wiki, ingest_source", async () => {
     await mkdir(path.join(tmpDir, "wiki"), { recursive: true });
-    expect(await otherActionArgs(tmpDir)).toEqual([["compile"], ["ingest"]]);
+    expect(await otherActionTools(tmpDir)).toEqual(["compile_wiki", "ingest_source"]);
   });
 
-  it("review-pending -> review list, review approve", async () => {
+  it("review-pending -> nothing callable, because no surface promotes a candidate", async () => {
     await touchMarkdown(path.join(tmpDir, CONCEPTS_DIR), "a.md");
     await seedCandidate(tmpDir, "candidate-aabbccdd");
-    expect(await otherActionArgs(tmpDir)).toEqual([["review", "list"], ["review", "approve"]]);
+    expect(await otherActionTools(tmpDir)).toEqual([]);
   });
 
-  it("lint-attention -> lint, view --open", async () => {
+  it("lint-attention -> lint_wiki, with no viewer action left", async () => {
     await touchMarkdown(path.join(tmpDir, CONCEPTS_DIR), "a.md");
     await writeLintCache(tmpDir, { warnings: 0, errors: 1, info: 0, results: [] });
-    expect(await otherActionArgs(tmpDir)).toEqual([["lint"], ["view", "--open"]]);
+    expect(await otherActionTools(tmpDir)).toEqual(["lint_wiki"]);
   });
 
-  it("wiki-ready -> view --open, query", async () => {
+  it("wiki-ready -> query_wiki, with no viewer action left", async () => {
     await touchMarkdown(path.join(tmpDir, CONCEPTS_DIR), "a.md");
-    expect(await otherActionArgs(tmpDir)).toEqual([["view", "--open"], ["query"]]);
+    expect(await otherActionTools(tmpDir)).toEqual(["query_wiki"]);
   });
 
-  it("placeholder actions list slot names rather than literal angle brackets in args", async () => {
+  it("placeholder actions carry placeholder-valued fields, not literal values", async () => {
     const action = recommendNextAction(await collectProjectState(tmpDir)).recommended;
-    expect(action.executable?.placeholders).toEqual(["source"]);
-    expect(action.executable?.args).not.toContain("<source>");
+    expect(action.executable?.tool).toBe("ingest_source");
+    expect(action.executable?.input).toEqual({ source: "<source>", stackId: "<stackId>" });
   });
 });

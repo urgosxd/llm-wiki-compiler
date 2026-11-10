@@ -6,7 +6,7 @@
  *      citations, warnings, etc).
  *   2. Collecting project state via the shared `collectProjectState`
  *      helper so the lint cache and pending-candidate counts match
- *      what `llmwiki next` would report.
+ *      what `recommendNextAction` reports.
  *   3. Lexically ranking pages against the prompt via the Slice-1
  *      ranker.
  *   4. Delegating the recommendation prefix to
@@ -476,7 +476,8 @@ function buildTopLevelWarnings(
       code: "embedding-entry-stale",
       message:
         "Some embedding entries are stale (their page changed or was removed); " +
-        "results stayed fresh by skipping them. Run `llmwiki compile` to rebuild embeddings.",
+        "results stayed fresh by skipping them. Call the MCP tool `compile_wiki` to " +
+        "rebuild embeddings.",
     });
   }
   const retrievalWarning = semantic.warning;
@@ -485,14 +486,14 @@ function buildTopLevelWarnings(
       code: "embedding-store-missing",
       message:
         "No usable embedding store found; semantic retrieval skipped. " +
-        "Run `llmwiki compile` to populate embeddings.",
+        "Call the MCP tool `compile_wiki` to populate embeddings.",
     });
   } else if (retrievalWarning === "embedding-index-outdated") {
     warnings.push({
       code: "embedding-index-outdated",
       message:
         "The embedding index is an older version; semantic retrieval skipped. " +
-        "Run `llmwiki compile` to rebuild embeddings.",
+        "Call the MCP tool `compile_wiki` to rebuild embeddings.",
     });
   } else if (retrievalWarning === "query-embedding-unavailable") {
     warnings.push({
@@ -527,25 +528,26 @@ interface ContextActionInput {
 
 /** Context-specific suffix: rebuild embeddings when pages exist but no store is usable. */
 const CONTEXT_COMPILE_ACTION: RecommendedAction = {
-  command: "llmwiki compile",
+  command: "compile_wiki",
   reason:
     "Refresh compiled pages and rebuild the embedding store for semantic context.",
-  executable: { binary: "llmwiki", args: ["compile"] },
+  executable: { tool: "compile_wiki", input: { stackId: "<stackId>" } },
 };
 
-/** Context-specific suffix: open the selected wiki when shared recommendations omit it. */
-const CONTEXT_VIEW_ACTION: RecommendedAction = {
-  command: "llmwiki view --open",
-  reason: "Browse the compiled wiki in the local viewer.",
-  executable: { binary: "llmwiki", args: ["view", "--open"] },
-};
-
-/** Context-specific suffix: use the same prompt to generate an answer after reviewing evidence. */
+/**
+ * Context-specific suffix: ask the same prompt as a question when the shared table omits it.
+ *
+ * Its input is deliberately identical to the shared query action: the two describe the
+ * same call with different prose, so {@link actionKey} collapses them into one suggestion.
+ */
 const CONTEXT_QUERY_ACTION: RecommendedAction = {
-  command: 'llmwiki query "<prompt>"',
+  command: "query_wiki",
   reason:
     "Generate an answer with the same prompt after reviewing this context pack.",
-  executable: { binary: "llmwiki", args: ["query"], placeholders: ["prompt"] },
+  executable: {
+    tool: "query_wiki",
+    input: { question: "<question>", stackId: "<stackId>" },
+  },
 };
 
 function collectSuggestedActions(
@@ -563,7 +565,6 @@ function collectSuggestedActions(
     appendUniqueAction(actions, CONTEXT_COMPILE_ACTION);
   }
   if (input.hasPages) {
-    appendUniqueAction(actions, CONTEXT_VIEW_ACTION);
     appendUniqueAction(actions, CONTEXT_QUERY_ACTION);
   }
   return actions;
@@ -579,10 +580,22 @@ function appendUniqueAction(
   actions.push(candidate);
 }
 
-/** Dedupe by executable intent, falling back to display command for non-executable actions. */
+/**
+ * Dedupe by the call, not by the prose: two actions that invoke the same registered
+ * tool with the same input fields are ONE suggestion, however differently their reason
+ * words it. Fields are sorted so the key is stable regardless of declaration order.
+ *
+ * A non-executable action has no call to compare — and, being a sentinel, it must never
+ * collide with a real suggestion — so its display label is the key, and a null label
+ * falls back to the reason.
+ */
 function actionKey(action: RecommendedAction): string {
   if (!action.executable) return action.command ?? action.reason;
-  return `${action.executable.binary} ${action.executable.args.join(" ")}`;
+  const { tool, input } = action.executable;
+  const fields = Object.keys(input)
+    .sort()
+    .map((field) => `${field}=${input[field]}`);
+  return `${tool}?${fields.join("&")}`;
 }
 
 /**

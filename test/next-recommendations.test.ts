@@ -28,7 +28,8 @@
  * ## Invariants pinned
  *
  *   - the seven-way precedence decides `state`
- *   - the PRIMARY action's structured form is exact, placeholders included
+ *   - the PRIMARY action names a registered MCP tool and the input fields that tool
+ *     requires, so an agent can actually make the call
  *   - the recommendation never mutates the project it inspects
  */
 
@@ -77,13 +78,12 @@ describe("recommendNextAction — a fresh project", () => {
     expect(rec.recommended.reason).toBe("No sources or wiki pages were found.");
   });
 
-  it("recommends quickstart with a `source` placeholder slot", async () => {
+  it("recommends the ingest_source call with the fields that tool requires", async () => {
     const rec = await recommendation();
-    expect(rec.recommended.command).toBe("llmwiki quickstart <source>");
+    expect(rec.recommended.command).toBe("ingest_source");
     expect(rec.recommended.executable).toEqual({
-      binary: "llmwiki",
-      args: ["quickstart"],
-      placeholders: ["source"],
+      tool: "ingest_source",
+      input: { source: "<source>", stackId: "<stackId>" },
     });
   });
 });
@@ -93,14 +93,17 @@ describe("recommendNextAction — seeded sources and pages", () => {
     await touchMarkdown(path.join(projectRoot, SOURCES_DIR), "a.md");
     const rec = await recommendation();
     expect(rec.state).toBe("sources-only");
-    expect(rec.recommended.executable?.args).toEqual(["compile"]);
+    expect(rec.recommended.executable?.tool).toBe("compile_wiki");
   });
 
-  it("classifies seeded wiki pages as `wiki-ready` and recommends the viewer", async () => {
+  it("classifies seeded wiki pages as `wiki-ready` and recommends query_wiki", async () => {
     await touchMarkdown(path.join(projectRoot, CONCEPTS_DIR), "a.md");
     const rec = await recommendation();
     expect(rec.state).toBe("wiki-ready");
-    expect(rec.recommended.executable).toEqual({ binary: "llmwiki", args: ["view", "--open"] });
+    expect(rec.recommended.executable).toEqual({
+      tool: "query_wiki",
+      input: { question: "<question>", stackId: "<stackId>" },
+    });
   });
 
   it("classifies a pending candidate as `review-pending`, outranking wiki-ready", async () => {
@@ -108,7 +111,11 @@ describe("recommendNextAction — seeded sources and pages", () => {
     await seedPendingCandidate(projectRoot, "candidate-aabbccdd");
     const rec = await recommendation();
     expect(rec.state).toBe("review-pending");
-    expect(rec.recommended.executable?.args).toEqual(["review", "list"]);
+    // Nothing promotes a candidate into `wiki/`, so the honest recommendation names no
+    // call at all rather than a review command this product does not have.
+    expect(rec.recommended.command).toBeNull();
+    expect(rec.recommended.executable).toBeNull();
+    expect(rec.recommended.reason).toContain(".llmwiki/candidates/");
   });
 
   it("classifies a lint cache with errors as `lint-attention` and surfaces its entry", async () => {
@@ -117,7 +124,7 @@ describe("recommendNextAction — seeded sources and pages", () => {
     const state = await collectProjectState(projectRoot);
     const rec = recommendNextAction(state);
     expect(rec.state).toBe("lint-attention");
-    expect(rec.recommended.executable?.args).toEqual(["lint"]);
+    expect(rec.recommended.executable?.tool).toBe("lint_wiki");
     expect(state.lint.present).toBe(true);
     expect(state.lint.entry).toEqual({ warnings: 1, errors: 3, at: expect.any(String) });
   });

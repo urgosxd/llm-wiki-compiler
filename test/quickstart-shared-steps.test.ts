@@ -256,7 +256,7 @@ describe("step 3 — the review-mode report", () => {
       // ranks a source with no compiled pages ahead of the review queue. `compile`
       // is the surviving contract. Reported as a finding, not hidden.
       expect(rec.state).toBe("sources-only");
-      expect(rec.recommended.executable?.args).toEqual(["compile"]);
+      expect(rec.recommended.executable?.tool).toBe("compile_wiki");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -92,7 +92,7 @@ describe("context-pack audit regressions", () => {
     await writeConcept("alpha", "Alpha", "body");
     mockedRetrieve.mockResolvedValueOnce({ hits: [], warning: "embedding-store-missing" });
     const pack = await buildContextPack({ root, prompt: "alpha" });
-    expect(pack.suggestedActions.map((a) => a.command)).toContain("llmwiki compile");
+    expect(pack.suggestedActions.map((a) => a.executable?.tool)).toContain("compile_wiki");
   });
 
   it("surfaces unexpected semantic retrieval failures as their own warning code", async () => {
