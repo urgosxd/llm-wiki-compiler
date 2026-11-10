@@ -24,11 +24,18 @@ One source in, seven interlinked concept pages out. Browse the `wiki/` directory
 
 ## Reproduce it yourself
 
-```bash
-# run from the repo root
-llmwiki ingest examples/basic/sources/knowledge-compilation.md
-llmwiki compile
-llmwiki query "what is knowledge compilation?"
+`examples/basic/sources/knowledge-compilation.md` is the input, and `wiki/` is what
+`compile()` produced from it. From a repository checkout:
+
+```ts
+import { createWiki } from "llm-wiki-compiler";
+
+const wiki = createWiki({ root: "examples/basic" });
+await wiki.compile();
+const { answer } = await wiki.query("what is knowledge compilation?");
 ```
+
+Add another input with `wiki.ingest({ source })`, or with the MCP `ingest_source`
+tool, and compile through the MCP `compile_wiki` tool when an agent drives llmwiki.
 
 Output will vary since it's LLM-generated, but the structure will match.

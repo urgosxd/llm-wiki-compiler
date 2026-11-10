@@ -21,23 +21,11 @@ The same page in a demonstration wiki. Click either screenshot for a closer look
 
 Recursive source folders, path exclusions, project-specific compile instructions, and storage for larger embedding indexes.
 
-### Configurable Lifecycle Profiles — introduced in 1.0.
-
-Build a domain-specific wiki with typed records, relationships, lifecycle gates, and workflows defined in one validated profile. Start with AutoSci or Newsroom, or create your own.
-
-### New in 1.2 — Explore your records and their evidence.
-
-Browse profile-defined categories, declared fields, connected records, provenance, and supporting source passages in the local viewer.
-
-### New in 1.1 — Publish and share domain templates.
-
-Create signed template distributions, discover them through explicitly trusted catalogs, and install or update them with compatibility checks.
-
 ---
 
 ## What llmwiki does
 
-Compile raw sources into an interlinked, citation-traceable markdown wiki that agents and humans can browse, query, lint, export, and reuse. The default profile preserves the classic concepts-and-queries layout; optional profiles add domain-specific types and workflows without adding domain branches to the compiler.
+Compile raw sources into an interlinked, citation-traceable markdown wiki that agents and humans can browse, query, lint, export, and reuse. The default profile preserves the classic concepts-and-queries layout.
 
 llmwiki implements the [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern: instead of re-discovering knowledge from raw files at query time, compile it once into durable pages that accumulate structure, provenance, review state, and retrieval metadata over time.
 
@@ -56,9 +44,7 @@ Do not use llmwiki as a general static-site generator, a heavy ontology database
 ## What you get
 
 - **Compiled wiki, not chunks.** A two-phase LLM pipeline extracts concepts, then generates typed pages: `concept`, `entity`, `comparison`, and `overview`.
-- **Configurable Lifecycle Profiles.** A fail-closed `.llmwiki/profile.json` can declare entity schemas, typed relations, lifecycle state machines, transition requirements, workflows, artifacts, connectors, content tiers, and retrieval policy.
-- **Installable domain templates.** The built-in `autosci` template declares a research project with papers, ideas, experiments, manuscripts, evidence artifacts, workflows, and Crossref import. `newsroom` demonstrates the same machinery for editorial work.
-- **Runtime trust gates.** Relation, evidence, artifact, and human/agent gates are enforced by the write path rather than left as prompt conventions; standing lint detects drift after the fact.
+- **Runtime trust gates.** Every page write is path-confined, size-capped before parsing, blocked from overwriting an existing target unless the caller declares an upsert, and rejected on malformed frontmatter rather than left to prompt convention; standing lint detects drift after the fact.
 - **Citation-traceable output.** Paragraphs and claims cite source files and line ranges, and the lint rules (`wiki.lint()`, MCP `lint_wiki`) validate the links.
 - **Hybrid retrieval.** Semantic chunk search, BM25 reranking, and wikilink graph expansion build compact evidence packs for queries and agents.
 - **Local viewer.** The launcher's `host` mode serves a read-only browser UI with search, page metadata, graph exploration, source-freshness badges, and citation chips.
@@ -70,26 +56,6 @@ Do not use llmwiki as a general static-site generator, a heavy ontology database
 - **Open Knowledge Format exchange.** Export and import OKF bundles for portable, markdown-native knowledge exchange. External OKF imports are staged through the review queue by default; trusted bundles can be written live explicitly.
 - **Other portable exports.** Export JSON, JSON-LD, GraphML, Marp slides, and `llms.txt` for downstream systems.
 - **Provider portable.** Anthropic, Claude Agent SDK local login, OpenAI-compatible servers, Ollama, GitHub Copilot, Atlas Cloud, OrcaRouter, and local OpenAI-compatible runtimes.
-
-## Configurable Lifecycle Profiles (CLP)
-
-CLP turns llmwiki's knowledge compiler into a reusable substrate for domain-specific knowledge systems. A validated `.llmwiki/profile.json` is the single contract for:
-
-- typed entities, fields, and directed relations;
-- lifecycle states, transition evidence, and trust gates;
-- multi-stage workflows and declared actions;
-- hash-pinned artifacts and first-party connector bindings; and
-- content tiers and retrieval behavior.
-
-These rules are enforced by the runtime, not left as prompt conventions. The CLI, SDK, MCP server, viewer, context builder, lint, status, export, and OKF exchange surfaces all operate from the same profile contract. Invalid profiles and writes that bypass a declared gate fail closed.
-
-CLP is backward-compatible by construction: a project without `.llmwiki/profile.json` uses the built-in default concepts-and-queries profile and preserves the pre-1.0 behavior. A project starts from its own profile file, from a built-in or local template, or from a signed template installed from a trusted tap.
-
-`autosci` is a practical research system with papers, ideas, experiments, manuscripts, evidence artifacts, workflows, and Crossref ingestion. `newsroom` applies the same generic machinery to articles, desks, bylines, and editorial workflows. Templates contain configuration and examples, never executable plugin code.
-
-Templates can also be distributed securely. Publishers build signed, offline distributions — Ed25519 signing, key rotation, and package revocation — and consumers add explicitly trusted taps, discover and inspect signed catalogs, and install or update templates with continuity, revocation, and compatibility checks enforced under lock.
-
-Read the [CLP concept guide](docs/concepts/configurable-lifecycle-profiles.mdx), follow the [AutoSci research workflow](docs/guides/autosci-research-workflow.mdx), or explore the [Newsroom editorial workflow](docs/guides/newsroom-editorial-workflow.mdx).
 
 ## Karpathy's LLM Wiki pattern
 
@@ -151,11 +117,6 @@ const { answer } = await wiki.query("what are the key ideas?");
 console.log(answer);
 ```
 
-To start with a domain model instead of the default concepts-and-queries layout, install a
-template into a new or empty project.
-
-Template installation is for a new or empty typed project. It materializes the chosen profile into `.llmwiki/profile.json`; normal project loading never depends on a template registry or lockfile.
-
 ## Demo
 
 Open [`examples/basic/`](examples/basic/) - it includes a small pre-generated wiki you can inspect without an API key - or point `createWiki` at any article or document and compile it yourself.
@@ -193,20 +154,13 @@ sources/
 wiki/
   concepts/      compiled pages
   queries/       saved answers
-  <entity>/      profile-declared typed pages
-  graph/         typed relation and audit-event stores
-  outputs/       derived workflow projections
   index.md       generated TOC
 .llmwiki/
-  profile.json   active domain contract
-  template-lock.json  advisory install provenance
   config.json    review policy and source selection
   schema.json    page-kind/cross-link policy
   state.json     source hashes and ownership
   candidates/    held review candidates
-  workflows/     signed workflow run state
   eval/          quality history and thresholds
-artifacts/       hash-pinned profile-declared files and manifests
 log.md           activity journal
 ```
 
@@ -247,12 +201,7 @@ const answer = await wiki.query("What changed?");
 
 See [`docs/guides/sdk.mdx`](docs/guides/sdk.mdx). `llm-wiki-compiler` is the
 supported entry point; its scoped supporting packages are implementation
-dependencies. The local workflow engine and an application's own coordinator
-are two tiers, not a migration path: the local engine runs a profile-declared
-workflow in-process with persisted state between sessions.
-An external coordinator calls the same SDK without using local workflow
-execution methods; the supporting engine dependency remains installed. See
-[SDK package selection](docs/guides/sdk-packages.mdx) and
+dependencies. See [SDK package selection](docs/guides/sdk-packages.mdx) and
 [SDK upgrade notes](docs/guides/sdk-upgrade.mdx).
 
 ## Configuration
@@ -284,9 +233,6 @@ See [`docs/configuration/providers.mdx`](docs/configuration/providers.mdx) and [
 llmwiki is designed for auditable generated knowledge:
 
 - **Review before write.** Use `compile({ review: true })` or `.llmwiki/config.json` review policy to hold risky pages as candidates.
-- **Profile floors are runtime checks.** Field contracts, lifecycle transitions, relation counts, evidence, and artifact requirements are enforced across page, lifecycle, workflow, import, and approval write surfaces.
-- **External connector data is untrusted.** First-party connectors use confined fetches and stage fenced review candidates; approval is pinned to the exact body the operator reviewed.
-- **Artifacts are content-addressed evidence.** Artifact reads and writes are path-confined, size-capped, schema-checked, and verified against hash-pinned references.
 - **Fail-closed config.** Invalid review-policy config aborts compile instead of silently disabling review.
 - **Source confinement.** Source snippets and import/export paths are confined to the project.
 - **Freshness is explicit.** Pages can be fresh, stale, orphaned, or unverified; stale pages are flagged and repairable. The JSON export is active-page-only: it carries freshness for live pages (`fresh`/`stale`/`unverified`); computed-orphaned pages (all sources deleted) surface only as lint and viewer signals and are dropped from the export.
@@ -320,10 +266,10 @@ The full docs site source is in [`docs/`](docs/):
 - Karpathy's LLM Wiki pattern: [`docs/concepts/karpathy-pattern.mdx`](docs/concepts/karpathy-pattern.mdx)
 - How the compiler works: [`docs/concepts/how-it-works.mdx`](docs/concepts/how-it-works.mdx)
 - Wiki model: [`docs/concepts/wiki-model.mdx`](docs/concepts/wiki-model.mdx)
-- Configurable Lifecycle Profiles: [`docs/concepts/configurable-lifecycle-profiles.mdx`](docs/concepts/configurable-lifecycle-profiles.mdx)
-- AutoSci research workflow: [`docs/guides/autosci-research-workflow.mdx`](docs/guides/autosci-research-workflow.mdx)
-- Newsroom editorial workflow: [`docs/guides/newsroom-editorial-workflow.mdx`](docs/guides/newsroom-editorial-workflow.mdx)
-- Profile templates: [`docs/configuration/profile-templates.mdx`](docs/configuration/profile-templates.mdx)
+- Lifecycle profiles are fixed, not configurable: [`docs/concepts/configurable-lifecycle-profiles.mdx`](docs/concepts/configurable-lifecycle-profiles.mdx)
+- AutoSci research workflow (not part of this build): [`docs/guides/autosci-research-workflow.mdx`](docs/guides/autosci-research-workflow.mdx)
+- Newsroom editorial workflow (not part of this build): [`docs/guides/newsroom-editorial-workflow.mdx`](docs/guides/newsroom-editorial-workflow.mdx)
+- Profile templates (not part of this build): [`docs/configuration/profile-templates.mdx`](docs/configuration/profile-templates.mdx)
 - Open Knowledge Format: [`docs/guides/open-knowledge-format.mdx`](docs/guides/open-knowledge-format.mdx)
 - MCP integration: [`docs/guides/mcp-agent-integration.mdx`](docs/guides/mcp-agent-integration.mdx)
 - SDK: [`docs/guides/sdk.mdx`](docs/guides/sdk.mdx)
@@ -341,12 +287,13 @@ volta run --node 24 npx mint dev --port 3001
 ## Current release
 
 `main` carries the `1.4.0-dev.20260919` development candidate: a local
-integration build, not an npm release. It adds the split-package SDK, generic
-domain record preparation, operation-bundle authority, and provider-backed
-product actions while preserving the public compiler and viewer. Standalone
-AutoSci/Newsroom process packages are not included; their builtin ontology
-templates remain supported. See the [changelog](CHANGELOG.md) `Unreleased`
-section and [`ARCHITECTURE.md`](ARCHITECTURE.md#development-runtime-authority).
+integration build, not an npm release. The product is a pnpm workspace of five
+packages (`@repo/foundation`, `@repo/kg`, `@repo/wiki`, `@repo/api` and
+`@atomicstrata/llmwiki-core`): the public compiler and viewer live in `@repo/wiki`,
+published behind `llm-wiki-compiler`, and the knowledge and domain services behind
+`@atomicstrata/llmwiki-core`. Standalone AutoSci/Newsroom process packages are
+not included. See the [changelog](CHANGELOG.md) `Unreleased` section and
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 **Released `1.3.0`:**
 

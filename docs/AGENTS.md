@@ -16,7 +16,7 @@
 ## Feature documentation rule
 
 - Any user-facing feature change must update the Mintlify docs in the same PR.
-- User-facing means CLI commands and flags, config, environment variables, providers, SDK/MCP surfaces, viewer behavior, export/import formats, files written under `.llmwiki/`, security boundaries, and changed failure behavior.
+- User-facing means config, environment variables, providers, SDK/MCP surfaces, viewer behavior, export/import formats, files written under `.llmwiki/`, security boundaries, and changed failure behavior.
 - Prefer updating the closest existing page. Add a new page only when the feature needs a standalone reference or workflow.
 - If a new page is added, update `docs.json` navigation in the same change.
 - Document safety and trust boundaries explicitly for imports, external content, credentials, local servers, path confinement, and review gates.
@@ -24,7 +24,7 @@
 
 ## Terminology
 
-- Use `llmwiki` for the CLI/product name.
+- Use `llmwiki` for the product name.
 - Use `wiki` for the compiled output under `wiki/`.
 - Use `sources/` for raw input files.
 - Use `review candidates` for records under `.llmwiki/candidates/`.
@@ -37,7 +37,7 @@
 - Use sentence case for headings
 - Bold for UI elements: Click **Settings**
 - Code formatting for file names, commands, paths, and code references
-- Prefer copyable commands over prose-only explanations.
+- Prefer copyable code over prose-only explanations.
 - State defaults and exceptions close to the command or config that causes them.
 
 ## Content boundaries

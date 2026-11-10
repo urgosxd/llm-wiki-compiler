@@ -2,7 +2,7 @@
 
 This document defines the **stable input contract** for the `sources/` directory:
 the format a programmatic producer (for example, **a downstream rule importer**) writes to drive
-`llmwiki compile` without going through the interactive `llmwiki ingest` command.
+`wiki.compile()` without going through `wiki.ingest({ source })` or the MCP `ingest_source` tool.
 
 Anything that can write a markdown file with the frontmatter described here can feed
 the compiler. The compiler treats `sources/` as the single source of truth for what
@@ -74,7 +74,7 @@ into the compiled output.
 
 ## Filename and slug rules
 
-The filename a producer chooses should match how `llmwiki ingest` would name it, so
+The filename a producer chooses should match how `wiki.ingest({ source })` names it, so
 re-ingest stays idempotent:
 
 1. **Slug** is derived from `title` by lowercasing, transliterating to ASCII-ish
@@ -92,28 +92,28 @@ re-ingest stays idempotent:
 A producer that does not want to replicate the slug algorithm may simply write a
 stable `<producer-chosen-name>.md` of its own choosing — the compiler keys change
 detection off the **filename + file hash**, not the slug. The slug rules above only
-matter for staying byte-compatible with `llmwiki ingest` output.
+matter for staying byte-compatible with `wiki.ingest({ source })` output.
 
 ---
 
 ## Size limit: `MAX_SOURCE_CHARS`
 
 The compiler-facing size ceiling is **`MAX_SOURCE_CHARS = 100_000` characters** of
-body content (see `src/utils/constants.ts`). Producers should:
+body content (see `packages/wiki/src/utils/constants.ts`). Producers should:
 
 - Truncate the body to at most `MAX_SOURCE_CHARS` characters.
 - When truncating, set `truncated: true` and `originalChars: <pre-truncation length>`
   in the frontmatter.
 
 Very short bodies (under `MIN_SOURCE_CHARS = 50`) compile but are low-signal; the
-interactive ingester warns on them. A programmatic producer should avoid emitting
+ingest path warns on them. A programmatic producer should avoid emitting
 near-empty sources.
 
 ---
 
 ## Change detection (incremental compile)
 
-`llmwiki compile` is incremental. It records each source file's SHA-256 hash in
+`wiki.compile()` is incremental. It records each source file's SHA-256 hash in
 `.llmwiki/state.json` under `sources[<filename>] = { hash, concepts, compiledAt }`.
 On the next compile, a source whose hash is unchanged is **skipped**.
 

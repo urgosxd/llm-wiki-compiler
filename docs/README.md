@@ -6,7 +6,7 @@ This directory contains the Mintlify documentation site for llmwiki. The docs ar
 
 Update docs in the same PR as any user-facing change:
 
-- New or changed CLI command, flag, output field, config key, environment variable, provider, SDK API, MCP tool/resource, viewer behavior, export/import format, or file written under `.llmwiki/`.
+- New or changed SDK method, MCP tool/resource, output field, config key, environment variable, provider, viewer behavior, export/import format, or file written under `.llmwiki/`.
 - Changed default behavior, failure mode, security boundary, path/confinement rule, review policy, freshness semantics, or compatibility requirement.
 - New integration path with another tool or downstream package.
 
@@ -14,8 +14,7 @@ Internal refactors do not need docs unless they change an observable contract.
 
 ## Where changes belong
 
-- `introduction.mdx` and `quickstart.mdx` - only for first-run or top-level positioning changes.
-- `cli/*.mdx` - command syntax, flags, examples, output semantics, and command-specific safety notes.
+- `introduction.mdx` and `installation.mdx` - only for first-run or top-level positioning changes.
 - `configuration/*.mdx` - environment variables, providers, project config, schema, review policy, and defaults.
 - `concepts/*.mdx` - durable concepts such as the wiki model, page types, citations, freshness, provenance, and review lifecycle.
 - `guides/*.mdx` - end-to-end workflows and integrations.
@@ -27,7 +26,7 @@ Internal refactors do not need docs unless they change an observable contract.
 For every user-facing feature PR:
 
 1. Update the closest existing page first. Add a new page only when the feature needs its own workflow or reference surface.
-2. Include the command or config exactly as the CLI accepts it.
+2. Include the code or config exactly as the SDK or MCP surface accepts it.
 3. Document what is written to disk and what is not written.
 4. Document trust boundaries for imports, external content, local servers, credentials, path confinement, and review gates.
 5. Document failure behavior: fail-loud, skip-and-warn, dry-run behavior, or partial-success behavior.
