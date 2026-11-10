@@ -4,7 +4,7 @@ sidebarTitle: "Citations"
 description: "llmwiki traces every paragraph and claim back to the source file and line range. Learn how paragraph and claim-level citations work."
 ---
 
-When you compile a wiki, you are trusting an LLM to synthesize knowledge from your sources. That trust is only well-placed if you can trace every claim back to where it came from. llmwiki builds provenance tracing into the page format itself: paragraphs carry lightweight citation markers pointing back to the source file that contributed them, and specific claims can pin to exact line ranges within that file. This means you can open any compiled page, see a citation marker, and know precisely which source - and which lines of that source - the content derives from. `llmwiki lint` validates every citation on every run, and `llmwiki eval` measures how thoroughly and accurately your pages are cited.
+When you compile a wiki, you are trusting an LLM to synthesize knowledge from your sources. That trust is only well-placed if you can trace every claim back to where it came from. llmwiki builds provenance tracing into the page format itself: paragraphs carry lightweight citation markers pointing back to the source file that contributed them, and specific claims can pin to exact line ranges within that file. This means you can open any compiled page, see a citation marker, and know precisely which source - and which lines of that source - the content derives from. The linter (`lint()` on the SDK, `lint_wiki` over MCP) validates every citation on every run, and the eval harness (`runEval()`, or the MCP `run_eval` tool) measures how thoroughly and accurately your pages are cited.
 
 ## Paragraph-Level Citations
 
@@ -37,12 +37,12 @@ The system uses a two-phase compile pipeline. ^[architecture-notes.md#L42-L58]
 Both forms identify the same span: lines 42 through 58 (inclusive) of `architecture-notes.md` in the `sources/` directory. Use whichever form your team prefers - llmwiki's linter and eval harness treat them identically.
 
 <Tip>
-  Claim-level citations are tracked by `llmwiki eval` as the `claim_level_citation_rate` metric: the fraction of all citations in the wiki that pin to a specific line range rather than a whole file. Higher rates mean tighter, more verifiable provenance. You can set a minimum threshold in `.llmwiki/eval/thresholds.yaml`.
+  Claim-level citations are tracked by `runEval()` as the `claim_level_citation_rate` metric: the fraction of all citations in the wiki that pin to a specific line range rather than a whole file. Higher rates mean tighter, more verifiable provenance. You can set a minimum threshold in `.llmwiki/eval/thresholds.yaml`.
 </Tip>
 
-## How `llmwiki lint` Validates Citations
+## How the Linter Validates Citations
 
-`llmwiki lint` validates every citation marker in every compiled page. It checks for four categories of problems:
+`lint()` validates every citation marker in every compiled page. It checks for four categories of problems:
 
 <CardGroup cols={2}>
   <Card title="Missing source file" icon="file-circle-xmark">
@@ -59,7 +59,7 @@ Both forms identify the same span: lines 42 through 58 (inclusive) of `architect
   </Card>
 </CardGroup>
 
-Citation errors contribute to the health score computed by `llmwiki eval` and are listed individually in lint output. Broken citations also trigger the `provenance-violating` review policy hold mode, so pages with bad citations can be automatically queued for human review rather than written to `wiki/`.
+Citation errors contribute to the health score computed by the eval harness (`runEval()`) and are listed individually in lint output. Broken citations also trigger the `provenance-violating` review policy hold mode, so pages with bad citations can be automatically queued for human review rather than written to `wiki/`.
 
 ## What Happens During Source Merge
 
@@ -113,11 +113,11 @@ Related concepts: [[Compilation Pipeline]], [[Incremental Compilation]], [[Wikil
 
 ## Citation Coverage and Eval
 
-`llmwiki eval` measures citation quality across the entire wiki as part of its health score:
+The eval harness (`runEval()`) measures citation quality across the entire wiki as part of its health score:
 
 - **Citation coverage** - the fraction of prose paragraphs in `wiki/concepts/` that carry at least one `^[...]` marker. Low coverage means paragraphs are floating without provenance.
 - **Citation precision** - the fraction of `^[...]` markers that point to a source file that actually exists in `sources/`. A precision below 100% indicates hallucinated or deleted source references.
-- **Citation support** (`--suite full`) - samples up to N `(claim, source span)` pairs and asks a judge model to score each 0–2 (unsupported → fully supported). Results are cached in `.llmwiki/eval/citation-cache.jsonl` so re-runs only judge new pairs.
+- **Citation support** (`mode: "full"`) - samples up to N `(claim, source span)` pairs and asks a judge model to score each 0–2 (unsupported → fully supported). Results are cached in `.llmwiki/eval/citation-cache.jsonl` so re-runs only judge new pairs.
 - **Claim-level citation rate** - the fraction of all citations that use a line-range form rather than a bare filename.
 
 You can set minimum thresholds for all of these in `.llmwiki/eval/thresholds.yaml` to gate CI pipelines on citation quality.

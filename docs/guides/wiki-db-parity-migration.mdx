@@ -1,7 +1,7 @@
 ---
 title: "Upgrade a database for row-backed wiki parity"
 sidebarTitle: "Wiki DB Parity Migration"
-description: "Apply src/dimensions/wiki/migration_wiki_db_parity.sql to an existing database: exact commands, what it adds, why it is safe to re-run, how to verify it applied, and what a database that skipped it reports."
+description: "Apply packages/wiki/src/dimensions/wiki/migration_wiki_db_parity.sql to an existing database: exact commands, what it adds, why it is safe to re-run, how to verify it applied, and what a database that skipped it reports."
 ---
 
 A Stack whose pages live in `wiki.pages` rows used to lose four facts on every compile:
@@ -9,7 +9,7 @@ concept aliases, curated contextual links, categories with their membership evid
 `attributionGaps`. The columns and tables that keep them ship as one SQL file:
 
 ```text
-src/dimensions/wiki/migration_wiki_db_parity.sql
+packages/wiki/src/dimensions/wiki/migration_wiki_db_parity.sql
 ```
 
 Apply it **before** pointing this build at an existing database. A file-backed project
@@ -52,7 +52,7 @@ pre-migration database — every file `scripts/apply-schemas.sh` lists, in that 
 order, with the migration excluded and the wiki schema replaced by the frozen snapshot
 `test/fixtures/wiki-schema-pre-db-parity.sql` — applies this file to it, and diffs the
 result against a database built from the current
-`src/dimensions/wiki/schema.sql`. The cases worth knowing:
+`packages/wiki/src/dimensions/wiki/schema.sql`. The cases worth knowing:
 
 - *"migrates a pre-migration database into the shape a fresh install reaches"* — the diff.
 - *"is idempotent: a second apply changes nothing and the fresh install needs it not"*.
@@ -123,13 +123,13 @@ has to exist inside the container:
 ```bash
 # From the repository root.
 docker exec -i llmwiki-kg-db-1 psql -U aks -d aks \
-  < src/dimensions/wiki/migration_wiki_db_parity.sql
+  < packages/wiki/src/dimensions/wiki/migration_wiki_db_parity.sql
 ```
 
 ```bash
 # Same thing through compose, if you prefer the service name to the container name.
 docker compose -f docker-compose.yml exec -T db psql -U llmwiki -d llmwiki \
-  < src/dimensions/wiki/migration_wiki_db_parity.sql
+  < packages/wiki/src/dimensions/wiki/migration_wiki_db_parity.sql
 ```
 
 `docker compose -f docker-compose.yml ps` prints the container name if yours differs, and
@@ -141,7 +141,7 @@ the container; piping it from the host does not have that requirement.
 
 ```bash
 psql "postgresql://aks:aks@localhost:5434/aks" \
-  -f src/dimensions/wiki/migration_wiki_db_parity.sql
+  -f packages/wiki/src/dimensions/wiki/migration_wiki_db_parity.sql
 ```
 
 Use the port your database actually publishes. The two local containers publish different
@@ -151,7 +151,7 @@ standard `5432`.
 
 ## A fresh install needs nothing
 
-The same DDL is mirrored inside `src/dimensions/wiki/schema.sql`, between the
+The same DDL is mirrored inside `packages/wiki/src/dimensions/wiki/schema.sql`, between the
 `wiki-db-parity-mirror:begin` and `wiki-db-parity-mirror:end` comments. That duplication is
 this package's existing convention — there is no migration runner in the application, so
 `schema.sql` must be self-sufficient for a clean install while a live database also needs
@@ -238,9 +238,8 @@ security.`
   `[]` for both arrays and no curated records until the next run that writes it. Nothing is
   invented for it: an empty alias list and an empty gap list are what the file path means by
   "nothing declared".
-- **Scope limits apply on both storages.** `llmwiki category` and `llmwiki categories-here`
-  still read `wiki/categories/*.md`, and a `--recompile` run writes no categories. Both are
-  documented in
+- **Scope limits apply on both storages.** The category store still reads
+  `wiki/categories/*.md`. The storage split is documented in
   [Where a Stack-backed Run Keeps Them](/concepts/wiki-model#where-a-stack-backed-run-keeps-them).
 - **Verification lives in one place.** The `file:line` chain, the `git grep` that re-checks
   it, and what static analysis does and does not cover are in

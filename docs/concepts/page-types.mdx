@@ -32,7 +32,7 @@ Without typed pages, a compiled wiki quickly becomes a flat list of topics with 
 </CardGroup>
 
 <Note>
-  Page kinds are enforced by the optional `.llmwiki/schema.json` file. Projects without a schema file treat every page as `kind: concept` by default. Run `llmwiki schema init` to create a starter schema, or `llmwiki schema show` to inspect the resolved policy for your project.
+  Page kinds are enforced by the optional `.llmwiki/schema.json` file. Projects without a schema file treat every page as `kind: concept` by default.
 </Note>
 
 ## Compiled Page Frontmatter
@@ -59,7 +59,7 @@ updatedAt: "2026-04-05T12:00:00Z"
 
 <CardGroup cols={2}>
   <Card title="confidence" icon="gauge">
-    A number between `0` and `1` representing the LLM's reported confidence in the synthesized page. Higher values indicate the page is well-supported by its sources with minimal ambiguity. Lower values - by default, below `0.5` - cause `llmwiki lint` to flag the page with a `low-confidence` warning and, if the review policy is active, hold the page for review rather than writing it to `wiki/`.
+    A number between `0` and `1` representing the LLM's reported confidence in the synthesized page. Higher values indicate the page is well-supported by its sources with minimal ambiguity. Lower values - by default, below `0.5` - cause the linter (`lint()`, or the MCP `lint_wiki` tool) to flag the page with a `low-confidence` warning and, if the review policy is active, hold the page for review rather than writing it to `wiki/`.
   </Card>
   <Card title="provenanceState" icon="route">
     A categorical label describing how the page's content was produced:
@@ -104,7 +104,7 @@ The review policy in `.llmwiki/config.json` uses epistemic metadata to decide wh
 </Tabs>
 
 <Warning>
-  The review policy is fail-closed. An unknown hold mode or a corrupt `config.json` aborts the compile rather than silently disabling review. If you edit `config.json` manually, verify it with `llmwiki schema show` before the next compile.
+  The review policy is fail-closed. An unknown hold mode or a corrupt `config.json` aborts the compile rather than silently disabling review. If you edit `config.json` manually, verify it before the next compile.
 </Warning>
 
 When multiple sources merge into one slug, epistemic metadata is reconciled: the `confidence` takes the minimum across all contributing sources, `provenanceState` is set to `merged`, and `contradictedBy` is the deduplicated union of all contributing sources' contradiction lists.

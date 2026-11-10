@@ -12,7 +12,7 @@ When llmwiki compiles your sources, it writes everything into a predictable, fil
 log.md                  append-only activity journal
 wiki/
   concepts/             one .md file per compiled concept page
-  queries/              saved answers from llmwiki query --save
+  queries/              saved answers from query(..., { save: true })
   index.md              auto-generated table of contents
 .llmwiki/
   state.json            per-source content hashes and concept ownership
@@ -22,7 +22,7 @@ wiki/
   config.json           review policy (hold modes and thresholds)
   curated-links.json    curated links kept outside the page bodies they belong to
   candidates/           pages held for review
-  candidates/archive/   rejected candidates kept for audit
+  candidates/archive/   archive location for candidate records
   eval/
     history.jsonl       one JSON line per eval run
     citation-cache.jsonl  cached citation judgements
@@ -36,10 +36,10 @@ wiki/
     One Markdown file per compiled concept. Each file has YAML frontmatter with title, summary, kind, sources, timestamps, and optional epistemic metadata. The file body contains prose paragraphs with `^[source.md]` citation markers and `[[wikilinks]]` to related concepts.
   </Card>
   <Card title="wiki/queries/" icon="magnifying-glass">
-    Saved answers from `llmwiki query --save`. Query pages are full wiki pages and participate in retrieval - future queries use them as context, compounding the wiki's usefulness over time.
+    Saved answers from `query(..., { save: true })`. Query pages are full wiki pages and participate in retrieval - future queries use them as context, compounding the wiki's usefulness over time.
   </Card>
   <Card title="wiki/index.md" icon="list">
-    An auto-generated table of contents rebuilt after every compile. Lists every concept page with its summary, grouped for navigation. Both the CLI and the local viewer use this as the primary entry point.
+    An auto-generated table of contents rebuilt after every compile. Lists every concept page with its summary, grouped for navigation. The local viewer uses this as the primary entry point.
   </Card>
 </CardGroup>
 
@@ -53,10 +53,10 @@ wiki/
     The v3 embedding store carries page and chunk vectors under qualified page ids for query and context retrieval. Small stores use `embeddings.json`; large or explicitly opted-in stores use `embeddings.bin`. Binary remains authoritative on later runs; an old JSON file is only a historical backup. See [storage and recovery](/configuration/environment-variables#embedding-storage).
   </Card>
   <Card title="candidates/" icon="clock">
-    JSON records for pages held for review - either via `llmwiki compile --review`, triggered automatically by a review policy in `config.json`, or staged by `llmwiki import --okf`. Each candidate records exactly why it was held (low confidence, contradicted, schema-violating, provenance-violating, or imported from OKF). Rejected candidates move to `candidates/archive/` for audit.
+    JSON records for pages held for review - either via `compile({ review: true })`, triggered automatically by a review policy in `config.json`, or staged by `importOkf(...)`. Each candidate records exactly why it was held (low confidence, contradicted, schema-violating, provenance-violating, or imported from OKF). This build exposes no surface that promotes or rejects a candidate - there is no SDK method, no MCP tool, and the viewer's review list is read-only - so a held page stays under `.llmwiki/candidates/`.
   </Card>
   <Card title="schema.json" icon="sitemap">
-    An optional file you create with `llmwiki schema init`. Defines which page kinds are permitted, per-kind minimum wikilink counts, and seed pages the compiler should materialize (such as domain-level overview pages). Projects without a schema file fall back to the `concept` kind for all pages.
+    An optional file you write by hand. Defines which page kinds are permitted, per-kind minimum wikilink counts, and seed pages the compiler should materialize (such as domain-level overview pages). Projects without a schema file fall back to the `concept` kind for all pages.
   </Card>
   <Card title="config.json" icon="gear">
     Holds the review policy: which hold modes are active (`low-confidence`, `contradicted`, `schema-violating`, `provenance-violating`) and the `lowConfidenceThreshold`. A missing or empty `config.json` means all pages are written directly to `wiki/` with no review step.
@@ -81,7 +81,7 @@ aliases:
 ---
 ```
 
-Any `[[multi-head self-attention]]` or `[[MHA]]` link in the wiki resolves to this page, even if the slug is `multi-head-attention`. Alias resolution is honored by the local viewer, the MCP `read_page` tool, and `llmwiki query`.
+Any `[[multi-head self-attention]]` or `[[MHA]]` link in the wiki resolves to this page, even if the slug is `multi-head-attention`. Alias resolution is honored by the local viewer, the MCP `read_page` tool, and `query()`.
 
 A page keeps the aliases it was folded onto, so the next compile folds against the same names instead of re-deriving them: `aliases:` in the file when the page is a markdown file, the `wiki.pages.aliases` column when the page is a row. Both are read back by the identity tier before it decides anything. See [Where a Stack-backed Run Keeps Them](#where-a-stack-backed-run-keeps-them).
 
@@ -312,18 +312,13 @@ every render on both, a lost anchor drops the link AND reports it on both, a cat
 identity is minted once from its canonical name on both, and a page drawing on a source it
 does not cite reads as not fully attributed on both.
 
-Three limits are worth knowing before you rely on that:
+Two limits are worth knowing before you rely on that:
 
-- **The category read commands are Stack-aware, and not a second taxonomy.**
-  `llmwiki category` and `llmwiki categories-here` resolve their store the way the compile
-  does, from `AKS_STACK_ID`: on a Stack-backed project they answer from
-  `wiki.categories` and `wiki.category_members` — the rows the compile wrote — and on a
-  project with no Stack from `wiki/categories/*.md`. A Stack that is addressed but
-  unreachable makes them fail rather than answer from whatever files the checkout happens
-  to hold.
-- **`--recompile` writes no categories, on either storage.** Category assignment changes
-  objects the run did not name, so a scoped regeneration skips it. That is the promise of
-  the lever, not a missing backend: a full compile writes categories on both.
+- **Categories are read from the store the compile wrote, and not a second taxonomy.**
+  On a Stack-backed project they come from `wiki.categories` and
+  `wiki.category_members` — the rows the compile wrote — and on a project with no
+  Stack from `wiki/categories/*.md`. A Stack that is addressed but unreachable fails
+  rather than answering from whatever files the checkout happens to hold.
 - **A restored curated link is never taken on trust.** Every render re-tests the anchor
   against the body it just produced, on both storages, and drops the record with reason
   `anchor-missing` when the mention is gone. That check is shared code, not two
@@ -339,10 +334,10 @@ still has the pre-parity shape needs one migration applied first; see
 
 Pages imported from Open Knowledge Format bundles are marked as imported knowledge. The mapped page frontmatter carries `provenanceState: imported`, an `okf:<bundle>` source token, and an `x-okf` provenance snapshot that records the original bundle path and original OKF frontmatter.
 
-This imported provenance is used for honest re-export: `llmwiki export --target okf` preserves foreign producer keys and raw foreign `type` values, restores safe original bundle paths, and derives standard OKF fields from the current llmwiki page so local edits are reflected.
+This imported provenance is used for honest re-export: `exportOkf()` preserves foreign producer keys and raw foreign `type` values, restores safe original bundle paths, and derives standard OKF fields from the current llmwiki page so local edits are reflected.
 
 <Note>
-  OKF import is review-gated by default. External bundle content is staged as review candidates and does not become live wiki content until you approve it. Use `llmwiki import --okf <dir> --trusted` only for bundles you already trust.
+  OKF import is review-gated by default. External bundle content is staged as review candidates and is not written into the live wiki. Call `importOkf(dir, { trusted: true })` only for bundles you already trust.
 </Note>
 
 ## The Activity Journal (`log.md`)

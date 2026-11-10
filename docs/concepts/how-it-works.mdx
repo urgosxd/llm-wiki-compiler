@@ -4,7 +4,7 @@ sidebarTitle: "How It Works"
 description: "Understand llmwiki's two-phase LLM pipeline: concept extraction, page generation, incremental change detection, and hybrid retrieval."
 ---
 
-Most knowledge management tools retrieve information at query time - every question re-discovers the same relationships from scratch, and the structure never accumulates. llmwiki takes the opposite approach: it compiles your sources into a persistent, interlinked wiki artifact **before** any query runs. Concepts get their own typed pages. Content shared across multiple sources is merged into one page rather than competing as duplicate chunks. Pages link to each other via `[[wikilinks]]`. When you query with `--save`, the answer becomes a new page and future queries use it as context. Embeddings, BM25 reranking, and wikilink-graph expansion then run over this compiled artifact, narrowing hundreds of pages to a tight, citation-traceable evidence pack.
+Most knowledge management tools retrieve information at query time - every question re-discovers the same relationships from scratch, and the structure never accumulates. llmwiki takes the opposite approach: it compiles your sources into a persistent, interlinked wiki artifact **before** any query runs. Concepts get their own typed pages. Content shared across multiple sources is merged into one page rather than competing as duplicate chunks. Pages link to each other via `[[wikilinks]]`. When you query with `save: true`, the answer becomes a new page and future queries use it as context. Embeddings, BM25 reranking, and wikilink-graph expansion then run over this compiled artifact, narrowing hundreds of pages to a tight, citation-traceable evidence pack.
 
 ## The Compile Pipeline
 
@@ -15,9 +15,9 @@ sources/  →  hash check  →  LLM concept extraction  →  page generation  �
               │                                               ↓
               │                             semantic search + BM25 rerank + graph expansion
               │                                               ↓
-              │                                    llmwiki query / context / MCP
+              │                                    query / context (SDK) or MCP
               ↓
-   stale / orphaned pages  →  llmwiki refresh --stale  →  recompile changed owners, clean up orphans
+   stale / orphaned pages  →  compile  →  recompile changed owners, mark orphaned pages
 ```
 
 ## Two-Phase Compile
@@ -47,7 +47,7 @@ llmwiki avoids re-processing unchanged work at every layer of the pipeline.
     Chunk embeddings in the active JSON or binary index are content-hash-aware. Re-running on an unchanged corpus skips all embedding work.
   </Card>
   <Card title="Cached citations" icon="bookmark">
-    Citation judgements from `llmwiki eval --suite full` are cached in `.llmwiki/eval/citation-cache.jsonl`. Subsequent eval runs only re-judge new pairs.
+    Citation judgements from `runEval({ mode: "full" })` are cached in `.llmwiki/eval/citation-cache.jsonl`. Subsequent eval runs only re-judge new pairs.
   </Card>
 </CardGroup>
 
@@ -80,7 +80,7 @@ Every compiled page records the sources - and their SHA-256 content hashes - tha
 - **Stale** - a page whose recorded source hashes no longer match the files on disk. The source still exists, but its content changed since the last compile.
 - **Orphaned** - a page whose recorded sources were all deleted from `sources/`.
 
-`llmwiki lint`, `llmwiki status`, the local viewer, the JSON export, and the MCP `wiki_status` tool all surface stale and orphaned pages without triggering a recompile. To repair them, run `llmwiki refresh --stale`: it recompiles only the changed sources that own stale pages and cleans up orphaned pages, deliberately leaving unrelated new sources for a full `llmwiki compile`. Use `--dry-run` to preview the repair plan with no LLM calls or writes.
+`lint()`, `status()`, the local viewer, the JSON export, and the MCP `wiki_status` tool all surface stale and orphaned pages without triggering a recompile. To repair them, run a compile: it recompiles the sources that changed and marks pages whose sources were all deleted as orphaned, while leaving pages whose sources did not change untouched.
 
 ## Output Structure
 
@@ -90,7 +90,7 @@ A successful compile writes three output locations:
 log.md              append-only activity journal
 wiki/
   concepts/         one .md file per compiled concept page
-  queries/          saved answers from llmwiki query --save
+  queries/          saved answers from query(..., { save: true })
   index.md          auto-generated table of contents
 .llmwiki/
   schema.json       optional page-kind and cross-link policy
@@ -98,7 +98,7 @@ wiki/
   state.json        per-source content hashes and concept ownership
   embeddings.json   small-store page and chunk vectors
   embeddings.bin    binary vectors when selected; takes precedence over JSON
-  candidates/       pages held for review (from --review or review policy)
+  candidates/       pages held for review (from compile({ review: true }) or a review policy)
   candidates/archive/  rejected candidates kept for audit
 ```
 
@@ -110,7 +110,7 @@ wiki/
 | **Concept merging** | Duplicate chunks compete at retrieval time | Multiple sources merge into one page at compile time |
 | **Structure** | Flat chunk store | Interlinked pages with `[[wikilinks]]` |
 | **Citation tracing** | Chunk-level source reference | Paragraph- and claim-level line-range citations |
-| **Compounding** | Query results are ephemeral | `--save` adds answers back to the wiki as new pages |
+| **Compounding** | Query results are ephemeral | `save: true` adds answers back to the wiki as new pages |
 | **Freshness tracking** | None | Stale/orphaned detection per page |
 | **Best for** | Ad-hoc retrieval over noisy, fast-changing corpora | Persistent, citation-traceable knowledge that compounds over time |
 

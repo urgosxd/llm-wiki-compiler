@@ -14,7 +14,7 @@ Scientific Clay is the default for browsers without a saved preference and stays
 
 Preferences use `llmwiki.viewer.theme.v1`. When that key is absent, a saved `light` or `dark` in the older `llmwiki-viewer-theme` key migrates to the corresponding Nebula choice. An invalid new preference falls back to Scientific Clay. The older key is preserved for older viewer versions. Unavailable storage leaves selection usable for the current page.
 
-Storage belongs to the browser origin, including the port. Reuse the same `llmwiki view --port` value to keep preferences between launches.
+Storage belongs to the browser origin, including the port. Reuse the same `port` value in `startViewer` to keep preferences between launches.
 
 ## Stylesheet structure
 

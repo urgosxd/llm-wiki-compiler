@@ -170,7 +170,9 @@ Bind the host to the exact address the caller will use, then have the caller add
 
 ```bash
 # Bind to the Docker bridge gateway, the address a container reaches the host on.
-llmwiki host --allow-lan --host 172.17.0.1 --port 4173
+# From a source checkout after `pnpm run build`. In the image the same bundle is
+# `/app/dist/api.js`, which `docker/entry.sh` execs with the same flags.
+node dist/api.js host --allow-lan --host 172.17.0.1 --port 4173
 ```
 
 ```bash
