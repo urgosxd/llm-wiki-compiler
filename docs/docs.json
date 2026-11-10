@@ -48,7 +48,6 @@
               "configuration/stack-ontology",
               "configuration/kg-type-catalog",
               "configuration/kg-classification",
-              "configuration/review-policy",
               "configuration/schema",
               {
                 "group": "Configurable Lifecycle Profiles",

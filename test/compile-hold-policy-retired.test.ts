@@ -1,17 +1,19 @@
 /**
- * @file The `review.hold` path is retired: a hold config no longer stages anything.
+ * @file The `review.hold` path is retired: a hold config now REFUSES at config load.
  *
  * The policy used to route a held page into `.llmwiki/candidates/` instead of `wiki/`.
- * No surface promotes a candidate, so a hold can never be honoured; the same config now
- * writes the page live and the queue stays empty. The compile result also stops
- * promising the review split and the candidate ids that the stager used to produce.
+ * No surface promotes a candidate, so a hold can never be honoured and the stager is
+ * gone - and `review.hold` is refused rather than ignored, because a project that
+ * configured holds would otherwise keep compiling while silently writing the pages it
+ * believed were withheld. This case therefore pins the stronger contract: the run
+ * refuses BEFORE writing anything, so no page appears and no record is queued.
  *
  * The last case is the PRESERVE half of the ruling: candidate records written BEFORE
  * the retirement are data that stops being produced, never data that is destroyed, so
  * the store must still list and read a record planted on disk.
  */
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
@@ -22,7 +24,12 @@ import { useCompileProject } from "./fixtures/compile-project.js";
 
 const project = useCompileProject({ dirSuffix: "hold-retired" });
 
-/** Stub both LLM phases so the run produces exactly one deterministic page. */
+/** The exact load-time refusal, asserted verbatim. */
+const REFUSAL =
+  'The project config "review" key no longer exists: `review.hold` is retired, and pages which ' +
+  "would previously have been held are now written live. Remove the key.";
+
+/** Stub both LLM phases so the run would produce exactly one deterministic page. */
 function stubOneLowConfidencePage(): void {
   vi.spyOn(AnthropicProvider.prototype, "toolCall").mockResolvedValue(JSON.stringify({
     concepts: [{
@@ -49,16 +56,16 @@ async function stagedRecordNames(): Promise<string[]> {
   return (await readdir(dir)).filter((name) => name.endsWith(".json"));
 }
 
-describe("a review.hold policy no longer stages a page", () => {
-  it("writes the page live and leaves the candidate queue empty", async () => {
+describe("a review.hold policy refuses the compile at config load", () => {
+  it("refuses with the exact message and writes neither a page nor a record", async () => {
     stubOneLowConfidencePage();
     await holdEveryPage();
 
-    const result = await compileAndReport(project.dir);
+    // The old contract was "compiles and writes the page live". Ignoring the key is the
+    // defect, so the run must now refuse BEFORE it writes anything at all.
+    await expect(compileAndReport(project.dir)).rejects.toThrow(REFUSAL);
 
-    expect(result.errors).toEqual([]);
-    expect(await readFile(path.join(project.dir, CONCEPTS_DIR, "example.md"), "utf8"))
-      .toContain("An example body.");
+    expect(await readdir(path.join(project.dir, CONCEPTS_DIR))).toEqual([]);
     expect(await stagedRecordNames()).toEqual([]);
     expect(await listCandidates(project.dir)).toEqual([]);
   });

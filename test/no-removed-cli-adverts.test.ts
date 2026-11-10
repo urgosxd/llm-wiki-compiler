@@ -79,6 +79,26 @@
  * re-introduce it. The scan therefore has no opinion about string literals — it reads
  * every line of the file.
  *
+ * ## Why the pattern also names removed OPTION FLAGS
+ *
+ * The subcommand arm above matches a word AFTER the binary name, so a flag could never
+ * match it by construction: `--review` is not preceded by `llmwiki `, and it was not
+ * preceded by it even in the messages that told a user to type `compile --review`.
+ * That is not a cosmetic gap. A sweep of this tree reported zero adverts while twelve
+ * `--review` mentions survived it, because the guard could not express a flag at all —
+ * a green run proved only that the pattern's own shape had not found anything.
+ *
+ * So a removed option flag gets its own arm, and it covers ONLY flags that are gone.
+ * `--review` is the whole removed set: it was the compile option and the query option,
+ * and neither exists. Every live flag (`--save`, `--json`, `--recompile`, …) stays
+ * unflagged, because a guard that cries wolf on flags a caller can actually pass
+ * teaches people to add allow-lists, which is the failure the narrowed subcommand
+ * pattern exists to prevent.
+ *
+ * The trailing `(?![\w-])` is what keeps the arm honest in the other direction: it
+ * requires the flag to END there, so `--reviewer` and a hypothetical `--review-x` are
+ * not swept up as adverts of a flag that was never spelled that way.
+ *
  * ## Why a green run over a swept tree proves nothing on its own
  *
  * "Found nothing" and "looked nowhere" are indistinguishable, so the inventory is
@@ -143,8 +163,25 @@ const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist"]);
 const REMOVED_SUBCOMMAND_PATTERN =
   /llmwiki\s+(compile|query|ingest|lint|review|view|export|import|quickstart|workflow|next|recover|eval|serves?|host)\b/;
 
+/**
+ * A removed OPTION FLAG advertised as something a caller can still pass.
+ *
+ * `--review` is the entire retired flag surface, so this arm lists exactly one flag.
+ * The trailing `(?![\w-])` requires the flag to end there: `--reviewer` is a different
+ * word and must not be reported as an advert.
+ */
+const REMOVED_OPTION_PATTERN = /--review(?![\w-])/;
+
+/**
+ * Every removed surface, as one pattern: a subcommand after the binary name, or a
+ * retired option flag.
+ */
+const REMOVED_SURFACE_PATTERN = new RegExp(
+  `(?:${REMOVED_SUBCOMMAND_PATTERN.source}|${REMOVED_OPTION_PATTERN.source})`,
+);
+
 /** Global copy for `matchAll`; `findAdverts` resets it per line. */
-const ADVERT_PATTERN_GLOBAL = new RegExp(REMOVED_SUBCOMMAND_PATTERN.source, "g");
+const ADVERT_PATTERN_GLOBAL = new RegExp(REMOVED_SURFACE_PATTERN.source, "g");
 
 /**
  * Every scanned production file under `relative`, repository-relative.
@@ -246,9 +283,16 @@ describe("no runtime string advertises a removed `llmwiki <subcommand>`", () => 
     // `host` is retired as a SUBCOMMAND while the mode survives, so the binary name in
     // front of it is still an instruction to run something that does not exist.
     expect(findAdverts("x.ts", "start with llmwiki host")).toHaveLength(1);
+    // A removed FLAG is an advert without any binary name in front of it: this arm is
+    // why twelve `--review` mentions survived a sweep that reported zero.
+    expect(findAdverts("x.ts", "run your compile with --review to hold pages")).toHaveLength(1);
+    expect(findAdverts("x.ts", "the in-memory candidate-lint path (`compile --review`)")).toHaveLength(1);
+    expect(findAdverts("x.ts", "pending/<id>.json when compile is run with --review.")).toHaveLength(1);
+    // One line carrying both a subcommand and a flag reports twice.
+    expect(findAdverts("x.ts", "llmwiki compile --review")).toHaveLength(2);
   });
 
-  it("leaves the product noun, dot-paths and schema keys alone", () => {
+  it("leaves the product noun, dot-paths, schema keys and LIVE flags alone", () => {
     // Pinned so nobody re-widens the pattern to `/llmwiki\s+[a-z]/` and forces true prose
     // to be reworded: every one of these statements is correct and stays legal.
     expect(findAdverts("x.ts", "Candidates live under `.llmwiki/candidates/`.")).toEqual([]);
@@ -257,6 +301,13 @@ describe("no runtime string advertises a removed `llmwiki <subcommand>`", () => 
     expect(findAdverts("x.ts", "Owns the `.llmwiki` lock.")).toEqual([]);
     expect(findAdverts("x.ts", "`llmwiki.css` is the viewer stylesheet")).toEqual([]);
     expect(findAdverts("x.ts", "the llmwiki viewer process")).toEqual([]);
+    // Live flags a caller can still pass. A guard that reports these trains people to
+    // add allow-lists, so the flag arm names exactly one removed flag and no other.
+    expect(findAdverts("x.ts", "query --save writes the answer as a page")).toEqual([]);
+    expect(findAdverts("x.ts", "`quickstart --json` sets quiet mode")).toEqual([]);
+    expect(findAdverts("x.ts", "pass --recompile to force a rewrite")).toEqual([]);
+    // A longer word that merely starts with the removed flag's spelling is not an advert.
+    expect(findAdverts("x.ts", "the --reviewer role is read-only")).toEqual([]);
   });
 
   it("scans a real, non-trivial tree (the guard is not vacuous)", async () => {

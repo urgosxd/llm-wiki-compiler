@@ -19,10 +19,10 @@ wiki/
   embeddings.json       small-store page and chunk vectors
   embeddings.bin        binary index when selected; takes precedence over JSON
   schema.json           optional page-kind and cross-link policy
-  config.json           review policy (hold modes and thresholds)
+  config.json           source discovery settings
   curated-links.json    curated links kept outside the page bodies they belong to
-  candidates/           pages held for review
-  candidates/archive/   archive location for candidate records
+  candidates/           records left by the retired review queue, still readable
+  candidates/archive/   archive location for older candidate records
   eval/
     history.jsonl       one JSON line per eval run
     citation-cache.jsonl  cached citation judgements
@@ -53,13 +53,13 @@ wiki/
     The v3 embedding store carries page and chunk vectors under qualified page ids for query and context retrieval. Small stores use `embeddings.json`; large or explicitly opted-in stores use `embeddings.bin`. Binary remains authoritative on later runs; an old JSON file is only a historical backup. See [storage and recovery](/configuration/environment-variables#embedding-storage).
   </Card>
   <Card title="candidates/" icon="clock">
-    JSON records for pages held for review - held automatically by a review policy in `config.json`, or staged by `importOkf(...)`. Each candidate records exactly why it was held (low confidence, contradicted, schema-violating, provenance-violating, or imported from OKF). This build exposes no surface that promotes or rejects a candidate - there is no SDK method, no MCP tool, and the viewer's review list is read-only - so a held page stays under `.llmwiki/candidates/`.
+    JSON records for page changes that were queued for human review by a version of this product that had a review queue. Nothing produces a new record now: a compile writes every page it generates straight to `wiki/`, and an OKF import is either refused or written live. The records already on disk are inert, not deleted - they stay readable and are never migrated. Each one still states why it was queued (low confidence, contradicted, schema-violating, provenance-violating, or imported from OKF).
   </Card>
   <Card title="schema.json" icon="sitemap">
     An optional file you write by hand. Defines which page kinds are permitted, per-kind minimum wikilink counts, and seed pages the compiler should materialize (such as domain-level overview pages). Projects without a schema file fall back to the `concept` kind for all pages.
   </Card>
   <Card title="config.json" icon="gear">
-    Holds the review policy: which hold modes are active (`low-confidence`, `contradicted`, `schema-violating`, `provenance-violating`) and the `lowConfidenceThreshold`. A missing or empty `config.json` means all pages are written directly to `wiki/` with no review step.
+    Holds optional source discovery settings (`sources.recursive` and `sources.exclude`). A missing or empty `config.json` means default discovery: top-level sources only, nothing excluded. The `review` key this file used to hold is retired - a document that still carries one is refused at config load rather than silently ignored.
   </Card>
   <Card title="curated-links.json" icon="link">
     The links the review step added to already-written pages, stored outside those pages' bodies so a regenerated body cannot erase them. Every record carries its anchor and is re-validated on each render. See [Curated Links](#curated-links). A Stack-backed run keeps the same records in `wiki.curated_links` rows instead of this file; see [Where a Stack-backed Run Keeps Them](#where-a-stack-backed-run-keeps-them).
@@ -337,7 +337,7 @@ Pages imported from Open Knowledge Format bundles are marked as imported knowled
 This imported provenance is used for honest re-export: `exportOkf()` preserves foreign producer keys and raw foreign `type` values, restores safe original bundle paths, and derives standard OKF fields from the current llmwiki page so local edits are reflected.
 
 <Note>
-  OKF import is review-gated by default. External bundle content is staged as review candidates and is not written into the live wiki. Call `importOkf(dir, { trusted: true })` only for bundles you already trust.
+  OKF import is trusted-write or refused. A bundle that does not declare `trusted: true` is rejected, so foreign content cannot enter the live wiki by accident; a trusted bundle is written straight into the wiki, with nothing staged in between. Call `importOkf(dir, { trusted: true })` only for bundles you already trust.
 </Note>
 
 ## The Activity Journal (`log.md`)

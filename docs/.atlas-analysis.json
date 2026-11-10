@@ -32,7 +32,6 @@
             "pages": [
               "configuration/providers",
               "configuration/environment-variables",
-              "configuration/review-policy",
               "configuration/schema"
             ]
           },
@@ -63,7 +62,6 @@
     "Local read-only web viewer with search, graph, and provenance chips",
     "MCP server for Claude Desktop, Cursor, and Claude Code integration",
     "In-process SDK via createWiki() for embedding llmwiki programmatically",
-    "Review queue and policy for holding low-confidence or risky pages",
     "Source freshness tracking with stale/orphaned page detection",
     "Eval harness with CI-gateable health scores and citation quality metrics",
     "Multi-provider support: Anthropic, OpenAI-compatible, Ollama, GitHub Copilot, Claude Agent SDK",

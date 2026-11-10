@@ -1,11 +1,11 @@
 /**
  * @file Collision policy for OKF import (v1: skip + warn, never overwrite). A mapped
- * slug clashes with an existing live page, a pending review candidate, or an earlier
+ * slug clashes with an existing live page, a stored review candidate, or an earlier
  * doc in the same import. First (path-sorted) wins; later clashes are dropped.
  *
  * {@link filterCollisions} handles the untyped concepts/queries leg; the CLP-7.6
  * typed leg ({@link filterTypedCollisions}) applies the SAME first-wins policy over
- * the `wiki/<entityType>/<slug>.md` namespace and typed pending candidates.
+ * the `wiki/<entityType>/<slug>.md` namespace and stored typed candidates.
  */
 import { access } from "fs/promises";
 import path from "path";
@@ -62,13 +62,14 @@ async function typedSkipReason(
 }
 
 /**
- * Partition typed docs into those safe to stage and those skipped for a collision,
+ * Partition typed docs into those safe to write and those skipped for a collision,
  * applying the SAME first-wins policy as {@link filterCollisions} over the typed
  * `wiki/<entityType>/<slug>.md` namespace: skip when a live typed page exists at
- * that path, a pending review candidate already targets that `entityType`+`slug`,
+ * that path, a stored review candidate already targets that `entityType`+`slug`,
  * or an earlier doc in this bundle already claimed it. A FALLBACK doc (no declared
- * `entityType`) is never typed-collision-checked here — it stages untyped, where
- * `writeCandidate` dedups on its own target key — so it always passes through.
+ * `entityType`) is never typed-collision-checked here — it goes through
+ * {@link filterCollisions} instead, which checks live paths and stored candidate
+ * slugs — so it always passes through.
  *
  * @param root - Absolute project root directory.
  * @param typed - The typed docs mapped from this bundle.

@@ -266,13 +266,13 @@ Existing MCP `query_wiki` callers using `save: true` receive the same answer-pre
 </ParamField>
 
 <ParamField body="wiki.importOkf(dir, options?)">
-  Import an Open Knowledge Format bundle without calling an LLM. By default, imported pages are staged as review candidates.
+  Import an Open Knowledge Format bundle without calling an LLM. An import that does not declare `trusted: true` is refused with `UntrustedOkfImportError`: nothing is staged, and the refusal names the option that works.
 
   - `dir` - path to the OKF bundle directory.
   - `options.dryRun` - preview pages, skips, and warnings without writing.
-  - `options.trusted` - write live pages directly. Use only for bundles whose content and provenance you already trust.
+  - `options.trusted` - write the bundle's pages live. Required: this is the only import path, and use it only for bundles whose content and provenance you already trust.
 
-  The report includes `mode`, imported page details, skipped pages, warnings, and a `nextAction` string when review approval is required.
+  The report includes `mode`, imported page details, skipped pages, and warnings. There is no staging mode and no `nextAction` prompting an approval that no surface performs.
 </ParamField>
 
 ## Error handling

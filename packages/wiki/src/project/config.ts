@@ -30,6 +30,45 @@ export function normalizeProjectConfig(raw: unknown): Record<string, unknown> {
 }
 
 /**
+ * Keys whose capability was removed, with the consequence a user MUST be told about.
+ *
+ * Each message states two things: that the key is gone, and what its absence changes
+ * about the wiki. The second is the load-bearing one — a user who configured a hold
+ * believed pages were being withheld, so deleting the key silently would leave them
+ * believing it still while the pages land live.
+ */
+const RETIRED_CONFIG_KEYS: ReadonlyMap<string, string> = new Map([
+  [
+    "review",
+    'The project config "review" key no longer exists: `review.hold` is retired, and pages which ' +
+      "would previously have been held are now written live. Remove the key.",
+  ],
+]);
+
+/**
+ * Refuse a config that still carries a retired key, BEFORE anything acts on it.
+ *
+ * The refusal belongs here, at load, and deliberately not at first use: `review` is
+ * read from `.llmwiki/config.json` (and from a Stack's `wiki.project_config` row),
+ * which is exactly the place where refusing early stops a run before it writes
+ * anything. The compile-option guard is the mirror case — that key was never
+ * file-configurable, so guarding it at load would have protected a key no file could
+ * carry.
+ *
+ * @param config - The loaded document, or `null` when there is none.
+ * @returns The document, unchanged, when it names no retired key.
+ */
+function refuseRetiredConfigKeys(
+  config: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (config === null) return null;
+  for (const [key, message] of RETIRED_CONFIG_KEYS) {
+    if (key in config) throw new ProjectConfigError(message);
+  }
+  return config;
+}
+
+/**
  * Read one project's config, from whichever corpus it has.
  *
  * ## Why the Stack wins
@@ -45,6 +84,8 @@ export function normalizeProjectConfig(raw: unknown): Record<string, unknown> {
  * @param root - Project root, used only by the file backend.
  * @param env - Environment naming the Stack; `process.env` when omitted.
  * @returns The config record, or `null` when there is none.
+ * @throws {ProjectConfigError} When the document names a key whose capability was
+ * removed — see {@link RETIRED_CONFIG_KEYS}.
  */
 export async function loadProjectConfig(
   root: string,
@@ -75,9 +116,9 @@ export async function loadProjectConfig(
     throw new ProjectConfigError(`Cannot read this Stack's config: ${String(error)}`);
   }
   if (stored !== null) {
-    return stored === undefined ? null : requireConfigRecord(stored, "config");
+    return refuseRetiredConfigKeys(stored === undefined ? null : requireConfigRecord(stored, "config"));
   }
-  return await readFileConfig(root);
+  return refuseRetiredConfigKeys(await readFileConfig(root));
 }
 
 /**

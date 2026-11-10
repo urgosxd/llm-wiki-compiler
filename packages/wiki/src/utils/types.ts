@@ -23,7 +23,7 @@ import type { Dimension } from "../dimensions/types.js";
  * - `inferred`: produced by the model from context, not directly cited.
  * - `ambiguous`: sources disagree or evidence is conflicting.
  * - `imported`: brought in from an external OKF bundle (durable origin marker
- *   that survives review approval; never produced by local compilation).
+ *   recorded on the page itself; never produced by local compilation).
  */
 export type ProvenanceState =
   | "extracted"
@@ -304,14 +304,19 @@ export interface CompileOptions {
 }
 
 /**
- * A pending wiki page change awaiting human review. Persisted as JSON under
- * .llmwiki/candidates/<id>.json when compile is run with --review.
+ * A wiki page change that was once recorded for human review.
+ *
+ * Persisted as JSON under `.llmwiki/candidates/<id>.json`, or as a
+ * `wiki.review_candidates` row, by staging paths that no longer exist: nothing
+ * produces a new record now, and no surface promotes or rejects one. What
+ * survives is the READ side — stored records stay readable, so this shape still
+ * describes real data on disk.
  */
 export interface ReviewCandidate {
   /** Exclusive reviewed-answer discriminator and proposal audit metadata. */
   candidateKind?: ValidatedAnswerKind;
   citationManifest?: AnswerCitationManifest;
-  /** Stable identifier used by the review CLI commands. */
+  /** Stable identifier, and the name a stored record is keyed by. */
   id: string;
   /** Human-readable concept title. */
   title: string;
@@ -402,7 +407,8 @@ export interface ReviewCandidate {
    * Populated when the candidate body violates a schema rule (e.g. fewer
    * wikilinks than the kind's `minWikilinks` requires). Only set when at
    * least one violation exists — absent when the candidate is clean.
-   * `review show` surfaces these so reviewers see failures before approving.
+   * Recorded with the candidate and round-tripped by the row store; no surface
+   * reads it back to gate a write any more.
    */
   schemaViolations?: import("../linter/types.js").LintResult[];
   /**
@@ -410,9 +416,9 @@ export interface ReviewCandidate {
    *
    * Covers malformed claim citations (`^[file.md:abc]`), out-of-bounds
    * line spans, and citations referencing source files that don't exist.
-   * Surfaced in `review show` next to schema violations so reviewers
-   * catch citation issues before approving — these used to only show up
-   * on the next normal `compile` after the page was already promoted.
+   * Surfaced beside schema violations for the same reason: a stored record
+   * carries the citation findings the page had when it was recorded, so a
+   * reader can see them without re-linting the corpus.
    */
   provenanceViolations?: import("../linter/types.js").LintResult[];
 }

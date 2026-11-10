@@ -64,20 +64,11 @@ You don't need to run a dedicated freshness check to know about stale pages. The
 
 Pages whose sources did not change are not reprocessed, so a repair costs only the changed work. Neither surface takes a stale-only selector, so a repair pass and a normal pass are the same operation - which also means the run picks up source files that have never been compiled.
 
-## Review policy and compile
+## No review policy: a compile writes everything it generates
 
-If your project has a review policy declared in `.llmwiki/config.json`, `compile()` honors it. Pages that trip a hold condition (low confidence, contradicted, schema-violating, or provenance-violating) are queued as candidates in `.llmwiki/candidates/` rather than written directly to `wiki/`. Configuration is fail-closed - a malformed config aborts the compile rather than silently disabling the policy.
+There is no hold mode and no review queue. Every page a compile generates lands in `wiki/` in the same run, so a page that used to be withheld for low confidence, contradiction, schema violation or broken provenance is now written live.
 
-```json
-{
-  "version": 1,
-  "review": {
-    "hold": ["low-confidence", "contradicted"],
-    "lowConfidenceThreshold": 0.5
-  }
-}
-```
-
+A `review` key in `.llmwiki/config.json` is **refused at config load**: a run that finds one aborts with an error naming the key instead of ignoring it. That is deliberate - a project configured to hold pages would otherwise keep compiling and silently start writing them, and the error is the only thing that tells you the wiki may have gained pages.
 ## Corrupt state
 
 If `.llmwiki/state.json` is missing or contains invalid JSON, llmwiki surfaces the problem explicitly. It does **not** silently create a `.bak` file or fall back to an empty state. Instead:

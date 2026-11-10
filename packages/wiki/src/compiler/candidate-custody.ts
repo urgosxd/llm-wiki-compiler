@@ -195,12 +195,12 @@ async function assertDirectoryReadable(
  * THE DISTINCTION MATTERS. A missing `.llmwiki/candidates` directory is a CUSTODY
  * FAILURE on a file-backed project — the store should be there and its absence means
  * something removed or never created it. On a Stack the directory is ABSENT BY
- * DESIGN: `writeCandidate` takes its row branch and its own header says the custody
- * dance exists "to give a DIRECTORY the identity a row has for free". So the same
- * absence means opposite things, and a single check cannot serve both.
+ * DESIGN: the row-backed store keeps every record in `wiki.review_candidates`, and the
+ * custody dance exists only "to give a DIRECTORY the identity a row has for free", so
+ * the same absence means opposite things and one check cannot serve both.
  *
- * Without this, `review approve` on a Stack refused every candidate with "candidate
- * store unavailable" and exited 1 before reaching any page write.
+ * Without this, a candidate read on a Stack refused with "candidate store unavailable"
+ * before reaching any page read — the fault the retired review-approval flow hit first.
  *
  * The decision is read from the environment, mirroring `withCandidateSource`, so this
  * module answers the same question the read/write/delete paths already answer.

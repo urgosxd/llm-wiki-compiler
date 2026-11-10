@@ -48,9 +48,9 @@ Organize inputs with recursive source folders and literal path exclusions, suppl
 
 **Agent-ready via MCP.** The launcher's `serve` mode exposes the full pipeline to Claude Desktop, Cursor, Claude Code, and any MCP-compatible agent. Agents can ingest sources, compile, query, lint, retrieve context packs, and exchange OKF bundles.
 
-**Open Knowledge Format round-trip.** `exportOkf()` writes a Google OKF-style bundle with page docs, references, and an activity log. `importOkf()` stages external bundles as review candidates by default, so third-party knowledge does not enter the live wiki; pass `trusted: true` only for bundles you already trust. Imported foreign pages re-export at their safe original paths when possible.
+**Open Knowledge Format round-trip.** `exportOkf()` writes a Google OKF-style bundle with page docs, references, and an activity log. `importOkf()` refuses a bundle that is not explicitly `trusted: true`, so third-party knowledge does not enter the live wiki by accident; pass `trusted: true` only for bundles you already trust. Imported foreign pages re-export at their safe original paths when possible.
 
-**Review holds stage work; they do not publish it.** `importOkf()` without `trusted: true` and a review policy in `.llmwiki/config.json` write a candidate record under `.llmwiki/candidates/` while the live wiki is left untouched, and each candidate records why it was held - low confidence, contradicted, schema-violating, provenance-violating, or imported from OKF. This build exposes no surface that promotes or rejects a candidate: there is no approval operation on the SDK or among the MCP tools, and the viewer's review list is read-only.
+**A compile writes everything it generates.** There is no held state and no approval step: every generated page lands in `wiki/` in the run that produced it, and a `review` key in `.llmwiki/config.json` is refused at config load instead of being silently ignored. Candidate records written by earlier versions of this product stay readable under `.llmwiki/candidates/` and in `wiki.review_candidates`, but nothing produces a new one.
 
 **Programmatic control via SDK.** `createWiki({ root })` drives the entire pipeline in-process - no shelling out, no console noise, fully typed, including OKF import/export.
 

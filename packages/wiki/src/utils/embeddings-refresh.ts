@@ -1,25 +1,25 @@
 /**
  * @file src/utils/embeddings-refresh.ts
- * @description The SINGLE pending-marker-draining embeddings refresh both the
- * compiler and `review approve` route through, so the per-id write-ahead
+ * @description The SINGLE pending-marker-draining embeddings refresh the
+ * compiler and the trusted OKF import route through, so the per-id write-ahead
  * lifecycle is never re-implemented (and never partially omitted) per call site.
  *
  * ## Why one shared drain
- * The compiler's post-write refresh and the `review approve` post-write refresh
- * are the SAME operation: union the freshly-changed page-ids into any prior
- * pending entries, write the intent ahead, run the lock-free embeddings core,
- * then settle the marker per-id (clear embedded, retain eligible-unembedded,
- * quarantine ineligible-over-cap). A separate review-approve refresh that only
- * called the core for the approved id NEVER drained the accumulated marker — so a
- * project run purely as `compile --review` + `review approve` leaked pending ids
- * that were never retried, leaving embeddings stale indefinitely. Folding both
- * onto this function closes that gap by construction.
+ * Every post-write refresh is the SAME operation: union the freshly-changed
+ * page-ids into any prior pending entries, write the intent ahead, run the
+ * lock-free embeddings core, then settle the marker per-id (clear embedded,
+ * retain eligible-unembedded, quarantine ineligible-over-cap). A write path that
+ * called the core only for the one id it had just written NEVER drained the
+ * accumulated marker, so ids left pending by an earlier run were never retried
+ * and their embeddings stayed stale indefinitely. Every path goes through this
+ * function for exactly that reason: the drain cannot be partially copied.
  *
  * ## Lock precondition (caller MUST hold the project lock)
  * This calls {@link updateEmbeddingsLockedCore}, the LOCK-FREE core, NOT the
  * self-locking wrapper. Both call sites already hold `.llmwiki/lock` across the
- * call (compile for its whole pipeline; `review approve` via `runReviewUnderLock`),
- * so re-locking here would deadlock. Any new caller MUST likewise hold the lock.
+ * call (compile for its whole pipeline; `import/okf-refresh.ts` inside the
+ * import's own lock), so re-locking here would deadlock. Any new caller MUST
+ * likewise hold the lock.
  *
  * ## Non-fatal
  * Embeddings are a non-critical enhancement: a missing API key or a transient

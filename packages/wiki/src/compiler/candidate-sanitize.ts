@@ -12,7 +12,13 @@ import type { ReviewCandidate, SourceState } from "../utils/types.js";
 import type { HeldReason, PolicyHeldReasonCode, ReviewMode } from "../review/policy.js";
 import type { TrustDecision } from "../trust/decision.js";
 
-/** Default metadata for legacy `compile --review` callers. */
+/**
+ * Default metadata for a stored record that names no held reason.
+ *
+ * Re-exported by `candidate-read.ts` as part of the surviving read surface;
+ * nothing inside this repository imports it from here, so the export reads as dead.
+ */
+// fallow-ignore-next-line unused-export
 export const DEFAULT_HELD_REASONS: HeldReason[] = [{ code: "manual-review-requested" }];
 
 const VALID_REVIEW_MODES: ReviewMode[] = ["policy", "forced", "imported", "connector"];

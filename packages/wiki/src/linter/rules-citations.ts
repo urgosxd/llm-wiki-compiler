@@ -5,10 +5,10 @@
  * prose to its sources: broken citations (source file missing or claim-level
  * line span out of bounds) and malformed claim citations (entries that don't
  * parse against the documented `file.md` / `file.md:N-N` / `file.md:N,N-M`
- * / `file.md#LN-LN` grammar). Each on-disk walker has a pure per-page variant
- * so the in-memory candidate-lint path (`compile --review`) surfaces the same
- * findings before a reviewer approves a candidate. Re-exported through
- * {@link file://./rules.ts}.
+ * / `file.md#LN-LN` grammar). Each on-disk walker has a pure per-page variant,
+ * so one page's citations can be checked without walking the corpus, and the
+ * variants stay exported for a caller that already holds a page body.
+ * Re-exported through {@link file://./rules.ts}.
  */
 
 import { existsSync } from "fs";
@@ -77,9 +77,9 @@ export async function checkBrokenCitations(root: string): Promise<LintResult[]> 
 /**
  * Pure-body variant of {@link checkBrokenCitations} that inspects a single
  * page's content against an in-memory or on-disk sources directory. Used
- * by the on-disk lint walker above, and by the in-memory candidate-lint
- * path so `compile --review` surfaces broken-source-file and out-of-bounds
- * span findings before a reviewer approves the candidate.
+ * by the on-disk lint walker above, and exported so a caller that already
+ * holds a page body can check broken-source-file and out-of-bounds span
+ * findings without walking the corpus.
  *
  * @param content - Full page markdown including frontmatter.
  * @param filePath - Logical path embedded in diagnostics (may be virtual).
@@ -87,6 +87,10 @@ export async function checkBrokenCitations(root: string): Promise<LintResult[]> 
  * @param lineCountCache - Optional cross-page cache; provide one when
  *   linting many pages so source file line counts aren't re-read.
  */
+// Part of the linter surface {@link file://./rules.ts} re-exports; its only
+// consumer INSIDE this repository is the walker above, which is why the export
+// reads as dead here. Removing it would narrow the public linter surface.
+// fallow-ignore-next-line unused-export
 export async function checkPageBrokenCitations(
   content: string,
   filePath: string,
@@ -212,9 +216,9 @@ export async function checkMalformedClaimCitations(root: string): Promise<LintRe
 
 /**
  * Pure-body variant of {@link checkMalformedClaimCitations} that inspects
- * a single page's content. Used by both the on-disk lint walker above and
- * the in-memory candidate-lint path so `compile --review` surfaces
- * malformed claim citations before a reviewer approves the candidate.
+ * a single page's content. Used by the on-disk lint walker above, and
+ * exported so a caller that already holds a page body can check malformed
+ * claim citations without walking the corpus.
  */
 export function checkPageMalformedCitations(content: string, filePath: string): LintResult[] {
   const results: LintResult[] = [];

@@ -12,17 +12,19 @@
  * artifact logic.
  *
  * Volume bound. Staging is an unbounded-by-default surface: an untrusted actor
- * can otherwise flood the review queue. {@link assertStagedWriteBudget}
- * generalizes the existing fail-closed candidate cap — `src/import/run.ts`
- * throws `QueueFullError` when `pending + valid > maxNewCandidates` for
- * untrusted imports, and `src/mcp/okf-tools.ts` pins
- * `MAX_MCP_PENDING_CANDIDATES = 200` — into a two-level (per-call + per-session)
- * ceiling that throws a typed {@link StagedWriteOverflowError} naming the
- * breached cap. It NEVER silently clamps: an overflow is an error the caller
- * must handle, not a truncation it can miss.
+ * can otherwise flood the queue. {@link assertStagedWriteBudget} is a two-level
+ * (per-call + per-session) ceiling that throws a typed
+ * {@link StagedWriteOverflowError} naming the breached cap. It NEVER silently
+ * clamps: an overflow is an error the caller must handle, not a truncation it
+ * can miss. The candidate cap this budget once generalised — the
+ * untrusted-import queue limit this file used to cite by name — went away with
+ * candidate staging, so this budget is now the only volume bound on a staged
+ * change.
  *
  * Cap defaults. {@link DEFAULT_STAGED_WRITE_PER_SESSION} is `200`, anchored
- * directly to the existing pending-candidate ceiling so the two surfaces agree.
+ * directly to the pending-record ceiling this platform has always used, and
+ * kept at that number so retiring candidate staging did not silently change the
+ * budget.
  * {@link DEFAULT_STAGED_WRITE_PER_CALL} is `50`: a single planning call should
  * not be able to consume the whole session budget in one shot, but the limit is
  * generous enough for realistic batch proposals. Per-session ≥ per-call always.
@@ -112,8 +114,9 @@ export interface StagedWriteCaps {
 export const DEFAULT_STAGED_WRITE_PER_CALL = 50;
 
 /**
- * Default max staged writes held across a session. Anchored to the existing
- * `MAX_MCP_PENDING_CANDIDATES` so the staging and import surfaces share a limit.
+ * Default max staged writes held across a session. Anchored to the 200-record
+ * pending ceiling this platform has always used, kept at that number so the
+ * removal of candidate staging did not silently change the budget.
  */
 export const DEFAULT_STAGED_WRITE_PER_SESSION = 200;
 

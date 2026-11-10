@@ -11,7 +11,7 @@
  * ## What survives, and why
  *
  * Records already on disk stay READABLE. `.llmwiki/candidates/*.json` is inert data, not
- * deleted data: the viewer lists it, `review show` renders it, and the deletion and archive
+ * deleted data: the viewer lists it, the read path renders it, and the deletion and archive
  * paths below still consume it under exact custody receipts. The read/list/sanitize/validate
  * half lives in {@link file://./candidate-read.ts} and the shared path resolvers in
  * {@link file://./candidate-paths.ts}; both are RE-EXPORTED below so existing importers of

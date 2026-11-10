@@ -56,7 +56,8 @@ create table if not exists wiki.review_candidates (
     generated_at timestamptz not null,
 
     -- Every value `ReviewMode` declares: `policy` (held by a rule), `forced`
-    -- (--review), `imported` (an OKF bundle stage) and `connector` (a fetched
+    -- (the removed forced-review compile option), `imported` (an OKF bundle
+    -- stage) and `connector` (a fetched
     -- source). This check listed only the first two at first, which made the row
     -- store unable to hold an imported or connector candidate at all -- the write
     -- failed on the constraint rather than degrading. Kept as a check rather than an

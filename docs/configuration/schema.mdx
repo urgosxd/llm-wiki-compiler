@@ -96,9 +96,9 @@ When a compile runs:
 - An `overview` page that doesn't reach its minimum is flagged.
 - Violations are reported by slug and kind so you can find and fix them.
 
-## How the schema affects review
+## How the schema affects a compile
 
-When a review policy is active with `schema-violating` in the `hold` array, any page that fails a schema cross-link rule is automatically held for review instead of written live. See [Review Policy](/configuration/review-policy) for how to configure that behavior.
+A schema cross-link violation is a lint finding and nothing more: the page is written to `wiki/` and flagged, so you can find it by slug and fix it. There is no review policy to route it into, and no hold mode that withholds it.
 
 <Tip>
   A schema is most useful for **large wikis**, **domain templates**, and **structured knowledge bases** where you want consistent page structure enforced over time. For a personal notebook or exploratory wiki, you likely don't need one - start without a schema and add one when you find yourself wanting to enforce cross-link density or generate overview pages automatically.
@@ -106,4 +106,4 @@ When a review policy is active with `schema-violating` in the `hold` array, any 
 
 ---
 
-For more on how page kinds behave in the compiler, see [Page Types](/concepts/page-types). For holding schema-violating pages automatically during compile, see [Review Policy](/configuration/review-policy).
+For more on how page kinds behave in the compiler, see [Page Types](/concepts/page-types). For what a compile writes and what a stale wiki needs, see [Stale Pages](/troubleshooting/stale-pages).

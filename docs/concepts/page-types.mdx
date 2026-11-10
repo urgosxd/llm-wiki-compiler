@@ -4,7 +4,7 @@ sidebarTitle: "Page Types"
 description: "Learn the four page kinds - concept, entity, comparison, overview - their lint expectations, and the epistemic metadata every compiled page can carry."
 ---
 
-Without typed pages, a compiled wiki quickly becomes a flat list of topics with no signal about what role each page plays. A page about "Transformer" could be a conceptual explanation, a specific model card for GPT-4, a side-by-side of Transformer vs. RNN, or a domain map tying together all attention-related pages. llmwiki's four page kinds give the compiler - and you - a vocabulary for these distinctions. Each kind carries different linting expectations (such as minimum wikilink counts you can configure in `schema.json`), surfaces differently in the local viewer, and participates differently in the review policy.
+Without typed pages, a compiled wiki quickly becomes a flat list of topics with no signal about what role each page plays. A page about "Transformer" could be a conceptual explanation, a specific model card for GPT-4, a side-by-side of Transformer vs. RNN, or a domain map tying together all attention-related pages. llmwiki's four page kinds give the compiler - and you - a vocabulary for these distinctions. Each kind carries different linting expectations (such as minimum wikilink counts you can configure in `schema.json`) and surfaces differently in the local viewer.
 
 ## The Four Page Kinds
 
@@ -59,7 +59,7 @@ updatedAt: "2026-04-05T12:00:00Z"
 
 <CardGroup cols={2}>
   <Card title="confidence" icon="gauge">
-    A number between `0` and `1` representing the LLM's reported confidence in the synthesized page. Higher values indicate the page is well-supported by its sources with minimal ambiguity. Lower values - by default, below `0.5` - cause the linter (`lint()`, or the MCP `lint_wiki` tool) to flag the page with a `low-confidence` warning and, if the review policy is active, hold the page for review rather than writing it to `wiki/`.
+    A number between `0` and `1` representing the LLM's reported confidence in the synthesized page. Higher values indicate the page is well-supported by its sources with minimal ambiguity. Lower values - by default, below `0.5` - cause the linter (`lint()`, or the MCP `lint_wiki` tool) to flag the page with a `low-confidence` warning. The page is written either way: there is no hold mode that withholds it from `wiki/`.
   </Card>
   <Card title="provenanceState" icon="route">
     A categorical label describing how the page's content was produced:
@@ -82,31 +82,16 @@ contradictedBy:
   - slug: probabilistic-reasoning
 ```
 
-A non-empty `contradictedBy` triggers a `contradicted-page` lint warning and, if enabled in the review policy, holds the page as a candidate for human review.
+A non-empty `contradictedBy` triggers a `contradicted-page` lint warning. It does not withhold the page - the page is written to `wiki/` and flagged.
 
-## How Metadata Affects the Review Policy
+## How Metadata Reaches the Wiki
 
-The review policy in `.llmwiki/config.json` uses epistemic metadata to decide whether a compiled page is written directly to `wiki/` or held in `.llmwiki/candidates/` for review. Any enabled hold mode that fires on a page's metadata causes it to be held:
-
-<Tabs>
-  <Tab title="low-confidence">
-    Pages with `confidence` below `lowConfidenceThreshold` (default `0.5`) are held. Pages with no `confidence` field are also held by default - set `"treatMissingConfidenceAs": "ok"` in `config.json` to let them pass.
-  </Tab>
-  <Tab title="contradicted">
-    Pages with a non-empty `contradictedBy` array are held, regardless of their confidence score.
-  </Tab>
-  <Tab title="schema-violating">
-    Pages that fail a schema cross-link rule - for example, a `concept` page with fewer wikilinks than the schema's `minWikilinks` requires - are held.
-  </Tab>
-  <Tab title="provenance-violating">
-    Pages with broken or malformed citations - source files that don't exist, line ranges that are impossible or out of bounds - are held.
-  </Tab>
-</Tabs>
+Epistemic metadata is written into each page's frontmatter and read by the linter. It no longer decides where a page goes: every page a compile generates is written to `wiki/`, and `.llmwiki/candidates/` receives nothing new. The four hold modes this metadata used to feed - `low-confidence`, `contradicted`, `schema-violating` and `provenance-violating` - are gone with the review policy that read them, and a `review` key in `config.json` is refused at config load.
 
 <Warning>
-  The review policy is fail-closed. An unknown hold mode or a corrupt `config.json` aborts the compile rather than silently disabling review. If you edit `config.json` manually, verify it before the next compile.
+  A `review` key in `.llmwiki/config.json` is refused, not ignored. If you still carry one, the next compile aborts with an error naming the key - remove it to continue, and expect the pages it used to hold to be written live.
 </Warning>
 
 When multiple sources merge into one slug, epistemic metadata is reconciled: the `confidence` takes the minimum across all contributing sources, `provenanceState` is set to `merged`, and `contradictedBy` is the deduplicated union of all contributing sources' contradiction lists.
 
-For more detail on the schema layer and the review policy configuration format, see [Schema](/configuration/schema) and [Review Policy](/configuration/review-policy).
+For more detail on the schema layer, see [Schema](/configuration/schema).

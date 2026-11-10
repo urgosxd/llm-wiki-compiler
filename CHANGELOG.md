@@ -9,6 +9,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — nothing is staged for review any more: a compile writes every
+  page it generates, an untrusted OKF import is refused, and a `review` key in
+  `.llmwiki/config.json` now refuses at config load instead of being silently
+  ignored.** No surface promotes a candidate into the wiki — there is no SDK
+  method, no MCP tool, and the viewer's review list is read-only — so a staged
+  record could never become a page. Staging was removed rather than softened:
+  staging that nothing can promote is not a feature under a better name.
+
+  What stops happening, in the order an existing project meets it:
+
+  - **A compile no longer withholds pages.** The `review.hold` policy is removed
+    with `evaluatePolicy`, the hold modes and the `review` config validator that
+    read them. A page that used to be held for low confidence, contradiction, a
+    schema violation or broken provenance is now written live, through the path
+    that was already writing pages. **A wiki compiled under a hold policy may
+    therefore gain pages on its next compile.**
+  - **A `review` key is REFUSED, not ignored.** A compile in a project whose
+    `.llmwiki/config.json` — or whose Stack's `wiki.project_config` row — still
+    carries one aborts before it writes anything, with
+    ``The project config "review" key no longer exists: `review.hold` is retired,
+    and pages which would previously have been held are now written live. Remove
+    the key.`` Ignoring it was the defect: a project that configured holds would
+    keep compiling and quietly start writing the pages it believed were withheld.
+
+    The refusal is at config LOAD, which is the opposite of the removed compile
+    option's guard, and for a precise reason: that option was never
+    file-configurable, so guarding it at load would have protected a key no file
+    could carry, while this key is read from `.llmwiki/config.json` — exactly
+    where a load-time refusal stops a run before it writes anything.
+  - **untrusted OKF imports are refused, and no candidate is staged anywhere — existing candidate records remain readable, and nothing new is produced.**
+    `importOkf()` without `trusted: true` now throws `UntrustedOkfImportError`
+    instead of staging the bundle's documents; `mode` loses its `staged` arm,
+    and the queue-cap plumbing that only bounded staging (`assertQueueCapacity`,
+    `maxNewCandidates`, `QueueFullError`) goes with it. A `dryRun` preview still
+    writes nothing.
+  - **the MCP `import_okf` tool is removed — it could only stage, and staging is gone; the SDK's documented `trusted: true` live import is unchanged and is the surviving path.**
+    The tool hardcoded `trusted: false` and its schema had
+    no `trusted` field, so with staging gone it could only ever return the
+    refusal: a tool that can only fail advertises something impossible.
+    `export_okf` is untouched.
+
+  Stored records go **inert, not away**, and that is the data-lifecycle
+  statement this entry exists to make: the **record** survives and stays
+  readable, the **emission** stops. Every candidate file already under
+  `.llmwiki/candidates/` and every row of `wiki.review_candidates` is still
+  listed, read, rendered, archived and deleted through the surviving paths, and
+  a record carrying `manual-review-requested` still parses. Nothing is deleted,
+  migrated or dropped — no table is dropped, no row is rewritten, no directory
+  is removed. What changed is that nothing produces a new one:
+  `persistReviewCandidate`, `writeCandidate` and `writeFreshCandidate` are all
+  gone, so `wiki_status`'s `pendingCandidates` counts only what an earlier
+  version left behind.
+
 - **BREAKING — the `query` review option is removed, and a saved answer is now
   always written as a `wiki/queries/` page.** No call can request a review
   candidate from a query any more: `wiki.query(question, { save: true, review:

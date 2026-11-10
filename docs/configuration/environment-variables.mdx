@@ -16,7 +16,7 @@ You don't need to set everything - only the variables relevant to your chosen pr
 |---|---|---|
 | `LLMWIKI_PROVIDER` | `anthropic` | Provider to use. One of: `anthropic`, `openai`, `ollama`, `minimax`, `copilot`, `claude-agent`, `orcarouter`, `atlascloud` (aliases: `atlas-cloud`, `atlas`) |
 | `LLMWIKI_MODEL` | Provider default | Model name to use. Overrides the provider's built-in default model. |
-| `LLMWIKI_EMBEDDINGS` | Enabled | Set to `off`, `false`, `0`, or `no` (case-insensitive) to skip all embedding refreshes, including compile, review approval, import, and `query --save`. Existing embedding and pending files are left untouched. |
+| `LLMWIKI_EMBEDDINGS` | Enabled | Set to `off`, `false`, `0`, or `no` (case-insensitive) to skip all embedding refreshes, including compile, trusted OKF import, and `query --save`. Existing embedding and pending files are left untouched. |
 | `LLMWIKI_EMBEDDING_PROVIDER` | Active chat provider | Backend serving embeddings, independent of `LLMWIKI_PROVIDER`. One of `anthropic`, `claude-agent`, `openai`, `ollama`, `orcarouter` |
 | `LLMWIKI_EMBEDDING_MODEL` | Provider default | Embedding model to use. Applies when the effective embedding provider is `openai`, `ollama` or `orcarouter` - ignored for `anthropic` and `claude-agent`, even when `LLMWIKI_EMBEDDING_PROVIDER` names one of them explicitly |
 
@@ -42,7 +42,7 @@ The check runs at startup, before any compile or query work begins, so a misspel
 
 ### Changing the embedding backend rebuilds the index
 
-The embedding index records which provider, model, and endpoint produced its vectors. Changing the effective `LLMWIKI_EMBEDDING_PROVIDER`, `LLMWIKI_EMBEDDING_MODEL`, or embedding endpoint invalidates the index. The next non-review compile with refreshes enabled can re-embed the entire eligible wiki, even when no source changed. This incurs embedding-provider requests and potential costs without regenerating source-derived pages. Quarantined pages remain excluded until you explicitly re-queue them; see [retry recovery](#embedding-retries-and-quarantine).
+The embedding index records which provider, model, and endpoint produced its vectors. Changing the effective `LLMWIKI_EMBEDDING_PROVIDER`, `LLMWIKI_EMBEDDING_MODEL`, or embedding endpoint invalidates the index. The next compile with refreshes enabled can re-embed the entire eligible wiki, even when no source changed. This incurs embedding-provider requests and potential costs without regenerating source-derived pages. Quarantined pages remain excluded until you explicitly re-queue them; see [retry recovery](#embedding-retries-and-quarantine).
 
 This matters because vectors from different backends are not comparable even when the model name matches - a local server answering to `text-embedding-3-small` does not produce the same vectors as cloud OpenAI, and `nomic-embed-text` served by Ollama does not match the same model served over an OpenAI-compatible endpoint. Until the index is rebuilt, a query reports the index as outdated and falls back to lexical ranking rather than ranking against a mixed index.
 
@@ -154,7 +154,7 @@ A compile embeds pages and chunks in provider-native batches. These variables ar
   Batching controls requests independently of storage. Small stores keep `.llmwiki/embeddings.json`; stores exceeding its 64 MiB limit automatically use `.llmwiki/embeddings.bin` without repeating embedding requests.
 </Note>
 
-Enabled non-review compiles scan eligible pages and the store for missing or
+Enabled compiles with refreshes on scan eligible pages and the store for missing or
 stale embeddings even when their source delta is empty. This also applies when
 you have never used `LLMWIKI_EMBEDDINGS`. An unchanged, healthy store makes no
 embedding-provider calls and is not rewritten.
@@ -218,7 +218,7 @@ An unreadable or corrupt binary index produces `embedding-store-unavailable`
 and degraded retrieval rather than silently reading that older snapshot.
 The context-pack surface uses its existing `embedding-store-missing` warning code
 for this condition, meaning no usable store, not necessarily no file on disk.
-An enabled non-review compile discovers the missing vectors even when
+An enabled compile discovers the missing vectors even when
 no sources changed. Rebuilding an unavailable index embeds the live eligible
 corpus again, except quarantined pages, and can incur provider costs.
 

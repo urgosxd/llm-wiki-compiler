@@ -35,7 +35,7 @@ Use llmwiki when you need a persistent knowledge base from raw material:
 
 - Compile papers, notes, READMEs, transcripts, PDFs, images, or web pages into typed wiki pages.
 - Give agents a stable, citation-aware context pack instead of a pile of loose files.
-- Keep generated knowledge auditable with source citations, review queues, freshness checks, and quality gates.
+- Keep generated knowledge auditable with source citations, freshness checks, and quality gates.
 - Browse the result locally, query it from TypeScript, drive it from an agent over MCP, or run the whole pipeline in the container.
 - Exchange compiled knowledge with other tools using Open Knowledge Format (OKF), JSON, JSON-LD, GraphML, Marp, and `llms.txt`.
 
@@ -48,12 +48,12 @@ Do not use llmwiki as a general static-site generator, a heavy ontology database
 - **Citation-traceable output.** Paragraphs and claims cite source files and line ranges, and the lint rules (`wiki.lint()`, MCP `lint_wiki`) validate the links.
 - **Hybrid retrieval.** Semantic chunk search, BM25 reranking, and wikilink graph expansion build compact evidence packs for queries and agents.
 - **Local viewer.** The launcher's `host` mode serves a read-only browser UI with search, page metadata, graph exploration, source-freshness badges, and citation chips.
-- **Review policy.** Generated pages can be auto-held for review when confidence, contradiction, schema, or provenance rules trip.
+- **Nothing is held for approval.** A compile writes every page it generates straight to `wiki/`. There is no held state, no approval step, and no option that withholds a page, so the wiki you read is the wiki the last compile produced.
 - **Freshness repair.** `wiki.lint()` and `wiki.status()` surface stale and orphaned pages so a recompile can target them.
 - **Eval harness.** `wiki.runEval()` reports health score, a per-page health distribution that flags the worst pages, wikilink-graph health, citation coverage/precision, corpus stats, regression deltas, and optional judge-model citation support.
 - **MCP server.** The launcher's `serve` mode exposes ingest, compile, query, lint, read, status, eval, context-pack, and OKF exchange tools to MCP-compatible agents.
 - **SDK.** `createWiki({ root })` drives ingest, compile, query, context, status, export, eval, and OKF import/export from TypeScript without shelling out.
-- **Open Knowledge Format exchange.** Export and import OKF bundles for portable, markdown-native knowledge exchange. External OKF imports are staged through the review queue by default; trusted bundles can be written live explicitly.
+- **Open Knowledge Format exchange.** Export and import OKF bundles for portable, markdown-native knowledge exchange. An import that does not declare `trusted: true` is refused, and a trusted import writes its pages live.
 - **Other portable exports.** Export JSON, JSON-LD, GraphML, Marp slides, and `llms.txt` for downstream systems.
 - **Provider portable.** Anthropic, Claude Agent SDK local login, OpenAI-compatible servers, Ollama, GitHub Copilot, Atlas Cloud, OrcaRouter, and local OpenAI-compatible runtimes.
 
@@ -78,7 +78,6 @@ If an agent is scanning this README, these are the high-signal entry points:
 | Ingest raw text with no network fetch | `wiki.ingestText({ title, text })` |
 | Compile or recompile changed sources | `wiki.compile()`, or MCP `compile_wiki` |
 | Add project-specific writing guidance | `wiki.compile({ systemPolicy })` |
-| Hold generated pages for human approval | a review policy in `.llmwiki/config.json` |
 | Ask grounded questions | `wiki.query("question")`, or MCP `query_wiki` |
 | Save an answer back into the wiki | `wiki.query("question", { save: true })` |
 | Build an evidence pack for another agent | `wiki.getContextPack({ prompt })` or MCP `get_context_pack` |
@@ -140,7 +139,7 @@ await wiki.importOkf("./dist/okf", { dryRun: true });
 await wiki.importOkf("./dist/okf");
 ```
 
-OKF import is intentionally review-first: untrusted bundles become review candidates, not live wiki pages. The importer preserves foreign OKF metadata, stores llmwiki provenance under `x-llmwiki`, and re-exports imported pages honestly after local edits, including safe original nested paths.
+OKF import is trusted-write or refused: a bundle that does not declare `trusted: true` is rejected, and a trusted bundle is written live. Nothing is staged as a candidate, because no surface promotes one. The importer preserves foreign OKF metadata, stores llmwiki provenance under `x-llmwiki`, and re-exports imported pages honestly after local edits, including safe original nested paths.
 
 See [`docs/guides/open-knowledge-format.mdx`](docs/guides/open-knowledge-format.mdx).
 
@@ -156,10 +155,10 @@ wiki/
   queries/       saved answers
   index.md       generated TOC
 .llmwiki/
-  config.json    review policy and source selection
+  config.json    source discovery settings
   schema.json    page-kind/cross-link policy
   state.json     source hashes and ownership
-  candidates/    held review candidates
+  candidates/    records left by a retired review queue, still readable
   eval/          quality history and thresholds
 log.md           activity journal
 ```
@@ -232,14 +231,14 @@ See [`docs/configuration/providers.mdx`](docs/configuration/providers.mdx) and [
 
 llmwiki is designed for auditable generated knowledge:
 
-- **Review before write.** Use a `.llmwiki/config.json` review policy to hold risky pages as candidates.
-- **Fail-closed config.** Invalid review-policy config aborts compile instead of silently disabling review.
+- **Nothing is withheld.** A compile writes every generated page straight to `wiki/`; there is no hold, no approval queue, and no surface that promotes or rejects a page. A `review` key in `.llmwiki/config.json` is refused at config load rather than silently ignored, because a user who set one believes pages are being held when they are now written live.
+- **Fail-closed config.** An invalid `.llmwiki/config.json` aborts compile instead of quietly falling back to defaults.
 - **Source confinement.** Source snippets and import/export paths are confined to the project.
 - **Freshness is explicit.** Pages can be fresh, stale, orphaned, or unverified; stale pages are flagged and repairable. The JSON export is active-page-only: it carries freshness for live pages (`fresh`/`stale`/`unverified`); computed-orphaned pages (all sources deleted) surface only as lint and viewer signals and are dropped from the export.
-- **Imported compiled knowledge is staged by default.** External bundles go through the review queue unless explicitly trusted.
+- **Imported compiled knowledge is trusted or refused.** An OKF bundle that does not declare `trusted: true` is refused; a trusted import writes its pages live, so nothing is staged anywhere.
 - **CI gates are supported.** `wiki.lint()` and `wiki.runEval()` can enforce quality thresholds.
 
-See [`docs/configuration/review-policy.mdx`](docs/configuration/review-policy.mdx) and [`docs/troubleshooting/stale-pages.mdx`](docs/troubleshooting/stale-pages.mdx).
+See [`docs/troubleshooting/stale-pages.mdx`](docs/troubleshooting/stale-pages.mdx).
 
 ## Scale and what works
 

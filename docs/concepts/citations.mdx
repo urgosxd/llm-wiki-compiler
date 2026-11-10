@@ -59,7 +59,7 @@ Both forms identify the same span: lines 42 through 58 (inclusive) of `architect
   </Card>
 </CardGroup>
 
-Citation errors contribute to the health score computed by the eval harness (`runEval()`) and are listed individually in lint output. Broken citations also trigger the `provenance-violating` review policy hold mode, so pages with bad citations can be automatically queued for human review rather than written to `wiki/`.
+Citation errors contribute to the health score computed by the eval harness (`runEval()`) and are listed individually in lint output. They do not withhold a page: broken or malformed citations are a lint finding on a page that is already in `wiki/`, because compile writes every page it generates and holds nothing back.
 
 ## What Happens During Source Merge
 

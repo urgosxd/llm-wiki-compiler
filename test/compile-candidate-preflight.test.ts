@@ -36,16 +36,6 @@ async function stubCompileWithMalformedCandidate(): Promise<string> {
 }
 
 /**
- * Configure the retired hold policy: it no longer stages anything, so the page below is
- * written live. Kept in place because "the policy still parses and decides nothing" is
- * exactly the property these cases share.
- */
-async function holdEveryPage(): Promise<void> {
-  const document = JSON.stringify({ version: 1, review: { hold: ["all"] } });
-  await writeFile(path.join(project.dir, ".llmwiki", "config.json"), document);
-}
-
-/**
  * Assert the run succeeded and left the malformed candidate exactly as it found it.
  *
  * Shared by the two branch cases below because it is the property BOTH must hold: an
@@ -86,9 +76,8 @@ describe("public-default candidate discovery", () => {
       .toContain("An example body.");
   });
 
-  it("writes the page live under a policy hold despite an unrelated malformed candidate", async () => {
+  it("writes the page live and does not list an unrelated malformed candidate", async () => {
     const malformed = await stubCompileWithMalformedCandidate();
-    await holdEveryPage();
 
     const result = await compileAndReport(project.dir);
     await expectCleanRun(result, malformed);

@@ -114,7 +114,7 @@ The server exposes fourteen tools. Every tool takes a required `stackId` naming 
 
 **`get_context_pack` vs `query_wiki`:** these tools serve different purposes. `get_context_pack` *packages evidence* - it assembles a structured JSON envelope of relevant pages, semantic chunks, and citations that the agent uses for its own reasoning. `query_wiki` *generates an answer* - it calls the LLM and returns prose. Use `get_context_pack` when the agent needs grounded source material to reason over; use `query_wiki` when you want a finished answer.
 
-`query_wiki` has no review option. Its existing no-save path returns the answer and advisory citations without publication checks. Read [review policy configuration](/configuration/review-policy) before using `save: true`.
+`query_wiki` has no review option. Its existing no-save path returns the answer and advisory citations without publication checks. `save: true` is governed by the direct-save profile gate alone - there is no review policy to read, and a `review` key in project config is refused at load.
 
 ### MCP resources
 
@@ -166,7 +166,7 @@ The server starts without credentials. Provider credentials are read from the `e
 - Importing is an SDK-only, trusted operation: `wiki.importOkf(dir, { trusted: true })`. See the [OKF guide](/guides/open-knowledge-format).
 
 <Tip>
-  After an agent calls `compile_wiki`, check `wiki_status` and look at the `pendingCandidates` field. If your wiki has a review policy configured in `.llmwiki/config.json`, some pages are held for review rather than written directly. A non-zero `pendingCandidates` means the agent has queued pages that stay staged under `.llmwiki/candidates/` instead of going live in `wiki/` - this build exposes no surface that promotes or rejects a candidate, so review them there.
+  `wiki_status` still reports a `pendingCandidates` count, but nothing produces a candidate any more: it counts records left on disk by the retired review queue, which stay readable and are never promoted, rejected, migrated or deleted. A compile holds nothing back, so a non-zero count means an OLD record is still there, not that pages are waiting.
 </Tip>
 
 ## Next steps
