@@ -65,15 +65,15 @@
 
 ## Tasks
 
-- [x] T1 — author this feature document — S: none — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
-- [x] T2 — RED: write the two retire tests plus the already-absent coverage in `test/compiler/graph-retirement-retires-source.test.ts`, observe and record the failing assertion — S1, S2, S3 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
-- [x] T3 — GREEN: capture identities before orphaning and make `forgetDeletedSources` consume them — S5 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
-- [x] T4 — correct the `forgetDeletedSources` docstring — S4 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
-- [x] T5 — CHANGELOG bullet — S6 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
-- [x] T6 — prove the mutation fails S2's test, then restore — S2 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
-- [x] T7 — base-vs-head database differential and tenant-boundary assertion — S7 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
-- [x] T8 — run every gate and record each exit code — S8 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
-- [x] T9 — pin the tenant boundary as a committed DB-backed test (`graph-retirement-tenant-scope.test.ts`), prove it non-vacuous by mutation, and correct the CHANGELOG bullet for the deselected-source path — S6, S7 — route: gentle-ai-worker — commit: 9c636d32ccc1fcc66771911c050f06c5b85100d2
+- [x] T1 — author this feature document — S: none — route: gentle-ai-worker — commit: 602b289ec85accb93c8ee33a3c8d73132d67dd6e
+- [x] T2 — RED: write the two retire tests plus the already-absent coverage in `test/compiler/graph-retirement-retires-source.test.ts`, observe and record the failing assertion — S1, S2, S3 — route: gentle-ai-worker — commit: 602b289ec85accb93c8ee33a3c8d73132d67dd6e
+- [x] T3 — GREEN: capture identities before orphaning and make `forgetDeletedSources` consume them — S5 — route: gentle-ai-worker — commit: 602b289ec85accb93c8ee33a3c8d73132d67dd6e
+- [x] T4 — correct the `forgetDeletedSources` docstring — S4 — route: gentle-ai-worker — commit: 602b289ec85accb93c8ee33a3c8d73132d67dd6e
+- [x] T5 — CHANGELOG bullet — S6 — route: gentle-ai-worker — commit: 602b289ec85accb93c8ee33a3c8d73132d67dd6e
+- [x] T6 — prove the mutation fails S2's test, then restore — S2 — route: gentle-ai-worker — commit: 602b289ec85accb93c8ee33a3c8d73132d67dd6e
+- [x] T7 — base-vs-head database differential and tenant-boundary assertion — S7 — route: gentle-ai-worker — commit: 602b289ec85accb93c8ee33a3c8d73132d67dd6e
+- [x] T8 — run every gate and record each exit code — S8 — route: gentle-ai-worker — commit: 602b289ec85accb93c8ee33a3c8d73132d67dd6e
+- [x] T9 — pin the tenant boundary as a committed DB-backed test (`graph-retirement-tenant-scope.test.ts`), prove it non-vacuous by mutation, and correct the CHANGELOG bullet for the deselected-source path — S6, S7 — route: gentle-ai-worker — commit: 602b289ec85accb93c8ee33a3c8d73132d67dd6e
 
 ## Log
 
@@ -713,7 +713,7 @@ stopped and removed (`docker ps` now shows only `hardcore_borg`,
 this task). This task's own scratch (`/tmp/tenant-mutation-yRPmdOye`, the suite log) was
 removed too. Nothing was committed.
 
-**L20 (measured) — the slice is committed as `9c636d32ccc1fcc66771911c050f06c5b85100d2`,
+**L20 (measured) — the slice is committed as `602b289ec85accb93c8ee33a3c8d73132d67dd6e`,
 and that commit holds exactly the six files the gate runs in `L18`/`L19` measured.**
 
 Files in the commit (`git show --name-only --format= 9c636d32`): `CHANGELOG.md`,
@@ -740,3 +740,42 @@ inherited, not counted)` against base ref local `main`, and `pnpm exec tsc --noE
 printed nothing and exited 0. The full suite was NOT re-run for this commit; `L18`'s
 `pnpm test` result (`Test Files 814 passed | 3 skipped (817)`, `Tests 6135 passed | 4
 skipped (6139)`) stands as the record for this content.
+
+**L21 (measured) — the branch was rebased onto the new main tip, and the commit sha
+`L20` recorded no longer exists on it, so the T1–T9 `commit:` records are corrected
+here.**
+
+- Old base, the tip this branch was cut from:
+  `5a31842bfa788971de757ba62b322cf94118696b`.
+- New base, local `main` after the documentation-only slice:
+  `0cecbee516672bc5ba5c4151bad5e9b11c16a5f3`.
+- Pre-rebase commits: `9c636d32ccc1fcc66771911c050f06c5b85100d2`
+  (`fix(compiler): retire graph documents for deleted sources`) and
+  `7fe10d5b73210eee3f02702580130b624557fb5a`
+  (`docs(odd): record the slice commit in the graph-retirement tracker`).
+- Post-rebase commits: `602b289ec85accb93c8ee33a3c8d73132d67dd6e` and
+  `b441ceacc12348456d8aabfc70ab32dbc680704a`, same two subjects in the same order.
+  The replay was clean: no conflict, so nothing was resolved by hand and no file was
+  editorialised.
+- Content proof. `git diff --name-only 7fe10d5b HEAD` lists exactly the **37** paths the
+  documentation slice changed — `ARCHITECTURE.md`, `README.md`, `SOURCES_CONTRACT.md`,
+  31 files under `docs/`, `examples/basic/README.md`,
+  `odd/tasks/docs-remove-stale-cli-prose.md` and `packages/llmwiki-core/README.md` — and
+  nothing else. Not one file under `packages/wiki`, `packages/llmwiki-kg`, `test/` or
+  `CHANGELOG.md` appears in it.
+- Second proof. `git diff 7fe10d5b HEAD -- packages/wiki packages/llmwiki-kg test
+  CHANGELOG.md odd/tasks/graph-retirement-live.md` printed **nothing** (empty output), so
+  the slice's change content is byte-identical to the pre-rebase content and only the
+  parent changed. The tracker line and `L20` above were unaffected by the replay itself;
+  the sha substitution in this entry is the only edit made to this document afterwards.
+- The documentation slice did not touch any file our slice touches. Our six paths are
+  `CHANGELOG.md`, `packages/wiki/src/compiler/index.ts`, the three
+  `test/compiler/graph-retirement-*.test.ts` files and this document; the slice's 37 are
+  all documentation and example prose. The two slices share only the `odd/tasks/`
+  directory, and even there the files differ (`docs-remove-stale-cli-prose.md` vs
+  `graph-retirement-live.md`).
+- Everything the T1–T9 lines and `L20` recorded now names
+  `602b289ec85accb93c8ee33a3c8d73132d67dd6e`, the commit that holds the six-file slice on
+  this branch. `L20`'s abbreviated `git show --name-only --format= 9c636d32` was left
+  byte-identical on purpose: it is an accurate reference to the pre-rebase object, which
+  still exists in the object database even though the branch no longer points at it.
