@@ -1,6 +1,27 @@
 /**
  * Build all core entry points together so shared authority, locks, error classes
  * and the module-instance token resolve to one set of chunks in an installation.
+ *
+ * THE ENTRIES ARE THIS PACKAGE'S OWN SOURCES. They used to point into
+ * `../../packages/wiki/src/`, which made whatever that package exported the
+ * published surface by accident. `./src/index.ts` and `./src/compiler-sdk.ts`
+ * are the facade now, they name every re-export, and they reach the wiki sources
+ * by RELATIVE specifier so no undeclared bare specifier survives into `dist/`.
+ * The entry values stay literal (`test/artifact/facade-surface.test.ts` parses
+ * this text): no variables, no `path.resolve`.
+ *
+ * WHY THERE IS NO `rootDir` OVERRIDE. It used to pin
+ * `path.resolve("../../packages/wiki/src")`, and once the entries moved out of
+ * that tree the declaration build failed with `error TS6059: File
+ * '.../packages/llmwiki-core/src/index.ts' is not under 'rootDir'
+ * '.../packages/wiki/src'. 'rootDir' is expected to contain all source files.`
+ * The entries and the wiki modules they re-export no longer share a root inside
+ * the wiki package, so no override can be both narrow and true. Dropping it lets
+ * TypeScript infer the common source directory, and tsup names each declaration
+ * from its ENTRY KEY — which is why `dist/index.d.ts` and
+ * `dist/compiler-sdk.d.ts` stay top-level beside the shared declaration chunk,
+ * with no `dist/packages/` or `dist/src/` nesting: the paths `package.json`
+ * `exports` names.
  */
 import { defineConfig } from "tsup";
 import path from "node:path";
@@ -8,8 +29,8 @@ import { execFileSync } from "node:child_process";
 
 export default defineConfig({
   entry: {
-    index: "../../packages/wiki/src/core-index.ts",
-    "compiler-sdk": "../../packages/wiki/src/sdk/compiler-composition.ts",
+    index: "./src/index.ts",
+    "compiler-sdk": "./src/compiler-sdk.ts",
   },
   outDir: "dist",
   format: ["esm"],
@@ -55,7 +76,7 @@ export default defineConfig({
   splitting: true,
   sourcemap: true,
   clean: true,
-  dts: { compilerOptions: { rootDir: path.resolve("../../packages/wiki/src") } },
+  dts: true,
   tsconfig: "../../tsconfig.json",
   onSuccess: async () => {
     execFileSync(process.execPath, [path.resolve("../../scripts/copy-viewer-assets.mjs"), "packages/llmwiki-core/dist"]);
