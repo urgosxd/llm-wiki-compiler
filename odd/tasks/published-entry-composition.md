@@ -14,6 +14,8 @@ S2. THE PUBLISHED PORT TYPE IS SELF-CONTAINED. Manager ruling, verbatim: "Declar
 
 Consequence: `@repo/foundation` is `private: true` and absent from `publish.yml` `PACKAGE_DIRS: "packages/llmwiki-core ."`, so naming its type in the published `compiler-sdk.d.ts` would hand embedders a specifier they can never import.
 
+Consequence: as shipped, the published type is AUTHORITATIVE on the wiki side and the guard is key-set parity on `DimensionsRequest` and `DimensionsPort` plus one-direction assignability (a port from `@repo/api`'s factory satisfies `CreateWikiOptions.dimensionsPort`); the reverse direction cannot exist because the published `db` is deliberately opaque. Proven to bite by inverse edit.
+
 S3. THE FIELD IS OPTIONAL AND OMITTING IT IS VALID. Manager ruling, verbatim: "the field stays **optional and omitting it is valid**".
 
 Consequence: omission means the composed default or the ambient fallback, never a throw.
@@ -41,7 +43,7 @@ S11. THE ARTEFACT TIER'S LIMIT IS WRITTEN DOWN. Manager ruling, verbatim: "the r
 ## Tasks
 
 T0 · S10-S11 · route: worker · this document · commit: fcfcc15bac6bb0e743152a6205141bec465a9a59
-T1 · S2-S4 · route: worker · self-contained published `DimensionsPort`/`DimensionsRequest` beside `core-types.ts`, the optional `CreateWikiOptions.dimensionsPort`, and the mutual-assignability guard proven to bite · commit: 9122cffc1ec1e2d03d1aca7272d07e3c75fafe83
+T1 · S2-S4 · route: worker · self-contained published `DimensionsPort`/`DimensionsRequest` beside `core-types.ts`, the optional `CreateWikiOptions.dimensionsPort`, and the drift guard (key-set parity plus one-direction assignability) proven to bite · commit: 9122cffc1ec1e2d03d1aca7272d07e3c75fafe83
 T2 · S5-S7 · route: worker · port threading in `core.ts:84/:86` and the `port?` on `ingestTextSource:303` · commit: <pending>
 T2b · S1 · route: worker · `env` forwarding in `core.ts:84/:86`, RED FIRST, own commit so the behaviour change is revertable alone · commit: 3089859777e68324385c948af3797a134d4b1b67
 T3 · S7-S8 · route: worker · recording fake proving the port is CALLED, plus `MissingDimensionsPortError` at the internal seam · commit: <pending>
