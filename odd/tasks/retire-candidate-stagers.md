@@ -76,7 +76,7 @@ T3 | S3 | worker | done — Remove the dead `applyApprovedMutations` import at `
 
 T4 | S5, S7 | worker | done — `CHANGELOG.md` entry stating what stops happening. The entry lands in `e313207e1efb8d317a7c2f313bfc8616a2cea23c`; its correction to the false TypeScript-caller claim, and the retirement of `QueryResult.candidateId` that the entry describes, land in `30a37ab32169e3ef8ed35cf3a17e2e2afa6b534a`.
 
-T5 | S9 | verify | done — Independent verification of T2-T4, with the verdict, the four defects it found and their fixes recorded in L7.
+T5 | S9 | verify | done — Independent verification of T2-T4, with the verdict, the four defects it found and their fixes recorded in L7. A verification is not a commit, so no SHA *is* T5; what it verified is the tree at `198b020c23a1c9fbfc32ed2bbad63f027cb78065`, which contains `e313207e1efb8d317a7c2f313bfc8616a2cea23c`, `30a37ab32169e3ef8ed35cf3a17e2e2afa6b534a`, `ff33e11c5c897f1f1e3f631d26b026dfa2721a6b` and `198b020c23a1c9fbfc32ed2bbad63f027cb78065`.
 
 T6 | S2, S8 | — | recorded — The `persistReviewCandidate` / `writeCandidate` / OKF-staging / `review.hold` retirement (Slice B), parked and blocked on branch `fix/remove-review-option` landing, then rebasing onto it before any work starts.
 
