@@ -26,7 +26,8 @@
   "include": [
     "packages/wiki/src/**/*",
     "packages/api/src/**/*.ts",
-    "packages/foundation/src/**/*.ts"
+    "packages/foundation/src/**/*.ts",
+    "packages/llmwiki-core/src/**/*.ts"
   ],
   "exclude": [
     "node_modules",
