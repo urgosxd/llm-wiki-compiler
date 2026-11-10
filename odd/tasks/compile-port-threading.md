@@ -312,3 +312,25 @@ Consequences for whoever fixes it: **review mode must keep retiring nothing**; m
 - (b) `S3`'s coverage is exactly "the port is asked, once, with the right request". The retire that would follow it is the `L22` gap, so this slice proves the seam is **load-bearing but not that a source is retired end to end**.
 - (c) The mutation-proven narrowing coverage lives in the **COMMITTED** `test/compiler/default-dimensions-port-narrowing.test.ts` (its own mutation: replacing the throw with `continue` makes it fail), so **no extra test was added**. The compile-path refusal pin stays green under that mutation — it does not cover the port's own narrowing, and it was not made to.
 - (d) Adopted from `verify-gates-suite` as durable-probe candidates, NOT committed here: `compile-port-sdk-omission` and `compile-port-narrowing-contract` (both scratch-only, verifier-owned) plus the optional `scripts/verify-container-modes.sh` for `S5`, which no unit test can cover. Copying them in is a separate, reviewable decision.
+
+**L24 (closing ruling — human, relayed by the manager)** — recorded verbatim:
+
+> `L22` stays unfixed in this slice. The slice closes as **threading-only**, and the retire path becomes its own feature with its own document and its own risk line. The manager's earlier leaning toward fixing it here was overridden by the human after reading the review-mode correction below; the override stands. The follow-up feature is to be briefed with L22 as prescribed reading.
+
+**L25 (closing statement — required verbatim in substance by the manager)**
+
+1. **What the port proof does and does not establish.** The port is genuinely invoked, and the invocation is **load-bearing for the seam**: patch `packages/wiki/src/compiler/index.ts:1402` to return the default port and the committed test goes red (`expected [] to have a length of 1 but got +0`). The resolved dimensions **have no effect**, because the consumer loop at `packages/wiki/src/compiler/index.ts:1499` retires nothing.
+
+   So the seam is not decorative, and the behaviour it feeds is absent. This branch must NOT be read as "graph retirement works".
+
+2. **Review mode is a guard against the fix, not a preserved behaviour.** `forgetDeletedSources` sits inside the same `if (!options.review)` guard as `markDeletedAsOrphaned`, so **review mode retires nothing by design and must keep retiring nothing**. The follow-up feature's second test is therefore **not a PRESERVE of working behaviour but a guard against its own fix** — because exit-early capture of the deleted identities, done carelessly, can move the retire call outside that guard and start deleting graph documents the wiki is still serving. This sentence exists to stop someone taking the obvious-looking shortcut.
+
+3. **Risk exclusions, as exclusion arguments, not as `none`.** All four, each with its evidence:
+   - `CompileOptions` is **not** exported from `packages/wiki/src/index.ts` (that entry exports `createWiki`, `Wiki`, `CreateWikiOptions`, `DimensionsPort`, `DimensionsRequest` plus profile/domain-read/refusal surfaces), so **risk item 3 does not attach**.
+   - the published `CreateWikiOptions` in `sdk/core-types.ts` is **byte-unchanged** because that file was never touched;
+   - the base-vs-head differential was **byte-identical** including empty stdout/stderr, `stateIdentical:true` and `pages:[]`, so no path resolves a different dimension set and **item 1 does not attach**; and
+   - the port threading carries **four committed tests, one mutation-proven**, so **item 6 does not attach to what changes**.
+
+   The reason this reasoning is recorded at all: "A `Risk: none` that does not show its work is indistinguishable from a `Risk: none` that did not look."
+
+4. **The `/health` origin-gate asymmetry.** `/health` returns **200 even with a wrong `Host`**, because `/health` is graph-owned and graph routes deliberately skip the origin gate (`packages/api/src/host/server.ts:400`, and the trust-boundary table at `:14-16`), so the 403 half of the container criterion exists on `/` and `/api/pages` only. This is pre-existing and low severity for a health probe, **but exactly the sort of asymmetry that later reads as a hole** — which is why it belongs in the record rather than in nobody's memory.
