@@ -301,6 +301,9 @@ export async function ingestSource(
  *   omitted. A caller that resolved the request environment must pass it, or the
  *   document and its journal entry land in the AMBIENT Stack instead of the one the
  *   request named.
+ * @param port - The dimensions, injected by the caller that owns them: the parameter
+ *   `ingestSource` already takes, in the position `ingestSource` takes it. Omitted
+ *   means "resolve internally", exactly as before.
  * @returns Structured ingest result with filename, char count, and source URI.
  * @throws {LockBusyError} When another mutation holds the project lock.
  */
@@ -308,6 +311,7 @@ export async function ingestTextSource(
   root: string,
   input: IngestTextInput,
   env: NodeJS.ProcessEnv = process.env,
+  port?: DimensionsPort<Dimension>,
 ): Promise<IngestResult> {
   const digest = createHash("sha256")
     .update(`${input.title.length}\n`)
@@ -321,12 +325,16 @@ export async function ingestTextSource(
   // `env` keeps the position it has in `ingestSource`, and is forwarded rather than
   // dropped: omitting it here made this path resolve the tenant from the ambient
   // environment, so a request for one Stack wrote into the deployment's.
+  //
+  // `port` rides in the SAME trailing position `ingestSource` uses. It is the injected
+  // resolution seam: a port this function accepted but did not forward would revert to
+  // the ambient read, which makes the published option a decorative consumer.
   const { savedPath, writeStatus } = await writeToDimensions(root, {
     title: input.title,
     source,
     document,
     body: result.content,
-  }, undefined, env);
+  }, undefined, env, undefined, port);
 
   // Journal only real writes — a no-op re-ingest must not append a log line.
   if (writeStatus !== "unchanged") {

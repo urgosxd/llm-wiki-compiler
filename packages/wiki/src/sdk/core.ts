@@ -84,9 +84,15 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     // `env` is forwarded, not merely computed: an environment this boundary captured
     // but did not pass on silently retargets the write to the AMBIENT Stack, which is
     // a wrong-tenant write under the contract the resolution above promises.
-    ingest: ({ source }) => runQuiet(() => ingestSource(root, source, undefined, env)),
+    //
+    // `options.dimensionsPort` is forwarded for the same class of reason: it is the
+    // injected resolution seam, and a port captured from the caller but not passed on
+    // silently reverts to the ambient `LLMWIKI_DIMENSIONS` read the caller replaced.
+    ingest: ({ source }) =>
+      runQuiet(() => ingestSource(root, source, undefined, env, {}, options.dimensionsPort)),
 
-    ingestText: (input) => runQuiet(() => ingestTextSource(root, input, env)),
+    ingestText: (input) =>
+      runQuiet(() => ingestTextSource(root, input, env, options.dimensionsPort)),
 
     compile: (opts: SdkCompileOptions = {}) =>
       runQuiet(() => {
