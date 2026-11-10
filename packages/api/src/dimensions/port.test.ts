@@ -24,7 +24,24 @@ import { describe, expect, it } from "vitest";
 import { MissingDimensionsPortError, requireDimensionsPort } from "@repo/foundation";
 import type { DatabaseHandle, DimensionsPort, DimensionsRequest } from "@repo/foundation";
 import { DimensionActivationError, resolveDimensions } from "@repo/wiki/dimensions-activation";
+import type { CreateWikiOptions } from "@repo/wiki/compiler-sdk";
 import { createDimensionsPort } from "./port.js";
+
+/**
+ * The published option accepts the port this factory returns.
+ *
+ * The direction that ships: an embedder hands `createDimensionsPort()`'s result to
+ * `CreateWikiOptions.dimensionsPort`, and the published shape is the one the wiki
+ * ingest path declares authoritative (`packages/wiki/src/services/ingest/service.ts`).
+ * Type-level on purpose — a drift here is a `tsc` failure, not a runtime expectation.
+ *
+ * Asserted HERE, beside the factory, rather than from `test/`: `eslint.config.mjs`'s
+ * `WIKI_TO_API` boundary forbids a root-side test from naming this package in any
+ * form, and this guard must not be the reason to weaken that rule.
+ */
+const _acceptedByPublishedOptions: NonNullable<CreateWikiOptions["dimensionsPort"]> =
+  createDimensionsPort();
+void _acceptedByPublishedOptions;
 
 /** wiki's own dimension type, reached through the resolver rather than by name. */
 type WikiDimension = ReturnType<typeof resolveDimensions>[number];

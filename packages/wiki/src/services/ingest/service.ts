@@ -26,7 +26,7 @@
 import { tryWithOrdinaryMutationLock } from "../../utils/mutation-lock.js";
 import path from "path";
 import { createHash } from "node:crypto";
-import type { DimensionsPort } from "@repo/foundation";
+import type { DimensionsPort } from "../../sdk/core-types.js";
 import {
   createDimensionsDatabase,
   ingestDimensions,

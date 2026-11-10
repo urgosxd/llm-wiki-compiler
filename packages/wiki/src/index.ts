@@ -22,6 +22,16 @@
 
 export { createWiki } from "./sdk/wiki.js";
 export type { Wiki } from "./sdk/types.js";
+/**
+ * The published option and dimension-port types, additive on purpose.
+ *
+ * A `CreateWikiOptions.dimensionsPort` field an embedder cannot NAME is not a public
+ * option: `CreateWikiOptions` is reached through
+ * `@atomicstrata/llmwiki-core/compiler-sdk`, so the port it accepts has to be
+ * reachable from this entry too. `sdk/types.ts` re-exports the compilation's whole
+ * type surface, which is where the declarations in `sdk/core-types.ts` land.
+ */
+export type { CreateWikiOptions, DimensionsPort, DimensionsRequest } from "./sdk/types.js";
 
 /**
  * Read-only domain contract.

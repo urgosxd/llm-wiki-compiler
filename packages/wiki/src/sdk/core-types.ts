@@ -14,6 +14,8 @@
  * them by hand and they need names a reader can find.
  */
 
+import type { Dimension } from "../dimensions/types.js";
+
 export interface SdkCompileOptions {
   /** Write generated pages as candidates for review instead of mutating wiki/. */
   review?: boolean;
@@ -63,6 +65,97 @@ export interface CreateWikiOptions {
    * one the request named.
    */
   env?: NodeJS.ProcessEnv;
+  /**
+   * The configured dimensions, when the caller already holds one.
+   *
+   * OPTIONAL, AND OMITTING IT IS VALID (spec S3). Absent means "compose the
+   * default you are given", never "throw": an embedder that passes nothing keeps
+   * working exactly as it did. Inside the wiki package, absence means the ambient
+   * resolution `writeToDimensions` already performs.
+   *
+   * The type is declared in THIS file rather than re-exported from the monorepo's
+   * private foundation package for the reason in {@link DimensionsPort}: this file is
+   * published, and a private specifier in a published `.d.ts` is a specifier the
+   * embedder can never import.
+   */
+  dimensionsPort?: DimensionsPort<Dimension>;
+}
+
+/**
+ * One dimension-resolution request, as the published contract states it.
+ *
+ * ## The published type is the AUTHORITATIVE one on the wiki side
+ *
+ * This is not a copy kept in step with the private foundation package's interface; it is the
+ * contract the wiki ingest path ACCEPTS, and foundation's implementation-side
+ * `DimensionsPort<Dimension>` is the thing that has to satisfy it. That direction is
+ * the only one the product needs: the API package constructs a port and hands it to
+ * `CreateWikiOptions.dimensionsPort`, while nothing ever hands a hand-built
+ * published port to the engine's resolver. Testing the pair as "are these identical?"
+ * demanded a mirror of `db` that cannot be written without naming a third-party
+ * package; testing the direction that ships demands only what an implementation side
+ * can actually produce.
+ *
+ * ## Why `db` is `object`
+ *
+ * The handle's query-result container is the driver package's `RowList` reached through
+ * drizzle's `PgQueryResultKind<PostgresJsQueryResultHKT, TRow>` — `RowList<T> = T &
+ * Iterable<NonNullable<T[number]>> & ResultQueryMeta<…>`, whose `pop()` returns
+ * `Assume<TRow, Row>` rather than `TRow`. Re-declaring that shape is not possible
+ * without naming that ORM and its driver package, which would put specifiers in a
+ * published `.d.ts` that the publishing package does not declare. So the field is
+ * typed as the narrowest thing that is true here: an object.
+ *
+ * The handle is carried so an IMPLEMENTATION can forward it to the library's own
+ * resolution machinery — the composition root owns the real handle and the real
+ * resolver. It is NOT carried so an embedder can execute SQL through this boundary.
+ * A hand-built port therefore cannot call `db.execute` meaningfully, and that is the
+ * contract, not a gap: the published surface offers an injectable port, not database
+ * access.
+ *
+ * `only` is `readonly string[]` rather than a dimension-name union because the union
+ * belongs to the dimension that defines it; `env` is REQUIRED so a port can never
+ * fall back to `process.env` through an input it never stated; `root` and `db` are
+ * REQUIRED because both real consumers already hold them when they need a dimension
+ * set.
+ */
+export interface DimensionsRequest {
+  /** Dimension names the caller may receive; never enables one the environment disabled. */
+  readonly only: readonly string[];
+  /** The one environment this resolution reads. Required: no ambient default. */
+  readonly env: NodeJS.ProcessEnv;
+  /** Project root the dimensions are bound to. */
+  readonly root: string;
+  /**
+   * Database handle the dimensions are backed by, OPAQUE at this boundary.
+   *
+   * `object` rather than the driver's handle type for the reason in this interface's
+   * header: the result container cannot be re-declared here without naming packages a
+   * published consumer cannot resolve. It is forwarded to the implementation's own
+   * resolver; it is not a query surface this contract offers.
+   */
+  readonly db: object;
+  /** Stack the caller already resolved, when it did. */
+  readonly stackId?: string;
+}
+
+/**
+ * The configured dimensions, as a caller who holds them hands them over.
+ *
+ * {@link CreateWikiOptions.dimensionsPort} stays OPTIONAL and omitting it is valid
+ * (spec S3): absent means the composed default, never a throw.
+ *
+ * @typeParam TDimension - The dimension type of the implementing side, which this
+ *   file does not name beyond the one shipped dimension contract.
+ */
+export interface DimensionsPort<TDimension> {
+  /**
+   * Build the dimensions the request enables.
+   *
+   * @param request - The root, handle, environment and narrowing the caller states.
+   * @returns The enabled dimensions, in the implementation's commit order.
+   */
+  resolve(request: DimensionsRequest): readonly TDimension[];
 }
 
 /**
