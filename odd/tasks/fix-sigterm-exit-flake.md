@@ -45,8 +45,8 @@ Recorded finding, no code change: `runServe` in `packages/api/src/main.ts` never
 
 ## Tasks
 
-`T1 → S1,S2,S3,S5 | route: worker | commit: pending` — arm the shutdown handlers before the readiness announcement, with the deterministic RED.
-`T2 → S4 | route: worker | commit: pending` — `process.on` + `shuttingDown` idempotence guard; defect pinned at the unit level in `packages/api/src/serve-bind.test.ts`.
+`T1 → S1,S2,S3,S5 | route: worker | commit: fdfff69b472fbc0308ff51624d909de85d945077` — arm the shutdown handlers before the readiness announcement, with the deterministic RED.
+`T2 → S4 | route: worker | commit: 198170211eb619aeea09460e128089dafaddcaa5` — `process.on` + `shuttingDown` idempotence guard; defect pinned at the unit level in `packages/api/src/serve-bind.test.ts`.
 `T3 → S6 | documentation only, no code change`
 `T4 → S7 | gates evidence`
 
