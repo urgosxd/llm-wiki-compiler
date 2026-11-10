@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — the `llmwiki` executable and its `bin` entry are removed, and
+  there is no replacement command.** Anyone who ran `llmwiki <command>` loses it
+  entirely: `npm install -g llm-wiki-compiler` no longer puts anything on
+  `PATH`, and the package ships a library, an MCP server and a container image,
+  not an executable. Nothing stands in for the retired one, and the removal is
+  not a rename or a re-flagging of it.
+
+  Three counts describe this change and they measure three different things, so
+  quoting one alone is how a changelog turns into a lie: **27 top-level commands
+  and 43 leaf invocations** left with the executable — every one of them,
+  because the binary that dispatched them is gone; **18 of those 43 had no
+  non-CLI entry point at all**, so their capability is lost rather than merely
+  re-surfaced; and **6 of those 18 are the data-mutating capabilities** an
+  operator accepted losing. Every other leaf invocation was a facade over a
+  module that survives with its own tests, and is now reached through
+  `createWiki()`, the MCP tools or the host route instead of a command.
+
+  The six data-mutating capabilities are gone outright, with nothing replacing
+  them: `rm` (`sources/removal.ts`, `wiki/delete-page.ts`), `visualize`
+  (`viewer/navigation-write.ts`, `viewer/navigation-artifacts.ts`), `lint
+  --fix-preview`/`--fix-propose` (`linter/fix-plan.ts`), `ingest-session`
+  (`adapters/**`), `eval cache clear` (`eval/cache.ts`) and `review reject`
+  (`compiler/candidate-rejection.ts`). The rest of the eighteen go with the CLI,
+  and `review approve`, `review list` and `review show` go with `review reject`
+  on purpose rather than surviving it: an `approve` that outlives a `reject` is
+  a surface that can admit into trust and never remove from it.
+
+  `createWiki()` and the rest of the library surface are unchanged.
+  `deleteSource` is withdrawn from it separately: it unlinked the raw source and
+  left the derived pages, links and state rows behind, so keeping it once `rm`
+  was gone would have turned "no delete" into "delete, but it corrupts".
+
+  The container still starts in both modes, `host` and `serve`, and now does so
+  from `dist/api.js` through a new `@repo/api` launcher. `docker/entry.sh` is
+  unchanged in contract — same modes, same flags — so an existing deployment
+  keeps working.
+
+  Two delivery repairs land alongside, because neither mode could be proven from
+  an image that did not build: the image was **unbuildable before this branch**
+  (`docker build` died at the frozen install with `pnpm: not found`, exit 127,
+  reproduced against a clean archive of the base commit), and its
+  `pnpm prune --prod` step deadlocked for ~39 minutes on a fresh tree before it
+  was replaced by a separate production-dependencies stage.
+
 - **BREAKING — the Stack argument is named `stackId` on every request, and the
   legacy `stack_id` request-body key is now refused.** The Knowledge Graph
   dimension spelled one concept `stack_id` on its inbound surface while the wiki

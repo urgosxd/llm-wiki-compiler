@@ -2,7 +2,7 @@
   "name": "llm-wiki-compiler",
   "version": "1.4.0-dev.20260919",
   "packageManager": "pnpm@11.5.0",
-  "description": "A knowledge compiler CLI \u2014 raw sources in, interlinked wiki out",
+  "description": "A knowledge compiler \u2014 raw sources in, interlinked wiki out \u2014 whose library surface is createWiki(), reached through the MCP server or the container image",
   "type": "module",
   "workspaces": [
     "packages/api",

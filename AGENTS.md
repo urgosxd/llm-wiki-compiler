@@ -1,6 +1,6 @@
 # llmwiki
 
-A knowledge compiler CLI. Raw sources in, interlinked wiki out.
+A knowledge compiler. Raw sources in, interlinked wiki out, reached through the MCP server or the container image — not a CLI.
 
 ## Development Guidelines
 
@@ -68,24 +68,28 @@ scope you ran. Report the scope and the result together.
 **`pnpm run test:integration`** is the remaining tier: `scripts/test-partition.ts`
 classifies a test as integration when it spawns a child process — `runCLI(`,
 `spawnSync(`, `spawn(`, `execFileSync(`, `execFile(`, `execSync(`, `npm pack`,
-`fixtures/cli-runner` — so it covers the built command surface end to end rather
-than behaviour reached in process. `test:unit` takes everything that does not
-spawn, and `pnpm test` is plain `vitest run`, which collects both tiers.
+`fixtures/run-cli-server`, `fixtures/mcp-test-env` — so it covers the built command
+surface end to end rather than behaviour reached in process. `test:unit` takes
+everything that does not spawn, and `pnpm test` is plain `vitest run`, which
+collects both tiers.
 `test/sdk/packaging.test.ts` spawns too but `vitest.config.ts` excludes it from
 that collection; it runs only via `pnpm run test:pack`.
 
-**Workers are capped by measured memory, not by core count.** `vitest.config.ts` pins
-`maxWorkers: 4`, and `pnpm run test:integration` lowers it further with
-`--maxWorkers=2`, because those files spawn `node dist/cli.js` children whose cost is per
-child process rather than per file. Three full-suite runs on the reference host — one per
-configuration, sequential and alone, peak RSS of the whole run's process tree from its
-cgroup counter — measured 2 workers 809 s / 2808 MB / no swap out, 4 workers 496 s /
-3816 MB / ~1 MB, and 6 workers 403 s / 5119 MB / ~400 MB with worst MemAvailable down to
-2576 MB. Six workers buys 93 s and costs the host, which is how concurrent verification
-runs start killing each other. The cap is sized from the worst case `pnpm test` can
-actually meet — the integration tier's per-worker peak, since that run covers both
-tiers unfiltered — so **the unit tier deliberately runs below its own optimum; do not
-raise this number without the integration tier's peak in hand.**
+**Workers are capped by measured memory, not by core count.** `vitest.config.ts`
+pins `maxWorkers: 4`, and `pnpm run test:integration` lowers it further with
+`--maxWorkers=2`, because those files spawn `node dist/api.js` children — the
+launcher the build produces is the only executable in `dist/` — whose cost is per
+child process rather than per file, and spawning is exactly what
+`scripts/test-partition.ts` classifies as `integration`. Three full-suite runs on
+the reference host — one per configuration, sequential and alone, peak RSS of the
+whole run's process tree from its cgroup counter — measured 2 workers 809 s /
+2808 MB / no swap out, 4 workers 496 s / 3816 MB / ~1 MB, and 6 workers 403 s /
+5119 MB / ~400 MB with worst MemAvailable down to 2576 MB. Six workers buys 93 s
+and costs the host, which is how concurrent verification runs start killing each
+other. The cap is sized from the worst case `pnpm test` can actually meet — the
+integration tier's per-worker peak, since that run covers both tiers unfiltered —
+so **the unit tier deliberately runs below its own optimum; do not raise this
+number without the integration tier's peak in hand.**
 
 Tests must not depend on timing or external services.
 

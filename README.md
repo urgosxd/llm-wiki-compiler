@@ -162,7 +162,7 @@ Open [`examples/basic/`](examples/basic/) - it includes a small pre-generated wi
 
 ## The `llmwiki` CLI is gone
 
-The `llmwiki` executable left the product. The package's `bin` entry is retired, so `npm install -g llm-wiki-compiler` no longer puts anything on your `PATH`, and the eighteen commands an operator reached through it lost their only entry point. Six of those eighteen were data-mutating capabilities that had no implementation anywhere else: `rm`, `visualize`, `lint --fix-preview`/`--fix-propose`, `ingest-session`, `eval cache clear` and `review reject`. The remaining commands were facades over modules that survive with their own tests, and are reachable through the surfaces in the table above.
+The `llmwiki` executable left the product. The package's `bin` entry is retired, so `npm install -g llm-wiki-compiler` no longer puts anything on your `PATH`; 27 top-level commands and 43 leaf invocations went with it, and 18 of those 43 had no non-CLI entry point at all, so their capability is lost rather than re-surfaced. Six of those eighteen were data-mutating capabilities that had no implementation anywhere else: `rm`, `visualize`, `lint --fix-preview`/`--fix-propose`, `ingest-session`, `eval cache clear` and `review reject`. The remaining commands were facades over modules that survive with their own tests, and are reachable through the surfaces in the table above.
 
 The library surface is unchanged: `createWiki({ root })` is still the supported entry point, and the container still starts the `host` and `serve` modes. [CHANGELOG.md](CHANGELOG.md) records the removal as a breaking change.
 
