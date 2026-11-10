@@ -129,7 +129,7 @@
     "packages/wiki/src/commands/query.ts max-lines-per-function": 1,
     "packages/wiki/src/compiler/compile-report.ts max-lines-per-function": 1,
     "packages/wiki/src/compiler/index.ts max-lines": 1,
-    "packages/wiki/src/compiler/index.ts max-lines-per-function": 5,
+    "packages/wiki/src/compiler/index.ts max-lines-per-function": 4,
     "packages/wiki/src/context/build.ts max-lines": 1,
     "packages/wiki/src/context/build.ts max-lines-per-function": 2,
     "packages/wiki/src/context/graph.ts max-lines-per-function": 1,
