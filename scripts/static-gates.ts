@@ -14,8 +14,8 @@
  * ## `build` is NOT in this set, and must not be added
  *
  * Every gate here is read-only over the checkout. `pnpm run build` is not: it
- * writes `dist/`, and anything that spawns `dist/cli.js` — the output-contract
- * tests, the packed-consumer suites — reads what it writes. A build running
+ * writes `dist/`, and anything that spawns `dist/api.js` — the launcher and
+ * viewer suites, the packed-consumer suites — reads what it writes. A build running
  * beside those readers is a race whose losing runs look like product bugs, so
  * `build` stays ordered BEFORE anything that spawns `dist/`, in the hook and in
  * CI, and never becomes a member of {@link STATIC_GATES}.

@@ -1,11 +1,11 @@
 /**
  * Vitest globalSetup: build dist/ once before any test file loads.
  *
- * Several test files spawn `node dist/cli.js` to exercise the CLI surface.
- * Without a shared setup, each file's own beforeAll would call tsup, and
- * vitest's parallel-by-default test workers would race on dist/cli.js
- * (tsup's `clean: true` wipes the file mid-write). Building once globally
- * eliminates the race and saves ~1s per integration test file.
+ * Several test files spawn `node dist/api.js` to exercise the launcher and the
+ * viewer/MCP surfaces it carries. Without a shared setup, each file's own
+ * beforeAll would call tsup, and vitest's parallel-by-default test workers would
+ * race on dist/api.js (tsup's per-entry `clean` wipes the file mid-write).
+ * Building once globally eliminates the race and saves ~1s per spawning file.
  *
  * THE BUILD IS SKIPPED WHEN ITS INPUTS ARE UNCHANGED. The full build costs
  * ~42s (~36s of it `packages/llmwiki-core`, mostly `dts: true`), which a

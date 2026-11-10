@@ -3,9 +3,7 @@
   "entry": [
     "scripts/check-fallow-report.mjs",
     "packages/wiki/src/core-index.ts",
-    "packages/wiki/src/cli.ts",
     "packages/wiki/src/index.ts",
-    "packages/wiki/src/compiler-cli.ts",
     "packages/wiki/src/sdk/compiler-composition.ts",
     "packages/wiki/src/viewer/assets/viewer.js",
     "scripts/copy-viewer-assets.mjs",
@@ -32,6 +30,7 @@
     "packages/llmwiki-kg/**"
   ],
   "ignoreDependencies": [
+    "dotenv",
     "@fontsource/dm-sans",
     "@fontsource/nunito",
     "@fontsource/space-grotesk",

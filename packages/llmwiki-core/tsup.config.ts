@@ -9,7 +9,6 @@ import { execFileSync } from "node:child_process";
 export default defineConfig({
   entry: {
     index: "../../packages/wiki/src/core-index.ts",
-    "compiler-cli": "../../packages/wiki/src/compiler-cli.ts",
     "compiler-sdk": "../../packages/wiki/src/sdk/compiler-composition.ts",
   },
   outDir: "dist",

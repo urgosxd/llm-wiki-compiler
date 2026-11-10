@@ -40,14 +40,16 @@ import os from "node:os";
 import { createWiki } from "../packages/wiki/src/index.js";
 import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
 import { buildParityCorpus } from "./fixtures/parity-corpus.js";
-import { runCLI } from "./fixtures/run-cli.js";
 import { connectMcpClient } from "./fixtures/mcp-test-env.js";
 import { assertGolden } from "./parity/golden.js";
 
 /** Every deterministic, no-LLM surface the profile refactor must reproduce. */
 const DETERMINISTIC_SURFACES = [
   "sdk.status", "sdk.lint", "sdk.exportJson", "sdk.listPages", "sdk.getPage", "sdk.exportOkf",
-  "cli.lint", "cli.export", "cli.next", "cli.review.list",
+  // The four `cli.*` captures left with the CLI. Their behaviour did not
+  // disappear unobserved: `sdk.lint` and `sdk.exportJson` below cover the same
+  // in-process paths the `lint` and `export` commands delegated to, and the
+  // `next` / `review list` adapters left the product with the CLI itself.
   // `mcp.wiki_status`, `mcp.lint_wiki` and `mcp.read_page` were retired rather than
   // rebound; the file header records why. `mcp.resources` stays: resources keep
   // resolving their Stack from the server environment by design.
@@ -65,20 +67,12 @@ const DEFERRED_LLM_SURFACES: Array<{ surface: string; reason: string }> = [];
  * `replaceRoot` so the (load-bearing) relative remainder is still asserted.
  *
  * The generic key name `at` is deliberately NOT global: stripping any field
- * named `at` tree-wide would mask drift in meaningful `at` fields. The only
- * volatile `at` is the lint last-run cache timestamp (`summary.lint.at`),
- * which surfaces solely through `cli.next`; it is scoped there via
- * {@link NEXT_VOLATILE} instead of being deleted everywhere.
+ * named `at` tree-wide would mask drift in meaningful `at` fields. The one
+ * volatile `at` was the lint last-run cache timestamp (`summary.lint.at`), and it
+ * surfaced ONLY through `cli.next` — a surface that left with the CLI, so the
+ * scoped override it needed is gone with it rather than kept as dead masking.
  */
 const VOLATILE = ["exportedAt", "generatedAt"];
-
-/**
- * Volatile fields for the `cli.next` surface only: the global set plus the
- * lint-cache wall-clock timestamp `at` (the run-time of `llmwiki lint`, which
- * cannot be pinned). Scoped here so `at` is masked at exactly its one volatile
- * site rather than across the whole tree.
- */
-const NEXT_VOLATILE = [...VOLATILE, "at"];
 
 let root = "";
 /** Realpath of `root` — macOS resolves temp dirs through the /private symlink. */
@@ -207,25 +201,6 @@ describe("SDK deterministic surfaces", () => {
       tree,
     }, { volatile: VOLATILE, unordered: ["writtenPaths", "warnings"] });
     await rm(path.dirname(out), { recursive: true, force: true });
-  });
-});
-
-describe("CLI deterministic surfaces", () => {
-  it("captures lint, next --json, review list (stdout)", async () => {
-    const lint = await runCLI(["lint"], root);
-    capture("cli.lint", { code: lint.code, stdout: normalizeCliText(lint.stdout) });
-    const next = await runCLI(["next", "--json"], root);
-    capture("cli.next", { code: next.code, json: JSON.parse(next.stdout) }, { volatile: NEXT_VOLATILE });
-    const review = await runCLI(["review", "list"], root);
-    capture("cli.review.list", { code: review.code, stdout: normalizeCliText(review.stdout) });
-  });
-
-  it("captures export stdout plus written file tree and bytes", async () => {
-    const result = await runCLI(["export"], root);
-    const tree = await snapshotTree(path.join(root, "dist", "exports"));
-    // Several formats stamp the volatile export time into their bytes; blank it.
-    for (const file of Object.keys(tree)) tree[file] = blankExportTime(tree[file]);
-    capture("cli.export", { code: result.code, stdout: normalizeCliText(result.stdout), tree });
   });
 });
 

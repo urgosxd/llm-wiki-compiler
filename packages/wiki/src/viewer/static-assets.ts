@@ -24,7 +24,7 @@ import { assertSafeSlug, PathSafetyError } from "./path-safety.js";
 /**
  * Resolve the directory the viewer's static assets live in. Computed once
  * at module load, relative to wherever this file ended up after tsup
- * bundling — i.e. `<dist>/viewer/assets/` next to `dist/cli.js`. The
+ * bundling — i.e. `<dist>/viewer/assets/` next to the launcher bundle. The
  * `copy-viewer-assets.mjs` tsup `onSuccess` hook is responsible for
  * populating that location; if it failed to run, the shell handler in
  * `server.ts` surfaces a per-request `shell_missing` 500 and this module

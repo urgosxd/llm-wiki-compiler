@@ -1,12 +1,13 @@
 /**
  * Build the standard distribution as a facade over one core and engine package.
- * Dependency builds finish first; both CLI and SDK externalize the same entries.
+ * Dependency builds finish first; both the library and the launcher externalize
+ * the same entries.
  */
 import { defineConfig, type Options } from "tsup";
 import { buildCompilerDependencies } from "./scripts/tsup-command.js";
 
-// Fields shared by both bundles. Extracted into one base object so the CLI and
-// library entries can't drift on format/target/output settings.
+// Fields shared by every bundle. Extracted into one base object so the entries
+// can't drift on format/target/output settings.
 const shared = {
   format: ["esm"],
   target: "node24",
@@ -22,39 +23,8 @@ export default defineConfig(async (options) => {
   return [
   {
     ...shared,
-    entry: ["packages/wiki/src/cli.ts"],
-    // External packages are outside esbuild's import graph. Watch their source
-    // explicitly and rebuild them before announcing a successful facade build.
-    ...(options.watch ? {
-      watch: ["packages/wiki/src", "scripts", "packages/*/package.json", "packages/*/tsup.config.ts", "tsconfig.json"],
-      esbuildPlugins: [{
-        name: "rebuild-compiler-dependencies",
-        setup(build) {
-          build.onStart(async () => {
-            if (initialBuild) { initialBuild = false; return; }
-            await buildCompilerDependencies(process.cwd());
-          });
-        },
-      }],
-    } : {}),
-    // Per-entry targeted clean: only wipe this bundle's own outputs. A blanket
-    // `clean: true` here would race the library entry's writes (tsup runs array
-    // entries in parallel) and could delete dist/index.* on watch/incremental
-    // rebuilds.
-    clean: ["dist/cli.js", "dist/cli.js.map"],
-    banner: {
-      js: "#!/usr/bin/env node",
-    },
-    // Mirror the viewer's static assets (shell template, stylesheet, client
-    // script) into dist/viewer/assets/ so they ship with the published
-    // npm package. The Slice 3 viewer server reads the template at runtime
-    // and serves /assets/* from this directory.
-    onSuccess: "node scripts/copy-viewer-assets.mjs",
-  },
-  {
-    ...shared,
     entry: ["packages/wiki/src/index.ts"],
-    // Per-entry targeted clean: only this bundle's own outputs, never the CLI's.
+    // Per-entry targeted clean: only this bundle's own outputs, never a sibling's.
     clean: ["dist/index.js", "dist/index.js.map", "dist/index.d.ts"],
     dts: true,
     // No banner — library bundle must not include a shebang line.
@@ -65,7 +35,7 @@ export default defineConfig(async (options) => {
     // keeps copying a single root `dist/`. `docker/entry.sh` execs this bundle in
     // both modes; `packages/api/package.json` publishes no path to it.
     entry: { api: "packages/api/src/main.ts" },
-    // Per-entry targeted clean, for the reason the CLI entry documents: the array
+    // Per-entry targeted clean, for the reason the library entry documents: the array
     // entries build in parallel, so a blanket `clean: true` would delete a
     // sibling's output mid-write and turn every watch rebuild into a race.
     clean: ["dist/api.js", "dist/api.js.map"],
@@ -88,6 +58,16 @@ export default defineConfig(async (options) => {
         "const require = __createRequire(import.meta.url);",
       ].join("\n"),
     },
+    // Mirror the viewer's static assets (shell template, stylesheet, client
+    // script) into dist/viewer/assets/ so they ship with the published npm
+    // package AND with the container image. The viewer server reads the template
+    // at runtime and serves /assets/* from this directory.
+    //
+    // It hangs off THIS entry because `host` is the only mode that serves the
+    // viewer, and this is the only bundle that carries it. It used to hang off the
+    // CLI entry; when that entry was deleted the copy silently stopped and
+    // `dist/viewer/assets` came back EMPTY while the build still reported success.
+    onSuccess: "node scripts/copy-viewer-assets.mjs",
   },
   ];
 });

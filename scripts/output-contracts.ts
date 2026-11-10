@@ -13,17 +13,17 @@
 import type { AffectedScope } from "./test-affected.ts";
 
 /**
- * Tests whose whole point is a BYTE-LEVEL contract on the spawned CLI's stdout
+ * Tests whose whole point is a BYTE-LEVEL contract on a spawned process's stdout
  * and stderr. They are always run, on top of whatever tier the scope selects.
  *
  * WHY A SEPARATE LIST. `scripts/test-partition.ts` classifies these files
- * `integration` because they spawn `node dist/cli.js`, and the affected runner
+ * `integration` because they spawn a child process, and the affected runner
  * only runs the spawn-free unit tier on a global change — so without this list
  * such a file is unreachable from `npm run test:affected` by construction and
  * can only go green when somebody runs it by hand. That is exactly how
- * `test/quickstart-json-stdout.test.ts` regressed invisibly: it pins that
+ * `test/quickstart-json-stdout.test.ts` regressed invisibly: it pinned that
  * `--json` stdout stays one envelope while the warning goes to stderr, and any
- * change to CLI option handling or Stack resolution can break it silently.
+ * change to option handling or Stack resolution could break it silently.
  * The unit tier cannot hold it, because a real spawned process is the only
  * thing that produces those bytes.
  *
@@ -31,19 +31,23 @@ import type { AffectedScope } from "./test-affected.ts";
  * entry on every affected run):
  *
  *   1. The assertion must be a byte-level stdout/stderr contract of a spawned
- *      CLI, i.e. something no in-process unit test can produce.
+ *      process, i.e. something no in-process unit test can produce.
  *   2. It must be a contract a plausible change (option parsing, Stack
  *      resolution, output formatting) can break while every other gate stays
  *      green.
  *   3. If a spawn-free assertion can pin the same contract, add it to the unit
  *      tier instead and do NOT list the file here.
  *
+ * EMPTY IS THE CURRENT, CORRECT STATE, not an oversight. Every entry this list
+ * ever held was a contract on the CLI's stdout, and the CLI left the product with
+ * the capabilities it reached. The machinery below is kept, and covered by
+ * `scripts/output-contracts.test.ts`, because the next spawned-surface contract
+ * (the `@repo/api` launcher is one candidate) needs exactly this path.
+ *
  * The list is exact, repository-relative paths. A missing or misspelled entry
  * fails the run closed: vitest is handed the path explicitly and errors on it.
  */
-export const OUTPUT_CONTRACT_TESTS: readonly string[] = [
-  "test/quickstart-json-stdout.test.ts",
-];
+export const OUTPUT_CONTRACT_TESTS: readonly string[] = [];
 
 /** One `npx vitest …` invocation, as argv after the `vitest` binary. */
 export interface VitestInvocation {

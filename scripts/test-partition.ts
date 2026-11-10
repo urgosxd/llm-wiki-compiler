@@ -2,8 +2,8 @@
  * @file Partition the test suite into a fast inner loop and an integration tier.
  *
  * A small minority of test files start a child process, and those files dominate
- * the suite's wall time: most of the cost is `node dist/cli.js` cold start paid
- * once per spawn, not test logic. Splitting the two lets a developer run the
+ * the suite's wall time: most of the cost is a `node dist/api.js` cold start
+ * paid once per spawn, not test logic. Splitting the two lets a developer run the
  * non-spawning majority in seconds and leave the spawning files to CI. Both tier
  * sizes are one command away — `node scripts/test-partition.ts unit | wc -l` and
  * `node scripts/test-partition.ts integration | wc -l` — as is the total they add
@@ -15,12 +15,10 @@
  * tier and make it a lie. The patterns below are the complete set of ways this
  * repo starts a child process, verified against every test file: `runCLI`,
  * `execFileSync`, `spawnSync`, `spawn`, `execFile`, `execSync`, `npm pack`,
- * plus `exec(...)` from the shared `fixtures/cli-runner` helper.
+ * plus `exec(...)` from a shared fixture helper.
  *
- * A file that imports `cli-runner` is integration even without a direct spawn
- * call site of its own — the helper exists precisely to spawn the built CLI, and
- * files such as `cli.test.ts`, `claim-provenance-integration` and `rm-cli` call
- * `exec(...)` through it rather than naming a child-process API.
+ * A file that imports a spawning fixture is integration even without a direct
+ * spawn call site of its own — that is the rule recorded with the patterns below.
  *
  * WHICH DIRECTORIES ARE ENUMERATED IS A CORRECTNESS PROPERTY, NOT A CONVENIENCE.
  * The tiers are not only a developer convenience: `scripts/run-affected-tests.ts`
@@ -82,8 +80,8 @@ const SKIPPED_DIRS: ReadonlySet<string> = new Set([
  * prose in comments.
  *
  * The three path entries are the other half of the same rule: A SPAWN HIDDEN IN
- * A SHARED FIXTURE IS STILL A SPAWN. `cli-runner`, `run-cli-server` and
- * `mcp-test-env` all fork a real subprocess on the caller's behalf, so the file
+ * A SHARED FIXTURE IS STILL A SPAWN. `run-cli-server` and `mcp-test-env`
+ * fork a real subprocess on the caller's behalf, so the file
  * importing one pays that cold start without ever naming `spawn`. Reading only
  * each file's own source therefore classified every viewer and MCP stdio suite
  * as `unit` while they spawned — the fast tier was a lie for as long as this
@@ -100,7 +98,6 @@ const SPAWN_PATTERNS: readonly RegExp[] = [
   /\bexecFile\s*\(/,
   /\bexecSync\s*\(/,
   /\bnpm\s+pack\b/,
-  /fixtures\/cli-runner/,
   /fixtures\/run-cli-server/,
   /fixtures\/mcp-test-env/,
 ];

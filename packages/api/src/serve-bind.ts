@@ -1,24 +1,23 @@
 /**
  * @file src/serve-bind.ts
- * @description Shared bind/readiness/shutdown plumbing for the modules that
- * start a long-lived HTTP listener (the `view` command and the joining package's
- * `host` mode).
+ * @description Shared bind/readiness/shutdown plumbing for the `host` mode the
+ * launcher starts: the `--host`/`--allow-lan` symmetry, the wildcard rejection,
+ * the readiness line and the shutdown handlers.
  *
- * Extracted from `src/commands/view.ts` so a SECOND listener does not duplicate
- * the privacy gate. That duplication is the risk worth avoiding: the
- * `--host`/`--allow-lan` symmetry and the wildcard rejection are security rules,
- * and two copies of a security rule eventually disagree. One module owns them.
+ * Extracted from `src/commands/view.ts` so a SECOND listener did not duplicate
+ * the privacy gate. That duplication was the risk worth avoiding: two copies of a
+ * security rule eventually disagree. One module owns them.
  *
- * ## Why it sits at the package root and not under `commands/`
+ * ## Why it now lives in the joining package
  *
- * The launcher that starts the second listener lives in the joining package
- * (`packages/api`), and the
- * `commands/**` tree is CLI-only surface that leaves with the CLI. A gate shared
- * by the launcher and a surviving command is neither CLI-only nor the launcher's:
- * moving it into `packages/api` would force the `view` command to import the joining
- * package (`wiki → api`, forbidden by the topology), and copying it would recreate
- * the duplicated security rule this module exists to prevent. So it stays in
- * `@repo/wiki`, reachable from both sides as `@repo/wiki/serve-bind`.
+ * It used to sit at `@repo/wiki`'s root, reachable as `@repo/wiki/serve-bind`,
+ * because the CLI's `view` command and the launcher's `host` mode both started a
+ * listener and neither could import the other's package (`wiki -> api` is
+ * forbidden by the topology). `view` left with the CLI, so the launcher is the
+ * only listener this repository starts and the module belongs beside it. Its
+ * reachability is the reason the comment that used to be here is now wrong:
+ * nothing outside `packages/api` imports it, so nothing outside `packages/api`
+ * should be able to.
  *
  * Nothing here is viewer-specific; the names were the only viewer-ish thing about
  * it.

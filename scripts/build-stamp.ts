@@ -51,7 +51,7 @@ const INPUT_FILES = ["tsup.config.ts", "tsconfig.json", "package.json"];
 
 /**
  * Paths the build must have produced. Checked for existence only: a stamp that
- * claims a successful build while `dist/cli.js` is missing is treated as a miss.
+ * claims a successful build while `dist/api.js` is missing is treated as a miss.
  *
  * Every entry must name a file THIS repository's build actually writes, or the
  * check can never pass and the cache never skips — a demanded output nobody
@@ -60,7 +60,6 @@ const INPUT_FILES = ["tsup.config.ts", "tsconfig.json", "package.json"];
  * workspace.
  */
 export const REQUIRED_OUTPUTS = [
-  "dist/cli.js",
   "dist/api.js",
   "dist/index.js",
   "dist/index.d.ts",

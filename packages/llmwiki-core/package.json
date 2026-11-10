@@ -25,10 +25,6 @@
     "prepack": "npm run build"
   },
   "exports": {
-    "./compiler-cli": {
-      "types": "./dist/compiler-cli.d.ts",
-      "import": "./dist/compiler-cli.js"
-    },
     "./compiler-sdk": {
       "types": "./dist/compiler-sdk.d.ts",
       "import": "./dist/compiler-sdk.js"
@@ -47,8 +43,6 @@
     "@mozilla/readability": "^0.6.0",
     "ajv": "^8.20.0",
     "canonicalize": "^3.0.0",
-    "chokidar": "^4.0.0",
-    "commander": "^13.0.0",
     "express": "^5.1.0",
     "js-yaml": "^4.3.0",
     "jsdom": "^25.0.0",

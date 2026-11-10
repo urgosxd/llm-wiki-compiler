@@ -45,8 +45,7 @@
  *
  * pdf-parse (and its transitive pdfjs-dist) is imported dynamically so the
  * cost of loading the PDF parser is only paid when a PDF is actually being
- * ingested — `node dist/cli.js --help` and every other non-PDF code path
- * stays lean.
+ * ingested — a `--help` listing and every other non-PDF code path stays lean.
  */
 
 import { readFile } from "fs/promises";

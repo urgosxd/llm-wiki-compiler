@@ -63,7 +63,7 @@ import { createRequire } from "node:module";
 import { createWikiMcpServer, startMCPServer } from "@repo/wiki/mcp";
 import { startHost } from "./host/server.js";
 import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
-import { buildReadyUrl, registerShutdown, resolveBindConfig, type BindOptions } from "@repo/wiki/serve-bind";
+import { buildReadyUrl, registerShutdown, resolveBindConfig, type BindOptions } from "./serve-bind.js";
 
 /** The subcommand that starts the unified HTTP listener. */
 const HOST_COMMAND = "host";

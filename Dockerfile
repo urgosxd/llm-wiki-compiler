@@ -17,8 +17,8 @@
 #
 # WHY THE RUNTIME KEEPS `node_modules`
 #
-# `dist/cli.js` is a bundle, but not a self-contained one: it externalizes
-# `@atomicstrata/llmwiki-core`, the MCP SDK, `zod`, `openai`, `commander`,
+# `dist/api.js` is a bundle, but not a self-contained one: it externalizes
+# `@atomicstrata/llmwiki-core`, the MCP SDK, `zod`, `openai`,
 # `markdown-it`, `jsdom` and the rest of the 20 root dependencies. Dropping
 # `node_modules` produces an image that starts and then fails on its first import,
 # so the runtime stage carries a production-only install of them, built from clean

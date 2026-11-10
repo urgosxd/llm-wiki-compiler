@@ -133,22 +133,19 @@ function runVitest(root: string, pnpm: PnpmCandidate, argv: readonly string[]): 
 /**
  * Build `dist/` when a contract file needs it and it is absent.
  *
- * The output contracts spawn `node dist/cli.js`, so a checkout that was never
- * built cannot run them. Skipping them would turn a real byte-contract check
- * into a silent no-op, so this BUILDS ONCE instead, and a failing build fails
- * the hook. (vitest's own `globalSetup` also builds; this covers the case where
- * the contract list is the reason a build is needed at all.)
+ * Retired with the CLI. Every entry this guarded spawned `node dist/cli.js`, so
+ * there is no contract left that needs the build; the function stayed behind a
+ * list that had become empty, which is a hook that reports success over work it
+ * never did. Restore it in the same change that gives the list a member again.
  *
  * @param root - Repository root.
  * @param pnpm - The resolved pnpm invocation.
- * @returns Process status: 0 when a build was unnecessary or succeeded.
+ * @returns Process status: always 0 — nothing to build for.
  */
 function ensureBuiltCli(root: string, pnpm: PnpmCandidate): number {
-  if (OUTPUT_CONTRACT_TESTS.length === 0 || existsSync(path.join(root, "dist", "cli.js"))) return 0;
-  process.stderr.write(
-    "test-affected: dist/cli.js is missing — running `pnpm run build` once for the output contracts\n",
-  );
-  return spawnPnpm(root, pnpm, ["run", "build"], "the build");
+  void root;
+  void pnpm;
+  return 0;
 }
 
 /**

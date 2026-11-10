@@ -131,21 +131,6 @@ const COMPILER_SDK_ENTRY: PublishedEntry = {
   },
 };
 
-/** The compiler CLI barrel: its chunk graph is the one holding express and mammoth. */
-const COMPILER_CLI_ENTRY: PublishedEntry = {
-  specifier: "@atomicstrata/llmwiki-core/compiler-cli",
-  manifest: "packages/llmwiki-core/package.json",
-  exportsKey: "./compiler-cli",
-  expectedKinds: {
-    compileAndReport: "function",
-    lint: "function",
-    compileCommand: "function",
-    DEFAULT_SAMPLE_SIZE: "number",
-    STATE_FILE: "string",
-    output: "object",
-  },
-};
-
 /**
  * The sentence every precondition failure carries, so an unrun build is never
  * mistaken for a broken artifact.
@@ -267,11 +252,4 @@ describe("published entries", () => {
     assertExportKinds(COMPILER_SDK_ENTRY, namespace, artifact);
   });
 
-  it("@atomicstrata/llmwiki-core/compiler-cli evaluates from its published dist artifact", async () => {
-    const literalPath = "../../packages/llmwiki-core/dist/compiler-cli.js";
-    const artifact = await assertPublishedArtifact(COMPILER_CLI_ENTRY, literalPath);
-    // @ts-ignore -- build output; the test-typecheck job installs without building
-    const namespace: unknown = await import("../../packages/llmwiki-core/dist/compiler-cli.js");
-    assertExportKinds(COMPILER_CLI_ENTRY, namespace, artifact);
-  });
 });

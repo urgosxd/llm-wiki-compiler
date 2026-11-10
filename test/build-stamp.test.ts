@@ -29,14 +29,13 @@ import {
 let root: string;
 
 /**
- * The files a real `tsup` run at the repository root writes: three root bundles
- * (the CLI entry, the `@repo/api` launcher the container execs, and the library
- * entry with its `d.ts`) plus the built dependency package. Deliberately NOT
- * derived from `REQUIRED_OUTPUTS` — a seed read out of the module under test
- * would make every case below vacuous.
+ * The files a real `tsup` run at the repository root writes: two root bundles
+ * (the `@repo/api` launcher the container execs, and the library entry with its
+ * `d.ts`) plus the built dependency package. Deliberately NOT derived from
+ * `REQUIRED_OUTPUTS` — a seed read out of the module under test would make every
+ * case below vacuous.
  */
 const BUILT_OUTPUTS = [
-  "dist/cli.js",
   "dist/api.js",
   "dist/index.js",
   "dist/index.d.ts",
@@ -112,7 +111,7 @@ describe("isBuildFresh", () => {
 
   it("is false when a built output is missing", () => {
     writeStamp(root);
-    rmSync(path.join(root, "dist/cli.js"));
+    rmSync(path.join(root, "dist/api.js"));
     expect(isBuildFresh(root)).toBe(false);
   });
 
@@ -136,7 +135,7 @@ describe("isBuildFresh", () => {
 describe("computeInputsHash", () => {
   it("ignores an unbuilt sibling directory so churn in dist cannot invalidate it", () => {
     const before = computeInputsHash(root);
-    writeFileSync(path.join(root, "dist/cli.js"), "rebuilt differently\n");
+    writeFileSync(path.join(root, "dist/api.js"), "rebuilt differently\n");
     expect(computeInputsHash(root)).toBe(before);
   });
 

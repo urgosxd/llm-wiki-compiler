@@ -20,13 +20,9 @@
     },
     "./package.json": "./package.json"
   },
-  "bin": {
-    "llmwiki": "dist/cli.js"
-  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch packages/wiki/src --watch scripts --watch tsconfig.json --watch \"packages/*/package.json\" --watch \"packages/*/tsup.config.ts\"",
-    "dev:view": "node scripts/dev-viewer.mjs",
     "vendor:fonts": "node scripts/vendor-fonts.mjs",
     "release:check-docs": "node scripts/check-release-docs.mjs",
     "release:check-docs:current": "node scripts/check-release-docs.mjs --current-version",
@@ -83,8 +79,6 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
     "canonicalize": "^3.0.0",
-    "chokidar": "^4.0.0",
-    "commander": "^13.0.0",
     "dotenv": "^17.4.0",
     "drizzle-orm": "^0.45.4",
     "js-yaml": "^4.3.0",

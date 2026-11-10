@@ -24,7 +24,6 @@ describe("spawnsChildProcess", () => {
     ["bare spawn", 'spawn("node", [])'],
     ["execFile", 'await execFile("node", [])'],
     ["npm pack", 'await run("npm pack")'],
-    ["cli-runner helper import", 'import { exec } from "./fixtures/cli-runner.js"'],
     // The two shared fixtures that spawn on the caller's behalf. A file whose
     // only child-process construct is one of these imports is still a spawning
     // file: the spawn is real, it just lives one module away from the test.
@@ -100,11 +99,13 @@ describe("classifyTests", () => {
     // still classified integration, so this keeps asserting the behaviour and not
     // just the absence of crashes.
     const known = [
-      "test/context-integration.test.ts",
-      "test/activity-log-integration.test.ts",
-      // Spawns the built `node dist/cli.js` through `runCLI`, so it must never fall
-      // into the fast unit loop; if the classifier stops matching `runCLI(`, this
-      // fails by name instead of the parity signal being skipped without a trace.
+      // Spawns `node dist/api.js serve` over stdio through `fixtures/mcp-test-env`,
+      // and its source names no child-process API of its own.
+      "test/mcp-stdio.test.ts",
+      // Spawns the same MCP stdio server for the parity captures, which are the
+      // reason it must never fall into the fast unit loop; if the classifier stops
+      // matching the fixture import, this fails by name instead of the parity
+      // signal being skipped without a trace.
       "test/parity-default.test.ts",
       // Spawns `node dist/api.js host --no-graph` once per case through
       // `fixtures/run-cli-server`, and its source names no child-process API of

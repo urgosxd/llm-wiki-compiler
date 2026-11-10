@@ -31,7 +31,6 @@ export default defineConfig({
   // installed compiler peer by name; this resolver is not shipped at runtime.
   resolve: {
     alias: [
-      { find: /^@atomicstrata\/llmwiki-core\/compiler-cli$/, replacement: fileURLToPath(new URL("./packages/wiki/src/compiler-cli.ts", import.meta.url)) },
       { find: /^@atomicstrata\/llmwiki-core\/compiler-sdk$/, replacement: fileURLToPath(new URL("./packages/wiki/src/sdk/compiler-composition.ts", import.meta.url)) },
       { find: /^@atomicstrata\/llmwiki-core$/, replacement: fileURLToPath(new URL("./packages/wiki/src/core-index.ts", import.meta.url)) },
       { find: /^llm-wiki-compiler$/, replacement: fileURLToPath(new URL("./packages/wiki/src/index.ts", import.meta.url)) },
@@ -67,8 +66,9 @@ export default defineConfig({
     // WHY 4 AND NOT THE UNIT TIER'S OPTIMUM: the number is sized from the worst
     // case `pnpm test` can actually meet. `test` runs BOTH tiers unfiltered in
     // one process pool, so the per-worker cost that binds the cap is the
-    // integration tier's — those files spawn `node dist/cli.js` children
-    // (measured max single-child RSS 442 MB), and the unit tier therefore
+    // integration tier's — those files spawn `node dist/api.js` children
+    // (measured max single-child RSS 442 MB, taken on the then-current CLI
+    // launcher; the subprocess shape is unchanged), and the unit tier therefore
     // deliberately runs below its own optimum here. Nobody should raise this
     // number without the integration tier's per-worker peak in hand.
     maxWorkers: 4,
@@ -87,7 +87,7 @@ export default defineConfig({
     ],
     // Build dist/ once globally so parallel test workers don't race on
     // tsup's clean+write cycle (multiple beforeAll(npx tsup) calls were
-    // wiping dist/cli.js mid-test).
+    // wiping dist/api.js mid-test).
     globalSetup: "./test/global-setup.ts",
   },
 });

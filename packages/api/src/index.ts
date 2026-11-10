@@ -32,9 +32,10 @@
  * `main.ts` is the container launcher (`host` and `serve`), and `host/` is the
  * unified listener it dispatches to: one HTTP server mounting the wiki viewer, the
  * wiki mutation endpoints and the KG graph sub-app, plus the MCP-over-HTTP mount
- * and the tenant resolver. `serve-bind.ts` is NOT here: the bind/readiness/privacy
- * gate is shared with the surviving `view` command and lives in `@repo/wiki`, so
- * moving it would have created a `wiki → api` edge. The modules the listener needs
+ * and the tenant resolver. `serve-bind.ts` is HERE, beside the only listener that
+ * uses it: it lived in `@repo/wiki` while the CLI's `view` command shared the bind
+ * and privacy gate, and it moved once `view` left with the CLI, because moving it
+ * earlier would have created a `wiki → api` edge. The modules the listener needs
  * from the wiki side are reached through that package's explicit `exports`
  * subpaths; nothing here is a re-export barrel.
  *
