@@ -6,7 +6,7 @@ description: "Complete reference for all llmwiki environment variables: provider
 
 llmwiki reads configuration from environment variables and an optional `.env` file placed in your project directory (alongside `sources/` and `wiki/`). Variables set in your shell take precedence over those in `.env`, which in turn take precedence over the Claude Code settings fallback (`~/.claude/settings.json` → `env` block) and built-in defaults.
 
-You don't need to set everything - only the variables relevant to your chosen provider are required. Most projects need only two or three exports before running `llmwiki compile`.
+You don't need to set everything - only the variables relevant to your chosen provider are required. Most projects need only two or three exports before the first compile.
 
 ---
 
@@ -24,11 +24,11 @@ You don't need to set everything - only the variables relevant to your chosen pr
 disabled, write paths do not read or change the embedding store (binary index
 or legacy `.llmwiki/embeddings.json`), `.llmwiki/pending-embeddings.json`, or
 `.llmwiki/quarantined-embeddings.json`. An existing pending marker may therefore
-remain visible in `lint` and `status`. Query and search commands can still read
+remain visible in `lint` and `status`. Query and search can still read
 an existing embedding store, and they keep their normal embedding-provider
 validation.
 
-After you re-enable refreshes, run `llmwiki compile`. The compile reconciles
+After you re-enable refreshes, the next compile reconciles
 missing and stale vectors even when no source changed. It does not regenerate
 source-derived pages in that case, and a healthy store is not rewritten.
 
@@ -42,13 +42,13 @@ The check runs at startup, before any compile or query work begins, so a misspel
 
 ### Changing the embedding backend rebuilds the index
 
-The embedding index records which provider, model, and endpoint produced its vectors. Changing the effective `LLMWIKI_EMBEDDING_PROVIDER`, `LLMWIKI_EMBEDDING_MODEL`, or embedding endpoint invalidates the index. The next non-review `llmwiki compile` with refreshes enabled can re-embed the entire eligible wiki, even when no source changed. This incurs embedding-provider requests and potential costs without regenerating source-derived pages. Quarantined pages remain excluded until you explicitly re-queue them; see [retry recovery](#embedding-retries-and-quarantine).
+The embedding index records which provider, model, and endpoint produced its vectors. Changing the effective `LLMWIKI_EMBEDDING_PROVIDER`, `LLMWIKI_EMBEDDING_MODEL`, or embedding endpoint invalidates the index. The next non-review compile with refreshes enabled can re-embed the entire eligible wiki, even when no source changed. This incurs embedding-provider requests and potential costs without regenerating source-derived pages. Quarantined pages remain excluded until you explicitly re-queue them; see [retry recovery](#embedding-retries-and-quarantine).
 
-This matters because vectors from different backends are not comparable even when the model name matches - a local server answering to `text-embedding-3-small` does not produce the same vectors as cloud OpenAI, and `nomic-embed-text` served by Ollama does not match the same model served over an OpenAI-compatible endpoint. Until the index is rebuilt, `llmwiki query` reports the index as outdated and falls back to lexical ranking rather than ranking against a mixed index.
+This matters because vectors from different backends are not comparable even when the model name matches - a local server answering to `text-embedding-3-small` does not produce the same vectors as cloud OpenAI, and `nomic-embed-text` served by Ollama does not match the same model served over an OpenAI-compatible endpoint. Until the index is rebuilt, a query reports the index as outdated and falls back to lexical ranking rather than ranking against a mixed index.
 
 Moving between `anthropic` and `claude-agent` does **not** rebuild the index. Both send embeddings to Voyage with the same model, so their vectors are interchangeable.
 
-An index built before llmwiki recorded the endpoint carries only its model name, which cannot distinguish those backends. Such an index is kept as-is while you run without `LLMWIKI_EMBEDDING_PROVIDER` or an endpoint override, so upgrading does not re-embed your project. With either override active, the next `llmwiki compile` rebuilds it once and records the full configuration from then on.
+An index built before llmwiki recorded the endpoint carries only its model name, which cannot distinguish those backends. Such an index is kept as-is while you run without `LLMWIKI_EMBEDDING_PROVIDER` or an endpoint override, so upgrading does not re-embed your project. With either override active, the next compile rebuilds it once and records the full configuration from then on.
 
 ---
 
@@ -136,13 +136,13 @@ Model names are namespaced by publisher (e.g. `qwen/qwen3.5-35b-a3b`, the defaul
 
 | Variable | Required | Description |
 |---|---|---|
-| `VOYAGE_API_KEY` | For semantic search | Voyage API key used by the `anthropic` and `claude-agent` providers for embeddings. Without it, `llmwiki query` falls back to lexical ranking |
+| `VOYAGE_API_KEY` | For semantic search | Voyage API key used by the `anthropic` and `claude-agent` providers for embeddings. Without it, a query falls back to lexical ranking |
 
 ---
 
 ## Embeddings
 
-`llmwiki compile` embeds pages and chunks in provider-native batches. These variables are optional.
+A compile embeds pages and chunks in provider-native batches. These variables are optional.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -198,7 +198,7 @@ the page through its normal write workflow, to re-queue it with a fresh budget.
 Changing only embedding configuration does not clear quarantine. To retry all
 quarantined pages without regenerating source pages, remove
 both `.llmwiki/quarantined-embeddings.json` and `.llmwiki/pending-embeddings.json`
-from your project while no compile or refresh is running, then run `llmwiki compile`
+from your project while no compile or refresh is running, then compile
 with refreshes enabled. Removing both also releases exhausted entries retained
 in pending at capacity. This resets all retry budgets and may incur costs.
 
@@ -216,9 +216,9 @@ Once `embeddings.bin` exists, readers and writers use it without the flag.
 Any older JSON file is left untouched as a historical backup, not a fallback.
 An unreadable or corrupt binary index produces `embedding-store-unavailable`
 and degraded retrieval rather than silently reading that older snapshot.
-The context command uses its existing `embedding-store-missing` warning code
+The context-pack surface uses its existing `embedding-store-missing` warning code
 for this condition, meaning no usable store, not necessarily no file on disk.
-An enabled non-review `llmwiki compile` discovers the missing vectors even when
+An enabled non-review compile discovers the missing vectors even when
 no sources changed. Rebuilding an unavailable index embeds the live eligible
 corpus again, except quarantined pages, and can incur provider costs.
 
@@ -248,20 +248,20 @@ Non-numeric, zero, or negative values are silently ignored and the next source i
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLMWIKI_COMPILE_CONCURRENCY` | `5` | Maximum LLM calls run in parallel during a compile, across both concept extraction and page generation. Raise it to cut wall-clock on cold starts and large refreshes; lower it to ease a provider's rate limits. Non-positive or non-integer values fall back to the default, and any value above `50` is clamped down with a warning. The `--concurrency` flag on `llmwiki compile`, `llmwiki refresh`, `llmwiki watch`, and `llmwiki quickstart` overrides this for a single run. An invalid `--concurrency` flag value is ignored with a warning, so this variable (or the default) still applies; `quickstart --json` writes that warning to stderr to keep stdout parseable, while human output keeps the warning on stdout |
+| `LLMWIKI_COMPILE_CONCURRENCY` | `5` | Maximum LLM calls run in parallel during a compile, across both concept extraction and page generation. Raise it to cut wall-clock on cold starts and large refreshes; lower it to ease a provider's rate limits. Non-positive or non-integer values fall back to the default, and any value above `50` is clamped down with a warning. The SDK's `compile({ concurrency })` overrides this for a single call |
 
 ---
 
 ## Stacks
 
 Stack configuration is optional. A single checkout configures none of these and
-still compiles: the resolution order is `--stack <id>`, then `AKS_STACK_ID`, then
+still compiles: the resolution order is `AKS_STACK_ID`, then
 the default Stack - documented once in
 [Tenant isolation](/concepts/tenant-isolation#choosing-which-stack-a-command-uses).
 
 | Variable | Default | Description |
 |---|---|---|
-| `AKS_STACK_ID` | The default Stack | The Stack `ingest`, `compile`, `refresh`, `query` and `watch` read and write. Unset or blank means the default Stack is used, announced once on stderr. The `--stack <id>` flag wins over it for a single run |
+| `AKS_STACK_ID` | The default Stack | The Stack `ingest`, `compile`, `refresh`, `query` and `watch` read and write. Unset or blank means the default Stack is used, announced once on stderr |
 | `AKS_STACK_NAME` | The Stack id | Display name recorded for the Stack in the graph dimension |
 | `AKS_DATABASE_URL` | The `llmwiki-kg` DSN | Connection string for the dimensions database that holds Stack-scoped rows. Setting it is how a project points at a different database, not a requirement |
 
@@ -279,7 +279,7 @@ empty, only `wiki` is enabled. The Stack is resolved exactly as described in
 | `LLMWIKI_DIMENSIONS` | `wiki` | Comma-separated dimensions to write. Known values: `wiki`, `kg`. An unknown name fails before any work runs and names the value it could not honour |
 
 ```bash
-LLMWIKI_DIMENSIONS=wiki,kg llmwiki ingest sources/report.md
+LLMWIKI_DIMENSIONS=wiki,kg
 ```
 
 This variable selects **which** dimensions run. It does not configure what they
@@ -520,7 +520,7 @@ providers, or Ollama's native structured-output requests. Blank means no
 extensions. For an endpoint that requires thinking disabled for forced tools:
 
 ```bash
-LLMWIKI_OPENAI_EXTRA_BODY='{"thinking":{"type":"disabled"}}' llmwiki compile
+LLMWIKI_OPENAI_EXTRA_BODY='{"thinking":{"type":"disabled"}}'
 ```
 
 Check your endpoint's documentation before using vendor-specific fields. For
@@ -539,8 +539,8 @@ place because extraction depends on structured arguments, not optional prose.
 | Variable | Default | Description |
 |---|---|---|
 | `LLMWIKI_MAX_TOKENS` | `4096` | Default completion-token limit for shared LLM calls, including concept extraction and page generation. Use a positive safe integer in decimal digits; blank means the default. Internal calls with their own fixed limit are unaffected. Agent-backed providers do not honor this limit. This is separate from the input character budget below |
-| `LLMWIKI_OUTPUT_LANG` | *(model default, typically English)* | Language for generated wiki content. Applies to every prompt in the compile and query pipelines. Examples: `zh-CN`, `Chinese`, `ja`, `Japanese`. The `--lang` CLI flag on `llmwiki compile` and `llmwiki query` overrides this for a single invocation |
-| `LLMWIKI_SOURCES_SECTION` | *(enabled)* | Set to `off`, `false`, `0`, or `no` to stop asking the model for a trailing `## Sources` section in generated pages. Useful when your own renderer already displays the `sources:` frontmatter, which would otherwise appear twice. Does not change provenance: the frontmatter and the inline `^[file.md:1-5]` citation markers come from the compiler, not from this instruction. The `--no-sources-section` flag on `llmwiki compile` sets it for a single invocation |
+| `LLMWIKI_OUTPUT_LANG` | *(model default, typically English)* | Language for generated wiki content. Applies to every prompt in the compile and query pipelines. Examples: `zh-CN`, `Chinese`, `ja`, `Japanese` |
+| `LLMWIKI_SOURCES_SECTION` | *(enabled)* | Set to `off`, `false`, `0`, or `no` to stop asking the model for a trailing `## Sources` section in generated pages. Useful when your own renderer already displays the `sources:` frontmatter, which would otherwise appear twice. Does not change provenance: the frontmatter and the inline `^[file.md:1-5]` citation markers come from the compiler, not from this instruction |
 | `LLMWIKI_PROMPT_BUDGET_CHARS` | `200000` | Character ceiling for combined per-concept source content sent to the LLM. Raise for larger-context models; lower for small-context local models. A stderr warning prints when the cap fires |
 
 ---
@@ -550,7 +550,6 @@ place because extraction depends on structured arguments, not optional prose.
 | Variable | Values | Description |
 |---|---|---|
 | `LLMWIKI_DEBUG` | `1` or `verbose` | Debug tracing for the `claude-agent` provider only. `1` prints a concise one-line trace per SDK message plus subprocess errors. `verbose` additionally enables the Agent SDK's full verbose logging |
-| `LLMWIKI_VERBOSE` | any non-empty value | Enable verbose progress output on commands that accept `--verbose` (`compile`, `refresh`, `quickstart`, `ingest`, `ingest-session`, `query`, `context`, `export`, `import`). Equivalent to passing `--verbose` on the command line. Detail is richest for `compile`, `refresh`, and `quickstart`, which print per-step lines for source parsing, concept merging, page writes, embedding batches, and total compile time |
 | `LLMWIKI_STAGE_TIMING_FILE` | absolute file path | Off by default. When set to an absolute path, `compile` and `query` append one JSON line per stage (`compile.detect-changes`, `compile.extraction`, `compile.page-generation`, `compile.finalize`, `compile.embeddings`, `query.retrieval`, `query.answer`) with only `v`, `stage`, `ms`, `ok`, and `pid`: no source text, prompts, answers, paths, or credentials. The path must be a regular file: a relative path, a symlink, a FIFO, a directory, or a file that cannot be opened is skipped, and a log that cannot be written never fails the command. New log files are created with mode `0600`; an existing file keeps its mode. `compile.embeddings` runs inside `compile.finalize`, so its time is included in both. `ok` means the stage did not throw, not that every page or embedding in it succeeded |
 
 ---

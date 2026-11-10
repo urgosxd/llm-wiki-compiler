@@ -14,7 +14,7 @@ When you use the Anthropic provider (the default), llmwiki resolves credentials 
 2. Claude Code settings fallback - `~/.claude/settings.json` → `env` block
 3. Built-in provider defaults (where applicable)
 
-This means that if you already have Claude Code configured on your machine, you can run `llmwiki compile` without exporting a single variable.
+This means that if you already have Claude Code configured on your machine, a compile runs without exporting a single variable.
 
 ## Providers
 
@@ -40,7 +40,6 @@ Set either `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` - either one satisfies 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 export ANTHROPIC_BASE_URL=https://proxy.example.com  # optional
-llmwiki compile
 ```
 
 **Zero-export usage with Claude Code**
@@ -52,14 +51,10 @@ If `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_BASE_URL` are not
 - `ANTHROPIC_BASE_URL`
 - `ANTHROPIC_MODEL`
 
-If Claude Code is already configured on your machine, this works with no additional setup:
-
-```bash
-llmwiki compile
-```
+If Claude Code is already configured on your machine, this works with no additional setup.
 
 <Note>
-  The Anthropic provider delegates embeddings to the [Voyage API](https://www.voyageai.com/). Set `VOYAGE_API_KEY` to enable semantic search with `llmwiki query`. Without it, query falls back to lexical ranking. To route embeddings to a different backend instead, set `LLMWIKI_EMBEDDING_PROVIDER` - see [Environment Variables](/configuration/environment-variables).
+  The Anthropic provider delegates embeddings to the [Voyage API](https://www.voyageai.com/). Set `VOYAGE_API_KEY` to enable semantic search with `wiki.query()` and the `query_wiki` MCP tool. Without it, query falls back to lexical ranking. To route embeddings to a different backend instead, set `LLMWIKI_EMBEDDING_PROVIDER` - see [Environment Variables](/configuration/environment-variables).
 </Note>
 
   </Tab>
@@ -72,12 +67,11 @@ The `claude-agent` provider routes calls through the [Claude Agent SDK](https://
 ```bash
 export LLMWIKI_PROVIDER=claude-agent
 export LLMWIKI_MODEL=claude-sonnet-4-6  # optional; this is the default
-llmwiki compile
 ```
 
 **Embeddings**
 
-The Claude Agent SDK has no embeddings endpoint. Set `VOYAGE_API_KEY` to enable semantic search in `llmwiki query`; without it, query falls back to lexical ranking. To route embeddings to a different backend instead, set `LLMWIKI_EMBEDDING_PROVIDER` - see [Environment Variables](/configuration/environment-variables).
+The Claude Agent SDK has no embeddings endpoint. Set `VOYAGE_API_KEY` to enable semantic search with `wiki.query()` and the `query_wiki` MCP tool; without it, query falls back to lexical ranking. To route embeddings to a different backend instead, set `LLMWIKI_EMBEDDING_PROVIDER` - see [Environment Variables](/configuration/environment-variables).
 
 ```bash
 export VOYAGE_API_KEY=pa-...
@@ -93,7 +87,7 @@ Use `LLMWIKI_DEBUG` to see what the SDK is doing during a compile:
 | `verbose` | Concise trace **plus** the SDK's full verbose logging |
 
 ```bash
-LLMWIKI_DEBUG=1 LLMWIKI_PROVIDER=claude-agent llmwiki compile
+LLMWIKI_DEBUG=1 LLMWIKI_PROVIDER=claude-agent
 ```
 
 <Warning>
@@ -127,7 +121,6 @@ export LLMWIKI_EMBEDDING_MODEL=text-embedding-model
 export OPENAI_API_KEY=sk-local
 export OPENAI_BASE_URL=http://localhost:8080/v1
 export OPENAI_EMBEDDINGS_BASE_URL=http://localhost:8081/v1
-llmwiki compile
 ```
 
 **Request timeout**
@@ -166,7 +159,6 @@ export LLMWIKI_EMBEDDING_MODEL=nomic-embed-text
 export OLLAMA_HOST=http://localhost:11434/v1
 # Optional: separate host for embeddings
 export OLLAMA_EMBEDDINGS_HOST=http://localhost:11435/v1
-llmwiki compile
 ```
 
 <Note>
@@ -192,7 +184,6 @@ gh auth refresh --scopes copilot
 export LLMWIKI_PROVIDER=copilot
 export GITHUB_TOKEN=$(gh auth token)   # OAuth token required; PATs will not work
 export LLMWIKI_MODEL=gpt-4o            # optional; gpt-4o is the default
-llmwiki compile
 ```
 
 **Available models**
@@ -208,7 +199,7 @@ Model names use dots, not dashes. Availability depends on your Copilot plan:
 
 **Embeddings**
 
-The GitHub Copilot API does not expose an embeddings endpoint. Semantic search (`llmwiki query` with chunked retrieval) falls back to full-index selection without embeddings. To enable it, keep Copilot for chat and route embeddings to another backend with `LLMWIKI_EMBEDDING_PROVIDER` - see [Environment Variables](/configuration/environment-variables):
+The GitHub Copilot API does not expose an embeddings endpoint. Semantic search (`wiki.query()` and `query_wiki`, with chunked retrieval) falls back to full-index selection without embeddings. To enable it, keep Copilot for chat and route embeddings to another backend with `LLMWIKI_EMBEDDING_PROVIDER` - see [Environment Variables](/configuration/environment-variables):
 
 ```bash
 export LLMWIKI_PROVIDER=copilot
@@ -247,7 +238,6 @@ unprefixed GPT-5.6 default does not apply to a namespaced id. See
 ```bash
 export LLMWIKI_PROVIDER=orcarouter
 export ORCAROUTER_API_KEY=sk-orca-...
-llmwiki compile
 ```
 
 **Embeddings**
@@ -300,12 +290,11 @@ only with a value that model supports. See
 ```bash
 export LLMWIKI_PROVIDER=atlascloud
 export ATLASCLOUD_API_KEY=<your-key>
-llmwiki compile
 ```
 
 **Choosing a model**
 
-`llmwiki compile` extracts concepts through a tool call and requires the model to return tool arguments, so an override must be a model Atlas Cloud lists as supporting tools. The default, `qwen/qwen3.5-35b-a3b`, does. A model without tool support fails on the first extraction request rather than degrading.
+`wiki.compile()` extracts concepts through a tool call and requires the model to return tool arguments, so an override must be a model Atlas Cloud lists as supporting tools. The default, `qwen/qwen3.5-35b-a3b`, does. A model without tool support fails on the first extraction request rather than degrading.
 
 **Embeddings**
 
@@ -348,16 +337,10 @@ A truncation warning prints to stderr when the cap fires, naming the concept tha
 
 ## Output language
 
-Generated wiki content defaults to whatever language the model produces from the source material - typically English. You can override this two ways:
-
-- `LLMWIKI_OUTPUT_LANG` - applies to every prompt the compile and query pipelines make. For example: `zh-CN`, `Chinese`, `ja`, `Japanese`.
-- `--lang <code>` on `llmwiki compile` or `llmwiki query` - same effect, scoped to one invocation. Wins over the env var.
+Generated wiki content defaults to whatever language the model produces from the source material - typically English. Set `LLMWIKI_OUTPUT_LANG` to override it for every prompt the compile and query pipelines make. For example: `zh-CN`, `Chinese`, `ja`, `Japanese`.
 
 ```bash
 export LLMWIKI_OUTPUT_LANG=zh-CN
-llmwiki compile
-# or per-invocation:
-llmwiki compile --lang Japanese
 ```
 
 ---

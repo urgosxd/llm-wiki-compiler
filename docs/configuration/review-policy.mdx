@@ -4,9 +4,9 @@ sidebarTitle: "Review Policy"
 description: "Configure .llmwiki/config.json to automatically hold low-confidence, contradicted, or schema-violating pages for review instead of writing them live."
 ---
 
-By default, `llmwiki compile` writes every generated page directly to `wiki/`. You can change that behavior in two ways. The `--review` flag is all-or-nothing: every candidate goes to the review queue and nothing lands in `wiki/` until you approve it. A **review policy** is more surgical - it lets a normal `compile` run write most pages live while automatically holding back the ones that trip specific risk conditions.
+By default, a compile writes every generated page directly to `wiki/`. You can change that behavior in two ways. The `review` compile option - `wiki.compile({ review: true })` - is all-or-nothing: every candidate is held and nothing lands in `wiki/`. A **review policy** is more surgical - it lets a normal compile run write most pages live while automatically holding back the ones that trip specific risk conditions.
 
-With a policy in place, a low-confidence page gets queued for your review while an unambiguous page is written immediately. You get confidence-appropriate friction without slowing down the happy path.
+With a policy in place, a low-confidence page is held while an unambiguous page is written immediately. You get confidence-appropriate friction without slowing down the happy path.
 
 ## Configuring the policy
 
@@ -40,7 +40,7 @@ A page is held as a candidate if it trips **any** enabled mode (union semantics)
 
 - **`provenance-violating`** - holds any page whose citations are broken or malformed - pointing to missing source files, impossible line ranges, or unparseable citation markers.
 
-- **`all`** - holds every generated page, regardless of any other condition. Equivalent to running `compile --review` but expressed as a persistent policy.
+- **`all`** - holds every generated page, regardless of any other condition. Equivalent to the `review` compile option, but expressed as a persistent policy.
 
 - **`off`** or `"hold": []` - disables the policy entirely. All pages are written live.
 
@@ -54,29 +54,12 @@ When a page is held by the policy:
 
 - A candidate record is stored in `.llmwiki/candidates/` with reason codes explaining exactly why it was held.
 - The existing live page in `wiki/` (if any) is left untouched.
-- `llmwiki review list` and `llmwiki review show <id>` display the hold reasons alongside the candidate content.
 
-After every compile, llmwiki reports the split between written and held pages:
+This build exposes no surface that promotes or rejects a candidate: there is no SDK method, no MCP tool, and the viewer's review list is read-only. A held page therefore stays staged under `.llmwiki/candidates/`.
 
-```
-Wrote 8 page(s), held 2 for review - run `llmwiki review list`
-```
+After every compile, llmwiki reports the split between written and held pages.
 
 ## What is and isn't policy-gated
 
-- **`llmwiki compile`** - honors the review policy.
-- **`llmwiki refresh --stale`** - honors the same policy when recompiling stale or orphaned pages.
-- **`llmwiki query --save`** - is **not** policy-gated in the current version. Saved query answers are written directly to `wiki/queries/`.
-
-## Managing the review queue
-
-Use the review commands to process held candidates:
-
-```bash
-llmwiki review list           # see all pending candidates and their hold reasons
-llmwiki review show <id>      # inspect a single candidate's title, summary, and body
-llmwiki review approve <id>   # promote the candidate into wiki/ and refresh the index
-llmwiki review reject <id>    # archive the candidate without touching wiki/
-```
-
-For full review queue documentation, see [Managing the review queue](#managing-the-review-queue).
+- **compile** - honors the review policy.
+- **`query({ save: true })`** - is **not** policy-gated in the current version. Saved query answers are written directly to `wiki/queries/`.

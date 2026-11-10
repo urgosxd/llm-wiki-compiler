@@ -20,8 +20,8 @@ really says. This page is the complete configuration path for it.
 
 One declaration per Stack. It is read from and written to `stacks.ontology`, and
 it is written **only** through the KG REST API: `POST /stacks` when the Stack is
-created, `PATCH /stacks/:stackId` afterwards. No llmwiki CLI command sets it -
-`--stack` and `AKS_STACK_ID` choose which Stack a command works on, never what
+created, `PATCH /stacks/:stackId` afterwards. No other surface sets it -
+`AKS_STACK_ID` chooses which Stack a run works on, never what
 that Stack's vocabulary is.
 
 ## Running the KG REST API
@@ -53,10 +53,10 @@ defaults that means `OPENAI_API_KEY` (embeddings) and `ANTHROPIC_API_KEY`
 (extraction) must both be set, even though creating a Stack itself touches only
 the database.
 
-This server is neither `llmwiki host` - the unified HTTP server for the viewer,
-the graph, and `/api/ingest` plus `/api/compile` - nor `llmwiki serve`, which is
-an MCP server over stdio and serves no HTTP at all. `/stacks` belongs to neither
-of them.
+This server is neither the container's `host` mode - the unified HTTP server for
+the viewer, the graph, and `/api/ingest` plus `/api/compile` - nor its `serve`
+mode, which is an MCP server over stdio and serves no HTTP at all. `/stacks`
+belongs to neither of them.
 
 ## The payload
 
@@ -293,8 +293,8 @@ To state it once, because it is the mistake this page exists to prevent:
   `kg` dimension in the first place:
 
   ```bash
-  LLMWIKI_DIMENSIONS=wiki,kg llmwiki ingest sources/report.md
+  LLMWIKI_DIMENSIONS=wiki,kg
   ```
 
-- `AKS_STACK_ID` and `--stack` select *which* Stack a command works on, and
-  therefore whose declaration applies. They do not change the declaration.
+- `AKS_STACK_ID` selects *which* Stack a run works on, and
+  therefore whose declaration applies. It does not change the declaration.

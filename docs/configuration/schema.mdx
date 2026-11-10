@@ -6,17 +6,6 @@ description: "Define .llmwiki/schema.json to enforce page kinds, minimum wikilin
 
 The schema layer is entirely optional. Without a schema file, llmwiki compiles every page as a `concept` and applies no cross-link minimums - existing wikis continue to work exactly as they did before the schema layer existed. You only need a schema when you want to enforce structure: typed page kinds, minimum wikilink counts per kind, or seed pages that the compiler should materialize automatically.
 
-## Initializing a schema
-
-Run these commands from your project root:
-
-```bash
-llmwiki schema init   # writes a starter .llmwiki/schema.json
-llmwiki schema show   # prints the resolved schema for the current project
-```
-
-`schema init` writes a template file you can edit. `schema show` always prints the fully-resolved schema, merging your file onto built-in defaults - useful for confirming what the compiler is actually using.
-
 ## Schema file location
 
 llmwiki searches for a schema file in the following order, using the first one found:
@@ -27,7 +16,7 @@ llmwiki searches for a schema file in the following order, using the first one f
 4. `wiki/.schema.yaml`
 5. `wiki/.schema.yml`
 
-The most common location is `.llmwiki/schema.json` (what `schema init` creates).
+The most common location is `.llmwiki/schema.json`.
 
 ## Page kinds
 
@@ -94,14 +83,14 @@ Every field is optional - you only need to specify what you want to override. Mi
 
 ## How the schema affects compile
 
-When you run `llmwiki compile`:
+When a compile runs:
 
 - **Seed pages** declared in `seedPages` are materialized automatically. For `overview` and `comparison` seeds with `relatedSlugs`, the compiler passes the named pages as the source material.
 - Pages without an explicit `kind` in frontmatter are assigned `defaultKind` (default: `concept`).
 
 ## How the schema affects lint
 
-`llmwiki lint` enforces per-kind cross-link minimums after compile:
+`lint` - `wiki.lint()`, or the `lint_wiki` MCP tool - enforces per-kind cross-link minimums after compile:
 
 - A `comparison` page with fewer than `minWikilinks` wikilinks is flagged.
 - An `overview` page that doesn't reach its minimum is flagged.
