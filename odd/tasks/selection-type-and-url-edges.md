@@ -62,21 +62,21 @@ a source-text filter with a hole … a staged second call path left it 4/4 green
 
 ## Tasks
 
-- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `5e6af0825ba8251a5101584405e1aa45efca39a1`
-- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `5e6af0825ba8251a5101584405e1aa45efca39a1`
-- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `5e6af0825ba8251a5101584405e1aa45efca39a1`
-- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `5e6af0825ba8251a5101584405e1aa45efca39a1`
-- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `5e6af0825ba8251a5101584405e1aa45efca39a1`
+- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `2d2be3dba6d088586549968b46226e6076658caa`
+- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `2d2be3dba6d088586549968b46226e6076658caa`
+- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `2d2be3dba6d088586549968b46226e6076658caa`
+- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `2d2be3dba6d088586549968b46226e6076658caa`
+- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `2d2be3dba6d088586549968b46226e6076658caa`
 
 - T6 | S8-S13 | worker `gentle-ai-worker` — this feature document | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
 - T7 | S8, S9, S11 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: boundary header, `TypeOnlyDependent`, `TYPE_ONLY_DEPENDENTS`, `typeOnlyDependentsOf` | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
 - T8 | S12 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: one stderr line on the `test` flow, pinned by `test/package-task-boundary-notice.test.ts` | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
 - T9 | S8, S9, S13 | worker `gentle-ai-worker` — `test/package-selection-union.test.ts`: rot guard, owner derivation, fail-closed exhaustiveness | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
 - T10 | S10, S11 | worker `gentle-ai-worker` — `docs/turborepo.md`: stated boundary, type-only pairing, orphan bucket status, regenerated census | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
-- T11 | S14 | worker `gentle-ai-worker` — `scripts/type-only-dependents.ts` (new): TypeScript-parsed derivation of every type-only dependent across ALL collected tests, four elided forms | TBD
-- T12 | S14 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: declaration demoted to annotation, derivation re-exported for one import surface | TBD
-- T13 | S15 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: `shouldReportTypeOnlyDependents` predicate replaces the source-text gate | TBD
-- T14 | S14, S15 | worker `gentle-ai-worker` — union + notice tests (exact equality both directions, four forms, four-task gate), three probes, `docs/turborepo.md` overclaim correction | TBD
+- T11 | S14 | worker `gentle-ai-worker` — `scripts/type-only-dependents.ts` (new): TypeScript-parsed derivation of every type-only dependent across ALL collected tests, four elided forms | `5e6af0825ba8251a5101584405e1aa45efca39a1`
+- T12 | S14 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: declaration demoted to annotation, derivation re-exported for one import surface | `5e6af0825ba8251a5101584405e1aa45efca39a1`
+- T13 | S15 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: `shouldReportTypeOnlyDependents` predicate replaces the source-text gate | `5e6af0825ba8251a5101584405e1aa45efca39a1`
+- T14 | S14, S15 | worker `gentle-ai-worker` — union + notice tests (exact equality both directions, four forms, four-task gate), three probes, `docs/turborepo.md` overclaim correction | `5e6af0825ba8251a5101584405e1aa45efca39a1`
 ## Log
 
 L1 — the original request, verbatim:
@@ -322,3 +322,23 @@ derivation costs about 0.6-0.9 s, well inside the ~5 s budget, and nothing was t
 census did NOT move: `@repo/foundation=405 @repo/wiki=565 @repo/kg=549 @repo/api=13 meta=70 orphan=29
 uncovered=0 collected=827 distinct=827 multiPackage=409` before and after, because the derivation
 adds no collected test file.
+
+L26 — the judge fix is committed as ONE work unit: `5e6af0825ba8251a5101584405e1aa45efca39a1`
+(`fix(selection): derive the type-only dependents instead of freezing a list`), seven paths —
+`scripts/type-only-dependents.ts` (new), `scripts/package-selection.ts`, `scripts/package-tasks.ts`,
+`test/package-selection-union.test.ts`, `test/package-task-boundary-notice.test.ts`,
+`docs/turborepo.md` and this document. The probe/revert evidence, in order: RED-1 with the declaration
+trimmed to the original three names → `2 failed | 8 passed`, `expected [ …(13) ] to deeply equal []`
+naming `+ "test/viewer-sidebar.test.ts -> @repo/wiki"`; RED-2a with
+`test/mcp/query-sources-use-filesystem.test.ts` dropped → `expected [ Array(1) ] to deeply equal []`
+naming exactly that pair; RED-2b with `test/zz-meta-type-probe.test.ts` staged (type-only wiki import
+plus a `test/fixtures` import, census `meta=70 -> 71`) → red naming that pair, then the file deleted and
+`git status --short` showing no probe. GREEN: 14 focused tests across the two files.
+The battery on the committed tree: `tsc --noEmit` 0, `typecheck:tests` 0 (1592 files), `lint` 0
+(558 / 396 / 423, unchanged), `fallow:ci` 0 — after it FAILED the first draft with 4 findings (three
+unused type re-exports and a `package-selection.ts <-> type-only-dependents.ts` cycle), fixed by
+inverting the dependency and dropping the unused re-exports rather than suppressing them — `build` 0,
+and the full suite `pnpm test` exit 0 with `Test Files 824 passed | 3 skipped (827)`, `Tests 6140
+passed | 4 skipped (6144)` in 324.70 s, load 1.35 before and 6.67 after. The census did NOT move in this
+work unit either: `meta=70 orphan=29 uncovered=0 collected=827` with the four package buckets unchanged,
+so `docs/turborepo.md:130-131` needed no regeneration.
