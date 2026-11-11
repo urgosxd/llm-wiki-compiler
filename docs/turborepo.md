@@ -128,12 +128,55 @@ Its census at this commit, printed by the run rather than baked:
 
 ```
 selection buckets: @repo/foundation=405 @repo/wiki=565 @repo/kg=549 @repo/api=13
-meta=67 orphan=29 uncovered=0 collected=824 distinct=824 multiPackage=409
+meta=70 orphan=29 uncovered=0 collected=827 distinct=827 multiPackage=409
 ```
+
+**That census is REGENERATED, and it was already stale before this slice.** Two corrections landed
+in the same commit and are recorded as two, because only one of them is ours. The PRE-EXISTING
+drift: the block used to read `meta=67 … collected=824 distinct=824`, while the base commit itself
+printed `meta=69 … collected=826 distinct=826` — two test files had landed after it was generated.
+This slice's own delta: `test/package-task-boundary-notice.test.ts` reaches `scripts/` and lands in
+`meta`, so `meta` +1 and `collected`/`distinct` +1. Before: `meta=67 orphan=29 uncovered=0
+collected=824 distinct=824`. After: `meta=70 orphan=29 uncovered=0 collected=827 distinct=827`.
+
+The package buckets (`405/565/549/13`), `orphan=29` and `uncovered=0` did NOT move, and that is the
+claim worth checking in the diff: a boundary DECLARATION plus a notice test cannot change what any
+package's selection runs, because no collected test file joined or left a package. `orphan=29` is
+where the three declared type-only dependents still sit — see
+[Named gap 2](#named-gap-2-import-type-orphans).
 
 ```
 node scripts/package-tasks.ts <test|lint|typecheck|fallow> --package <@repo/name>
 ```
+
+### The boundary, stated: static import specifiers only
+
+**The selection models static import specifiers and nothing else.** The crawl is vite's
+`transformRequest(url, { ssr: true })` walked over `importedModules`, so a dependency is
+visible exactly when it is a static `import` **specifier**. Three routes are invisible to that
+closure by construction, and no amount of crawling fixes them:
+
+- `require(...)` — a call expression, not a module request the graph records;
+- a computed `import(expr)` — the specifier is not a literal, so there is no request to follow;
+- `new URL("../..", import.meta.url)` — a string, not a module request at all. This is how
+  `test/artifact/dist-specifiers.test.ts`:99 reaches the built root `dist/`, and it is the case
+  that decides the design: **a closure over static imports cannot see it**, so the class is
+  DECLARED, never modelled.
+
+A fourth route is elided before the graph exists: `import type`, which the ssr transform
+erases. [Named gap 2](#named-gap-2-import-type-orphans) records the pairing that answers it.
+
+What the declaration buys is that the gap **fails closed — and the fail-closed edge lives in
+the union test, not in `assertCoverage`.** `orphan` is an ACCEPTED bucket: `assertCoverage`
+counts packages, `meta` and `orphan` as covered, so a test no surface can attribute runs in no
+per-package selection and nothing complains — all 29 currently do exactly that. Making it
+fail closed therefore means changing the bucket's STATUS, not adding a refusal to
+`assertCoverage`: `test/package-selection-union.test.ts` freezes it with
+`expect(result.orphan).toEqual([...FROZEN_ORPHANS])`, a **total** comparison, so a new
+test that reaches a package by a non-import route fails the run instead of joining a list.
+That was proven rather than assumed: a throwaway test importing only a type made the run red
+with `expected [ …(30) ] to deeply equal [ …(29) ]` naming the new file, and deleting it
+returned the run to green.
 
 ## The recorded direction arrived: no transitional package is left
 
@@ -186,7 +229,7 @@ above still declares no task.
 ## `@repo/kg#test` runs under the ROOT vitest config
 
 `packages/llmwiki-kg/ts/vitest.config.ts` keeps `include: ["src/**/*.test.ts"]`,
-which collects **142 of the 824** files the root run collects. That is a
+which collects **142 of the 827** files the root run collects. That is a
 package-local config narrowing the suite to a fifth of it, so `@repo/kg#test` does
 not use it: every package's `test` task runs under the root `vitest.config.ts` and
 passes its derived selection as filters. `@repo/kg`'s `typecheck` likewise invokes
@@ -281,26 +324,55 @@ shim or `corepack enable` first. The graph itself is unaffected; only the launch
 
 ## Named gap 2: `import type` orphans
 
-**This is a gap, not a footnote.** The derivation reads the module graph, and the ssr
-transform **erases type-only imports**. A test that merely `import type`s a package
-therefore has no edge to that package's sources and is not selected by it. Two tests
-are in that position today and are named in `test/package-selection-union.test.ts`:
+**This is a gap, and what answers it is a DECLARATION plus a stated pairing — not a patch to
+the graph.** The derivation reads the module graph, and the ssr transform **erases type-only
+imports**, so a test that merely `import type`s a package has no edge to that package's
+sources and is not selected by it. Three tests are in that position today, and each is named
+with its reason in `TYPE_ONLY_DEPENDENTS` (`scripts/package-selection.ts`):
 
-- `test/query-candidate-id-absent.test.ts`
-- `test/sdk/published-dimensions-port.test.ts`
+- `test/provenance-metadata-shape.test.ts` — `ProvenanceMetadata` from
+  `packages/wiki/src/utils/types.js`
+- `test/query-candidate-id-absent.test.ts` — `QueryResult` from the same module
+- `test/sdk/published-dimensions-port.test.ts` — `Dimension` from
+  `packages/wiki/src/dimensions/types.js`
 
-Both are `orphan` for that reason, and the consequence is precise and worth stating
-plainly: **a type-only change to `@repo/wiki` will not run them** on the selective
-path. They remain covered by the root `pnpm test` gate, so nothing goes untested
-today — but a per-package run of wiki is not a complete check of a wiki type change.
+**The pairing, written so nobody reads it as a to-do.** A `test` run cannot observe a
+type-only edge **at all**, because the import is elided: the emitted JavaScript does not
+contain the type, so no runtime assertion can fail on a change to it. That is measured, not
+assumed — with `QueryResult` temporarily given `candidateId?: string`,
+`vitest run test/query-candidate-id-absent.test.ts` still exits `0`. The tier that **does**
+observe it is the root `typecheck:tests` program (`scripts/typecheck-tests.ts` over
+`tsconfig.test.json`), which compiles these files: the same mutation makes it exit `1` with
+`test/query-candidate-id-absent.test.ts: 1 diagnostics exceeds baseline 0`. A per-package
+`typecheck:tests` does not exist and **was declined by the owner**, so there is no
+package-level substitute to build; the pairing is root-wide by decision, not by omission.
 
-`vitest related` misses them identically, so this is a property of the transform and
+The consequence in one sentence: **a selective green (`turbo run test --filter=@repo/wiki`)
+does not speak for these files' type edges**, and `pnpm run typecheck:tests` is the gate that
+does. This page used to claim the files "remain covered by the root `pnpm test` gate" — that
+is false: `pnpm test` is the same `test` tier, and it cannot observe an elided import either.
+`scripts/package-tasks.ts` prints one line on stderr, before vitest runs, when the package has
+declared type-only dependents, so the affected run states this itself instead of leaving the
+reader to find it here.
+
+**Why the edge is declared and not modelled.** The recorded direction — record `import type`
+specifiers during the crawl and pull those files into wiki's selection — was deliberately not
+taken: it would make the `test` tier select files it cannot fail on, while the
+`new URL("../..")` route stayed invisible, so the graph would look complete and would not be.
+Instead the gap is named and pinned. `test/package-selection-union.test.ts` fails if a
+declared entry rots — file gone, no longer in the `orphan` bucket, package owner changed, or
+the declared type no longer imported from the declared module — and the frozen `orphan` pin
+fails if an undeclared unreachable test appears.
+
+**The exhaustiveness assertion was proven to bite** rather than asserted: a throwaway
+`test/zz-throwaway-type-only-probe.test.ts` importing only
+`type { QueryResult }` from `packages/wiki/src/utils/types.js` turned
+`test/package-selection-union.test.ts` red with `expected [ …(30) ] to deeply equal [ …(29) ]`
+and `+ "test/zz-throwaway-type-only-probe.test.ts"` in the diff; the file was deleted and the
+run went green.
+
+`vitest related` misses these files identically, so this is a property of the transform and
 the graph, not of this crawler.
-
-**Proposed durable fix:** add type-import edges to the closure — record `import type`
-specifiers during the crawl and include them in each module's dependency set, so the
-two files above gain a real edge to wiki's sources and join its selection. Until
-then they stay named, rather than absorbed into a bucket that would hide them.
 
 ## Named gap 3: the artefact `@repo/kg` ships is built only incidentally, never as a delivery step
 
@@ -544,7 +616,7 @@ steps, in order:
 | 5 | `Apply database schema` | `psql "$AKS_TEST_DATABASE_URL" -f ../db/schema.sql` (`:58`) | **stronger** here: `./scripts/apply-schemas.sh` then `CHECK_ONLY=true ./scripts/apply-schemas.sh` (`ci.yml:106`, `:108`), which asserts every tenant table exists AND enforces row-level security |
 | 6 | `Typecheck` | `pnpm run typecheck` in `ts/` → `scripts/kg-typecheck.ts` | same gate: `pnpm run typecheck:kg` (`ci.yml:100`) |
 | 7 | `Build` | `pnpm run build` in `ts/` → `tsc -p tsconfig.build.json` | **now covered** by the step added in Named gap 3: `pnpm --filter @repo/kg run build` (`ci.yml:92`) |
-| 8 | `Test` | `pnpm test 2>&1 \| tee test-output.log` (the package's 142 files) | **superset**: root `pnpm test` collects 824 files, of which KG's selection is 549 |
+| 8 | `Test` | `pnpm test 2>&1 \| tee test-output.log` (the package's 142 files) | **superset**: root `pnpm test` collects 827 files, of which KG's selection is 549 |
 | 9 | `Guard against silent skips` | fails when the summary line reports more than 4 skips | none, and obsolete here — see below |
 | 10 | `Upload failure log` (`if: failure()`) | `actions/upload-artifact@v4` on `ts/test-output.log` | none (ergonomics, not a gate) |
 

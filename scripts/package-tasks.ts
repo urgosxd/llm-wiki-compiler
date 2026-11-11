@@ -89,7 +89,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { isEntryPoint } from "./cli-root.ts";
 import { closeGraphServer, crawlTestClosures, createGraphServer } from "./module-graph.ts";
-import { PACKAGE_SURFACES, partition, type PackageSurface } from "./package-selection.ts";
+import { PACKAGE_SURFACES, partition, typeOnlyDependentsOf, type PackageSurface } from "./package-selection.ts";
 import { runTask, type PackageTask } from "./package-tasks-runners.ts";
 
 /** Repository root, resolved from this script's location so a package cwd cannot move it. */
@@ -163,6 +163,34 @@ function reportUnattributed(unattributed: readonly string[]): void {
 }
 
 /**
+ * Say on stderr which tests this selection cannot fail on, and what covers them.
+ *
+ * A `test` selection is a closure over static import specifiers, so it cannot
+ * select a test that reaches the package only through an elided `import type` —
+ * that test runs in no per-package selection at all. Printing it here is the point:
+ * a green from this command must not be read as a statement about those files. The
+ * covering tier is the root `typecheck:tests` program; a per-package typecheck was
+ * declined by the owner, so it is not an option to offer. Nothing is printed for a
+ * package with no declared type-only dependents.
+ *
+ * An EXPORT rather than a private helper: the notice is a developer-facing contract that
+ * must be pinnable without spawning the suite, and this module is the effect layer (it
+ * writes a stream), so it cannot live in `package-selection.ts`, which is pure by contract
+ * and decides buckets rather than printing.
+ *
+ * @param surface - The package whose test task is about to run.
+ */
+export function reportTypeOnlyDependents(surface: PackageSurface): void {
+  const declared = typeOnlyDependentsOf(surface.name);
+  if (declared.length === 0) return;
+  const files = declared.map((entry) => entry.testFile).join(", ");
+  process.stderr.write(
+    `package-tasks: ${surface.name} has ${declared.length} declared type-only dependent test(s) ` +
+      `this selection cannot observe (${files}); root \`typecheck:tests\` is the covering tier\n`,
+  );
+}
+
+/**
  * Derive one package's test selection from the import graph.
  *
  * @param surface - The package whose selection is wanted.
@@ -208,6 +236,7 @@ async function main(argv: readonly string[]): Promise<number> {
   const task = readTask(positionals);
   const surface = surfaceFor(values.package);
   const tests = task === "fallow" ? [] : await deriveSelection(surface);
+  if (task === "test") reportTypeOnlyDependents(surface);
   return runTask(task, { root: REPO_ROOT, surface, tests });
 }
 

@@ -31,7 +31,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { posix, resolve } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
   closeGraphServer,
@@ -42,8 +43,10 @@ import {
 import {
   META_ROOTS,
   PACKAGE_SURFACES,
+  TYPE_ONLY_DEPENDENTS,
   assertCoverage,
   partition,
+  typeOnlyDependentsOf,
   type PartitionResult,
 } from "../scripts/package-selection.js";
 
@@ -263,11 +266,84 @@ it("reports the orphans the guards exist to surface, and no test a package now c
 });
 
 it("freezes the orphan ratchet so a new unreachable test cannot slip in silently", () => {
-  // KNOWN LIMITATION, and a comment rather than an assertion on purpose:
-  // `test/query-candidate-id-absent.test.ts` and
-  // `test/sdk/published-dimensions-port.test.ts` are orphan because their imports
-  // of wiki sources are TYPE-ONLY, and the ssr transform erases type-only imports.
-  // `vitest related` misses them identically, so this is a property of the graph
-  // and of the transform, not of this crawler.
+  // The three tests of wiki sources that reach them ONLY through `import type`
+  // live in `FROZEN_ORPHANS` and are declared with their reason there, in
+  // `TYPE_ONLY_DEPENDENTS` (`scripts/package-selection.ts`). The census line that
+  // used to sit here as a comment is now an assertion: see the four tests below.
+  expect(result.orphan).toEqual([...FROZEN_ORPHANS]);
+});
+
+/** Absolute path of a repo-relative POSIX path. */
+function repoPath(file: string): string {
+  return resolve(REPO_ROOT, file);
+}
+
+/** An import specifier written in `testFile`, resolved to a repo-relative POSIX path. */
+function resolvedSpecifier(testFile: string, specifier: string): string {
+  return posix.normalize(posix.join(posix.dirname(testFile), specifier));
+}
+
+/**
+ * The names one file imports as TYPES from one source module.
+ *
+ * The pattern spans newlines on purpose: the declaration names a repo-relative
+ * `sourceFile`, while the test writes `../../packages/...`, so the specifier is
+ * resolved against the importing file's directory before it is compared.
+ */
+function typeSpecifiersFrom(testFile: string, sourceFile: string): string[] {
+  const source = readFileSync(repoPath(testFile), "utf8");
+  const blocks = [...source.matchAll(/import\s+type\s*\{([^}]*)\}\s*from\s*"([^"]+)"/g)];
+  return blocks
+    .filter((block) => resolvedSpecifier(testFile, block[2]) === sourceFile)
+    .flatMap((block) => block[1].split(","))
+    .map((name) => name.split(/\s+as\s+/)[0].trim())
+    .filter((name) => name.length > 0);
+}
+
+/** The declared package whose source roots contain a repo-relative module path. */
+function owningPackage(sourceFile: string): string | undefined {
+  return PACKAGE_SURFACES.find((surface) =>
+    surface.sourceRoots.some((root) => sourceFile.startsWith(`${root}/`)),
+  )?.name;
+}
+
+it("declares every type-only dependent whose type import is still elided", () => {
+  expect(TYPE_ONLY_DEPENDENTS.length).toBeGreaterThan(0);
+  for (const entry of TYPE_ONLY_DEPENDENTS) {
+    expect(existsSync(repoPath(entry.testFile)), `${entry.testFile} is gone`).toBe(true);
+    expect(result.orphan, `${entry.testFile} left the orphan bucket`).toContain(entry.testFile);
+    const specifiers = typeSpecifiersFrom(entry.testFile, entry.sourceFile);
+    expect(
+      specifiers,
+      `${entry.testFile} no longer imports type ${entry.typeSpecifier} from ${entry.sourceFile}`,
+    ).toContain(entry.typeSpecifier);
+    expect(entry.reason.trim().length, `${entry.testFile} has no stated reason`).toBeGreaterThan(0);
+  }
+});
+
+it("names the package that owns each declared type-only source file", () => {
+  for (const entry of TYPE_ONLY_DEPENDENTS) {
+    expect(owningPackage(entry.sourceFile), `no package owns ${entry.sourceFile}`).toBe(
+      entry.packageName,
+    );
+    const declared = typeOnlyDependentsOf(entry.packageName).map((each) => each.testFile);
+    expect(declared, `${entry.packageName} does not declare ${entry.testFile}`).toContain(
+      entry.testFile,
+    );
+  }
+  const packages = [...new Set(TYPE_ONLY_DEPENDENTS.map((entry) => entry.packageName))].sort();
+  expect(typeOnlyDependentsOf("@repo/api")).toEqual([]);
+  expect(packages.every((name) => typeOnlyDependentsOf(name).length > 0)).toBe(true);
+});
+
+it("fails closed: an orphan the frozen pin does not name breaks the ratchet", () => {
+  for (const entry of TYPE_ONLY_DEPENDENTS) {
+    expect([...FROZEN_ORPHANS], `${entry.testFile} is declared but not frozen`).toContain(
+      entry.testFile,
+    );
+  }
+  const newOrphan = "test/a-new-unreachable-by-import.test.ts";
+  expect(FROZEN_ORPHANS).not.toContain(newOrphan);
+  expect([...result.orphan, newOrphan]).not.toEqual([...FROZEN_ORPHANS]);
   expect(result.orphan).toEqual([...FROZEN_ORPHANS]);
 });

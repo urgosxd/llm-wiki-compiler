@@ -44,6 +44,18 @@
  * PURE BY CONTRACT. No child process, no network, no database, no writes. The
  * caller brings the collected file list and the closures; this file only decides
  * which bucket each test lands in.
+ *
+ * THE BOUNDARY THIS MODULE MODELS: STATIC IMPORT SPECIFIERS ONLY. The graph is
+ * built from vite's `transformRequest(url, { ssr: true })` and walked over
+ * `importedModules`, so a dependency is visible only when it is a static `import`
+ * SPECIFIER. Three routes are therefore INVISIBLE to the closure, and no amount of
+ * crawling fixes them: `require(` (a call, not an import), a computed `import(`
+ * (the specifier is not a literal) and `new URL("../..", import.meta.url)` (a
+ * string, not a module request at all). A fourth route is elided before the graph
+ * exists: `import type`, which the SSR transform erases, so a test that reaches a
+ * package ONLY through a type import has an empty closure and lands in `orphan`.
+ * The type-only dependents are not silently accepted — they are DECLARED by name in
+ * {@link TYPE_ONLY_DEPENDENTS}, with the tier that actually observes them.
  */
 
 /**
@@ -117,6 +129,93 @@ export const PACKAGE_SURFACES: readonly PackageSurface[] = [
  * EMPTY, so a new unattributable test fails the run instead of joining a list.
  */
 export const META_ROOTS: readonly string[] = ["scripts", "test/fixtures", "test/sdk", "test/artifact"];
+
+/**
+ * One test that reaches a package ONLY through an `import type` specifier.
+ *
+ * Every field is a claim a rot guard re-checks against the working tree: the file
+ * exists, it is still in the `orphan` bucket, its `sourceFile` is still owned by
+ * `packageName`, and `typeSpecifier` is still imported as a type from that module.
+ */
+export interface TypeOnlyDependent {
+  /** Repository-relative POSIX path of the dependent test file. */
+  readonly testFile: string;
+  /** Declared package the test depends on, the owner of {@link sourceFile}. */
+  readonly packageName: string;
+  /** The exported type the test imports, and the reason the edge exists. */
+  readonly typeSpecifier: string;
+  /** Repository-relative POSIX path of the module the type is imported from. */
+  readonly sourceFile: string;
+  /** Why this pairing exists instead of a modelled edge: read before "fixing" it. */
+  readonly reason: string;
+}
+
+/**
+ * The declared type-only dependents of a package's source.
+ *
+ * WHY EACH ENTRY EXISTS, AND WHY IT IS NOT A TO-DO.
+ * The `test` tier CANNOT OBSERVE A TYPE-ONLY EDGE AT ALL: `import type` is elided by
+ * the SSR transform, so the importing test has an empty module closure and the
+ * partition puts it in `orphan`. Running it proves nothing about the type, because
+ * the type is not in the emitted JavaScript. The tier that DOES observe it is the
+ * root `typecheck:tests` program (`scripts/typecheck-tests.ts` over
+ * `tsconfig.test.json`), which compiles these files and fails on a type change that
+ * breaks them. A per-package `typecheck:tests` was considered and DECLINED by the
+ * owner, so this is the final shape, not a step towards one.
+ *
+ * THE CONSEQUENCE, STATED PLAINLY: a selective green (`turbo run test
+ * --filter=@repo/wiki`) does not speak for these files' type edges. It is not a
+ * claim that they are covered; it is a claim about the `test` tier only, and
+ * `pnpm run typecheck:tests` is the gate that speaks for the rest. Do not delete an
+ * entry because the test passes — it passed before the change too.
+ *
+ * WHY DECLARED AND NOT MODELLED. Modelling `import type` edges would make the
+ * `test` tier select files it cannot fail on, and the same closure still could not
+ * see the `new URL("../..")` route (`test/artifact/dist-specifiers.test.ts`), so the
+ * graph would stay incomplete while LOOKING complete. Declaration keeps the gap
+ * named and pinned instead: `test/package-selection-union.test.ts` fails if an entry
+ * rots, and the frozen `orphan` pin fails if a new unreachable test appears.
+ */
+export const TYPE_ONLY_DEPENDENTS: readonly TypeOnlyDependent[] = [
+  {
+    testFile: "test/provenance-metadata-shape.test.ts",
+    packageName: "@repo/wiki",
+    typeSpecifier: "ProvenanceMetadata",
+    sourceFile: "packages/wiki/src/utils/types.js",
+    reason:
+      "asserts the runtime provenance field shape at the type level; every wiki import is `import type`",
+  },
+  {
+    testFile: "test/query-candidate-id-absent.test.ts",
+    packageName: "@repo/wiki",
+    typeSpecifier: "QueryResult",
+    sourceFile: "packages/wiki/src/utils/types.js",
+    reason:
+      "asserts the retired `candidateId` key is absent from QueryResult by key-set comparison, so it is purely type-level",
+  },
+  {
+    testFile: "test/sdk/published-dimensions-port.test.ts",
+    packageName: "@repo/wiki",
+    typeSpecifier: "Dimension",
+    sourceFile: "packages/wiki/src/dimensions/types.js",
+    reason:
+      "proves the published dimensions port stays compatible with the wiki `Dimension` type in both directions",
+  },
+];
+
+/**
+ * The declared type-only dependents of one package.
+ *
+ * This is the developer's view of {@link TYPE_ONLY_DEPENDENTS}: `package-tasks.ts`
+ * uses it to print which files a selective `test` run cannot fail on, so the gap is
+ * visible on the affected run instead of only in this file.
+ *
+ * @param packageName - Declared package name, for example `@repo/wiki`.
+ * @returns The declared entries for that package, empty when it has none.
+ */
+export function typeOnlyDependentsOf(packageName: string): readonly TypeOnlyDependent[] {
+  return TYPE_ONLY_DEPENDENTS.filter((entry) => entry.packageName === packageName);
+}
 
 /** Everything {@link partition} needs: the collected universe and its closures. */
 export interface PartitionInput {
