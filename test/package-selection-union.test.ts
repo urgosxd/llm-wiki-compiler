@@ -8,9 +8,11 @@
  * stopped looking. So every collected test must land in a package that attributes
  * it, the `meta` bucket (a test of the tooling: `scripts/`, `test/fixtures/`,
  * `test/sdk/`), or the `orphan` bucket (a test whose closure reaches no repo module
- * at all). Whatever is left over is the hole, and it must equal
- * {@link UNATTRIBUTABLE} exactly — one named test, explained below — so a SECOND
- * hole cannot appear without failing here.
+ * at all). Whatever is left over is the hole, and it must now be EMPTY: the one
+ * test that used to be allowed here reached the built `dist/` of
+ * `@atomicstrata/llmwiki-core`, and the collapse deleted that package, so the
+ * exemption went with it. Emptying it is a STRENGTHENING of the guard, not a
+ * relaxation — there is no list left that a second hole could join.
  *
  * WHY THE CENSUS IS PRINTED AND NOT BAKED. The total grows every time this feature
  * adds a test, so a literal `819`/`820` would be a stale number that fails for the
@@ -48,22 +50,21 @@ import {
 const REPO_ROOT = resolve(import.meta.dirname, "..");
 
 /**
- * The one collected test no surface can claim, asserted by exact equality.
+ * The tests no surface can claim.
  *
- * `test/artifact/facade-surface.test.ts` imports
- * `packages/llmwiki-core/dist/index.js` and `compiler-sdk.js` DYNAMICALLY — the
- * built artefacts of `@atomicstrata/llmwiki-core` — and reaches nothing else in the
- * repository. That package is transitional (it will become a thin alias of
- * `@repo/wiki` or disappear), so it deliberately has no task surface, and its
- * `dist/` output is neither a package source root nor a meta root.
+ * This list is EMPTY, and it is empty because the package is gone rather than because
+ * the guard was relaxed. Its single former member, `test/artifact/facade-surface.test.ts`,
+ * imported `packages/llmwiki-core/dist/index.js` and `compiler-sdk.js` dynamically — the
+ * built artefacts of `@atomicstrata/llmwiki-core` — and reached nothing else in the
+ * repository, so no package, `meta` root or `orphan` rule could claim it. That package no
+ * longer exists (`odd/tasks/collapse-core-package.md`), and the test died with its
+ * subject.
  *
- * THIS IS REPORTED, NOT ABSORBED. Giving the wiki package a claim on it, or calling
- * `packages/llmwiki-core/dist` a meta root, would hide the very hole this slice
- * exists to surface. The root `pnpm test` gate still runs this file; what is on
- * record is that no per-package selection does. A NAME APPEARING HERE LATER IS A
- * REGRESSION TO INVESTIGATE, exactly like the orphan ratchet below.
+ * WHAT REPLACED THE ALLOWANCE IS STRICTER: the leftover bucket must be empty. A name
+ * appearing there now fails the run instead of needing to be added to a list, so a new
+ * unreachable test cannot be absorbed by editing this constant.
  */
-const UNATTRIBUTABLE: readonly string[] = ["test/artifact/facade-surface.test.ts"];
+const UNATTRIBUTABLE: readonly string[] = [];
 
 /**
  * The orphan ratchet, frozen at the run that introduced this guard.
@@ -161,7 +162,6 @@ function coveredTests(source: PartitionResult): Set<string> {
 function attributableUniverse(): string[] {
   return collected.filter((file) => !UNATTRIBUTABLE.includes(file));
 }
-
 /** How many tests more than one package claims, which is expected and kept. */
 function multiPackageCount(source: PartitionResult): number {
   const claims = new Map<string, number>();

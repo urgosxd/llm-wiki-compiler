@@ -31,12 +31,15 @@
  * directory rule. The same exclusion governs the `meta` rule, because a test under
  * `test/sdk/` is not a test OF `test/sdk` merely by living there.
  *
- * `@atomicstrata/llmwiki-core` IS DELIBERATELY NOT A SURFACE. It is transitional —
- * it will become a thin alias of `@repo/wiki` or disappear — so it gets no `test`,
- * `lint`, `typecheck` or `fallow` bucket. It is also not a "package directory" for
- * the exclusion rules below: a test that attributes only to core must show up in
- * the census as an orphan to be reported, not hide inside a package that has no
- * task surface to run it.
+ * NO PACKAGE IS EXEMPT FROM A TASK SURFACE. `@atomicstrata/llmwiki-core` used to be
+ * named here as deliberately NOT a surface: it was transitional, so it got no `test`,
+ * `lint`, `typecheck` or `fallow` bucket, and one test that reached its built `dist/`
+ * was reported as an orphan rather than hidden inside a package with no task surface.
+ * The collapse deleted that package (`odd/tasks/collapse-core-package.md`), so the
+ * exemption is gone because the PACKAGE is gone — NOT because this guard was relaxed.
+ * Nothing replaces it: `test/package-selection-union.test.ts` requires the leftover
+ * bucket to be empty, which is strictly stronger than the frozen exception it used to
+ * assert by equality.
  *
  * PURE BY CONTRACT. No child process, no network, no database, no writes. The
  * caller brings the collected file list and the closures; this file only decides
@@ -62,11 +65,10 @@ export interface PackageSurface {
 }
 
 /**
- * The four packages that carry a task surface.
+ * The four workspace packages that carry a task surface.
  *
- * `@atomicstrata/llmwiki-core` (`packages/llmwiki-core`) is intentionally absent:
- * see the file header. Adding it here would invent a task surface for a package
- * that is on its way out.
+ * Every workspace member that ships source appears here, and there is no exemption
+ * list: see the file header.
  */
 export const PACKAGE_SURFACES: readonly PackageSurface[] = [
   {
@@ -233,13 +235,12 @@ function coveredTests(result: PartitionResult): Set<string> {
  * list the caller passes, which means a caller cannot satisfy it by editing the
  * `uncovered` field.
  *
- * THE UNIVERSE IS THE CALLER'S DECLARATION, and it is a parameter on purpose: a
- * test that reaches only the transitional `@atomicstrata/llmwiki-core` artefacts
- * cannot be attributed to any surface, and the honest handling is for the caller
- * to name it in a frozen exception list and assert that list by exact equality —
- * never to widen the buckets until the hole closes by itself. Passing the
- * unfiltered collected list is the strict form, and it reports such a test as
- * missing, which is the right answer when no exception has been declared.
+ * THE UNIVERSE IS THE CALLER'S DECLARATION, and it is a parameter on purpose, so a
+ * caller cannot satisfy the guard by editing `result.uncovered`. No exception list
+ * remains to pass here: the single test that used to need one reached the built
+ * `dist/` of `@atomicstrata/llmwiki-core`, and that package no longer exists. The
+ * caller therefore passes the UNFILTERED collected list, which is the strict form,
+ * and a test no bucket claims is reported as missing.
  *
  * @param result - A partition to validate.
  * @param collected - The collected universe the partition must answer for.

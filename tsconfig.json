@@ -12,12 +12,6 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
     "paths": {
-      "@atomicstrata/llmwiki-core/compiler-sdk": [
-        "./packages/wiki/src/sdk/compiler-composition.ts"
-      ],
-      "@atomicstrata/llmwiki-core": [
-        "./packages/wiki/src/core-index.ts"
-      ],
       "llm-wiki-compiler": [
         "./packages/wiki/src/index.ts"
       ]
@@ -26,8 +20,7 @@
   "include": [
     "packages/wiki/src/**/*",
     "packages/api/src/**/*.ts",
-    "packages/foundation/src/**/*.ts",
-    "packages/llmwiki-core/src/**/*.ts"
+    "packages/foundation/src/**/*.ts"
   ],
   "exclude": [
     "node_modules",

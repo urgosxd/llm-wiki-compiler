@@ -65,10 +65,12 @@ concurrency:
 
 env:
   NODE_VERSION: "24"
-  # Publication order: dependencies before dependents. Directories relative to
-  # the repository root; "." is the standard facade. `test/sdk/pack-distribution.test.ts`
-  # pins this value to the publishable workspaces, so it cannot drift again.
-  PACKAGE_DIRS: "packages/llmwiki-core ."
+  # Every directory the release workflow publishes. One entry is the post-collapse
+  # shape: the root package IS the distribution, and `@atomicstrata/llmwiki-core` is no
+  # longer a package (see `odd/tasks/collapse-core-package.md`).
+  # `test/sdk/pack-distribution.test.ts` pins this value to the publishable
+  # workspaces, so it cannot drift again.
+  PACKAGE_DIRS: "."
 
 defaults:
   run:

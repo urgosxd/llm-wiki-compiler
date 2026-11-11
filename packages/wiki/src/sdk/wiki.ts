@@ -4,7 +4,7 @@
  * Normalize the root once and pass the original options without copying grants.
  */
 import path from "node:path";
-import { withQuiet, createWikiCoreAtRoot } from "@atomicstrata/llmwiki-core/compiler-sdk";
+import { withQuiet, createWikiCoreAtRoot } from "./compiler-composition.js";
 import type { CreateWikiOptions, Wiki } from "./types.js";
 
 /** Preserve rejected-promise behavior for synchronous delegate failures. */

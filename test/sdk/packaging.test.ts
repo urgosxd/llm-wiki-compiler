@@ -82,14 +82,20 @@ function packDistribution(repo: string, destination: string): string[] {
 }
 
 /**
- * A mixed-package consumer must see ONE contract through both published packages.
+ * A mixed-package consumer must see ONE contract through both published subpaths.
  *
- * The facade's `Wiki` is the core's `WikiCore` with nothing added, so the two
- * declarations are mutually assignable, and the facade's `createWiki` accepts the
- * core's `CreateWikiOptions` -- a divergence in either package breaks this file.
- * `SlugSafe` proves the branded identifier types still survive the shipped
- * declarations as brands: a second copy of core's `.d.ts` (or a hand-written
- * duplicate) would either lose the brand or be indistinguishable from `string`.
+ * The facade's `Wiki` is the compiler-sdk subpath's `WikiCore` with nothing added, so the
+ * two declarations are mutually assignable, and the facade's `createWiki` accepts the
+ * subpath's `CreateWikiOptions` -- a divergence in either subpath breaks this file.
+ * `SlugSafe` proves the branded identifier types still survive the shipped declarations
+ * as brands: a second copy of the declarations (or a hand-written duplicate) would either
+ * lose the brand or be indistinguishable from `string`.
+ *
+ * THE TYPES COME FROM ONE PACKAGE, TWO SUBPATHS. They used to arrive from a second
+ * published package (`@atomicstrata/llmwiki-core` and its own `./compiler-sdk`), which the
+ * collapse deleted, so both imports now resolve onto `llm-wiki-compiler/compiler-sdk` --
+ * the successor the root manifest's `exports` declares. The assertions are unchanged: the
+ * two declarations must still line up name for name.
  *
  * ## The dimensions port is proved from the INSTALLED declarations too (spec S9)
  *
@@ -112,8 +118,7 @@ function packDistribution(repo: string, destination: string): string[] {
 async function verifyInstalledTypes(repo: string, fixture: string): Promise<void> {
   await writeFile(path.join(fixture, "types.ts"), `
     import { createWiki, type CreateWikiOptions as FacadeOptions, type Wiki } from "llm-wiki-compiler";
-    import type { SlugSafe, WikiCore } from "@atomicstrata/llmwiki-core";
-    import type { CreateWikiOptions } from "@atomicstrata/llmwiki-core/compiler-sdk";
+    import type { CreateWikiOptions, SlugSafe, WikiCore } from "llm-wiki-compiler/compiler-sdk";
     declare const wiki: Wiki;
     declare const options: CreateWikiOptions;
     declare const slug: SlugSafe;
@@ -122,8 +127,7 @@ async function verifyInstalledTypes(repo: string, fixture: string): Promise<void
     /** True when a branded type collapsed to plain string in the published .d.ts. */
     type ErasedToPlainString<T> = [T] extends [string] ? ([string] extends [T] ? true : false) : false;
     const sameContract: MutuallyAssignable<Wiki, WikiCore> = true;
-    const core: WikiCore = wiki;
-    const facade: Wiki = createWiki(options);
+    const core: WikiCore = wiki;    const facade: Wiki = createWiki(options);
     const slugText: string = slug;
     const brandSurvives: ErasedToPlainString<SlugSafe> = false;
 
@@ -247,6 +251,16 @@ async function verifyInstalledRuntimeDependencies(fixture: string): Promise<void
 
 /** The title the installed package gives the page it ingests. */
 const INGEST_TITLE = "Installed Tarball Ingest";
+/**
+ * The title the QUIET probe ingests, deliberately different from {@link INGEST_TITLE}.
+ *
+ * Both probes share ONE probe Stack (`withInstalledProbeStack`), and the wiki dimension
+ * writes pages as ROWS in that Stack's database, not into the temp root alone. Ingesting
+ * the same title a second time is therefore `unchanged` rather than `created` — measured:
+ * the quiet case failed with `expected 'unchanged' to be 'created'`, which reads as a
+ * quiet-output defect and is really the fixture colliding with itself.
+ */
+const QUIET_TITLE = "Installed Tarball Quiet Ingest";
 /** Enough body text to clear the minimum source length the ingest enforces. */
 const INGEST_BODY = "Body long enough to clear the minimum source length the ingest enforces.";
 
@@ -411,7 +425,7 @@ async function quietScopeThroughInstalledSubpath(fixture: string, probe: ProbeSt
         WIKI_COMPILER_SDK: specifier,
         WIKI_QUIET_ROOT: root,
         WIKI_QUIET_RESULT: resultPath,
-        WIKI_INGEST_TITLE: INGEST_TITLE,
+        WIKI_INGEST_TITLE: QUIET_TITLE,
         WIKI_INGEST_BODY: INGEST_BODY,
       },
     });

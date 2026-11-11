@@ -184,9 +184,9 @@ export function validateConfig(cfg: Config): void {
  * recomputed later.
  *
  * WHY FIRST ACCESS AND NOT IMPORT. llmwiki loads the project `.env` into
- * `process.env` after this module graph has been evaluated, and the
- * externalized `@atomicstrata/llmwiki-core` chunk that carries this module is
- * evaluated before the CLI entry body runs at all. Snapshotting `process.env`
+ * `process.env` after this module graph has been evaluated, and the bundle that
+ * carries this module is evaluated before the CLI entry body runs at all.
+ * Snapshotting `process.env`
  * here made a `.env` invisible to the KG side, so the credentials the wiki
  * dimension already had never reached the bridge. Resolving on first access
  * moves the snapshot to where the environment is complete: a dimension running,

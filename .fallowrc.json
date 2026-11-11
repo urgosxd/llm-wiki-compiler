@@ -17,7 +17,6 @@
     "packages/api/src/main.ts"
   ],
   "ignorePatterns": [
-    "packages/llmwiki-core/package.json",
     "docs/**",
     "packages/wiki/src/viewer/assets/index.html",
     "packages/wiki/src/viewer/assets/viewer-content.css",
@@ -39,7 +38,10 @@
     "@repo/kg",
     "@repo/wiki",
     "postgres",
-    "picomatch"
+    "picomatch",
+    "@hono/node-server",
+    "ajv",
+    "express"
   ],
   "ignoreExports": [
     {

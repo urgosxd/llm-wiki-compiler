@@ -4,7 +4,6 @@
 packages:
   - packages/api
   - packages/foundation
-  - packages/llmwiki-core
   - packages/llmwiki-kg/ts
   - packages/wiki
 
@@ -29,12 +28,10 @@ overrides:
 # a follow-up, not this delivery.
 nodeLinker: hoisted
 
-# npm records `node_modules/@atomicstrata/llmwiki-core` as
-# {"resolved":"packages/llmwiki-core","link":true} in `package-lock.json`, and
-# the only version that satisfies the root's exact pin
-# (`1.4.0-dev.20260919`) is that local workspace folder — the version was never
-# published to the registry. Without this, pnpm consults the registry for the
-# facade and fails with ERR_PNPM_NO_MATCHING_VERSION.
+# npm recorded its workspace links in `package-lock.json` as
+# {"resolved":"packages/<member>","link":true}, so pnpm must resolve a member the
+# same way. Without this it consults the registry first and fails with
+# ERR_PNPM_NO_MATCHING_VERSION for a version that only exists in this tree.
 linkWorkspacePackages: true
 
 # Make the local workspace win over a registry version whenever both could

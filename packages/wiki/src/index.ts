@@ -26,12 +26,31 @@ export type { Wiki } from "./sdk/types.js";
  * The published option and dimension-port types, additive on purpose.
  *
  * A `CreateWikiOptions.dimensionsPort` field an embedder cannot NAME is not a public
- * option: `CreateWikiOptions` is reached through
- * `@atomicstrata/llmwiki-core/compiler-sdk`, so the port it accepts has to be
- * reachable from this entry too. `sdk/types.ts` re-exports the compilation's whole
- * type surface, which is where the declarations in `sdk/core-types.ts` land.
+ * option, so the port it accepts has to be reachable from this entry too. `WikiCore` and
+ * `SdkCompileOptions` are here for the same reason: `./compiler-sdk` re-exports them
+ * from this entry, which is what keeps the subpath a one-statement shim instead of a
+ * second copy of the module graph.
  */
-export type { CreateWikiOptions, DimensionsPort, DimensionsRequest } from "./sdk/types.js";
+export type {
+  CreateWikiOptions,
+  DimensionsPort,
+  DimensionsRequest,
+  SdkCompileOptions,
+  WikiCore,
+} from "./sdk/types.js";
+/** The branded identifier type the profile layer declares and the SDK hands back. */
+export type { SlugSafe } from "./profile/types.js";
+
+/**
+ * The version-locked composition its own `./compiler-sdk` subpath publishes.
+ *
+ * Exported HERE, as values, so that subpath can be a zero-state re-export of this
+ * bundle. Building it from the composition module instead would inline a second
+ * `AsyncLocalStorage` from `utils/output.ts` (`splitting: false`), and `withQuiet`
+ * entered through the subpath would then silently stop applying to the engine in this
+ * same file.
+ */
+export { createWikiCoreAtRoot, withQuiet } from "./sdk/compiler-composition.js";
 
 /**
  * Read-only domain contract.
