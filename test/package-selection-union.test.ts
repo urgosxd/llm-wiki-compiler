@@ -87,6 +87,14 @@ const FROZEN_ORPHANS: readonly string[] = [
   "test/no-executable-root-src-walks.test.ts",
   "test/no-removed-cli-adverts.test.ts",
   "test/no-research-branch-in-core.test.ts",
+  // LEGITIMATELY ORPHAN, investigated not pasted: this file pins `turbo.json` and
+  // the workspace manifests as POLICY DATA. It imports no repo module at all — only
+  // `node:fs`, `node:path` and `vitest` — and reads `turbo.json` and each
+  // `packages/*/package.json` with `readFileSync`, so its closure is itself and
+  // nothing else, which is exactly the orphan rule. There is nothing for a package
+  // to attribute it to and nothing to fix; a test written this way lands here by
+  // construction.
+  "test/package-task-selection.test.ts",
   "test/pnpm-migration-wiring.test.ts",
   "test/provenance-metadata-shape.test.ts",
   "test/query-candidate-id-absent.test.ts",

@@ -112,6 +112,19 @@ that hash a run skips the ~42 s tsup rebuild and a single-file run drops from
 ~48 s to under a second. To force the rebuild anyway — after a suspicious
 `dist/`, for example — set `LLMWIKI_TEST_FORCE_BUILD=1`.
 
+### Per-Package Task Surfaces
+
+Every workspace package (`@repo/foundation`, `@repo/wiki`, `@repo/kg`,
+`@repo/api`) declares `test`, `lint` and `typecheck` (plus `fallow` for `@repo/kg`),
+and each `test` set is **derived** at run time from the import graph rather than
+listed by hand — a new test that imports the package joins its selection by itself.
+Run one package's tools with `turbo run <task> --filter=<pkg>` (for example
+`turbo run test --filter=@repo/wiki`), or the same work without turbo as
+`corepack pnpm --filter <pkg> run <task>`. This is a local selection convenience,
+not a gate: **the gate of record is still root `pnpm test`**, no gate is routed
+through Turborepo, and no CI job name changes. Design, the cache-less graph, the
+`pnpm`-on-`PATH` prerequisite and the known holes: `docs/turborepo.md`.
+
 ### Pre-Commit Checks
 
 Before committing any work, and before considering any task complete, you must:
