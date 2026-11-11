@@ -203,7 +203,10 @@ serially (`tsc` 5.1 s, `typecheck:tests` 12.5 s, `typecheck:kg` 5.2 s, `lint` 10
 `fallow:ci` 2.1 s, `fallow:kg` 0.5 s) and ~26.7 s behind the command, peaking at ~2.2 GB
 with no swap added. `pnpm run build` is deliberately NOT in that set and must not be
 added: every gate there is read-only over the checkout, while `build` writes `dist/`, so
-it stays ordered before anything that spawns `dist/` — in the push hook and in CI.
+it stays ordered before anything that spawns `dist/`. The push hook runs that root script
+directly; **in CI the ordering is implemented by `turbo run build`**, which runs the same
+root `pnpm run build` script as its `//#build` task. Grep CI for `pnpm run build` and you
+will not find the literal — the graph is the caller now, not because the rule was dropped.
 
 ### Branch protection
 

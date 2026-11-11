@@ -7,5 +7,5 @@
 #
 # `test:affected` is deliberately NOT here. When the scope resolves to the full
 # unit tier it declines to run it and exits non-zero, so a push gate built on it
-# could decide to gate nothing. `pnpm test` in CI is the one full-suite verdict.
+# could decide to gate nothing. CI's one full-suite verdict is `pnpm exec turbo run test --filter=//`.
 node scripts/pnpm-invocation.ts run build
