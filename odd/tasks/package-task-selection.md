@@ -69,7 +69,7 @@ S12. The gates, verbatim: "`gates:static` · `tsc --noEmit` · `typecheck:tests`
 - T2 | S2, S11 | worker | module-graph crawl core with the frozen parity fixtures as a red-then-green test
 - T3 | S3, S4, S10, S11 | worker | package/meta/orphan selection with the union guard and its bite proof
 - T4 | S1, S5, S6, S10 | worker | per-package scripts, turbo.json, turbo devDependency, .gitignore
-- T5 | S7, S8, S9 | worker | docs and the proof runs that root scripts and CI names are unchanged | done
+- T5 | S7, S8, S9 | worker | docs and the proof runs that root scripts and CI names are unchanged | 19815dd77e36d3f26a6ea83a769678f032983df0
 - T6 | S1-S12 | verify | independent verification of every S#
 
 ## Log
