@@ -84,25 +84,25 @@ S19. THE RECORD'S FRAMING. "a notice that misinforms is worse than the silence i
 
 ## Tasks
 
-- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `65f8b0f810dbef34d4882fb458388993d9b6801e`
-- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `65f8b0f810dbef34d4882fb458388993d9b6801e`
-- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `65f8b0f810dbef34d4882fb458388993d9b6801e`
-- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `65f8b0f810dbef34d4882fb458388993d9b6801e`
-- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `65f8b0f810dbef34d4882fb458388993d9b6801e`
+- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `1b94665d1662967e5f76fa50871f8e9bedc3bcdf`
+- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `1b94665d1662967e5f76fa50871f8e9bedc3bcdf`
+- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `1b94665d1662967e5f76fa50871f8e9bedc3bcdf`
+- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `1b94665d1662967e5f76fa50871f8e9bedc3bcdf`
+- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `1b94665d1662967e5f76fa50871f8e9bedc3bcdf`
 
-- T6 | S8-S13 | worker `gentle-ai-worker` — this feature document | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
-- T7 | S8, S9, S11 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: boundary header, `TypeOnlyDependent`, `TYPE_ONLY_DEPENDENTS`, `typeOnlyDependentsOf` | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
-- T8 | S12 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: one stderr line on the `test` flow, pinned by `test/package-task-boundary-notice.test.ts` | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
-- T9 | S8, S9, S13 | worker `gentle-ai-worker` — `test/package-selection-union.test.ts`: rot guard, owner derivation, fail-closed exhaustiveness | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
-- T10 | S10, S11 | worker `gentle-ai-worker` — `docs/turborepo.md`: stated boundary, type-only pairing, orphan bucket status, regenerated census | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
-- T11 | S14 | worker `gentle-ai-worker` — `scripts/type-only-dependents.ts` (new): TypeScript-parsed derivation of every type-only dependent across ALL collected tests, four elided forms | `5e6af0825ba8251a5101584405e1aa45efca39a1`
-- T12 | S14 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: declaration demoted to annotation, derivation re-exported for one import surface | `5e6af0825ba8251a5101584405e1aa45efca39a1`
-- T13 | S15 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: `shouldReportTypeOnlyDependents` predicate replaces the source-text gate | `5e6af0825ba8251a5101584405e1aa45efca39a1`
-- T14 | S14, S15 | worker `gentle-ai-worker` — union + notice tests (exact equality both directions, four forms, four-task gate), three probes, `docs/turborepo.md` overclaim correction | `5e6af0825ba8251a5101584405e1aa45efca39a1`
-- T15 | S17 | worker `gentle-ai-worker` — `scripts/type-only-dependents.ts`: edges only, namespace/inline-export/subpath forms, limits documented | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
-- T16 | S16 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: subtract the partition, so a pair means "not selected" | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
-- T17 | S18 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: notice prints from the run's own derived set; structural two-occurrence guard | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
-- T18 | S16, S19 | worker `gentle-ai-worker` — soundness assertion, specifier table, probes RED-S/RED-N1/N2/G/G2, docs correction | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
+- T6 | S8-S13 | worker `gentle-ai-worker` — this feature document | `1b94665d1662967e5f76fa50871f8e9bedc3bcdf`
+- T7 | S8, S9, S11 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: boundary header, `TypeOnlyDependent`, `TYPE_ONLY_DEPENDENTS`, `typeOnlyDependentsOf` | `1b94665d1662967e5f76fa50871f8e9bedc3bcdf`
+- T8 | S12 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: one stderr line on the `test` flow, pinned by `test/package-task-boundary-notice.test.ts` | `1b94665d1662967e5f76fa50871f8e9bedc3bcdf`
+- T9 | S8, S9, S13 | worker `gentle-ai-worker` — `test/package-selection-union.test.ts`: rot guard, owner derivation, fail-closed exhaustiveness | `1b94665d1662967e5f76fa50871f8e9bedc3bcdf`
+- T10 | S10, S11 | worker `gentle-ai-worker` — `docs/turborepo.md`: stated boundary, type-only pairing, orphan bucket status, regenerated census | `1b94665d1662967e5f76fa50871f8e9bedc3bcdf`
+- T11 | S14 | worker `gentle-ai-worker` — `scripts/type-only-dependents.ts` (new): TypeScript-parsed derivation of every type-only dependent across ALL collected tests, four elided forms | `7276c237a09a1f12473b633e15af279fbc0ea088`
+- T12 | S14 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: declaration demoted to annotation, derivation re-exported for one import surface | `7276c237a09a1f12473b633e15af279fbc0ea088`
+- T13 | S15 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: `shouldReportTypeOnlyDependents` predicate replaces the source-text gate | `7276c237a09a1f12473b633e15af279fbc0ea088`
+- T14 | S14, S15 | worker `gentle-ai-worker` — union + notice tests (exact equality both directions, four forms, four-task gate), three probes, `docs/turborepo.md` overclaim correction | `7276c237a09a1f12473b633e15af279fbc0ea088`
+- T15 | S17 | worker `gentle-ai-worker` — `scripts/type-only-dependents.ts`: edges only, namespace/inline-export/subpath forms, limits documented | `87891d11922bc7327a61b9735dfbf8d521dc5b8f`
+- T16 | S16 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: subtract the partition, so a pair means "not selected" | `87891d11922bc7327a61b9735dfbf8d521dc5b8f`
+- T17 | S18 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: notice prints from the run's own derived set; structural two-occurrence guard | `87891d11922bc7327a61b9735dfbf8d521dc5b8f`
+- T18 | S16, S19 | worker `gentle-ai-worker` — soundness assertion, specifier table, probes RED-S/RED-N1/N2/G/G2, docs correction | `87891d11922bc7327a61b9735dfbf8d521dc5b8f`
 ## Log
 
 L1 — the original request, verbatim:
@@ -293,7 +293,7 @@ references in the removed-`^test`-edge prose, `@repo/kg=549`, `orphan=29` and th
 codes were each verified to still be true and left alone.
 
 L22 — the slice is committed as ONE work unit. Commit
-`d84400907bbc4a626b6c9c81dd09d5f683350de4` (`feat(selection): declare type-only dependents and fail
+`1b94665d1662967e5f76fa50871f8e9bedc3bcdf` (`feat(selection): declare type-only dependents and fail
 closed on unreachable tests`) holds all six paths: `scripts/package-selection.ts`,
 `scripts/package-tasks.ts`, `test/package-selection-union.test.ts`,
 `test/package-task-boundary-notice.test.ts`, `docs/turborepo.md` and this document. The notice was NOT
@@ -349,7 +349,7 @@ census did NOT move: `@repo/foundation=405 @repo/wiki=565 @repo/kg=549 @repo/api
 uncovered=0 collected=827 distinct=827 multiPackage=409` before and after, because the derivation
 adds no collected test file.
 
-L26 — the judge fix is committed as ONE work unit: `5e6af0825ba8251a5101584405e1aa45efca39a1`
+L26 — the judge fix is committed as ONE work unit: `7276c237a09a1f12473b633e15af279fbc0ea088`
 (`fix(selection): derive the type-only dependents instead of freezing a list`), seven paths —
 `scripts/type-only-dependents.ts` (new), `scripts/package-selection.ts`, `scripts/package-tasks.ts`,
 `test/package-selection-union.test.ts`, `test/package-task-boundary-notice.test.ts`,
@@ -433,7 +433,7 @@ passing first time here, after the previous work unit's cycle was fixed at the d
 4 for `@repo/wiki` and would read 1 for `@repo/foundation`, which is the measured set in L28, not a
 target.
 
-L23 — JD-A3-002, the notice's SCOPE claim, after the final adversarial pass returned SHIP with the
+L31 — JD-A3-002, the notice's SCOPE claim, after the final adversarial pass returned SHIP with the
 derived set independently reproduced at 5 pairs over 4 files (4 wiki / 1 foundation, `EQUAL=true`
 against their own regex scan). The notice ended "`root \`typecheck:tests\` is the covering tier`",
 which is true for the type-only edge and FALSE as a blanket reassurance about a file that also has
@@ -443,7 +443,7 @@ byte-exact pin and its rebuild case carry the new string; `docs/turborepo.md` qu
 nothing there changed. The line quoted in L10 is the PRE-change wording and is left as the record of
 what was observed then.
 
-L24 — RESIDUALS RECORDED, each with its direction, so the next reader knows what is unproven and
+L32 — RESIDUALS RECORDED, each with its direction, so the next reader knows what is unproven and
 which way it fails:
 
   - **JD-A3-001 · WARNING · HIDES.** The one-call-site guard is a substring count and is defeated by
@@ -452,7 +452,7 @@ which way it fails:
     not a plausible accidental change — the mutant a reviewer would actually introduce (a second call
     site) is caught by RED-G2. A behavioural pin would need `main` exported or a stubbed `runTask`
     seam; that is a separate slice, not this one.
-  - **JD-A3-002 · WARNING · HIDES (partially closed by L23).** A file carrying a type-only edge AND an
+  - **JD-A3-002 · WARNING · HIDES (partially closed by L31).** A file carrying a type-only edge AND an
     unmodelled runtime route is still named by the notice under the type-only umbrella. There is NO
     live instance today: none of the five pairs uses `require(`, a computed `import(` or
     `new URL(`. The wording now scopes the claim to the edge; the structural exposure remains,
@@ -466,16 +466,40 @@ which way it fails:
     false-red on a comment mentioning the forbidden name and would pass under a renamed re-export.
     It is a REMINDER, not a guard; the count assertion beside it is what does the work.
 
-L25 — CLAIM CORRECTION, recorded because a commit message cannot be amended. The message for
-`d4d500d141367f6cc3516f3eb3d8d53e30ba1740` says "125 raw edges". The measurement is **130 raw pairs,
+L33 — CLAIM CORRECTION, recorded because a commit message cannot be amended. The message for
+`87891d11922bc7327a61b9735dfbf8d521dc5b8f` says "125 raw edges". The measurement is **130 raw pairs,
 of which 125 are false pairs** (130 − 5 = 125), which is why the RED-S assertion printed
 `expected [ …(125) ]`: 125 is the count of wrongly-claimed pairs, not the size of the raw edge set.
 The pair is 130/125, and the commit message stands uncorrected by rule; this line is the correction.
 
-L26 — this micro-unit is committed as `d8aabb2dacb3ebfb80b02e08216dc847f24056e6` (`fix(selection): scope the notice's reassurance to
+L34 — this micro-unit is committed as `c6c36f5cbe97a82ddc13aa654bbd88bb2c5b4f41` (`fix(selection): scope the notice's reassurance to
 the type-only edge`), three paths: `scripts/package-tasks.ts`, `test/package-task-boundary-notice.test.ts`
 and this document. Battery on that tree: `tsc --noEmit` 0, `typecheck:tests` 0 (1592 files), `lint` 0
 (558 / 396 / 423, unchanged), `fallow:ci` 0, `build` 0, full suite `pnpm test` exit 0 with `Test Files
 824 passed | 3 skipped (827)` and `Tests 6143 passed | 4 skipped (6147)` in 327.08 s, load 2.78 before
 and 5.77 after. Census unchanged at `meta=70 orphan=29 uncovered=0 collected=827` with the four package
 buckets identical, so `docs/turborepo.md:130-131` was not touched; a string change moves no count.
+
+L35 — REBASE onto `4b4ff4abb834419f9d1a3c2d344e2c42a2b2378d`, and what it did to the record. The
+branch was replayed commit-for-commit onto main, which brought in this document's own audit record
+(`0b507626`) and a docker/CI slice (`4b4ff4ab`). Main's `L1`-`L8` and `S1`-`S7` are kept BYTE-FOR-BYTE:
+they describe what was observed at `5260d423`, and the implementation answered them rather than editing
+them. My specs continue main's numbering as `S8`-`S19` and my entries continue as `L9`-`L34`, both
+renumbered mechanically. Main's `T1`-`T5` rows are kept, and the only permitted removal is their
+`pending` cells, which now name `1b94665d1662967e5f76fa50871f8e9bedc3bcdf` — the commit that implemented
+them — plus the three fix-forwards that followed.
+
+THREE CORRECTIONS, so the record is not quietly wrong. (1) Main's header still says the audit
+implemented nothing and that the five-file remedy is "left pending". That was true of the audit and is
+superseded by `T1`-`T18`; the header is main's text and was not reworded. (2) The replay applied the
+last two commits without a textual conflict, which left my final four entries carrying their pre-rebase
+numbers (`L23`-`L26`); they are `L31`-`L34` here, and the one internal reference was remapped with them.
+(3) Every commit SHA cited in this document was dead after the rebase — all eight commits were replayed
+— so each was resynchronised: `d8440090`->`1b94665d`, `544ee720`->`47773649`, `5e6af082`->`7276c237`,
+`2d2be3db`->`87b2f6ea`, `d4d500d1`->`87891d11`, `65f8b0f8`->`d7f4cd33`, `d8aabb2d`->`c6c36f5c`,
+`bf5d830f`->`5cd0688a`. The commit MESSAGES still cite the old SHAs where they always did; a message
+cannot be amended, so this entry is the correction.
+
+NO FINDING WAS TOUCHED BY THIS REBASE: `JD-A3-001` through `JD-A3-004` remain carried exactly as
+recorded in `L31`/`L32`, and no claim in the slice was widened, narrowed or "fixed" while resolving the
+conflict.
