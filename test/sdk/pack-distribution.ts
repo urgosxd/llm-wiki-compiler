@@ -11,7 +11,8 @@
  *
  * So the truth is DERIVED instead of restated: a workspace ships when its
  * manifest exists and is not `private`, and the root package ships because it is
- * the published facade. `pack-distribution.test.ts` compares that derived set
+ * the published artefact. Once the core stopped being a package there was no
+ * publishable workspace left, so the derived list is the root package on its own. `pack-distribution.test.ts` compares that derived set
  * against {@link PACK_DISTRIBUTION} on every unit run, so a manifest that
  * changes publishability — or a package directory that disappears — without a
  * matching list edit turns the suite red.
@@ -27,9 +28,15 @@ import path from "node:path";
 
 /**
  * Package directories packed for distribution, relative to the repository root:
- * the core SDK workspace plus the root facade package.
+ * the root package ALONE.
+ *
+ * `@atomicstrata/llmwiki-core` used to be listed first, and the root tarball was
+ * only installable because that second tarball was installed beside it. The
+ * collapse of the core into `packages/wiki` (spec S2 of
+ * `odd/tasks/collapse-core-package.md`) leaves exactly one published artefact,
+ * and `packaging.test.ts` now proves it installs with nothing beside it.
  */
-export const PACK_DISTRIBUTION: readonly string[] = ["packages/llmwiki-core", "."];
+export const PACK_DISTRIBUTION: readonly string[] = ["."];
 
 /** The workflow whose `PACKAGE_DIRS` value must agree with the derived distribution. */
 const PUBLISH_WORKFLOW_PATH = ".github/workflows/publish.yml";
@@ -118,8 +125,11 @@ export function readPublishPackageDirs(repoRoot: string): string[] {
   const value = stripYamlQuotes((match[1] ?? "").trim());
   if (value === "") throw new PublishPackageDirsError("the value is empty");
   const entries = value.split(/[ \t]+/).filter(entry => entry !== "");
-  if (entries.length < 2) {
-    throw new PublishPackageDirsError(`expected at least two directories, parsed ${JSON.stringify(entries)}`);
+  // ONE directory is the post-collapse shape: the root package is the whole
+  // distribution. Zero is still an error, because a value that parsed to nothing
+  // would make the comparison below pass on an empty workflow.
+  if (entries.length < 1) {
+    throw new PublishPackageDirsError(`expected at least one directory, parsed ${JSON.stringify(entries)}`);
   }
   return entries;
 }
