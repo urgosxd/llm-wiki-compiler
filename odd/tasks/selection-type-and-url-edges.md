@@ -84,11 +84,11 @@ S19. THE RECORD'S FRAMING. "a notice that misinforms is worse than the silence i
 
 ## Tasks
 
-- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
-- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
-- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
-- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
-- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
+- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `65f8b0f810dbef34d4882fb458388993d9b6801e`
+- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `65f8b0f810dbef34d4882fb458388993d9b6801e`
+- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `65f8b0f810dbef34d4882fb458388993d9b6801e`
+- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `65f8b0f810dbef34d4882fb458388993d9b6801e`
+- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `65f8b0f810dbef34d4882fb458388993d9b6801e`
 
 - T6 | S8-S13 | worker `gentle-ai-worker` — this feature document | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
 - T7 | S8, S9, S11 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: boundary header, `TypeOnlyDependent`, `TYPE_ONLY_DEPENDENTS`, `typeOnlyDependentsOf` | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
@@ -99,10 +99,10 @@ S19. THE RECORD'S FRAMING. "a notice that misinforms is worse than the silence i
 - T12 | S14 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: declaration demoted to annotation, derivation re-exported for one import surface | `5e6af0825ba8251a5101584405e1aa45efca39a1`
 - T13 | S15 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: `shouldReportTypeOnlyDependents` predicate replaces the source-text gate | `5e6af0825ba8251a5101584405e1aa45efca39a1`
 - T14 | S14, S15 | worker `gentle-ai-worker` — union + notice tests (exact equality both directions, four forms, four-task gate), three probes, `docs/turborepo.md` overclaim correction | `5e6af0825ba8251a5101584405e1aa45efca39a1`
-- T15 | S17 | worker `gentle-ai-worker` — `scripts/type-only-dependents.ts`: edges only, namespace/inline-export/subpath forms, limits documented | TBD
-- T16 | S16 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: subtract the partition, so a pair means "not selected" | TBD
-- T17 | S18 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: notice prints from the run's own derived set; structural two-occurrence guard | TBD
-- T18 | S16, S19 | worker `gentle-ai-worker` — soundness assertion, specifier table, probes RED-S/RED-N1/N2/G/G2, docs correction | TBD
+- T15 | S17 | worker `gentle-ai-worker` — `scripts/type-only-dependents.ts`: edges only, namespace/inline-export/subpath forms, limits documented | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
+- T16 | S16 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: subtract the partition, so a pair means "not selected" | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
+- T17 | S18 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: notice prints from the run's own derived set; structural two-occurrence guard | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
+- T18 | S16, S19 | worker `gentle-ai-worker` — soundness assertion, specifier table, probes RED-S/RED-N1/N2/G/G2, docs correction | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
 ## Log
 
 L1 — the original request, verbatim:
@@ -421,3 +421,14 @@ change: JD-A-001 (viewer-sidebar is in the byte-exact notice pin and in the deri
 JD-A-002 (deleting that annotation gives `expected [ Array(1) ] to deeply equal []` naming it);
 JD-A-004 (`meta` bucket is covered — the probe above is `meta` and is caught); JD-A-005 (no
 tautology; the non-vacuity case drives the real diff helper both ways).
+
+L30 — also recorded in this work unit, and charged to the record rather than to the code: the
+census did NOT move (`@repo/foundation=405 @repo/wiki=565 @repo/kg=549 @repo/api=13 meta=70
+orphan=29 uncovered=0 collected=827 distinct=827 multiPackage=409`, identical before and after), so
+`docs/turborepo.md:130-131` was left alone. The battery on this tree: `tsc --noEmit` 0,
+`typecheck:tests` 0 (1592 files), `lint` 0 (triple 558 / 396 / 423, unchanged), `fallow:ci` 0 —
+passing first time here, after the previous work unit's cycle was fixed at the design level — `build`
+0, and the full suite `pnpm test` exit 0 with `Test Files 824 passed | 3 skipped (827)` and `Tests
+6143 passed | 4 skipped (6147)` in 333.20 s, load 2.36 before and 6.13 after. The notice now reads
+4 for `@repo/wiki` and would read 1 for `@repo/foundation`, which is the measured set in L28, not a
+target.
