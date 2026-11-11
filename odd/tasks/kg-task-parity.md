@@ -218,3 +218,15 @@ The mechanism the Manager named for the rule is that briefs are written out of s
 **The two findings that slice recorded and refused to fix, one line each.** The runtime image ships `migration_open_kg_classification.sql` and `migration_drop_ingest_outbox.sql` while no `SCHEMA_FILES` entry in `scripts/apply-schemas.sh` names either — a documented manual path rather than proven-missing coverage, and a schema question for its own slice. The two Dockerfiles share no base stage and duplicate their enable/install/prune rationale (`Dockerfile:34-44` vs the KG Dockerfile's `:17-29`), which is a drift channel that has already fired once.
 
 **Cost, measured: 147 s cold at HEAD**, 73 s root + 74 s KG, against the earlier 122 s at base — under the +180 s line that would have forced a separate job and a branch-protection change, though with a 33 s margin rather than 58 s and host-specific either way. The deferral condition L9 named for splitting `docs/turborepo.md` — "it waits until the image-CI decision lands" — has now landed; the split itself is still not taken here, and its corrected framing is measured at the image-CI HEAD rather than assumed.
+
+### L11
+
+**The SHAs `L10` cites were rewritten by a rebase onto a new base, so this entry records the mapping rather than editing `L10` in place.** This directory is append-only, so `L10`'s reference to `4671bc8fb8500e7a7716266c924a31e176e2a564` stays verbatim and is superseded here. Branch `fix/docker-images-in-ci` was rebased from old base `5260d423963bd84911c239bfa5e57d2eec02bffe` onto new base `0b5076265ebd882db5a535a66199b2d755688e20`; the new base is a descendant of the old one whose only delta is one new file, `odd/tasks/selection-type-and-url-edges.md`, disjoint from every path the image-CI slice touches, so the slice's content did not change — only its commit identities, because their parent chain moved.
+
+**The old → new mapping, literally:**
+
+- `4671bc8fb8500e7a7716266c924a31e176e2a564` → `a0af88444b249535e8b45da79064674aed393979` — `ci(container): build and smoke-test both container images in the existing job`
+- `6d8e8ac7e0b654580ee2146f07786f4c6a105443` → `214c8b1f048d27e70c6f8b324c92c3fea521ccbc` — `docs(odd): record the docker-image CI slice, its verdict and the two findings`
+- `903fce32af651c0c2f103cef460aac320cc8bda5` → `b47e425bdcb7ba33ea9126812ff7756a8d749cf7` — `docs(odd): record the docker-image CI close-out commit and the step index`
+
+**The rebase is proven to be ancestry-only, so every verdict `L10` records still stands.** The patch range is byte-identical before and after (`cmp` exit **0**; 539 lines, `sha256 8e36d57d4f995cf3bb92a7114c962ef54bd403ffb4d091505db1fb68e5839300` both times), the pre- and post-rebase commit sets share no commit, and the only tree difference is the base file arriving. `odd/tasks/docker-images-in-ci.md` carries the same mapping in its own `L5`. Nothing about the assembled images, the smoke test or the delivered artefact changed, so the tolerated-not-correct KG-manifest verdict and both recorded findings remain as `L10` stated them.
