@@ -128,7 +128,7 @@ Its census at this commit, printed by the run rather than baked:
 
 ```
 selection buckets: @repo/foundation=405 @repo/wiki=565 @repo/kg=549 @repo/api=13
-meta=66 orphan=29 uncovered=0 collected=823 distinct=823 multiPackage=409
+meta=67 orphan=29 uncovered=0 collected=824 distinct=824 multiPackage=409
 ```
 
 ```
@@ -186,7 +186,7 @@ above still declares no task.
 ## `@repo/kg#test` runs under the ROOT vitest config
 
 `packages/llmwiki-kg/ts/vitest.config.ts` keeps `include: ["src/**/*.test.ts"]`,
-which collects **142 of the 823** files the root run collects. That is a
+which collects **142 of the 824** files the root run collects. That is a
 package-local config narrowing the suite to a fifth of it, so `@repo/kg#test` does
 not use it: every package's `test` task runs under the root `vitest.config.ts` and
 passes its derived selection as filters. `@repo/kg`'s `typecheck` likewise invokes
