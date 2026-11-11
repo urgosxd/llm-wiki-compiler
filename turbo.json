@@ -4,7 +4,9 @@
   // ORDER and SELECTION, not speed: a cache hit is a green that did not execute,
   // which is the exact failure this repository has spent a long time removing.
   // Do not enable caching without a provably complete input set, and expect that
-  // argument to be made in writing rather than by flipping this flag.
+  // argument to be made in writing rather than by flipping this flag. `build` is
+  // held to the same rule for the same reason: a cache hit on a build task is an
+  // artefact nobody produced in this run, reported as if they had.
   //
   // `concurrency: "1"` is the other half of the point, and it belongs HERE rather
   // than in `TURBO_CONCURRENCY`: every test task in this workspace runs against ONE
@@ -13,7 +15,55 @@
   // same schema in the same container. A limit carried by the graph cannot be
   // forgotten; an environment variable can.
   "concurrency": "1",
+  // Turborepo 2 runs every task in STRICT env mode by default, so a task inherits
+  // NOTHING from the invoking shell except what this file declares. That default is
+  // safe for most tasks and wrong for exactly one here: CI supplies `DATABASE_URL`,
+  // `LLMWIKI_TEST_DATABASE_URL` and `AKS_DATABASE_URL` in the `build-and-test` job's
+  // `env:` block, and `//#test` is the suite that reads them. MEASURED without this
+  // list: a probe task printed `LLMWIKI=UNSET DATABASE_URL=UNSET AKS=UNSET` and turbo
+  // still reported `Tasks: 1 successful, 1 total`, exit 0 — a silent strip, not a
+  // failure. The consequence in CI would be `test/fixtures/testcontainers-postgres.ts`
+  // finding no override, provisioning its own container, and leaving the job's
+  // `services: postgres` and both schema steps governing a database the suite never
+  // opens.
+  //
+  // PASS-THROUGH, not `env`: `env` folds a name into the cache key, and caching is off
+  // everywhere here on purpose; pass-through forwards without pretending the value is
+  // part of the verdict. Chosen over `--env-mode=loose` because loose forwards EVERY
+  // variable — the opposite of declaring what is needed — and a CLI flag would make
+  // CI's graph differ from every local invocation. This list is the same declaration in
+  // both places, and `test/control-gates.test.ts` fails closed if the job's env block
+  // ever grows a key this list does not account for.
+  "globalPassThroughEnv": ["DATABASE_URL", "LLMWIKI_TEST_DATABASE_URL", "AKS_DATABASE_URL"],
   "tasks": {
+    // The ROOT project's build. Turbo names the root package `//`, never its
+    // `package.json` name (`llm-wiki-compiler`), and `--filter=llm-wiki-compiler`
+    // fails with `No package found with name 'llm-wiki-compiler' in workspace`. The
+    // `//#` prefix is the ONLY way to register a root task —
+    // `node_modules/turbo/docs/messages/missing-root-task-in-turbo-json.mdx:41-49` —
+    // and there is no `--include-workspace-root` flag. Without this entry the root
+    // `tsup` run that produces the distribution is absent from `turbo run build`
+    // entirely, and the task exits 0 having built only `@repo/kg`.
+    "//#build": {
+      "dependsOn": [],
+      "cache": false
+    },
+    // The ROOT project's test task: the full suite (`vitest run`), which is the gate
+    // of record. It exists so CI can select it EXACTLY, with `--filter=//`, for the
+    // reason the `test` comment below gives: unfiltered, this task plus
+    // `@repo/kg#test` would run 549 of the same files twice.
+    "//#test": {
+      "dependsOn": [],
+      "cache": false
+    },
+    // `build` is declared cache-less like every other task here, and it declares no
+    // edge. It is the PER-PACKAGE half of the build surface: `@repo/kg#build` is the
+    // only member task with a command. The distribution's build is `//#build`
+    // above.
+    "build": {
+      "dependsOn": [],
+      "cache": false
+    },
     // NO `^test` EDGE, and none may be added back. The RULING this records:
     //
     // 1. Database serialisation is a CONCURRENCY concern, not a dependency edge.
@@ -50,15 +100,27 @@
       "cache": false
     }
   }
-  // WHY THERE IS NO `build` TASK, AND WHY NO PACKAGE GETS ONE:
-  // `@repo/api`, `@repo/wiki` and `@repo/foundation` emit nothing — they export
-  // `./src/*.ts` and are bundled from source by the single root tsup run
-  // (`tsup.config.ts` `noExternal: [/^@repo\//]`). A `build` task over a package
-  // that emits no artifact is a task that reports success without an artifact,
-  // which is precisely the defect this graph exists to avoid. The one package
-  // that does emit (`@repo/kg`) keeps its own scripts, untouched by this slice,
-  // and no `^build` edge pretends otherwise. `@atomicstrata/llmwiki-core` used to
-  // be the second emitter and is collapsed into `packages/wiki`, so it emits no
-  // artefact of its own: the single root tsup run is now the only producer of the
-  // distribution.
+  // WHAT `turbo run build` EXECUTES, MEASURED ON TURBO 2.11.10, AND WHY THERE IS
+  // STILL NO `^build` EDGE:
+  // Unfiltered, `turbo run build` executes TWO real tasks, in two DISTINCT output
+  // directories so neither can clobber the other:
+  //   `//#build`      -> `tsup`                       -> `dist/`
+  //   `@repo/kg#build` -> `tsc -p tsconfig.build.json` -> `packages/llmwiki-kg/ts/dist/`
+  // It also RESOLVES three ids with no command — `@repo/api#build`,
+  // `@repo/foundation#build`, `@repo/wiki#build` — which turbo marks `<NONEXISTENT>`
+  // and drops from the run. Those three members emit nothing by design: they export
+  // `./src/*.ts` and are bundled from source by the single root `tsup` run. A `build`
+  // script there would report success without an artefact, which is the defect this
+  // graph exists to avoid; `<NONEXISTENT>` is also why the task contributes nothing
+  // for them rather than a false success.
+  //
+  // There is still no `^build` edge, and none is needed. The root `tsup` run does not
+  // read `packages/llmwiki-kg/ts/dist`: it bundles every `@repo/*` package from
+  // SOURCE, because those packages publish raw TypeScript paths (see the
+  // `noExternal` comment in `tsup.config.ts`). Nothing in this graph consumes the
+  // other build's output, so an ordering edge would order nothing — and in a
+  // cache-less graph an edge is a claim about a dependency, not a scheduling hint.
+  //
+  // `@atomicstrata/llmwiki-core` used to be the second emitter and is collapsed
+  // into `packages/wiki`, so it emits no artefact of its own.
 }

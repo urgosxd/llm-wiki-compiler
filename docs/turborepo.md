@@ -1,7 +1,8 @@
 # Turborepo: the derived per-package task graph
 
 Maintainer and operator reference for `turbo.json`, the per-package `test`,
-`lint`, `typecheck` and `fallow` scripts, and the selection that sits behind them.
+`lint`, `typecheck`, `fallow` and `build` scripts, the two ROOT tasks `//#build` and
+`//#test`, and the selection that sits behind them.
 This page is repo-facing (plain `.md`, not part of the published Mintlify site),
 because `turbo.json` is JSONC with inline reasoning and the fuller argument — the
 measurements, the rejected alternatives, the known holes — needs a page.
@@ -15,7 +16,7 @@ A hand-written per-package path list works today and rots tomorrow: someone adds
 That is the "a green that stopped looking" defect, and it is the one thing this
 slice can hide, so everything below is derived from the module graph at run time.
 
-## The graph: four tasks, and not one of them cached
+## The graph: seven tasks, and not one of them cached
 
 | task        | `dependsOn` | `cache` | what it runs                                        |
 | ----------- | ----------- | ------- | --------------------------------------------------- |
@@ -23,6 +24,13 @@ slice can hide, so everything below is derived from the module graph at run time
 | `lint`      | `[]`        | `false` | the house-rule ratchet, narrowed to the package      |
 | `typecheck` | `[]`        | `false` | the package's sources plus its derived tests         |
 | `fallow`    | `[]`        | `false` | the root `fallow:kg` gate, for `@repo/kg` only       |
+| `build`     | `[]`        | `false` | `@repo/kg`'s `tsc -p tsconfig.build.json` — the only member that declares a `build` script |
+| `//#build`  | `[]`        | `false` | the ROOT project's `tsup` run — the distribution, into `dist/` |
+| `//#test`   | `[]`        | `false` | the ROOT project's `vitest run` — the full 827-file suite |
+
+Turbo names the root project `//`, **not** by its `package.json` name, so `//#build` and
+`//#test` are the only two task names here that do not start with a package. That detail
+is the one that cost two iterations of measurement, and it is stated plainly below.
 
 **Every task is `cache: false`, and that is the point of the file.** The goal here
 is **order and selection, not speed**. A cache hit is a green that did not
@@ -75,20 +83,228 @@ task resolves to nothing for them rather than to a scan over no baseline.
 `.turbo/` is gitignored: with caching off it holds run summaries and logs, not
 verdicts.
 
-## Why there is no `build` task, and why no package gets one
+## The `build` task: two tasks, two artefact directories, and no per-package selection
 
-`@repo/api`, `@repo/wiki` and `@repo/foundation` emit nothing. They export
-`./src/*.ts` and are bundled from source by the **single** root `tsup` run
-(`tsup.config.ts` `noExternal: [/^@repo\//]`). A `build` task over a package that
-emits no artifact is a task that reports success without an artifact — the exact
-defect this graph exists to avoid — so no `build` task is declared and no `^build`
-edge is invented to make the graph look symmetrical.
+`build` is declared, and CI's front door calls it — `turbo run build`, unfiltered. What
+it executes is a fact about **which projects declare a `build` script**, and the answer is
+`@repo/kg` (`tsc -p tsconfig.build.json` → `packages/llmwiki-kg/ts/dist/`) plus the root
+project's `tsup` (`→ dist/`). Those are two **distinct** output directories
+(`tsup.config.ts:22` vs `packages/llmwiki-kg/ts/tsconfig.json:10`), so there is no
+two-writers defect: neither task can clobber the other. Confirmed by measurement, not by
+reading the paths — both artefacts were rewritten by the same run and both kept their
+content hashes.
 
-The packages that genuinely emit keep their own untouched scripts — `@repo/kg`
-(`tsc -p tsconfig.build.json`) — and it used to be two: `@atomicstrata/llmwiki-core`
-ran `tsup` over wiki's sources as a second artefact, and that emitter is gone with
-the package. The single real emit for the shipped artifact is the root `tsup` run,
-and `pnpm run build` stays the gate for it.
+**Turbo names the root project `//`, not `llm-wiki-compiler`.** That is the fact worth the
+most here, because it is the one that costs an iteration to find. The root `package.json`
+says `"name": "llm-wiki-compiler"`, but that name is **not** a package in this workspace,
+and asking for it by name fails:
+
+```
+$ corepack pnpm exec turbo run test --filter=llm-wiki-compiler
+  x No package found with name 'llm-wiki-compiler' in workspace
+exit=1
+
+$ corepack pnpm exec turbo run build --filter=llm-wiki-compiler
+  x No package found with name 'llm-wiki-compiler' in workspace
+exit=1
+```
+
+The root joins a task run only when its task is registered with the `//#` prefix —
+`"//#build": {}`, `"//#test": {}` — which is the mechanism turbo's own shipped docs state:
+`node_modules/turbo/docs/messages/missing-root-task-in-turbo-json.mdx:41-49` ("you can add
+it to the `tasks` field … `"//#build": {}`"), restated at
+`node_modules/turbo/docs/crafting-your-repository/configuring-tasks.mdx:252,270`. There is
+**no** `--include-workspace-root` flag to fall back on: turbo 2.11.10 rejects it with
+`ERROR unexpected argument '--include-workspace-root' found`, exit `1`. Without a `//#`
+declaration the root project is simply absent from every run, so `turbo run build` exits
+`0` having built `@repo/kg` and **not** the distribution.
+
+**`turbo run build` has no per-package selection, because there is ONE distribution
+artefact.** `@repo/api`, `@repo/wiki` and `@repo/foundation` emit nothing: they export
+`./src/*.ts` and are bundled from source by the single root `tsup` run (`tsup.config.ts`
+`noExternal: [/^@repo\//]`). They therefore declare no `build` script, and there is
+nothing to select per package — the only per-package build surface in the workspace is
+`@repo/kg`'s. A `build` script on a non-emitting package would report success without an
+artefact, which is the exact defect this graph exists to avoid.
+
+**The resolved-but-nonexistent ids are a documented property, not a footnote.** Because
+`build` is declared for the whole workspace, turbo resolves it in every project, marks the
+three non-emitting ones `<NONEXISTENT>`, and drops them from the run. The literal
+measurement, with the exit code:
+
+```
+$ corepack pnpm exec turbo run build
+   • Packages in scope: //, @repo/api, @repo/foundation, @repo/kg, @repo/wiki
+   • Running build in 5 packages
+@repo/kg:build: $ tsc -p tsconfig.build.json
+//:build: $ tsup
+ Tasks:    2 successful, 2 total
+ Time:    11.456s
+exit=0
+```
+
+and the resolution behind it, from `--dry=json`: `//#build` → `tsup`, `@repo/kg#build` →
+`tsc -p tsconfig.build.json`, and `@repo/api#build` / `@repo/foundation#build` /
+`@repo/wiki#build` → `<NONEXISTENT>`. Five ids resolve; **two** execute. A `<NONEXISTENT>`
+id that reached a run without being dropped would be a defect, so it is named here beside
+the exit code rather than left for a reader to find.
+
+### Why the CI build is unfiltered, and the narrower candidates that were rejected
+
+`turbo run build` stays **unfiltered on purpose**, and the reason is structural: it is
+**extensional**. A package that later declares a `build` script joins the CI front door
+**by existing** — no edit to this page, no edit to CI, no list to remember. The filtering
+candidates were measured and rejected, and their numbers are recorded so the next reader
+does not "optimise" the invocation back into a list:
+
+| candidate | packages in scope | executed | wall | verdict |
+| --- | --- | --- | --- | --- |
+| `turbo run build` | `//`, `@repo/api`, `@repo/foundation`, `@repo/kg`, `@repo/wiki` | 2 (`//#build`, `@repo/kg#build`), exit `0` | 11.9 s | **chosen** — extensional |
+| `turbo run build --filter=// --filter=@repo/kg` | `//`, `@repo/kg` | 2 (`//#build`, `@repo/kg#build`), exit `0` | 11.8 s | **rejected** — it ENUMERATES the artefact set, so the next package to declare a `build` script silently stops being built in CI: an item-6 defect introduced by the fix for an item-6 defect |
+| `turbo run build --filter=//` | `//` | 1 (`//#build` = `tsup`), exit `0` | 8.0 s | **rejected** — drops `@repo/kg#build`, so the artefact the KG image ships (`packages/llmwiki-kg/Dockerfile:113`) stops being built |
+
+A third task in an unfiltered run costs a second of serialisation at `concurrency: "1"`;
+a filter list costs a build that stops happening and nobody notices. That asymmetry is the
+whole argument, and it is the reason `turbo run build` must not be narrowed.
+
+**The local per-package path is still `--filter=@repo/<pkg>`.** `turbo run build
+--filter=@repo/kg` runs just the KG compile when that is what you want locally; what it
+must not become is the CI invocation. The CI gate of record remains **the full suite**,
+expressed as the root project's `test` — see the next section.
+
+### Why the CI test invocation filters, and it is the only filter in CI
+
+CI runs `turbo run test --filter=//`, and the filter is load-bearing for a reason of
+counts, not taste. The census puts the root suite at **`collected=827`** and
+`@repo/kg`'s derived selection at **549** — a strict subset of those same 827 files. With
+`//#test` declared, an unfiltered `turbo run test` resolves **five** tasks: `//#test`
+(`vitest run`, all 827) plus the four package tasks, `@repo/kg#test` among them. The 549
+KG files would then run **twice** in one job.
+
+The opposite mistake is worse, and it is why a per-package-only model is not the answer
+either: **99 files belong to no package at all** — `meta=70` plus `orphan=29`, with
+`uncovered=0` — so a model built only from package tasks would never run them. That is the
+"green that stopped looking" defect. CI therefore keeps the **full suite** as its verdict
+and selects it exactly, with one filter on one task.
+
+```
+$ corepack pnpm exec turbo run test --filter=//
+   • Packages in scope: //
+   • Running test in 1 package
+//:test: $ vitest run
+exit=1        # HISTORICAL — that run's only failures were two assertions in
+              # test/package-task-selection.test.ts, since amended
+ Tasks:    0 successful, 1 total
+ Time:    5m45.075s
+```
+
+The gate of record through the ROOT script — the same `vitest run` the graph runs — observed on the
+tree that existed **before** the prose corrections (`README.md`, `AGENTS.md` and
+`scripts/test-affected.ts` were still stale at that point), and kept here labelled as such:
+
+```
+$ corepack pnpm test
+Test Files  824 passed | 3 skipped (827)
+Tests  6144 passed | 4 skipped (6148)
+Duration  325.10s
+EXIT=0
+WALL=325.85 s
+loadavg immediately after: 7.11 5.67 4.36 3/3093 3942980
+```
+
+The **final tree** — the state that was committed, after those three prose corrections — re-run
+rather than assumed:
+
+```
+$ corepack pnpm test
+Test Files  824 passed | 3 skipped (827)
+Tests  6144 passed | 4 skipped (6148)
+Duration  333.83s
+EXIT=0
+WALL=334.68 s
+loadavg immediately after: 7.69 5.54 4.25 1/3129 4069013
+```
+
+**Which number belongs to which tree**, since the two runs are easy to conflate: **325.10 s /
+load 7.11** is the behavioural slice's tree, taken before the prose corrections landed;
+**333.83 s / load 7.69** is the committed tree. The verdict is `EXIT=0` on both, and the two
+differ in timing only — no test input and no source file differs between those two states.
+
+**Item 6 stays closed only while two declarations survive, and it fails silently if either goes —
+which is why the sentence is a conditional and not a clearance.** Both ways this green becomes
+meaningless exit `0`:
+
+- **Drop `//#build` and the distribution stops being built.** `turbo run build` still succeeds,
+  still prints a task count, and simply never runs `tsup` — CI would then ship a container built
+  from a `dist/` nobody in that job produced (`test:pack` packs `files: ["dist/"]`).
+- **Drop a name from `globalPassThroughEnv` and the suite measures a database CI did not
+  provide.** `//#test` still runs all 827 files and still reports its verdict; it just does it
+  against a container the fixture started itself, so the job's `services: postgres` and both
+  schema steps stop governing the result.
+
+Neither failure raises an error, which is the whole reason to state them beside the exit code
+rather than trust that a green run means what it says. `test/control-gates.test.ts` fails closed
+on both: the ordering assertion pins the build step before the image check, and the env assertion
+requires every `env:` key of `build-and-test` to be forwarded or explicitly exempted.
+
+**Every census on this page is unmoved by the front-door change**, because no collected
+test file joined or left any bucket: the run still prints
+`selection buckets: @repo/foundation=405 @repo/wiki=565 @repo/kg=549 @repo/api=13 meta=70
+orphan=29 uncovered=0 collected=827 distinct=827 multiPackage=409`. It is regenerated
+below rather than edited, and it did not need editing.
+
+The packages that genuinely emit keep their own scripts — `@repo/kg`
+(`tsc -p tsconfig.build.json`) — and it used to be two: `@atomicstrata/llmwiki-core` ran
+`tsup` over wiki's sources as a second artefact, and that emitter is gone with the package.
+
+## The env-mode finding: strict by default, and it strips a variable silently
+
+**Turborepo 2 runs every task in STRICT env mode by default, so a turbo task inherits NOTHING from
+the invoking shell except what `turbo.json` declares.** For most tasks that is the right default.
+For exactly one task here it was a defect that no local run could see, because these variables
+are set only in CI.
+
+**Measured, not inferred.** A probe task printing the three variables, run through
+`turbo run test --filter=//` with all three exported in the invoking shell:
+
+```
+$ LLMWIKI_TEST_DATABASE_URL=postgresql://probe@127.0.0.1:1/nope \
+  DATABASE_URL=... AKS_DATABASE_URL=... corepack pnpm exec turbo run test --filter=//
+//:test: PROBE LLMWIKI=UNSET DATABASE_URL=UNSET AKS=UNSET
+ Tasks:    1 successful, 1 total
+exit=0
+```
+
+`exit=0`, one successful task, and three variables gone — a silent strip rather than a failure.
+The same command outside turbo prints all three values, so the shell was not the problem.
+Turbo's own view of the same run: `envMode: strict` and
+`environmentVariables.specified.passThroughEnv: null`.
+
+The consequence in CI would have been concrete and quiet: `test/fixtures/testcontainers-postgres.ts`
+finds no override in `LLMWIKI_TEST_DATABASE_URL`, provisions its own container, and the
+`build-and-test` job's `services: postgres` plus both `scripts/apply-schemas.sh` steps stop
+governing the database the suite actually opens. On a runner without Docker, the suite fails for
+a reason that names Postgres rather than the graph.
+
+**What is declared, and why a declaration rather than a flag.**
+
+```json
+"globalPassThroughEnv": ["DATABASE_URL", "LLMWIKI_TEST_DATABASE_URL", "AKS_DATABASE_URL"],
+```
+
+Those are exactly the three keys of the `build-and-test` job's `env:` block. Verified accepted
+by turbo 2.11.10 (`--dry=json` parses it, exit 0, and reports it under
+`globalCacheInputs.environmentVariables.specified.passThroughEnv`); re-running the same probe
+afterwards printed all three values and still `Tasks: 1 successful, 1 total`.
+
+- **Pass-through, not `env`.** `env` folds a name into the cache key and treats the value as part
+  of the verdict. Caching is off everywhere in this graph on purpose, and a database URL is not
+  an input to what the suite *proves* — it is where it points.
+- **A declaration, not `--env-mode=loose`.** Loose forwards EVERY variable, which is the opposite
+  of saying what is needed, and a CLI flag on the CI invocation would make the graph in CI differ
+  from every local run — the class of divergence this page exists to remove. The list is the same
+  declaration in both places, and it fails closed: a variable added to the job's env block
+  tomorrow breaks `test/control-gates.test.ts` rather than joining silently.
 
 ## How selection works, in plain terms
 
@@ -268,13 +484,20 @@ and a filter that looks like coverage is worse than no filter. This table is the
 distance between the two — the roadmap as measurement, honestly including the part that is not
 equivalent.
 
+**What has changed since this table was drawn:** CI's front door IS Turborepo now —
+`build-and-test` runs `turbo run build` and `turbo run test --filter=//` — so the roadmap's
+premise has inverted for those two commands. The table below is still the right question for
+the per-package SELECTION (`--filter=@repo/<pkg>`), which remains a local convenience and not
+a gate: the equivalence it measures is about whether a package task means what its root gate
+means, and that question does not go away because CI calls the root tasks directly.
+
 | package task | what it runs today | root gate it must equal | equal? |
 | --- | --- | --- | --- |
 | `@repo/kg#typecheck` | `node scripts/package-tasks.ts typecheck --package @repo/kg`, which spawns `scripts/kg-typecheck.ts` | `typecheck:kg` (`node scripts/kg-typecheck.ts`, two-direction ratchet) | **yes** — both emit the identical sentence `KG package type-check: 357 files checked; 0 diagnostics baselined across 0 entries in packages/llmwiki-kg/ts/tsconfig.json; no regression.` |
 | `@repo/kg#test` | derived import-graph selection under the ROOT vitest config, with an exactness assertion on the files that actually ran | the root suite's KG coverage | **yes** — bucket `@repo/kg=549`, package run `Test Files 546 passed / 3 skipped (549)`, `Tests 3775 passed / 4 skipped`, `uncovered=0` |
 | `@repo/kg#lint` | the ratchet's own `collectSnapshot`/`compareViolations`, narrowed to the package's files | `pnpm run lint` | **no, by design** — package scope reports `764 files in scope; 381 baseline violations in 274 files`, root reports `1662 files scanned; 558 baseline violations in 396 files across 423 rule/file entries`; a scope narrower than the tree is a different measurement, so the root gate stays the gate of record |
 | `@repo/kg#fallow` | re-enters root `fallow:kg` through the resolved pnpm | `fallow:kg` | **yes** |
-| `@repo/kg#build` | no `build` task exists in `turbo.json` | — | **no** — `turbo run build --filter=@repo/kg` exits **1** with ``Could not find task `build` in project``; root `pnpm run build` (`tsup`) and package `build` (`tsc -p tsconfig.build.json`) produce different artefacts for different consumers, so this is a design question, not a wiring one |
+| `@repo/kg#build` | `tsc -p tsconfig.build.json`, writing `packages/llmwiki-kg/ts/dist`, reached through `turbo run build` | `pnpm --filter @repo/kg run build` | **yes** — same command, same directory, and the explicit CI step it duplicated was removed. The root `tsup` distribution is the OTHER artefact and is now the `//#build` root task, so the two meanings the old row collapsed into one word are two task keys |
 | `typecheck:tests` | no per-package equivalent exists | `pnpm run typecheck:tests` | **no** — `Test type-check: 1591 files checked; 238 baseline diagnostics in 86 files; no regression.` is reachable only from the root script |
 
 **What is already equivalent:** typecheck, test and fallow. That equivalence was built before
@@ -454,8 +677,11 @@ it as a fixture side effect. Root `pnpm run build` is `tsup` over the distributi
 (`package.json:27`) and never touches this config. The gap is incidental-versus-explicit, not
 "compiled by nobody".
 
-`turbo.json` declares `test`, `lint`, `typecheck` and `fallow`, and no `build`. Turbo 2.11.10
-resolves tasks against that declaration, so the command is not merely empty:
+`turbo.json` declared `test`, `lint`, `typecheck` and `fallow`, and no `build` — the state this
+paragraph and the two commands below were measured against. (A `build` task, plus the root
+tasks `//#build` and `//#test`, were declared later by `odd/tasks/ci-turbo-front-door.md`; the
+measurement is kept because it is what the absence looked like.) Turbo 2.11.10
+resolves tasks against that declaration, so the command was not merely empty:
 
 ```
 $ corepack pnpm turbo run build --filter=@repo/kg --dry=json
@@ -478,19 +704,26 @@ rather than an empty selection. Anyone who believed the green form would go look
 silent no-op that does not exist. What the error costs is reachability, not honesty — the
 command that would build the artefact cannot run at all.
 
-**No `build` task will be added, and this is a decline rather than a deferral.**
-`turbo.json` declares `test`, `lint`, `typecheck` and `fallow`, and keeps doing so. Three of
-the four members (`@repo/api`, `@repo/wiki`, `@repo/foundation`) emit no artefact — they
-export `./src/*.ts` and are bundled from source by the single root `tsup` run — so a `build`
-task plus a `^build` edge would create queued tasks that report success while producing
-nothing. That is the decline finding recorded in **"Why there is no `build` task, and why no
-package gets one"** above, and it is not restated here.
+**SUPERSEDED: a `build` task exists now, and this decline no longer stands.**
+`odd/tasks/ci-turbo-front-door.md` declared `build`, `//#build` and `//#test` in
+`turbo.json` — all three `cache: false`, `dependsOn: []`, no `^build` edge — because CI's
+front door became `turbo run build` and `turbo run test --filter=//`. What the decline was
+right about survives intact: the three non-emitting members still declare no `build`
+script, and there is still no `^build` edge. What changed is that a workspace task key is
+no longer read as a claim that every package builds; turbo resolves it, marks the
+non-emitting projects `<NONEXISTENT>` and drops them, so the task cannot report a false
+success. See **"The `build` task: two tasks, two artefact directories, and no per-package
+selection"** above; the paragraph above it is kept as the record of the decision as it
+stood before that declaration existed.
 
-**ADDRESSED in this slice — by a STEP inside `build-and-test`, not by a new job — and the value
-is signal locality, not coverage.** `.github/workflows/ci.yml:91-92` now runs
-`pnpm --filter @repo/kg run build` as the step **"Build the @repo/kg artefact the image
-ships"**, immediately after the root `pnpm run build` step and before the KG diagnostic
-ratchet, using the same config the image uses.
+**ADDRESSED, then SUPERSEDED — the step this paragraph describes no longer exists.** It was
+added as a step inside `build-and-test` (not a new job) to buy signal locality, and
+`odd/tasks/ci-turbo-front-door.md` removed it once `@repo/kg#build` became reachable through
+`turbo run build`: the explicit `pnpm --filter @repo/kg run build` was the same compile as a
+task on the line above it. Everything below is the record of WHY it was added, kept because
+that reasoning still explains what `turbo run build` has to cover. **Every `ci.yml:91-92` /
+`ci.yml:92` citation on this page is a citation of the removed step and no longer describes
+the workflow**; the line it occupied now carries the comment that records its removal.
 
 - **What it fixes:** breakage currently arrives as a red `test/kg-mcp-e2e` fixture, which reports
 under the MCP e2e suite's name when the thing that broke is packaging. A delivery artefact should
@@ -651,7 +884,7 @@ steps, in order:
 | 4 | `Install dependencies` | `pnpm install --frozen-lockfile` (`working-directory: .`, `:54`) | same |
 | 5 | `Apply database schema` | `psql "$AKS_TEST_DATABASE_URL" -f ../db/schema.sql` (`:58`) | **stronger** here: `./scripts/apply-schemas.sh` then `CHECK_ONLY=true ./scripts/apply-schemas.sh` (`ci.yml:106`, `:108`), which asserts every tenant table exists AND enforces row-level security |
 | 6 | `Typecheck` | `pnpm run typecheck` in `ts/` → `scripts/kg-typecheck.ts` | same gate: `pnpm run typecheck:kg` (`ci.yml:100`) |
-| 7 | `Build` | `pnpm run build` in `ts/` → `tsc -p tsconfig.build.json` | **now covered** by the step added in Named gap 3: `pnpm --filter @repo/kg run build` (`ci.yml:92`) |
+| 7 | `Build` | `pnpm run build` in `ts/` → `tsc -p tsconfig.build.json` | **covered, by a different step since SUPERSEDED**: the explicit `pnpm --filter @repo/kg run build` step added in Named gap 3 was REMOVED once `@repo/kg#build` became reachable through `turbo run build`. The task that produces this input now runs one step earlier in `build-and-test` (`pnpm exec turbo run build`), so the compile is still gated, in a step still named for building |
 | 8 | `Test` | `pnpm test 2>&1 \| tee test-output.log` (the package's 142 files) | **superset**: root `pnpm test` collects 827 files, of which KG's selection is 549 |
 | 9 | `Guard against silent skips` | fails when the summary line reports more than 4 skips | none, and obsolete here — see below |
 | 10 | `Upload failure log` (`if: failure()`) | `actions/upload-artifact@v4` on `ts/test-output.log` | none (ergonomics, not a gate) |
@@ -739,10 +972,13 @@ updated, not loosened. Measured: RED with the delete in place and the test unedi
 `AssertionError: expected 3 to be 4` at `test/pnpm-migration-wiring.test.ts:142:30`, exit 1 —
 then GREEN after the two-line update, 9/9 tests, exit 0.
 
-**Gap 3 and gap 5 were one decision, and only one half needed turbo.** With no `build` task
-(will not be added — see Named gap 3), step 7's script could not become
+**Gap 3 and gap 5 were one decision, and at the time only one half needed turbo.** With no
+`build` task in the graph (the state Named gap 3 records), step 7's script could not become
 `turbo run build --filter=@repo/kg`; it became the same `pnpm --filter @repo/kg run build`
-root CI runs, which is what the image runs too.
+root CI ran, which is what the image runs too. **That is now reversed:** `//#build` and
+`build` exist, `turbo run build` reaches both artefact producers, and the explicit step is
+gone — so step 7's script IS `turbo run build` today, which is what this paragraph predicted
+would become possible once the graph could express it.
 
 ## Named gap 6: two images, no shared base stage, and the same rationale written twice
 
@@ -1021,7 +1257,7 @@ The job inventories confirm it from the other side:
 
 | workflow | job ids (measured) | image job |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` | `build-and-test` (`:24`), `codebase-health` (`:132`) | none |
+| `.github/workflows/ci.yml` | `build-and-test` (`:24`), `codebase-health` (`:182`) | none |
 | `.github/workflows/publish.yml` | `resolve` (`:84`), `preflight` (`:155`), `publish` (`:283`), `verify` (`:337`) | none |
 | `.github/workflows/typecheck-tests.yml` | `test-typecheck` (`:12`) | none |
 
@@ -1034,16 +1270,19 @@ job id was `test` (`:10`) named "Typecheck, build and test" (`:11`), running typ
 and test in `ts/`. So even the file that looked like KG image CI was KG *package* CI in the
 wrong directory, and the KG image has never had a builder in CI at any path.
 
-**What the artefact step from gap 3 covers, and what it does not.** The step
-`Build the @repo/kg artefact the image ships` (`.github/workflows/ci.yml:91-92`, running
-`pnpm --filter @repo/kg run build`) makes explicit what was previously only incidental: no CI
-step compiled `packages/llmwiki-kg/ts/dist` as delivery work of its own. That directory is **one
-input to one image** — copied into the
-tracked file at `packages/llmwiki-kg/Dockerfile:113` and executed by `:123` — and the step
-therefore proves that input compiles. It does not build `packages/llmwiki-kg/Dockerfile`, it
-does not build the root `Dockerfile`, it does not build either of their `prod-deps` trees, and
-it does not exercise `pnpm install --frozen-lockfile` in the image's own context, which is
-exactly the check gap 7 needs. Compiling one input is not building an image.
+**What covers the KG compile now, and what it does not — SUPERSEDED, and this is the correction.**
+The step this paragraph used to describe, `Build the @repo/kg artefact the image ships`
+(`.github/workflows/ci.yml:91-92`, running `pnpm --filter @repo/kg run build`), **no longer
+exists**: `turbo run build` runs `@repo/kg#build`, the same `tsc -p tsconfig.build.json`, so the
+explicit step was a duplicate and was removed. What replaced it is not a separate step but the
+task: `packages/llmwiki-kg/ts/dist` is compiled by the graph, one step earlier in
+`build-and-test`, before the container-image step that consumes it. The claim the old paragraph
+was making still holds in substance — a broken `tsconfig.build.json` fails a step named for
+building — and the claim about scope holds exactly as written: it does not build
+`packages/llmwiki-kg/Dockerfile`, it does not build the root `Dockerfile`, it does not build
+either of their `prod-deps` trees, and it does not exercise `pnpm install --frozen-lockfile` in
+an image's own context, which is exactly the check gap 7 needs. Compiling one input is not
+building an image.
 
 **The real question, stated plainly:** this repository ships two container images that **no
 workflow proves exist**. No CI step would fail if either `Dockerfile` stopped parsing, if a
@@ -1060,19 +1299,41 @@ would be ceremony rather than a gate.
 
 ## What the graph does NOT own
 
-- **The gate of record is still root `pnpm test`.** No gate is routed through
-  Turborepo, and none may be: `test`, `test:unit`, `test:integration`,
-  `test:affected`, `test:pack`, `gates:static`, `build`, `lint`, `fallow:ci`,
-  `fallow:kg`, `typecheck:tests` and `typecheck:kg` are byte-identical to what they
-  were before this graph existed, and `test/package-task-selection.test.ts` freezes
-  them and asserts none of them mentions `turbo`. `test:affected`'s exit codes
-  (`78` full tier, `69` uncomputable, `0` true negative) are load-bearing and
-  survive unchanged.
+- **CI's front door is the graph now; the root SCRIPTS are untouched.** Since
+  `odd/tasks/ci-turbo-front-door.md`, the `build-and-test` job runs
+  `pnpm exec turbo run build` and `pnpm exec turbo run test --filter=//` instead of
+  `pnpm run build` and `pnpm test`. What did NOT change: every root script — `test`,
+  `test:unit`, `test:integration`, `test:affected`, `test:pack`, `gates:static`,
+  `build`, `lint`, `fallow:ci`, `fallow:kg`, `typecheck:tests`, `typecheck:kg` — is
+  byte-identical to what it was before this graph existed, and `pnpm test` stays the
+  gate of record locally. `test/package-task-selection.test.ts` freezes those scripts
+  and asserts none of them mentions `turbo`; that assertion **still passes**, and its
+  passing is the empirical proof that the front door was wired through CI and not
+  through a root script — the guard is the evidence, not an argument about what it
+  ought to say. `test:affected`'s exit codes (`78` full tier, `69` uncomputable, `0`
+  true negative) are load-bearing and survive unchanged.
+  `test/package-task-selection.test.ts` was amended in the same slice to declare the
+  seven task keys and to assert the build surface positively: `build`, `//#build` and
+  `//#test` are declared, every task is cache-less, no `^build` edge exists anywhere,
+  and the three non-emitting members still declare no `build` script. That last clause
+  is the invariant the old "declares no build task" case existed for, and it was proven
+  to bite: giving `@repo/api` a temporary `build` script turned the file red at
+  `test/package-task-selection.test.ts:240` with `AssertionError: @repo/api build:`
+  before the manifest was restored byte-identically.
+  **That red is now gone, and it was a second file.** `test/control-gates.test.ts` pinned CI's
+  literal `run` strings (`pnpm run build`, `pnpm test`), so the front-door change turned it red on
+  two assertions; it has since been amended — the literals are the two turbo invocations, the
+  ordering assertions are kept and now also assert that both labels exist before comparing them,
+  and a new assertion fails closed if the job's `env:` block grows a key the graph does not
+  forward. Both new assertions were proven to bite before being trusted: moving the build step
+  last reds the ordering case, and either dropping a `globalPassThroughEnv` name or adding an
+  unaccounted `env:` key reds the env case.
 - **No CI job name moved.** `test-typecheck`, `codebase-health` and
   `build-and-test (24)` are branch-protection requirements; the lint ratchet is a
-  **step inside** `build-and-test` so it inherits that required check name. Turbo
-  runs locally; the graph and every root script are unchanged, and exactly one step was
-  added to the `build-and-test` job (Named gap 3) — no job was renamed, added or removed.
+  **step inside** `build-and-test` so it inherits that required check name, and both
+  turbo invocations are steps inside that same job for the same reason. No job was
+  renamed, added or removed; the one step Named gap 3 added was later removed as a
+  duplicate of `@repo/kg#build` once the build task existed.
 - **Per-package `lint` is a view, not a replacement.** `scripts/lint-ratchet.ts` is
   a whole-repo gate on a frozen baseline and accepts no scope argument; the package
   task reuses its measurement and narrows it. A scope narrower than the tree it

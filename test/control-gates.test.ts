@@ -20,8 +20,42 @@ interface WorkflowStep {
 
 /** The parsed shape of a workflow file, reduced to what these assertions read. */
 interface Workflow {
-  jobs: Record<string, { steps?: WorkflowStep[] }>;
+  jobs: Record<string, { env?: Record<string, string>; steps?: WorkflowStep[] }>;
 }
+
+/**
+ * The two steps that now enter the task graph, by their `ci.yml` step label.
+ *
+ * Labels, not `run` strings: a step that carries a `name` is identified by it, and both
+ * turbo invocations carry one so the workflow reads as an intent rather than as a command.
+ */
+const TURBO_BUILD_LABEL = "Build the distribution and the @repo/kg artefact through the task graph";
+const TURBO_TEST_LABEL = "Run the full suite through the task graph";
+
+/**
+ * The commands those two steps run.
+ *
+ * `pnpm exec turbo …`, not `corepack pnpm exec turbo …`: CI provisions pnpm through
+ * `pnpm/action-setup@v4`, which resolves `packageManager` from the root manifest, so the
+ * bare form is the one the job guarantees. `corepack` is a local workaround for a host
+ * whose bare `pnpm` exits 127, and it must not appear in the workflow.
+ */
+const TURBO_BUILD_COMMAND = "pnpm exec turbo run build";
+const TURBO_TEST_COMMAND = "pnpm exec turbo run test --filter=//";
+
+/**
+ * Job `env:` keys that deliberately do NOT reach a turbo task, each with its reason.
+ *
+ * EMPTY TODAY, and that is the finding rather than an oversight: every variable the
+ * `build-and-test` job sets is one the suite reads, so all three must be forwarded.
+ * An entry here is a decision a reviewer can see; the assertion below fails closed for
+ * any key that is neither forwarded nor listed, so a variable added to that env block
+ * tomorrow cannot join silently.
+ */
+const ENV_EXEMPT: Readonly<Record<string, string>> = {};
+
+/** A string literal (kept) or a comment (dropped), so a `//` inside a string survives. */
+const STRING_OR_COMMENT = /"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
 
 /** The gates `AGENTS.md` lists, in the order it lists them. */
 const GATE_COMMANDS = [
@@ -72,6 +106,14 @@ function jobCommands(workflow: Workflow, job: string): string[] {
   return (workflow.jobs[job]?.steps ?? []).flatMap((step) => (step.run ? [step.run.trim()] : []));
 }
 
+/** Parse `turbo.json` the way its JSONC readers do, so comments never break the parse. */
+function turboGraph(): { globalEnv?: string[]; globalPassThroughEnv?: string[] } {
+  const stripped = readRepositoryFile("turbo.json").replace(STRING_OR_COMMENT, (match) =>
+    match.startsWith('"') ? match : "",
+  );
+  return JSON.parse(stripped) as { globalEnv?: string[]; globalPassThroughEnv?: string[] };
+}
+
 /** A synthetic snapshot for the ratchet comparison: counts are derived, never passed in. */
 function snapshotOf(violations: HouseViolation[]): Snapshot {
   const counts: Record<string, number> = {};
@@ -99,7 +141,7 @@ describe("control gates — CI wiring", () => {
   it("runs the type-check, the lint ratchet and the full suite inside build-and-test", () => {
     const workflow = readWorkflow(".github/workflows/ci.yml");
     expect(jobCommands(workflow, "build-and-test")).toEqual(
-      expect.arrayContaining(["pnpm exec tsc --noEmit", "pnpm run lint", "pnpm test"]),
+      expect.arrayContaining(["pnpm exec tsc --noEmit", "pnpm run lint", TURBO_TEST_COMMAND]),
     );
   });
 
@@ -109,13 +151,50 @@ describe("control gates — CI wiring", () => {
     expect(stepLabels(workflow, "build-and-test")).not.toContain("Run the tests affected by this change");
   });
 
+  // The two ordered steps are found by LABEL because both carry a `name`; an unnamed
+  // step resolves to `-1`, which is why every pair below asserts BOTH endpoints exist
+  // before comparing them — a missing label cannot make an ordering pass by accident.
   it("keeps the order: root type-check before the build, the suite after the schema steps", () => {
-    const labels = stepLabels(readWorkflow(".github/workflows/ci.yml"), "build-and-test");
+    const workflow = readWorkflow(".github/workflows/ci.yml");
+    const labels = stepLabels(workflow, "build-and-test");
     const index = (label: string) => labels.indexOf(label);
-    expect(index("Type-check the root project")).toBeGreaterThan(index("pnpm install --frozen-lockfile"));
-    expect(index("Type-check the root project")).toBeLessThan(index("pnpm run build"));
-    expect(index("Lint the house rules against their frozen baseline")).toBeLessThan(index("pnpm run build"));
-    expect(index("pnpm test")).toBeGreaterThan(index("Verify tenant isolation is enforced"));
+    expect(jobCommands(workflow, "build-and-test"), "the build step must still enter the graph").toContain(
+      TURBO_BUILD_COMMAND,
+    );
+    const order: readonly (readonly [string, string])[] = [
+      ["pnpm install --frozen-lockfile", "Type-check the root project"],
+      ["Type-check the root project", TURBO_BUILD_LABEL],
+      ["Lint the house rules against their frozen baseline", TURBO_BUILD_LABEL],
+      [TURBO_BUILD_LABEL, "Build and smoke-test both container images"],
+      ["Verify tenant isolation is enforced", TURBO_TEST_LABEL],
+    ];
+    for (const [before, after] of order) {
+      expect(index(before), `${before} must be a step label in ci.yml`).toBeGreaterThan(-1);
+      expect(index(after), `${after} must be a step label in ci.yml`).toBeGreaterThan(-1);
+      expect(index(before), `${before} must precede ${after}`).toBeLessThan(index(after));
+    }
+  });
+});
+
+// The env half of the same wiring, and it fails CLOSED: turbo 2 runs tasks in strict env
+// mode, so a variable this job sets and `turbo.json` does not declare never reaches
+// `//#test`. Measured: with the list absent, a probe task printed
+// `LLMWIKI=UNSET DATABASE_URL=UNSET AKS=UNSET` while turbo exited 0 — a silent strip.
+// The subject is the JOB'S ENV BLOCK, not a name pattern: every key must be accounted
+// for, so a new variable cannot join by having an unrecognised name.
+describe("control gates — turbo env pass-through", () => {
+  it("forwards every env key of the build-and-test job into the turbo test task", () => {
+    const keys = Object.keys(readWorkflow(".github/workflows/ci.yml").jobs["build-and-test"]?.env ?? {});
+    expect(keys.length, "an empty env block would make this assertion vacuous").toBeGreaterThan(0);
+    const graph = turboGraph();
+    const forwarded = new Set([...(graph.globalEnv ?? []), ...(graph.globalPassThroughEnv ?? [])]);
+    const unaccounted = keys.filter((key) => !forwarded.has(key) && !(key in ENV_EXEMPT));
+    expect(unaccounted, "declare these in turbo.json globalPassThroughEnv, or exempt each in ENV_EXEMPT").toEqual([]);
+    // The exemption path needs teeth of its own: an entry that can be blank would turn the
+    // assertion above into a way to silence a variable instead of a way to decide about one.
+    for (const [key, reason] of Object.entries(ENV_EXEMPT)) {
+      expect(reason.trim(), `ENV_EXEMPT[${key}] must carry a reason`).not.toBe("");
+    }
   });
 });
 

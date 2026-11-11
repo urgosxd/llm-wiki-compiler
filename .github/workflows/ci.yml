@@ -80,16 +80,29 @@ jobs:
       - name: Lint the house rules against their frozen baseline
         run: pnpm run lint
       - run: pnpm run release:check-docs
-      - run: pnpm run build
-      # The artefact the runtime image ships was compiled only incidentally: the
-      # kg-mcp-e2e harness runs `tsc -p packages/llmwiki-kg/ts/tsconfig.build.json`
-      # inside root `pnpm test` (`test/kg-mcp-e2e/probe-harness.ts:46`), so breaking
-      # packaging surfaced as a red MCP fixture naming the wrong subsystem. This step
-      # makes the build explicit delivery work, failing in a step named for delivery.
-      # A STEP, not a new job: it inherits the required `build-and-test (24)` name,
-      # while a new job name has no branch-protection entry and could be merged past.
-      - name: Build the @repo/kg artefact the image ships
-        run: pnpm --filter @repo/kg run build
+      # The build front door is the task graph, not the root script. Deliberately
+      # UNFILTERED, and that is the decision worth keeping: `turbo run build` resolves
+      # `//#build` (tsup -> `dist/`) and `@repo/kg#build` (tsc ->
+      # `packages/llmwiki-kg/ts/dist/`), two tasks in two distinct directories. It is
+      # EXTENSIONAL — a package that later declares a `build` script joins this step by
+      # existing. A `--filter=// --filter=@repo/kg` list would ENUMERATE the artefact
+      # set instead, so the next emitter would silently stop being built here: an
+      # item-6 defect introduced by the fix for an item-6 defect.
+      - name: Build the distribution and the @repo/kg artefact through the task graph
+        run: pnpm exec turbo run build
+      # `turbo run build` above runs `@repo/kg#build`, which is `tsc -p
+      # tsconfig.build.json` writing the same `packages/llmwiki-kg/ts/dist` the KG image
+      # consumes (`packages/llmwiki-kg/Dockerfile:113` COPY, `:123` CMD). The explicit
+      # `pnpm --filter @repo/kg run build` step that used to sit here was therefore a
+      # duplicate of a task on the line above, and it was removed: a broken
+      # `tsconfig.build.json` still fails a step named for building, because the task
+      # that produces the artefact is that step. Do not re-add it — checking it against
+      # the graph is what showed the duplication.
+      # A NOTE, not a filter: `<NONEXISTENT>` ids are normal here. `build` is declared
+      # for the whole workspace, so `@repo/api#build`, `@repo/foundation#build` and
+      # `@repo/wiki#build` resolve with no command and are dropped from the run by
+      # turbo. Those three members emit nothing by design; `turbo run build` executes
+      # exactly two tasks, and says so: `Tasks: 2 successful, 2 total`.
       # BOTH images this repository ships are built here and exercised by running
       # them — the root one in `host` mode (the viewer's origin gate, which accepts
       # only the Host the container bound) and in `serve` mode (one stdio MCP
@@ -137,7 +150,18 @@ jobs:
       # was then superseded by it, so it never contributed a verdict the full run
       # would not have produced. It follows the schema steps because the suite
       # includes the database-backed suites.
-      - run: pnpm test
+      #
+      # Selected through the graph, and the `--filter` is load-bearing. `//` is turbo's
+      # identifier for the ROOT project — the root is NOT named `llm-wiki-compiler` to
+      # turbo, and `--filter=llm-wiki-compiler` fails with `No package found with name
+      # 'llm-wiki-compiler' in workspace`, exit 1. With `//#test` declared, this filter
+      # resolves exactly ONE task, `//#test` = `vitest run` over all 827 collected
+      # files. Dropping the filter would add `@repo/kg#test` to the run, a DERIVED
+      # subset of those same 827 files (549 of them), so 549 file-runs would happen
+      # twice; and a per-package-only model would miss the 99 files (70 `meta` + 29
+      # `orphan`, `uncovered=0`) that belong to no package. The full suite is the gate.
+      - name: Run the full suite through the task graph
+        run: pnpm exec turbo run test --filter=//
       # Default tests exclude this fresh-install check. Exercise the shipped
       # facade, its exact workspace dependencies, and consumer declarations.
       - run: pnpm run test:pack

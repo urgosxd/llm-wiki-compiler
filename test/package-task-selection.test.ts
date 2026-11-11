@@ -28,6 +28,15 @@
  * 142 of 820 files must not quietly take `build`, `dev`, `start`, `test:watch`
  * or `eval:kg` with it.
  *
+ * ## The root SCRIPTS are what is frozen, even though CI calls the graph
+ *
+ * CI's `build-and-test` job runs `turbo run build` and `turbo run test --filter=//`
+ * (`odd/tasks/ci-turbo-front-door.md`), so Turborepo is the front door THERE. What the
+ * `FROZEN_ROOT_SCRIPTS` assertion below still pins is the ROOT scripts: they stay
+ * exactly as they were, and none may mention `turbo`. That is how the two never become
+ * each other — the graph calls the scripts, never the reverse — and a change that wires
+ * a root script back through `turbo run` has to delete that assertion first.
+ *
  * ## `test` has no dependency edge, and `turbo.json` says why
  *
  * The graph once ordered a package's tests after its workspace dependencies'
@@ -65,7 +74,15 @@ import { expect, it } from "vitest";
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
 /** Every task the graph declares, in sorted order. */
-const DECLARED_TASKS: readonly string[] = ["fallow", "lint", "test", "typecheck"];
+const DECLARED_TASKS: readonly string[] = [
+  "//#build",
+  "//#test",
+  "build",
+  "fallow",
+  "lint",
+  "test",
+  "typecheck",
+];
 
 /**
  * The root gate scripts, frozen byte for byte at the commit that added this file.
@@ -197,8 +214,28 @@ it("serialises task execution in the graph rather than in an environment variabl
   expect(turboConfig().concurrency).toBe("1");
 });
 
-it("declares no build task and gives no package a build-emitting surface", () => {
-  expect(Object.keys(turboTasks())).not.toContain("build");
+it("declares the root and build tasks cache-less and still gives no non-emitting package a build script", () => {
+  const tasks = turboTasks();
+  // 1. The build surface exists, and the ROOT project's half of it exists as `//#`
+  // entries: turbo names the root package `//`, so a bare `build` key alone would
+  // leave the tsup distribution OUT of `turbo run build`.
+  for (const name of ["build", "//#build", "//#test"]) {
+    expect(Object.keys(tasks), `${name} must be declared`).toContain(name);
+  }
+  // 2. Cache-less like every other task: a cache hit on a build is an artefact
+  // nobody produced in that run, reported as if they had.
+  for (const [name, task] of Object.entries(tasks)) {
+    expect(task.cache, `${name} must not be cached`).toBe(false);
+  }
+  // 3. No `^build` edge ANYWHERE. The root tsup run bundles every `@repo/*` package
+  // from source, so nothing consumes another build's output; an edge would be a
+  // claim about a dependency that does not exist.
+  for (const [name, task] of Object.entries(tasks)) {
+    expect(task.dependsOn ?? [], `${name} must not depend on a dependency's build`).not.toContain("^build");
+  }
+  // 4. The invariant the ORIGINAL case protected, kept with its teeth: the members
+  // that emit nothing must still declare no `build` script, or `turbo run build`
+  // gains a queued task that reports success while producing no artefact.
   for (const surface of SURFACES.filter((entry) => entry.name !== "@repo/kg")) {
     expect(manifestScripts(surface.directory).build, `${surface.name} build`).toBeUndefined();
   }
