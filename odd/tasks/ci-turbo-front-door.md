@@ -54,15 +54,16 @@ Plus two facts added at `L6`/`L7`: **turbo names the root project `//`, not by i
 
 ## Tasks
 
-- [x] T1 — base-state measurements before any write: RED for the CI change, both pre-change `turbo run build` failure modes, workspace build inventory, whether the root tsup build reads `@repo/kg`'s dist, and the job's pnpm setup — Spec: S1, S4, S5, S10 — route: inline (measurement only) — commit:
-- [x] T2 — create this ODD feature document — Spec: S1-S10 — route: inline — commit:
-- [x] T3 — `turbo.json`: declare the `build` task (`cache: false`, `dependsOn: []`) and rewrite the trailing comment to the post-change truth; then, under Option A, the root tasks `//#build` and `//#test` — Spec: S3-S4 — route: inline — commit:
-- [x] T4 — `.github/workflows/ci.yml`: the two invocations of S1, and the redundant-step decision of S5 (removed) — Spec: S1-S2, S5-S6 — route: inline — commit:
-- [x] T5 — post-change measurements: both turbo invocations with exit codes, task counts, names and wall times; both artefacts; the guard;; the `--filter=@repo/kg` behaviour — Spec: S2, S5, S7, S10 — route: inline — commit:
-- [x] T6 — `docs/turborepo.md`: the honest limits, the `build` task row, the roadmap row, the superseded decline, the `//` naming, the extensionality table — Spec: S8-S9, S11 — route: inline — commit:
-- [x] T7 — the gates, each with its literal exit code — **green at `L9`**: `corepack pnpm test` EXIT=0 (824 passed, 6144 tests, load 7.11), and tsc/typecheck:tests/lint/fallow:ci all EXIT=0 — Spec: S10 — route: inline — commit:
-- [x] T8 — amend `test/package-task-selection.test.ts` (`DECLARED_TASKS` + the rewritten build-surface assertion) and prove the rewritten assertion bites — Spec: S12 — route: inline — commit:
-- [x] T9 — amend `test/control-gates.test.ts` under the granted consent: turbo literals, ordering kept and strengthened, fail-closed env accounting, with three bite proofs — Spec: S10, S12 — route: inline — commit:
+- [x] T1 — base-state measurements before any write: RED for the CI change, both pre-change `turbo run build` failure modes, workspace build inventory, whether the root tsup build reads `@repo/kg`'s dist, and the job's pnpm setup — Spec: S1, S4, S5, S10 — route: inline (measurement only) — commit: 7e5cccf2d8fb4f01b06a64c7a464e722094c6f9e
+- [x] T2 — create this ODD feature document — Spec: S1-S10 — route: inline — commit: 7e5cccf2d8fb4f01b06a64c7a464e722094c6f9e
+- [x] T3 — `turbo.json`: declare the `build` task (`cache: false`, `dependsOn: []`) and rewrite the trailing comment to the post-change truth; then, under Option A, the root tasks `//#build` and `//#test` — Spec: S3-S4 — route: inline — commit: 7e5cccf2d8fb4f01b06a64c7a464e722094c6f9e
+- [x] T4 — `.github/workflows/ci.yml`: the two invocations of S1, and the redundant-step decision of S5 (removed) — Spec: S1-S2, S5-S6 — route: inline — commit: 7e5cccf2d8fb4f01b06a64c7a464e722094c6f9e
+- [x] T5 — post-change measurements: both turbo invocations with exit codes, task counts, names and wall times; both artefacts; the guard;; the `--filter=@repo/kg` behaviour — Spec: S2, S5, S7, S10 — route: inline — commit: 7e5cccf2d8fb4f01b06a64c7a464e722094c6f9e
+- [x] T6 — `docs/turborepo.md`: the honest limits, the `build` task row, the roadmap row, the superseded decline, the `//` naming, the extensionality table — Spec: S8-S9, S11 — route: inline — commit: 7e5cccf2d8fb4f01b06a64c7a464e722094c6f9e
+- [x] T7 — the gates, each with its literal exit code — **green at `L9`**: `corepack pnpm test` EXIT=0 (824 passed, 6144 tests, load 7.11), and tsc/typecheck:tests/lint/fallow:ci all EXIT=0 — Spec: S10 — route: inline — commit: 7e5cccf2d8fb4f01b06a64c7a464e722094c6f9e
+- [x] T8 — amend `test/package-task-selection.test.ts` (`DECLARED_TASKS` + the rewritten build-surface assertion) and prove the rewritten assertion bites — Spec: S12 — route: inline — commit: 7e5cccf2d8fb4f01b06a64c7a464e722094c6f9e
+- [x] T9 — amend `test/control-gates.test.ts` under the granted consent: turbo literals, ordering kept and strengthened, fail-closed env accounting, with three bite proofs — Spec: S10, S12 — route: inline — commit: 7e5cccf2d8fb4f01b06a64c7a464e722094c6f9e
+- [x] T10 — the prose slice: `README.md`, `AGENTS.md`, `scripts/test-affected.ts` (comment-only) — Spec: S1, S11 — route: inline — commit: f0732a22d37066cce8e7de3cb26567b3b952c9b3
 
 ## Log
 
@@ -553,3 +554,23 @@ describing it in the present tense — both marked SUPERSEDED with what replaced
 env-mode section with the measured strip and the declaration, and now states item 6 as a
 **conditional naming both silent failure modes** beside the literal exit code. The pre-existing
 stale job-map line (`codebase-health` `:132`) was corrected to the measured `:182`.
+
+### L10
+
+The slice is committed in three work units on `feat/ci-turbo-front-door`, and the gate of record was
+green at the tree commit 1 holds.
+
+- **Commit 1, the behavioural slice (6 files):** `7e5cccf2d8fb4f01b06a64c7a464e722094c6f9e` —
+  `feat(ci): run the build and the full suite through the turbo task graph`. This is the tree the
+  full suite passed on: `EXIT=0`, `Test Files 824 passed | 3 skipped (827)`,
+  `Tests 6144 passed | 4 skipped (6148)`, load `7.69`, and `tsc`, `typecheck:tests`, `lint`
+  (`558 / 396 / 423`) and `fallow:ci` all exit 0.
+- **Commit 2, the prose slice (3 files):** `f0732a22d37066cce8e7de3cb26567b3b952c9b3` —
+  `docs: state that CI reaches the full suite through turbo`. No test input and no source file
+  changed, which is why no suite re-run was owed for it.
+- **Commit 3, this evidence:** the commit holding this document's filled `## Tasks` column.
+
+Two advisories from independent verification were closed before the commits, not carried: the
+`ENV_EXEMPT` reason is now asserted non-empty (bite: `ENV_EXEMPT[PROBE_EXEMPT] must carry a
+reason: expected '' not to be ''` at `test/control-gates.test.ts:196`, 1 failed | 14 passed, then
+restored and byte-identical), and this page's green now names which tree each number belongs to.
