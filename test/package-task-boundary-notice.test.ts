@@ -63,7 +63,7 @@ const WIKI_NOTICE =
   "package-tasks: @repo/wiki has 4 derived type-only dependent test(s) this selection cannot " +
   "observe (test/provenance-metadata-shape.test.ts, test/query-candidate-id-absent.test.ts, " +
   "test/sdk/published-dimensions-port.test.ts, test/viewer-sidebar.test.ts); " +
-  "root `typecheck:tests` is the covering tier\n";
+  "root `typecheck:tests` is the covering tier for that type-only edge\n";
 
 /** The declared surface for a package name, failing loudly rather than returning undefined. */
 function surfaceNamed(name: string): PackageSurface {
@@ -102,7 +102,7 @@ it("rebuilds the pinned line from the derived pairs, so count and files cannot d
   const rebuilt =
     `package-tasks: @repo/wiki has ${pairs.length} derived type-only dependent test(s) this ` +
     `selection cannot observe (${pairs.map((pair) => pair.testFile).join(", ")}); ` +
-    "root `typecheck:tests` is the covering tier\n";
+    "root `typecheck:tests` is the covering tier for that type-only edge\n";
   expect(WIKI_NOTICE).toBe(rebuilt);
   expect(WIKI_NOTICE).toContain("test/viewer-sidebar.test.ts");
 });

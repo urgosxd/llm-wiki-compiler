@@ -432,3 +432,42 @@ passing first time here, after the previous work unit's cycle was fixed at the d
 6143 passed | 4 skipped (6147)` in 333.20 s, load 2.36 before and 6.13 after. The notice now reads
 4 for `@repo/wiki` and would read 1 for `@repo/foundation`, which is the measured set in L28, not a
 target.
+
+L23 — JD-A3-002, the notice's SCOPE claim, after the final adversarial pass returned SHIP with the
+derived set independently reproduced at 5 pairs over 4 files (4 wiki / 1 foundation, `EQUAL=true`
+against their own regex scan). The notice ended "`root \`typecheck:tests\` is the covering tier`",
+which is true for the type-only edge and FALSE as a blanket reassurance about a file that also has
+a runtime route the crawl cannot model. It now ends "`root \`typecheck:tests\` is the covering tier
+for that type-only edge`" — still ONE line on stderr, no second sentence, no warning block. The
+byte-exact pin and its rebuild case carry the new string; `docs/turborepo.md` quoted it nowhere, so
+nothing there changed. The line quoted in L10 is the PRE-change wording and is left as the record of
+what was observed then.
+
+L24 — RESIDUALS RECORDED, each with its direction, so the next reader knows what is unproven and
+which way it fails:
+
+  - **JD-A3-001 · WARNING · HIDES.** The one-call-site guard is a substring count and is defeated by
+    aliasing: `const emit = reportTypeOnlyDependents; emit(...)` keeps the count at 2 while the notice
+    prints twice and on non-`test` tasks, and every test stays green. This is a SYNTHETIC refactor,
+    not a plausible accidental change — the mutant a reviewer would actually introduce (a second call
+    site) is caught by RED-G2. A behavioural pin would need `main` exported or a stubbed `runTask`
+    seam; that is a separate slice, not this one.
+  - **JD-A3-002 · WARNING · HIDES (partially closed by L23).** A file carrying a type-only edge AND an
+    unmodelled runtime route is still named by the notice under the type-only umbrella. There is NO
+    live instance today: none of the five pairs uses `require(`, a computed `import(` or
+    `new URL(`. The wording now scopes the claim to the edge; the structural exposure remains,
+    because detecting those routes is a different mechanism.
+  - **JD-A3-003 · SUGGESTION · OVER-REPORTS.** `packageOf`'s surface-directory fallback attributes
+    any path under `packages/<dir>/` — for example `../../packages/wiki/scripts/build.js` — to that
+    package. Dormant today and SAFE in direction (it can only add a dependent, never hide one), left
+    as-is deliberately: the alternative is to resolve each candidate on disk, which buys nothing
+    while no such import exists.
+  - **JD-A3-004 · SUGGESTION.** The structural case's string-absence check (`not.toContain`) would
+    false-red on a comment mentioning the forbidden name and would pass under a renamed re-export.
+    It is a REMINDER, not a guard; the count assertion beside it is what does the work.
+
+L25 — CLAIM CORRECTION, recorded because a commit message cannot be amended. The message for
+`d4d500d141367f6cc3516f3eb3d8d53e30ba1740` says "125 raw edges". The measurement is **130 raw pairs,
+of which 125 are false pairs** (130 − 5 = 125), which is why the RED-S assertion printed
+`expected [ …(125) ]`: 125 is the count of wrongly-claimed pairs, not the size of the raw edge set.
+The pair is 130/125, and the commit message stands uncorrected by rule; this line is the correction.

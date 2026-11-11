@@ -227,7 +227,7 @@ export function reportTypeOnlyDependents(
   const files = dependents.map((pair) => pair.testFile).join(", ");
   process.stderr.write(
     `package-tasks: ${surface.name} has ${dependents.length} derived type-only dependent test(s) ` +
-      `this selection cannot observe (${files}); root \`typecheck:tests\` is the covering tier\n`,
+      `this selection cannot observe (${files}); root \`typecheck:tests\` is the covering tier for that type-only edge\n`,
   );
 }
 
