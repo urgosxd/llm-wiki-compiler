@@ -59,10 +59,10 @@ Branch `fix/docker-images-in-ci`. Objective: make CI assemble and exercise both 
 
 | ID | S# | route | commit |
 | --- | --- | --- | --- |
-| T1 | S1, S5, S6, S7, S11 | gentle-ai-worker | pending |
-| T2 | S2, S3, S11 | gentle-ai-worker | pending |
-| T3 | S1-S8, S12 | gentle-ai-verify | pending |
-| T4 | S4, S9, S10 | gentle-ai-worker | pending |
+| T1 | S1, S5, S6, S7, S11 | gentle-ai-worker | `4671bc8fb8500e7a7716266c924a31e176e2a564` |
+| T2 | S2, S3, S11 | gentle-ai-worker | `4671bc8fb8500e7a7716266c924a31e176e2a564` |
+| T3 | S1-S8, S12 | gentle-ai-verify | no commit; PASS (result ref `result:verify-docker-ci#1`) |
+| T4 | S4, S9, S10 | gentle-ai-worker | `this commit` — its 40-character SHA is recorded in the close-out handoff, because a commit cannot contain its own SHA; L4 is the entry it appends |
 
 - T1 — `.github/scripts/docker-images-check.sh` builds both images and asserts every runtime claim in S5, S6 and S7, failing loudly rather than skipping when Docker is unavailable.
 - T2 — one new step in the existing `build-and-test` job calls that script, and no job is added, renamed or removed.
@@ -137,3 +137,45 @@ The file set; the workflow diff and **which check name it runs under**; the meas
 ### L2
 
 **Decisions fixed before the first write, so the slice could not drift.** The file set was fixed at four files — `odd/tasks/docker-images-in-ci.md`, `.github/scripts/docker-images-check.sh`, `.github/workflows/ci.yml`, `odd/tasks/kg-task-parity.md` (append-only) — before any write; the script lives in `.github/scripts/` rather than `scripts/` because `.dockerignore:59` excludes `.github` from every build context, so the runtime image's `/app/scripts` stays byte-identical and no published artefact changes; and the measured cold build of 122 s (64 s root + 58 s KG, sequential, `--no-cache`) stays under the +180 s line, so the work stays inside `build-and-test` instead of proposing a separate job and its branch-protection change.
+
+### L3
+
+**Independent verification: PASS on every spec it was given, and no defects.** `gentle-ai-verify`, which wrote none of the code under review, verified S1–S8 and S12 at `4671bc8fb8500e7a7716266c924a31e176e2a564` and returned PASS on each with **no defects**. The script exited **0** and printed `root image built in 3s` and `KG image built in 0s`. Every runtime assertion held: `/health` → **200**; `/` with the container's own Host → **200** (`llmwiki viewer`); `/` with `evil.example:4173` → **403**; the `localhost:4173` control → **403**, which is what proves the Host value is mandatory rather than merely checked; `/api/health` with the forged Host → **403**; `initialize -> exit 0` printing `"serverInfo":{"name":"llmwiki"`; the KG image's own `/health` → **200** containing `"service":"aks-reference-server"`. Total wall time was **8 s warm**, with the images at **995 MB** and **895 MB**.
+
+**The committed shape was re-read from git, not from the worktree.** `git show --stat` reported exactly 3 files: the script at 290 lines mode `100755`, `ci.yml` +24, and this feature document +139. The `ci.yml` diff is one hunk of 24 added lines and 0 removed; `build-and-test` went from 15 steps to 16 with the new step at index 10 and nothing removed; the workflow's jobs are still exactly `build-and-test` and `codebase-health`; `test-typecheck` appears once in `typecheck-tests.yml`, `codebase-health` once in `ci.yml`, and `node-version: [24]` once. The container's `--host` is read out of the live process with `docker exec … cat /proc/1/cmdline`, with a `docker inspect` fallback that cannot green silently, because `/` would then 403.
+
+**`/health` is outside the origin gate, and the document says so instead of letting a 200 imply more than it proves.** `packages/api/src/host/server.ts:400` lists `"/health"` in `GRAPH_PATH_PREFIXES` and dispatches the graph app before the viewer, while `/` is gated at `packages/wiki/src/viewer/server.ts:187-190` and `/api/health` at `packages/api/src/host/api.ts:434-441`. So `/health` 200 proves the container *listens*; the gate is proven by the other four assertions.
+
+**RED, as far as this host can stage it.** At base `5260d423963bd84911c239bfa5e57d2eec02bffe`, `git show 5260d423963bd84911c239bfa5e57d2eec02bffe:.github/workflows/ci.yml | grep -n docker | grep -v 'image: pgvector'` printed nothing and exited **1**; at HEAD the same grep finds the new step — the gate genuinely did not exist before this commit. A mutated copy of the script with one expected status flipped 403→200 exited **1**, naming the assertion, both values and the observed body, so the smoke test can fail; the tracked script's `sha256sum` was identical before and after that mutation. A genuinely red CI run could not be observed from this host: `command -v gh` exits **1**.
+
+**Every gate was re-run by the verifier, independently of the implementer's report.** `npx tsc --noEmit` **0**; `npm run typecheck:tests` **0** (1591 files, 238 baseline diagnostics in 86 files, no regression); `npm run lint` **0** printing `558 baseline violations in 396 files across 423 rule/file entries; no regression`, exactly at the `558 / 396 / 423` ceiling — neither increased nor decreased; `npm run fallow:ci` **0**; `npm run test:affected` **78**, with stderr `affected: scope resolves to the full unit tier; run `pnpm test` instead`, the documented full-tier decline rather than a silence. The suite verdict is the implementer's run: `npm test` exit **0**, `Test Files 823 passed | 3 skipped (826)`, `Tests 6132 passed | 4 skipped (6136)`, 324.74 s, `/proc/loadavg` `3.09 4.18 3.26` before and `6.60 5.84 4.31` after.
+
+**Two deviations in the worker's run were judged sound, not defects.** Host mode also passes `--env LLMWIKI_PORT=${PORT}` because `docker/entry.sh:60-69` defaults the listener to 4173, so without it a non-default `PORT` would publish a socket nothing listens on — and the default path is unchanged. And `REPO_ROOT` defaults to `$(cd "$(dirname "$0")/../.." && pwd)`, which is the repository root when the workflow runs `bash .github/scripts/docker-images-check.sh`, with the override used only by probe copies.
+
+**Three advisories were recorded and deliberately not acted on.** The cold timing is host-specific and is not a portable figure. `LLMWIKI_DOCKER_CHECK_SKIP=1` is an exit-0 escape hatch that no workflow sets, and it must never be added to a CI env, because a skip flag in CI is the false green this project keeps removing. And `/health` being Host-insensitive is by design, which is exactly why the gate is proven on `/` and `/api/health` rather than on `/health`.
+
+### L4
+
+**The S4 measurement finally has a verdict: the KG image installs, and it is tolerated, not correct.** The cold build log at base `5260d423963bd84911c239bfa5e57d2eec02bffe` says, verbatim:
+
+```
+#14 [build  7/11] RUN pnpm install --frozen-lockfile
+#14 2.537 Scope: all 3 workspace projects
+#14 10.50 Lockfile is up to date, resolution step is skipped
+#14 34.43 + @repo/api 0.0.0 <- packages/api
+#14 34.43 + @repo/foundation 0.1.0 <- packages/foundation
+#14 34.43 + @repo/kg 0.2.0 <- packages/llmwiki-kg/ts
+#14 34.43 + @repo/wiki 0.0.0 <- packages/wiki
+#14 34.64 Done in 32.5s using pnpm v11.5.0
+```
+
+Set that against the root image's own `#16 2.616 Scope: all 5 workspace projects`. **`--frozen-lockfile` never validated the two absent importers, and `Lockfile is up to date, resolution step is skipped` is not a pass signal — with `--frozen-lockfile` resolution is skipped by construction, so nothing compared the missing manifests against the lockfile.** `Scope: all 3` counts the root project plus the two members whose manifests the KG build stage copies, so it confirms rather than contradicts the brief's table: the KG build stage copies the root manifest and exactly **2 of the 4** member manifests (`packages/llmwiki-kg/ts/package.json`, `packages/foundation/package.json`), while `packages/wiki/package.json` and `packages/api/package.json` are absent. The two absent members were still linked, as dangling symlinks carrying the placeholder version `0.0.0` instead of their real `0.1.0`. The Dockerfile header's claim that every remaining member declares its manifest where `workspaces` names it is therefore false for two members — and this is one deleted manifest away from the `packages/foundation/package.json` defect that already cost this project a broken image.
+
+**The cold timing is recorded as two observations, because one observation is not a margin.** The workflow comment's original figure is a single prior observation — `--no-cache`, 16-core host, base `5260d423963bd84911c239bfa5e57d2eec02bffe`: 64 s root + 58 s KG = **122 s**. An independent re-measure at HEAD gave **73 s root + 74 s KG = 147 s**, still under the +180 s line at which this would have had to become a separate job, but with a 33 s margin rather than 58 s. The margin is host-specific; the decision held on both observations, and the workflow comment now carries both numbers rather than only the friendlier one.
+
+**Recorded finding 1: two shipped migration files no runner applies.** `migration_open_kg_classification.sql` and `migration_drop_ingest_outbox.sql` are copied into the runtime image by the root `Dockerfile`, while no `SCHEMA_FILES` entry in `scripts/apply-schemas.sh` names either, and grepping both across `scripts/`, `src/` and `packages/` returns no match — files present in the image that no runner applies, which suggests migration coverage that does not exist. The honest nuance: `docs/guides/kg-classification-migration.mdx:91` states the classification migration is mirrored inside `packages/llmwiki-kg/db/schema.sql` (`grep -c kg_classification` there returns 7) and applied by hand, and `drop_ingest_outbox` is a one-shot manual migration — so this is a documented manual path rather than proven-missing coverage. Whether either belongs in `SCHEMA_FILES` stays a schema question for its own slice. Not fixed here.
+
+**Recorded finding 2: no shared base stage.** The root `Dockerfile` (226 lines, 3 stages) and `packages/llmwiki-kg/Dockerfile` (123 lines, 3 stages) share no base stage; each carries its own `corepack enable` plus install plus prod-deps sequence; and the rationale prose explaining why neither prunes is duplicated between `Dockerfile:34-44` and the KG Dockerfile's `:17-29`. Two independent enable/install/prune sequences is a drift channel that has already fired once. Not unified here.
+
+**The scope decision is recorded, not taken.** The slice stayed inside `build-and-test` because both cold measurements stayed under +180 s. If a future Dockerfile change pushes a cold run past roughly +180 s, converting this to a separate job requires a matching branch-protection change — an owner decision this slice does not take.
+

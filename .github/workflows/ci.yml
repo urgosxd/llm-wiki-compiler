@@ -106,8 +106,11 @@ jobs:
       # 5260d423963bd84911c239bfa5e57d2eec02bffe on a 16-core host: 64 s root +
       # 58 s KG = 122 s, under the +180 s line at which this would have to become a
       # separate job plus a branch-protection change (the owner's action, not a
-      # decision taken here). The script prints its own per-image seconds, so that
-      # figure stays honest as the Dockerfiles grow.
+      # decision taken here). Independently re-measured at HEAD, on the same host:
+      # 73 s root + 74 s KG = 147 s cold -- still under that +180 s line, so the
+      # decision holds on both observations, though with a 33 s margin rather than
+      # 58 s and the margin is host-specific. The script prints its own per-image
+      # seconds, so that figure stays honest as the Dockerfiles grow.
       #
       # The script sits in `.github/scripts/` because `.dockerignore` excludes
       # `.github` from every build context: the runtime image's `/app/scripts` stays
