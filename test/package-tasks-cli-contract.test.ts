@@ -11,11 +11,15 @@
  * `TASKS` or `PACKAGE_SURFACES` tables could have silently changed the surface the
  * CLI advertises while every gate stayed green.
  *
- * The second reason is S10: `@atomicstrata/llmwiki-core` is transitional and must
- * have no task surface. `test/package-task-selection.test.ts` pins that as
- * manifest data — no `test`/`lint`/`typecheck`/`fallow` script — and the assertion
- * below pins the same boundary where a human actually meets it, in the rejection
- * message the CLI prints, naming the four packages it does accept.
+ * The second reason is S10: `@atomicstrata/llmwiki-core` was transitional and had to
+ * have no task surface, and `odd/tasks/collapse-core-package.md` has since DELETED that
+ * package. The rejection below therefore matters MORE than when it was written, not less:
+ * the name is now one an operator could plausibly still type from an old note or an old
+ * package manifest, and the CLI must answer it as an unknown package rather than accept
+ * it. `test/package-task-selection.test.ts` pins the same boundary as manifest data — the
+ * task surface belongs to exactly the declared workspace members — and the assertion
+ * below pins it where a human actually meets it, in the rejection message the CLI prints,
+ * naming the four packages it does accept.
  *
  * ## Every invocation here is an instant path, by construction
  *
@@ -113,7 +117,9 @@ it("rejects an unknown task, naming the four accepted tasks", () => {
   expectRejection(["bogus", "--package", "@repo/wiki"], `unknown task: bogus; expected one of ${TASKS}`);
 });
 
-it("rejects the transitional core package, naming the four accepted packages", () => {
+it("rejects the collapsed core package name, naming the four accepted packages", () => {
+  // The package itself is gone; the NAME still has to be refused rather than matched
+  // against a surface that no longer exists.
   expectRejection(
     ["test", "--package", "@atomicstrata/llmwiki-core"],
     `unknown package: @atomicstrata/llmwiki-core; expected one of ${PACKAGES}`,

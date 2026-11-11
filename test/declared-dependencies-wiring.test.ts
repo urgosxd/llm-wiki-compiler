@@ -4,8 +4,7 @@
  * declared ones, so hoisting can stop being the only reason they resolve.
  *
  * The repository imports `drizzle-orm` from root `src/` while declaring it only
- * in `packages/llmwiki-kg/ts/package.json`, and `packages/llmwiki-core` builds
- * with `tsup` without declaring it at all. Both worked because
+ * in `packages/llmwiki-kg/ts/package.json`. That once worked because
  * `nodeLinker: hoisted` flattens the tree: every import satisfied itself from a
  * flat `node_modules` that nobody had asked for. That failure mode is silent —
  * a missing declaration breaks nothing until the layout stops being flat, and
@@ -22,20 +21,21 @@
  *    byte-identical for every package", so each new importer edge must point at
  *    a `snapshots` key that already existed — a declaration that pulled in a
  *    fresh resolution is a version change wearing an additive diff.
- * 3. Ownership lives where the import is. `packages/llmwiki-kg/ts` is the only
- *    workspace that imports `ajv` — from `ajv/dist/2020.js` in its conformance
- *    test — so the KG manifest is the only manifest that may declare it, and it
- *    declares it in `devDependencies` because the importer is a test file. Root
- *    therefore keeps no `ajv` declaration and no `ajv` edge in its lockfile
- *    importer, and `.fallowrc.json` no longer swallows the phantom with an
- *    `ignoreDependencies` entry. Here the range has to be a literal: root no
- *    longer carries one to copy, and the point of the assertion is that the
- *    moved declaration kept root's old range instead of re-choosing one.
- * 4. The negative space of that move is a claim of its own: the ajv resolution
- *    set, core's own `ajv` importer edge, the `.fallowrc.json` ignore list, and
- *    the KG dead-code baseline must all read exactly as they did before
- *    ownership moved, so the last block pins what the move had to leave alone
- *    rather than what it changed.
+ * 3. `ajv` is declared by every importer that needs it and by nobody else. It
+ *    started as a ROOT declaration, moved to `packages/llmwiki-kg/ts` alone, and
+ *    is now declared by BOTH: the KG writes `ajv/dist/2020.js` from its
+ *    conformance test so it keeps it in `devDependencies`, and the root needs it at
+ *    RUNTIME because `odd/tasks/collapse-core-package.md` inlined
+ *    `@atomicstrata/llmwiki-core`'s engine — which imports `ajv` — into
+ *    `dist/index.js`. A root `dependencies` entry is what makes the published
+ *    tarball installable; a dev one would ship a bundle that dies at import.
+ * 4. The same collapse brought two more runtime dependencies to root — `express`
+ *    and `@hono/node-server` — and all three are listed in `.fallowrc.json`'s
+ *    `ignoreDependencies`. That list is not a loophole here: it is the standing
+ *    exemption for a dependency declared for the RUNTIME and never imported by
+ *    name, exactly as `postgres` and `dotenv` already are. The assertions below
+ *    pin the list's exact tail so a fourth entry cannot be added silently, and pin
+ *    that every ignored name really is a root `dependencies` entry.
  * 5. A declaration is only worth what a CONSUMER can install. The last block
  *    reads the root `dependencies` block as an embedder's installer would, so a
  *    range that resolves only inside this workspace cannot ship unnoticed.
@@ -44,12 +44,13 @@
  * product behaviour, which is why they are asserted here by reading the
  * manifests and the lockfile directly.
  *
- * Spec: project brief fixes 2 and 3 — root `drizzle-orm` declaration and
- * `packages/llmwiki-core` `tsup` devDependency, with zero version movement —
- * plus S7 of `odd/tasks/pnpm-phantom-deps.md`, which moves `ajv` ownership to
- * the package that imports it, plus S1-S3 of
+ * Spec: project brief fixes 2 and 3 — root `drizzle-orm` declaration, with zero
+ * version movement — plus S7 of `odd/tasks/pnpm-phantom-deps.md`, which moves
+ * `ajv` ownership to the package that imports it, plus S1-S3 of
  * `odd/tasks/packed-manifest-guard.md`, which asserts the published
- * `dependencies` block.
+ * `dependencies` block, plus S1/S3 of `odd/tasks/collapse-core-package.md`,
+ * which makes root the declaration site for the engine's own runtime
+ * dependencies.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -72,6 +73,8 @@ const read = (relativePath: string): string => readFileSync(join(REPO_ROOT, rela
 interface Manifest {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  /** Only the root manifest declares these; read so the tsup claim covers every member. */
+  workspaces?: string[];
 }
 
 /** Only the `.fallowrc.json` surface this file cares about. */
@@ -96,7 +99,6 @@ interface Importer {
 }
 
 const rootPkg = JSON.parse(read("package.json")) as Manifest;
-const corePkg = JSON.parse(read("packages/llmwiki-core/package.json")) as Manifest;
 const kgPkg = JSON.parse(read("packages/llmwiki-kg/ts/package.json")) as Manifest;
 const lock = load(read("pnpm-lock.yaml")) as {
   importers?: Record<string, Importer>;
@@ -115,12 +117,28 @@ const DRIZZLE_RESOLVED = "0.45.4(postgres@3.4.9)";
 const TSUP_RESOLVED = "8.5.1(postcss@8.5.15)(tsx@4.23.15)(typescript@5.9.3)(yaml@2.9.1)";
 /** The range root shipped before the declaration moved; the KG manifest copies it. */
 const AJV_RANGE = "^8.20.0";
-/** The single ajv resolution the moved edge has to reuse — already in `snapshots`. */
+/** The single ajv resolution both edges must reuse — already in `snapshots`. */
 const AJV_RESOLVED = "8.20.0";
 /** Every ajv resolution the tree carried before the move and must still carry. */
 const AJV_RESOLUTIONS = ["6.15.0", "8.20.0"];
+/** The two runtime dependencies the collapse brought to root besides ajv. */
+const EXPRESS_RANGE = "^5.1.0";
+const EXPRESS_RESOLVED = "5.3.0";
+const HONO_RANGE = "^1.19.14";
+const HONO_RESOLVED = "1.19.14(hono@4.12.29)";
+/**
+ * The three dependencies the collapse moved onto root, in the order
+ * `.fallowrc.json` records them: declared for the runtime, never imported by name.
+ */
+const ENGINE_RUNTIME_DEPENDENCIES = ["ajv", "express", "@hono/node-server"];
+/** The same three, in the order `.fallowrc.json` appends them after `picomatch`. */
+const FALLOW_ENGINE_TAIL = ["@hono/node-server", "ajv", "express"];
+/** The entry that preceded them, so the list is proven extended rather than reordered. */
+const FALLOW_PRECEDING_ENTRY = "picomatch";
 /** The KG package's dead-code baseline, the file S7 had to empty of `ajv`. */
 const KG_DEAD_CODE_BASELINE = "packages/llmwiki-kg/ts/baselines/dead-code-baseline.json";
+/** The workspace member `odd/tasks/collapse-core-package.md` deleted. */
+const COLLAPSED_PACKAGE = "packages/llmwiki-core";
 
 describe("declared dependencies wiring: root drizzle-orm", () => {
   it("copies the KG range verbatim instead of choosing one", () => {
@@ -136,14 +154,26 @@ describe("declared dependencies wiring: root drizzle-orm", () => {
   });
 });
 
-describe("declared dependencies wiring: core tsup", () => {
-  it("declares exactly the root tsup range and nothing else", () => {
+describe("declared dependencies wiring: one build, and it is the root's", () => {
+  it("declares exactly the root tsup range and lets no workspace member declare its own", () => {
     expect(rootPkg.devDependencies?.tsup).toBe(ROOT_TSUP_RANGE);
-    expect(corePkg.devDependencies).toEqual({ tsup: rootPkg.devDependencies?.tsup });
+    // `packages/llmwiki-core` used to be asserted as `{ tsup: <root's range> }` — the ONE
+    // package allowed its own tsup devDependency, because it ran a second build. The
+    // collapse deleted that package and there is one build again, so the same claim is now
+    // stated for every member: no member declares tsup at all. Dropping the old assertion
+    // without this replacement would have left "a package quietly invents its own build"
+    // unguarded in the very diff that removed the only legitimate instance.
+    const members = rootPkg.workspaces ?? [];
+    expect(members.length, "an empty workspace list would make this assertion vacuous").toBeGreaterThan(0);
+    for (const member of members) {
+      const manifest = JSON.parse(read(`${member}/package.json`)) as Manifest;
+      expect(manifest.devDependencies?.tsup, `${member} must not declare its own tsup`).toBeUndefined();
+      expect(manifest.dependencies?.tsup, `${member} must not declare its own tsup`).toBeUndefined();
+    }
   });
 });
 
-describe("declared dependencies wiring: lockfile absorbed both edges", () => {
+describe("declared dependencies wiring: lockfile absorbed every edge", () => {
   it("records the root drizzle-orm edge with its pre-existing resolution", () => {
     const edge = importers["."]?.dependencies?.["drizzle-orm"];
     expect(edge?.specifier).toBe(KG_DRIZZLE_RANGE);
@@ -151,45 +181,66 @@ describe("declared dependencies wiring: lockfile absorbed both edges", () => {
     expect(snapshots).toHaveProperty(`drizzle-orm@${DRIZZLE_RESOLVED}`);
   });
 
-  it("records the core tsup edge with its pre-existing resolution", () => {
-    const edge = importers["packages/llmwiki-core"]?.devDependencies?.tsup;
+  it("keeps the root tsup edge on the pre-existing resolution and drops the deleted importer", () => {
+    const edge = importers["."]?.devDependencies?.tsup;
     expect(edge?.specifier).toBe(ROOT_TSUP_RANGE);
     expect(edge?.version).toBe(TSUP_RESOLVED);
     expect(snapshots).toHaveProperty(`tsup@${TSUP_RESOLVED}`);
+    // The second build's importer is gone with the package. Asserted, not assumed: a
+    // lockfile that still carries an importer for a directory that does not exist is the
+    // frozen-install failure the container manifests hit.
+    expect(importers).not.toHaveProperty(COLLAPSED_PACKAGE);
   });
 });
 
-describe("declared dependencies wiring: ajv belongs to the KG package", () => {
-  it("declares it there as a dev dependency at the range root used to carry", () => {
+describe("declared dependencies wiring: the engine's runtime dependencies live at root", () => {
+  it("declares all three in `dependencies`, at the ranges the deleted package used", () => {
+    expect(rootPkg.dependencies?.ajv).toBe(AJV_RANGE);
+    expect(rootPkg.dependencies?.express).toBe(EXPRESS_RANGE);
+    expect(rootPkg.dependencies?.["@hono/node-server"]).toBe(HONO_RANGE);
+  });
+
+  it("declares them as production dependencies, because the inlined engine imports them", () => {
+    // A devDependency here would leave `dist/index.js` importing `express`,
+    // `@hono/node-server` and `ajv` from a tarball whose install never fetches them.
+    for (const name of ENGINE_RUNTIME_DEPENDENCIES) {
+      expect(rootPkg.dependencies, `root dependencies must carry ${name}`).toHaveProperty(name);
+      expect(rootPkg.devDependencies?.[name], `${name} must not be a devDependency`).toBeUndefined();
+    }
+  });
+
+  it("records all three root importer edges at pre-existing resolutions", () => {
+    const deps = importers["."]?.dependencies;
+    expect(deps?.ajv).toEqual({ specifier: AJV_RANGE, version: AJV_RESOLVED });
+    expect(deps?.express).toEqual({ specifier: EXPRESS_RANGE, version: EXPRESS_RESOLVED });
+    expect(deps?.["@hono/node-server"]).toEqual({ specifier: HONO_RANGE, version: HONO_RESOLVED });
+    expect(snapshots).toHaveProperty(`express@${EXPRESS_RESOLVED}`);
+    expect(snapshots).toHaveProperty(`@hono/node-server@${HONO_RESOLVED}`);
+  });
+});
+
+describe("declared dependencies wiring: ajv is declared by both importers that need it", () => {
+  it("keeps the KG dev dependency at the range root used to carry", () => {
     expect(kgPkg.devDependencies?.ajv).toBe(AJV_RANGE);
     expect(kgPkg.dependencies?.ajv).toBeUndefined();
   });
 
-  it("leaves the root manifest with no ajv declaration at all", () => {
-    expect(rootPkg.dependencies?.ajv).toBeUndefined();
+  it("declares it at root as a production dependency, never a dev one", () => {
+    expect(rootPkg.dependencies?.ajv).toBe(AJV_RANGE);
     expect(rootPkg.devDependencies?.ajv).toBeUndefined();
   });
 
-  it("moves the lockfile edge from the root importer to the KG importer", () => {
-    const kgEdge = importers["packages/llmwiki-kg/ts"]?.devDependencies?.ajv;
-    expect(kgEdge?.specifier).toBe(AJV_RANGE);
-    expect(kgEdge?.version).toBe(AJV_RESOLVED);
+  it("records both lockfile edges at the one ajv resolution", () => {
+    expect(importers["packages/llmwiki-kg/ts"]?.devDependencies?.ajv).toEqual({
+      specifier: AJV_RANGE,
+      version: AJV_RESOLVED,
+    });
+    expect(importers["."]?.dependencies?.ajv).toEqual({ specifier: AJV_RANGE, version: AJV_RESOLVED });
     expect(snapshots).toHaveProperty(`ajv@${AJV_RESOLVED}`);
-
-    const rootImporter = importers["."];
-    expect(rootImporter?.dependencies?.ajv).toBeUndefined();
-    expect(rootImporter?.devDependencies?.ajv).toBeUndefined();
-  });
-
-  it("stops silencing the phantom with a fallow ignore entry", () => {
-    // `JSON.parse` is itself the strict-JSON assertion: a trailing comma or a
-    // comment leaves the repository tooling unable to read its own config.
-    const fallow = JSON.parse(read(".fallowrc.json")) as FallowConfig;
-    expect(fallow.ignoreDependencies).not.toContain("ajv");
   });
 });
 
-describe("declared dependencies wiring: what the ajv move left alone", () => {
+describe("declared dependencies wiring: what the ajv moves left alone", () => {
   it("keeps every ajv resolution the tree already carried", () => {
     // Peer suffixes are stripped so a re-resolution under a different peer set
     // still surfaces as a version string this list does not contain.
@@ -203,17 +254,25 @@ describe("declared dependencies wiring: what the ajv move left alone", () => {
     expect(versions).toEqual(AJV_RESOLUTIONS);
   });
 
-  it("leaves core's own ajv importer edge untouched", () => {
-    const edge = importers["packages/llmwiki-core"]?.dependencies?.ajv;
-    expect(edge).toEqual({ specifier: AJV_RANGE, version: AJV_RESOLVED });
-  });
-
-  it("keeps the fallow ignore list strict JSON and ajv-free, ending in picomatch", () => {
+  it("keeps the fallow ignore list strict JSON, extended after picomatch by exactly the three", () => {
+    // `JSON.parse` is itself the strict-JSON assertion: a trailing comma or a
+    // comment leaves the repository tooling unable to read its own config.
     const fallow = JSON.parse(read(".fallowrc.json")) as FallowConfig;
     const ignored = fallow.ignoreDependencies ?? [];
-    expect(ignored).not.toContain("ajv");
-    expect(ignored[ignored.length - 1]).toBe("picomatch");
+    expect(ignored.slice(-FALLOW_ENGINE_TAIL.length)).toEqual(FALLOW_ENGINE_TAIL);
+    expect(ignored[ignored.length - FALLOW_ENGINE_TAIL.length - 1]).toBe(FALLOW_PRECEDING_ENTRY);
     expect(ignored).toHaveLength(new Set(ignored).size);
+  });
+
+  it("ignores only names the root manifest really declares", () => {
+    // The list is an exemption for a dependency declared for the RUNTIME and never imported
+    // by name — `postgres` and `dotenv` predate the collapse, the engine's three joined it.
+    // An ignored name that no manifest declares would be a phantom nothing can resolve, so
+    // each one is held to the root `dependencies` block here.
+    const fallow = JSON.parse(read(".fallowrc.json")) as FallowConfig;
+    for (const name of FALLOW_ENGINE_TAIL) {
+      expect(rootPkg.dependencies, `${name} is ignored but not declared at root`).toHaveProperty(name);
+    }
   });
 
   it("keeps the KG dead-code baseline free of unlisted dependencies", () => {

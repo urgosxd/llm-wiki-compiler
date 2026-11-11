@@ -4,10 +4,12 @@
  *
  * `config.ts` parsed the environment while it was being imported, and `db.ts`
  * built its pool from `config.DATABASE_URL` at import too. llmwiki loads the
- * project `.env` after its module graph is evaluated (and its externalized
- * `@atomicstrata/llmwiki-core` chunk snapshots even earlier), so a user who
- * configured the shared embedding credential in `.env` reached the KG with an
- * environment that had not been read yet.
+ * project `.env` after its module graph is evaluated (and the engine's own
+ * chunk snapshots even earlier), so a user who configured the shared embedding
+ * credential in `.env` reached the KG with an environment that had not been read
+ * yet. That chunk used to belong to `@atomicstrata/llmwiki-core`; since
+ * `odd/tasks/collapse-core-package.md` it is inlined into `dist/index.js`, which
+ * does not change the ordering this file pins.
  *
  * Each case imports the module FIRST, writes the environment SECOND and only
  * then touches the value: that is the `.env` ordering, reproduced.

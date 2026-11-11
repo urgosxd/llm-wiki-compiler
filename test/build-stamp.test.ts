@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -31,16 +31,11 @@ let root: string;
 /**
  * The files a real `tsup` run at the repository root writes: two root bundles
  * (the `@repo/api` launcher the container execs, and the library entry with its
- * `d.ts`) plus the built dependency package. Deliberately NOT derived from
- * `REQUIRED_OUTPUTS` — a seed read out of the module under test would make every
- * case below vacuous.
+ * `d.ts`). Deliberately NOT derived from `REQUIRED_OUTPUTS` — a seed read out of
+ * the module under test would make every case below vacuous. Every one of them is
+ * under the single `dist/` build root, which is the property one case below pins.
  */
-const BUILT_OUTPUTS = [
-  "dist/api.js",
-  "dist/index.js",
-  "dist/index.d.ts",
-  "packages/llmwiki-core/dist/index.js",
-];
+const BUILT_OUTPUTS = ["dist/api.js", "dist/index.js", "dist/index.d.ts"];
 
 /** Create the minimum tree the stamp inspects, plus every output the build emits. */
 function seedProject(): void {
@@ -61,6 +56,9 @@ function declaredWorkspaces(): string[] {
   return manifest.workspaces ?? [];
 }
 
+/** The one build root this repository builds; the root `tsup.config.ts` sets it. */
+const BUILD_ROOT = "dist";
+
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), "build-stamp-"));
   seedProject();
@@ -80,20 +78,31 @@ describe("isBuildFresh", () => {
     expect(isBuildFresh(root)).toBe(true);
   });
 
-  it("is false when a dependency package output is missing", () => {
+  it("is false when a second required output is missing", () => {
     writeStamp(root);
-    rmSync(path.join(root, "packages/llmwiki-core/dist/index.js"));
+    rmSync(path.join(root, "dist/index.d.ts"));
     expect(isBuildFresh(root)).toBe(false);
   });
 
-  it("requires only outputs from packages this workspace declares and builds", () => {
-    const workspaces = declaredWorkspaces();
-    const packageOutputs = REQUIRED_OUTPUTS.filter((output) => output.startsWith("packages/"));
-    expect(packageOutputs.length).toBeGreaterThan(0);
-    for (const output of packageOutputs) {
-      const directory = output.slice(0, output.indexOf("/dist/"));
-      expect(workspaces, `${output} names ${directory}`).toContain(directory);
-      expect(existsSync(directory), `${output} names ${directory}`).toBe(true);
+  /**
+   * Every required output must be a file THIS repository's build writes. The list
+   * once named `packages/llmwiki-core/dist/index.js`; when that package was deleted
+   * (`odd/tasks/collapse-core-package.md`) the entry demanded a file nothing
+   * produced, so `isBuildFresh()` became a permanent miss and every vitest run paid
+   * a full rebuild. There is one build root now, so confining the list to it is the
+   * invariant that keeps a deleted package's output from being demanded again — and
+   * the same check that would have caught the original entry.
+   */
+  it("requires only outputs from the single build root this repository builds", () => {
+    expect(REQUIRED_OUTPUTS.length, "an empty requirement list would make the check vacuous").toBeGreaterThan(0);
+    for (const output of REQUIRED_OUTPUTS) {
+      expect(output.startsWith(`${BUILD_ROOT}/`), `REQUIRED_OUTPUTS names a second build root: ${output}`).toBe(
+        true,
+      );
+      expect(
+        declaredWorkspaces().some((member) => output.startsWith(`${member}/`)),
+        `${output} names a workspace package's own build, which the root build does not run`,
+      ).toBe(false);
     }
   });
 

@@ -6,14 +6,22 @@
  * (`odd/tasks/package-split.md:97` and `:123`) — a private workspace package
  * externalized into a broken `dist` with every fast gate green, twice.
  *
- * ## Why the walk is recursive, and why both roots
+ * ## Why the walk is recursive, and which roots it covers
  *
- * The manual grep was `dist/*.js`: non-recursive and root-only. The package that
- * actually externalizes is `@atomicstrata/llmwiki-core` (it carries `express`,
- * `@modelcontextprotocol/sdk`, `@hono/node-server` and `mammoth`), and its build
- * tree is `packages/llmwiki-core/dist`, which the manual grep never opened. This
- * guard therefore walks `dist/**\/*.js` and `packages/llmwiki-core/dist/**\/*.js`
- * RECURSIVELY and unions the two sets.
+ * The manual grep was `dist/*.js`: non-recursive and root-only. The shipped bundles
+ * are not all at the top of their tree — `dist/viewer/assets/*.js` are copied assets
+ * one level down — so a top-level-only scan under-reports what ships. This guard
+ * therefore walks `dist/**\/*.js` RECURSIVELY.
+ *
+ * There used to be a SECOND root, `packages/llmwiki-core/dist`, because the package
+ * that externalizes `express`, `@modelcontextprotocol/sdk`, `@hono/node-server` and
+ * `mammoth` was built there and the manual grep never opened it.
+ * `odd/tasks/collapse-core-package.md` deleted that package and inlined its engine
+ * into `dist/index.js`, so the whole distribution is one build tree and one root
+ * covers everything it ships. The root list is no longer hand-trusted for that:
+ * one case below reads the root manifest's `exports` and asserts every published
+ * ESM entry resolves into a root this guard walks, so a future second build root
+ * that gains a published entry fails here instead of escaping the scan.
  *
  * ## Two assertions, because `@repo/` reaches a bundle in two shapes
  *
@@ -37,11 +45,10 @@
  * ## Fail closed, per root
  *
  * Each root's collected file set is asserted non-empty SEPARATELY, before anything
- * is checked. A single combined check would pass trivially while
- * `packages/llmwiki-core/dist` was missing, silently un-checking the package that
- * matters. The precondition is "the build has run", and every failure names both
- * the root and `corepack pnpm run build`, so an unrun build is never mistaken for
- * a clean artifact.
+ * is checked. A single combined check would pass trivially while a root was
+ * missing, silently un-checking the tree that matters. The precondition is "the
+ * build has run", and every failure names both the root and `corepack pnpm run
+ * build`, so an unrun build is never mistaken for a clean artifact.
  *
  * The empty list is also the ONLY way a root may fail quietly, and it is reserved
  * for a root that does not exist. An unreadable subdirectory — a permission
@@ -94,8 +101,15 @@ const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 /** The command that writes the trees this guard inspects: the guard's precondition. */
 const BUILD_COMMAND = "corepack pnpm run build";
 
-/** Both build trees the guard walks recursively, repository-relative. */
-const BUILD_ROOTS: readonly string[] = ["dist", "packages/llmwiki-core/dist"];
+/**
+ * Every build tree the guard walks recursively, repository-relative.
+ *
+ * ONE root, because the collapse left one build: the deleted core package's tree was
+ * folded into `dist/`. The list is not trusted by hand — `walks the build trees the
+ * root manifest publishes its entries from` derives it from `package.json`'s
+ * `exports`.
+ */
+const BUILD_ROOTS: readonly string[] = ["dist"];
 
 /** The extension a shipped ESM bundle uses; the copied browser assets use it too. */
 const BUNDLE_EXTENSION = ".js";
@@ -279,6 +293,29 @@ function importPositionSpecifiers(source: string): string[] {
   return [...source.matchAll(IMPORT_POSITION_PRIVATE_SPECIFIER)].map((match) => match[1]);
 }
 
+/** The little of a root `package.json` this file reads: its published entry map. */
+interface RootManifest {
+  readonly exports?: Readonly<Record<string, string | { readonly import?: string }>>;
+}
+
+/**
+ * The build trees the published ESM entries resolve into, repository-relative.
+ *
+ * Derived from the root manifest rather than restated, so a new published entry built
+ * into a tree this guard does not walk fails the assertion below instead of shipping
+ * unscanned. `./package.json` is not an entry and its target does not end in `.js`.
+ *
+ * @returns One directory per published ESM entry, deduplicated and sorted.
+ */
+async function publishedEntryBuildRoots(): Promise<string[]> {
+  const manifest = JSON.parse(await readFile(path.join(REPO_ROOT, "package.json"), "utf8")) as RootManifest;
+  const targets = Object.values(manifest.exports ?? {})
+    .map((declared) => (typeof declared === "string" ? declared : declared.import))
+    .filter((target): target is string => typeof target === "string" && target.endsWith(BUNDLE_EXTENSION));
+  const directories = targets.map((target) => path.posix.dirname(target.replace(/^\.\//u, "")));
+  return [...new Set(directories)].sort();
+}
+
 /**
  * Scan one bundle's text for private specifiers in import position.
  *
@@ -359,6 +396,16 @@ it("walks each build root recursively, never just its top level", async () => {
       topLevel.length,
     );
   }
+});
+
+it("walks the build trees the root manifest publishes its entries from", async () => {
+  const published = await publishedEntryBuildRoots();
+  expect(published.length, "the manifest publishes no ESM entry, so this assertion would be vacuous")
+    .toBeGreaterThan(0);
+  expect(
+    published,
+    `the published entries resolve into ${published.join(", ")}, which the walk must cover`,
+  ).toEqual([...BUILD_ROOTS].sort());
 });
 
 it("fails closed, naming the root and the build, when a root yields no file", () => {

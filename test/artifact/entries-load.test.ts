@@ -1,7 +1,7 @@
 /**
  * @file test/artifact/entries-load.test.ts
- * @description Proves that each of the four PUBLISHED entry modules of this
- * repository evaluates in-process, from the built artifact a consumer installs.
+ * @description Proves that each PUBLISHED entry module of this repository
+ * evaluates in-process, from the built artifact a consumer installs.
  *
  * ## What this proves
  *
@@ -14,6 +14,14 @@
  * a value import (a value import of a type-only export is `undefined` at runtime,
  * and `typeof` catches it).
  *
+ * Since the core collapse (`odd/tasks/collapse-core-package.md`) there are exactly
+ * two published entries, and the root package publishes both: `.` and
+ * `./compiler-sdk`. The engine that used to ship as the separate
+ * `@atomicstrata/llmwiki-core` package is inlined into `dist/index.js`, and the
+ * `./compiler-sdk` subpath is a 62-byte re-export shim beside it — so the second
+ * entry below is what keeps `withQuiet` and `createWikiCoreAtRoot` reachable for
+ * an embedder now that the old specifier is gone.
+ *
  * ## What this does NOT prove
  *
  * This proves the modules EVALUATE and expose their public kinds. It does NOT
@@ -24,22 +32,20 @@
  *
  * ## Why a literal `dist/` path, and not the bare specifier
  *
- * `vitest.config.ts` aliases all four published specifiers to SOURCE
- * (`@atomicstrata/llmwiki-core` → `packages/wiki/src/core-index.ts`, and so on),
- * and `tsconfig.json` repeats the same aliases for the type checker. A test that
- * wrote `await import("@atomicstrata/llmwiki-core")` would evaluate
- * `packages/wiki/src/*.ts` and prove nothing about the bundle a consumer gets: the
- * `dist/` chunk graph that holds `express`, `mammoth` and the MCP SDK is never
- * touched. A relative path into `dist/` cannot be shadowed by a
- * `/^@atomicstrata\/llmwiki-core$/` style alias, so the literal specifier below is
- * what makes this a proof about the artifact.
+ * `vitest.config.ts` aliases the published specifier to SOURCE
+ * (`llm-wiki-compiler` → `packages/wiki/src/index.ts`), and `tsconfig.json`
+ * repeats the alias for the type checker. A test that wrote
+ * `await import("llm-wiki-compiler")` would evaluate `packages/wiki/src/*.ts` and
+ * prove nothing about the bundle a consumer gets: the `dist/` chunk graph that
+ * holds `express`, `mammoth` and the MCP SDK is never touched. A relative path
+ * into `dist/` cannot be shadowed by a `/^llm-wiki-compiler$/` style alias, so the
+ * literal specifier below is what makes this a proof about the artifact.
  *
  * Each literal is paired with an EQUALITY ASSERTION against the owning package's
  * `exports` map: the file this test imports must be the file that package
  * publishes. A specifier is not derived at runtime, because the dimension-boundary
  * rule reports a runtime import specifier as unverifiable rather than guessing at
  * it, and this file states what it imports so the turnpike stays readable.
- *
  * ## Precondition: the build has run
  *
  * Each artifact is asserted to exist and to be non-empty BEFORE it is imported,
@@ -93,7 +99,7 @@ interface PublishedEntry {
   readonly expectedKinds: Readonly<Record<string, string>>;
 }
 
-/** The root facade. */
+/** The root facade, which now also carries the engine's own public surface. */
 const ROOT_ENTRY: PublishedEntry = {
   specifier: "llm-wiki-compiler",
   manifest: "package.json",
@@ -103,27 +109,26 @@ const ROOT_ENTRY: PublishedEntry = {
     activeProfileDigest: "function",
     readConfinedCappedBuffer: "function",
     ProviderUnavailableError: "function",
+    // The quiet seam, published as VALUES on the root entry so the `./compiler-sdk`
+    // subpath re-exports the engine's own bindings rather than a second copy of
+    // `utils/output.ts`. A second `AsyncLocalStorage` would make `withQuiet`
+    // silently stop applying; `test/artifact/bundle-engine.test.ts` holds that half.
+    createWikiCoreAtRoot: "function",
+    withQuiet: "function",
   },
 };
 
-/** The engine-free knowledge SDK, which the root facade consumes. */
-const CORE_ENTRY: PublishedEntry = {
-  specifier: "@atomicstrata/llmwiki-core",
-  manifest: "packages/llmwiki-core/package.json",
-  exportsKey: ".",
-  expectedKinds: {
-    createWikiCore: "function",
-    startViewer: "function",
-    atomicWrite: "function",
-    parseFrontmatter: "function",
-    LockUnavailableError: "function",
-  },
-};
-
-/** The version-locked composition seam the standard facade builds on. */
+/**
+ * The version-locked composition seam, now published by the ROOT package.
+ *
+ * It replaced `@atomicstrata/llmwiki-core/compiler-sdk` when the collapse deleted
+ * that package: `withQuiet`'s only public reach for an embedder is this subpath, so
+ * the collapse had to publish a successor rather than assert quiet structurally
+ * (see `odd/tasks/collapse-core-package.md`, L11).
+ */
 const COMPILER_SDK_ENTRY: PublishedEntry = {
-  specifier: "@atomicstrata/llmwiki-core/compiler-sdk",
-  manifest: "packages/llmwiki-core/package.json",
+  specifier: "llm-wiki-compiler/compiler-sdk",
+  manifest: "package.json",
   exportsKey: "./compiler-sdk",
   expectedKinds: {
     createWikiCoreAtRoot: "function",
@@ -236,20 +241,11 @@ describe("published entries", () => {
     assertExportKinds(ROOT_ENTRY, namespace, artifact);
   });
 
-  it("@atomicstrata/llmwiki-core evaluates from its published dist artifact", async () => {
-    const literalPath = "../../packages/llmwiki-core/dist/index.js";
-    const artifact = await assertPublishedArtifact(CORE_ENTRY, literalPath);
-    // @ts-ignore -- build output; the test-typecheck job installs without building
-    const namespace: unknown = await import("../../packages/llmwiki-core/dist/index.js");
-    assertExportKinds(CORE_ENTRY, namespace, artifact);
-  });
-
-  it("@atomicstrata/llmwiki-core/compiler-sdk evaluates from its published dist artifact", async () => {
-    const literalPath = "../../packages/llmwiki-core/dist/compiler-sdk.js";
+  it("llm-wiki-compiler/compiler-sdk evaluates from its published dist artifact", async () => {
+    const literalPath = "../../dist/compiler-sdk.js";
     const artifact = await assertPublishedArtifact(COMPILER_SDK_ENTRY, literalPath);
     // @ts-ignore -- build output; the test-typecheck job installs without building
-    const namespace: unknown = await import("../../packages/llmwiki-core/dist/compiler-sdk.js");
+    const namespace: unknown = await import("../../dist/compiler-sdk.js");
     assertExportKinds(COMPILER_SDK_ENTRY, namespace, artifact);
   });
-
 });

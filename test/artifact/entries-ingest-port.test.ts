@@ -45,22 +45,24 @@
  *
  * ## S11 — THE LIMIT OF ANY IN-PROCESS ARTEFACT PROOF, WRITTEN DOWN
  *
- * The root `dist/index.js` is ~105 KB and contains NO engine code. `resolveDimensions`,
- * `LLMWIKI_DIMENSIONS`, `sdk/core.ts` and the ingest service are all ABSENT from it:
- * `packages/wiki/src/sdk/wiki.ts` imports `createWikiCoreAtRoot` from the EXTERNAL
- * `@atomicstrata/llmwiki-core/compiler-sdk` (`tsup.config.ts:17`), and the engine ships
- * inside that dependency's chunk (≈849 KB, `chunk-*.js`).
+ * This section used to say the opposite of the current build. It is kept, corrected,
+ * because the LIMIT it names outlived the fact that produced it: `dist/index.js` is
+ * 992,819 bytes now and CARRIES the engine (`resolveDimensions`, `LLMWIKI_DIMENSIONS`,
+ * `sdk/core.ts` and the ingest service are all inside it), because
+ * `odd/tasks/collapse-core-package.md` deleted `@atomicstrata/llmwiki-core` and inlined
+ * its chunk. So the facade-era caveat — "the engine you exercise is not the engine you
+ * ship" — no longer applies to WHAT the bundle contains.
  *
- * In-process, `vitest.config.ts` aliases that specifier back to SOURCE, so the engine
- * this file exercises is the source tree, not the shipped chunk. Therefore this file
- * and `test/artifact/entries-load.test.ts` prove the FAÇADE — that the built entry
- * exports what it claims and threads the public option into the composition seam — and
- * anyone reading either as a proof about the ENGINE'S SHIPPED CONTENT is over-reading
- * it. The file that covers that gap is `test/sdk/packaging.test.ts`: it installs the
- * packed tarballs, so the real `@atomicstrata/llmwiki-core` chunk is the module that
- * evaluates. What NO test covers today is an ingest EXECUTED against that packed chunk
- * with a database: that needs network install and a database together, and it was not
- * run for this change.
+ * It still applies to WHICH module the test loads. In-process, `vitest.config.ts` aliases
+ * `llm-wiki-compiler` back to `packages/wiki/src/index.ts` and the artefact path this
+ * file imports is loaded through that same runner, so the engine this file exercises is
+ * the SOURCE tree, not the emitted chunk graph. This file therefore proves the BUILT
+ * ENTRY exports what it claims and threads the public option into the composition seam —
+ * not that the shipped chunk evaluates. The file that covers the chunk is
+ * `test/sdk/packaging.test.ts`: it packs the tarball, installs it in a clean project and
+ * runs a real ingest through the installed package. What NO test covers today is an
+ * ingest executed against that packed chunk with a database in one process: that needs a
+ * network install and a database together, and it was not run for this change.
  *
  * ## Precondition
  *

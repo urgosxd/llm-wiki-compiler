@@ -1,10 +1,15 @@
 /**
  * @file Skip an unchanged build so a test run does not pay for it.
  *
- * `test/global-setup.ts` rebuilds `dist/` and both workspace packages with tsup
- * on every vitest invocation: ~42s, of which ~36s is `packages/llmwiki-core`
- * (mostly `dts: true`). A developer running one 7ms unit file therefore waits
- * ~48s, and the same ~42s is paid again for every subsequent run.
+ * `test/global-setup.ts` rebuilds `dist/` with tsup on every vitest invocation.
+ * That build used to cost ~42s, ~36s of it the separately-built
+ * `packages/llmwiki-core` (mostly `dts: true`); `odd/tasks/collapse-core-package.md`
+ * deleted that package, so one root build is the whole distribution and the
+ * rebuild is an order of magnitude cheaper. The cache still matters: any
+ * rebuild a developer pays for no reason is time spent waiting, and — see
+ * {@link REQUIRED_OUTPUTS} — a required output nobody produces turns the skip
+ * into a permanent miss, which is exactly how this module's whole purpose was
+ * silently lost for a while.
  *
  * This module answers one question per run: "are the build outputs already
  * newer than every input they were built from?" It keys on a content hash of
@@ -55,23 +60,31 @@ const INPUT_FILES = ["tsup.config.ts", "tsconfig.json", "package.json"];
  *
  * Every entry must name a file THIS repository's build actually writes, or the
  * check can never pass and the cache never skips — a demanded output nobody
- * produces is a permanent miss, not a strict check. `test/build-stamp.test.ts`
- * holds each `packages/**` entry to a directory the root manifest declares as a
- * workspace.
+ * produces is a permanent miss, not a strict check. There is exactly ONE build
+ * root in this repository now (the root `tsup.config.ts`, whose `outDir` is
+ * `dist`), so `test/build-stamp.test.ts` confines every entry to `dist/`: a
+ * second build root cannot be demanded again without deleting that assertion.
  */
 export const REQUIRED_OUTPUTS = [
   "dist/api.js",
   "dist/index.js",
   "dist/index.d.ts",
-  "packages/llmwiki-core/dist/index.js",
   // `packages/llmwiki-local-workflows/dist/index.js` USED to be listed here and
   // is deliberately absent: commit 0374a5f dropped every subsystem outside the
   // wiki and KG dimensions, so that package no longer exists, is not in the root
   // manifest's `workspaces`, and no tsup config emits it. Requiring it made
   // `isBuildFresh()` false on every run, so each vitest invocation rebuilt `dist/`
-  // (~21s, mostly `packages/llmwiki-core` with `dts: true`) and two concurrent
+  // (~21s, mostly the second package with `dts: true`) and two concurrent
   // invocations raced inside tsup's per-entry clean+write until one died before a
-  // single test loaded. Add an entry only for an output the build really writes.
+  // single test loaded.
+  //
+  // `packages/llmwiki-core/dist/index.js` was listed here next and met the same
+  // fate for the same reason: `odd/tasks/collapse-core-package.md` deleted that
+  // package and inlined its engine into `dist/index.js`. The entry then demanded a
+  // file nothing writes, so `isBuildFresh()` became a permanent miss and EVERY
+  // vitest run paid a full rebuild — the exact silent regression this array's
+  // contract exists to prevent, reproduced by the array itself. Add an entry only
+  // for an output the build really writes, and only under `dist/`.
 ];
 
 /** Recorded state of the last successful build. */

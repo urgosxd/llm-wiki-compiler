@@ -6,10 +6,13 @@
  *
  * ## Why the published port is a SECOND declaration
  *
- * `CreateWikiOptions` reaches embedders through `@atomicstrata/llmwiki-core`'s
- * `compiler-sdk` (`packages/wiki/src/sdk/compiler-composition.ts`, built by
- * `packages/llmwiki-core/tsup.config.ts:11-12`), and `dist/index.d.ts:1` of the root
- * package imports the option type from that specifier. `@repo/foundation` is
+ * `CreateWikiOptions` reaches embedders through the root package's `./compiler-sdk`
+ * subpath (`packages/wiki/src/sdk/compiler-composition.ts`, widened into the build by
+ * the `compiler-sdk` dts entry key in the root `tsup.config.ts`), and `dist/index.d.ts`
+ * of the root package publishes that same option type. The subpath used to belong to
+ * `@atomicstrata/llmwiki-core`; `odd/tasks/collapse-core-package.md` deleted that
+ * package and published `./compiler-sdk` on `llm-wiki-compiler` in its place, so the
+ * specifier an embedder writes changed while the shape did not. `@repo/foundation` is
  * `private: true` and is absent from `.github/workflows/publish.yml`'s
  * `PACKAGE_DIRS`, so naming foundation's `DimensionsPort` in `core-types.ts` would put
  * a specifier in a published `.d.ts` that no embedder can install. The shape is

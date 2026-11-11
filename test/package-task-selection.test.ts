@@ -42,15 +42,22 @@
  * no task may grow a `^test` edge again, and the concurrency cap must stay in
  * `turbo.json` rather than moving into an environment variable.
  *
- * ## The transitional package is asserted to stay surface-less
+ * ## The transitional package is asserted to stay surface-less — by construction now
  *
- * `@atomicstrata/llmwiki-core` is on its way to becoming a thin alias of
- * `@repo/wiki` or disappearing, so it must declare no `test`, `lint`,
- * `typecheck` or `fallow` script. A task surface added there would be a surface
- * that has to be removed later, and a green that means nothing in the meantime.
+ * `@atomicstrata/llmwiki-core` was on its way to becoming a thin alias of
+ * `@repo/wiki` or disappearing, and it must declare no `test`, `lint`,
+ * `typecheck` or `fallow` script while it exists: a task surface added there would
+ * be a surface that has to be removed later, and a green that means nothing in the
+ * meantime.
+ *
+ * `odd/tasks/collapse-core-package.md` resolved that choice by DELETION, so the
+ * guard below states the stronger form of the same claim: the packages carrying a
+ * task surface are exactly the members the root manifest declares, and the deleted
+ * package is neither. A directory nobody declares cannot grow a surface, and a
+ * declared member cannot ship without one.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, it } from "vitest";
 
@@ -157,6 +164,12 @@ function manifestScripts(directory: string): Record<string, string | undefined> 
   return (JSON.parse(text) as { scripts?: Record<string, string> }).scripts ?? {};
 }
 
+/** The workspace directories the root manifest declares, in declared order. */
+function declaredWorkspaces(): string[] {
+  const text = readFileSync(path.join(REPO_ROOT, "package.json"), "utf8");
+  return (JSON.parse(text) as { workspaces?: string[] }).workspaces ?? [];
+}
+
 it("declares every turbo task cache-less", () => {
   const tasks = turboTasks();
   expect(Object.keys(tasks).sort()).toEqual([...DECLARED_TASKS]);
@@ -224,9 +237,24 @@ it("leaves @repo/kg's own scripts untouched apart from test and typecheck", () =
   }
 });
 
-it("gives the transitional core package no task surface", () => {
-  const scripts = manifestScripts("packages/llmwiki-core");
-  for (const task of [...PER_PACKAGE_TASKS, "fallow"]) {
-    expect(scripts[task], `@atomicstrata/llmwiki-core ${task}`).toBeUndefined();
-  }
+it("gives a task surface to exactly the declared workspace members, and none to the removed core", () => {
+  const members = declaredWorkspaces();
+  // The surface set is DERIVED against the workspace set, so a package added or deleted
+  // without thinking about its task surface fails here rather than shipping a surface
+  // nobody meant to publish. This is what "the transitional core package has no task
+  // surface" became once the collapse resolved that package by deletion: it is not a
+  // member, so there is nothing left to carry a script.
+  expect(members.length, "an empty workspace list would make this assertion vacuous").toBeGreaterThan(0);
+  expect(SURFACES.map((surface) => surface.directory).sort(), "every member carries a surface").toEqual(
+    [...members].sort(),
+  );
+
+  // The specific package the original case policed: absent from the workspace set AND
+  // absent from the disk, so no later edit can hand it a `test`/`lint`/`typecheck`/`fallow`
+  // script by re-creating the directory.
+  expect(members).not.toContain("packages/llmwiki-core");
+  expect(
+    existsSync(path.join(REPO_ROOT, "packages/llmwiki-core")),
+    "packages/llmwiki-core was collapsed into packages/wiki; a re-created directory would carry no task surface",
+  ).toBe(false);
 });

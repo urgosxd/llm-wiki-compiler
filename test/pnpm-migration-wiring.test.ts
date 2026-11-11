@@ -69,13 +69,17 @@ function lockPairs(): string[] {
 describe("pnpm migration wiring: one graph", () => {
   it("declares pnpm as the package manager and keeps the npm workspaces field", () => {
     expect(pkg.packageManager).toBe("pnpm@11.5.0");
+    // Four members. `packages/llmwiki-core` was the fifth until
+    // `odd/tasks/collapse-core-package.md` deleted that package and inlined its engine
+    // into `packages/wiki`; the count is asserted as a literal list, not as a length, so
+    // a swapped-in member fails as loudly as a dropped one.
     expect(pkg.workspaces).toEqual([
       "packages/api",
       "packages/foundation",
-      "packages/llmwiki-core",
       "packages/llmwiki-kg/ts",
       "packages/wiki",
     ]);
+    expect(pkg.workspaces).not.toContain("packages/llmwiki-core");
   });
 
   it("keeps pnpm-workspace.yaml in step with package.json workspaces", () => {

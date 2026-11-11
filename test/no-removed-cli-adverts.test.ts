@@ -41,6 +41,15 @@
  * package, which makes them the same class of surface as a doc comment, not a lesser one.
  * The root for that package is therefore the package directory itself.
  *
+ * That package has since been DELETED (`odd/tasks/collapse-core-package.md`), and the
+ * lesson moved with the build rather than expiring with the directory: there is one build
+ * again, and its config is `tsup.config.ts` at the REPOSITORY ROOT. Dropping the dead root
+ * and stopping there would have re-opened exactly the hole that root was added to close —
+ * in the same change that deleted the file which taught it. The published package's own
+ * build config is therefore scanned BY NAME through `SCAN_FILES`, and its contribution to
+ * the inventory is asserted like a root's, so a walk that stopped reaching it fails instead
+ * of reporting a clean tree.
+ *
  * `dist` is skipped for exactly one reason: it is gitignored build output, so a walk that
  * read it would report a file count, and a verdict, that depend on whether this working
  * tree happened to be built. Nothing authored escapes by that exclusion — `dist` is
@@ -134,9 +143,11 @@
  * lie of omission: `.ts`/`.js`/`.css` only reported 132 offenders across 474 files, which
  * left the two `.sql` adverts unread; catching `serve` without `host` reported 133, which
  * left the second one unread; and stopping the walk at `src` subtrees reported 136 across
- * 487 files, which left a published package's build config unread. This tree now walks
- * 488 files (12 of them `.sql`) and reports 0. The tree was never clean, it was
- * unexamined.
+ * 487 files, which left a published package's build config unread. This tree reports 0. Its
+ * inventory is a little smaller than the 488 files that measurement walked, because the
+ * collapse deleted one package's directory and added back the one build config that
+ * replaced it; the verdict is unchanged and the replacement is asserted, not assumed. The
+ * tree was never clean, it was unexamined.
  *
  * That run is deliberately NOT part of this file — a committed test must not read git
  * history, or it fails for anyone without those commits and passes for the wrong reason.
@@ -154,11 +165,23 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
  * The source roots every scanned file lives under, repository-relative.
  *
  * Each root is asserted to contribute at least one file: a walker bug that silently drops
- * a root would otherwise read as a clean tree. `packages/llmwiki-core` is listed as a
- * whole package rather than a subtree because its build config sits at the package root;
- * see the scope note above.
+ * a root would otherwise read as a clean tree. `packages/llmwiki-core` used to be a third
+ * root, listed as a whole package rather than a subtree because its build config sits at
+ * the package root; the collapse deleted the package AND inlined its engine into
+ * `packages/wiki/src`, so that subtree is covered by the first root and the build config it
+ * protected is covered by `SCAN_FILES`. See the scope note above.
  */
-const SCAN_ROOTS = ["packages/wiki/src", "packages/api/src", "packages/llmwiki-core"] as const;
+const SCAN_ROOTS = ["packages/wiki/src", "packages/api/src"] as const;
+
+/**
+ * Individual files outside {@link SCAN_ROOTS} that ship, scanned by name.
+ *
+ * `tsup.config.ts` is the published package's build config now that the root package IS
+ * the published package. It lives at the repository root, which no `src` subtree contains,
+ * and it is the direct successor of the `packages/llmwiki-core/tsup.config.ts` file that
+ * carried a live `llmwiki serve` advert until this guard was widened to read it.
+ */
+const SCAN_FILES = ["tsup.config.ts"] as const;
 
 /** File types whose contents a user or an agent can end up reading. */
 const SCAN_EXTENSIONS = new Set([".ts", ".js", ".css", ".sql"]);
@@ -250,7 +273,7 @@ function findAdverts(relative: string, text: string): string[] {
  * @returns Repository-relative paths of the scanned files.
  */
 async function scannedTree(): Promise<string[]> {
-  return (await Promise.all(SCAN_ROOTS.map(listScannedFiles))).flat();
+  return [...(await Promise.all(SCAN_ROOTS.map(listScannedFiles))).flat(), ...SCAN_FILES];
 }
 
 /**
@@ -328,15 +351,18 @@ async function scanTreeForRenderedRetiredSurfaces(): Promise<string[]> {
 /**
  * Assert the inventory is a real tree, not an empty walk that would read as clean.
  *
- * A count floor, one contributing file per root, and no empty reads: any of these failing
- * means the guard looked nowhere, which is indistinguishable from a clean tree unless it
- * is asserted.
+ * A count floor, one contributing file per root, every named file actually reached, and no
+ * empty reads: any of these failing means the guard looked nowhere, which is
+ * indistinguishable from a clean tree unless it is asserted.
  */
 async function assertRealInventory(): Promise<void> {
   const files = await scannedTree();
   expect(files.length, `only ${files.length} files found; the walk is not covering the tree`).toBeGreaterThan(100);
   for (const root of SCAN_ROOTS) {
     expect(files, `no file scanned under ${root}`).toContainEqual(expect.stringContaining(`${root}${path.sep}`));
+  }
+  for (const file of SCAN_FILES) {
+    expect(files, `the named file ${file} is not in the inventory`).toContain(file);
   }
   const unreadable: string[] = [];
   for (const file of files) {

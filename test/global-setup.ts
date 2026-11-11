@@ -7,12 +7,16 @@
  * race on dist/api.js (tsup's per-entry `clean` wipes the file mid-write).
  * Building once globally eliminates the race and saves ~1s per spawning file.
  *
- * THE BUILD IS SKIPPED WHEN ITS INPUTS ARE UNCHANGED. The full build costs
- * ~42s (~36s of it `packages/llmwiki-core`, mostly `dts: true`), which a
- * developer paid again on every run even to execute a single 7ms unit file. A
- * content hash of the build inputs in `.llmwiki/build-stamp.json` decides this;
- * see `scripts/build-stamp.ts`. Every uncertainty rebuilds — a stale build
- * silently tests the wrong code, which is far worse than a slow run.
+ * THE BUILD IS SKIPPED WHEN ITS INPUTS ARE UNCHANGED. The full build used to cost
+ * ~42s (~36s of it the separately-built `packages/llmwiki-core`, mostly `dts: true`),
+ * which a developer paid again on every run even to execute a single 7ms unit file.
+ * `odd/tasks/collapse-core-package.md` deleted that package, so one root build is the
+ * whole distribution; the skip still matters, and it now actually happens — while that
+ * package existed, `scripts/build-stamp.ts` also REQUIRED its `dist/index.js`, so the
+ * freshness check was a permanent miss and every run rebuilt regardless. A content hash
+ * of the build inputs in `.llmwiki/build-stamp.json` decides this; see
+ * `scripts/build-stamp.ts`. Every uncertainty rebuilds — a stale build silently tests
+ * the wrong code, which is far worse than a slow run.
  *
  * Set `LLMWIKI_TEST_FORCE_BUILD=1` to bypass the cache entirely, e.g. after
  * suspecting a stale artifact.
