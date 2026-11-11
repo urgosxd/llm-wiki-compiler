@@ -29,9 +29,11 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
-    "test": "vitest run",
+    "test": "node ../../../scripts/package-tasks.ts test --package @repo/kg",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
+    "lint": "node ../../../scripts/package-tasks.ts lint --package @repo/kg",
+    "typecheck": "node ../../../scripts/package-tasks.ts typecheck --package @repo/kg",
+    "fallow": "node ../../../scripts/package-tasks.ts fallow --package @repo/kg",
     "eval:kg": "tsx src/core/eval/cli.ts"
   },
   "dependencies": {

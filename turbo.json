@@ -1,0 +1,45 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  // EVERY task here is cache-less, and that is the point of the file. The goal is
+  // ORDER and SELECTION, not speed: a cache hit is a green that did not execute,
+  // which is the exact failure this repository has spent a long time removing.
+  // Do not enable caching without a provably complete input set, and expect that
+  // argument to be made in writing rather than by flipping this flag.
+  "tasks": {
+    // `^test` is a real dependency and not decoration: every package's test task
+    // runs against ONE pgvector database provisioned once by `test/global-setup.ts`
+    // and seeded per worker by `test/setup/test-database-url.ts`. A dependant
+    // package's tests must therefore never run concurrently with its dependencies'
+    // tests, or two suites write the same schema in the same container and the
+    // victim of the collision is non-deterministic.
+    "test": {
+      "dependsOn": ["^test"],
+      "cache": false
+    },
+    // Lint and typecheck read the tree and report. They order nothing, so they
+    // declare no dependency edges at all.
+    "lint": {
+      "dependsOn": [],
+      "cache": false
+    },
+    "typecheck": {
+      "dependsOn": [],
+      "cache": false
+    },
+    // `fallow` exists only for `@repo/kg`, the one package with a `.fallowrc.json`
+    // and baselines. The other three declare no `fallow` script, so the task
+    // resolves to nothing for them rather than to a scan over no baseline.
+    "fallow": {
+      "dependsOn": [],
+      "cache": false
+    }
+  }
+  // WHY THERE IS NO `build` TASK, AND WHY NO PACKAGE GETS ONE:
+  // `@repo/api`, `@repo/wiki` and `@repo/foundation` emit nothing — they export
+  // `./src/*.ts` and are bundled from source by the single root tsup run
+  // (`tsup.config.ts` `noExternal: [/^@repo\//]`). A `build` task over a package
+  // that emits no artifact is a task that reports success without an artifact,
+  // which is precisely the defect this graph exists to avoid. The two packages
+  // that do emit (`@repo/kg`, `@atomicstrata/llmwiki-core`) keep their own
+  // scripts, untouched by this slice, and no `^build` edge pretends otherwise.
+}

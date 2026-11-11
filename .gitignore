@@ -36,3 +36,7 @@ docs/superpowers/
 
 # CodeGraph index — a local analysis cache, regenerated on demand.
 .codegraph/
+
+# Turborepo's local run/cache directory. Kept out of git even though every task in
+# turbo.json is declared cache-less: .turbo/ also holds logs and run summaries.
+.turbo/

@@ -4,6 +4,11 @@
   "private": true,
   "description": "The wiki dimension: the compiler, its commands, services and the viewer",
   "type": "module",
+  "scripts": {
+    "test": "node ../../scripts/package-tasks.ts test --package @repo/wiki",
+    "lint": "node ../../scripts/package-tasks.ts lint --package @repo/wiki",
+    "typecheck": "node ../../scripts/package-tasks.ts typecheck --package @repo/wiki"
+  },
   "exports": {
     "./package.json": "./package.json",
     "./core-index": "./src/core-index.ts",

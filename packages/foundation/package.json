@@ -4,6 +4,11 @@
   "private": true,
   "description": "The monorepo's bottom layer: the types wiki and kg must both name without importing each other",
   "type": "module",
+  "scripts": {
+    "test": "node ../../scripts/package-tasks.ts test --package @repo/foundation",
+    "lint": "node ../../scripts/package-tasks.ts lint --package @repo/foundation",
+    "typecheck": "node ../../scripts/package-tasks.ts typecheck --package @repo/foundation"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./stack-id": "./src/stack-id.ts"

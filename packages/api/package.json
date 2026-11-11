@@ -4,6 +4,11 @@
   "private": true,
   "description": "The joining package: the only package permitted to depend on both @repo/wiki and @repo/kg",
   "type": "module",
+  "scripts": {
+    "test": "node ../../scripts/package-tasks.ts test --package @repo/api",
+    "lint": "node ../../scripts/package-tasks.ts lint --package @repo/api",
+    "typecheck": "node ../../scripts/package-tasks.ts typecheck --package @repo/api"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
