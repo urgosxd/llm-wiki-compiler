@@ -81,6 +81,15 @@ jobs:
         run: pnpm run lint
       - run: pnpm run release:check-docs
       - run: pnpm run build
+      # The artefact the runtime image ships was compiled only incidentally: the
+      # kg-mcp-e2e harness runs `tsc -p packages/llmwiki-kg/ts/tsconfig.build.json`
+      # inside root `pnpm test` (`test/kg-mcp-e2e/probe-harness.ts:46`), so breaking
+      # packaging surfaced as a red MCP fixture naming the wrong subsystem. This step
+      # makes the build explicit delivery work, failing in a step named for delivery.
+      # A STEP, not a new job: it inherits the required `build-and-test (24)` name,
+      # while a new job name has no branch-protection entry and could be merged past.
+      - name: Build the @repo/kg artefact the image ships
+        run: pnpm --filter @repo/kg run build
       # The KG package carries its own tsconfig, and nothing else here reads it:
       # root `tsc` includes only `src/**`, and `codebase-health` ignores
       # `packages/llmwiki-kg/**`. Without this step its diagnostics are invisible

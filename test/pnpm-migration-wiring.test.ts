@@ -135,11 +135,10 @@ describe("pnpm migration wiring: delivery surfaces stay on pnpm", () => {
     ".github/workflows/ci.yml",
     ".github/workflows/publish.yml",
     ".github/workflows/typecheck-tests.yml",
-    "packages/llmwiki-kg/.github/workflows/ci.yml",
   ].filter((path) => existsSync(`${REPO_ROOT}/${path}`));
 
   it("runs every CI workflow through pnpm/action-setup with pnpm cache and a frozen install", () => {
-    expect(WORKFLOWS.length).toBe(4);
+    expect(WORKFLOWS.length).toBe(3);
     for (const path of WORKFLOWS) {
       const text = read(path);
       expect(text).not.toMatch(/\bnpm ci\b/);

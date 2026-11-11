@@ -292,10 +292,13 @@ returns no hit under `.github/`, and the only callers of
 `test/ci/fallow-report-gate.test.ts`. This is written down so nobody "restores CI
 parity" by reintroducing a path the script no longer needs — there is no CI role
 to keep parity with. One nuance, so the grep is not misread:
-`.github/workflows/ci.yml:90` does run `pnpm run fallow:kg`, but that is the
+`.github/workflows/ci.yml:101` does run `pnpm run fallow:kg`, but that is the
 different, KG-scoped gate with its own baselines (see "Baselines" above) and it
 shares no code with this one — "CI runs a `fallow:*` script" is true of the KG
-gate and false of the root gate.
+gate and false of the root gate. (That citation read `:90` and was already one
+line stale before this note was touched: the step sat at `:91`, and inserting the
+`@repo/kg` build step above it moved it to `:101`. A wrong line number either way
+— recorded so the correction is not mistaken for a step that moved.)
 
 ### The touched-file residual
 
