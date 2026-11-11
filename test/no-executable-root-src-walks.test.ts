@@ -203,3 +203,25 @@ describe("executable root src walks", () => {
     }
   });
 });
+
+/**
+ * The pin's own tolerance surface, kept in its own block: `max-lines-per-function`
+ * allows 39 body lines and the detection block above already spends them, so these
+ * two cases cannot join it without turning the ratchet red.
+ */
+describe("the root src walk pin", () => {
+  it("permits exactly one walk, with no wildcard and no per-file blanket", () => {
+    expect([...ALLOWED]).toEqual(["scripts/build-stamp.ts:INPUT_DIRS[src]"]);
+  });
+
+  it("rejects a pin that differs in file, owner, literal or callee", () => {
+    for (const other of [
+      "scripts/other.ts:INPUT_DIRS[src]",
+      "scripts/build-stamp.ts:ROOT_DIRS[src]",
+      "scripts/build-stamp.ts:INPUT_DIRS[src/viewer]",
+      "scripts/build-stamp.ts:readdirSync(src)",
+    ])
+      expect(ALLOWED.has(other), other).toBe(false);
+    expect(ALLOWED.has("scripts/build-stamp.ts:INPUT_DIRS[src]")).toBe(true);
+  });
+});

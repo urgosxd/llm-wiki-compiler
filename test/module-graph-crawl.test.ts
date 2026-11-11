@@ -32,9 +32,12 @@
  *
  * THE DEPTH CONTRAST IS LOAD-BEARING. `transformRequest` records only a module's
  * own imports, so a single pass yields depth-1 closures and stops. The pair of
- * inputs selects 23 files while the single input selects 6; a regression back to
- * one pass cannot reach that second number, which is what the strictly-greater
- * assertion below pins. The 30 s ceiling catches the other and worse regression:
+ * inputs selects 22 files while the single input selects 6 — those are the two
+ * frozen oracles below, i.e. the selections the real `vitest related` returned for
+ * those inputs, not counts this file derives from the crawl it is testing. A
+ * regression back to one pass cannot reach the second number, which is what the
+ * strictly-greater assertion below pins. The 30 s ceiling catches the other and
+ * worse regression:
  * a crawl switched to `ssrLoadModule`, which executes code, instead of
  * `transformRequest`, which does not.
  *
