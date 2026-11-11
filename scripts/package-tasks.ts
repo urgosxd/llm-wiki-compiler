@@ -89,11 +89,28 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { isEntryPoint } from "./cli-root.ts";
 import { closeGraphServer, crawlTestClosures, createGraphServer } from "./module-graph.ts";
-import { PACKAGE_SURFACES, partition, typeOnlyDependentsOf, type PackageSurface } from "./package-selection.ts";
+import {
+  PACKAGE_SURFACES,
+  deriveTypeOnlyDependents,
+  partition,
+  type PackageSurface,
+  type TypeOnlyPair,
+} from "./package-selection.ts";
 import { runTask, type PackageTask } from "./package-tasks-runners.ts";
 
 /** Repository root, resolved from this script's location so a package cwd cannot move it. */
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+
+/** One package's derived test selection, and what that selection cannot observe. */
+interface Selection {
+  /** Repository-relative POSIX test paths the selection runs. */
+  readonly tests: string[];
+  /** Type-only dependents of this package that the selection therefore cannot observe. */
+  readonly typeOnly: readonly TypeOnlyPair[];
+}
+
+/** The selection for a task that derives none, so `main` has one shape to read. */
+const EMPTY_SELECTION: Selection = { tests: [], typeOnly: [] };
 
 /** Vitest's CLI entry, spawned through node so no shell or exec bit is assumed. */
 const VITEST_ENTRY = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
@@ -194,14 +211,22 @@ export function shouldReportTypeOnlyDependents(task: PackageTask): boolean {
  * writes a stream), so it cannot live in `package-selection.ts`, which is pure by contract
  * and decides buckets rather than printing.
  *
+ * IT PRINTS FROM THE SET DERIVED AT RUN TIME, not from the committed annotation. The
+ * annotation carries only `reason` text; printing it would make the notice as true as the last
+ * commit rather than as true as this run, and the equality that validates it lives in a
+ * `meta`-bucket test the selective path never executes.
+ *
  * @param surface - The package whose test task is about to run.
+ * @param dependents - The pairs derived from this run's own partition.
  */
-export function reportTypeOnlyDependents(surface: PackageSurface): void {
-  const declared = typeOnlyDependentsOf(surface.name);
-  if (declared.length === 0) return;
-  const files = declared.map((entry) => entry.testFile).join(", ");
+export function reportTypeOnlyDependents(
+  surface: PackageSurface,
+  dependents: readonly TypeOnlyPair[],
+): void {
+  if (dependents.length === 0) return;
+  const files = dependents.map((pair) => pair.testFile).join(", ");
   process.stderr.write(
-    `package-tasks: ${surface.name} has ${declared.length} declared type-only dependent test(s) ` +
+    `package-tasks: ${surface.name} has ${dependents.length} derived type-only dependent test(s) ` +
       `this selection cannot observe (${files}); root \`typecheck:tests\` is the covering tier\n`,
   );
 }
@@ -214,7 +239,7 @@ export function reportTypeOnlyDependents(surface: PackageSurface): void {
  * @throws Error when the derivation selects nothing, because a task over an empty
  * selection would report success having run no test at all.
  */
-async function deriveSelection(surface: PackageSurface): Promise<string[]> {
+async function deriveSelection(surface: PackageSurface): Promise<Selection> {
   const collected = collectedTestFiles();
   const server = await createGraphServer(REPO_ROOT);
   try {
@@ -228,7 +253,8 @@ async function deriveSelection(surface: PackageSurface): Promise<string[]> {
           "a task over no test file would report success having run nothing",
       );
     }
-    return selected;
+    const derived = deriveTypeOnlyDependents(REPO_ROOT, { collected, result }).pairs;
+    return { tests: selected, typeOnly: derived.filter((pair) => pair.packageName === surface.name) };
   } finally {
     await closeGraphServer(server);
   }
@@ -251,9 +277,9 @@ async function main(argv: readonly string[]): Promise<number> {
   });
   const task = readTask(positionals);
   const surface = surfaceFor(values.package);
-  const tests = task === "fallow" ? [] : await deriveSelection(surface);
-  if (shouldReportTypeOnlyDependents(task)) reportTypeOnlyDependents(surface);
-  return runTask(task, { root: REPO_ROOT, surface, tests });
+  const selection = task === "fallow" ? EMPTY_SELECTION : await deriveSelection(surface);
+  if (shouldReportTypeOnlyDependents(task)) reportTypeOnlyDependents(surface, selection.typeOnly);
+  return runTask(task, { root: REPO_ROOT, surface, tests: selection.tests });
 }
 
 if (isEntryPoint(process.argv[1], import.meta.url)) {

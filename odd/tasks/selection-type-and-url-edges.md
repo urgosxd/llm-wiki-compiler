@@ -60,13 +60,35 @@ S15. GATING BECOMES BEHAVIOURAL. "export a pure predicate (e.g. `shouldReportTyp
 and test it for all four tasks (`test`, `lint`, `typecheck`, `fallow`)" — because "the call-site pin is
 a source-text filter with a hole … a staged second call path left it 4/4 green".
 
+S16. THE DEFINITION, AND WHY IT IS THE WHOLE FIX. "a pair is a type-only dependent of package P if
+and only if (a) the test has a type-only import edge into P's source, AND (b) the test is NOT in P's
+selection, i.e. `partition` did not attribute it to P. Condition (b) is the whole fix — it is the
+difference between \"has a type edge\" and \"cannot be observed\"." … "Implement it where the partition
+result exists (the bound wrapper in `scripts/package-selection.ts`), not by re-approximating the
+closure inside the scanner. The scanner's job becomes edges only; the caller subtracts what the
+selection covers."
+
+S17. THREE SCANNER BLIND SPOTS, EACH DETECTED. "JD-A2-002 — `import type * as W from …`" must
+register the edge; "JD-A2-003 — `export { type A } from`" is a TYPE reach, not a runtime one;
+"JD-A2-004 — specifier attribution … Support `@repo/<pkg>/<subpath>` … and type imports targeting
+`packages/<dir>/dist/…`. A type-only subpath import must not escape."
+
+S18. SOUND WIRING ON BOTH SIDES. "Restore a SOUND structural guard: assert the exact number of
+`reportTypeOnlyDependents(` occurrences in `scripts/package-tasks.ts` is 2" — and "have `main` print
+from the set DERIVED at run time off the same partition result that produced the selection, so the
+notice is true by construction on every run."
+
+S19. THE RECORD'S FRAMING. "a notice that misinforms is worse than the silence it replaced";
+"Gate-green proved the code ran, not that the claim was true."; the fourth file is the headline as
+"one test invisible in every bucket", explicitly not "three orphan tests".
+
 ## Tasks
 
-- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `2d2be3dba6d088586549968b46226e6076658caa`
-- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `2d2be3dba6d088586549968b46226e6076658caa`
-- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `2d2be3dba6d088586549968b46226e6076658caa`
-- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `2d2be3dba6d088586549968b46226e6076658caa`
-- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `2d2be3dba6d088586549968b46226e6076658caa`
+- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
+- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
+- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
+- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
+- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `d4d500d141367f6cc3516f3eb3d8d53e30ba1740`
 
 - T6 | S8-S13 | worker `gentle-ai-worker` — this feature document | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
 - T7 | S8, S9, S11 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: boundary header, `TypeOnlyDependent`, `TYPE_ONLY_DEPENDENTS`, `typeOnlyDependentsOf` | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
@@ -77,6 +99,10 @@ a source-text filter with a hole … a staged second call path left it 4/4 green
 - T12 | S14 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: declaration demoted to annotation, derivation re-exported for one import surface | `5e6af0825ba8251a5101584405e1aa45efca39a1`
 - T13 | S15 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: `shouldReportTypeOnlyDependents` predicate replaces the source-text gate | `5e6af0825ba8251a5101584405e1aa45efca39a1`
 - T14 | S14, S15 | worker `gentle-ai-worker` — union + notice tests (exact equality both directions, four forms, four-task gate), three probes, `docs/turborepo.md` overclaim correction | `5e6af0825ba8251a5101584405e1aa45efca39a1`
+- T15 | S17 | worker `gentle-ai-worker` — `scripts/type-only-dependents.ts`: edges only, namespace/inline-export/subpath forms, limits documented | TBD
+- T16 | S16 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: subtract the partition, so a pair means "not selected" | TBD
+- T17 | S18 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: notice prints from the run's own derived set; structural two-occurrence guard | TBD
+- T18 | S16, S19 | worker `gentle-ai-worker` — soundness assertion, specifier table, probes RED-S/RED-N1/N2/G/G2, docs correction | TBD
 ## Log
 
 L1 — the original request, verbatim:
@@ -342,3 +368,56 @@ and the full suite `pnpm test` exit 0 with `Test Files 824 passed | 3 skipped (8
 passed | 4 skipped (6144)` in 324.70 s, load 1.35 before and 6.67 after. The census did NOT move in this
 work unit either: `meta=70 orphan=29 uncovered=0 collected=827` with the four package buckets unchanged,
 so `docs/turborepo.md:130-131` needed no regeneration.
+
+L27 — SECOND JUDGE PASS. The derivation was UNSOUND, not merely incomplete: it filtered with a
+file's DIRECT runtime imports while `partition` attributes by the TRANSITIVE closure, so twelve of
+its seventeen pairs were tests their own selection already runs. That is the worst kind of error for
+a notice, because **"a notice that misinforms is worse than the silence it replaced"**. Each finding:
+
+  - **JD-A2-001 (soundness) — CLOSED.** The scanner now reports EDGES only, and
+    `deriveTypeOnlyDependents` subtracts `partition`'s attribution. RED-S: with the subtraction
+    staged out, the soundness assertion named `+ "test/query-stale-warning.test.ts -> @repo/wiki"` as
+    "claimed unobservable but IS in that package's selection", and the raw edge set was 125 pairs
+    (the new attribution fixes below catch far more edges than the old scanner did). Measured sound
+    set: FIVE pairs over FOUR files, all `selected=false` — see L28.
+  - **JD-A2-002 (namespace binding) — CLOSED.** `import type * as W from "./w.js"` now registers the
+    edge with `*` as the recorded specifier; asserted as a literal row `["./w.js", true, "*"]`.
+  - **JD-A2-003 (inline type re-export) — CLOSED.** `export { type A } from` is a TYPE reach, decided
+    element by element; rows `["./j.js", true, "J"]` and the control `["./k.js", false, "K,l"]`. This
+    was wrong in the direction that HIDES findings: an elided reach read as runtime suppresses every
+    other type-only edge to that package in the same file, which the scanner header now states.
+  - **JD-A2-004 (specifier attribution) — CLOSED.** `packageOfSpecifier` matches the exact surface,
+    its `@repo/<pkg>/<subpath>` form, relative paths under a source root, and the surface DIRECTORY
+    so `packages/wiki/dist/…` cannot escape; pinned by an eight-row table including two controls.
+  - **JD-A2-005 (lost wiring guard) — CLOSED, both directions.** The guard asserts the exact number of
+    `reportTypeOnlyDependents(` occurrences is 2. RED-G (call site deleted): `expected 1 to be 2`.
+    RED-G2 (the judge's mutant, an ungated second call): `expected 3 to be 2`. Reverted, 5/5 green.
+  - **JD-A2-006 (notice printed from the annotation) — CLOSED.** `main` prints
+    `selection.typeOnly`, derived in the same `deriveSelection` call that produced the selection, so
+    the notice is true by construction on every run; a structural case asserts the CLI never mentions
+    `typeOnlyDependentsOf` or `TYPE_ONLY_DEPENDENTS`. The annotation keeps only `reason` text and its
+    job is the fail-closed ratchet.
+
+L28 — the measured sound set, per pair, from a throwaway probe (written, run, deleted):
+```
+TRUTH collected=828 pairs=5 files=4
+TRUTH PAIR test/provenance-metadata-shape.test.ts -> @repo/wiki bucket=orphan closure=0 selected=false
+TRUTH PAIR test/query-candidate-id-absent.test.ts -> @repo/wiki bucket=orphan closure=0 selected=false
+TRUTH PAIR test/sdk/published-dimensions-port.test.ts -> @repo/foundation bucket=orphan closure=0 selected=false
+TRUTH PAIR test/sdk/published-dimensions-port.test.ts -> @repo/wiki bucket=orphan closure=0 selected=false
+TRUTH PAIR test/viewer-sidebar.test.ts -> @repo/wiki bucket=meta closure=1 selected=false
+```
+Four `@repo/wiki`, one `@repo/foundation`, four files — the Manager's predicted 5/4 confirmed by
+measurement rather than assumed. `collected=828` in that line includes the probe itself; the real
+count is 827.
+
+L29 — RED-N, both shapes, and the findings already closed. RED-N1 staged the `viewer-sidebar` shape
+(type edge + `test/fixtures` only, unselected): red naming
+`+ "test/zz-unselected-probe.test.ts -> @repo/wiki"`. RED-N2 staged the `query-stale-warning` shape
+(type edge + `test/fixtures/typed-grounding.ts`, which imports wiki at runtime): the run stayed GREEN,
+`12 passed`, the file appeared nowhere, and the census moved `@repo/wiki=565 -> 566`, proving the
+probe joined the selection and that the sound derivation refuses to report it. Re-proved after the
+change: JD-A-001 (viewer-sidebar is in the byte-exact notice pin and in the derived set);
+JD-A-002 (deleting that annotation gives `expected [ Array(1) ] to deeply equal []` naming it);
+JD-A-004 (`meta` bucket is covered — the probe above is `meta` and is caught); JD-A-005 (no
+tautology; the non-vacuity case drives the real diff helper both ways).

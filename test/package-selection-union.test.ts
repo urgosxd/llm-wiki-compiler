@@ -46,6 +46,7 @@ import {
   assertCoverage,
   deriveTypeOnlyDependents,
   moduleReachesOf,
+  packageOfSpecifier,
   partition,
   type PartitionResult,
   type TypeOnlyPair,
@@ -152,7 +153,7 @@ beforeAll(async () => {
   server = await createGraphServer(REPO_ROOT);
   const closures = await crawlTestClosures(server, collected);
   result = partition({ collected, closures });
-  derivedPairs = deriveTypeOnlyDependents(REPO_ROOT, collected).pairs;
+  derivedPairs = deriveTypeOnlyDependents(REPO_ROOT, { collected, result }).pairs;
 }, 180_000);
 
 afterAll(async () => {
@@ -278,7 +279,12 @@ it("freezes the orphan ratchet so a new unreachable test cannot slip in silently
 
 /** Sorted `testFile -> packageName` keys, so a set comparison cannot depend on order. */
 function pairKeys(pairs: readonly TypeOnlyPair[]): string[] {
-  return pairs.map((pair) => `${pair.testFile} -> ${pair.packageName}`).sort();
+  return pairs.map(pairKey).sort();
+}
+
+/** The stable key of one pair, matching the scanner's own key shape. */
+function pairKey(pair: TypeOnlyPair): string {
+  return `${pair.testFile} -> ${pair.packageName}`;
 }
 
 /** Members of `left` that `right` does not hold, both sides as sorted keys. */
@@ -314,6 +320,22 @@ it("derives exactly the annotated type-only dependents, in both directions", () 
   expect(derivedPairs.length).toBeGreaterThan(0);
 });
 
+it("reports only pairs the selection cannot observe, not every type-only edge", () => {
+  // THE DEFINITION, ASSERTED. A pair is a dependent only when the test has a type-only edge
+  // into the package AND `partition` did not attribute it there. Asserting only the first half
+  // is how an earlier version of this guard reported twelve tests that their own package
+  // selection already runs — `test/query-stale-warning.test.ts` reaches wiki through
+  // `test/fixtures/typed-grounding.ts` — and a notice that misinforms is worse than the
+  // silence it replaced.
+  const observed = derivedPairs.filter((pair) =>
+    (result.packages.get(pair.packageName) ?? []).includes(pair.testFile),
+  );
+  expect(
+    observed.map(pairKey),
+    "claimed unobservable but IS in that package's selection",
+  ).toEqual([]);
+});
+
 it("annotates every derived pair with a reason", () => {
   for (const entry of TYPE_ONLY_DEPENDENTS) {
     expect(
@@ -323,7 +345,7 @@ it("annotates every derived pair with a reason", () => {
   }
 });
 
-it("recognises all four elided import forms and no mixed declaration", () => {
+it("recognises every elided import and re-export form and no mixed declaration", () => {
   // One form per line, plus the three shapes that DO emit a real import. A scanner that
   // knows only `import type { … }` reports zero for the other three forms instead of
   // failing here, which is how a type-only guard goes quietly blind.
@@ -336,6 +358,9 @@ it("recognises all four elided import forms and no mixed declaration", () => {
       'import { type E, f } from "./e.js";',
       'import g from "./g.js";',
       'import * as h from "./h.js";',
+      'import type * as W from "./w.js";',
+      'export { type J } from "./j.js";',
+      'export { type K, l } from "./k.js";',
     ].join("\n"),
   );
   expect(reaches.map((reach) => [reach.specifier, reach.elided, reach.names.join(",")])).toEqual([
@@ -345,7 +370,39 @@ it("recognises all four elided import forms and no mixed declaration", () => {
     ["./d.js", true, "D"],
     ["./e.js", false, "E,f"],
     ["./g.js", false, "g"],
-    ["./h.js", false, ""],
+    ["./h.js", false, "*"],
+    ["./w.js", true, "*"],
+    ["./j.js", true, "J"],
+    ["./k.js", false, "K,l"],
+  ]);
+});
+
+it("attributes every specifier shape to its package, so a type import cannot escape", () => {
+  // Specifier attribution is where a type-only import escapes the scan: an exact-name match
+  // misses `@repo/<pkg>/<subpath>`, and a source-root-only match misses a type import aimed at a
+  // package's own `dist`. Both are pinned here, with a non-package specifier as the control.
+  const cases: [string, string][] = [
+    ["test/x.test.ts", "@repo/wiki"],
+    ["test/x.test.ts", "@repo/wiki/sdk/compiler-composition.js"],
+    ["test/x.test.ts", "@repo/kg/testing/per-run-database"],
+    ["test/sdk/x.test.ts", "../../packages/wiki/src/dimensions/types.js"],
+    ["test/sdk/x.test.ts", "../../packages/wiki/dist/index.d.ts"],
+    ["test/x.test.ts", "../packages/llmwiki-kg/ts/src/core-index.js"],
+    ["test/x.test.ts", "vitest"],
+    ["test/x.test.ts", "./fixtures/local.js"],
+  ];
+  const attributed = cases.map(([testFile, specifier]) =>
+    packageOfSpecifier(testFile, specifier, PACKAGE_SURFACES) ?? "(none)",
+  );
+  expect(attributed).toEqual([
+    "@repo/wiki",
+    "@repo/wiki",
+    "@repo/kg",
+    "@repo/wiki",
+    "@repo/wiki",
+    "@repo/kg",
+    "(none)",
+    "(none)",
   ]);
 });
 

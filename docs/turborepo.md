@@ -169,14 +169,23 @@ erases. [Named gap 2](#named-gap-2-import-type-orphans) records the pairing that
 **Which shapes are refused, and which are merely invisible — the honest boundary.** These are
 two different claims and an earlier version of this page ran them together:
 
-- **REFUSED: a type-only dependent that nobody declared.** The set is DERIVED, not frozen:
-  `scripts/type-only-dependents.ts` parses every collected test with the TypeScript compiler and
-  reports each `(test file, package)` pair whose only route to the package is an elided import —
-  `import type { X } from`, `import type X from`, inline `import { type X } from` and
-  `export type { X } from`. `TYPE_ONLY_DEPENDENTS` only supplies the reason for each pair, and
-  `test/package-selection-union.test.ts` requires the two sets to be EXACTLY equal in both
+- **REFUSED: a type-only dependent that nobody declared.** A pair counts only when the test HAS a
+  type-only import edge into the package **AND** `partition` did not attribute it to that package.
+  Both halves are load-bearing: "a test has a direct type-only import edge" is a fact about the
+  source, while "the selection could not observe this test" is a fact about the tool, and only the
+  tool can answer it. Reporting the first as the second is the category error behind the second
+  committed version of this guard, which named twelve tests its own selection already ran — and
+  **"a notice that misinforms is worse than the silence it replaced"**.
+  `scripts/type-only-dependents.ts` finds the edges (all the elided forms: `import type { X } from`,
+  `import type X from`, `import type * as W from`, inline `import { type X } from`,
+  `export type { X } from`, inline `export { type X } from`); `deriveTypeOnlyDependents` subtracts
+  what the selection covers, and `test/package-selection-union.test.ts` asserts that subtraction as
+  well as requiring the derived set and the `reason` annotations to be EXACTLY equal in both
   directions. So a new dependent fails the run **in whichever bucket it lands**, `orphan` or
-  `meta`, and an annotation whose edge is gone fails too.
+  `meta`, and an annotation whose edge is gone fails too. One asymmetry is worth naming: an elided
+  reach misread as **runtime** does not merely omit a finding — it *suppresses* other genuine
+  type-only edges to the same package in that file, so it fails in the direction that hides
+  findings.
 - **NOT COVERED, by detection or by refusal: `require(`, a computed `import(` and
   `new URL("...")`.** These are calls and strings, not module requests, so no scan of import
   specifiers can enumerate them, and nothing fails when a new one appears. The artefact route at
@@ -345,17 +354,23 @@ the graph.** The derivation reads the module graph, and the ssr transform **eras
 imports**, so a test that merely `import type`s a package has no edge to that package's
 sources and is not selected by it.
 
-**Seventeen pairs today, in two packages, and the number is measured rather than maintained.**
-`scripts/type-only-dependents.ts` derives them from the collected suite; seven reach
-`@repo/wiki` and ten reach `@repo/foundation`, and `TYPE_ONLY_DEPENDENTS` in
-`scripts/package-selection.ts` annotates each with a reason. Two examples of the shapes that
-matter: `test/query-candidate-id-absent.test.ts` imports `QueryResult` from
-`packages/wiki/src/utils/types.js` and nothing else at runtime, and
-`test/viewer-sidebar.test.ts` imports `type { ViewerPage }` while every other repo import is
-`test/fixtures` — so it is attributed to `meta`, is absent from the 565-file wiki selection, and
-was invisible to a guard that only looked at `orphan`. A frozen list of three names shipped
-here first and was short by fourteen, which is why the set is derived and the list is only an
-annotation.
+**One test was invisible in every bucket at once, and that is the headline.** Not three orphan
+tests — a tidiness record — but a correctness record: `test/viewer-sidebar.test.ts:18` imports
+`type { ViewerPage }` from the wiki viewer, and every other repo import there is `test/fixtures`,
+so the `META_ROOTS` clause attributed it to `meta`. It sat in **neither the wiki selection, nor
+the `orphan` pin, nor any declaration**, and the notice said so about three files while missing it
+entirely. The three orphan-shaped dependents (`test/provenance-metadata-shape.test.ts`,
+`test/query-candidate-id-absent.test.ts`, `test/sdk/published-dimensions-port.test.ts`) were only
+the VISIBLE comparison case, because the `orphan` bucket made them easy to find.
+
+**The measured set is five pairs over four files: four reach `@repo/wiki`, one reaches
+`@repo/foundation`.** Measured, not maintained — `deriveTypeOnlyDependents` computes it from the
+partition on every run, so the notice prints from the run's own answer rather than from a list.
+`TYPE_ONLY_DEPENDENTS` in `scripts/package-selection.ts` carries only the `reason` for each pair,
+and its job is the fail-closed ratchet: a new dependent makes the root suite fail until somebody
+writes that reason down. **Gate-green proved the code ran, not that the claim was true** — the
+first committed slice was green on every gate and still shipped a notice carrying six false
+claims, found only by an adversarial pass that attacked the claim instead of the plumbing.
 
 **The pairing, written so nobody reads it as a to-do.** A `test` run cannot observe a
 type-only edge **at all**, because the import is elided: the emitted JavaScript does not

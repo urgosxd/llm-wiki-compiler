@@ -59,8 +59,10 @@
  */
 
 import {
-  deriveTypeOnlyDependents as deriveFromSurfaces,
   moduleReachesOf,
+  packageOfSpecifier,
+  pairKey,
+  typeOnlyEdges,
   type TypeOnlyDependents,
 } from "./type-only-dependents.ts";
 
@@ -158,67 +160,34 @@ export interface TypeOnlyDependentAnnotation {
   readonly reason: string;
 }
 
-/** The reason every pair with nothing special to say carries: the type IS the edge. */
-const ERASED_TYPE_EDGE =
-  "the package is reached through a type-only import and nothing else, so the edge is erased from the emitted module";
-
 /**
  * The reasons behind the derived set, one annotation per (test file, package) pair.
  *
  * WHY EACH PAIR IS NOT A TO-DO. The `test` tier CANNOT OBSERVE A TYPE-ONLY EDGE AT ALL: the
  * import is erased before the module graph exists, so the file runs in no per-package
- * selection and no runtime assertion in it can fail on a type change. Running the file
- * proves nothing about the type, because the type is not in the emitted JavaScript. The tier
- * that DOES observe it is the root `typecheck:tests` program (`scripts/typecheck-tests.ts`
- * over `tsconfig.test.json`), which compiles these files and fails on a type change that
- * breaks them. A per-package `typecheck:tests` was considered and DECLINED by the owner, so
- * this pairing is the final shape, not a step towards one.
+ * selection and no runtime assertion in it can fail on a type change. The tier that DOES
+ * observe it is the root `typecheck:tests` program (`scripts/typecheck-tests.ts` over
+ * `tsconfig.test.json`), which compiles these files. A per-package `typecheck:tests` was
+ * considered and DECLINED by the owner, so this pairing is the final shape, not a step
+ * towards one. Do not delete an entry because the test passes — it passed before too.
  *
- * THE CONSEQUENCE, STATED PLAINLY: a selective green (`turbo run test --filter=@repo/wiki`)
- * does not speak for these files' type edges. It is a claim about the `test` tier only, and
- * `pnpm run typecheck:tests` is the gate that speaks for the rest. Do not delete an entry
- * because the test passes — it passed before the change too.
+ * THE DEFINITION THIS LIST ENCODES, because it is easy to get wrong in the flattering
+ * direction: a pair is a dependent only when the test HAS a type-only edge AND `partition` did
+ * not attribute it to that package. "A test has a direct type-only import edge" is a fact about
+ * the source; "the selection could not observe this test" is a fact about the tool, and only
+ * the tool can answer it. Reporting the first as the second is the category error behind an
+ * earlier version of this list, which named twelve tests their own selection already ran — a
+ * notice that misinforms is worse than the silence it replaced.
  *
- * MODELLING THE EDGE WAS REJECTED. It would make the `test` tier select files it cannot fail
- * on, and the same scan still could not see `require(`, a computed `import(` or
- * `new URL("...")` — the graph would look complete and would not be.
+ * WHAT THIS LIST IS NOW. `deriveTypeOnlyDependents` computes the true set from the partition on
+ * every run, and `main` prints from THAT, so the notice is true by construction. This
+ * annotation carries the `reason` text, and its job is the fail-closed ratchet:
+ * `test/package-selection-union.test.ts` requires the derived set and this list to be exactly
+ * equal, so a new type-only dependent makes the root suite fail until somebody writes the
+ * reason down. Gate-green proved the code ran, not that the claim was true: the first committed
+ * slice was green on every gate and still shipped a notice carrying false claims.
  */
 export const TYPE_ONLY_DEPENDENTS: readonly TypeOnlyDependentAnnotation[] = [
-  {
-    testFile: "test/compiler/default-dimensions-port-narrowing.test.ts",
-    packageName: "@repo/foundation",
-    reason: ERASED_TYPE_EDGE,
-  },
-  {
-    testFile: "test/dimensions/activation.test.ts",
-    packageName: "@repo/foundation",
-    reason: ERASED_TYPE_EDGE,
-  },
-  {
-    testFile: "test/dimensions/compile-config-isolation.test.ts",
-    packageName: "@repo/foundation",
-    reason: ERASED_TYPE_EDGE,
-  },
-  {
-    testFile: "test/dimensions/default-stack-both-dimensions.test.ts",
-    packageName: "@repo/foundation",
-    reason: ERASED_TYPE_EDGE,
-  },
-  {
-    testFile: "test/dimensions/stack-selection.test.ts",
-    packageName: "@repo/foundation",
-    reason: ERASED_TYPE_EDGE,
-  },
-  {
-    testFile: "test/dimensions/wiki-stack-isolation.test.ts",
-    packageName: "@repo/foundation",
-    reason: ERASED_TYPE_EDGE,
-  },
-  {
-    testFile: "test/mcp/query-sources-use-filesystem.test.ts",
-    packageName: "@repo/wiki",
-    reason: "`ContextPack` is the only wiki import, so the wiki edge is erased",
-  },
   {
     testFile: "test/provenance-metadata-shape.test.ts",
     packageName: "@repo/wiki",
@@ -228,11 +197,6 @@ export const TYPE_ONLY_DEPENDENTS: readonly TypeOnlyDependentAnnotation[] = [
     testFile: "test/query-candidate-id-absent.test.ts",
     packageName: "@repo/wiki",
     reason: "asserts the retired `candidateId` key is absent from QueryResult by key-set comparison",
-  },
-  {
-    testFile: "test/query-stale-warning.test.ts",
-    packageName: "@repo/wiki",
-    reason: "`EmbeddingStoreV3` is the only wiki import, so the wiki edge is erased",
   },
   {
     testFile: "test/sdk/published-dimensions-port.test.ts",
@@ -245,30 +209,10 @@ export const TYPE_ONLY_DEPENDENTS: readonly TypeOnlyDependentAnnotation[] = [
     reason: "proves the published dimensions port stays compatible with the wiki `Dimension` type both ways",
   },
   {
-    testFile: "test/search-fallback-eligibility.test.ts",
-    packageName: "@repo/wiki",
-    reason: "`ProfilePack` is the only wiki import, so the wiki edge is erased",
-  },
-  {
-    testFile: "test/services/ingest/default-stack-ingest.test.ts",
-    packageName: "@repo/foundation",
-    reason: ERASED_TYPE_EDGE,
-  },
-  {
-    testFile: "test/services/stacks/default-stack.test.ts",
-    packageName: "@repo/foundation",
-    reason: ERASED_TYPE_EDGE,
-  },
-  {
-    testFile: "test/services/stacks/resolve-stack.test.ts",
-    packageName: "@repo/foundation",
-    reason: ERASED_TYPE_EDGE,
-  },
-  {
     testFile: "test/viewer-sidebar.test.ts",
     packageName: "@repo/wiki",
     reason:
-      "`ViewerPage` is the only wiki import and everything else is `test/fixtures`, so it is `meta` and absent from the wiki selection",
+      "`ViewerPage` is the only wiki import and everything else is `test/fixtures`, so it is `meta`, absent from the selection, and in no other bucket either",
   },
 ];
 
@@ -288,25 +232,40 @@ export function typeOnlyDependentsOf(packageName: string): readonly TypeOnlyDepe
 }
 
 /**
- * Derive the type-only dependents of this repository's collected suite.
+ * Derive the type-only dependents of the collected suite, subtracting what the selection covers.
  *
- * This is the single import surface the rest of the repository uses: it binds the scanner to
+ * THE SUBTRACTION IS THE DEFINITION. A pair is a type-only dependent of package P if and only
+ * if (a) the test carries a type-only import edge into P's source, AND (b) `partition` did NOT
+ * attribute that test to P. Only (b) makes it unobservable; (a) alone is just a type import.
+ * The scanner answers (a) and nothing else, because only this function holds the partition —
+ * the earlier version approximated (b) inside the scanner with a file's DIRECT runtime imports
+ * and produced twelve pairs whose selection already ran them: `test/query-stale-warning.test.ts`
+ * reaches `@repo/wiki` through `test/fixtures/typed-grounding.ts` and is in the 565-file wiki
+ * selection, and every `@repo/foundation` pair was `bucket=pkg`.
+ *
+ * This is also the one import surface the rest of the repository uses: it binds the scanner to
  * `{@link PACKAGE_SURFACES}` so `package-tasks.ts` and the tests need one module, while the
- * scanner itself takes the surfaces as an argument and therefore never imports this file —
- * which is what keeps the two modules acyclic.
+ * scanner takes the surfaces as an argument and never imports this file — which is what keeps
+ * the two modules acyclic.
  *
  * @param root - Absolute repository root, for reading the collected files.
- * @param collected - Collected test files as repo-relative POSIX paths, from `vitest list`.
- * @returns Sorted pairs for the exact-equality assertion, plus the detail rows messages quote.
+ * @param input - The collected universe and the partition produced from it.
+ * @returns Sorted pairs the selection cannot observe, plus the detail rows messages quote.
  */
 export function deriveTypeOnlyDependents(
   root: string,
-  collected: readonly string[],
+  input: { readonly collected: readonly string[]; readonly result: PartitionResult },
 ): TypeOnlyDependents {
-  return deriveFromSurfaces(root, collected, PACKAGE_SURFACES);
+  const edges = typeOnlyEdges(root, input.collected, PACKAGE_SURFACES);
+  const selected = new Set(
+    [...input.result.packages].flatMap(([name, files]) => files.map((file) => `${file}\u0000${name}`)),
+  );
+  const pairs = edges.pairs.filter((pair) => !selected.has(`${pair.testFile}\u0000${pair.packageName}`));
+  const kept = new Set(pairs.map(pairKey));
+  return { pairs, entries: edges.entries.filter((entry) => kept.has(pairKey(entry))) };
 }
 
-export { moduleReachesOf };
+export { moduleReachesOf, packageOfSpecifier };
 export type { TypeOnlyPair } from "./type-only-dependents.ts";
 
 /** Everything {@link partition} needs: the collected universe and its closures. */
