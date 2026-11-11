@@ -26,9 +26,23 @@
  * The packaging gate installs tarballs and type-checks declarations; it needs none of
  * that, and inheriting it would make a networked packaging smoke test depend on a
  * reachable database. So this config stays deliberately tiny: one include, two excludes,
- * and an explicit root. Nothing here may grow a `globalSetup`, `setupFiles` or `env`
- * block. `test/sdk/packaging.test.ts` is excluded in the main config, so `npm test`
+ * `globals`, and an explicit root. Nothing here may grow a `globalSetup`, `setupFiles` or
+ * `env` block. `test/sdk/packaging.test.ts` is excluded in the main config, so `npm test`
  * never double-runs it.
+ *
+ * WHY `globals` IS ON, AND WHY IT IS NOT ONE OF THOSE FORBIDDEN BLOCKS. The gate calls
+ * `test/fixtures/probe-stack-suite.ts`, which registers its suites through the bare
+ * `describe` / `describe.skip` / `vi` globals rather than importing them, exactly as the
+ * two row-backed suites that share it do. The main `vitest.config.ts` sets `globals: true`,
+ * so those fixtures always had them; this config never did, and the gate never noticed
+ * because it died earlier at the tarball INSTALL — `ETARGET` on the pinned
+ * `@atomicstrata/llmwiki-core` — and never reached the fixture. Once the core collapse
+ * (`odd/tasks/collapse-core-package.md`) made that install succeed, the gate reached
+ * `createProbeSuite` and failed with `ReferenceError: describe is not defined`. `globals`
+ * is a flags block, not one of the three forbidden ones, and it aligns this config with
+ * the repository's own default instead of introducing a mechanism. The alternative —
+ * editing the shared fixture to import its vitest globals — would touch every suite that
+ * uses it, in order to fix one gate.
  */
 
 import { defineConfig } from "vitest/config";
@@ -52,6 +66,9 @@ export default defineConfig({
   test: {
     // The pin: exactly one file, whichever sibling trees exist on disk.
     include: [PACKAGING_TEST_FILE],
+    // The shared probe fixture registers its suites through the bare vitest globals; the
+    // header records why this gate needs them and why it only needed them after the collapse.
+    globals: true,
     // Both are defaults, restated so the intent survives a future default change:
     // installed dependencies and sibling worktree checkouts are never gate input.
     exclude: ["**/node_modules/**", "**/.worktrees/**"],

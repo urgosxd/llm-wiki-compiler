@@ -1,7 +1,7 @@
 {
   "version": 1,
   "typescript": "5.9.3",
-  "configuration": "ed380bbcb761858d446c0dee022a64b240279c191fc85099ceca7ef85bf072c9",
+  "configuration": "7638358bf63fb0f09a8620f46b6a407de6b16fac5eda74242ec9c28dfb90966c",
   "counts": {
     "test/compile-options.test.ts": 1,
     "test/compile-state-draft.test.ts": 4,
