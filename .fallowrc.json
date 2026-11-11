@@ -13,6 +13,8 @@
     "test/fixtures/track-dotenv-read.mjs",
     "test/fixtures/sigterm-at-ready.cjs",
     "test/fixtures/documents/make-fixtures.mjs",
+    "test/fixtures/install-preflight-child.mjs",
+    "test/fixtures/deny-uninstalled-packages.mjs",
     "packages/wiki/src/dimensions/index.ts",
     "packages/api/src/main.ts"
   ],
