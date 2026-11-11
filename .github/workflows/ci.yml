@@ -90,6 +90,30 @@ jobs:
       # while a new job name has no branch-protection entry and could be merged past.
       - name: Build the @repo/kg artefact the image ships
         run: pnpm --filter @repo/kg run build
+      # BOTH images this repository ships are built here and exercised by running
+      # them — the root one in `host` mode (the viewer's origin gate, which accepts
+      # only the Host the container bound) and in `serve` mode (one stdio MCP
+      # handshake), the KG one on its own `/health`. Neither is pushed anywhere:
+      # publishing an image is the owner's decision, not CI's. Assembling is not the
+      # claim, so the script runs the containers; a Dockerfile that builds into an
+      # image that dies on its first import used to be invisible to every gate here.
+      #
+      # A STEP, not a new job, for the reason the step above gives: it inherits the
+      # required `build-and-test (24)` name, while a new job name has no
+      # branch-protection entry and its red result could be merged past.
+      #
+      # Cost, measured cold with `--no-cache` at
+      # 5260d423963bd84911c239bfa5e57d2eec02bffe on a 16-core host: 64 s root +
+      # 58 s KG = 122 s, under the +180 s line at which this would have to become a
+      # separate job plus a branch-protection change (the owner's action, not a
+      # decision taken here). The script prints its own per-image seconds, so that
+      # figure stays honest as the Dockerfiles grow.
+      #
+      # The script sits in `.github/scripts/` because `.dockerignore` excludes
+      # `.github` from every build context: the runtime image's `/app/scripts` stays
+      # byte-identical, so this step cannot change the delivered artefact.
+      - name: Build and smoke-test both container images
+        run: bash .github/scripts/docker-images-check.sh
       # The KG package carries its own tsconfig, and nothing else here reads it:
       # root `tsc` includes only `src/**`, and `codebase-health` ignores
       # `packages/llmwiki-kg/**`. Without this step its diagnostics are invisible
