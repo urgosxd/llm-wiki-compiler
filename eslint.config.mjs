@@ -163,14 +163,17 @@ const WIKI_TO_KG = {
  * target spelling moved with the `@repo/wiki` carve: the pattern names
  * `packages/wiki/src` because that is what a live walk resolves to, and a
  * pattern still anchored on root `src` would match nothing while reporting
- * zero violations. The two aliases `tsconfig.json` resolves into the wiki
- * tree — `llm-wiki-compiler` and `@atomicstrata/llmwiki-core` — are the second
- * shape, so an alias cannot be used to slip past the first.
+ * zero violations. The alias `tsconfig.json` resolves into the wiki tree —
+ * `llm-wiki-compiler` — is the second shape, so an alias cannot be used to slip
+ * past the first. `@atomicstrata/llmwiki-core` was the other alias and is not one
+ * any more: it is collapsed into `packages/wiki` and the specifier resolves to
+ * nothing, so a pattern still naming it would match nothing while reporting zero
+ * violations — the failure mode just described.
  */
 const KG_TO_WIKI = {
   patterns: [
     { regex: "^(\\.\\./){4,}packages/wiki/src(/|$)", message: NO_KG_WIKI_IMPORT },
-    { regex: "^(llm-wiki-compiler|@atomicstrata/llmwiki-core)(/|$)", message: NO_KG_WIKI_IMPORT },
+    { regex: "^llm-wiki-compiler(/|$)", message: NO_KG_WIKI_IMPORT },
   ],
 };
 

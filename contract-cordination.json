@@ -17,7 +17,6 @@
     "pnpm-lock.yaml",
     "package.json",
     "packages/api/src/host/**",
-    "packages/llmwiki-core/**",
     "packages/llmwiki-kg/db/**",
     "scripts/**",
     "packages/wiki/src/citations/**",

@@ -55,7 +55,10 @@
   // `./src/*.ts` and are bundled from source by the single root tsup run
   // (`tsup.config.ts` `noExternal: [/^@repo\//]`). A `build` task over a package
   // that emits no artifact is a task that reports success without an artifact,
-  // which is precisely the defect this graph exists to avoid. The two packages
-  // that do emit (`@repo/kg`, `@atomicstrata/llmwiki-core`) keep their own
-  // scripts, untouched by this slice, and no `^build` edge pretends otherwise.
+  // which is precisely the defect this graph exists to avoid. The one package
+  // that does emit (`@repo/kg`) keeps its own scripts, untouched by this slice,
+  // and no `^build` edge pretends otherwise. `@atomicstrata/llmwiki-core` used to
+  // be the second emitter and is collapsed into `packages/wiki`, so it emits no
+  // artefact of its own: the single root tsup run is now the only producer of the
+  // distribution.
 }

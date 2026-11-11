@@ -41,10 +41,12 @@ WORKDIR /code
 RUN corepack enable
 
 # Manifests first, so the dependency layer caches independently of source changes.
-# Every workspace manifest is copied, because pnpm validates the whole workspace
-# against the one lockfile.
+# Every remaining workspace member declares its manifest where its `workspaces`
+# entry names it, because pnpm validates the whole workspace against the one
+# lockfile. `packages/llmwiki-core` was the fifth member until it was collapsed into
+# `packages/wiki`; its manifest COPY is gone because the path is, and a COPY of a
+# missing path fails the build (which is how the collapse announced itself here).
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY packages/llmwiki-core/package.json packages/llmwiki-core/
 COPY packages/llmwiki-kg/ts/package.json packages/llmwiki-kg/ts/
 # `@repo/foundation` is the one workspace package `@repo/kg` names as
 # `workspace:*`, so the install has to be able to resolve the member.
@@ -86,7 +88,6 @@ WORKDIR /code
 RUN corepack enable
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY packages/llmwiki-core/package.json packages/llmwiki-core/
 COPY packages/llmwiki-kg/ts/package.json packages/llmwiki-kg/ts/
 COPY packages/foundation/package.json packages/foundation/
 RUN pnpm --filter @repo/kg install --prod --frozen-lockfile --ignore-scripts

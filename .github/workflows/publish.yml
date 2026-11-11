@@ -1,10 +1,12 @@
 name: Publish llm-wiki-compiler
 
-# Token-less npm publish via OIDC Trusted Publishing, for the two-package
-# distribution: `@atomicstrata/llmwiki-core`, then the standard
-# `llm-wiki-compiler` facade that depends on it at an exact version.
-# Dependencies publish first so the facade is never on the registry while the
-# version it requires is missing.
+# Token-less npm publish via OIDC Trusted Publishing, for the ONE-package
+# distribution: `llm-wiki-compiler` alone. It used to publish two artefacts —
+# `@atomicstrata/llmwiki-core`, then the `llm-wiki-compiler` facade that depended
+# on it at an exact version — and the ordering below existed so the facade was
+# never on the registry while the version it required was missing. The engine now
+# lives inside this package (`odd/tasks/collapse-core-package.md`), so there is one
+# artefact and no ordering constraint left to honour; `PACKAGE_DIRS` is `"."`.
 #
 # Primary trigger is `repository_dispatch` (an operator/agent release script
 # sends an explicit release payload); `workflow_dispatch` is a manual fallback.
@@ -17,14 +19,16 @@ name: Publish llm-wiki-compiler
 # than `latest` (default `next`), so a development build never becomes what a
 # plain `npm install llm-wiki-compiler` resolves to.
 #
-# Resuming: if a run publishes the dependencies and then fails, re-dispatch the
-# same payload, including the same dist_tag. Packages already published at this version FROM THIS SHA are
-# skipped; one published from any other SHA refuses the release.
+# Resuming: if a run publishes and then fails during verification, re-dispatch the
+# same payload, including the same dist_tag. A package already published at this
+# version FROM THIS SHA is skipped by the publish job; one published from any other
+# SHA refuses the release in preflight.
 #
-# One-time setup (account-level, not in this repo), for EACH of the two
-# packages: an npm Trusted Publisher trusting repo
+# One-time setup (account-level, not in this repo), for the published package
+# `llm-wiki-compiler`: an npm Trusted Publisher trusting repo
 # `atomicstrata/llm-wiki-compiler`, workflow `publish.yml`, environment
-# `npm-release`. The `@atomicstrata` npm organization must own the scoped name.
+# `npm-release`. The `@atomicstrata` npm organization still owns the retired scoped
+# name on the registry; nothing here publishes to it.
 # No NPM_TOKEN is used.
 run-name: >-
   Publish ${{ github.event.client_payload.version || inputs.version }}
@@ -217,6 +221,10 @@ jobs:
           # published package must demand that version exactly. Both derive from
           # PACKAGE_DIRS, so this check follows the real package set instead of a
           # hand-maintained list that can name a directory that no longer exists.
+          # In the post-collapse shape PACKAGE_DIRS is the single entry `"."`, so
+          # there is no second package to pin and both loops below run zero times.
+          # They are kept rather than deleted because they are DERIVED: a second
+          # artefact would be covered again without editing the workflow.
           published="$(for dir in ${PACKAGE_DIRS}; do if [[ "${dir}" != "." ]]; then jq -r '.name' "${dir}/package.json"; fi; done)"
           for dir in ${PACKAGE_DIRS}; do
             if [[ "${dir}" == "." ]]; then continue; fi
@@ -306,7 +314,7 @@ jobs:
           set -euo pipefail
           pnpm install --frozen-lockfile
           pnpm run build
-      - name: Publish dependencies first (OIDC, no token)
+      - name: Publish the distribution (OIDC, no token)
         env:
           WANT: ${{ needs.resolve.outputs.version }}
           DIST_TAG: ${{ needs.resolve.outputs.dist_tag }}

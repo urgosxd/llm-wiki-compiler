@@ -17,12 +17,19 @@
 #
 # WHY THE RUNTIME KEEPS `node_modules`
 #
-# `dist/api.js` is a bundle, but not a self-contained one: it externalizes
-# `@atomicstrata/llmwiki-core`, the MCP SDK, `zod`, `openai`,
-# `markdown-it`, `jsdom` and the rest of the 20 root dependencies. Dropping
-# `node_modules` produces an image that starts and then fails on its first import,
-# so the runtime stage carries a production-only install of them, built from clean
-# by the `prod-deps` stage below.
+# `dist/api.js` is a bundle, but not a self-contained one: tsup externalizes every
+# package the root manifest declares as a `dependency`, so the launcher IMPORTS
+# `express`, `@modelcontextprotocol/sdk`, `zod`, `openai`, `drizzle-orm`, `postgres`,
+# `markdown-it`, `jsdom`, `mammoth` and the rest at run time instead of carrying them.
+# That set grew when `@atomicstrata/llmwiki-core` was collapsed into `packages/wiki`:
+# the engine's own dependencies are root `dependencies` now, so `express` stopped being
+# inlined and `dist/api.js` went 2,477,179 -> 1,313,057 bytes with no other change,
+# with 11 top-level `from "express"` import sites left in it. Dropping `node_modules`
+# produces an image that starts and then fails on its first import, so the runtime
+# stage carries a production-only install of them, built from clean by the `prod-deps`
+# stage below. Where each one resolves from is proved by running the image, not by
+# reading this file: `node -e 'require.resolve("express")'` in the runtime stage
+# answers `/app/node_modules/express/index.js`.
 #
 # WHY THE RUNTIME TREE IS INSTALLED, NOT PRUNED
 #
@@ -56,10 +63,12 @@ RUN corepack enable
 # resolves against a partial tree — pnpm validates the whole workspace against
 # `pnpm-lock.yaml`, so every member manifest has to be here.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-# Only the packages that actually declare a manifest. `llmwiki-local-workflows` and
-# `llmwiki-kg` have no root-level package.json — the KG manifest lives one level
-# down at `ts/` — and copying a path that does not exist fails the whole build.
-COPY packages/llmwiki-core/package.json packages/llmwiki-core/
+# Every remaining workspace member declares its manifest where its `workspaces`
+# entry names it — the KG one lives a level down at `ts/`, which is why that COPY
+# path differs — and a COPY of a path that does not exist fails the whole build.
+# That is exactly how this block announced the collapse: `packages/llmwiki-core`
+# stopped existing and the build died on its manifest COPY, so the line is gone
+# rather than tolerated.
 COPY packages/llmwiki-kg/ts/package.json packages/llmwiki-kg/ts/
 # `@repo/foundation` is the bottom layer `@repo/wiki` names as `workspace:*`, and it
 # is a root workspace member with its own `pnpm-lock.yaml` importer, so the frozen
@@ -110,7 +119,6 @@ WORKDIR /app
 RUN corepack enable
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY packages/llmwiki-core/package.json packages/llmwiki-core/
 COPY packages/llmwiki-kg/ts/package.json packages/llmwiki-kg/ts/
 COPY packages/foundation/package.json packages/foundation/
 COPY packages/wiki/package.json packages/wiki/
@@ -125,12 +133,15 @@ COPY packages/api/package.json packages/api/
 # without it this install would produce pnpm's default strict, symlinked layout
 # instead of the flat tree the bundle's bare specifiers resolve against.
 #
-# The one workspace link this leaves behind points at `packages/llmwiki-core`:
-# `@atomicstrata/llmwiki-core` is a root PRODUCTION dependency AND a workspace
-# member, so pnpm resolves it to `link:../../packages/llmwiki-core` — a manifest-only
-# directory here, supplied as a built tree by the runtime stage's own COPY. The
-# `@repo/*` packages are bundled into `dist/api.js` instead, so no link to them is
-# created (verified: the prod tree has no `node_modules/@repo` at all).
+# This install leaves NO workspace link behind, and that is the current truth rather
+# than an omission. The only member that used to be a root PRODUCTION dependency was
+# `@atomicstrata/llmwiki-core`: pnpm resolved it to `link:../../packages/llmwiki-core`,
+# a manifest-only directory the runtime stage had to supply as a built tree. That
+# package is collapsed into `packages/wiki`, so there is no `link:` entry left to
+# satisfy: every remaining member is a root DEVdependency that `--prod` skips, and the
+# `@repo/*` sources are bundled into `dist/api.js` instead. Verified in this stage's
+# own tree — `node_modules/@atomicstrata` and `node_modules/@repo` do not exist — and
+# the runtime stage therefore copies no workspace directory.
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
 # ---- runtime -----------------------------------------------------------------
@@ -159,12 +170,16 @@ RUN apt-get update \
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json
-# `@atomicstrata/llmwiki-core` is a WORKSPACE package: `node_modules/@atomicstrata/
-# llmwiki-core` is a symlink to `packages/llmwiki-core`, so it is not really inside
-# `node_modules` and a runtime that copies `node_modules` alone ships a dangling link
-# — the container then dies on `ERR_MODULE_NOT_FOUND` for that package. Its built
-# `dist` is copied to the same relative path so the symlink resolves.
-COPY --from=build /app/packages/llmwiki-core ./packages/llmwiki-core
+# NO workspace directory is copied, and the reason is the one this stage used to
+# carry inverted: `node_modules/@atomicstrata/llmwiki-core` was a symlink into
+# `packages/llmwiki-core`, so a runtime that copied `node_modules` alone shipped a
+# dangling link and died on `ERR_MODULE_NOT_FOUND`. That member is collapsed into
+# `packages/wiki`, the prod install creates no workspace link at all (see
+# `prod-deps`), and `node_modules/@atomicstrata` does not exist here — measured inside
+# this image, so the COPY that used to satisfy the link is dead and is gone. The
+# externalized runtime dependencies are ordinary hoisted directories installed by
+# `prod-deps` from the root manifest (`express`, `@modelcontextprotocol/sdk`,
+# `@hono/node-server`, `ajv`, `zod`, `openai` …), never a symlink to a workspace tree.
 # The wiki dimension reads its schema and migrations from the source tree at
 # runtime when `apply-schemas` runs, and the KG schema lives beside it. The paths
 # are `scripts/apply-schemas.sh`'s, which are repository-relative.
