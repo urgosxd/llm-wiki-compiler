@@ -34,6 +34,30 @@ A knowledge compiler. Raw sources in, interlinked wiki out, reached through the 
 - Keep comments up-to-date with code changes
 - Document any non-obvious behavior
 
+### Installing the workspace
+
+The checkout is a pnpm workspace, so install it with pnpm and a frozen lockfile:
+
+```bash
+corepack pnpm install --frozen-lockfile
+```
+
+**Bare `pnpm` may be unavailable**: on the reference host the global shim's `exec`
+target was deleted, so `command -v pnpm` succeeds while `pnpm --version` exits `127`.
+`corepack pnpm` reaches the launcher without that dependency, which is why the
+install is written that way — the bare `pnpm` forms elsewhere in this file are the
+same invocation wherever `pnpm` works. The lockfile is authoritative:
+`--frozen-lockfile` refuses rather than resolving a graph nobody tested.
+
+**The suite verifies the install before it runs anything.** `test/global-setup.ts`
+refuses at session start, printing that command, when `node_modules` is not a pnpm
+tree — it carries `node_modules/.package-lock.json`, or has no
+`node_modules/.pnpm` — or when a `@repo/api`, `@repo/foundation`, `@repo/kg` or
+`@repo/wiki` link is missing. Without that check the run dies later with
+`Cannot find package '@repo/kg/testing/per-run-database'`, an error that names an
+internal export and hides the cause. **Do not delete `node_modules` to fix it**: the
+install above is the whole fix, because the lockfile is what the tree must match.
+
 ### Test Execution Policy
 
 The full suite takes ~9 minutes and belongs to CI. For its current size run

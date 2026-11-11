@@ -48,14 +48,33 @@
  *
  * `teardown` gives the container back, but deliberately leaves a reusable one running: stopping it
  * would delete it (`stop()` implies `remove`) and throw away the ~1.4 s the next run would pay.
+ *
+ * ## The install preflight, and why it runs first
+ *
+ * A checkout pnpm did not install fails while THIS MODULE IS BEING LOADED, not while it runs: a
+ * static import of the database fixture reaches `@repo/kg/testing/per-run-database`, and ESM
+ * evaluates every static import before the module body, so a guard written inside `setup()` was
+ * dead code. Hence the two halves: the preflight is the first statement of `setup()`, and the three
+ * project-internal imports — tsup, the build stamp and the database fixture — became `await import()`
+ * inside the functions that use them, so no static edge reaches the workspace ahead of the guard.
+ * The decision itself is pure (`test/fixtures/install-preflight.ts`); this file only reads paths.
+ * There is deliberately NO environment-variable opt-out: an uninstallable tree can never pass a
+ * test, so an escape hatch would only hide the diagnosis and restore the misleading error.
+ *
+ * `teardown` IS GATED ON THE SAME VERDICT, and that gate is load-bearing. vitest records a project's
+ * globalSetup handles BEFORE `setup()` throws and still awaits the matching `teardown()`, so on a
+ * refused tree teardown would run against the workspace imports the refusal exists to spare us —
+ * and its `await import("./fixtures/testcontainers-postgres.js")` re-emitted `Cannot find package
+ * '@repo/kg/testing/per-run-database'` in a second banner beneath the refusal, restoring the exact
+ * confusion the preflight replaced. Nothing to release exists when the preflight refused, because
+ * the database was never resolved.
  */
 
 import { execFile } from "child_process";
-import { resolveTsupCli } from "../scripts/tsup-command.js";
-import { clearStamp, isBuildFresh, writeStamp } from "../scripts/build-stamp.js";
-import { publishSharedTestDatabase, releaseSharedTestDatabase } from "./fixtures/testcontainers-postgres.js";
+import { existsSync } from "fs";
 import { promisify } from "util";
 import path from "path";
+import { diagnoseInstallTree, installProbePaths } from "./fixtures/install-preflight.js";
 
 const exec = promisify(execFile);
 
@@ -67,14 +86,42 @@ function forcedBuild(): boolean {
   return process.env[FORCE_BUILD_ENV_VAR] === "1";
 }
 
-/** Build once, then record the inputs it was built from. */
+/** Repo-relative paths that exist right now, in the shape the diagnosis expects. */
+function presentInstallPaths(): string[] {
+  const root = path.resolve(".");
+  return installProbePaths().filter((relative) => existsSync(path.resolve(root, relative)));
+}
+
+/**
+ * Set only when the preflight accepted the tree.
+ *
+ * `teardown` must not reach a workspace import when the preflight refused, so the acceptance has to
+ * outlive `setup()`; a local verdict cannot tell the two teardown calls apart.
+ */
+let installPreflightPassed = false;
+
+/** Refuse a checkout pnpm did not install, before anything else can fail confusingly. */
+function assertInstalledWithPnpm(): void {
+  const verdict = diagnoseInstallTree(presentInstallPaths());
+  if (!verdict.ok) throw new Error(verdict.message);
+  installPreflightPassed = true;
+}
+
+/**
+ * Build once, then record the inputs it was built from.
+ *
+ * Both imports are deferred so this module can load on a tree the workspace has not installed.
+ */
 async function build(root: string): Promise<void> {
+  const { resolveTsupCli } = await import("../scripts/tsup-command.js");
+  const { writeStamp } = await import("../scripts/build-stamp.js");
   await exec(process.execPath, [resolveTsupCli()], { cwd: root });
   writeStamp(root);
 }
 
 /** Build dist/ unless the recorded inputs are unchanged. */
 async function prepareBuild(): Promise<void> {
+  const { clearStamp, isBuildFresh } = await import("../scripts/build-stamp.js");
   const root = path.resolve(".");
   if (!forcedBuild() && isBuildFresh(root)) return;
   // Clear first so a failed build cannot leave a stamp that claims success.
@@ -83,18 +130,27 @@ async function prepareBuild(): Promise<void> {
 }
 
 /**
- * Resolve this run's database, then build once. Both are needed before any test file loads.
+ * Refuse an uninstalled tree, then resolve this run's database and build once.
  *
- * The database is resolved first so its log line is the first thing a failing run prints, and
- * because a 120 ms adoption is cheap next to a 40 s rebuild. Resolution logs its own outcome,
- * including the reason when nothing answered, and never throws.
+ * The preflight comes before both because the database fixture is a workspace import: without the
+ * guard, a tree pnpm never installed fails while this module is still loading.
+ *
+ * The database is resolved before the build so its log line is the first thing a failing run
+ * prints, and because a 120 ms adoption is cheap next to a 40 s rebuild. Resolution logs its own
+ * outcome, including the reason when nothing answered, and never throws.
  */
 export async function setup(): Promise<void> {
+  assertInstalledWithPnpm();
+  const { publishSharedTestDatabase } = await import("./fixtures/testcontainers-postgres.js");
   await publishSharedTestDatabase();
   await prepareBuild();
 }
 
 /** Give the database container back when the run ends. Safe when setup started nothing. */
 export async function teardown(): Promise<void> {
+  // vitest still calls teardown when setup() threw, and the import below would re-raise the very
+  // "Cannot find package '@repo/…'" error this preflight exists to replace.
+  if (!installPreflightPassed) return;
+  const { releaseSharedTestDatabase } = await import("./fixtures/testcontainers-postgres.js");
   await releaseSharedTestDatabase();
 }

@@ -204,10 +204,10 @@ equivalent.
 | --- | --- | --- | --- |
 | `@repo/kg#typecheck` | `node scripts/package-tasks.ts typecheck --package @repo/kg`, which spawns `scripts/kg-typecheck.ts` | `typecheck:kg` (`node scripts/kg-typecheck.ts`, two-direction ratchet) | **yes** — both emit the identical sentence `KG package type-check: 357 files checked; 0 diagnostics baselined across 0 entries in packages/llmwiki-kg/ts/tsconfig.json; no regression.` |
 | `@repo/kg#test` | derived import-graph selection under the ROOT vitest config, with an exactness assertion on the files that actually ran | the root suite's KG coverage | **yes** — bucket `@repo/kg=549`, package run `Test Files 546 passed / 3 skipped (549)`, `Tests 3775 passed / 4 skipped`, `uncovered=0` |
-| `@repo/kg#lint` | the ratchet's own `collectSnapshot`/`compareViolations`, narrowed to the package's files | `pnpm run lint` | **no, by design** — package scope reports `764 files in scope; 381 baseline violations in 274 files`, root reports `1657 files scanned; 558 baseline violations in 396 files across 423 rule/file entries`; a scope narrower than the tree is a different measurement, so the root gate stays the gate of record |
+| `@repo/kg#lint` | the ratchet's own `collectSnapshot`/`compareViolations`, narrowed to the package's files | `pnpm run lint` | **no, by design** — package scope reports `764 files in scope; 381 baseline violations in 274 files`, root reports `1659 files scanned; 558 baseline violations in 396 files across 423 rule/file entries`; a scope narrower than the tree is a different measurement, so the root gate stays the gate of record |
 | `@repo/kg#fallow` | re-enters root `fallow:kg` through the resolved pnpm | `fallow:kg` | **yes** |
 | `@repo/kg#build` | no `build` task exists in `turbo.json` | — | **no** — `turbo run build --filter=@repo/kg` exits **1** with ``Could not find task `build` in project``; root `pnpm run build` (`tsup`) and package `build` (`tsc -p tsconfig.build.json`) produce different artefacts for different consumers, so this is a design question, not a wiring one |
-| `typecheck:tests` | no per-package equivalent exists | `pnpm run typecheck:tests` | **no** — `Test type-check: 1588 files checked; 238 baseline diagnostics in 86 files; no regression.` is reachable only from the root script |
+| `typecheck:tests` | no per-package equivalent exists | `pnpm run typecheck:tests` | **no** — `Test type-check: 1590 files checked; 238 baseline diagnostics in 86 files; no regression.` is reachable only from the root script |
 
 **What is already equivalent:** typecheck, test and fallow. That equivalence was built before
 this slice (`a9a21dfc`), and this slice did not change it — it PINNED typecheck by execution
@@ -227,7 +227,7 @@ is scoped to its own package by construction.
 
 **Reading the count: 3 of 6 pairs are equal, and the three that are not are three different kinds
 of gap.** `lint` differs **by design** — a package-scoped snapshot (`764 files in scope / 381
-violations in 274 files`) against the root `1657 / 558 / 423`; not a weaker gate but a different
+violations in 274 files`) against the root `1659 / 558 / 423`; not a weaker gate but a different
 question, so the root gate stays the gate of record. `build` is **absent from turbo** and fails
 honestly with exit 1. `typecheck:tests` is **absent entirely**, with no per-package runner. **Two
 of those three need a decision from the user, not a patch.**
@@ -256,7 +256,16 @@ prerequisite is real:
 ```bash
 corepack enable            # exposes the corepack pnpm shim as `pnpm`
 # or put the corepack shim directory that provides `pnpm` on PATH
+corepack pnpm install --frozen-lockfile # installs the workspace through that shim
 ```
+
+**The install needs the same launcher, and it is the step that is missing.** A tree
+installed by npm has no `node_modules/@repo/*` links, so every task fails as
+`Cannot find package '@repo/kg/testing/per-run-database'` — an error about an
+internal export, not about the install — instead of as the one command that repairs
+it. `test/global-setup.ts` refuses at session start for exactly that reason and
+prints the command; the reader-facing statement of it lives in `AGENTS.md`,
+"Installing the workspace".
 
 CI needs no special handling: `pnpm/action-setup` puts a working `pnpm` on `PATH`, so
 turbo works there by construction. Locally, `corepack pnpm`, `node_modules/.bin/pnpm`
@@ -413,7 +422,7 @@ artefact gated, and it does so without answering that design question.
 reported.** The claim under test was: a KG test file's types are checked *only* by root
 `pnpm run typecheck:tests`, so `turbo run typecheck --filter=@repo/kg` cannot fail on a KG
 test's type error. That is **false** — the package task sees KG's tests, and sees them under a
-stricter configuration. The residual gap is a different one: the same program is 1,588 files
+stricter configuration. The residual gap is a different one: the same program is 1,590 files
 wide, and no package task reproduces its `test/**/*` and `scripts/` entries at all. The reason
 KG is covered is one line of configuration:
 `packages/llmwiki-kg/ts/tsconfig.json` declares `"include": ["src/**/*.ts"]` and excludes
@@ -436,13 +445,15 @@ The root ratchet's own numbers, taken from its single summary line and nothing e
 
 ```
 $ corepack pnpm run typecheck:tests
-Test type-check: 1588 files checked; 238 baseline diagnostics in 86 files; no regression.
+Test type-check: 1590 files checked; 238 baseline diagnostics in 86 files; no regression.
 exit=0
 ```
 
 The figure was 1,587 when the Manager measured it; this slice's guard test
-(`test/package-task-gate-parity.test.ts`) added the one file to this program, and the census is
-regenerated in the same change so the published number never describes a tree that no longer exists.
+(`test/package-task-gate-parity.test.ts`) added the one file to this program, the install-preflight
+pair (`test/fixtures/install-preflight.ts`, `test/install-preflight.test.ts`) added two more, and the
+census is regenerated in the same change each time so the published number never describes a tree
+that no longer exists.
 
 Its program comes from `tsconfig.test.json`, whose `include` names
 `packages/llmwiki-kg/ts/src/**/*` beside `packages/wiki/src/**/*`, `packages/api/src/**/*`,
@@ -493,7 +504,7 @@ construction. Closing it means a task that belongs to the workspace rather than 
 — and the two-config split above would have to be resolved first for such a task to mean
 anything. Inventing a per-package typecheck-of-tests runner in this slice would have been a
 lookalike, so none was invented: this is recorded here as a roadmap item, with the measured
-coverage above (1,588 files, 238 baseline diagnostics in 86 files, `0` of them under KG).
+coverage above (1,590 files, 238 baseline diagnostics in 86 files, `0` of them under KG).
 
 **Honest negative worth naming:** `packages/llmwiki-kg/ts/oracle/**` is in **no** tsconfig —
 neither `tsconfig.test.json` nor the package config names it. It holds `0` `*.test.ts` files
