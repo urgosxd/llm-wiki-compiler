@@ -31,8 +31,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { posix, resolve } from "node:path";
+import { resolve } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
   closeGraphServer,
@@ -45,9 +44,11 @@ import {
   PACKAGE_SURFACES,
   TYPE_ONLY_DEPENDENTS,
   assertCoverage,
+  deriveTypeOnlyDependents,
+  moduleReachesOf,
   partition,
-  typeOnlyDependentsOf,
   type PartitionResult,
+  type TypeOnlyPair,
 } from "../scripts/package-selection.js";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
@@ -120,6 +121,7 @@ const FROZEN_ORPHANS: readonly string[] = [
 let server: GraphServer;
 let collected: string[];
 let result: PartitionResult;
+let derivedPairs: readonly TypeOnlyPair[];
 
 /** Repo-relative POSIX form of an absolute collected path. */
 function repoRelative(absolute: string): string {
@@ -150,6 +152,7 @@ beforeAll(async () => {
   server = await createGraphServer(REPO_ROOT);
   const closures = await crawlTestClosures(server, collected);
   result = partition({ collected, closures });
+  derivedPairs = deriveTypeOnlyDependents(REPO_ROOT, collected).pairs;
 }, 180_000);
 
 afterAll(async () => {
@@ -266,84 +269,89 @@ it("reports the orphans the guards exist to surface, and no test a package now c
 });
 
 it("freezes the orphan ratchet so a new unreachable test cannot slip in silently", () => {
-  // The three tests of wiki sources that reach them ONLY through `import type`
-  // live in `FROZEN_ORPHANS` and are declared with their reason there, in
-  // `TYPE_ONLY_DEPENDENTS` (`scripts/package-selection.ts`). The census line that
-  // used to sit here as a comment is now an assertion: see the four tests below.
+  // Note what this pin CANNOT see: a test that reaches a package only through an elided
+  // `import type` but is attributed to `meta` — `test/viewer-sidebar.test.ts` is one — is
+  // not an orphan, so no name here would change when it appears. That shape is covered by
+  // the derived type-only guard in the four tests below, not by this list.
   expect(result.orphan).toEqual([...FROZEN_ORPHANS]);
 });
 
-/** Absolute path of a repo-relative POSIX path. */
-function repoPath(file: string): string {
-  return resolve(REPO_ROOT, file);
+/** Sorted `testFile -> packageName` keys, so a set comparison cannot depend on order. */
+function pairKeys(pairs: readonly TypeOnlyPair[]): string[] {
+  return pairs.map((pair) => `${pair.testFile} -> ${pair.packageName}`).sort();
 }
 
-/** An import specifier written in `testFile`, resolved to a repo-relative POSIX path. */
-function resolvedSpecifier(testFile: string, specifier: string): string {
-  return posix.normalize(posix.join(posix.dirname(testFile), specifier));
+/** Members of `left` that `right` does not hold, both sides as sorted keys. */
+function difference(left: readonly string[], right: readonly string[]): string[] {
+  const other = new Set(right);
+  return left.filter((key) => !other.has(key));
 }
 
-/**
- * The names one file imports as TYPES from one source module.
- *
- * The pattern spans newlines on purpose: the declaration names a repo-relative
- * `sourceFile`, while the test writes `../../packages/...`, so the specifier is
- * resolved against the importing file's directory before it is compared.
- */
-function typeSpecifiersFrom(testFile: string, sourceFile: string): string[] {
-  const source = readFileSync(repoPath(testFile), "utf8");
-  const blocks = [...source.matchAll(/import\s+type\s*\{([^}]*)\}\s*from\s*"([^"]+)"/g)];
-  return blocks
-    .filter((block) => resolvedSpecifier(testFile, block[2]) === sourceFile)
-    .flatMap((block) => block[1].split(","))
-    .map((name) => name.split(/\s+as\s+/)[0].trim())
-    .filter((name) => name.length > 0);
+/** Derived pairs no annotation explains: the direction that catches a NEW hole. */
+function undeclared(pairs: readonly TypeOnlyPair[] = derivedPairs): string[] {
+  return difference(pairKeys(pairs), pairKeys(TYPE_ONLY_DEPENDENTS));
 }
 
-/** The declared package whose source roots contain a repo-relative module path. */
-function owningPackage(sourceFile: string): string | undefined {
-  return PACKAGE_SURFACES.find((surface) =>
-    surface.sourceRoots.some((root) => sourceFile.startsWith(`${root}/`)),
-  )?.name;
+/** Annotations whose type-only edge no longer exists: the stale-reason direction. */
+function staleReasons(pairs: readonly TypeOnlyPair[] = derivedPairs): string[] {
+  return difference(pairKeys(TYPE_ONLY_DEPENDENTS), pairKeys(pairs));
 }
 
-it("declares every type-only dependent whose type import is still elided", () => {
-  expect(TYPE_ONLY_DEPENDENTS.length).toBeGreaterThan(0);
+it("derives exactly the annotated type-only dependents, in both directions", () => {
+  // THE ASSERTION REPLACES A FROZEN LIST. `deriveTypeOnlyDependents` parses every
+  // collected test, so a type-only dependent appearing in ANY bucket — `orphan` or
+  // `meta` — is a pair this must see. The declaration only supplies reasons, and the
+  // two sets are required to be equal, so neither a missing annotation nor a stale one
+  // can survive a run. The first version of this guard froze three names and was short
+  // by fourteen, one of them in `meta` where no orphan pin could ever see it.
+  const hint =
+    "declare the pair in TYPE_ONLY_DEPENDENTS (scripts/package-selection.ts) with a reason, " +
+    "or delete the annotation when the edge is gone";
+  expect(undeclared(), `type-only dependents that reach a package and are NOT declared: ${hint}`).toEqual(
+    [],
+  );
+  expect(staleReasons(), `annotations whose type-only edge no longer exists: ${hint}`).toEqual([]);
+  expect(derivedPairs.length).toBeGreaterThan(0);
+});
+
+it("annotates every derived pair with a reason", () => {
   for (const entry of TYPE_ONLY_DEPENDENTS) {
-    expect(existsSync(repoPath(entry.testFile)), `${entry.testFile} is gone`).toBe(true);
-    expect(result.orphan, `${entry.testFile} left the orphan bucket`).toContain(entry.testFile);
-    const specifiers = typeSpecifiersFrom(entry.testFile, entry.sourceFile);
     expect(
-      specifiers,
-      `${entry.testFile} no longer imports type ${entry.typeSpecifier} from ${entry.sourceFile}`,
-    ).toContain(entry.typeSpecifier);
-    expect(entry.reason.trim().length, `${entry.testFile} has no stated reason`).toBeGreaterThan(0);
+      entry.reason.trim().length,
+      `${entry.testFile} -> ${entry.packageName} has no stated reason`,
+    ).toBeGreaterThan(0);
   }
 });
 
-it("names the package that owns each declared type-only source file", () => {
-  for (const entry of TYPE_ONLY_DEPENDENTS) {
-    expect(owningPackage(entry.sourceFile), `no package owns ${entry.sourceFile}`).toBe(
-      entry.packageName,
-    );
-    const declared = typeOnlyDependentsOf(entry.packageName).map((each) => each.testFile);
-    expect(declared, `${entry.packageName} does not declare ${entry.testFile}`).toContain(
-      entry.testFile,
-    );
-  }
-  const packages = [...new Set(TYPE_ONLY_DEPENDENTS.map((entry) => entry.packageName))].sort();
-  expect(typeOnlyDependentsOf("@repo/api")).toEqual([]);
-  expect(packages.every((name) => typeOnlyDependentsOf(name).length > 0)).toBe(true);
+it("recognises all four elided import forms and no mixed declaration", () => {
+  // One form per line, plus the three shapes that DO emit a real import. A scanner that
+  // knows only `import type { … }` reports zero for the other three forms instead of
+  // failing here, which is how a type-only guard goes quietly blind.
+  const reaches = moduleReachesOf(
+    [
+      'import type { A } from "./a.js";',
+      'import type B from "./b.js";',
+      'import { type C } from "./c.js";',
+      'export type { D } from "./d.js";',
+      'import { type E, f } from "./e.js";',
+      'import g from "./g.js";',
+      'import * as h from "./h.js";',
+    ].join("\n"),
+  );
+  expect(reaches.map((reach) => [reach.specifier, reach.elided, reach.names.join(",")])).toEqual([
+    ["./a.js", true, "A"],
+    ["./b.js", true, "B"],
+    ["./c.js", true, "C"],
+    ["./d.js", true, "D"],
+    ["./e.js", false, "E,f"],
+    ["./g.js", false, "g"],
+    ["./h.js", false, ""],
+  ]);
 });
 
-it("fails closed: an orphan the frozen pin does not name breaks the ratchet", () => {
-  for (const entry of TYPE_ONLY_DEPENDENTS) {
-    expect([...FROZEN_ORPHANS], `${entry.testFile} is declared but not frozen`).toContain(
-      entry.testFile,
-    );
-  }
-  const newOrphan = "test/a-new-unreachable-by-import.test.ts";
-  expect(FROZEN_ORPHANS).not.toContain(newOrphan);
-  expect([...result.orphan, newOrphan]).not.toEqual([...FROZEN_ORPHANS]);
-  expect(result.orphan).toEqual([...FROZEN_ORPHANS]);
+it("reports both directions of a mismatch, so the equality is not vacuous", () => {
+  const probe: TypeOnlyPair = { testFile: "test/a-probe.test.ts", packageName: "@repo/wiki" };
+  expect(undeclared([...derivedPairs, probe])).toEqual(["test/a-probe.test.ts -> @repo/wiki"]);
+  const [first] = derivedPairs;
+  expect(staleReasons(derivedPairs.slice(1))).toEqual([`${first.testFile} -> ${first.packageName}`]);
 });

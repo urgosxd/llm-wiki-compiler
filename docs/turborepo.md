@@ -166,17 +166,33 @@ closure by construction, and no amount of crawling fixes them:
 A fourth route is elided before the graph exists: `import type`, which the ssr transform
 erases. [Named gap 2](#named-gap-2-import-type-orphans) records the pairing that answers it.
 
-What the declaration buys is that the gap **fails closed — and the fail-closed edge lives in
-the union test, not in `assertCoverage`.** `orphan` is an ACCEPTED bucket: `assertCoverage`
-counts packages, `meta` and `orphan` as covered, so a test no surface can attribute runs in no
-per-package selection and nothing complains — all 29 currently do exactly that. Making it
-fail closed therefore means changing the bucket's STATUS, not adding a refusal to
-`assertCoverage`: `test/package-selection-union.test.ts` freezes it with
-`expect(result.orphan).toEqual([...FROZEN_ORPHANS])`, a **total** comparison, so a new
-test that reaches a package by a non-import route fails the run instead of joining a list.
-That was proven rather than assumed: a throwaway test importing only a type made the run red
-with `expected [ …(30) ] to deeply equal [ …(29) ]` naming the new file, and deleting it
-returned the run to green.
+**Which shapes are refused, and which are merely invisible — the honest boundary.** These are
+two different claims and an earlier version of this page ran them together:
+
+- **REFUSED: a type-only dependent that nobody declared.** The set is DERIVED, not frozen:
+  `scripts/type-only-dependents.ts` parses every collected test with the TypeScript compiler and
+  reports each `(test file, package)` pair whose only route to the package is an elided import —
+  `import type { X } from`, `import type X from`, inline `import { type X } from` and
+  `export type { X } from`. `TYPE_ONLY_DEPENDENTS` only supplies the reason for each pair, and
+  `test/package-selection-union.test.ts` requires the two sets to be EXACTLY equal in both
+  directions. So a new dependent fails the run **in whichever bucket it lands**, `orphan` or
+  `meta`, and an annotation whose edge is gone fails too.
+- **NOT COVERED, by detection or by refusal: `require(`, a computed `import(` and
+  `new URL("...")`.** These are calls and strings, not module requests, so no scan of import
+  specifiers can enumerate them, and nothing fails when a new one appears. The artefact route at
+  `test/artifact/dist-specifiers.test.ts`:99 is that shape. They are undeclared-by-detection, not
+  refused — do not read the paragraph below as covering them.
+
+What the declaration buys is that the type-only gap **fails closed — and the fail-closed edge
+lives in the union test, not in `assertCoverage`.** `orphan` is an ACCEPTED bucket:
+`assertCoverage` counts packages, `meta` and `orphan` as covered, so a test no surface can
+attribute runs in no per-package selection and nothing complains — all 29 currently do exactly
+that. Changing that would mean changing the bucket's STATUS, not adding a refusal to
+`assertCoverage`. What does fail closed is the frozen `orphan` pin,
+`expect(result.orphan).toEqual([...FROZEN_ORPHANS])`, for the shape it can see: a new test with
+an empty closure ran red with `expected [ …(30) ] to deeply equal [ …(29) ]` and returned to
+green when deleted. That pin cannot see a type-only dependent that lands in `meta`, which is why
+the derived assertion above exists.
 
 ## The recorded direction arrived: no transitional package is left
 
@@ -324,17 +340,22 @@ shim or `corepack enable` first. The graph itself is unaffected; only the launch
 
 ## Named gap 2: `import type` orphans
 
-**This is a gap, and what answers it is a DECLARATION plus a stated pairing — not a patch to
+**This is a gap, and what answers it is a DERIVED set plus a stated pairing — not a patch to
 the graph.** The derivation reads the module graph, and the ssr transform **erases type-only
 imports**, so a test that merely `import type`s a package has no edge to that package's
-sources and is not selected by it. Three tests are in that position today, and each is named
-with its reason in `TYPE_ONLY_DEPENDENTS` (`scripts/package-selection.ts`):
+sources and is not selected by it.
 
-- `test/provenance-metadata-shape.test.ts` — `ProvenanceMetadata` from
-  `packages/wiki/src/utils/types.js`
-- `test/query-candidate-id-absent.test.ts` — `QueryResult` from the same module
-- `test/sdk/published-dimensions-port.test.ts` — `Dimension` from
-  `packages/wiki/src/dimensions/types.js`
+**Seventeen pairs today, in two packages, and the number is measured rather than maintained.**
+`scripts/type-only-dependents.ts` derives them from the collected suite; seven reach
+`@repo/wiki` and ten reach `@repo/foundation`, and `TYPE_ONLY_DEPENDENTS` in
+`scripts/package-selection.ts` annotates each with a reason. Two examples of the shapes that
+matter: `test/query-candidate-id-absent.test.ts` imports `QueryResult` from
+`packages/wiki/src/utils/types.js` and nothing else at runtime, and
+`test/viewer-sidebar.test.ts` imports `type { ViewerPage }` while every other repo import is
+`test/fixtures` — so it is attributed to `meta`, is absent from the 565-file wiki selection, and
+was invisible to a guard that only looked at `orphan`. A frozen list of three names shipped
+here first and was short by fourteen, which is why the set is derived and the list is only an
+annotation.
 
 **The pairing, written so nobody reads it as a to-do.** A `test` run cannot observe a
 type-only edge **at all**, because the import is elided: the emitted JavaScript does not

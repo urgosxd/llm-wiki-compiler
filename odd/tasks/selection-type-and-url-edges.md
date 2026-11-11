@@ -49,19 +49,34 @@ affected flow only."
 S13. PROVE THE PIN BITES. "prove the exhaustiveness assertion bites by introducing a throwaway
 type-only dependent, watching it go red, removing it and confirming green."
 
+S14. DERIVE, DO NOT FREEZE. "Add a derivation that computes, from the COLLECTED test set, every test
+file that reaches a package surface through a TYPE-ONLY import — scanning ALL collected tests, not
+just orphans, so both the `orphan` and the `meta` shapes are covered." … "THE DECLARATION BECOMES AN
+ANNOTATION, NOT THE TRUTH. Keep `TYPE_ONLY_DEPENDENTS` for the `reason` strings, but the assertion
+becomes EXACT SET EQUALITY between derived and declared, BOTH directions, so an undeclared type-only
+dependent fails and an annotation describing a file that no longer has the edge also fails."
+
+S15. GATING BECOMES BEHAVIOURAL. "export a pure predicate (e.g. `shouldReportTypeOnlyDependents(task)`)
+and test it for all four tasks (`test`, `lint`, `typecheck`, `fallow`)" — because "the call-site pin is
+a source-text filter with a hole … a staged second call path left it 4/4 green".
+
 ## Tasks
 
-- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `544ee720a08f23c45cc543bc448c38bcd814a267`
-- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `544ee720a08f23c45cc543bc448c38bcd814a267`
-- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `544ee720a08f23c45cc543bc448c38bcd814a267`
-- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `544ee720a08f23c45cc543bc448c38bcd814a267`
-- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `544ee720a08f23c45cc543bc448c38bcd814a267`
+- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `5e6af0825ba8251a5101584405e1aa45efca39a1`
+- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `5e6af0825ba8251a5101584405e1aa45efca39a1`
+- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `5e6af0825ba8251a5101584405e1aa45efca39a1`
+- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `5e6af0825ba8251a5101584405e1aa45efca39a1`
+- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `5e6af0825ba8251a5101584405e1aa45efca39a1`
 
 - T6 | S8-S13 | worker `gentle-ai-worker` — this feature document | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
 - T7 | S8, S9, S11 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: boundary header, `TypeOnlyDependent`, `TYPE_ONLY_DEPENDENTS`, `typeOnlyDependentsOf` | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
 - T8 | S12 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: one stderr line on the `test` flow, pinned by `test/package-task-boundary-notice.test.ts` | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
 - T9 | S8, S9, S13 | worker `gentle-ai-worker` — `test/package-selection-union.test.ts`: rot guard, owner derivation, fail-closed exhaustiveness | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
 - T10 | S10, S11 | worker `gentle-ai-worker` — `docs/turborepo.md`: stated boundary, type-only pairing, orphan bucket status, regenerated census | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
+- T11 | S14 | worker `gentle-ai-worker` — `scripts/type-only-dependents.ts` (new): TypeScript-parsed derivation of every type-only dependent across ALL collected tests, four elided forms | TBD
+- T12 | S14 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: declaration demoted to annotation, derivation re-exported for one import surface | TBD
+- T13 | S15 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: `shouldReportTypeOnlyDependents` predicate replaces the source-text gate | TBD
+- T14 | S14, S15 | worker `gentle-ai-worker` — union + notice tests (exact equality both directions, four forms, four-task gate), three probes, `docs/turborepo.md` overclaim correction | TBD
 ## Log
 
 L1 — the original request, verbatim:
@@ -263,3 +278,47 @@ The full pre-commit battery ran on that tree, hooks included and not bypassed: `
 and the full suite `pnpm test` exit 0 with `Test Files 824 passed | 3 skipped (827)` and `Tests 6139
 passed | 4 skipped (6143)` in 323.32 s, load 2.59 before and 6.61 after. The suite's own `827` collected
 files is an independent confirmation of the regenerated census in L21.
+
+L23 — JUDGE FINDINGS, and how each was closed. The root cause was design, not implementation:
+`TYPE_ONLY_DEPENDENTS` was a FROZEN LIST, and this repository distrusts frozen lists because a
+frozen list can only prove that what it names is real, never that it names everything. The list is
+now an ANNOTATION over a DERIVED set (`scripts/type-only-dependents.ts`, TypeScript compiler API
+over every collected test), and the assertion is exact set equality in both directions.
+
+  - **JD-A-001 (CRITICAL) — CLOSED.** `test/viewer-sidebar.test.ts:18` imports
+    `type { ViewerPage } from "../packages/wiki/src/viewer/types.js"` and every other repo import is
+    `./fixtures/viewer-jsdom.js`, so it is `meta`, absent from the 565-file wiki selection, not in
+    `orphan`, and was undeclared. The derivation finds it with no knowledge of it being special;
+    RED-1 named it (`+ "test/viewer-sidebar.test.ts -> @repo/wiki"`) and it is now annotated. The
+    notice for `@repo/wiki` reads 7, not 3 and not 4.
+  - **JD-A-004 — CLOSED.** A non-import-route dependency that also imports a `META_ROOTS` path was
+    accepted silently. The derivation scans ALL collected tests, not just orphans, so the bucket is
+    irrelevant: RED-2b staged exactly that shape (`test/zz-meta-type-probe.test.ts`, `meta` 70 -> 71,
+    suite otherwise green) and the run went red naming it. The doc overclaim is corrected: what is
+    REFUSED is a type-only dependent in any bucket; what stays invisible is `require(`, computed
+    `import(` and `new URL(` — undeclared-by-detection, not refused.
+  - **JD-A-002 — CLOSED.** Deleting one entry used to leave all 9 union cases green. Deletion now
+    fails: RED-2a dropped `test/mcp/query-sources-use-filesystem.test.ts` and the run named exactly
+    that pair. The guard is bidirectional, so a stale annotation fails too.
+  - **JD-A-003 / JD-A-005 / JD-A-006 — CLOSED.** The call-site source-text filter is DELETED and
+    replaced by the exported pure predicate `shouldReportTypeOnlyDependents`, asserted for all four
+    tasks (`[true, false, false, false]`). The tautological "fails closed" case is DELETED; its bite
+    is now the exact-equality assertion, proven by the two probes above and by a committed case that
+    drives the same diff helper with known inputs in both directions. The four fragile string checks
+    are DELETED rather than patched: a derived entry is true by construction, only the `reason` is
+    checked, and the scanner recognises `import type { X } from`, `import type X from`, inline
+    `import { type X } from` and `export type { X } from`, each asserted as a literal row.
+
+L24 — CORRECTION to L19 and to the census prose it carried. L19 stated the notice names three files
+and that the declaration was complete; both were false, and the measurement that falsified them is
+L23. The derived set is SEVENTEEN pairs across two packages — seven `@repo/wiki`, ten
+`@repo/foundation` — so the first frozen list of three was short by FOURTEEN, not by one. Every
+earlier entry stands as the record of what was believed at the time; this line is the correction.
+
+L25 — cost and gates for this work unit. The derivation parses 827 collected files with
+`ts.createSourceFile` behind a `text.includes("from")` gate, which no elided form can pass without:
+wall time of `test/package-selection-union.test.ts` went from 7.48-7.77 s to 8.36 s, so the
+derivation costs about 0.6-0.9 s, well inside the ~5 s budget, and nothing was traded for speed. The
+census did NOT move: `@repo/foundation=405 @repo/wiki=565 @repo/kg=549 @repo/api=13 meta=70 orphan=29
+uncovered=0 collected=827 distinct=827 multiPackage=409` before and after, because the derivation
+adds no collected test file.

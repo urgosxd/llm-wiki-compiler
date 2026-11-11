@@ -163,6 +163,22 @@ function reportUnattributed(unattributed: readonly string[]): void {
 }
 
 /**
+ * True when this task must print the type-only boundary notice.
+ *
+ * A PURE PREDICATE so the gate is testable without executing `main`, which is private and
+ * would cost a full selection derivation plus a 565-file suite run to drive. The first
+ * version of this gate was a source-text filter over this file, and a staged second call
+ * path walked straight through it: a filter can only recognise the shapes its author
+ * thought of, while a predicate is the thing the caller has to obey.
+ *
+ * @param task - The task the caller asked for.
+ * @returns True for `test` only: `lint`, `typecheck` and `fallow` print nothing.
+ */
+export function shouldReportTypeOnlyDependents(task: PackageTask): boolean {
+  return task === "test";
+}
+
+/**
  * Say on stderr which tests this selection cannot fail on, and what covers them.
  *
  * A `test` selection is a closure over static import specifiers, so it cannot
@@ -236,7 +252,7 @@ async function main(argv: readonly string[]): Promise<number> {
   const task = readTask(positionals);
   const surface = surfaceFor(values.package);
   const tests = task === "fallow" ? [] : await deriveSelection(surface);
-  if (task === "test") reportTypeOnlyDependents(surface);
+  if (shouldReportTypeOnlyDependents(task)) reportTypeOnlyDependents(surface);
   return runTask(task, { root: REPO_ROOT, surface, tests });
 }
 
