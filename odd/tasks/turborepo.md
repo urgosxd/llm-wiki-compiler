@@ -58,3 +58,5 @@ L7 — the three findings that decided it, with citations:
 - **(iii) The false-green sibling.** `@repo/kg#typecheck` is `tsc --noEmit`, while the gate CI actually runs is the root `typecheck:kg` = `scripts/kg-typecheck.ts`, a two-direction ratchet against `kg-typecheck-baseline.json` (a new diagnostic fails, and a baselined diagnostic that stopped occurring also fails). A graph built from the package script would advertise a weaker lookalike beside the real gate.
 
 Also recorded: `@repo/kg`'s `dist` **is** consumed — `packages/llmwiki-kg/Dockerfile:112,122` copies and runs it, and `test/kg-mcp-e2e/probe-harness.ts:46` builds it itself at `:86` — so the build graph has two nodes and zero edges. There is no ordering to add.
+
+L8 — this slice supersedes the decline: `odd/tasks/package-task-selection.md` is the document that answers the narrowing finding recorded at L7(i), and the narrowing — `@repo/kg#test` collecting 142 files where the root run collects 820 — is exactly what that document's T3 derived selection fixes, by deriving each package's test set from the import graph instead of inheriting a package-local `include`.
