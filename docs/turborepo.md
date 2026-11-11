@@ -19,7 +19,7 @@ slice can hide, so everything below is derived from the module graph at run time
 
 | task        | `dependsOn` | `cache` | what it runs                                        |
 | ----------- | ----------- | ------- | --------------------------------------------------- |
-| `test`      | `["^test"]` | `false` | the package's derived test selection, root config    |
+| `test`      | `[]`        | `false` | the package's derived test selection, root config    |
 | `lint`      | `[]`        | `false` | the house-rule ratchet, narrowed to the package      |
 | `typecheck` | `[]`        | `false` | the package's sources plus its derived tests         |
 | `fallow`    | `[]`        | `false` | the root `fallow:kg` gate, for `@repo/kg` only       |
@@ -31,18 +31,46 @@ because anything ran. This repository has spent a long time removing exactly tha
 class of green, so caching stays off until someone produces a provably complete
 input set *in writing* — flipping the flag is not the argument.
 
-`test` declares a real dependency edge and the other three declare none:
+## No task declares a dependency edge. Selection is per package, literally
 
-- `^test` orders a package's tests **after** its workspace dependencies' tests.
-  Every `test` task runs against **one** pgvector database, provisioned once by
+**`test` used to declare `dependsOn: ["^test"]`, and it no longer does. That edge
+must not come back.** The ruling behind it:
+
+- **Database serialisation is a CONCURRENCY concern, not a dependency edge.** Every
+  `test` task runs against **one** pgvector database, provisioned once by
   `test/global-setup.ts` and seeded per worker by
   `test/setup/test-database-url.ts`. Two suites writing the same schema in the same
-  container produce a victim that is non-deterministic, so the dependant must never
-  run concurrently with its dependencies.
-- `lint` and `typecheck` read the tree and report; they order nothing.
-- `fallow` exists for one package. `@repo/kg` is the only member with a
-  `.fallowrc.json` and baselines; the other three declare no `fallow` script, so
-  the task resolves to nothing for them rather than to a scan over no baseline.
+  container produce a victim that is non-deterministic, so the concern is real —
+  and it is answered by `"concurrency": "1"` at the **root of `turbo.json`**, which
+  forces one task at a time across the whole run. That is strictly stronger than an
+  edge would be: it also separates siblings that do not depend on each other, which
+  a `^test` edge never did.
+- **A dependant's change does not invalidate its dependencies' tests.** Those tests
+  already passed against the tree they belong to; re-running them because a
+  dependent moved is work no filter asked for. With `^test`,
+  `turbo run test --filter=@repo/wiki` executed **972 file-runs** — 406
+  `@repo/foundation` files plus the 566 wiki files — for a filter whose selection is
+  566. Without it, the filtered run executes **exactly** the filtered package's
+  tests.
+
+So a per-package selection means what it says: `turbo run test --filter=@repo/wiki`
+runs 566 files and starts no foundation task. `lint`, `typecheck` and `fallow`
+never had an edge and still declare `[]`.
+
+The concurrency cap is declared in the graph rather than passed by hand **because a
+constraint a graph file carries cannot be forgotten, and an environment variable
+can**. `TURBO_CONCURRENCY=1` produces the same serialisation, but only for the person
+who remembers to type it; `"concurrency": "1"` applies to every invocation, on every
+machine, including a future one nobody has told about the database. `turbo` 2.11.10
+supports the key at the root of the config file (`node_modules/turbo/schema.json`,
+`concurrency`: "Use `1` to force serial execution (one task at a time)"; documented
+at `node_modules/turbo/docs/reference/configuration.mdx`, default `"10"`), and the
+value is validated on load — an invalid one fails the run with
+`Invalid value for `--concurrency` flag`.
+
+`fallow` exists for one package. `@repo/kg` is the only member with a
+`.fallowrc.json` and baselines; the other three declare no `fallow` script, so the
+task resolves to nothing for them rather than to a scan over no baseline.
 
 `.turbo/` is gitignored: with caching off it holds run summaries and logs, not
 verdicts.
@@ -122,21 +150,6 @@ test and asserts that list by exact equality — a second such name cannot appea
 without failing. The root `pnpm test` gate still runs that file; what is on record
 is that no per-package run does.
 
-## Known limitation: type-only imports are erased
-
-The derivation reads the module graph, and the ssr transform **erases type-only
-imports**. A test that merely `import type`s a package therefore has no edge to
-that package's sources and is not selected by it. Two tests are in that position
-today and are named in `test/package-selection-union.test.ts`:
-
-- `test/query-candidate-id-absent.test.ts`
-- `test/sdk/published-dimensions-port.test.ts`
-
-Both are `orphan` for that reason. `vitest related` misses them identically, so
-this is a property of the transform and the graph, not of this crawler — but it is
-a real hole in per-package selection, so it stays written down instead of being
-papered over by widening a bucket. The root suite runs both.
-
 ## `@repo/kg#test` runs under the ROOT vitest config
 
 `packages/llmwiki-kg/ts/vitest.config.ts` keeps `include: ["src/**/*.test.ts"]`,
@@ -146,32 +159,59 @@ not use it: every package's `test` task runs under the root `vitest.config.ts` a
 passes its derived selection as filters. `@repo/kg`'s `typecheck` likewise invokes
 the existing ratchet `scripts/kg-typecheck.ts`, never a `tsc --noEmit` lookalike.
 
-## PREREQUISITE: turbo needs a working bare `pnpm`
+## Named gap 1: `turbo` requires a working bare `pnpm` on `PATH`
 
-**This is an environment prerequisite, not a defect of the graph.** Turbo resolves
-the workspace and runs each package's script by shelling out to the **bare `pnpm`
-binary**. On a host where bare `pnpm` exits `127`, turbo fails with `127` before
-running anything — the same launcher problem this repository already works around
-in `scripts/pnpm-invocation.ts`, where the global `pnpm` is a shell wrapper whose
-`exec` target was deleted, so `command -v pnpm` succeeds and `pnpm --version`
-exits `127`.
+**This is a gap, not a footnote.** Turbo resolves the workspace and runs each
+package's script by shelling out to the **bare `pnpm` binary**. On this host bare
+`pnpm` exits **127**: the global `pnpm` is a shell wrapper whose `exec` target was
+deleted, so `command -v pnpm` succeeds and `pnpm --version` exits `127`. Turbo
+therefore fails with `127` **before running anything**, and **the failure names
+nothing helpful** — no path, no binary, no hint that a launcher is broken.
 
-Remedy, either:
+This is the same launcher defect `scripts/pnpm-invocation.ts` already works around
+the other gates; turbo has no equivalent indirection.
+
+**Proposed durable fix:** route turbo's package-manager invocation through that same
+resolver — the one place that already knows how to find a working `pnpm` — so turbo
+inherits the workaround instead of each operator repeating it. Until that exists, the
+prerequisite is real:
 
 ```bash
 corepack enable            # exposes the corepack pnpm shim as `pnpm`
 # or put the corepack shim directory that provides `pnpm` on PATH
 ```
 
-CI needs no special handling: `pnpm/action-setup` puts a working `pnpm` on `PATH`,
-so turbo works there by construction. Locally, `corepack pnpm`, `node_modules/.bin/pnpm`
-or `npm_execpath` are how the *other* gates survive a broken launcher; turbo has no
-equivalent indirection, which is why this page states the prerequisite instead of
-implying the graph is broken when `turbo` exits `127`.
+CI needs no special handling: `pnpm/action-setup` puts a working `pnpm` on `PATH`, so
+turbo works there by construction. Locally, `corepack pnpm`, `node_modules/.bin/pnpm`
+or `npm_execpath` are how the *other* gates survive a broken launcher; turbo does not
+look at any of them, which is exactly why the fix above is the durable one and a
+shim on `PATH` is the interim one.
 
-Everything on this page was verified by reading the config, running the selection
-and its guards, and probing `turbo`'s flag set. No full `turbo run` was executed
-while writing it; the documented invocations are the ones a reader runs.
+Any `turbo` invocation — including the measurement runs behind this page — needs that
+shim or `corepack enable` first. The graph itself is unaffected; only the launcher is.
+
+## Named gap 2: `import type` orphans
+
+**This is a gap, not a footnote.** The derivation reads the module graph, and the ssr
+transform **erases type-only imports**. A test that merely `import type`s a package
+therefore has no edge to that package's sources and is not selected by it. Two tests
+are in that position today and are named in `test/package-selection-union.test.ts`:
+
+- `test/query-candidate-id-absent.test.ts`
+- `test/sdk/published-dimensions-port.test.ts`
+
+Both are `orphan` for that reason, and the consequence is precise and worth stating
+plainly: **a type-only change to `@repo/wiki` will not run them** on the selective
+path. They remain covered by the root `pnpm test` gate, so nothing goes untested
+today — but a per-package run of wiki is not a complete check of a wiki type change.
+
+`vitest related` misses them identically, so this is a property of the transform and
+the graph, not of this crawler.
+
+**Proposed durable fix:** add type-import edges to the closure — record `import type`
+specifiers during the crawl and include them in each module's dependency set, so the
+two files above gain a real edge to wiki's sources and join its selection. Until
+then they stay named, rather than absorbed into a bucket that would hide them.
 
 ## What the graph does NOT own
 
@@ -200,11 +240,13 @@ Run the wiki package's tests:
 turbo run test --filter=@repo/wiki
 ```
 
-Because `test` declares `dependsOn: ["^test"]`, this runs
-`@repo/foundation#test` first — `@repo/wiki` depends on it through `workspace:*`,
-and the shared pgvector database must not be written by two suites at once — then
-`@repo/wiki#test` over the wiki selection. Add `--only` when you want the filtered
-package alone and are not relying on that ordering.
+Because `test` declares `dependsOn: []`, this runs **exactly one task**,
+`@repo/wiki#test`, over the 566-file wiki selection: no `@repo/foundation#test`, no
+core task, nothing else. Tasks run one at a time because of the root
+`"concurrency": "1"`, so the run still cannot collide with a second suite over the
+shared pgvector database — that protection is unchanged, it just no longer costs a
+dependency's 406 files. `--only` is no longer needed for "just the filtered
+package", because that is now what every filtered run means.
 
 Lint the KG package:
 
@@ -230,4 +272,5 @@ turbo run test --filter=@repo/wiki --dry=json
 which tasks matched the filter, their `dependsOn` edges, their cache status
 (`false` everywhere here) and the `directories`/`command` each one would use.
 Combined with a real run it is the fastest way to confirm that a filter selects the
-task you meant, and that nothing was cached into a green that did not execute.
+task you meant, and that nothing was cached into a green that did not execute — and
+that a `--filter` of one package resolves to one task.

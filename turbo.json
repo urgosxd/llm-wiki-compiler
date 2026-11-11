@@ -5,15 +5,31 @@
   // which is the exact failure this repository has spent a long time removing.
   // Do not enable caching without a provably complete input set, and expect that
   // argument to be made in writing rather than by flipping this flag.
+  //
+  // `concurrency: "1"` is the other half of the point, and it belongs HERE rather
+  // than in `TURBO_CONCURRENCY`: every test task in this workspace runs against ONE
+  // pgvector database, provisioned once by `test/global-setup.ts` and seeded per
+  // worker by `test/setup/test-database-url.ts`, so two suites must never write the
+  // same schema in the same container. A limit carried by the graph cannot be
+  // forgotten; an environment variable can.
+  "concurrency": "1",
   "tasks": {
-    // `^test` is a real dependency and not decoration: every package's test task
-    // runs against ONE pgvector database provisioned once by `test/global-setup.ts`
-    // and seeded per worker by `test/setup/test-database-url.ts`. A dependant
-    // package's tests must therefore never run concurrently with its dependencies'
-    // tests, or two suites write the same schema in the same container and the
-    // victim of the collision is non-deterministic.
+    // NO `^test` EDGE, and none may be added back. The RULING this records:
+    //
+    // 1. Database serialisation is a CONCURRENCY concern, not a dependency edge.
+    //    The single pgvector database is protected by `concurrency: "1"` above,
+    //    which forces one task at a time across the whole run — strictly stronger
+    //    than ordering along workspace edges, and it also covers siblings that do
+    //    not depend on each other.
+    // 2. A dependant's change does NOT invalidate its dependencies' tests. Those
+    //    tests already passed on the tree they belong to, and re-running them
+    //    because a dependent moved is work no filter asked for: with `^test`,
+    //    `turbo run test --filter=@repo/wiki` executed 972 file-runs (406 of
+    //    `@repo/foundation` + 566 of `@repo/wiki`) for a filter that selects 566.
+    //
+    // So a filtered run executes EXACTLY the filtered package's tests.
     "test": {
-      "dependsOn": ["^test"],
+      "dependsOn": [],
       "cache": false
     },
     // Lint and typecheck read the tree and report. They order nothing, so they

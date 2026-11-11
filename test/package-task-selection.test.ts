@@ -28,6 +28,20 @@
  * 142 of 820 files must not quietly take `build`, `dev`, `start`, `test:watch`
  * or `eval:kg` with it.
  *
+ * ## `test` has no dependency edge, and `turbo.json` says why
+ *
+ * The graph once ordered a package's tests after its workspace dependencies'
+ * tests (`dependsOn: ["^test"]`) to keep two suites from writing the single
+ * pgvector database at once. That was the wrong mechanism for a real concern: a
+ * filtered `turbo run test --filter=@repo/wiki` then executed 972 test runs
+ * (406 `@repo/foundation` + 566 `@repo/wiki`) instead of the 566 the filter
+ * selected, and a dependant's change does **not** invalidate its dependencies'
+ * already-passing tests. Database serialisation is a CONCURRENCY concern, so it
+ * is declared as `concurrency: "1"` at the root of the graph, where it cannot be
+ * forgotten, and every task keeps `dependsOn: []`. This file pins both halves:
+ * no task may grow a `^test` edge again, and the concurrency cap must stay in
+ * `turbo.json` rather than moving into an environment variable.
+ *
  * ## The transitional package is asserted to stay surface-less
  *
  * `@atomicstrata/llmwiki-core` is on its way to becoming a thin alias of
@@ -121,9 +135,20 @@ function readJsonc<T>(relativePath: string): T {
   return JSON.parse(stripJsonComments(text)) as T;
 }
 
+/** The whole parsed `turbo.json`, so root-level policy keys are visible too. */
+interface TurboConfig {
+  concurrency?: string;
+  tasks: Record<string, TurboTask>;
+}
+
+/** Read the graph itself, root keys included. */
+function turboConfig(): TurboConfig {
+  return readJsonc<TurboConfig>("turbo.json");
+}
+
 /** The declared tasks of the graph, keyed by task name. */
 function turboTasks(): Record<string, TurboTask> {
-  return readJsonc<{ tasks: Record<string, TurboTask> }>("turbo.json").tasks;
+  return turboConfig().tasks;
 }
 
 /** The scripts of one workspace member, or of the root when the path is `.`. */
@@ -140,12 +165,23 @@ it("declares every turbo task cache-less", () => {
   }
 });
 
-it("orders test after its dependencies' tests and orders nothing else", () => {
+it("declares no test dependency edge and orders nothing else", () => {
   const tasks = turboTasks();
-  expect(tasks.test?.dependsOn).toEqual(["^test"]);
+  expect(tasks.test?.dependsOn).toEqual([]);
   expect(tasks.lint?.dependsOn).toEqual([]);
   expect(tasks.typecheck?.dependsOn).toEqual([]);
   expect(tasks.fallow?.dependsOn).toEqual([]);
+  // A `^test` edge ANYWHERE would re-introduce the defect this ruling removed:
+  // a filtered run of one package would execute its dependencies' tests too.
+  for (const [name, task] of Object.entries(tasks)) {
+    expect(task.dependsOn ?? [], `${name} must not depend on a dependency's tests`).not.toContain("^test");
+  }
+});
+
+it("serialises task execution in the graph rather than in an environment variable", () => {
+  // Database serialisation is real, but it is a concurrency concern: one task at
+  // a time. Declared in `turbo.json` it cannot be forgotten; an env var can.
+  expect(turboConfig().concurrency).toBe("1");
 });
 
 it("declares no build task and gives no package a build-emitting surface", () => {

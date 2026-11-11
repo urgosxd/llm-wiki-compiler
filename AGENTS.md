@@ -120,7 +120,11 @@ and each `test` set is **derived** at run time from the import graph rather than
 listed by hand — a new test that imports the package joins its selection by itself.
 Run one package's tools with `turbo run <task> --filter=<pkg>` (for example
 `turbo run test --filter=@repo/wiki`), or the same work without turbo as
-`corepack pnpm --filter <pkg> run <task>`. This is a local selection convenience,
+`corepack pnpm --filter <pkg> run <task>`. A filtered run executes **exactly** the
+filtered package's tasks: no task declares a `^test` edge, so `--filter=@repo/wiki`
+starts no `@repo/foundation` task. The single pgvector database is protected by
+`"concurrency": "1"` in `turbo.json` — a concurrency constraint, one task at a time,
+not a dependency edge. This is a local selection convenience,
 not a gate: **the gate of record is still root `pnpm test`**, no gate is routed
 through Turborepo, and no CI job name changes. Design, the cache-less graph, the
 `pnpm`-on-`PATH` prerequisite and the known holes: `docs/turborepo.md`.
