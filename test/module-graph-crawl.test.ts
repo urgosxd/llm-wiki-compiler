@@ -8,8 +8,23 @@
  * keeps it honest is parity against the real one. That parity is frozen here as two
  * literal arrays produced by `vitest related` at commit
  * a12fd91f1fe850e77b46a0698cec29ae22e188fa: 6 files for
- * `packages/wiki/src/index.ts`, and 23 for that file plus
+ * `packages/wiki/src/index.ts`, and 22 for that file plus
  * `packages/wiki/src/sdk/compiler-composition.ts`.
+ *
+ * THE PAIR ORACLE WAS RE-FROZEN AT 22 BY THE CORE COLLAPSE, AND ONE ENTRY LEFT IT.
+ * It listed 23 and included `test/artifact/entries-load.test.ts`. That file reached
+ * `sdk/compiler-composition.ts` only THROUGH the root bundle it evaluates: at the
+ * oracle commit `dist/index.js` was a 108 KB facade whose one engine statement was
+ * `import { withQuiet, createWikiCoreAtRoot } from "@atomicstrata/llmwiki-core/compiler-sdk"`,
+ * and `vitest.config.ts` aliased that specifier back to
+ * `packages/wiki/src/sdk/compiler-composition.ts`, so the crawl followed the alias.
+ * `odd/tasks/collapse-core-package.md` inlined the engine (the bundle no longer names
+ * that specifier) and deleted both core aliases with the package, and the artifact
+ * suite was then consolidated onto `test/artifact/artifact-text.ts`. The file now
+ * reaches only build output and that helper, so the pair property genuinely no longer
+ * holds for it — and the LIVE `vitest related` on this tree agrees, returning these
+ * 22 files and not that one. The crawler was right; the frozen oracle was stale by one
+ * entry. Nothing else about the pair changed.
  *
  * WHY THE ORACLE IS FROZEN AND NOT CALLED LIVE. Comparing two resolvers inside one
  * test would let a shared misreading of the graph pass on both sides. The oracle
@@ -58,13 +73,12 @@ const SINGLE_TESTS: readonly string[] = [
   "test/query-publication-sdk-mcp.test.ts",
 ];
 
-/** Oracle input two, and the exactly-23 selection `vitest related` returned for it. */
+/** Oracle input two, and the exactly-22 selection `vitest related` returned for it. */
 const PAIR_SOURCES: readonly string[] = [
   "packages/wiki/src/index.ts",
   "packages/wiki/src/sdk/compiler-composition.ts",
 ];
 const PAIR_TESTS: readonly string[] = [
-  "test/artifact/entries-load.test.ts",
   "test/compile-options.test.ts",
   "test/compiler/graph-retirement-port-absence.test.ts",
   "test/offline-provider-keyless.test.ts",
