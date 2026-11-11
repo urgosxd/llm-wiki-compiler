@@ -28,8 +28,15 @@ import { resolve } from "node:path";
 /** Repository root, taken from this file's own location rather than the caller's working directory. */
 export const ARTIFACT_REPO_ROOT = resolve(import.meta.dirname, "../..");
 
-/** The command that produces every artefact these helpers read, quoted in each failure. */
-const ARTIFACT_BUILD_COMMAND = "corepack pnpm run build";
+/**
+ * The command that produces every artefact these helpers read, quoted in each failure.
+ *
+ * Exported because more than one artifact suite names it in a failure message, and a second
+ * literal in `test/artifact/entries-load.test.ts` was exactly the duplication this module
+ * exists to remove — `entries-load` EVALUATES its bundles rather than reading them as text,
+ * so {@link readArtifactText} is not its step, but the repository root and this command are.
+ */
+export const ARTIFACT_BUILD_COMMAND = "corepack pnpm run build";
 
 /**
  * Read one repository-relative artefact, failing with the build command named when it is absent.

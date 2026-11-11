@@ -202,7 +202,7 @@ it("declares four package surfaces and no bucket for the transitional core packa
   expect(names).toEqual(["@repo/foundation", "@repo/wiki", "@repo/kg", "@repo/api"]);
   expect([...result.packages.keys()]).toEqual(names);
   expect(names).not.toContain("@atomicstrata/llmwiki-core");
-  expect(META_ROOTS).toEqual(["scripts", "test/fixtures", "test/sdk"]);
+  expect(META_ROOTS).toEqual(["scripts", "test/fixtures", "test/sdk", "test/artifact"]);
 });
 
 it("keeps meta, orphan and package buckets disjoint while packages may overlap", () => {

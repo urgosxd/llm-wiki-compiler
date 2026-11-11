@@ -88,12 +88,35 @@ export const PACKAGE_SURFACES: readonly PackageSurface[] = [
 /**
  * Roots that belong to the tooling rather than to a package.
  *
- * A test that reaches `scripts/`, `test/fixtures/` or `test/sdk/` is testing the
- * build, the fixtures or the published SDK surface, so no package owns it. These
- * are the only supported answer for such a test: anything reaching neither a
- * package nor one of these roots is an orphan the census must show.
+ * A test that reaches `scripts/`, `test/fixtures/`, `test/sdk/` or `test/artifact/`
+ * is testing the build, the fixtures, the published SDK surface or the BUILT
+ * DISTRIBUTION, so no package owns it. These are the only supported answer for such a
+ * test: anything reaching neither a package nor one of these roots is an orphan the
+ * census must show.
+ *
+ * WHY `test/artifact` IS HERE, AND WHY NO PACKAGE MAY OWN IT INSTEAD.
+ * `test/artifact/bundle-engine.test.ts` and `test/artifact/entries-load.test.ts` assert
+ * the BUILT ROOT DISTRIBUTION: `dist/index.js` carries the inlined engine, and
+ * `dist/compiler-sdk.js` is the quiet seam beside it. That distribution is produced from
+ * EVERY workspace package at once (the root `tsup.config.ts` bundles `@repo/wiki`,
+ * `@repo/api` and `@repo/foundation` into it), and the root package is not one of the
+ * four declared {@link PACKAGE_SURFACES}, so a test of it is a test of the build.
+ *
+ * Attributing these two files to the package whose SOURCE they happen to exercise would
+ * be the defect this module exists to prevent, not a fix for it: `@repo/wiki`'s
+ * `test` task would then run a proof of the root tarball, and `turbo run test
+ * --filter=@repo/foundation` — equally implicated in that same tarball — would silently
+ * not, so the file would stop running in every selection except one. The meta bucket says
+ * the true thing: no single package owns a proof about the artefact they all compose into.
+ *
+ * This is a DIRECTORY CLASS, not an exemption. There is no per-file, per-path or
+ * per-package allowlist anywhere in this module — the one that used to exist for
+ * `@atomicstrata/llmwiki-core`'s built `dist/` was removed with that package by
+ * `odd/tasks/collapse-core-package.md` (S5), and
+ * `test/package-selection-union.test.ts` still requires the leftover bucket to be
+ * EMPTY, so a new unattributable test fails the run instead of joining a list.
  */
-export const META_ROOTS: readonly string[] = ["scripts", "test/fixtures", "test/sdk"];
+export const META_ROOTS: readonly string[] = ["scripts", "test/fixtures", "test/sdk", "test/artifact"];
 
 /** Everything {@link partition} needs: the collected universe and its closures. */
 export interface PartitionInput {

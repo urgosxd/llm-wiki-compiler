@@ -60,21 +60,26 @@
  * The bundle's own transitive `import`s are resolved by the module runner, so an
  * alias still applies inside a bundle. What this file pins is that each published
  * entry FILE is the built artifact, and that artifact evaluates.
+ *
+ * ## Why the repository root and the build command come from `./artifact-text.js`
+ *
+ * Both are the same three lines `test/artifact/bundle-engine.test.ts` needs, and
+ * `test/artifact/artifact-text.ts` already owns them — including the exact wording
+ * of the "run the build" failure. This file EVALUATES its bundles (a literal dynamic
+ * import, then `typeof` on every export) rather than reading their text, so it uses
+ * `ARTIFACT_REPO_ROOT` and `ARTIFACT_BUILD_COMMAND` and deliberately does NOT use
+ * `readArtifactText`: the two suites are the same class of proof about the same
+ * artefact and share what is genuinely common, and nothing more.
  */
 
 import { describe, expect, it } from "vitest";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
-/** Repository root, from this file's own location rather than the worker's cwd. */
-const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+import { ARTIFACT_BUILD_COMMAND, ARTIFACT_REPO_ROOT } from "./artifact-text.js";
 
 /** Directory this file lives in, which every literal artifact path is relative to. */
 const TEST_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
-
-/** The command that produces the artifacts this test reads, quoted in the failure. */
-const BUILD_COMMAND = "corepack pnpm run build";
 
 /** The one `exports` condition this test follows: what an ESM consumer imports. */
 const EXPORT_CONDITION = "import";
@@ -144,7 +149,7 @@ const COMPILER_SDK_ENTRY: PublishedEntry = {
  * @returns The failure text, naming the build command.
  */
 function buildMessage(detail: string): string {
-  return `${detail}, so the build has not run; run \`${BUILD_COMMAND}\` before using this test`;
+  return `${detail}, so the build has not run; run \`${ARTIFACT_BUILD_COMMAND}\` before using this test`;
 }
 
 /**
@@ -154,7 +159,7 @@ function buildMessage(detail: string): string {
  * @returns The parsed manifest.
  */
 async function readManifest(manifestPath: string): Promise<PackageManifest> {
-  return JSON.parse(await readFile(path.join(REPO_ROOT, manifestPath), "utf8")) as PackageManifest;
+  return JSON.parse(await readFile(path.join(ARTIFACT_REPO_ROOT, manifestPath), "utf8")) as PackageManifest;
 }
 
 /**
@@ -182,7 +187,7 @@ function importTargetOf(entry: PublishedEntry, manifest: PackageManifest): strin
  */
 async function publishedArtifactPath(entry: PublishedEntry): Promise<string> {
   const manifest = await readManifest(entry.manifest);
-  return path.resolve(path.dirname(path.join(REPO_ROOT, entry.manifest)), importTargetOf(entry, manifest));
+  return path.resolve(path.dirname(path.join(ARTIFACT_REPO_ROOT, entry.manifest)), importTargetOf(entry, manifest));
 }
 
 /**
@@ -197,7 +202,7 @@ async function publishedArtifactPath(entry: PublishedEntry): Promise<string> {
  */
 async function assertPublishedArtifact(entry: PublishedEntry, literalPath: string): Promise<string> {
   const importedFile = path.resolve(TEST_DIRECTORY, literalPath);
-  const relativeFile = path.relative(REPO_ROOT, importedFile);
+  const relativeFile = path.relative(ARTIFACT_REPO_ROOT, importedFile);
   expect(
     importedFile,
     `${entry.specifier}: the exports map must publish the artifact this file imports (${literalPath})`,
