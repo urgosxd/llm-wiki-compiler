@@ -471,3 +471,11 @@ L25 — CLAIM CORRECTION, recorded because a commit message cannot be amended. T
 of which 125 are false pairs** (130 − 5 = 125), which is why the RED-S assertion printed
 `expected [ …(125) ]`: 125 is the count of wrongly-claimed pairs, not the size of the raw edge set.
 The pair is 130/125, and the commit message stands uncorrected by rule; this line is the correction.
+
+L26 — this micro-unit is committed as `d8aabb2dacb3ebfb80b02e08216dc847f24056e6` (`fix(selection): scope the notice's reassurance to
+the type-only edge`), three paths: `scripts/package-tasks.ts`, `test/package-task-boundary-notice.test.ts`
+and this document. Battery on that tree: `tsc --noEmit` 0, `typecheck:tests` 0 (1592 files), `lint` 0
+(558 / 396 / 423, unchanged), `fallow:ci` 0, `build` 0, full suite `pnpm test` exit 0 with `Test Files
+824 passed | 3 skipped (827)` and `Tests 6143 passed | 4 skipped (6147)` in 327.08 s, load 2.78 before
+and 5.77 after. Census unchanged at `meta=70 orphan=29 uncovered=0 collected=827` with the four package
+buckets identical, so `docs/turborepo.md:130-131` was not touched; a string change moves no count.
