@@ -3,52 +3,84 @@ title: "SDK packages and ownership"
 description: "Which package publishes what, and which specifier to import."
 ---
 
-The package split described here belongs to the `1.4.0-dev.20260919` development
-candidate. It is not yet an npm release. Use a matching set of built tarballs
-when evaluating it; do not assume the new package names are available from the registry.
+The distribution is one artefact. `llm-wiki-compiler` — the package at this
+repository's root — is the only thing this repository publishes, and its tarball is
+self-sufficient: the compiler engine is inlined in `dist/index.js`, so an install
+needs nothing installed beside it.
+
+This page used to describe a two-artefact split around `@atomicstrata/llmwiki-core`.
+That package was collapsed into `packages/wiki` and the root `llm-wiki-compiler`
+package, and it is no longer part of this repository. Nothing in that work was
+pushed or published, so the published name is still installable from the registry;
+what changed is that this repository no longer builds, pins or exports it. The **retired-surface record** in `ARCHITECTURE.md` lists every one of the 95 names
+the retired package exported and where each went.
+
+The `1.4.0-dev.20260919` development candidate is still not an npm release. Use a
+built tarball when evaluating it, and do not assume the development version is
+available from the registry.
 
 ## Supported entry point
 
 Applications, including external coordinators, should install and import `llm-wiki-compiler`.
-The scoped packages below are publicly downloadable implementation dependencies,
-not separately supported consumer APIs. Direct exports are for compiler maintainers.
-Scoping does not make them private or establish a security boundary.
+The four workspace members behind it — `@repo/api`, `@repo/foundation`, `@repo/kg`
+and `@repo/wiki` — are all `private`: nothing publishes them and nothing downloads
+them, because the root distribution bundles their sources instead of depending on
+them at run time. Their direct exports are internal composition contracts, not
+separately supported consumer APIs. A `@repo/` scope is a naming convention, not a
+privacy mechanism and not a security boundary; what keeps those packages out of a
+registry is that they are never published.
+
+The successor to the retired `@atomicstrata/llmwiki-core/compiler-sdk` subpath is
+`llm-wiki-compiler/compiler-sdk`.
 
 ## What each package publishes
 
 | Need | Package | Entry point |
 | --- | --- | --- |
-| Existing SDK | `llm-wiki-compiler` | `createWiki` |
-| The same methods, composed directly | `@atomicstrata/llmwiki-core` | `createWikiCore` |
+| The standard SDK | `llm-wiki-compiler` | `createWiki` |
+| The same methods, composed directly | `llm-wiki-compiler/compiler-sdk` | `createWikiCoreAtRoot`, `withQuiet` |
 | Product-wide process coordination | Your own application or orchestration platform | Application-owned orchestration calling the standard package |
 
 `llm-wiki-compiler` is built from `packages/wiki/src/index.ts`, which exports `createWiki`
 and the `Wiki` type. `Wiki` is declared as `interface Wiki extends WikiCore {}`, so the two
-constructors return the same seventeen methods; both names survive because the core package
-is also usable on its own.
+constructors return the same seventeen methods; both names survive because the core surface
+is composable on its own.
 
-`@atomicstrata/llmwiki-core` publishes two entry points, `.` and `./compiler-sdk`. The `.`
-entry exports `createWikiCore`, the `WikiCore` type, `startViewer`, and the result and error
-types a caller needs in order to name what comes back. The `./compiler-sdk` entry carries
-the composition surface the standard facade is assembled from. Neither entry is the
-recommended application entry point.
+`llm-wiki-compiler/compiler-sdk` is the successor of the retired package's
+`./compiler-sdk` entry. It exports `createWikiCoreAtRoot`, `withQuiet`, and the
+published option types — `CreateWikiOptions`, `SdkCompileOptions`, `DimensionsPort`,
+`DimensionsRequest`, `WikiCore` — and nothing else at runtime. It is a zero-state
+re-export of the package's own entry point: `dist/compiler-sdk.js` is one statement
+re-exporting the two values out of `./index.js`, and its published declaration is an
+enumerated re-export of `./index.js` (sixteen names written out one by one), so the
+`export type *` wildcard inside `packages/wiki/src/sdk/compiler-composition.ts`
+cannot widen it. The quiet `AsyncLocalStorage` is therefore constructed exactly
+once, by `dist/index.js`, which is what makes `withQuiet` entered through the
+subpath apply to the engine's own output.
 
-The standard package requires the core package at an exact matching version.
+Neither the root entry nor the subpath requires a second package, at any version.
 
 ## Composing the core surface directly
 
-For compiler maintainers, internal composition uses:
+For compiler maintainers and embedders that assemble the composition themselves:
 
 ```ts
-import { createWikiCore } from "@atomicstrata/llmwiki-core";
+import { createWikiCoreAtRoot, withQuiet } from "llm-wiki-compiler/compiler-sdk";
 
-const wiki = createWikiCore({ root: "./my-wiki" });
-const status = await wiki.status();
+const root = "/absolute/path/to/my-wiki";
+// The first argument is the root already normalized by the caller, which is why it
+// repeats `options.root` — this is the seam the standard facade assembles itself.
+const core = createWikiCoreAtRoot(root, { root });
+const status = await withQuiet(() => core.status());
 ```
 
 Core owns knowledge compilation, profiles, records, relations, provenance, and the
 read-only domain observations. Every method is declared as returning `Promise<unknown>`;
-the concrete shapes are the interfaces exported as types from the same entry point. See
+the concrete shapes are interfaces declared in the compiler's own sources — reachable
+inside this repository through the private member's `@repo/wiki/core-index` subpath —
+and they are not exported by the published package, so a published-surface consumer
+receives `Promise<unknown>` and must narrow the value itself. The option and
+composition types named above are the exception: those are published. See
 [the SDK method reference](/guides/sdk#the-standard-facade-and-the-core-surface).
 
 An external coordinator owns process state and decisions. Retaining data or preparing a
@@ -59,11 +91,11 @@ change does not approve or apply that change.
 Built-in AutoSci and Newsroom profile templates describe schemas and declarations;
 they do not install full research or editorial applications. Those applications
 own providers, domain policy, process UX and product-specific exports. External
-research or creative-asset modules likewise do not belong in compiler core.
+research or creative-asset modules likewise do not belong in the compiler core.
 
-New reusable record, verification and authority mechanisms belong in core.
-Product sequencing, human decisions and revision strategy belong in the external
-coordinator.
+New reusable record, verification and authority mechanisms belong in the compiler
+core, which lives in `packages/wiki`. Product sequencing, human decisions and
+revision strategy belong in the external coordinator.
 
 The two are tiers, not a migration path. Reach for an external coordinator when several
 projects, several hosts, or work that outlives one invocation share state that a single
@@ -71,40 +103,54 @@ in-process SDK instance cannot own.
 
 ## Distribution requirements
 
-The release workflow publishes a matching set from one commit:
-`@atomicstrata/llmwiki-core` first, then `llm-wiki-compiler`, so the facade is never on
-the registry while a version it requires is missing. `PACKAGE_DIRS` in
-`.github/workflows/publish.yml` names exactly those two directories. The workflow verifies
-each package's version, exact internal pins and source commit, and finishes with a fresh
-installation. Prerelease versions publish to a non-`latest` dist-tag (`next` by default).
+The release workflow publishes one artefact from one commit. `PACKAGE_DIRS` in
+`.github/workflows/publish.yml` names exactly `"."`, and `test/sdk/pack-distribution.ts`
+pins that value as `PACK_DISTRIBUTION = ["."]`, so the two cannot drift apart. Preflight
+verifies the package's identity and version against the requested payload and the
+public commit; the job that follows publishes over OIDC and then verifies the
+registry's `gitHead` and a fresh installation of the released version. The workflow's
+internal exact-pin checks are derived from `PACKAGE_DIRS`, which means that with a
+single entry they run zero times rather than becoming dead code — a second artefact
+would re-enter them without a workflow edit.
 
-Scope ownership and trusted publishing access are release prerequisites; the
-naming change does not establish them. Each of the two packages needs its own
-trusted-publisher configuration before the first registry release.
+Prerelease versions publish to a non-`latest` dist-tag (`next` by default), so a
+development build never becomes what a plain `npm install llm-wiki-compiler`
+resolves to.
+
+Trusted publishing access is a release prerequisite, and naming a package does not
+establish it: one package needs one Trusted Publisher configuration. The workflow's
+own header records that the `@atomicstrata` npm organization still owns the retired
+scoped name on the registry, and that nothing here publishes to it. Retiring the name
+there — for instance with `npm deprecate` pointing at `llm-wiki-compiler` — is the
+project owner's decision and is not part of the collapse.
 
 ## Workspace members
 
-The root workspace declares five members: `@repo/api`, `@repo/foundation`,
-`@atomicstrata/llmwiki-core`, `@repo/kg` and `@repo/wiki`. The four `@repo/*` members are
-`private`; among the members only `@atomicstrata/llmwiki-core` is published, and it ships
-alongside the root `llm-wiki-compiler` package. The `@repo/*` packages publish raw
-TypeScript paths, so the root bundles include them rather than depending on them at
-runtime.
+The root workspace declares four members: `@repo/api`, `@repo/foundation`,
+`@repo/kg` and `@repo/wiki`. All four are `private`; none is published. The one
+published package, `llm-wiki-compiler`, is the root `package.json`, and it ships as a
+single tarball that carries the engine. The `@repo/*` packages publish raw TypeScript
+paths, so the root bundles include them rather than depending on them at runtime.
 
 `@repo/wiki` holds the source the standard package is built from: `createWiki`, the MCP
-server, the viewer, and the core services. `@repo/api` supplies the container entry point.
+server, the viewer, the core services and the engine the retired package used to build
+as a second artefact. `@repo/api` supplies the container entry point.
 
 ## Contributing across packages
 
 Use one repository and one PR, including for cross-package changes. Root-level
-`pnpm install --frozen-lockfile` links workspace packages; `pnpm run build` builds
-`@atomicstrata/llmwiki-core` first and then the two root `tsup` entries, because the
-standard facade and the container entry are declared at the repository root rather than in
-a package. Local development requires no publishing. No new public `core` subpath is
-introduced.
+`pnpm install --frozen-lockfile` links workspace packages; `pnpm run build` builds the
+two root `tsup` entries, because the standard facade and the container entry are
+declared at the repository root rather than in a package. There is no dependency
+package to build first. Local development requires no publishing.
+
+No `core` subpath is introduced. The single subpath this distribution declares is
+`./compiler-sdk`, which is the retired package's own subpath name carried onto the
+package that replaced it, for the embedders who already import it.
 
 - Knowledge and authority changes belong in the relevant `packages/wiki/src/` subsystem.
 - Public SDK composition belongs in `packages/wiki/src/sdk/` and `packages/wiki/src/index.ts`.
 
 Run focused tests for behavior changes. After building, `pnpm run test:pack`
-checks fresh installation and TypeScript consumption without workspace aliases.
+packs the root tarball alone, installs it in a clean project, and checks fresh
+installation, TypeScript consumption and quiet output without workspace aliases.

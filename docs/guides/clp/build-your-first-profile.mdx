@@ -19,6 +19,6 @@ What still works, and is documented on the SDK and MCP pages:
 
 - Write markdown pages under `wiki/concepts/` and `wiki/queries/`.
 - Check them with `wiki.lint()` or the MCP tool `lint_wiki`.
-- Browse them with `startViewer({ root, host, port })` from `@atomicstrata/llmwiki-core`.
+- Browse them with the local viewer: the container's host mode serves it (`node dist/api.js host --port 4173`, or the same entry inside the image). The `startViewer({ root, host, port })` constructor this page used to name still exists, but it lives in the compiler's own sources (`@repo/wiki/core-index`, internal) and is not part of the published package; the viewer a reader can actually open is the one the host mode serves.
 
 See the [SDK guide](/guides/sdk) and [MCP agent integration](/guides/mcp-agent-integration).

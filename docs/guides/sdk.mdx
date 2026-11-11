@@ -64,14 +64,23 @@ console.log(`${status.pages.total} pages, ${status.sources} sources`);
 ### The standard facade and the core surface
 
 `createWiki` from `llm-wiki-compiler` returns the standard `Wiki` facade.
-`createWikiCore` from `@atomicstrata/llmwiki-core` returns `WikiCore`. `Wiki`
-extends `WikiCore` without adding a method, so both expose the same seventeen
-methods documented below; the difference is the import surface, not the
+`createWikiCoreAtRoot` from `llm-wiki-compiler/compiler-sdk` returns `WikiCore`.
+`Wiki` extends `WikiCore` without adding a method, so both expose the same
+seventeen methods documented below; the difference is the import surface, not the
 capability.
 
 Every method is declared as returning `Promise<unknown>`. The shapes named below
-are the objects the implementation returns, and those interfaces are exported as
-types from `@atomicstrata/llmwiki-core`.
+are the objects the implementation returns. They are declared in the compiler's own
+sources and are NOT exported by the published package — a published-surface
+TypeScript consumer receives `Promise<unknown>` and narrows the value itself.
+Inside this repository they are reachable through the `@repo/wiki/core-index`
+subpath of the private `@repo/wiki` member, which is a maintainer path rather than
+an embedder one.
+
+`createWikiCore` is one of those maintainer-only names: the identity-level
+constructor the retired `@atomicstrata/llmwiki-core` package exported has no
+published successor, and `@repo/wiki/core-index` is the only place it is still
+reachable. The published composition entry is `createWikiCoreAtRoot`.
 
 ### Read-only domain observations
 
@@ -141,7 +150,7 @@ Both methods return `IngestResult` with `filename`, `charCount`, `truncated`, `s
   Returns `QueryResult` with `answer`, legacy display slugs in `selectedPages`, qualified grounding identities in `pageIds` and `refs`, `reasoning`, and `answerCitations` when collection succeeds. When requested, `debug` contains retrieval details. `saved` identifies a published query slug; `publicationRefusal` describes a refused save. These publication fields are mutually exclusive and absent when the query neither published nor was refused, such as a query without saving or without grounding.
 </ParamField>
 
-`answerCitations` is a version-1 report of unique, normalized answer-body wikilink targets in first-occurrence order. Successful collection returns it, including `{ version: 1, citations: [] }` when no links are recognized; a query with no grounding also returns an empty report. If collection fails, the field is absent, meaning citations are unavailable. The answer remains available; any requested publication performs its own fresh check and may succeed or return a refusal. SDK calls remain quiet, including warnings and refusals. Optional fields keep older `QueryResult` producers compatible. Import `QueryResult`, `AnswerCitation`, and `AnswerCitationReport` from `@atomicstrata/llmwiki-core`.
+`answerCitations` is a version-1 report of unique, normalized answer-body wikilink targets in first-occurrence order. Successful collection returns it, including `{ version: 1, citations: [] }` when no links are recognized; a query with no grounding also returns an empty report. If collection fails, the field is absent, meaning citations are unavailable. The answer remains available; any requested publication performs its own fresh check and may succeed or return a refusal. SDK calls remain quiet, including warnings and refusals. Optional fields keep older `QueryResult` producers compatible. `QueryResult`, `AnswerCitation` and `AnswerCitationReport` are declared in the compiler's sources and are not exported by the published package; inside this repository they are reached through `@repo/wiki/core-index`.
 
 ```ts
 const result = await wiki.query("How does attention work?");
@@ -222,7 +231,7 @@ Existing MCP `query_wiki` callers using `save: true` receive the same answer-pre
 
   Findings are the same objects `lint()` returns, in the same order within each tier; none gains a `tier` field. `low-confidence`, `contradicted-page`, and `excess-inferred-paragraphs` interpret stored judgments or citation coverage and are filed under `providerJudgement`. Profile confidence checks require a declared numeric field and flag finite values strictly below `0.5`; missing required or invalid values remain schema findings, and an absent optional value produces no confidence judgment. These labels do not prove model authorship or validate factual support.
 
-  Import `TieredLintReportV1` and `LintTierV1` from `@atomicstrata/llmwiki-core` when you need to name these types.
+  `TieredLintReportV1` and `LintTierV1` are declared in the compiler's sources and are not exported by the published package; inside this repository they are reached through `@repo/wiki/core-index`.
 
   **Performance note:** same per-call corpus-hashing cost as `lint()`. Avoid hot loops.
 </ParamField>
@@ -299,7 +308,22 @@ try {
 
 ## Result types
 
-The result interfaces named above are exported as types from `@atomicstrata/llmwiki-core`:
+The result interfaces named above are no longer exported by the published package.
+The retired `@atomicstrata/llmwiki-core` package exported them; after the collapse
+they live in the compiler's own sources, and the published declaration for
+`llm-wiki-compiler` re-exports sixteen names — of which the ones this page names are
+`Wiki`, `WikiCore`, `CreateWikiOptions`, `SdkCompileOptions`, `DimensionsPort`,
+`DimensionsRequest` and `SlugSafe`. None of the result shapes below is among them,
+so a published-surface caller gets `Promise<unknown>` per method and narrows the
+value it received:
+
+```ts
+const result = (await wiki.status()) as { pages: { total: number } };
+console.log(result.pages.total);
+```
+
+Inside this repository, and for compiler maintainers, the same interfaces are
+reachable through the private member's subpath:
 
 ```ts
 import type {
@@ -311,7 +335,7 @@ import type {
   EvalReport,
   OkfExportReport,
   OkfImportReport,
-} from "@atomicstrata/llmwiki-core";
+} from "@repo/wiki/core-index";
 ```
 
 ## Performance notes

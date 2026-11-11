@@ -9,6 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — anyone who imported `@atomicstrata/llmwiki-core` has to move: the
+  scoped package is retired into `packages/wiki`, the distribution is one artefact,
+  and the root tarball now installs alone.** The package was a second published
+  artefact built from wiki's sources, and the root build externalized it, so
+  `dist/index.js` was a 108,001-byte facade whose `resolveDimensions` count was
+  zero while the engine sat in the other package's engine chunk. It is gone — six
+  tracked files, the workspace member, both manifests' exact internal pins, the
+  `tsconfig` and `vitest` aliases, the lockfile edge, the Dockerfile copies — and
+  the engine is inlined: `dist/index.js` is now 992,819 bytes with three
+  `resolveDimensions` occurrences and the quiet scope among its six
+  `new AsyncLocalStorage` constructions. The migration for an embedder is one line:
+  `@atomicstrata/llmwiki-core/compiler-sdk` → `llm-wiki-compiler/compiler-sdk`.
+
+  - **The root tarball is self-sufficient, and that is executed, not argued.**
+    `pnpm run test:pack` packs the root tarball ALONE, installs it into a clean
+    project with no sibling tarball, imports `createWiki` and shows it is a
+    function, runs a real ingest that returns `created`, verifies the installed
+    manifest declares the engine's runtime dependencies, and type-checks the
+    installed declarations. `PACK_DISTRIBUTION` is `["."]` and the release
+    workflow's `PACKAGE_DIRS` is `"."`, pinned against each other by a test, so
+    two-tarball publishing is gone rather than optional.
+  - **`withQuiet` is still quiet, proven by execution.** The split existed to keep
+    quiet output on one `AsyncLocalStorage`, so silence is asserted through the
+    packaged `./compiler-sdk` subpath with a real ingest: both streams empty, the
+    ingest still `created`. Structurally, `var quietScope` is constructed at most
+    once per shipped bundle, `dist/compiler-sdk.js` constructs none of its own, and
+    exactly one package's bundles define it. That subpath is a 62-byte zero-state
+    re-export (`export { createWikiCoreAtRoot, withQuiet } from "./index.js";`) and
+    its published declaration is an enumerated 16-name re-export of `./index.js`, so
+    the compiler's internal `export type *` wildcard cannot widen the published
+    surface and the subpath is not a second engine copy.
+  - **Three runtime dependencies moved to the root manifest,** at the ranges the
+    deleted package declared — `@hono/node-server ^1.19.14`, `ajv ^8.20.0`,
+    `express ^5.1.0` — and `@modelcontextprotocol/sdk` was unified onto `^1.32.1`
+    from `^1.29.0` in the root and the wiki manifest, so the workspace cannot
+    resolve two. The engine's library build externalizes `express`,
+    `@modelcontextprotocol/sdk`, `@hono/node-server` and `mammoth`, each of which is
+    CommonJS and dies at import time when bundled into ESM output. A consequence
+    nothing asked for, recorded because it is real: the container launcher
+    `dist/api.js` went 2,477,179 → 1,313,057 bytes, because `express` is a root
+    dependency now and stopped being inlined into it.
+  - **What an embedder loses.** The retired package published 95 export entries: 17
+    carried onto `llm-wiki-compiler` or `llm-wiki-compiler/compiler-sdk`, 78
+    reachable only inside this repository through `@repo/wiki`, and 0 lost. The five
+    worth naming are `createWikiCore`, `startViewer`, `atomicWrite`,
+    `parseFrontmatter` and `LockUnavailableError`: ordinary values of the old `.`
+    entry with no successor on any published subpath. `createWiki` and the `Wiki`
+    type are NOT among them — they were never part of the retired surface. The
+    complete inventory is in `ARCHITECTURE.md`.
+  - **The registry entry was not touched.** Nothing in this work was pushed or
+    published, so the `@atomicstrata/llmwiki-core@1.4.0-dev.20260919` artefact stays
+    installable exactly as before. Retiring the name there (`npm deprecate …`
+    pointing at `llm-wiki-compiler`) is the project owner's decision and is not part
+    of this change.
+
 - **BREAKING — nothing is staged for review any more: a compile writes every
   page it generates, an untrusted OKF import is refused, and a `review` key in
   `.llmwiki/config.json` now refuses at config load instead of being silently

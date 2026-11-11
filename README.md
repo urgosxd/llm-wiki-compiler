@@ -286,13 +286,15 @@ volta run --node 24 npx mint dev --port 3001
 ## Current release
 
 `main` carries the `1.4.0-dev.20260919` development candidate: a local
-integration build, not an npm release. The product is a pnpm workspace of five
-packages (`@repo/foundation`, `@repo/kg`, `@repo/wiki`, `@repo/api` and
-`@atomicstrata/llmwiki-core`): the public compiler and viewer live in `@repo/wiki`,
-published behind `llm-wiki-compiler`, and the knowledge and domain services behind
-`@atomicstrata/llmwiki-core`. Standalone AutoSci/Newsroom process packages are
-not included. See the [changelog](CHANGELOG.md) `Unreleased` section and
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
+integration build, not an npm release. The product is a pnpm workspace of four
+private packages (`@repo/foundation`, `@repo/kg`, `@repo/wiki` and `@repo/api`):
+the public compiler and viewer live in `@repo/wiki`, published behind the single
+artefact `llm-wiki-compiler`, which carries the knowledge and domain services too.
+`@atomicstrata/llmwiki-core` is not part of this repository any more — it was
+collapsed into `packages/wiki` and the root package, one implementation under one
+name, and the published registry artefact was left untouched. Standalone
+AutoSci/Newsroom process packages are not included. See the [changelog](CHANGELOG.md)
+`Unreleased` section and [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 **Released `1.3.0`:**
 

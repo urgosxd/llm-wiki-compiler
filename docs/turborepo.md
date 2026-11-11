@@ -49,13 +49,13 @@ must not come back.** The ruling behind it:
   already passed against the tree they belong to; re-running them because a
   dependent moved is work no filter asked for. With `^test`,
   `turbo run test --filter=@repo/wiki` executed **972 file-runs** — 406
-  `@repo/foundation` files plus the 566 wiki files — for a filter whose selection is
-  566. Without it, the filtered run executes **exactly** the filtered package's
-  tests.
+  `@repo/foundation` files plus the 566 wiki files, as the suite stood when the
+  edge was removed — for a filter whose selection was 566. Without it, the
+  filtered run executes **exactly** the filtered package's tests.
 
 So a per-package selection means what it says: `turbo run test --filter=@repo/wiki`
-runs 566 files and starts no foundation task. `lint`, `typecheck` and `fallow`
-never had an edge and still declare `[]`.
+runs the wiki selection (565 files in the census below) and starts no foundation
+task. `lint`, `typecheck` and `fallow` never had an edge and still declare `[]`.
 
 The concurrency cap is declared in the graph rather than passed by hand **because a
 constraint a graph file carries cannot be forgotten, and an environment variable
@@ -84,10 +84,11 @@ emits no artifact is a task that reports success without an artifact — the exa
 defect this graph exists to avoid — so no `build` task is declared and no `^build`
 edge is invented to make the graph look symmetrical.
 
-The packages that genuinely emit keep their own untouched scripts: `@repo/kg`
-(`tsc -p tsconfig.build.json`) and `@atomicstrata/llmwiki-core` (`tsup`). The
-single real emit for the shipped artifact is the root `tsup` run, and `pnpm run
-build` stays the gate for it.
+The packages that genuinely emit keep their own untouched scripts — `@repo/kg`
+(`tsc -p tsconfig.build.json`) — and it used to be two: `@atomicstrata/llmwiki-core`
+ran `tsup` over wiki's sources as a second artefact, and that emitter is gone with
+the package. The single real emit for the shipped artifact is the root `tsup` run,
+and `pnpm run build` stays the gate for it.
 
 ## How selection works, in plain terms
 
@@ -122,38 +123,70 @@ package picks it up, adding a source file to the package picks it up, adding a n
 test directory that imports the package picks it up — nobody edits a list. The
 union guard in `test/package-selection-union.test.ts` is the other half: every
 collected test must land in some package, in `meta` (`scripts/`,
-`test/fixtures/`, `test/sdk/`) or in `orphan`, or the guard fails. Its census at
-this commit, printed by the run rather than baked:
+`test/fixtures/`, `test/sdk/`, `test/artifact/`) or in `orphan`, or the guard fails.
+Its census at this commit, printed by the run rather than baked:
 
 ```
-selection buckets: @repo/foundation=406 @repo/wiki=566 @repo/kg=550 @repo/api=13
-meta=63 orphan=29 uncovered=1 collected=822 distinct=821 multiPackage=410
+selection buckets: @repo/foundation=405 @repo/wiki=565 @repo/kg=549 @repo/api=13
+meta=66 orphan=29 uncovered=0 collected=823 distinct=823 multiPackage=409
 ```
 
 ```
 node scripts/package-tasks.ts <test|lint|typecheck|fallow> --package <@repo/name>
 ```
 
-## `@atomicstrata/llmwiki-core` is transitional
+## The recorded direction arrived: no transitional package is left
 
-Core has **no task surface** — no `test`, `lint`, `typecheck` or `fallow` — and it
-will become a thin alias of `@repo/wiki` or disappear. Giving it a surface now
-would create a surface that has to be deleted later, and a green that means
-nothing in the meantime.
+This page used to head a section "`@atomicstrata/llmwiki-core` is transitional",
+recording a package with **no task surface** — no `test`, `lint`, `typecheck` or
+`fallow` — and predicting that it "will become a thin alias of `@repo/wiki` or
+disappear". It disappeared: `odd/tasks/collapse-core-package.md` collapsed it into
+`packages/wiki` and the root `llm-wiki-compiler` package. The workspace is four
+private members (`@repo/api`, `@repo/foundation`, `@repo/kg`, `@repo/wiki`), every
+one of them has a task surface, and **no member is exempt** from this graph.
 
-The consequence is surfaced rather than absorbed. `test/artifact/facade-surface.test.ts`
-imports core's **built** artefacts (`packages/llmwiki-core/dist/index.js`,
-`compiler-sdk.js`) dynamically and reaches nothing else in the repository, so no
-package selection owns it and core's `dist/` is neither a source root nor a meta
-root. The union guard therefore names it explicitly as the one **unattributable**
-test and asserts that list by exact equality — a second such name cannot appear
-without failing. The root `pnpm test` gate still runs that file; what is on record
-is that no per-package run does.
+The exemption that section described is gone rather than renamed. `test/artifact`
+is a `META_ROOTS` directory class in `scripts/package-selection.ts` beside
+`scripts/`, `test/fixtures/` and `test/sdk/`, because those suites assert the BUILT
+ROOT DISTRIBUTION — one artefact produced from all four members at once — and
+attributing them to whichever package's source they happen to exercise would drop
+them from every other package's selection. `test/package-selection-union.test.ts`'s
+leftover bucket is `UNATTRIBUTABLE = []` and is asserted, so a NEW unattributable
+test fails the run instead of joining a list. The retired package's
+`test/artifact/facade-surface.test.ts` was deleted with its subject, the assertions
+worth keeping moved into `bundle-engine.test.ts` and `entries-load.test.ts`, and
+both land in `meta` with the rest of the artifact tier.
+
+### The earlier two-artefact decision, and why it is inapplicable now
+
+`odd/tasks/core-facade-and-packaging.md` decided at `L5`, and restated at `L20`,
+that the root tarball could not be made self-sufficient:
+
+> Bundling the engine into the root package would give the process a second
+> `AsyncLocalStorage`/lock/error-class instance, and `withQuiet` would silently
+> stop applying across that boundary.
+
+citing the warning still in place at
+`packages/wiki/src/sdk/compiler-composition.ts`:
+
+> Quiet output must use core's AsyncLocalStorage instance, not a bundled copy.
+
+That decision was right, and the collapse does not reverse it: it removes one of
+the two sides the warning is about. A second module-instance token can only exist
+while the root bundle inlines the engine AND a second artefact carrying the same
+engine is installed — which is exactly why the root `tsup` config externalized the
+core. With one artefact the quiet scope is constructed once, by the only bundle
+that ships, and `test/artifact/bundle-engine.test.ts` pins that: `var quietScope`
+is constructed at most once per bundle, `dist/compiler-sdk.js` constructs none of
+its own, and exactly one package's bundles define it. This graph inherits the
+simplification — `@repo/kg` is the only member that emits anything, so there is no
+second emitters' task to order, which is the second reason the `build` section
+above still declares no task.
 
 ## `@repo/kg#test` runs under the ROOT vitest config
 
 `packages/llmwiki-kg/ts/vitest.config.ts` keeps `include: ["src/**/*.test.ts"]`,
-which collects **142 of the 822** files the root run collects. That is a
+which collects **142 of the 823** files the root run collects. That is a
 package-local config narrowing the suite to a fifth of it, so `@repo/kg#test` does
 not use it: every package's `test` task runs under the root `vitest.config.ts` and
 passes its derived selection as filters. `@repo/kg`'s `typecheck` likewise invokes
@@ -241,11 +274,11 @@ turbo run test --filter=@repo/wiki
 ```
 
 Because `test` declares `dependsOn: []`, this runs **exactly one task**,
-`@repo/wiki#test`, over the 566-file wiki selection: no `@repo/foundation#test`, no
-core task, nothing else. Tasks run one at a time because of the root
+`@repo/wiki#test`, over the 565-file wiki selection: no `@repo/foundation#test`,
+nothing else. Tasks run one at a time because of the root
 `"concurrency": "1"`, so the run still cannot collide with a second suite over the
 shared pgvector database — that protection is unchanged, it just no longer costs a
-dependency's 406 files. `--only` is no longer needed for "just the filtered
+dependency's 405 files. `--only` is no longer needed for "just the filtered
 package", because that is now what every filtered run means.
 
 Lint the KG package:
