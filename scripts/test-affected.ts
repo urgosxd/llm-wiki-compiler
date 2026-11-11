@@ -1,8 +1,9 @@
 /**
  * @file Run only the tests a pushed change can affect.
  *
- * The full suite is CI's job: `.github/workflows/ci.yml` runs `pnpm test` on
- * every push and pull request, and it is the ground truth. The pre-push hook
+ * The full suite is CI's job: the `build-and-test` job in `.github/workflows/ci.yml`
+ * reaches it as `pnpm exec turbo run test --filter=//` on every push and pull request,
+ * and it is the ground truth. The pre-push hook
  * used to run that same command locally, so every push paid ~9 minutes to
  * duplicate a check the push itself triggers seconds later.
  *

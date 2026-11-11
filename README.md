@@ -356,7 +356,9 @@ pnpm run lint
 `pnpm run test:affected` covers the tests for what you changed; `pnpm test` runs the
 whole suite and is the one to use for cross-cutting changes or before opening a
 pull request. Where they meet, `test:affected` yields rather than duplicating work: it is
-local-only tooling — CI's one test verdict is `pnpm test`, and the push hook runs only
+local-only tooling — CI's one test verdict is that same full suite, reached by the
+`build-and-test` job as `pnpm exec turbo run test --filter=//` (that filter resolves exactly
+the root `test` task), and the push hook runs only
 `pnpm run build` — and
 when your change has suite-wide reach (`package.json`, the lockfile, `vitest.config.ts`,
 `tsconfig*.json`, or anything under `scripts/`) it declines to run the full unit tier,

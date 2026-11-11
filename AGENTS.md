@@ -148,9 +148,12 @@ Run one package's tools with `turbo run <task> --filter=<pkg>` (for example
 filtered package's tasks: no task declares a `^test` edge, so `--filter=@repo/wiki`
 starts no `@repo/foundation` task. The single pgvector database is protected by
 `"concurrency": "1"` in `turbo.json` — a concurrency constraint, one task at a time,
-not a dependency edge. This is a local selection convenience,
-not a gate: **the gate of record is still root `pnpm test`**, no gate is routed
-through Turborepo, and no CI job name changes. Design, the cache-less graph, the
+not a dependency edge. What this section describes is a local selection convenience,
+not a gate: **the gate of record is still the full suite**, and the root `pnpm test`
+script is unchanged and is what a local run uses. CI reaches that same suite through
+`turbo run test --filter=//` inside the `build-and-test` job, and no task in `turbo.json`
+is cached (`cache: false` on every one), so the gate still means an execution rather than
+a cache hit. No CI job name changed. Design, the cache-less graph, the
 `pnpm`-on-`PATH` prerequisite and the known holes: `docs/turborepo.md`.
 
 ### Pre-Commit Checks
