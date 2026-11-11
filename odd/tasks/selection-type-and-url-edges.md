@@ -51,17 +51,17 @@ type-only dependent, watching it go red, removing it and confirming green."
 
 ## Tasks
 
-- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
-- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
-- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
-- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
-- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
+- T1 | S3, S4, S5, S7 | gentle-ai-worker | the declared `TYPE_ONLY_DEPENDENTS` manifest (file → package → why) on the existing public surface of `scripts/package-selection.ts`, so `orphan` becomes declared-with-reason | `544ee720a08f23c45cc543bc448c38bcd814a267`
+- T2 | S4, S7 | gentle-ai-worker | one printed line on the affected flow only, in `scripts/package-tasks.ts` | `544ee720a08f23c45cc543bc448c38bcd814a267`
+- T3 | S3, S4, S7 | gentle-ai-worker | RED first: `test/package-selection-union.test.ts`, pinning that the declaration is exhaustive and cannot rot — each declared file still exists, still lands in `orphan`, and its `import type` target still resolves to the named package | `544ee720a08f23c45cc543bc448c38bcd814a267`
+- T4 | S2, S4, S7 | gentle-ai-worker | the stated boundary and the pairing in `docs/turborepo.md`, census regenerated in the same commit | `544ee720a08f23c45cc543bc448c38bcd814a267`
+- T5 | S1, S6, S7 | gentle-ai-worker | this document, recording the audit and its pending remedy | `544ee720a08f23c45cc543bc448c38bcd814a267`
 
-- T6 | S8-S13 | worker `gentle-ai-worker` — this feature document | TBD
-- T7 | S8, S9, S11 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: boundary header, `TypeOnlyDependent`, `TYPE_ONLY_DEPENDENTS`, `typeOnlyDependentsOf` | TBD
-- T8 | S12 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: one stderr line on the `test` flow | TBD
-- T9 | S8, S9, S13 | worker `gentle-ai-worker` — `test/package-selection-union.test.ts`: rot guard, owner derivation, fail-closed exhaustiveness | TBD
-- T10 | S10, S11 | worker `gentle-ai-worker` — `docs/turborepo.md`: stated boundary, type-only pairing, orphan bucket status | TBD
+- T6 | S8-S13 | worker `gentle-ai-worker` — this feature document | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
+- T7 | S8, S9, S11 | worker `gentle-ai-worker` — `scripts/package-selection.ts`: boundary header, `TypeOnlyDependent`, `TYPE_ONLY_DEPENDENTS`, `typeOnlyDependentsOf` | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
+- T8 | S12 | worker `gentle-ai-worker` — `scripts/package-tasks.ts`: one stderr line on the `test` flow, pinned by `test/package-task-boundary-notice.test.ts` | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
+- T9 | S8, S9, S13 | worker `gentle-ai-worker` — `test/package-selection-union.test.ts`: rot guard, owner derivation, fail-closed exhaustiveness | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
+- T10 | S10, S11 | worker `gentle-ai-worker` — `docs/turborepo.md`: stated boundary, type-only pairing, orphan bucket status, regenerated census | `d84400907bbc4a626b6c9c81dd09d5f683350de4`
 ## Log
 
 L1 — the original request, verbatim:
@@ -250,3 +250,16 @@ re-synchronised: the two other census-sense numbers were stale and are now `142 
 pnpm test collects 827 files`; line 57's "565 files in the census below", the 565-file and 405-file
 references in the removed-`^test`-edge prose, `@repo/kg=549`, `orphan=29` and the `78`/`69`/`0` exit
 codes were each verified to still be true and left alone.
+
+L22 — the slice is committed as ONE work unit. Commit
+`d84400907bbc4a626b6c9c81dd09d5f683350de4` (`feat(selection): declare type-only dependents and fail
+closed on unreachable tests`) holds all six paths: `scripts/package-selection.ts`,
+`scripts/package-tasks.ts`, `test/package-selection-union.test.ts`,
+`test/package-task-boundary-notice.test.ts`, `docs/turborepo.md` and this document. The notice was NOT
+split into its own commit: it is the developer-facing half of the same declaration, and a commit that
+declared a gap without telling the developer about it would be the half-fix this slice exists to avoid.
+The full pre-commit battery ran on that tree, hooks included and not bypassed: `tsc --noEmit` 0,
+`typecheck:tests` 0 (1592 files), `build` 0, `lint` 0 (triple 558 / 396 / 423, unchanged), `fallow:ci` 0,
+and the full suite `pnpm test` exit 0 with `Test Files 824 passed | 3 skipped (827)` and `Tests 6139
+passed | 4 skipped (6143)` in 323.32 s, load 2.59 before and 6.61 after. The suite's own `827` collected
+files is an independent confirmation of the regenerated census in L21.
