@@ -16,21 +16,33 @@
  * This file closes the gap: a synthetic key, an injected `fetchImpl`, no environment
  * dependency, no network, no vendor spend.
  *
- * ## Both arms, and why neither is decoration
+ * ## Both arms, and why neither alone is sufficient
  *
  * Arm A drives the REAL client and asserts the message carries no credential and no
  * `Bearer <token>` shape. That assertion is worthless on its own: a message that
  * never contained a key in the first place would satisfy it while proving nothing.
  * Arm B therefore mocks `redactSecrets` to the identity function and shows the SAME
- * two scenarios DO leak the key. Arm B is the permanent mutation proof — it is what
- * makes Arm A able to fail, because it demonstrates that with the redaction removed
- * the credential really is present in the text that would be persisted. The value
- * layer is asserted separately, since only it can catch a key that matches no header
- * or bearer shape.
+ * two scenarios DO leak the key, which is what makes Arm A able to fail: it
+ * demonstrates that with the redaction removed the credential really is present in
+ * the text that would be persisted. The value layer is asserted separately, since
+ * only it can catch a key that matches no header or bearer shape.
+ *
+ * The two arms are not interchangeable, and they do not cover the same faults: Arm A
+ * catches both a broken redactor AND a redactor that is never called, while Arm B
+ * catches only the first. See `clientWithoutScrub` below for the two mutation probes
+ * (M1, M2) that separate them, and for why neither arm alone is sufficient.
  *
  * Arm A imports the real modules statically and Arm B loads its client through
  * `vi.doMock` + `vi.resetModules()` + a dynamic `import()`, so a mocked module can
  * never poison the real arm.
+ *
+ * ## Nothing guards the guard
+ *
+ * If this file's fixtures or Arm B were weakened, no other test in the suite would
+ * notice: these assertions are the only ones that go red when redaction breaks, so
+ * the guard's own coverage is itself unguarded. That is inherent to a mutation-style
+ * proof rather than an oversight, and it is worth stating plainly rather than
+ * papering over with a redundant file.
  *
  * ## What the dummy-key diagnostic established (observed)
  *
@@ -119,7 +131,32 @@ async function persistedReason(client: JevDecisionClient): Promise<string> {
  * A second, independently evaluated `client.js` whose `redactSecrets` is identity.
  *
  * Mocking the module rather than editing `client.ts` keeps the production file
- * untouched while reproducing exactly what deleting `scrub()` would do.
+ * untouched. It does NOT reproduce "deleting `scrub()`": neutralising
+ * `redactSecrets` and removing the `scrub()` call are two distinct mutations, and
+ * this arm covers only the first. Two probes separate them, and both are reproducible
+ * by hand against a scratch copy of the repository:
+ *
+ * - **M1 — `redactSecrets` made identity.** Arm A goes red (its two leak assertions
+ *   fail) and Arm B stays green, because Arm B *is* that mutation. The separate
+ *   value-layer test also goes red, since it exercises the real function.
+ * - **M2 — the `scrub()` call deleted from both error paths of `client.ts`** (the
+ *   401-body path and the transport-failure path). Arm A goes red for both cases:
+ *   the raw message still carries the credential verbatim, so a real redactor that is
+ *   never invoked cannot remove it. Arm B stays GREEN under M2 — its client loses the
+ *   call too, but its `redactSecrets` is already identity, so its expectation of a
+ *   leak is satisfied either way.
+ *
+ * So the arms cover different faults. Arm A catches BOTH M1 and M2; Arm B catches
+ * ONLY broken redaction logic (M1). Arm B's mutation is additionally broader than
+ * that single fault, because neutralising the module also disables the URL and
+ * header-value redaction performed inside `redactRequestDescriptor` — and this base
+ * URL (`http://127.0.0.1:1`) carries no credential for any assertion here to observe
+ * that loss.
+ *
+ * Together the pair excludes both mutations; neither arm alone is sufficient. Arm A
+ * alone would stay green if it were asserting on a message that never held a
+ * credential, and Arm B alone would stay green with `scrub()` deleted from
+ * production.
  *
  * @param fetchImpl - The transport to inject.
  * @returns A client with redaction neutralised.
