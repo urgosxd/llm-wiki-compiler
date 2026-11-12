@@ -6,7 +6,7 @@
  * Spec: odd/tasks/control-gates-ci.md — S1, S2, S3, S5, S6, S7, S8, S10.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { load } from "js-yaml";
 import { describe, expect, it } from "vitest";
 import { compareViolations, type HouseViolation, type Snapshot } from "../scripts/lint-ratchet.js";
@@ -16,6 +16,8 @@ interface WorkflowStep {
   name?: string;
   uses?: string;
   run?: string;
+  with?: Record<string, unknown>;
+  env?: Record<string, string>;
 }
 
 /** The parsed shape of a workflow file, reduced to what these assertions read. */
@@ -35,10 +37,12 @@ const TURBO_TEST_LABEL = "Run the full suite through the task graph";
 /**
  * The commands those two steps run.
  *
- * `pnpm exec turbo …`, not `corepack pnpm exec turbo …`: CI provisions pnpm through
- * `pnpm/action-setup@v4`, which resolves `packageManager` from the root manifest, so the
- * bare form is the one the job guarantees. `corepack` is a local workaround for a host
- * whose bare `pnpm` exits 127, and it must not appear in the workflow.
+ * `pnpm exec turbo …` inside `build-and-test`, not `corepack pnpm exec turbo …`: that job
+ * provisions pnpm through `pnpm/action-setup@v4`, which resolves `packageManager` from the
+ * root manifest, so the bare form is the one that job guarantees. `corepack` does appear in
+ * `ci.yml`, but only in `codebase-health`, which provisions no toolchain and lets corepack
+ * resolve the same `packageManager` itself. The two jobs are deliberately different rather
+ * than inconsistent, and neither form is a workaround for this host.
  */
 const TURBO_BUILD_COMMAND = "pnpm exec turbo run build";
 const TURBO_TEST_COMMAND = "pnpm exec turbo run test --filter=//";
@@ -173,6 +177,87 @@ describe("control gates — CI wiring", () => {
       expect(index(after), `${after} must be a step label in ci.yml`).toBeGreaterThan(-1);
       expect(index(before), `${before} must precede ${after}`).toBeLessThan(index(after));
     }
+  });
+});
+
+/** The one step that gates the codebase, by its `ci.yml` label. */
+const FALLOW_STEP_LABEL = "Gate the codebase health of this changeset";
+
+/**
+ * The variable that makes a vacuous base fatal.
+ *
+ * CI is its ONLY legitimate home: with it unset, `scripts/fallow-ci.sh` warns and proceeds,
+ * which is what a developer on a branch with no commits yet needs (`.husky/pre-commit` runs
+ * that script, and `AGENTS.md` forbids `--no-verify`). So dropping this one `env:` line from
+ * the workflow would NOT fail the script's own tests — it would silently return CI to
+ * warn-and-proceed, green having compared nothing. That is why the declaration itself is
+ * pinned below, and why every pin names the property it protects.
+ */
+const STRICT_BASE_ENV = "FALLOW_CI_REQUIRE_DISTINCT_BASE";
+
+/** The parsed `codebase-health` job of `ci.yml`. */
+function codebaseHealthJob(): { env?: Record<string, string>; steps?: WorkflowStep[] } {
+  return readWorkflow(".github/workflows/ci.yml").jobs["codebase-health"] ?? {};
+}
+
+/** Every step in every workflow that declares `key` in its `env`, as `<file>:<label>`. */
+function stepsDeclaringEnv(key: string): string[] {
+  const dir = new URL("../.github/workflows/", import.meta.url);
+  return readdirSync(dir)
+    .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
+    .flatMap((name) => {
+      const workflow = load(readFileSync(new URL(name, dir), "utf8")) as Workflow;
+      return Object.entries(workflow.jobs).flatMap(([, job]) =>
+        (job.steps ?? [])
+          .filter((step) => step.env !== undefined && key in step.env)
+          .map((step) => `${name}:${(step.name ?? step.uses ?? "").trim()}`),
+      );
+    })
+    .sort();
+}
+
+describe("control gates — the codebase-health job shape", () => {
+  // Provisioning is pinned positionally AND by index, as `build-and-test` does it: a required
+  // check that leaned on the runner image's toolchain would gate with something unverified.
+  it("keeps four steps: full-history checkout, pnpm, Node 24, then the gate, and no fallow action", () => {
+    const steps = codebaseHealthJob().steps ?? [];
+    expect(steps).toHaveLength(4);
+    expect(steps[0]).toMatchObject({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } });
+    expect(steps[1]).toMatchObject({ uses: "pnpm/action-setup@v4" });
+    expect(steps[2]).toMatchObject({ uses: "actions/setup-node@v4", with: { "node-version": 24, cache: "pnpm" } });
+    expect(steps[3]?.name).toBe(FALLOW_STEP_LABEL);
+    const uses = steps.map((step) => step.uses ?? "");
+    expect(uses.indexOf("pnpm/action-setup@v4")).toBeLessThan(uses.indexOf("actions/setup-node@v4"));
+    expect(JSON.stringify(codebaseHealthJob()), "the pinned fallow action is not the gate").not.toContain("fallow-rs");
+  });
+
+  it("runs the project's own gate command with the pnpm the job provisioned, not corepack", () => {
+    const runs = (codebaseHealthJob().steps ?? []).flatMap((step) => (step.run ? [step.run] : []));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toContain("pnpm run fallow:ci");
+    expect(runs[0], "the job provisions pnpm; it must not assume the runner image's corepack").not.toContain("corepack");
+  });
+
+  it("takes the event's own base, refuses an absent one, and detaches HEAD before repointing main", () => {
+    const steps = codebaseHealthJob().steps ?? [];
+    const gate = steps.find((step) => step.name === FALLOW_STEP_LABEL);
+    const run = gate?.run ?? "";
+    expect(gate?.env?.BASE_SHA).toBe("${{ github.event.pull_request.base.sha || github.event.before }}");
+    expect(run, "no fallback to a base the event did not name").not.toContain("origin/main");
+    expect(run).toContain("::error::");
+    expect(run).toContain("exit 1");
+    const order = ["0000000000000000000000000000000000000000", "git checkout --detach", "git update-ref refs/heads/main"]
+      .map((needle) => run.indexOf(needle));
+    expect(order, `missing from the gate step: ${order}`).not.toContain(-1);
+    expect([...order].sort((left, right) => left - right), "detach before repointing main").toEqual(order);
+  });
+
+  it("declares the strict distinct-base mode on that one CI step, because its absence makes CI vacuous", () => {
+    expect(stepsDeclaringEnv(STRICT_BASE_ENV), "CI-only strictness, on exactly one step").toEqual([
+      `ci.yml:${FALLOW_STEP_LABEL}`,
+    ]);
+    const gate = (codebaseHealthJob().steps ?? []).find((step) => step.name === FALLOW_STEP_LABEL);
+    expect(gate?.env?.[STRICT_BASE_ENV], "the exact value, not mere presence").toBe("1");
   });
 });
 

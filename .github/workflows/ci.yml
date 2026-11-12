@@ -172,25 +172,79 @@ jobs:
       # facade, its exact workspace dependencies, and consumer declarations.
       - run: pnpm run test:pack
 
-  # Scope note, verified: this workflow never passes `--changed-since`. The
-  # pinned `fallow-rs/fallow` wrapper (the `uses:` below) declares an
-  # `auto-changed-since` input defaulting to `true`, and on
-  # `pull_request`/`pull_request_target` events it injects
-  # `--changed-since "$PR_BASE_SHA"`, so PR runs analyze the diff only. A push
-  # to `main` has no PR context, so this same job runs full-tree there.
-  # Base-SHA resolution can fail (shallow checkouts walk a fallback chain);
-  # when it does the wrapper drops the flag and the run degrades to full-tree,
-  # not to an error.
-  # Verification depth: the absence of `--changed-since` is checked against
-  # this file; the injection mechanism was read from the action wrapper's
-  # source at the pinned commit, not from anything in this repository.
-  # Re-verify upstream at the pin before changing the inputs below.
+  # The gate, not the raw report. `pnpm run fallow:ci` is what `AGENTS.md` calls
+  # "the command that actually gates": it runs `fallow audit --gate new-only` and
+  # decides from the `attribution` block alone, so inherited findings are printed
+  # and never counted. This job used to run the pinned `fallow-rs` action wrapper
+  # with `fail-on-issues: true`, and that is a different command: on a push to
+  # `main` it analysed the full tree and failed on inherited debt forever — run
+  # 43140640639, "Fallow found 204 issues", measured back as 197 dead-code +
+  # 6 dupes + 1 health in a tree with no `node_modules`, because this job never
+  # installed and every workspace import resolved to nothing (169
+  # `unresolved_imports`). The same command on an installed tree reports 46. So CI
+  # and a laptop now run one command, and the only difference is the checkout
+  # state it reads.
+  #
+  # pnpm and Node are provisioned exactly as `build-and-test` above and
+  # `typecheck-tests.yml` do — `pnpm/action-setup@v4` (which resolves `packageManager`
+  # from the root manifest) then `actions/setup-node@v4` with Node 24 and the pnpm
+  # store cached. The package manager this job INSTALLS with is therefore the one it
+  # GATES with, and nothing in a required check depends on what the runner image
+  # happens to ship preinstalled. What the job needs is `node_modules`
+  # (`scripts/fallow-ci.sh` runs `./node_modules/.bin/fallow`) plus full history —
+  # `fetch-depth: 0` — because `audit` attributes against its own merge-base with a
+  # LOCAL `main` ref, and a shallow checkout carries neither the history nor that ref.
+  #
+  # The base is the event's own: `github.event.before` on a `push` (the tip of
+  # `main` before the push), `pull_request.base.sha` on a pull request. `BASE_SHA`
+  # is empty or all zeros on a branch's first push, and then this step FAILS
+  # instead of falling back to `origin/main`: a base that is not the event's own
+  # would gate a changeset nobody asked about, and a vacuous pass is worse than a
+  # red step. HEAD is detached before `main` is repointed, because moving the
+  # checked-out branch moves HEAD with it and `audit` would compare HEAD against
+  # itself.
+  #
+  # `FALLOW_CI_REQUIRE_DISTINCT_BASE=1` is what makes that refusal fatal, and this job
+  # is the ONLY place that sets it. Without the variable the script warns on stderr and
+  # runs anyway — the shape a developer on a fresh branch is in, where HEAD == `main`
+  # until the first commit lands, `.husky/pre-commit` runs this same script, and
+  # `AGENTS.md` forbids `--no-verify`. With it, CI can never be green having compared
+  # nothing. Deleting the line below would not fail anything else: the local shape is
+  # legitimate, so the warning would take over silently. `test/control-gates.test.ts`
+  # pins the declaration for exactly that reason.
+  #
+  # A missing base is loud, never silently green: `fallow` exits 2 when it cannot
+  # resolve the ref, and `scripts/check-fallow-report.mjs` fails closed with
+  # exit 2 when the document cannot prove new-only attribution.
   codebase-health:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Pin the action wrapper while using the signed 2.82.0 binary release.
-      - uses: fallow-rs/fallow@5cc7152083ad57f20880a14ac82262a5a6861eec
         with:
-          version: 2.82.0
-          fail-on-issues: true
+          fetch-depth: 0
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      # Install, establish the base, detach, repoint `main`, run the gate: one
+      # step, so no rotation of steps can separate the base from the run that
+      # depends on it.
+      - name: Gate the codebase health of this changeset
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          # The strict mode of `scripts/fallow-ci.sh`, set HERE and nowhere else.
+          FALLOW_CI_REQUIRE_DISTINCT_BASE: "1"
+        run: |
+          pnpm install --frozen-lockfile
+          base="${BASE_SHA}"
+          case "$base" in
+            '' | 0000000000000000000000000000000000000000)
+              echo "::error::codebase-health could not establish the base commit for this event; refusing to run a gate that compared nothing" >&2
+              exit 1
+              ;;
+          esac
+          git checkout --detach --quiet
+          git update-ref refs/heads/main "$base"
+          pnpm run fallow:ci

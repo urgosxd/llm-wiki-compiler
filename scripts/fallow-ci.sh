@@ -19,6 +19,10 @@
 # that remote, whose `main` can lag local `main` by many commits and would drag
 # unrelated history into the changeset.
 #
+# That base is checked before the gate runs: when it IS HEAD the audit compares
+# HEAD against HEAD and reports a pass, which reads exactly like a clean
+# changeset. See `refuse_vacuous_base` below.
+#
 # IMPORTANT — known parity gap:
 #   fallow's clone-detection has empirical platform variation. The same
 #   command, fallow version, commit, and base SHA can return 0 dupes on
@@ -54,7 +58,45 @@ BASE_SHA=$(git merge-base "$BASE_REF" HEAD 2>/dev/null || true)
 # One invocation for both paths: `audit` owns the base-ref resolution, and the
 # checker fails closed (exit 2) when the report proves no new-only attribution,
 # so a missing or bogus base is red rather than silently green.
+#
+# Handle the one base the checker CANNOT catch, in two modes. `audit` attributes
+# against its own merge-base with the local default branch; when local `main`
+# already contains everything this checkout has, that merge-base IS HEAD, so the
+# run compares HEAD against itself and the report reads `changed_files_count: 0`,
+# `verdict: pass`, every introduced counter 0 — indistinguishable from "compared
+# and found nothing". The condition is that COMPARISON, not SHA equality: `main`
+# merely being ahead of HEAD produces it too. The document cannot prove it,
+# because `base_ref` names a REF ("main") and `head_sha` is abbreviated, never the
+# resolved base commit. So the comparison happens here, where git is, before the
+# analyzer runs rather than after.
+#
+#   FALLOW_CI_REQUIRE_DISTINCT_BASE=1  -> fatal (exit 2). CI sets this, so a CI run
+#                                        can never be green having compared nothing.
+#   unset / anything else             -> a warning on stderr, then the analyzer
+#                                        decides. This is the local default, and it
+#                                        is deliberate: `.husky/pre-commit` and
+#                                        `gates:static` both run this script, and a
+#                                        branch whose first commit has not landed yet
+#                                        has HEAD == main, so a fatal check here would
+#                                        make every branch's first commit impossible —
+#                                        and `AGENTS.md` forbids `--no-verify`.
+#
+# Neither mode is silent: the warning is emitted by this script, on stderr, so
+# fallow's `-q` cannot suppress it.
+refuse_vacuous_base() {
+  local head base
+  head=$(git rev-parse HEAD 2>/dev/null || true)
+  base=$(git merge-base refs/heads/main HEAD 2>/dev/null || true)
+  [ -n "$head" ] && [ "$base" = "$head" ] || return 0
+  if [ "${FALLOW_CI_REQUIRE_DISTINCT_BASE:-}" = "1" ]; then
+    echo "Fallow CI: refusing to run — refs/heads/main already contains everything this checkout has (merge-base(refs/heads/main, HEAD) is HEAD, ${head}), so the gate compared nothing and a pass would be a statement about nothing. Move local main to the real comparison base, or check out the branch you meant to gate." >&2
+    exit 2
+  fi
+  echo "Fallow CI: WARNING — refs/heads/main already contains everything this checkout has (merge-base(refs/heads/main, HEAD) is HEAD, ${head}), so the gate compared nothing. Committing your work is what makes it comparable; CI sets FALLOW_CI_REQUIRE_DISTINCT_BASE=1 and refuses this shape instead." >&2
+}
+
 run_gate() {
+  refuse_vacuous_base
   ./node_modules/.bin/fallow --root . audit --format json --gate new-only -q \
     | node scripts/check-fallow-report.mjs
 }
