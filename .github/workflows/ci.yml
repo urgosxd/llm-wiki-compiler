@@ -111,9 +111,15 @@ jobs:
       # claim, so the script runs the containers; a Dockerfile that builds into an
       # image that dies on its first import used to be invisible to every gate here.
       #
-      # A STEP, not a new job, for the reason the step above gives: it inherits the
-      # required `build-and-test (24)` name, while a new job name has no
-      # branch-protection entry and its red result could be merged past.
+      # A STEP, not a new job: it shares `build-and-test`'s check identity --
+      # with no authored job-level `name:`, GitHub renders the job id plus the
+      # matrix value from `node-version: [24]`, so the check publishes as
+      # `build-and-test (24)`, while a separate job would publish a different
+      # name. `main` has no branch protection enabled (`"protected": false`,
+      # no required-status-check contexts), so no red check blocks a merge and
+      # these checks are advisory. If protection is ever turned on, the name to
+      # require is `build-and-test (24)`, and an authored job-level `name:`
+      # would replace that rendering outright.
       #
       # Cost, measured cold with `--no-cache` at
       # 5260d423963bd84911c239bfa5e57d2eec02bffe on a 16-core host: 64 s root +
