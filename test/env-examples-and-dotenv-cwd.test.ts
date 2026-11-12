@@ -56,15 +56,18 @@ interface ExampleEnvFile {
 }
 
 /**
- * The three example env files a discoverability fix has to reach.
+ * Every tracked example env file an operator can copy into a `.env`.
  *
- * `docker/env.example` is deliberately absent: it documents the container's
- * shell-level compose variables, not the operator's `.env`, and the commit this
- * file pins did not touch it.
+ * `docker/env.example` belongs here even though its directory reads as
+ * container-only: its own first line says "Copy to `.env` at the repository
+ * root", which makes it the example of the very `.env` this guard's second half
+ * resolves. It stayed unguarded because the original sweep asked where the
+ * variable was missing instead of which example files exist.
  */
 const EXAMPLE_ENV_FILES: ExampleEnvFile[] = [
   { path: "packages/llmwiki-kg/.env.example" },
   { path: "docker/hub.env.example" },
+  { path: "docker/env.example" },
   { path: ".env.synthetic.example" },
 ];
 
