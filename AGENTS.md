@@ -136,25 +136,50 @@ that hash a run skips the ~42 s tsup rebuild and a single-file run drops from
 ~48 s to under a second. To force the rebuild anyway — after a suspicious
 `dist/`, for example — set `LLMWIKI_TEST_FORCE_BUILD=1`.
 
-### Per-Package Task Surfaces
+### Iterating per package, and why the full suite is still the gate
 
-Every workspace package (`@repo/foundation`, `@repo/wiki`, `@repo/kg`,
-`@repo/api`) declares `test`, `lint` and `typecheck` (plus `fallow` for `@repo/kg`),
-and each `test` set is **derived** at run time from the import graph rather than
-listed by hand — a new test that imports the package joins its selection by itself.
-Run one package's tools with `turbo run <task> --filter=<pkg>` (for example
-`turbo run test --filter=@repo/wiki`), or the same work without turbo as
-`corepack pnpm --filter <pkg> run <task>`. A filtered run executes **exactly** the
-filtered package's tasks: no task declares a `^test` edge, so `--filter=@repo/wiki`
-starts no `@repo/foundation` task. The single pgvector database is protected by
-`"concurrency": "1"` in `turbo.json` — a concurrency constraint, one task at a time,
-not a dependency edge. What this section describes is a local selection convenience,
-not a gate: **the gate of record is still the full suite**, and the root `pnpm test`
-script is unchanged and is what a local run uses. CI reaches that same suite through
-`turbo run test --filter=//` inside the `build-and-test` job, and no task in `turbo.json`
-is cached (`cache: false` on every one), so the gate still means an execution rather than
-a cache hit. No CI job name changed. Design, the cache-less graph, the
-`pnpm`-on-`PATH` prerequisite and the known holes: `docs/turborepo.md`.
+`turbo run test --filter=@repo/wiki` runs one package's tests and nothing else. The
+selection census measured on this workspace puts `@repo/wiki` at **565** of the
+**827** collected test files — 68.3% by arithmetic on those two counts — with
+`@repo/foundation` at 405, `@repo/kg` at 549 and `@repo/api` at 13. That is the
+iteration loop to prefer over the full run.
+
+`test`, `lint`, `typecheck` and `fallow` all select the same way, and each routes to
+the **real** root gate rather than to a weaker sibling: `@repo/kg#typecheck` spawns
+`scripts/kg-typecheck.ts` itself rather than re-declaring its rules, and `lint` runs
+the same ratchet scoped to the package's file set. A filtered run executes **exactly**
+the filtered package's tasks — no task declares a `^test` edge, so
+`--filter=@repo/wiki` starts no `@repo/foundation` task. The single pgvector database
+is protected by `"concurrency": "1"` in `turbo.json`, a concurrency constraint of one
+task at a time rather than a dependency edge.
+
+**The gate of record is still the full suite, in CI and before a PR**:
+`turbo run test --filter=//`. A selective run is a local iteration affordance and
+never a gate: a gate that runs a different set depending on which files you happened
+to touch stops being a record of anything.
+
+Four properties of that selection are worth knowing before you trust it:
+
+- **It models static import specifiers only.** `require(`, computed `import(` and
+  `new URL(` are invisible to it, and four type-only dependents are deliberately
+  outside the `@repo/wiki` set: `test/provenance-metadata-shape.test.ts`,
+  `test/query-candidate-id-absent.test.ts`, `test/viewer-sidebar.test.ts` and
+  `test/sdk/published-dimensions-port.test.ts`. A **type** change to wiki is caught by
+  the root `typecheck:tests`, not by the selective run, and a green selective run
+  says nothing about it. The run prints a notice naming them; do not silence it.
+- **Bare `pnpm` must be on `PATH`.** Turbo spawns the package manager itself, and
+  `corepack pnpm` does not reach that spawn. On the reference host bare `pnpm` exits
+  `127`, so a shim is needed — a host defect, not part of this repository.
+- **`cache: false` stays on every verdict task.** Turbo is used here for selection
+  and ordering, not for speed: a cache hit is a green that did not run.
+- **`//` is the root project**, and a root script joins a task run only through a
+  declared `//#<task>` entry. That is why the distribution's build is `//#build`, and
+  why `turbo run build --filter=@repo/kg` runs `@repo/kg#build` alone — exit `0`, one
+  task — and leaves `dist/` to `//#build`: filtering to a package never builds the
+  distribution for you.
+
+The design, the rejected candidates and the named gaps belong to `docs/turborepo.md`;
+this section is only the operating instructions.
 
 ### Pre-Commit Checks
 
@@ -210,16 +235,32 @@ will not find the literal — the graph is the caller now, not because the rule 
 
 ### Branch protection
 
-`test-typecheck` is required by main's branch protection, alongside
-`codebase-health` and `build-and-test (24)`. Branches must be up to date before
-merging. Workflow changes must preserve the required check name or update branch
-protection in the same rollout: **renaming a CI job without updating branch
-protection silently un-gates `main`**.
+**`main` is not protected.** Measured against the live repository,
+`GET /repos/urgosxd/llm-wiki-compiler/branches/main` returns `"protected": false`
+with `"protection": {"enabled": false, "required_status_checks":
+{"enforcement_level": "off", "contexts": []}}`. Nothing at the GitHub level refuses
+a merge. The checks described below exist and run on every push and pull request,
+but they are **advisory**: a red one does not stop a merge, and reading them before
+merging is a human responsibility rather than an enforced gate. Branch protection is
+a **missing control**, not an existing one — and if it is ever turned on, these are
+the check names it must require.
 
-The lint ratchet runs as a **step inside `build-and-test`**, not as its own job:
-a step inherits that job's required check name, while a new job name has no
-branch-protection entry and its red result could be merged past. Renaming or
-splitting the lint step into a separate job would therefore silently un-gate it.
+The three are `build-and-test (24)`, `codebase-health` and `test-typecheck`. Two
+mechanical facts make the first of them easy to break by accident:
+
+- **`build-and-test (24)` is not written anywhere in the workflows.** The job key is
+  `build-and-test` with no job-level `name:`, so GitHub renders the key plus the
+  matrix value from `node-version: [24]`. An explicit job-level `name:` replaces that
+  rendering outright, and a second matrix value renames the check into a `(22)`/`(24)`
+  pair. Either way a required-check entry written against `build-and-test (24)` stops
+  matching.
+- `codebase-health` and `test-typecheck` are each a job of their own.
+
+The lint ratchet runs as a **step inside `build-and-test`**, not as its own job: a
+step inherits that job's check name, while a new job name has no branch-protection
+entry and its red result could be merged past. Renaming or splitting the lint step
+into a separate job would therefore silently un-gate it. That reasoning holds whether
+protection is enabled today or turned on later.
 
 ## General Rules
 
