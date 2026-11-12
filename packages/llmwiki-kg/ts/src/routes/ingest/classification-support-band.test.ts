@@ -40,6 +40,21 @@
  * assertion of that string could only be written against a production change. The
  * reason string itself is pinned, DB-free, in `core/jev/interpret-support.test.ts`.
  *
+ * ## Two holes verification found after the file was green twice
+ *
+ * `interpretSupport` resolves the LABEL (`SUPPORTED` / `UNSUPPORTED`) before it applies
+ * the 0.6 band, so the band — not the label — decides which arm is stored. Nothing
+ * pinned that: the DB-free case uses `SUPPORTED` at 0.55 and the only `UNSUPPORTED`
+ * case is decided at 0.9, so a shortcut that returned the decided arm early for
+ * `UNSUPPORTED` would have shipped silently. The first case below closes it.
+ *
+ * The support judgement is keyed by candidate ref, so the relation reads its own
+ * entry and never a neighbour's. Nothing pinned THAT either: every script here gave
+ * the same direction to entities and relation, so a relation reading the first
+ * entity's judgement would produce the same stored value and stay green. The second
+ * case below gives the two a different direction, so the shared-readout mistake
+ * shows up as a stored value.
+ *
  * No network: the extraction provider is the shared fetch stub and the decision
  * client is `ScriptedJevClient`.
  */
@@ -110,6 +125,9 @@ const UNDECIDED_SUPPORT_TOP = 0.55;
 /** A top probability comfortably above the 0.6 band, for the candidate that decides. */
 const DECIDED_SUPPORT_TOP = 0.92;
 
+/** The second entity's decided top: above the band, and distinct from the first's. */
+const POLICY_SUPPORT_TOP = 0.88;
+
 /** A catalog fit above the 0.65 uncertain-fit band, and a top above the 0.45 minimum. */
 const CLASSIFIED_FIT = 0.8;
 const CLASSIFIED_TOP = 0.8;
@@ -148,7 +166,7 @@ function relationAnswer(label: string, top: number, fits: number): JevScriptStep
 const SCRIPT: readonly JevScriptStep[] = [
   supportAnswer("SUPPORTED", UNDECIDED_SUPPORT_TOP),
   supportAnswer("SUPPORTED", DECIDED_SUPPORT_TOP),
-  supportAnswer("SUPPORTED", 0.88),
+  supportAnswer("SUPPORTED", POLICY_SUPPORT_TOP),
   entityAnswer("Document", CLASSIFIED_TOP, CLASSIFIED_FIT),
   entityAnswer("Policy", 0.85, 0.85),
   entityAnswer("Role", 0.3, 0.02),
@@ -166,8 +184,45 @@ const SCRIPT: readonly JevScriptStep[] = [
  */
 const RELATION_SCRIPT: readonly JevScriptStep[] = [
   supportAnswer("SUPPORTED", DECIDED_SUPPORT_TOP),
-  supportAnswer("SUPPORTED", 0.88),
+  supportAnswer("SUPPORTED", POLICY_SUPPORT_TOP),
   supportAnswer("SUPPORTED", UNDECIDED_SUPPORT_TOP),
+  entityAnswer("Document", CLASSIFIED_TOP, CLASSIFIED_FIT),
+  entityAnswer("Policy", 0.85, 0.85),
+  entityAnswer("Role", 0.3, 0.02),
+  relationAnswer("governs", CLASSIFIED_TOP, CLASSIFIED_FIT),
+];
+
+/**
+ * The same ingest as `RELATION_SCRIPT`, with the relation's support answer flipped to
+ * the OTHER label, still undecided.
+ *
+ * `UNSUPPORTED` at 0.55 is the cell the label-first wiring would get wrong: resolving
+ * the label early turns `uncertain` into the decided negative the label names. Both
+ * entities and the classification answers stay identical to `RELATION_SCRIPT`, so only
+ * the relation's support label moves.
+ */
+const UNSUPPORTED_RELATION_SCRIPT: readonly JevScriptStep[] = [
+  supportAnswer("SUPPORTED", DECIDED_SUPPORT_TOP),
+  supportAnswer("SUPPORTED", POLICY_SUPPORT_TOP),
+  supportAnswer("UNSUPPORTED", UNDECIDED_SUPPORT_TOP),
+  entityAnswer("Document", CLASSIFIED_TOP, CLASSIFIED_FIT),
+  entityAnswer("Policy", 0.85, 0.85),
+  entityAnswer("Role", 0.3, 0.02),
+  relationAnswer("governs", CLASSIFIED_TOP, CLASSIFIED_FIT),
+];
+
+/**
+ * The reverse leak: BOTH entities undecided, the relation decided.
+ *
+ * Every other script here gives entities and relation the same support direction, so a
+ * relation that read a neighbour's judgement instead of its own would store the same
+ * value it should and stay green. Here the two directions differ, so a shared readout
+ * lands on the relation row as `uncertain` where `supported` belongs.
+ */
+const ENTITIES_UNDECIDED_SCRIPT: readonly JevScriptStep[] = [
+  supportAnswer("SUPPORTED", UNDECIDED_SUPPORT_TOP),
+  supportAnswer("SUPPORTED", UNDECIDED_SUPPORT_TOP),
+  supportAnswer("SUPPORTED", DECIDED_SUPPORT_TOP),
   entityAnswer("Document", CLASSIFIED_TOP, CLASSIFIED_FIT),
   entityAnswer("Policy", 0.85, 0.85),
   entityAnswer("Role", 0.3, 0.02),
@@ -252,24 +307,50 @@ async function relationshipRows(stackId: string) {
   );
 }
 
-describe.skipIf(skipReason !== false)("ingest stores the support band's undecided verdict", () => {
-  beforeEach(async () => {
-    await deleteFixtureRows();
-    installFetchStub();
-  });
+/** One stored relationship row, as the assertions below read it. */
+type StoredRelationship = Awaited<ReturnType<typeof relationshipRows>>[number];
 
-  afterEach(async () => {
-    uninstallFetchStub();
-    await deleteFixtureRows();
-  });
+/** One stored entity row, as the assertions below read it. */
+type StoredEntity = Awaited<ReturnType<typeof entityRows>>[number];
+
+/** Ingests one scripted run into a fresh Stack and returns that Stack's id. */
+async function ingestRun(steps: readonly JevScriptStep[], label: string): Promise<string> {
+  const app = buildApp(runtime(steps));
+  const stackId = await createStack(app, label);
+  await ingestAnswer(app, stackId);
+  return stackId;
+}
+
+/** The single relation {@link ANSWER} asserts, or `undefined` when none was written. */
+async function relationRow(stackId: string): Promise<StoredRelationship | undefined> {
+  return (await relationshipRows(stackId)).find((row) => row.predicate === "deja sin efecto");
+}
+
+/** One stored entity by name, or `undefined` when the extractor produced no such row. */
+async function entityRow(stackId: string, name: string): Promise<StoredEntity | undefined> {
+  return (await entityRows(stackId)).find((row) => row.name === name);
+}
+
+/** Puts the fixture database and the fetch stub in the state every case starts from. */
+async function resetFixture(): Promise<void> {
+  await deleteFixtureRows();
+  installFetchStub();
+}
+
+/** Undoes {@link resetFixture}, so one case cannot leave rows behind for the next. */
+async function clearFixture(): Promise<void> {
+  uninstallFetchStub();
+  await deleteFixtureRows();
+}
+
+describe.skipIf(skipReason !== false)("ingest stores the support band's undecided verdict", () => {
+  beforeEach(resetFixture);
+
+  afterEach(clearFixture);
 
   it("stores uncertain support on a row the classifier confidently classified (S3)", async () => {
-    const app = buildApp(runtime());
-    const stackId = await createStack(app, "uncertain");
-    await ingestAnswer(app, stackId);
-
-    const rows = await entityRows(stackId);
-    const runbook = rows.find((row) => row.name === "Runbook");
+    const stackId = await ingestRun(SCRIPT, "uncertain");
+    const runbook = await entityRow(stackId, "Runbook");
     // A 0.55 top probability is under the 0.6 support band, so the judgement is
     // stored as undecided rather than being rounded into a direction.
     expect(runbook?.support_state).toBe("uncertain");
@@ -277,26 +358,18 @@ describe.skipIf(skipReason !== false)("ingest stores the support band's undecide
     // both classification bands. Support and classification are independent (S32).
     expect(runbook?.classification_state).toBe("classified");
     expect(runbook?.canonical_type).toBe("Document");
-
-    const policy = rows.find((row) => row.name === "Política anterior");
     // The same run's other candidate is decided, so `uncertain` is not a value the
     // writer puts on every row.
-    expect(policy?.support_state).toBe("supported");
+    expect((await entityRow(stackId, "Política anterior"))?.support_state).toBe("supported");
   });
 
   it("stores uncertain support on a relation the classifier confidently classified (T5)", async () => {
-    const app = buildApp(runtime(RELATION_SCRIPT));
-    const stackId = await createStack(app, "relation-uncertain");
-    await ingestAnswer(app, stackId);
-
-    const relation = (await relationshipRows(stackId)).find(
-      (row) => row.predicate === "deja sin efecto",
-    );
+    const stackId = await ingestRun(RELATION_SCRIPT, "relation-uncertain");
     // The relation half of the 0.6 band abstains exactly as the entity half does: a
     // 0.55 support top is stored as undecided, never rounded into a direction. A
     // mis-wire in `applyRelationDecision` only would have kept every entity test
     // green while shipping relations that claim their assertion is supported.
-    expect(relation).toMatchObject({
+    expect(await relationRow(stackId)).toMatchObject({
       support_state: "uncertain",
       // The same row's classification axis is settled — an 0.8 fit and an 0.8 top
       // clear both classification bands — so the two axes are independent on a
@@ -304,5 +377,27 @@ describe.skipIf(skipReason !== false)("ingest stores the support band's undecide
       classification_state: "classified",
       canonical_type: "governs",
     });
+  });
+
+  it("stores uncertain support for an UNSUPPORTED relation choice whose top is undecided (L9)", async () => {
+    const stackId = await ingestRun(UNSUPPORTED_RELATION_SCRIPT, "relation-unsupported-undecided");
+    // The 0.6 band decides the arm and it is read AFTER the label: an `UNSUPPORTED`
+    // answer whose top is undecided is stored undecided, never the decided negative
+    // the label names. Resolving the label first would ship that value silently.
+    expect(await relationRow(stackId)).toMatchObject({
+      support_state: "uncertain",
+      classification_state: "classified",
+      canonical_type: "governs",
+    });
+  });
+
+  it("stores supported on a relation while both entities stay uncertain (L9)", async () => {
+    const stackId = await ingestRun(ENTITIES_UNDECIDED_SCRIPT, "entities-undecided");
+    // Both entity judgements abstain, so the relation cannot have inherited either.
+    expect((await entityRow(stackId, "Runbook"))?.support_state).toBe("uncertain");
+    expect((await entityRow(stackId, "Política anterior"))?.support_state).toBe("uncertain");
+    // Keyed by candidate ref, so a relation reading a neighbour's verdict would store
+    // `uncertain` here — which is why the two directions must differ.
+    expect((await relationRow(stackId))?.support_state).toBe("supported");
   });
 });
