@@ -129,6 +129,19 @@ about them. It exists for local debugging: **CI must never set
 `LLMWIKI_TEST_ALLOW_NO_DATABASE=1`**, because a green run there would then
 prove nothing about the database-backed suites.
 
+**One test contacts an external service, and it is the single deliberate
+exception.** `packages/llmwiki-kg/ts/src/core/jev/vendor-contract.test.ts` is the
+only test in the suite that reaches a real vendor (`api.typesafe.ai`): every other
+JEV suite runs on the scripted double, so nothing else would notice the moment that
+API's contract moves. It skips loudly without `TYPESAFE_API_KEY`, naming the
+variable and stating that the vendor contract is UNVERIFIED in that run, which means
+**CI reports it SKIPPED — not passed, and not verified**. **CI must never be given
+that key.** A CI run holding a real credential would pay the vendor on every push
+and make the suite non-deterministic — an assertion whose result depends on a remote
+model's answer today cannot be a gate — which is exactly what the "no external
+services" rule above protects. The unverified skip is the correct and cheapest
+outcome, not a gap to close by exporting the credential.
+
 **The build in `test/global-setup.ts` is cached.** A content hash of the `src/`,
 `packages/` and `scripts/` trees plus `tsup.config.ts`, `tsconfig.json` and
 `package.json` is recorded in `.llmwiki/build-stamp.json`, so when nothing feeds
