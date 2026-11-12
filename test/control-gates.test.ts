@@ -35,14 +35,12 @@ const TURBO_BUILD_LABEL = "Build the distribution and the @repo/kg artefact thro
 const TURBO_TEST_LABEL = "Run the full suite through the task graph";
 
 /**
- * The commands those two steps run.
+ * The commands those two steps run, in the bare `pnpm` form.
  *
- * `pnpm exec turbo …` inside `build-and-test`, not `corepack pnpm exec turbo …`: that job
- * provisions pnpm through `pnpm/action-setup@v4`, which resolves `packageManager` from the
- * root manifest, so the bare form is the one that job guarantees. `corepack` does appear in
- * `ci.yml`, but only in `codebase-health`, which provisions no toolchain and lets corepack
- * resolve the same `packageManager` itself. The two jobs are deliberately different rather
- * than inconsistent, and neither form is a workaround for this host.
+ * `ci.yml` mentions `corepack` nowhere: both jobs provision pnpm and Node through
+ * `pnpm/action-setup@v4` + `actions/setup-node@v4`, so neither depends on what the runner
+ * image happens to ship. `corepack` survives only as a workaround for a developer host
+ * whose bare `pnpm` is broken — never as a CI form.
  */
 const TURBO_BUILD_COMMAND = "pnpm exec turbo run build";
 const TURBO_TEST_COMMAND = "pnpm exec turbo run test --filter=//";
