@@ -23,12 +23,14 @@
  *
  * ## What these assertions are, and are not
  *
- * They are SPEC-DERIVED AND NOT YET OBSERVED. Nothing in this file has been executed
- * against the vendor; the first run with a configured key is the moment we learn
- * whether these invariants were right, and a failure there is a vendor divergence to
- * report, not a defect to paper over here. No assertion pins an answer, a label or a
- * probability: the model is not deterministic, so each one asserts only a property
- * every correct response must have.
+ * They are SPEC-DERIVED AND NOT YET OBSERVED. No vendor ANSWER has ever reached this
+ * file: every execution so far failed before a response body was parsed — a request made
+ * with a dummy credential did reach `api.typesafe.ai` and was refused there, which is
+ * evidence that the endpoint answers and no evidence at all about anything below. The
+ * first run with a configured key is the moment we learn whether these invariants were
+ * right, and a failure there is a vendor divergence to report, not a defect to paper over
+ * here. No assertion pins an answer, a label or a probability: the model is not
+ * deterministic, so each one asserts only a property every correct response must have.
  *
  * There is no System One RESPONSE specification inside this checkout to derive them
  * from. `models.md`, `api/system-one.md` and `primitives-choice.md` are not present,
@@ -41,8 +43,10 @@
  *
  * The key is read as presence-or-absence only. Nothing here prints it, logs it, copies
  * it, measures a prefix of it or asserts on its format or length; the only reads are
- * the boolean `hasApiKey` and the boolean `message.includes(key)` in the failure-path
- * test, and the failure-path client cannot ask the vendor at all.
+ * `hasApiKey` and the two `message.includes(key)` booleans in the credential tests. Those
+ * tests inject a `fetchImpl`, so they cannot ask the vendor at all: the credential is
+ * quoted into the synthetic text the injected transport hands back, which is the only way
+ * to observe whether the client's own redaction removes it.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -50,7 +54,14 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { asRecord } from "../llm/json.js";
 import { createJevHttpClient } from "./client.js";
 import { DEFAULT_JEV_BASE_URL, DEFAULT_JEV_MODEL } from "./config.js";
-import type { JevAnswer, JevChoiceAnswer, JevDecisionRequest, JevDecisionResponse, JevNoulAnswer } from "./types.js";
+import type {
+  JevAnswer,
+  JevChoiceAnswer,
+  JevDecisionClient,
+  JevDecisionRequest,
+  JevDecisionResponse,
+  JevNoulAnswer,
+} from "./types.js";
 
 /** The credential. Only its absence or presence is ever read; see the file header. */
 const apiKey = process.env["TYPESAFE_API_KEY"];
@@ -90,6 +101,15 @@ const NETWORK_TEST_TIMEOUT_MS = 210_000;
 
 /** A port nothing listens on: the transport fails deterministically and costs the vendor nothing. */
 const UNREACHABLE_BASE_URL = "http://127.0.0.1:1";
+
+/**
+ * The budget for the credential tests, which open no socket at all.
+ *
+ * Their transport is injected, so the only work left is the client's own retry
+ * bookkeeping. A verdict that takes longer than this means something reached the
+ * network, which is the one thing these tests must never do.
+ */
+const OFFLINE_TEST_TIMEOUT_MS = 5_000;
 
 /** Id of the `choice` question, echoed back as a key of `answers`. */
 const CHOICE_QUESTION_ID = "contract-colour-choice";
@@ -251,56 +271,105 @@ function registerEnvelopeInvariants(): void {
 }
 
 /**
- * Registers the failure-path invariant, which needs no vendor at all.
+ * The credential as a value, for the tests that must inject it.
  *
- * @returns Nothing; the test is registered as a side effect.
+ * The suite gate above already skipped this file when the variable is absent, so
+ * reaching the throw means the gate and the fixture disagreed — a failure worth seeing,
+ * never a silently empty needle that would match everywhere.
+ *
+ * @returns The credential configured for this run.
  */
-function registerFailurePathInvariant(): void {
-  it("fails without a message that could carry the credential", async () => {
-    const key = apiKey ?? "";
-    // The base-URL override is the mechanism: `createJevHttpClient` takes `baseUrl`
-    // (`client.ts`) and appends the documented `JEV_SYSTEM_ONE_PATH`, so a closed local
-    // port fails deterministically at zero vendor cost, without relying on the vendor
-    // rejecting anything. `sleep` replaces only the retry TIMER; the client's own
-    // policy still decides how many attempts a transport failure gets.
-    const unreachable = createJevHttpClient({
+function liveCredential(): string {
+  if (apiKey === undefined || apiKey === "") {
+    throw new Error("TYPESAFE_API_KEY is absent, so the credential tests must have been skipped");
+  }
+  return apiKey;
+}
+
+/**
+ * The message a client failed with, or a named failure when it did not fail.
+ *
+ * A resolved call is reported by name rather than as a passing test: a failure path
+ * that never fires would let every credential assertion below pass without observing
+ * anything.
+ *
+ * @param client - The client under test.
+ * @returns The message it threw.
+ */
+async function thrownMessage(client: JevDecisionClient): Promise<string> {
+  try {
+    await client.decide(REQUEST);
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  throw new Error(
+    "the client resolved, so the failure path is UNPROVEN: " +
+      "a resolved failure is a credential leak waiting for the next vendor error body",
+  );
+}
+
+/**
+ * Registers the two credential invariants, which need no vendor at all.
+ *
+ * They replace a real `fetch` against a closed local port, whose genuine error text is
+ * `… request failed: fetch failed` and never quotes the credential: an assertion that
+ * such a message excludes the key cannot fail, so it proved nothing about `redact.ts`.
+ * Here the credential is quoted INTO the synthetic failure, and each test first asserts
+ * that its own fixture carries it — that fixture assertion is what makes the assertion
+ * about the client's message able to fail. `fetchImpl` and `sleep` are both injected, so
+ * no socket is opened and the vendor is not billed.
+ *
+ * @returns Nothing; the tests are registered as a side effect.
+ */
+function registerCredentialRedaction(): void {
+  it("removes the credential a transport failure quotes back", async () => {
+    const key = liveCredential();
+    const syntheticText = `connect ECONNREFUSED 127.0.0.1:1 with authorization: Bearer ${key}`;
+    // Self-proving: if this fixture stopped carrying the key, the assertions below
+    // would be vacuous, so that condition is a failure here instead.
+    expect(syntheticText.includes(key)).toBe(true);
+    const failTransport = (): Promise<Response> => Promise.reject(new Error(syntheticText));
+    const client = createJevHttpClient({
       baseUrl: UNREACHABLE_BASE_URL,
       apiKey: key,
       timeoutMs: REQUEST_TIMEOUT_MS,
       sleep: async () => undefined,
+      fetchImpl: failTransport,
     });
-    let message: string | undefined;
-    try {
-      await unreachable.decide(REQUEST);
-    } catch (error) {
-      message = error instanceof Error ? error.message : String(error);
-    }
-    if (message === undefined) {
-      throw new Error(
-        `the transport to ${UNREACHABLE_BASE_URL} did NOT throw, so the failure path is UNPROVEN: ` +
-          "a refusal that resolves is a credential leak waiting for the next vendor error body",
-      );
-    }
-    // Both reported paths run their text through `scrub()` — the non-2xx body at
-    // `client.ts:151` and the transport failure at `client.ts:191` — and `scrub` is
-    // `redactSecrets(text, [transport.apiKey])` (`client.ts`), the helper `redact.ts`
-    // documents as the one place a credential is stripped from anything this package is
-    // about to report, store or return. Only booleans are asserted: no value, no prefix.
+    const message = await thrownMessage(client);
     expect(message.length).toBeGreaterThan(0);
     expect(message.includes(key)).toBe(false);
     expect(/bearer\s+\S+/i.test(message)).toBe(false);
-  }, NETWORK_TEST_TIMEOUT_MS);
+  }, OFFLINE_TEST_TIMEOUT_MS);
+
+  it("removes the credential a refused request quotes in its body", async () => {
+    const key = liveCredential();
+    const syntheticBody = JSON.stringify({ error: `bad key ${key}` });
+    // Self-proving: the same fixture assertion as above, for the body path.
+    expect(syntheticBody.includes(key)).toBe(true);
+    const refuseWithBody = (): Promise<Response> => Promise.resolve(new Response(syntheticBody, { status: 401 }));
+    const client = createJevHttpClient({
+      baseUrl: UNREACHABLE_BASE_URL,
+      apiKey: key,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      fetchImpl: refuseWithBody,
+    });
+    const message = await thrownMessage(client);
+    expect(message).toContain("401");
+    expect(message.includes(key)).toBe(false);
+  }, OFFLINE_TEST_TIMEOUT_MS);
 }
 
 /**
- * Registers the whole suite: one live request first, then the invariants it feeds.
+ * Registers the live half: one request first, then the invariants it feeds.
  *
- * The `beforeAll` lives here so it runs ONLY when the gate above let the suite in: a
- * run without a credential must make no request at all, not a skipped request.
+ * The `beforeAll` lives inside this nested suite and nowhere above it, so a `-t`
+ * selection of the credential tests leaves it unrun: a run that asks nothing of the
+ * vendor must make no request at all, not a skipped request.
  *
- * @returns Nothing; the hook and the three groups are registered as a side effect.
+ * @returns Nothing; the hook and the two invariant groups are registered as a side effect.
  */
-function registerVendorContractCheck(): void {
+function registerLiveResponseSuite(): void {
   beforeAll(async () => {
     const client = createJevHttpClient({
       baseUrl: DEFAULT_JEV_BASE_URL,
@@ -314,7 +383,20 @@ function registerVendorContractCheck(): void {
 
   describe("the choice answer of that one live response", registerChoiceInvariants);
   describe("the envelope of that same live response", registerEnvelopeInvariants);
-  describe("the failure path", registerFailurePathInvariant);
+}
+
+/**
+ * Registers the whole key-gated suite, as two nested suites that share no hook.
+ *
+ * The split is what makes the credential half selectable on its own: a `beforeAll` at
+ * this level would ask the vendor for a test that needs nothing from it, and the two
+ * halves must be able to report independently.
+ *
+ * @returns Nothing; the suites are registered as a side effect.
+ */
+function registerVendorContractCheck(): void {
+  describe("the one live response", registerLiveResponseSuite);
+  describe("the failure path never reports the credential", registerCredentialRedaction);
 }
 
 describe.skipIf(!hasApiKey)(SUITE_TITLE, registerVendorContractCheck);
