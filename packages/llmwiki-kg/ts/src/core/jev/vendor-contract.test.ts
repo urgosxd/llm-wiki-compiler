@@ -32,6 +32,13 @@
  * here. No assertion pins an answer, a label or a probability: the model is not
  * deterministic, so each one asserts only a property every correct response must have.
  *
+ * The concrete `model` id is OBSERVED PER RUN, NOT ASSERTED. A keyed run logs the id the
+ * vendor answered with, the `usage` object it carried and the sum of the probability
+ * values, because `jev-latest` is an alias that MOVES and the code persists whatever id
+ * the response echoes. That is also the structural limit to keep in mind: the assertions
+ * here are property-based, and a property-only check cannot detect the alias moving to a
+ * new version — only a recorded id, compared across runs, can.
+ *
  * There is no System One RESPONSE specification inside this checkout to derive them
  * from. `models.md`, `api/system-one.md` and `primitives-choice.md` are not present,
  * and `docs/configuration/kg-classification.mdx` documents the request body only. The
@@ -379,6 +386,17 @@ function registerLiveResponseSuite(): void {
     // ONE call, through the real client's public method. The scripted double is
     // deliberately not used: it is the thing this file exists to check against.
     response = await client.decide(REQUEST);
+    // The record a keyed run leaves behind, and the only place the concrete vendor id
+    // becomes visible: observed here, asserted nowhere. Read defensively so a malformed
+    // answer costs its own invariant test rather than this report.
+    const observed = response.answers[CHOICE_QUESTION_ID];
+    const probabilitySum =
+      observed?.type === "choice"
+        ? Object.values(observed.probabilities).reduce((sum, probability) => sum + probability, 0)
+        : Number.NaN;
+    console.log(
+      `[jev-vendor-contract] model=${response.model} usage=${JSON.stringify(response.usage)} probabilitySum=${probabilitySum}`,
+    );
   }, NETWORK_TEST_TIMEOUT_MS);
 
   describe("the choice answer of that one live response", registerChoiceInvariants);
