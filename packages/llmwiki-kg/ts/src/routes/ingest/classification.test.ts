@@ -45,7 +45,7 @@ import { sql } from "drizzle-orm";
 
 import { createRequireApiKey } from "../../auth.js";
 import { parseConfig } from "../../config.js";
-import { createRequestTransactionWrapper, createTransactionRunner } from "../../db.js";
+import { createRequestTransactionWrapper, createTransactionRunner, normalizeTimestamptz } from "../../db.js";
 import { parseJevConfig } from "../../core/jev/config.js";
 import type { JevScriptStep } from "../../core/jev/doubles.js";
 import { choiceAnswer, noulAnswer, scriptedJevClient, vendorResponse } from "../../core/jev/doubles.js";
@@ -216,6 +216,20 @@ async function entityRows(stackId: string) {
       from ontology_entities where stack_id = ${stackId} order by name
     `),
   );
+}
+
+/**
+ * The database server's own clock, as a comparably formatted instant.
+ *
+ * The run window below is measured on THAT clock rather than on this process's, so
+ * the assertion needs no allowance for a skew between the test host and the
+ * database it provisioned.
+ */
+async function databaseNow(): Promise<string> {
+  const rows = await database().execute<{ clock: string }>(sql`select now() as clock`);
+  const clock = rows[0]?.clock;
+  if (clock === undefined) throw new Error("the fixture database returned no clock");
+  return normalizeTimestamptz(clock);
 }
 
 /** Every relationship row of one Stack, with the classification columns. */
@@ -423,7 +437,39 @@ describe.skipIf(skipReason !== false)("ingest records evidence and classificatio
     expect(classified?.jev_confidence).toBeCloseTo(0.8);
     const free = rows.find((row) => row.new_state === "free_no_match");
     expect(free?.new_canonical_type).toBeNull();
-    expect(free?.reason).toBeTruthy();
+    // The verbatim operator-facing reason of the `free_no_match` arm, as the literal
+    // an operator reads. `toBeTruthy()` here accepted the uncertain-fit reason, the
+    // uncertain-top reason and the collision reason equally, so a decision made by
+    // the wrong arm was invisible.
+    expect(free?.reason).toBe(
+      "the companion noul put P(some catalog type fits) below the configured no-match band",
+    );
+  });
+
+  it("records which model decided, and when, on the row it decided (S43)", async () => {
+    const stackId = await createStack(app, "attribution");
+    const openedAt = await databaseNow();
+    await ingestAnswer(app, stackId);
+    const closedAt = await databaseNow();
+
+    const rows = await withFixtureTenant(database(), { stackId }, (tx) =>
+      tx.execute<{ name: string; jev_model: string | null; jev_classified_at: string | null }>(sql`
+        select name, jev_model, jev_classified_at
+        from ontology_entities where stack_id = ${stackId} order by name
+      `),
+    );
+    const committee = rows.find((row) => row.name === "Comité de Cambios");
+    // The attribution is the model the RESPONSE echoed, not the moving alias the
+    // request asked for (`jev-latest`, `models.md:81`): a missing or substituted model
+    // would leave a stored decision unattributable after the fact.
+    expect(committee?.jev_model).toBe("jev-test");
+    const classifiedAt = committee?.jev_classified_at;
+    expect(classifiedAt).not.toBeNull();
+    // A real timestamp of THIS run on the server's own clock: neither null nor a
+    // placeholder, and inside the window the ingest actually occupied.
+    const stamped = Date.parse(normalizeTimestamptz(classifiedAt ?? ""));
+    expect(stamped).toBeGreaterThanOrEqual(Date.parse(openedAt));
+    expect(stamped).toBeLessThanOrEqual(Date.parse(closedAt));
   });
 
   it("updates the same row on a re-ingest instead of classifying a second one (S45.12)", async () => {
