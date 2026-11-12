@@ -26,7 +26,13 @@
  *
  * ## What is asserted, and the one thing this file cannot assert
  *
- * The assertions are on the STORED row. The verbatim uncertain-support reason
+ * The assertions are on the STORED row, on BOTH decision tables. `applyEntityDecision`
+ * writes `support_state` on `ontology_entities` and `applyRelationDecision` writes it
+ * on `ontology_relationships`, so an entity-only case would let the relation half of
+ * the band stay mis-wired while every test stayed green — the same silent class the
+ * whole file exists to close. The relation case therefore seeds the undecided support
+ * top for the relation alone and asserts the stored row carries `uncertain` beside a
+ * settled classification state. The verbatim uncertain-support reason
  * (`SUPPORT_REASON_UNCERTAIN`, `core/jev/interpret.ts`) is deliberately NOT asserted
  * here: nothing stores it. `support-stage.ts` builds a `SemanticSupport` carrying
  * that reason, and the only support column either decision table has is
@@ -149,6 +155,25 @@ const SCRIPT: readonly JevScriptStep[] = [
   relationAnswer("governs", 0.7, 0.03),
 ];
 
+/**
+ * The same ingest, with ONLY the relation's support answer left undecided.
+ *
+ * Both entities keep a support top above the 0.6 band, so a stored `uncertain` on the
+ * relation row cannot be a value that leaked from an entity judgement. The relation's
+ * classification answer clears both classification bands and names a declared
+ * relation type, so that row's classification axis is settled while its support one
+ * is not — the same independence the entity half asserts, on the other decision table.
+ */
+const RELATION_SCRIPT: readonly JevScriptStep[] = [
+  supportAnswer("SUPPORTED", DECIDED_SUPPORT_TOP),
+  supportAnswer("SUPPORTED", 0.88),
+  supportAnswer("SUPPORTED", UNDECIDED_SUPPORT_TOP),
+  entityAnswer("Document", CLASSIFIED_TOP, CLASSIFIED_FIT),
+  entityAnswer("Policy", 0.85, 0.85),
+  entityAnswer("Role", 0.3, 0.02),
+  relationAnswer("governs", CLASSIFIED_TOP, CLASSIFIED_FIT),
+];
+
 /** The decision runtime a test injects: the double plus the shipped thresholds. */
 function runtime(steps: readonly JevScriptStep[] = SCRIPT): ClassificationRuntime {
   return { client: scriptedJevClient(steps), config: parseJevConfig({}) };
@@ -212,6 +237,21 @@ async function entityRows(stackId: string) {
   );
 }
 
+/** Every relationship row of one Stack, with the support and classification columns. */
+async function relationshipRows(stackId: string) {
+  return withFixtureTenant(database(), { stackId }, (tx) =>
+    tx.execute<{
+      predicate: string | null;
+      classification_state: string | null;
+      canonical_type: string | null;
+      support_state: string | null;
+    }>(sql`
+      select predicate, classification_state, canonical_type, support_state
+      from ontology_relationships where stack_id = ${stackId} order by predicate
+    `),
+  );
+}
+
 describe.skipIf(skipReason !== false)("ingest stores the support band's undecided verdict", () => {
   beforeEach(async () => {
     await deleteFixtureRows();
@@ -242,5 +282,27 @@ describe.skipIf(skipReason !== false)("ingest stores the support band's undecide
     // The same run's other candidate is decided, so `uncertain` is not a value the
     // writer puts on every row.
     expect(policy?.support_state).toBe("supported");
+  });
+
+  it("stores uncertain support on a relation the classifier confidently classified (T5)", async () => {
+    const app = buildApp(runtime(RELATION_SCRIPT));
+    const stackId = await createStack(app, "relation-uncertain");
+    await ingestAnswer(app, stackId);
+
+    const relation = (await relationshipRows(stackId)).find(
+      (row) => row.predicate === "deja sin efecto",
+    );
+    // The relation half of the 0.6 band abstains exactly as the entity half does: a
+    // 0.55 support top is stored as undecided, never rounded into a direction. A
+    // mis-wire in `applyRelationDecision` only would have kept every entity test
+    // green while shipping relations that claim their assertion is supported.
+    expect(relation).toMatchObject({
+      support_state: "uncertain",
+      // The same row's classification axis is settled — an 0.8 fit and an 0.8 top
+      // clear both classification bands — so the two axes are independent on a
+      // relation exactly as they are on an entity (S32).
+      classification_state: "classified",
+      canonical_type: "governs",
+    });
   });
 });
