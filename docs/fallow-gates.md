@@ -243,11 +243,16 @@ so the rule was effectively dead and readers learned to ignore it.
 audit attributes against", and that base is the merge-base of the current branch
 and the local default branch (`main`)** — not "present in a file the diff
 touched", and not "written by this diff". So the gate's verdict depends on local
-`main` being the checkout's real reference, and that is deliberate: on this clone
-`origin/main` is `8203862`, a ref far behind local `main` (how far is itself a
-moving counter — measure it with the command below), so a remote-based base hands
-a long stretch of history to the current changeset and turns the gate red on an
-untouched tree for reasons nobody can fix.
+`main` being the checkout's real reference, and that is deliberate. When this note
+was first written, `origin/main` was `8203862`, a ref far behind local `main` (how
+far is itself a moving counter — measure it with the command below), so a
+remote-based base handed a long stretch of history to the current changeset and
+turned the gate red on an untouched tree for reasons nobody can fix. **That is no
+longer the state, and the reason it changed is recorded below:** `origin/main` now
+reads `8955d061`, identical to local `main`, which is exactly what expired the
+decision that CI could not have a role — see "A developer-machine gate that CI now
+runs too". The rule itself has not moved: the base is still the local default
+branch, in CI and on a laptop alike.
 
 The commands below are reproducible; their countable output is not. Anything that
 counts commits (`8203862..HEAD`, `8203862..main`) or changed files
@@ -278,27 +283,159 @@ Safety is measured, not promised. A missing, undetectable or bogus base ref make
 repository", "exit_code": 2}` — and `scripts/check-fallow-report.mjs` additionally
 fails closed with exit 2 when the document cannot prove new-only attribution: a
 wrong `command`, a missing `verdict`, an empty `base_ref`, or an
-`attribution.gate` other than `new-only`. The gate goes red on an unverifiable
-report, never silently green.
+`attribution.gate` other than `new-only`.
 
-### A developer-machine gate; CI is the pinned action
+**That last sentence used to read "the gate goes red on an unverifiable report,
+never silently green", and for one shape it was false.** What the checker
+validated was that `base_ref` was *non-empty*; it could not tell "compared
+nothing" from "compared and found nothing", because the audit document names its
+base with a ref (`base_ref: "main"` here) and carries an abbreviated `head_sha` —
+never the resolved base commit. That is the tool's own contract, not an inference:
+`node_modules/fallow/types/output-contract.d.ts` documents `base_ref` as "Git ref
+used as comparison base (explicit or auto-detected)" and `head_sha` as "Short SHA
+of HEAD. Omitted when git is unavailable". So when the base this section describes
+equals HEAD — a branch checked out at `main`'s tip — the run compares HEAD against
+HEAD and reports `verdict: pass`, every introduced counter `0`, `changed_files_count: 0`,
+exit `0`. Measured on this tree (`main` = `HEAD` = `8955d061`) before the guard
+below existed, and indistinguishable from a clean changeset.
 
-`scripts/fallow-ci.sh` has no CI role: it is a developer-machine gate. The
-`codebase-health` job in `.github/workflows/ci.yml` runs the pinned
-`fallow-rs/fallow` action with `fail-on-issues: true` and never calls the script.
-Measured: `git grep -n 'fallow-ci\|fallow:ci' -- .github/ scripts/ package.json`
-returns no hit under `.github/`, and the only callers of
-`scripts/check-fallow-report.mjs` are `scripts/fallow-ci.sh` and
-`test/ci/fallow-report-gate.test.ts`. This is written down so nobody "restores CI
-parity" by reintroducing a path the script no longer needs — there is no CI role
-to keep parity with. One nuance, so the grep is not misread:
-`.github/workflows/ci.yml:101` does run `pnpm run fallow:kg`, but that is the
-different, KG-scoped gate with its own baselines (see "Baselines" above) and it
-shares no code with this one — "CI runs a `fallow:*` script" is true of the KG
-gate and false of the root gate. (That citation read `:90` and was already one
-line stale before this note was touched: the step sat at `:91`, and inserting the
-`@repo/kg` build step above it moved it to `:101`. A wrong line number either way
-— recorded so the correction is not mistaken for a step that moved.)
+**`scripts/fallow-ci.sh` now handles that shape in two modes, before the analyzer
+runs.** The guard's subject is the COMPARISON, not SHA equality: it asks whether
+`git merge-base refs/heads/main HEAD` is `git rev-parse HEAD`, and yes means local
+`main` already contains everything this checkout has — so the audit would attribute
+every finding against itself. That is what makes the guard catch the shape where
+`main` is merely **ahead** of HEAD too (a detached HEAD checked out at an older
+commit than `main`): the two commits there are not equal, and the gate has still
+compared nothing. Measured in a scratch clone with `main` one commit ahead of a detached
+HEAD: refused, not passed — and pinned by the test that names that shape.
+
+- With `FALLOW_CI_REQUIRE_DISTINCT_BASE=1` it is **fatal**, exit 2 — the same code
+the checker uses for a report it cannot verify. CI sets that variable in the
+`codebase-health` step and nowhere else, so a CI run can never be green having
+compared nothing:
+
+```text
+Fallow CI: refusing to run — refs/heads/main already contains everything this checkout has (merge-base(refs/heads/main, HEAD) is HEAD, 8955d0615c5b6f624ba59d4f3154764050103028), so the gate compared nothing and a pass would be a statement about nothing. Move local main to the real comparison base, or check out the branch you meant to gate.
+```
+
+- With it unset — the local default — it prints a warning on **stderr** and runs
+the gate anyway, so the verdict is still the analyzer's. Note what the sentence
+claims: the comparison that was made, and HEAD's own SHA. It must never say the two
+commits are the same, because in the ahead case they are not:
+
+```text
+Fallow CI: WARNING — refs/heads/main already contains everything this checkout has (merge-base(refs/heads/main, HEAD) is HEAD, 8955d0615c5b6f624ba59d4f3154764050103028), so the gate compared nothing. Committing your work is what makes it comparable; CI sets FALLOW_CI_REQUIRE_DISTINCT_BASE=1 and refuses this shape instead.
+```
+
+**Why the local mode is permissive rather than strict.** `.husky/pre-commit` runs
+`node scripts/pnpm-invocation.ts run fallow:ci`, and `pnpm run gates:static` runs
+the same gate as one of its six steps, while on a branch whose first commit has not
+landed yet `HEAD == main` by definition. A fatal check there would make every
+branch's first commit impossible, and `AGENTS.md` forbids `--no-verify` — that is a
+deadlock of the authoring loop, not a safety property. So the strictness is a
+**declaration CI makes about itself**, not a property of the script: dropping that
+one `env:` line would silently return CI to warn-and-proceed, which is why
+`test/control-gates.test.ts` pins that this variable is set on exactly one step in
+the whole of `.github/workflows/`, and to exactly `"1"`. The warning is emitted by
+the script on stderr, so fallow's own `-q` cannot suppress it, and a developer still
+learns that a pass over nothing was not a check.
+
+The comparison lives in the shell script rather than the checker for the reason
+above: the document cannot prove it. Four tests pin the four behaviours — base equal
+to HEAD refuses with the variable set, base equal to HEAD warns and proceeds without
+it, base older than HEAD proceeds, a report that names no base still fails closed —
+in `test/ci/fallow-report-gate.test.ts`, each running the real script against a stub
+analyzer in a scratch repository, so they do not depend on the git state of the
+checkout running them.
+
+**CI supplies that same local `main`, at the event's own base.** A CI checkout has
+no local default branch, which is why this page once concluded the script had no CI
+role. It now manufactures one: `actions/checkout@v4` with `fetch-depth: 0`, then one
+step that installs, takes `BASE_SHA` from `github.event.before` on a `push` (the tip
+of `main` before the push) or `pull_request.base.sha` on a pull request, detaches
+HEAD, and runs `git update-ref refs/heads/main "$base"`. The detach comes first
+because moving the checked-out branch moves HEAD with it, which produces exactly the
+base-equals-HEAD shape refused above. An empty or all-zeros `BASE_SHA` — a branch's
+first push — fails the step instead of falling back to `origin/main`: a base the
+event did not name gates a changeset nobody asked about, and a red step is the honest
+answer. So the base stays "the local default branch, and that is deliberate" in CI
+too, with the local ref pointed at the commit the event itself named.
+
+Creating that local ref is not belt-and-braces, it is the whole point, and the
+failure it prevents was measured: `audit` names its base as the remote's default
+branch and then reads the **local ref of that same name**, so a checkout whose
+`refs/remotes/origin/HEAD` points at a branch with no local counterpart dies with
+`could not determine changed files for base ref 'fix/…'. Verify the ref exists in
+this git repository`, exit 2 — loud, which is the right failure, but it means the
+gate cannot run at all until a local ref of the base's name exists. The step makes
+sure `main` does, at the event's commit.
+
+### A developer-machine gate that CI now runs too; the pinned action is gone
+
+**This section used to say the opposite, and the earlier decision was right for its
+premise.** It read: "`scripts/fallow-ci.sh` has no CI role: it is a developer-machine
+gate. The `codebase-health` job in `.github/workflows/ci.yml` runs the pinned
+`fallow-rs/fallow` action with `fail-on-issues: true` and never calls the script", and
+its evidence was that `git grep -n 'fallow-ci\|fallow:ci' -- .github/ scripts/
+package.json` returned no hit under `.github/`, while the only callers of
+`scripts/check-fallow-report.mjs` were `scripts/fallow-ci.sh` and
+`test/ci/fallow-report-gate.test.ts`.
+
+That reasoning was sound, and it is kept here rather than deleted, because it is still
+the reason the base is what it is. The script's comparison base is the **local**
+`main`, and on this clone `origin/main` was `8203862`, far behind it — a remote-based
+base hands a long stretch of history to the current changeset and reddens an untouched
+tree with twenty introduced clone groups ("Where `audit` gets its base" above). A CI
+checkout offered no local `main` and no cheap way to manufacture one, so a CI role for
+the script was correctly declined. Nobody was being timid: the alternative on the table
+really was a gate that compared against the wrong commit.
+
+**The first push removed the premise.** `origin/main` now reads `8955d061`, identical
+to local `main`, so the constraint that made a CI role impossible expired — and the
+conclusion expired with it.
+
+**What CI runs now.** `codebase-health` runs `pnpm run fallow:ci`: the same script a
+laptop runs, so the two cannot drift into "similar but not the same", which is the whole
+failure this change undoes. The grep that used to prove there was no CI role
+now returns one — `git grep -n 'fallow:ci' -- .github/` hits the job's own step and its
+rationale comment — and it is the only root-scope fallow invocation in a workflow. The raw command it used to run — the pinned
+action's `fail-on-issues: true` over the full tree — failed on inherited debt: run
+`43140640639`, "Fallow found 204 issues", measured back as **204 = 197 dead-code + 6
+dupes + 1 health in a tree with no `node_modules`**, 169 of them `unresolved_imports`
+because the job never installed and every workspace import resolved to nothing — against
+**46** on the same tree with dependencies installed. Two things the script needs that
+that job never provided: `node_modules` (`scripts/fallow-ci.sh` runs
+`./node_modules/.bin/fallow`) and full history plus a local `main` (`fetch-depth: 0`, then
+the `git update-ref` in the section above).
+
+**Provisioned, not assumed.** The job sets up its own toolchain the way its sibling jobs
+do — `pnpm/action-setup@v4` (which resolves `packageManager` from the root manifest), then
+`actions/setup-node@v4` with `node-version: 24` and `cache: pnpm` — and only then runs
+`pnpm install --frozen-lockfile` followed by `pnpm run fallow:ci`. That is deliberate
+rather than ceremony: `corepack pnpm` would have depended on what the runner image happens
+to ship, and a REQUIRED CHECK whose package manager is an assumption about a third-party
+image is not a check you can reason about. With the two actions, the pnpm that installs is
+the pnpm that gates, it is the one `package.json` pins, and `AGENTS.md`'s "Node 24 only"
+rule is enforced by `setup-node` instead of hoped for.
+
+One nuance, so the grep is not misread: `.github/workflows/ci.yml:146` also runs
+`pnpm run fallow:kg`, but that is the different, KG-scoped gate with its own baselines
+(see "Baselines" above) and it shares no code with this one. (That citation read `:90`,
+then `:101`, and is corrected here again to the step's real line — recorded each time so
+a moved step is not mistaken for a new gate.)
+
+**The warning has inverted.** It is no longer "do not restore CI parity by accident";
+parity is the design. The danger now is the opposite one: **CI running a gate whose base
+it did not actually establish**, which reports a pass over nothing. Two guards stand
+against that: the step fails when the event carries no usable base SHA, and under
+CI's `FALLOW_CI_REQUIRE_DISTINCT_BASE=1`, `scripts/fallow-ci.sh` exits 2 when the base it
+would attribute against already contains everything HEAD has — the `main` equal to HEAD
+case and the `main` ahead of it case alike. The second guard exists because the first was
+not enough.
+
+**Honest limit, stated rather than papered over:** none of the CI side is verified from
+here — `gh` is absent and the API returns 403 for logs — so this page claims no green
+run. The first post-fix push is the real test of the wiring above.
 
 ### The touched-file residual
 
@@ -321,11 +458,16 @@ out-of-scope list below.
 - Coverage verdicts are no longer counted locally: the old checker read them from
   the combined report's `health.runtime_coverage.findings`, which the `audit`
   document does not carry. Runtime coverage is licence-gated and informational
-  (it does not change an exit code), and CI's `fail-on-issues` does not gate on it
-  either.
+  (it does not change an exit code), and nothing in CI gates on it either: the
+  pinned `fallow-rs/fallow` action and its `fail-on-issues` input are gone, and
+  `codebase-health` now runs `pnpm run fallow:ci`, whose checker reads the
+  `attribution` block only.
 - The pre-existing repo-wide findings that come from unbuilt `dist/` imports are
   not this gate's concern any more, because it only counts findings it attributes
   to the changeset; `pnpm run build` is still what removes them from a full-tree
   run.
-- `.husky/pre-commit` does not run fallow, so nothing forces either gate locally
-  before a commit.
+- `.husky/pre-commit` DOES run the root gate — `node scripts/pnpm-invocation.ts
+  run fallow:ci`, the same script CI runs — so the root gate is not skippable
+  locally. On a branch whose first commit has not landed yet it runs as the
+  warning mode described above, because `HEAD == main` there by definition. It does
+  not run `fallow:kg`, so the KG gate is still nobody's pre-commit obligation.
