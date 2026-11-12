@@ -65,6 +65,11 @@ So a per-package selection means what it says: `turbo run test --filter=@repo/wi
 runs the wiki selection (565 files in the census below) and starts no foundation
 task. `lint`, `typecheck` and `fallow` never had an edge and still declare `[]`.
 
+**Every per-package recipe below needs a bare `pnpm` on `PATH`, because turbo spawns the
+package manager itself** — `AGENTS.md`'s `corepack pnpm` advice does not reach turbo, which would
+run `pnpm run test` and this host's bare `pnpm` exits `127`; whichever shim makes `pnpm` reachable
+on the reference host is a host-only workaround, not part of this repository.
+
 The concurrency cap is declared in the graph rather than passed by hand **because a
 constraint a graph file carries cannot be forgotten, and an environment variable
 can**. `TURBO_CONCURRENCY=1` produces the same serialisation, but only for the person

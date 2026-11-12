@@ -19,11 +19,14 @@
  * exists to replace. Node builtins are equally absent — there is no filesystem
  * access at all, only string paths and a set membership test.
  *
- * THE TWO STATES. (a) Not a pnpm tree: `node_modules/.package-lock.json` exists
- * (npm created the tree, and npm never reads the pnpm workspace, so the
- * `node_modules/@repo/*` links were never created) or `node_modules/.pnpm` is
- * absent. (b) pnpm tree present but one or more `node_modules/@repo/*` links
- * missing, which leaves the same broken imports behind a healthier-looking tree.
+ * THE TWO STATES. (a) Not a pnpm tree: `node_modules/.pnpm` is absent — and ONLY then does
+ * `node_modules/.package-lock.json` say who made the tree (npm created it, and npm never reads
+ * the pnpm workspace, so the `node_modules/@repo/*` links were never created). The marker is a
+ * LEFTOVER rather than a diagnosis once `.pnpm` exists: an npm install can run first and leave
+ * its marker behind while pnpm then builds the workspace over it, and reading the marker first
+ * refuses that tree while blaming npm for a `node_modules` pnpm built. (b) pnpm tree present but
+ * one or more `node_modules/@repo/*` links missing, which leaves the same broken imports behind
+ * a healthier-looking tree.
  *
  * NO MESSAGE HERE TELLS THE READER TO DELETE `node_modules`. A fix that begins
  * with destruction is not a fix; `corepack pnpm install --frozen-lockfile` is
@@ -41,7 +44,12 @@ export const INSTALL_COMMAND = "corepack pnpm install --frozen-lockfile";
 /** Repo-relative path of the directory a pnpm install creates. Its absence means "not a pnpm tree". */
 export const PNPM_TREE_MARKER = "node_modules/.pnpm";
 
-/** Repo-relative path npm leaves behind. Its presence means "an npm tree, not a pnpm workspace". */
+/**
+ * Repo-relative path npm leaves behind, and the marker that names npm as the installer.
+ *
+ * Read as "an npm tree" only when {@link PNPM_TREE_MARKER} is ABSENT: npm can install first
+ * and leave this behind while pnpm builds the workspace over it.
+ */
 export const NPM_TREE_MARKER = "node_modules/.package-lock.json";
 
 /** The workspace packages whose `@repo/*` links the test suite imports. */
@@ -99,12 +107,12 @@ function notAPnpmTreeTail(): string {
 }
 
 /**
- * Message for state A1: the npm marker proves the tree came from npm.
+ * Message for state A1: no pnpm layout, and the npm marker says who made what is there.
  *
  * Names the npm install as the cause, because the reader's instinct is to blame
  * the workspace rather than the package manager that never read it.
  *
- * @returns The refusal message for a tree carrying {@link NPM_TREE_MARKER}.
+ * @returns The refusal message for a tree carrying {@link NPM_TREE_MARKER} and no {@link PNPM_TREE_MARKER}.
  */
 function npmTreeMessage(): string {
   return (
@@ -162,13 +170,30 @@ function missingWorkspaceLinksMessage(missing: readonly string[]): string {
 }
 
 /**
+ * Message for state A1 or state A2: which manager built a tree that has no pnpm layout.
+ *
+ * The two variants differ only in what was observed — npm's marker, or nothing at all —
+ * because a reader who can be told the cause should be, and a reader facing a bare
+ * directory needs the absence stated rather than a manager guessed at.
+ *
+ * @param paths - Repo-relative paths known to exist, already known to lack {@link PNPM_TREE_MARKER}.
+ * @returns The refusal message for state A1 or state A2.
+ */
+function noPnpmLayoutMessage(paths: ReadonlySet<string>): string {
+  return paths.has(NPM_TREE_MARKER) ? npmTreeMessage() : noPnpmTreeMessage();
+}
+
+/**
  * Decide from the set of repo-relative paths that exist.
  *
  * Pure: no filesystem access, so a test can describe a tree exactly. The order of
- * the checks is the diagnosis order — an npm marker contradicts a pnpm tree even
- * when `.pnpm` survived, and a missing tree is a stronger finding than a missing
- * link inside one. Each message is built by a named helper, so this function
- * reads as three guards over the finding and one healthy-tree fall-through.
+ * the checks is the diagnosis order, and that order is load-bearing: the pnpm layout
+ * decides FIRST, and only a tree without it is asked whether npm left a marker. The
+ * marker survives an npm install that pnpm later built over, so a single checkout can
+ * hold both and reading the marker first refuses a tree pnpm installed. A missing tree
+ * is a stronger finding than a missing link inside one, so the links come last. Each
+ * message is built by a named helper, so this function reads as two guards over the
+ * finding and one healthy-tree fall-through.
  *
  * @param present - Repo-relative paths known to exist. Compared by exact string.
  * @returns `{ ok: true }` for a healthy tree, otherwise the problem and its exact message.
@@ -176,12 +201,8 @@ function missingWorkspaceLinksMessage(missing: readonly string[]): string {
 export function diagnoseInstallTree(present: Iterable<string>): InstallVerdict {
   const paths = new Set(present);
 
-  if (paths.has(NPM_TREE_MARKER)) {
-    return { ok: false, problem: "not-a-pnpm-tree", message: npmTreeMessage() };
-  }
-
   if (!paths.has(PNPM_TREE_MARKER)) {
-    return { ok: false, problem: "not-a-pnpm-tree", message: noPnpmTreeMessage() };
+    return { ok: false, problem: "not-a-pnpm-tree", message: noPnpmLayoutMessage(paths) };
   }
 
   const missing = missingWorkspaceLinks(paths);

@@ -78,6 +78,7 @@ const MESSAGE_MISSING_LINK =
   `the repository root to recreate them; the lockfile is authoritative, so that one command is the whole fix.`;
 
 describe("diagnoseInstallTree", () => {
+  // S1: the marker with no pnpm layout to contradict it is a real npm tree, and must keep refusing.
   it("refuses an npm-installed tree and names the install command", () => {
     const verdict = refusalFrom([NPM_TREE_MARKER]);
 
@@ -97,6 +98,7 @@ describe("diagnoseInstallTree", () => {
     });
   });
 
+  // S4: a pnpm tree that lost a link is still refused, and the message names the link.
   it("refuses a pnpm tree whose workspace links are missing, naming each one", () => {
     const present = [PNPM_TREE_MARKER, ...ALL_LINKS.filter((link) => link !== "node_modules/@repo/kg")];
     const verdict = refusalFrom(present);
@@ -108,7 +110,8 @@ describe("diagnoseInstallTree", () => {
     expect(verdict.message).toContain("node_modules/@repo/kg");
   });
 
-  // The rule that matters most: a check that fires on a correct tree makes every session red.
+  // S3: marker absent, pnpm layout and links present. The rule that matters most: a check
+  // that fires on a correct tree makes every session red.
   it("does not refuse a healthy tree", () => {
     const verdict = diagnoseInstallTree([PNPM_TREE_MARKER, ...ALL_LINKS]);
 
@@ -116,6 +119,36 @@ describe("diagnoseInstallTree", () => {
     // The healthy arm carries no message; `in` reads that safely off the union, which
     // the removed `.message` access could not do without failing the test type-check.
     expect("message" in verdict).toBe(false);
+  });
+});
+
+/**
+ * S1 and S2: `NPM_TREE_MARKER` is a DIAGNOSIS only when the pnpm evidence is absent.
+ *
+ * A second `describe` rather than two more cases in the block above: these tests carry no tree
+ * literals of their own, and the block above already meets the repo's 39-line function ceiling.
+ * The stale marker these cases describe is the one this repository's own checkout held — an npm
+ * leftover from an earlier install sitting beside a genuine pnpm tree.
+ */
+describe("diagnoseInstallTree, the npm marker beside a pnpm tree", () => {
+  // S2: marker present AND `.pnpm` present AND every link present. The marker is a leftover, not
+  // a finding, so the guard must not refuse a tree it cannot tell apart from a healthy one.
+  it("does not refuse a stale npm marker beside a real pnpm tree", () => {
+    const verdict = diagnoseInstallTree([NPM_TREE_MARKER, PNPM_TREE_MARKER, ...ALL_LINKS]);
+
+    expect(verdict).toStrictEqual({ ok: true });
+    expect("message" in verdict).toBe(false);
+  });
+
+  // S1: with no `.pnpm` to contradict it, the marker still fires even when links survived, so
+  // the marker branch cannot be deleted while rule 2 is being satisfied.
+  it("keeps the npm-marker refusal when the pnpm layout is absent", () => {
+    const verdict = refusalFrom([NPM_TREE_MARKER, ...ALL_LINKS]);
+
+    expect(verdict).toEqual({
+      problem: "not-a-pnpm-tree",
+      message: MESSAGE_NPM_TREE,
+    });
   });
 });
 
@@ -133,9 +166,12 @@ const REFUSING_TREES = [
   ALL_LINKS,
   // A pnpm tree that lost one workspace link.
   [PNPM_TREE_MARKER, ...ALL_LINKS.filter((link) => link !== workspaceLinkPath("kg"))],
+  // S2's tree with a link missing: with `.pnpm` present the marker cannot outrank the link
+  // finding, and the refusal still owes the reader the one repairing command.
+  [NPM_TREE_MARKER, PNPM_TREE_MARKER, ...ALL_LINKS.filter((link) => link !== workspaceLinkPath("wiki"))],
 ] as const;
 
-// S3 and S4 hold for EVERY state that can refuse, not only the two that name the command.
+// S5: every refusal carries the exact command, for EVERY state that can refuse.
 describe("refusal messages", () => {
   it("every refusal carries the install command and never recommends destroying node_modules", () => {
     for (const present of REFUSING_TREES) {
