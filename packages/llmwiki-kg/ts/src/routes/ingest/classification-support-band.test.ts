@@ -396,8 +396,11 @@ describe.skipIf(skipReason !== false)("ingest stores the support band's undecide
     // Both entity judgements abstain, so the relation cannot have inherited either.
     expect((await entityRow(stackId, "Runbook"))?.support_state).toBe("uncertain");
     expect((await entityRow(stackId, "Política anterior"))?.support_state).toBe("uncertain");
-    // Keyed by candidate ref, so a relation reading a neighbour's verdict would store
-    // `uncertain` here — which is why the two directions must differ.
+    // What this case pins is the exact stored value per candidate: a decided relation
+    // beside two undecided entities. It does not exclude aggregation by itself — a
+    // per-table aggregate for relations still satisfies it — so what rules out both
+    // aggregation directions is this case PAIRED with the relation-`uncertain` case
+    // above (T5).
     expect((await relationRow(stackId))?.support_state).toBe("supported");
   });
 });
