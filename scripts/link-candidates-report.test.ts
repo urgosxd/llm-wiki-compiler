@@ -138,7 +138,30 @@ it("states that a stratum is empty instead of printing an empty table", () => {
   );
 
   expect(markdown).toContain("_No incremental pairs at this threshold");
+  // One candidate DID reach the thresholds here, so the lexical claim is the true one.
+  expect(markdown).toContain("every candidate in the slice is already produced by a lexical channel");
+  expect(markdown).not.toContain("No pair reached this threshold");
   expect(markdown).not.toContain("| cosine | paragraph | concept |");
+});
+
+it("says no pair reached a threshold that held no candidates, and never blames lexical match", () => {
+  const markdown = renderReportMarkdown(
+    buildReport([measurement([])], {
+      thresholds: CANDIDATE_THRESHOLDS,
+      sampleSize: DEFAULT_SAMPLE_SIZE,
+      seed: DEFAULT_SAMPLE_SEED,
+    }),
+  );
+
+  // The heading is asserted too: a claim check alone would pass on an empty document.
+  expect(markdown).toContain("### threshold 0.86 — 0 candidates, 0 excluded by lexical match, 0 incremental");
+  for (const threshold of ["0.86", "0.80", "0.75"]) {
+    expect(markdown).toContain(
+      `_No pair reached this threshold: nothing in the slice scored cosine ≥ ${threshold}._`,
+    );
+  }
+  // Zero candidates means nothing scored high enough; lexical exclusion did not empty it.
+  expect(markdown).not.toContain("already produced by a lexical channel");
 });
 
 it("renders the same report byte for byte twice, so two readers label the same sample", () => {

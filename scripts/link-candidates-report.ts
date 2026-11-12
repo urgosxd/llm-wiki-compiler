@@ -5,30 +5,23 @@
  *
  * ## Why two artifacts and not one
  *
- * They answer different questions. The JSON has to be COMPLETE — every incremental
- * pair at every threshold, every count, the read-only proof — because it is the
- * record of what the run saw, and a record that dropped rows to stay readable would
- * be worthless. The markdown has to be LABELLABLE — a bounded sample per threshold
- * with a checkbox and an empty verdict slot — because the number this whole channel
- * exists to produce (precision) is not computable from the data at all: a human has
- * to decide, pair by pair, whether the relation is real. Rendering the same object
- * twice makes the two views provably about the same run.
+ * The JSON has to be COMPLETE — every incremental pair at every threshold, every
+ * count, the read-only proof — because it records what the run saw. The markdown has
+ * to be LABELLABLE — a bounded sample per threshold with a checkbox and an empty
+ * verdict slot — because precision, the number this channel exists to produce, is not
+ * computable from the data: a human decides, pair by pair, whether the relation is
+ * real. Rendering one object twice makes both views about one run.
  *
- * ## Why there are no timestamps
+ * ## Why the wording, the clock and the caveats are part of the artifact
  *
- * The artifacts are meant to be diffed: rerun the measurement on an unchanged corpus
- * and the report should be byte-identical, so a reviewer sees only what actually
- * changed. A clock reading anywhere in here would break that on every run, and an
- * unordered map would break it intermittently, which is worse.
- *
- * ## Why the caveats are part of the artifact
- *
- * Two of them change how the numbers may be read: the alias half of the
- * lexical-exclusion filter never ran against real data (the corpora carry no
- * declared aliases), and the 398-page corpus's dangling-link rate is a separate
- * population that these counts must not be read against. A reader who has only the
- * markdown must not be able to reach a stronger conclusion than the run supports, so
- * the caveats travel with the numbers instead of living in a chat message.
+ * There are no timestamps and no unordered maps: a rerun on an unchanged corpus must
+ * be byte-identical, so a reviewer sees only what changed. An empty stratum has two
+ * sentences rather than one — zero candidates means nothing reached the threshold, so
+ * borrowing the lexical wording there would claim an exclusion that never happened.
+ * And the caveats travel with the numbers (the alias half of the exclusion filter
+ * never ran against real data; the 398-page corpus's dangling-link rate is a separate
+ * population), so a reader holding only the markdown cannot conclude more than the run
+ * supports.
  */
 
 import {
@@ -58,6 +51,14 @@ const METHOD_LINE =
   "then inverted to per-paragraph top-k concepts. Pairs whose concept title occurs in the " +
   "paragraph (word-bounded) are excluded as already reachable by a lexical channel; the " +
   "remainder is the incremental set, stratified by inclusive cosine lower bound.";
+
+/** Zero candidates: a threshold fact — nothing was excluded, so no lexical wording here. */
+const NO_CANDIDATE_SENTENCE = "No pair reached this threshold: nothing in the slice scored cosine ≥";
+
+/** Candidates existed and every one is lexically reachable: the only case that wording fits. */
+const LEXICAL_STRATUM_SENTENCE =
+  "No incremental pairs at this threshold: every candidate in the slice is already produced " +
+  "by a lexical channel.";
 
 /** The four things a reader must know before quoting any number below. */
 const CAVEATS: readonly string[] = [
@@ -319,7 +320,9 @@ function renderPairTable(pairs: readonly RenderedCandidatePair[]): string[] {
 }
 
 /**
- * Render one threshold's section, including the sample a human labels.
+ * Render one threshold's section, including the sample a human labels. An empty
+ * stratum says which of two things happened: nothing reached the threshold, or every
+ * candidate that did is lexically reachable.
  *
  * @param threshold - That threshold's report.
  * @param seed - The seed the sample was drawn with, printed so it can be reproduced.
@@ -331,12 +334,10 @@ function renderThresholdSection(threshold: ThresholdReport, seed: number): strin
     `${threshold.candidateCount} candidates, ${threshold.excludedByLexicalCount} excluded by lexical ` +
     `match, ${threshold.incrementalCount} incremental`;
   if (threshold.incrementalCount === 0) {
-    return [
-      heading,
-      "",
-      "_No incremental pairs at this threshold: every candidate in the slice is already produced " +
-        "by a lexical channel._",
-    ];
+    const statement = threshold.candidateCount === 0
+      ? `${NO_CANDIDATE_SENTENCE} ${threshold.threshold.toFixed(THRESHOLD_DECIMALS)}.`
+      : LEXICAL_STRATUM_SENTENCE;
+    return [heading, "", `_${statement}_`];
   }
   return [
     heading,
