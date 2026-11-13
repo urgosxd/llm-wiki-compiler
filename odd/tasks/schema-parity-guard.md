@@ -337,3 +337,64 @@ suite `turbo run test --filter=//` exit `0` with **838 files (834 passed, 4 skip
 (6269 passed, 11 skipped)** read from its own summary, plus `1 successful`. `test:affected` exited `78`: it
 reports that scope resolves to the full unit tier and names the CI form, which is the suite run above, so the
 full suite is the substitute rather than a skipped gate.
+
+L10 (final slice: the last silent-green path). An independent verifier confirmed L8's fixes but found ONE
+residual silent-green path — the exact class this guard exists to prevent — and one weak pin. Both are closed.
+
+**The hole, reproduced.** `node < scripts/schema-parity-check.ts` (the source piped in as the program) leaves
+`process.argv[1]` undefined, so the L8 entrypoint guard judged the module "imported", skipped `main()`, and
+the process **exited `0` with no output at all**: a silent no-op pass from the one command whose job is to
+refuse silent no-op passes. Measured: `node < scripts/schema-parity-check.ts; echo $?` → no output, exit `0`.
+RED first, a new test in `test/schema-parity-check.test.ts` spawns
+`spawnSync(process.execPath, [], { input: readFileSync(CHECKER), cwd: REPO_ROOT, env: baseEnv() })` and asserts
+`stdout === ""`, `status === 2`, `stderr` containing `error: schema parity needs a connection`. Observed RED on
+the committed tree: `AssertionError: expected +0 to be 2 // Object.is equality` — the `stdout === ""`
+assertion passed *because* the run printed nothing at all, which is the defect stated as an assertion.
+
+**`import.meta.main` was tried and rejected on measured evidence, not by a gate.** The brief expected it to be
+`true` for the stdin form on Node 24. It is not. Probed on this exact runtime (`v24.21.0`) with a three-line
+module printing `process.argv` and `import.meta.main`: direct `node probe.ts` → `argv[1]` set, `main` **true**;
+`node < probe.ts` → `argv[1]` **absent**, `main` **false**; `node --input-type=module -e 'await import(...)'` →
+`argv[1]` absent, `main` **false**. So `import.meta.main` cannot tell the piped-in program from an import and
+would have left the hole open. `tsc`/`lint` never had to reject it: measurement did. What does distinguish them
+is where the module itself lives — a piped-in program is an eval-style module whose `import.meta.url` is a
+pseudo-URL ending `[eval1]` under the cwd, while an imported file keeps its own file URL. The predicate is now
+one hoisted constant, `EVAL_MODULE = /\[eval\d*\]$/`, used by `isEntryPoint()` for the absent-`argv[1]` case and
+unchanged `realpathSync`/`pathToFileURL` comparison when `argv[1]` is present, so all four forms are covered:
+direct `node scripts/schema-parity-check.ts`, absolute path, and a `/tmp` symlink each exit `2` naming the
+missing connection (measured by hand), the piped-in form the same, and
+`node --input-type=module -e 'await import("<abs>/scripts/schema-parity-check.ts")'` still exits `0` with
+stdout and stderr both empty.
+
+**A second consequence of the same pseudo-URL, found by the RED test.** `REPO_ROOT` was
+`fileURLToPath(new URL("..", import.meta.url))`; under the piped-in form that resolves to the *parent of the
+cwd*, so the checker read the runner from `../scripts/apply-schemas.sh` and died with
+`error: ENOENT: no such file or directory, open '.../llm-wiki-compiler/scripts/apply-schemas.sh'` — loud, but
+for the wrong reason and not the connection message. `REPO_ROOT` now takes `process.cwd()` in exactly that
+eval case and keeps the file-relative resolution otherwise, and its docblock says so: piped in from anywhere
+but the repository root it fails loudly on the runner it cannot read (exit `2`) rather than passing on a
+surface it never compared.
+
+**The weak pin is now a full pin.** The import pin asserted `stderr` and the exit code but not stdout; it now
+asserts `status === 0`, `stdout === ""`, `stdout` not containing `schema parity:`, and `stderr === ""`.
+
+**Size, measured.** `scripts/schema-parity-check.ts` was at 398 of 399 permitted code lines, so the change had
+to pay for itself: `EVAL_MODULE` (+1), the one-line `REPO_ROOT` ternary (net 0) and one mechanical line join in
+`formatMissingTables`' spread (-2) leave the file at **397** code lines, and `isEntryPoint` is still 4. No
+behavior changed in the joined line.
+
+**Validation of this slice.** `vitest run test/schema-parity-check.test.ts test/apply-schemas-check-flag.test.ts`
+exit `0`, 2 files / 18 tests passed (RED above, then GREEN). `tsc --noEmit` exit `0`; `typecheck:tests` exit `0`
+(1600 files, 238 baseline diagnostics in 86 files, no regression); `lint` exit `0` — `558 baseline violations in
+396 files across 423 rule/file entries; no regression`, the ceiling exactly; `fallow:ci` exit `0` and it did
+**not** print "compared nothing" (it compared against local `main` as its base ref and reported `0 dead-code, 0
+complexity, 0 duplication introduced`); `bash -n scripts/apply-schemas.sh` exit `0`. End-to-end on a
+`paritystdin_<epoch>` database this slice created and dropped: apply exit `0`, `CHECK_ONLY=true` exit `0` with
+`schema parity: 308 declared columns all present.` / `schema parity: ok` / `ok: every tenant table enforces
+row-level security.`; `alter table wiki.pages drop column aliases` then `CHECK_ONLY=true` exit `1` with
+`    wiki.pages.aliases  provided by packages/wiki/src/dimensions/wiki/migration_wiki_db_parity.sql`,
+`schema parity: FAIL - 1 missing columns in 1 tables, 0 missing tables.` and `drift detected.`; re-apply exit `0`
+and the check exit `0` again. CI-form suite `turbo run test --filter=//` exit `0`, **838 files (834 passed, 4
+skipped)** and **6281 tests (6270 passed, 11 skipped)** from its own summary, `1 successful` — one test more
+than L9, which is this slice's new case. `aks` was not written to (counters identical at 12 | 32 | 271 | 4753 |
+619 before and after).

@@ -37,7 +37,7 @@
  * supplies the `docker exec` wrapper `docs/guides/wiki-db-parity-migration.mdx` documents.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -290,6 +290,18 @@ describe("the wired check mode", () => {
     expect(result.stderr).toContain("error: schema parity needs a connection");
   });
 
+  it("fails loudly when its source is piped in as the program, never passing silently", () => {
+    const result = spawnSync(process.execPath, [], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      input: readFileSync(CHECKER, "utf-8"),
+      env: baseEnv(),
+    });
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("error: schema parity needs a connection");
+  });
+
   it("passes on a database built by the runner, and still reports RLS", () => {
     expect(beforeDrop.stderr).toBe("");
     expect(beforeDrop.status).toBe(0);
@@ -348,13 +360,15 @@ describe("the check mode beyond a lost column", () => {
 });
 
 describe("importing the checker", () => {
-  it("does not run the CLI, and touches neither stderr nor the exit code", () => {
+  it("does not run the CLI, and touches neither stream nor the exit code", () => {
     const result = spawnSync(
       process.execPath,
       ["--input-type=module", "-e", `await import(${JSON.stringify(CHECKER)});`],
       { cwd: REPO_ROOT, encoding: "utf8", env: baseEnv() },
     );
-    expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stdout).not.toContain("schema parity:");
+    expect(result.stderr).toBe("");
   });
 });

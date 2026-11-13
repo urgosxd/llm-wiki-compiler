@@ -74,8 +74,17 @@ import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-/** Repository root, resolved from this file so the caller's cwd cannot matter. */
-const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+/** Marker Node puts in `import.meta.url` when the program is piped in, not named by a file. */
+const EVAL_MODULE = /\[eval\d*\]$/;
+
+/**
+ * Repository root, resolved from this file so the caller's cwd cannot matter — with one
+ * exception, the piped-in form documented at {@link isEntryPoint}: a program read from stdin has
+ * no file of its own, only a `[eval]` pseudo-URL, so there the cwd it was started from is the
+ * anchor. Piped in from anywhere else it fails loudly on the runner it cannot read (exit `2`)
+ * rather than passing on a surface it never compared.
+ */
+const REPO_ROOT = EVAL_MODULE.test(import.meta.url) ? process.cwd() : fileURLToPath(new URL("..", import.meta.url));
 
 /** The runner that owns the one authoritative file list. */
 const RUNNER = "scripts/apply-schemas.sh";
@@ -488,9 +497,7 @@ function formatMissingTables(report: ParityReport): string[] {
   if (report.missingTables.length === 0) return [];
   return [
     `missing tables (${String(report.missingTables.length)}):`,
-    ...report.missingTables.map(
-      (table) => `  ${table}  provided by ${tableProvider(report, table)}`,
-    ),
+    ...report.missingTables.map((table) => `  ${table}  provided by ${tableProvider(report, table)}`),
   ];
 }
 
@@ -645,15 +652,30 @@ function main(argv: readonly string[]): number {
  * `process.exitCode = 1` on a run where every assertion passed. `scripts/apply-schemas.sh`
  * still executes the file as `node <path>/schema-parity-check.ts`, which must keep working.
  *
- * `process.argv[1]` is absent under `node -e` / `--input-type=module`, which is another
- * import-shaped invocation. Both sides go through `realpathSync` so a symlinked or
- * relatively-invoked entry still compares equal to `import.meta.url`'s file path. That
- * resolution cannot fail here: `argv[1]` is only read when it names a file Node itself just
- * loaded, and `import.meta.url` names this file, which is by definition readable.
+ * `process.argv[1]` names the executed file, and both sides go through `realpathSync` so a
+ * symlinked or relatively-invoked entry still compares equal to `import.meta.url`'s file path.
+ * That resolution cannot fail there: `argv[1]` is only read when it names a file Node itself
+ * just loaded, and `import.meta.url` names this file, which is by definition readable.
+ *
+ * ## `argv[1]` absent: piped-in program versus imported module
+ *
+ * `node < scripts/schema-parity-check.ts` pipes the source in as the program, and Node then
+ * supplies NO `argv[1]` — the earlier `if (executed === undefined) return false` read that as
+ * "imported", skipped `main()`, and the process EXITED `0` WITH NO OUTPUT AT ALL: a silent
+ * no-op green in the one check whose entire purpose is to prevent silent no-op greens.
+ *
+ * `import.meta.main` does not distinguish these on Node 24.21.0: measured, it is `false` for
+ * the piped-in program as well as for an import, so it would keep the hole open. What does
+ * distinguish them is where the module itself lives. A piped-in program is an eval-style
+ * module whose `import.meta.url` is a pseudo-URL ending in `[eval]`/`[eval1]` (`file://<cwd>/`
+ * plus that marker); an imported file keeps its own file URL. So an absent `argv[1]` counts as
+ * "this module is the program" exactly when its own URL carries that marker ({@link EVAL_MODULE},
+ * which also anchors {@link REPO_ROOT} in the same case), and an imported module — including one
+ * imported from `node -e` — is still left alone.
  */
 function isEntryPoint(): boolean {
   const executed = process.argv[1];
-  if (executed === undefined) return false;
+  if (executed === undefined) return EVAL_MODULE.test(import.meta.url);
   const self = pathToFileURL(realpathSync(fileURLToPath(import.meta.url))).href;
   return pathToFileURL(realpathSync(executed)).href === self;
 }
