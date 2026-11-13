@@ -162,24 +162,6 @@ describe("the header records the fingerprint's inputs", () => {
     expect(row.fingerprint).toBe("b".repeat(64));
     expect((await load(harness)).store).toBeNull();
   });
-
-  it("never stores credentials a configured endpoint carries", async () => {
-    setEnv({
-      ...LOCAL_ENDPOINT_ENV,
-      OPENAI_EMBEDDINGS_BASE_URL: "https://user:hunter2@vllm.example.com/v1?api_key=hunter2",
-    });
-    await writeStamped(harness, resolveEmbeddingFingerprint());
-
-    const row = await readHeaderInputs(harness);
-
-    // The endpoint is operator-supplied free text, so it can carry userinfo or a token
-    // in its query -- exactly why the fingerprint hashes it. This column is cleartext,
-    // so the credential is stripped at this boundary.
-    expect(row.endpoint).toBe("https://vllm.example.com/v1");
-    // Consequence, asserted rather than assumed: these inputs no longer reproduce the
-    // digest, so analysing this corpus needs the credential the reader was not given.
-    expect(row.fingerprint).not.toBe(identityDigest("openai", row.model, "https://vllm.example.com/v1"));
-  });
 });
 
 describe("recording an input never substitutes for the digest", () => {
@@ -221,5 +203,63 @@ describe("recording an input never substitutes for the digest", () => {
     // Untouched: no provenance and no override still matches on `model` alone, which is
     // what stops an upgrade from forcing a full re-embed of an existing wiki.
     expect((await load(harness)).store?.entries).toHaveLength(1);
+  });
+});
+
+/**
+ * The endpoint column is CLEARTEXT, so it may never hold a credential — and it must
+ * still be the endpoint the operator actually configured.
+ *
+ * ## Why the scheme-less shapes are their own suite
+ *
+ * `OLLAMA_HOST` is documented as a bare `host:port`, and `new URL()` does NOT throw on
+ * that shape: it reads everything before the first `:` as a scheme. Dispatching on a
+ * thrown error therefore never reached the scheme-less rule, which is how a password
+ * survived into the column and how `localhost:11434` became `localhost://11434`.
+ */
+describe("the recorded endpoint cannot carry a credential", () => {
+  let harness: KgPostgresHarness;
+  beforeEach(async () => { harness = await freshStack(); });
+  afterEach(async () => { await harness.cleanup(); restore(); });
+
+  it("never stores credentials a configured endpoint carries", async () => {
+    setEnv({
+      ...LOCAL_ENDPOINT_ENV,
+      OPENAI_EMBEDDINGS_BASE_URL: "https://user:hunter2@vllm.example.com/v1?api_key=hunter2",
+    });
+    await writeStamped(harness, resolveEmbeddingFingerprint());
+
+    const row = await readHeaderInputs(harness);
+
+    // The endpoint is operator-supplied free text, so it can carry userinfo or a token
+    // in its query -- exactly why the fingerprint hashes it. This column is cleartext,
+    // so the credential is stripped at this boundary.
+    expect(row.endpoint).toBe("https://vllm.example.com/v1");
+    // Consequence, asserted rather than assumed: these inputs no longer reproduce the
+    // digest, so analysing this corpus needs the credential the reader was not given.
+    expect(row.fingerprint).not.toBe(identityDigest("openai", row.model, "https://vllm.example.com/v1"));
+  });
+
+  it("drops userinfo from a scheme-less endpoint instead of storing it", async () => {
+    setEnv({ ...LOCAL_ENDPOINT_ENV, OPENAI_EMBEDDINGS_BASE_URL: "user:hunter2@vllm.internal:8443/v1" });
+    await writeStamped(harness, resolveEmbeddingFingerprint());
+
+    const row = await readHeaderInputs(harness);
+
+    // The SHAPE, not a thrown error, selects the rule: `new URL()` reads `user:` as a
+    // scheme and would hand the password back inside the path.
+    expect(row.endpoint).toBe("vllm.internal:8443/v1");
+    expect(JSON.stringify(row)).not.toContain("hunter2");
+  });
+
+  it("records a scheme-less host:port endpoint verbatim", async () => {
+    // The canonical OLLAMA_HOST form: there is no scheme to rebuild, and none may be
+    // invented -- an invented one names an endpoint that does not exist.
+    setEnv({ LLMWIKI_PROVIDER: "ollama", LLMWIKI_EMBEDDING_PROVIDER: "ollama", OLLAMA_HOST: "localhost:11434" });
+    await writeStamped(harness, resolveEmbeddingFingerprint());
+
+    const row = await readHeaderInputs(harness);
+
+    expect(`${row.backend}|${row.endpoint}`).toBe("ollama|localhost:11434");
   });
 });

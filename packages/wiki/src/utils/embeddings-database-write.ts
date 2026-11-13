@@ -92,28 +92,58 @@ function resolveIdentityOrNull(): EmbeddingFingerprintIdentity | null {
 }
 
 /**
+ * A value that really carries a scheme, which is the only form `URL()` reads as one.
+ *
+ * Matched explicitly because `URL()` does NOT throw on a scheme-less value: it treats
+ * whatever precedes the first `:` as a scheme. `user:hunter2@vllm.internal:8443/v1`
+ * therefore parses as scheme `user:` with the PASSWORD inside the path, and
+ * `localhost:11434` as scheme `localhost:` with an empty host — and `OLLAMA_HOST` is
+ * documented in exactly that scheme-less `host:port` shape.
+ */
+const EXPLICIT_ENDPOINT_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+
+/**
  * Strip credentials from an endpoint before it is stored in CLEARTEXT.
  *
  * The endpoint is operator-supplied free text (`OPENAI_EMBEDDINGS_BASE_URL`,
  * `OLLAMA_HOST`, ...) and may carry a token as userinfo or as a query parameter — which
- * is exactly why the fingerprint hashes it. Scheme, host, port and path are kept, so the
- * value still identifies the server; userinfo, query and fragment are dropped.
+ * is exactly why the fingerprint hashes it. The value is kept identifiable, so it still
+ * says which server produced the vectors; userinfo, query and fragment are dropped.
+ *
+ * Dispatch is on the SHAPE, never on whether `URL()` throws: a scheme-less value is
+ * parsed by `URL()` rather than rejected, and rebuilding `scheme://host+path` from that
+ * reading re-emits the credential it was supposed to remove.
  */
 function redactEndpointCredentials(endpoint: string): string {
+  if (!EXPLICIT_ENDPOINT_SCHEME.test(endpoint)) return redactAuthorityCredentials(endpoint);
   try {
-    const url = new URL(endpoint);
-    return `${url.protocol}//${url.host}${url.pathname}`;
+    return redactUrlCredentials(endpoint);
   } catch {
-    // Not a URL (for example a bare `host:port`), so there is no scheme to rebuild.
-    return stripInlineCredentials(endpoint);
+    // An explicit scheme the parser still refuses. Fall back to the textual rule rather
+    // than failing a header write over a diagnostic field.
+    return redactAuthorityCredentials(endpoint);
   }
 }
 
-/** Redact a value that is not a parseable URL, where userinfo can still appear. */
-function stripInlineCredentials(value: string): string {
-  const bare = value.split(/[?#]/, 1)[0] ?? "";
-  const userinfoEnd = bare.indexOf("@");
-  return userinfoEnd === -1 ? bare : bare.slice(userinfoEnd + 1);
+/** `scheme://host:port/path` from a value that genuinely has a scheme. */
+function redactUrlCredentials(endpoint: string): string {
+  const url = new URL(endpoint);
+  return `${url.protocol}//${url.host}${url.pathname}`;
+}
+
+/**
+ * Drop userinfo, query and fragment from a scheme-less authority, keeping the rest
+ * VERBATIM.
+ *
+ * Nothing is re-encoded and no scheme is invented: `host:port` must stay `host:port`,
+ * because an invented `scheme://` names an endpoint that does not exist. Userinfo is
+ * everything up to the LAST `@`, so a password containing `@` cannot survive by
+ * splitting at the first one.
+ */
+function redactAuthorityCredentials(authority: string): string {
+  const withoutQuery = authority.split(/[?#]/, 1)[0] ?? "";
+  const userinfoEnd = withoutQuery.lastIndexOf("@");
+  return userinfoEnd === -1 ? withoutQuery : withoutQuery.slice(userinfoEnd + 1);
 }
 
 export async function writeEmbeddingStoreToDb(
