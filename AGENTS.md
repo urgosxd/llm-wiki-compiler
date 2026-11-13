@@ -74,8 +74,8 @@ actually affect; do not wait for the whole suite while iterating.
    (`package.json`, `pnpm-lock.yaml`, `vitest.config.ts`, `tsconfig*.json`, or
    anything under `scripts/`), narrowing there would be a false negative, so it
    resolves the scope to the full unit tier and then declines to run it — that
-   tier is a subset of `pnpm test`, and running it here pays for the same files
-   twice. It prints
+   tier is a subset of what the CI gate already runs, and running it here pays for
+   the same files twice. It prints
    ```text
    affected: scope resolves to the full unit tier; run what CI runs instead:
      PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" corepack pnpm exec turbo run test --filter=//
