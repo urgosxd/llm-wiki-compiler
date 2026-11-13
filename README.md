@@ -362,11 +362,18 @@ the root `test` task), and the push hook runs only
 `pnpm run build` — and
 when your change has suite-wide reach (`package.json`, the lockfile, `vitest.config.ts`,
 `tsconfig*.json`, or anything under `scripts/`) it declines to run the full unit tier,
-which is a subset of `pnpm test`. It prints
-`` affected: scope resolves to the full unit tier; run `pnpm test` instead `` on stderr
-and exits `78`, so in that case run `pnpm test` yourself. It exits `69` when the change
-set cannot be computed at all (no `origin/main` or `upstream/main`, or a failed
-merge-base); exit `0` means a successful computation found nothing relevant.
+which is a subset of what the CI gate already runs. It prints this on stderr and exits
+`78`, so in that case run what CI runs yourself instead:
+
+```text
+affected: scope resolves to the full unit tier; run what CI runs instead:
+  PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" corepack pnpm exec turbo run test --filter=//
+not bare `pnpm test`: it never enters turbo, so the strict-env pass-through `//#test` depends on is never exercised.
+```
+
+It exits `69` when the change set cannot be computed at all (no `origin/main` or
+`upstream/main`, or a failed merge-base); exit `0` means a successful computation found
+nothing relevant.
 
 ### Measured verification limits
 

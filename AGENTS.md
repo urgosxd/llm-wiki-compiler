@@ -76,7 +76,11 @@ actually affect; do not wait for the whole suite while iterating.
    resolves the scope to the full unit tier and then declines to run it — that
    tier is a subset of `pnpm test`, and running it here pays for the same files
    twice. It prints
-   `` affected: scope resolves to the full unit tier; run `pnpm test` instead ``
+   ```text
+   affected: scope resolves to the full unit tier; run what CI runs instead:
+     PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" corepack pnpm exec turbo run test --filter=//
+   not bare `pnpm test`: it never enters turbo, so the strict-env pass-through `//#test` depends on is never exercised.
+   ```
    on stderr and exits `78`. It exits `69` when the change set cannot be
    computed at all (no `origin/main` or `upstream/main`, or a failed
    merge-base); exit `0` is reserved for a computation that succeeded and found

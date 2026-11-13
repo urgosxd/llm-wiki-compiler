@@ -17,9 +17,10 @@
  *   - A change to build/test configuration (`package.json`,
  *     `vitest.config.ts`, `tsconfig*.json`, `scripts/`) can affect any file, so
  *     the scope resolves to the whole `test:unit` tier rather than guessing. The
- *     DECISION stays here; EXECUTING that tier no longer does, because the tier is
- *     a subset of `pnpm test`, and `scripts/run-affected-tests.ts` declines it with
- *     its own status instead of re-running work the full suite already covers.
+ *     DECISION stays here; EXECUTING that tier no longer does, because that tier is a
+ *     subset of what the CI gate runs (`turbo run test --filter=//`), and
+ *     `scripts/run-affected-tests.ts` declines it with its own status rather than
+ *     paying for the same files twice.
  *   - When no base can be resolved (shallow clone, no upstream), or the
  *     merge-base/diff fails, nothing could be computed at all. That is
  *     `unresolved`: a refusal carrying its own non-zero status and its own message.
