@@ -672,6 +672,23 @@ function main(argv: readonly string[]): number {
  * "this module is the program" exactly when its own URL carries that marker ({@link EVAL_MODULE},
  * which also anchors {@link REPO_ROOT} in the same case), and an imported module — including one
  * imported from `node -e` — is still left alone.
+ *
+ * ## Why the predicate does not key on `import.meta.main` — do not "simplify" it back
+ *
+ * The measurement that fixes this predicate: on Node v24.21.0 a program piped in as
+ * `node < script.ts` reports `import.meta.main === false`, exactly as a module that was
+ * imported does. `import.meta.main` is therefore NOT a substitute for the marker test:
+ * swapping it in restores the silent no-op green on every piped-in run, which is the one
+ * failure mode this whole check exists to prevent. The pseudo-URL marker is the only
+ * measured discriminator between the two cases.
+ *
+ * The comment above can rot; the test cannot. The committed test `fails loudly when its
+ * source is piped in as the program, never passing silently` in
+ * `test/schema-parity-check.test.ts` pipes this file's source into `node` and asserts exit
+ * `2` with `error: schema parity needs a connection...` on stderr. If a future Node release
+ * renames or drops the `[eval]` marker, that test goes red instead of the hole reopening
+ * quietly, and the fix is to re-point {@link EVAL_MODULE} at the new naming — never to
+ * delete the test or to replace the predicate with `import.meta.main`.
  */
 function isEntryPoint(): boolean {
   const executed = process.argv[1];
