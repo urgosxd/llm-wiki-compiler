@@ -418,3 +418,24 @@ program, never passing silently` is what goes red if a future Node release chang
 
 The checker sits at **397 of 399 permitted code lines**; the owner recorded that budget as **the next slice's
 first task**, explicitly not to be refactored in this one.
+
+L12 (post-rebase gates). `L9`'s suite population is stale for this branch: it measured **6280 tests** on the
+pre-rebase tree, before `main`'s link-anchoring tests arrived with the rebase (`L10`'s population was 6281, one
+case more). `L9`'s gate results remain valid for the code; only its suite population is superseded here, and the
+gates were re-measured on the rebased tree at `428d2ae0de07f644e8cd72f75f9227760f982a79`.
+
+- `tsc --noEmit` exit `0`.
+- `npm run typecheck:tests` exit `0` — 1600 files checked, 238 baseline diagnostics in 86 files, no regression.
+- `npm run build` exit `0`.
+- `npm run lint` exit `0` — triple **558 / 396 / 423**, unchanged from the required ceiling; no `lint:update` run.
+- `npm run fallow:ci` exit `0`, and this time it did **not** print "compared nothing": it compared against the new
+  local `main` (`d7d46b94`) as its base ref and reported `0 dead-code, 0 complexity, 0 duplication introduced`.
+- The 18 schema tests, `vitest run test/schema-parity-check.test.ts test/apply-schemas-check-flag.test.ts`: 2 files,
+  18 tests passed, exit `0`.
+- The CI-form suite `turbo run test --filter=//` exit `0` — **838 files (834 passed, 4 skipped)** and **6293 tests
+  (6282 passed, 11 skipped)** from its own summary, `1 successful`. The delta from `L10`'s 6281 is 12 tests, exactly
+  the 12 `it(...)` cases `d7d46b94` adds to `test/compiler/link-anchoring.test.ts` (`L9`'s 6280 was one case behind
+  `L10`), so the growth is `main`'s new link-anchoring tests arriving with the rebase and this branch added none.
+- Rebase outcome: **no conflict**, and the base's file set is exactly
+  `odd/tasks/fix-anchoring-accepts-honest-short-labels.md`, `packages/wiki/src/compiler/link-anchoring.ts` and
+  `test/compiler/link-anchoring.test.ts` — disjoint from this branch's five paths.
