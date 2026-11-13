@@ -16,7 +16,9 @@
  *  - that a POPULATED row never stands in for the comparison the gate makes —
  *    recording an input must not become a way to relax the gate;
  *  - that an operator-supplied endpoint cannot smuggle a credential into a column
- *    that, unlike the fingerprint, is stored in cleartext.
+ *    that, unlike the fingerprint, is stored in cleartext;
+ *  - that an input which normalises to NOTHING records NULL, because `""` would claim
+ *    the endpoint really is empty while NULL says it is unknown.
  *
  * Split from `embeddings-database.test.ts` because that file is already at the
  * project's size limit.
@@ -275,5 +277,81 @@ describe("the recorded endpoint cannot carry a credential", () => {
     const row = await readHeaderInputs(harness);
 
     expect(`${row.backend}|${row.endpoint}`).toBe("ollama|localhost:11434");
+  });
+});
+
+/**
+ * An input that normalises to nothing is UNKNOWN, not empty.
+ *
+ * `""` is a claim -- it says the endpoint really is the empty string -- while NULL says the
+ * value is not recorded. Two producers reach `""`: the redaction cut for a value that STARTS
+ * with a control character, and a fixed-endpoint backend, whose identity endpoint is `""` by
+ * definition. Both must land as NULL, or the column states a fact nobody proved.
+ *
+ * A blank `backend` has no public path here: `readEnv` (`embedding-provider.ts:117-120`) trims
+ * and treats empty as unset, so neither `LLMWIKI_PROVIDER` nor `LLMWIKI_EMBEDDING_PROVIDER`
+ * can name a blank backend. The normalisation covers that column anyway, so a future producer
+ * of one cannot reintroduce the empty-string lie.
+ */
+describe("an input that normalises to nothing is recorded as unknown", () => {
+  let harness: KgPostgresHarness;
+  beforeEach(async () => { harness = await freshStack(); });
+  afterEach(async () => { await harness.cleanup(); restore(); });
+
+  it("records NULL when a leading control character empties the endpoint", async () => {
+    // NUL is not whitespace, so it survives the endpoint's own `trim()` and reaches the cut
+    // at index 0: the remainder is empty, and there is nothing left to record.
+    const row = await writeEndpointRow(harness, "\u0000host:1/v1");
+
+    expect(row.endpoint).toBeNull();
+    expect(JSON.stringify(row)).not.toContain("host:1/v1");
+  });
+
+  it("records NULL for a whitespace-only endpoint", async () => {
+    // Whitespace is not an endpoint, and clearing a variable instead of unsetting it is how
+    // an operator produces one.
+    const row = await writeEndpointRow(harness, "   ");
+
+    expect(row.endpoint).toBeNull();
+  });
+
+  it("records NULL when the credential cut leaves nothing behind", async () => {
+    // `new URL()` rejects an empty host, so the textual rule runs: userinfo is everything up
+    // to the LAST `@`, which here is the entire value.
+    const row = await writeEndpointRow(harness, "https://user:hunter2@");
+
+    expect(row.endpoint).toBeNull();
+    expect(JSON.stringify(row)).not.toContain("hunter2");
+  });
+
+  it("records NULL for a lone DEL character", async () => {
+    // DEL is a raw control character like any other, and it is the whole endpoint.
+    const row = await writeEndpointRow(harness, "\u007f");
+
+    expect(row.endpoint).toBeNull();
+  });
+
+  it("cuts a scheme-ful endpoint at a control character like a scheme-less one", async () => {
+    // The cut sits UPSTREAM of the shape rule, so a value with a scheme loses everything
+    // behind the control character exactly as the scheme-less case above does.
+    const row = await writeEndpointRow(harness, "https://vllm.example.com/v1\nhunter2");
+
+    expect(row.endpoint).toBe("https://vllm.example.com/v1");
+    expect(JSON.stringify(row)).not.toContain("hunter2");
+  });
+
+  it("records NULL for a fixed-endpoint backend whose endpoint is empty", async () => {
+    // Anthropic embeds through Voyage, which has no endpoint override, so the identity's
+    // endpoint IS `""` and the digest provably covers it -- yet `""` in this column reads as
+    // "the endpoint is empty", which is nobody's configuration.
+    setEnv({ LLMWIKI_PROVIDER: "anthropic", LLMWIKI_EMBEDDING_PROVIDER: "anthropic" });
+    await writeStamped(harness, resolveEmbeddingFingerprint());
+
+    const row = await readHeaderInputs(harness);
+
+    expect(row.backend).toBe("voyage");
+    expect(row.endpoint).toBeNull();
+    // The inputs ARE proved: the empty endpoint is what the digest hashed.
+    expect(row.fingerprint).toBe(identityDigest("voyage", row.model, ""));
   });
 });

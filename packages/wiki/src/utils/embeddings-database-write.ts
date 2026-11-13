@@ -48,7 +48,8 @@ const EMBEDDING_COLUMN_WIDTH = 768;
  *
  * NULL is the correct answer whenever the proof below fails: it says "unknown", which
  * is exactly what a digest produced in another environment leaves behind. A guess
- * would be worse than nothing, because a reader treats a populated pair as evidence.
+ * would be worse than nothing, because a reader treats a populated pair as evidence --
+ * and an empty string is one of those guesses, since it claims the value IS empty.
  */
 interface RecordedFingerprintInputs {
   readonly backend: string | null;
@@ -73,7 +74,25 @@ function recordableFingerprintInputs(store: EmbeddingStoreV3): RecordedFingerpri
   if (identity === null) return UNRECORDED_INPUTS;
   if (store.model !== identity.model) return UNRECORDED_INPUTS;
   if (embeddingIdentityDigest(identity) !== store.fingerprint) return UNRECORDED_INPUTS;
-  return { backend: identity.backend, endpoint: redactEndpointCredentials(identity.endpoint) };
+  return {
+    backend: unknownWhenBlank(identity.backend),
+    endpoint: unknownWhenBlank(redactEndpointCredentials(identity.endpoint)),
+  };
+}
+
+/**
+ * A recorded input, or NULL when there is nothing of it to record.
+ *
+ * `""` is a CLAIM: in this column it says the endpoint really is the empty string. A value
+ * can reach it two ways -- the redaction cut empties one that starts with a control
+ * character, and a fixed-endpoint backend has no endpoint at all -- and neither is a fact
+ * anybody proved. NULL says "unknown", which is true in both.
+ *
+ * `trim()` decides only WHETHER to record; a non-blank value is recorded exactly as given,
+ * because rewriting it would break the proof that these are the digest's own inputs.
+ */
+function unknownWhenBlank(value: string): string | null {
+  return value.trim() === "" ? null : value;
 }
 
 /**
