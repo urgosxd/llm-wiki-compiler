@@ -77,23 +77,24 @@ actually affect; do not wait for the whole suite while iterating.
    tier is a subset of `pnpm test`, and running it here pays for the same files
    twice. It prints
    `` affected: scope resolves to the full unit tier; run `pnpm test` instead ``
-   on stderr and exits `78`. It exits `69` when the change set cannot be computed
-   at all (no `origin/main` or `upstream/main`, or a failed merge-base); exit `0`
-   is reserved for a computation that succeeded and found nothing relevant.
-   A `78` means run what CI runs:
-   `PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" corepack pnpm exec turbo run
-   test --filter=//`, which selects the root task `//#test` — the only task that can
-   see a `scripts/` change, because that directory is one of `TEST_ROOTS` in
-   `scripts/test-partition.ts` and belongs to no workspace package, so no
-   `--filter=@repo/<pkg>` reaches it. Not bare `pnpm test`: bare `pnpm test` never
-   enters turbo and so never exercises the strict-env pass-through `//#test` depends
-   on — the configuration `turbo.json` records as having silently stripped
-   `DATABASE_URL` and its two siblings at exit `0` before `globalPassThroughEnv`
-   named them — which leaves a green bare run as evidence about a different
-   configuration from the one CI gates on. And assert the population rather than the
-   exit code: that form once exited `127` having executed nothing, so read the file
-   and test counts from its own summary (`835` files / `6247` tests as measured) and
-   check the run reports `1 successful`, since a stripped environment exits `0` too.
+   on stderr and exits `78`. It exits `69` when the change set cannot be
+   computed at all (no `origin/main` or `upstream/main`, or a failed
+   merge-base); exit `0` is reserved for a computation that succeeded and found
+   nothing relevant. A `78` means run what CI runs:
+   `PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" corepack pnpm exec turbo run test --filter=//`
+   — the root task `//#test`, and the only task that can see a `scripts/`
+   change: that directory is one of `TEST_ROOTS` in `scripts/test-partition.ts`
+   and belongs to no workspace package, so no `--filter=@repo/<pkg>` can reach
+   it. Not bare `pnpm test`: bare `pnpm test` never enters turbo, so it never
+   exercises the strict-env pass-through `//#test` depends on — the
+   configuration `turbo.json` records as having silently stripped
+   `DATABASE_URL` and its two siblings at exit `0` before
+   `globalPassThroughEnv` named them — which leaves a green bare run as evidence
+   about a different configuration from the one CI gates on. Assert the
+   population, not the exit code: that form once exited `127` having executed
+   nothing, so read the file and test counts from its own summary, confirm
+   neither is `0`, and check the run reports `1 successful`, since a stripped
+   environment exits `0` too.
 3. **`pnpm test`** — the exhaustive run. Required only when your change is
    cross-cutting, when you suspect a coupling the related-selection cannot see,
    or before opening a pull request. CI runs it on every push and pull request,
