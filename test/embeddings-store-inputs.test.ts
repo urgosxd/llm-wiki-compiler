@@ -355,3 +355,36 @@ describe("an input that normalises to nothing is recorded as unknown", () => {
     expect(row.fingerprint).toBe(identityDigest("voyage", row.model, ""));
   });
 });
+
+/**
+ * The two cases that sit on a BOUNDARY rather than on one rule, kept in their own block:
+ * `max-lines-per-function` allows 39 body lines and the block above spends them, so they cannot
+ * join it without turning the ratchet red. A lone TAB is both whitespace-only and a control
+ * character at index 0, so whichever rule fires first, nothing may be left to record; the last
+ * case is the anti-relaxation rule this normalisation must not touch.
+ */
+describe("the blank-input boundary and the gate it must not relax", () => {
+  let harness: KgPostgresHarness;
+  beforeEach(async () => { harness = await freshStack(); });
+  afterEach(async () => { await harness.cleanup(); restore(); });
+
+  it("records NULL for a lone TAB, which is both whitespace and a control character", async () => {
+    // Boundary of the two rules: whichever one fires, nothing is left to record.
+    const row = await writeEndpointRow(harness, "\t");
+
+    expect(row.endpoint).toBeNull();
+  });
+
+  it("records NULL for an empty endpoint and STILL refuses the mismatched digest", async () => {
+    // The brief's stop condition: if normalising to NULL could admit a store, the gate
+    // would have been relaxed. It must refuse exactly as it does with a populated endpoint.
+    setEnv({ ...LOCAL_ENDPOINT_ENV, OPENAI_EMBEDDINGS_BASE_URL: "\u0000host:1/v1" });
+    await writeStamped(harness, "b".repeat(64));
+    const refused = await load(harness);
+    const row = await readHeaderInputs(harness);
+
+    expect(row.backend).toBeNull();
+    expect(row.endpoint).toBeNull();
+    expect(refused.store).toBeNull();
+  });
+});

@@ -26,11 +26,12 @@ migration are unchanged.
 
 ## Tasks
 
-T1. Create this feature document. Route: inline. Commit: `docs(odd): track embedding input unknown-not-empty fix`.
+T1. Create this feature document. Route: inline. Commit: `ec495ffe9dcde7a044c520ba1f958125891e8b10` `docs(odd): track embedding input unknown-not-empty fix`.
 T2. RED — extend `test/embeddings-store-inputs.test.ts` through the existing seam; observe `""` written for the new NULL cases. Route: inline. Commit: with T3.
-T3. Fix + GREEN — emptiness→NULL normalisation in `recordableFingerprintInputs` for both inputs; focused test passes, nine existing cases untouched. Route: inline. Commit: `fix(embeddings): record NULL when a fingerprint input normalises to empty`.
+T3. Fix + GREEN — emptiness→NULL normalisation in `recordableFingerprintInputs` for both inputs; focused test passes, nine existing cases untouched. Route: inline. Commit: `cc202d081fabbbc2d3f28b6e2ad24690a5336104` `fix(embeddings): record NULL when a fingerprint input normalises to empty`.
 T4. Gates — `npx tsc --noEmit`, `npm run typecheck:tests`, `npm run lint` (ceiling 558 / 396 / 423), `npm run fallow:ci`, `npm run test:affected`. Route: inline. Commit: none.
 T5. Commit the behavioural unit (tests + normalisation together). Route: inline. Commit: as T3.
+T6. Regression tests — a lone TAB (both whitespace and control character: the boundary of the two rules) and an empty endpoint that must STILL refuse a mismatched digest (the brief's anti-relaxation stop condition). Covers S1–S3. Route: inline. Commit: T6 (this commit) `test(embeddings): pin blank-input boundary and anti-relaxation gate`.
 
 ## Log
 
