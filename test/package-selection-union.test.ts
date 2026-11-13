@@ -88,6 +88,14 @@ const FROZEN_ORPHANS: readonly string[] = [
   "test/ci/fallow-report-gate.test.ts",
   "test/config-prose-rot-guard.test.ts",
   "test/dimensions/kg-config-laziness.test.ts",
+  // LEGITIMATELY ORPHAN, investigated not pasted: this file pins the env example
+  // files `packages/llmwiki-kg/.env.example`, `docker/hub.env.example`,
+  // `docker/env.example`, `.env.synthetic.example` and the `dotenv` cwd resolution in
+  // `packages/api/src/load-environment.ts`. It imports no repo module — only node
+  // builtins and `vitest` — so it is cross-package by subject and package-less by
+  // import graph: no package filter can select it and it runs in the full suite only.
+  // There is nothing to fix; a test written this way lands here by construction.
+  "test/env-examples-and-dotenv-cwd.test.ts",
   "test/gate-zone-paths-exist.test.ts",
   "test/kg-test-program-coverage.test.ts",
   "test/no-executable-root-src-walks.test.ts",
