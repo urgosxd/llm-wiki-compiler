@@ -80,7 +80,7 @@ export const EXIT_SCOPE_UNRESOLVED = 69;
  * inside backticks. Concatenated, never a template literal, so `$HOME` passes
  * through literally.
  */
-const FULL_TIER_LINE =
+export const FULL_TIER_LINE =
   'affected: scope resolves to the full unit tier; run what CI runs instead:\n' +
   '  PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" corepack pnpm exec turbo run test --filter=//\n' +
   'not bare `pnpm test`: it never enters turbo, so the strict-env pass-through `//#test` depends on is never exercised.\n';
