@@ -83,6 +83,8 @@ readonly SCHEMA_FILES=(
   "packages/wiki/src/dimensions/wiki/migration_wiki_derived.sql"
   "packages/wiki/src/dimensions/wiki/migration_wiki_project_config.sql"
   "packages/wiki/src/dimensions/wiki/migration_page_embeddings.sql"
+  # Alters `wiki.embedding_store_meta`, so it must follow the file that creates it.
+  "packages/wiki/src/dimensions/wiki/migration_wiki_embedding_store_inputs.sql"
   "packages/wiki/src/dimensions/wiki/migration_wiki_jobs.sql"
   # Last on purpose. It alters `wiki.pages` and creates three tables whose foreign keys
   # reach `public.stacks`, so it needs both the KG schema (first in this list) and

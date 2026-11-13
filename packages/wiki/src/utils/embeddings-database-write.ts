@@ -24,7 +24,14 @@
 import { sql } from "drizzle-orm";
 import type { DatabaseHandle } from "@repo/foundation";
 import { bindStack, splitPageId } from "./embeddings-tenant.js";
-import type { ChunkEmbeddingV3, EmbeddingStoreV3, PageEmbeddingV3 } from "./embeddings-store.js";
+import {
+  embeddingIdentityDigest,
+  resolveEmbeddingFingerprintIdentity,
+  type ChunkEmbeddingV3,
+  type EmbeddingFingerprintIdentity,
+  type EmbeddingStoreV3,
+  type PageEmbeddingV3,
+} from "./embeddings-store.js";
 import { EMBEDDING_MODELS } from "./constants.js";
 import { getActiveEmbeddingProviderName } from "./embedding-provider.js";
 
@@ -34,6 +41,80 @@ import { getActiveEmbeddingProviderName } from "./embedding-provider.js";
  * apart silently.
  */
 const EMBEDDING_COLUMN_WIDTH = 768;
+
+/**
+ * The fingerprint inputs a header row may record, or NULLs when this write cannot
+ * vouch for them.
+ *
+ * NULL is the correct answer whenever the proof below fails: it says "unknown", which
+ * is exactly what a digest produced in another environment leaves behind. A guess
+ * would be worse than nothing, because a reader treats a populated pair as evidence.
+ */
+interface RecordedFingerprintInputs {
+  readonly backend: string | null;
+  readonly endpoint: string | null;
+}
+
+/** The one shape an unproven write records. */
+const UNRECORDED_INPUTS: RecordedFingerprintInputs = { backend: null, endpoint: null };
+
+/**
+ * The inputs this write may record beside `store.fingerprint`.
+ *
+ * TWO proofs, both required. The digest must equal the one the ACTIVE configuration
+ * produces — that is what makes these values THE inputs of the stored digest, since
+ * no other triple hashes to it — and the stored `model` must equal the resolved one, or
+ * the row would carry four values (backend, model, endpoint, fingerprint) that cannot
+ * be reconciled. Anything unproven records NULL rather than a plausible-looking lie.
+ */
+function recordableFingerprintInputs(store: EmbeddingStoreV3): RecordedFingerprintInputs {
+  if (typeof store.fingerprint !== "string") return UNRECORDED_INPUTS;
+  const identity = resolveIdentityOrNull();
+  if (identity === null) return UNRECORDED_INPUTS;
+  if (store.model !== identity.model) return UNRECORDED_INPUTS;
+  if (embeddingIdentityDigest(identity) !== store.fingerprint) return UNRECORDED_INPUTS;
+  return { backend: identity.backend, endpoint: redactEndpointCredentials(identity.endpoint) };
+}
+
+/**
+ * The active identity, or null when resolution refuses the configuration.
+ *
+ * Recording is DIAGNOSTIC here, so a configuration the resolver rejects must not turn a
+ * header write that used to succeed into a failure. NULL then says the inputs are
+ * unknown, which is true.
+ */
+function resolveIdentityOrNull(): EmbeddingFingerprintIdentity | null {
+  try {
+    return resolveEmbeddingFingerprintIdentity();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Strip credentials from an endpoint before it is stored in CLEARTEXT.
+ *
+ * The endpoint is operator-supplied free text (`OPENAI_EMBEDDINGS_BASE_URL`,
+ * `OLLAMA_HOST`, ...) and may carry a token as userinfo or as a query parameter — which
+ * is exactly why the fingerprint hashes it. Scheme, host, port and path are kept, so the
+ * value still identifies the server; userinfo, query and fragment are dropped.
+ */
+function redactEndpointCredentials(endpoint: string): string {
+  try {
+    const url = new URL(endpoint);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    // Not a URL (for example a bare `host:port`), so there is no scheme to rebuild.
+    return stripInlineCredentials(endpoint);
+  }
+}
+
+/** Redact a value that is not a parseable URL, where userinfo can still appear. */
+function stripInlineCredentials(value: string): string {
+  const bare = value.split(/[?#]/, 1)[0] ?? "";
+  const userinfoEnd = bare.indexOf("@");
+  return userinfoEnd === -1 ? bare : bare.slice(userinfoEnd + 1);
+}
 
 export async function writeEmbeddingStoreToDb(
   db: DatabaseHandle,
@@ -50,17 +131,29 @@ export async function writeEmbeddingStoreToDb(
   });
 }
 
-/** Upsert the header row for this Stack. */
+/**
+ * Upsert the header row for this Stack.
+ *
+ * The fingerprint's inputs are recorded from the SAME resolver the digest comes from,
+ * and only when their digest IS the fingerprint being written — see
+ * {@link recordableFingerprintInputs}. `model`, `dimensions`, `min_similarity` and
+ * `fingerprint` are written exactly as before; the inputs are evidence beside them and
+ * nothing compares them.
+ */
 async function upsertMeta(tx: DatabaseHandle, stackId: string, store: EmbeddingStoreV3): Promise<void> {
+  const recorded = recordableFingerprintInputs(store);
   await tx.execute(sql`
     insert into wiki.embedding_store_meta
-      (stack_id, model, dimensions, fingerprint, min_similarity, updated_at)
+      (stack_id, model, dimensions, fingerprint, backend, endpoint, min_similarity, updated_at)
     values (${stackId}, ${store.model}, ${store.dimensions},
-            ${store.fingerprint ?? null}, ${store.minSimilarity ?? null}, now())
+            ${store.fingerprint ?? null}, ${recorded.backend}, ${recorded.endpoint},
+            ${store.minSimilarity ?? null}, now())
     on conflict (stack_id) do update
       set model = excluded.model,
           dimensions = excluded.dimensions,
           fingerprint = excluded.fingerprint,
+          backend = excluded.backend,
+          endpoint = excluded.endpoint,
           min_similarity = excluded.min_similarity,
           updated_at = now()
   `);

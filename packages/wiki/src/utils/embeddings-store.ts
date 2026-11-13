@@ -342,6 +342,60 @@ export function resolveEmbeddingModel(): string {
 }
 
 /**
+ * The three values a store's fingerprint is computed from.
+ *
+ * Recorded beside the digest in `wiki.embedding_store_meta` because a digest is
+ * one-way: without these, a corpus cannot say which backend and endpoint built it
+ * once the configuration that produced it has moved on.
+ */
+export interface EmbeddingFingerprintIdentity {
+  /** Backend the vectors were produced against — see `resolveEmbeddingBackend`. */
+  readonly backend: string;
+  /** Model name the vectors were produced with. */
+  readonly model: string;
+  /** Endpoint serving that backend, or "" for a fixed one. */
+  readonly endpoint: string;
+}
+
+/**
+ * Resolve the fingerprint inputs from the ACTIVE embedding configuration.
+ *
+ * Split out of `resolveEmbeddingFingerprint` so the inputs can be recorded NEXT TO the
+ * digest they produce. One resolver, deliberately: a second resolution somewhere else
+ * would be free to disagree with the values the digest was computed from, and a stored
+ * input that does not hash to its own fingerprint is worse than no input at all.
+ */
+export function resolveEmbeddingFingerprintIdentity(): EmbeddingFingerprintIdentity {
+  const providerName = getActiveEmbeddingProviderName();
+  // Keyed on the BACKEND, not the provider name: anthropic and claude-agent both
+  // embed via Voyage, so moving between them must not trigger a rebuild.
+  return {
+    backend: resolveEmbeddingBackend(providerName),
+    model: resolveEmbeddingModel(),
+    endpoint: resolveEmbeddingEndpoint(providerName),
+  };
+}
+
+/**
+ * The digest `identity` produces.
+ *
+ * NUL-separated: no env value can contain one, so no pair of distinct configurations
+ * can collide by concatenation. The join order, separator and encoding ARE the
+ * store's invalidation key — changing any of them re-embeds every existing wiki.
+ *
+ * HASHED because this is persisted. The endpoint component is a free-form URL that
+ * routinely carries a credential as userinfo or a query parameter, and
+ * .llmwiki/embeddings.json gets committed, copied between machines, and pasted into
+ * bug reports. Nothing ever reads the fingerprint back — it is only compared for
+ * equality — so opacity costs nothing, and `model` remains on the store in cleartext
+ * for diagnostics.
+ */
+export function embeddingIdentityDigest(identity: EmbeddingFingerprintIdentity): string {
+  const composed = [identity.backend, identity.model, identity.endpoint].join("\0");
+  return createHash("sha256").update(composed, "utf8").digest("hex");
+}
+
+/**
  * Identity of the configuration that PRODUCES a store's vectors: the embedding
  * provider, its model, and the endpoint serving it.
  *
@@ -364,23 +418,7 @@ export function resolveEmbeddingModel(): string {
  * rebuild instead.
  */
 export function resolveEmbeddingFingerprint(): string {
-  const providerName = getActiveEmbeddingProviderName();
-  // Keyed on the BACKEND, not the provider name: anthropic and claude-agent both
-  // embed via Voyage, so moving between them must not trigger a rebuild.
-  // NUL-separated: no env value can contain one, so no pair of distinct
-  // configurations can collide by concatenation.
-  const identity = [
-    resolveEmbeddingBackend(providerName),
-    resolveEmbeddingModel(),
-    resolveEmbeddingEndpoint(providerName),
-  ].join("\0");
-  // HASHED because this is persisted. The endpoint component is a free-form URL
-  // that routinely carries a credential as userinfo or a query parameter, and
-  // .llmwiki/embeddings.json gets committed, copied between machines, and pasted
-  // into bug reports. Nothing ever reads the fingerprint back — it is only
-  // compared for equality — so opacity costs nothing, and `model` remains on the
-  // store in cleartext for diagnostics.
-  return createHash("sha256").update(identity, "utf8").digest("hex");
+  return embeddingIdentityDigest(resolveEmbeddingFingerprintIdentity());
 }
 
 /**
