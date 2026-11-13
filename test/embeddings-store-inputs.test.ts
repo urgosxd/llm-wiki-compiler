@@ -206,6 +206,13 @@ describe("recording an input never substitutes for the digest", () => {
   });
 });
 
+/** The row left by a store whose configured endpoint was `endpoint`. */
+async function writeEndpointRow(harness: KgPostgresHarness, endpoint: string): Promise<HeaderInputs> {
+  setEnv({ ...LOCAL_ENDPOINT_ENV, OPENAI_EMBEDDINGS_BASE_URL: endpoint });
+  await writeStamped(harness, resolveEmbeddingFingerprint());
+  return readHeaderInputs(harness);
+}
+
 /**
  * The endpoint column is CLEARTEXT, so it may never hold a credential — and it must
  * still be the endpoint the operator actually configured.
@@ -223,17 +230,10 @@ describe("the recorded endpoint cannot carry a credential", () => {
   afterEach(async () => { await harness.cleanup(); restore(); });
 
   it("never stores credentials a configured endpoint carries", async () => {
-    setEnv({
-      ...LOCAL_ENDPOINT_ENV,
-      OPENAI_EMBEDDINGS_BASE_URL: "https://user:hunter2@vllm.example.com/v1?api_key=hunter2",
-    });
-    await writeStamped(harness, resolveEmbeddingFingerprint());
-
-    const row = await readHeaderInputs(harness);
-
     // The endpoint is operator-supplied free text, so it can carry userinfo or a token
-    // in its query -- exactly why the fingerprint hashes it. This column is cleartext,
-    // so the credential is stripped at this boundary.
+    // in its query -- exactly why the fingerprint hashes it. This column is cleartext.
+    const row = await writeEndpointRow(harness, "https://user:hunter2@vllm.example.com/v1?api_key=hunter2");
+
     expect(row.endpoint).toBe("https://vllm.example.com/v1");
     // Consequence, asserted rather than assumed: these inputs no longer reproduce the
     // digest, so analysing this corpus needs the credential the reader was not given.
@@ -241,14 +241,28 @@ describe("the recorded endpoint cannot carry a credential", () => {
   });
 
   it("drops userinfo from a scheme-less endpoint instead of storing it", async () => {
-    setEnv({ ...LOCAL_ENDPOINT_ENV, OPENAI_EMBEDDINGS_BASE_URL: "user:hunter2@vllm.internal:8443/v1" });
-    await writeStamped(harness, resolveEmbeddingFingerprint());
-
-    const row = await readHeaderInputs(harness);
-
     // The SHAPE, not a thrown error, selects the rule: `new URL()` reads `user:` as a
     // scheme and would hand the password back inside the path.
+    const row = await writeEndpointRow(harness, "user:hunter2@vllm.internal:8443/v1");
+
     expect(row.endpoint).toBe("vllm.internal:8443/v1");
+    expect(JSON.stringify(row)).not.toContain("hunter2");
+  });
+
+  it("splits userinfo at the LAST @ so a password containing @ cannot survive", async () => {
+    // A password may itself contain the delimiter; first-@ splitting would keep `ss@host`.
+    const row = await writeEndpointRow(harness, "p@ss@host:1/v1?token=hunter2");
+
+    expect(row.endpoint).toBe("host:1/v1");
+    expect(`${JSON.stringify(row)}`).not.toMatch(/p@ss|hunter2/);
+  });
+
+  it("cuts the endpoint at a control character so nothing hides behind one", async () => {
+    // A control character is invisible in a listing, so anything behind it is smuggled:
+    // the value ends there, because no legitimate endpoint contains a raw one.
+    const row = await writeEndpointRow(harness, "host:1/v1\nhunter2");
+
+    expect(row.endpoint).toBe("host:1/v1");
     expect(JSON.stringify(row)).not.toContain("hunter2");
   });
 

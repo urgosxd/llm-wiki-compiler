@@ -102,6 +102,9 @@ function resolveIdentityOrNull(): EmbeddingFingerprintIdentity | null {
  */
 const EXPLICIT_ENDPOINT_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 
+/** A raw control character (C0 and DEL), which no legitimate endpoint contains. */
+const RAW_CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+
 /**
  * Strip credentials from an endpoint before it is stored in CLEARTEXT.
  *
@@ -113,16 +116,36 @@ const EXPLICIT_ENDPOINT_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
  * Dispatch is on the SHAPE, never on whether `URL()` throws: a scheme-less value is
  * parsed by `URL()` rather than rejected, and rebuilding `scheme://host+path` from that
  * reading re-emits the credential it was supposed to remove.
+ *
+ * ## The residual this deliberately accepts
+ *
+ * A credential sitting in the URL PATH is KEPT. A path token is indistinguishable from a
+ * legitimate path segment (`/v1`, `/api/<tenant>`), so stripping it would corrupt genuine
+ * endpoints and make the record useless as evidence; userinfo, query and fragment are the
+ * carriers this function removes, and those are the ones a reader must never be handed.
  */
 function redactEndpointCredentials(endpoint: string): string {
-  if (!EXPLICIT_ENDPOINT_SCHEME.test(endpoint)) return redactAuthorityCredentials(endpoint);
+  // ONE cut, upstream of both shape rules, because a raw control character ENDS the
+  // endpoint: nothing legible follows it, most tools do not show it, and `URL()` does not
+  // neutralise one either -- it DELETES a tab or newline, gluing the hidden text onto the
+  // path (`http://h/v1\nhunter2` becomes the path `v1hunter2`), and percent-encodes the
+  // rest instead of stopping there. An empty remainder stays empty; a header write must
+  // not fail over a diagnostic field.
+  const printable = cutAtControlCharacter(endpoint);
+  if (!EXPLICIT_ENDPOINT_SCHEME.test(printable)) return redactAuthorityCredentials(printable);
   try {
-    return redactUrlCredentials(endpoint);
+    return redactUrlCredentials(printable);
   } catch {
     // An explicit scheme the parser still refuses. Fall back to the textual rule rather
     // than failing a header write over a diagnostic field.
-    return redactAuthorityCredentials(endpoint);
+    return redactAuthorityCredentials(printable);
   }
+}
+
+/** Everything before the first raw control character, or the value unchanged. */
+function cutAtControlCharacter(endpoint: string): string {
+  const controlAt = endpoint.search(RAW_CONTROL_CHARACTER);
+  return controlAt === -1 ? endpoint : endpoint.slice(0, controlAt);
 }
 
 /** `scheme://host:port/path` from a value that genuinely has a scheme. */
