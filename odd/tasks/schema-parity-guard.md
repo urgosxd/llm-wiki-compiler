@@ -328,3 +328,12 @@ apply exit `0`, `CHECK_ONLY=true` exit `0` with `schema parity: 308 declared col
 `    wiki.pages.aliases  provided by packages/wiki/src/dimensions/wiki/migration_wiki_db_parity.sql`,
 `schema parity: FAIL - 1 missing columns in 1 tables, 0 missing tables.` and `drift detected.`. `aks` was not
 written to. Leftover probe directories `/tmp/gpaNywqo` and `/tmp/parity-verify-qqLcxh` removed.
+
+L9 (work unit). Commit W1 holds T1-T5: `2b99ba9552c080907c71deffb798e6f4a8f6b2b3`. Gates, all re-run on the
+exact tree committed: tsc exit `0`; typecheck:tests exit `0` (1600 files, 238 baseline diagnostics in 86
+files, no regression); build exit `0`; lint exit `0` (triple **558 / 396 / 423**, no regression); fallow:ci
+exit `0`, and it printed "compared nothing" because merge-base(local `main`, `HEAD`) is `HEAD`; the CI-form
+suite `turbo run test --filter=//` exit `0` with **838 files (834 passed, 4 skipped)** and **6280 tests
+(6269 passed, 11 skipped)** read from its own summary, plus `1 successful`. `test:affected` exited `78`: it
+reports that scope resolves to the full unit tier and names the CI form, which is the suite run above, so the
+full suite is the substitute rather than a skipped gate.
