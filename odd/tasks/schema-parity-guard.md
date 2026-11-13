@@ -398,3 +398,23 @@ and the check exit `0` again. CI-form suite `turbo run test --filter=//` exit `0
 skipped)** and **6281 tests (6270 passed, 11 skipped)** from its own summary, `1 successful` — one test more
 than L9, which is this slice's new case. `aks` was not written to (counters identical at 12 | 32 | 271 | 4753 |
 619 before and after).
+
+L11 (rebase). The branch was rebased onto `d7d46b94778817614939c2a500aef84486bdd150` (local `main`), which
+**supersedes the SHAs recorded in L9 and L10**: every commit below is the same tree replayed on the new base,
+and the L9/L10 hashes no longer name anything reachable from this branch. The owner verified beforehand that the
+target commit touches exactly `packages/wiki/src/compiler/link-anchoring.ts`,
+`test/compiler/link-anchoring.test.ts` and `odd/tasks/fix-anchoring-accepts-honest-short-labels.md` — disjoint
+from this work unit's five paths — and `git rebase` confirmed it: **no conflict**, working tree clean after.
+
+- `6dd2b66a236bb9914845bee1a1e659458b629de1` feat(schema): fail the database check when declared columns are missing (was `2b99ba9552c080907c71deffb798e6f4a8f6b2b3`)
+- `b0746f375e76b73a9d5d2d07b95402a92cffd83f` docs(odd): record the schema-parity-guard work unit (was `02e2e44566d2e4e57135293724ff07f5e54cf858`)
+- `6f5b32183be7e1b3c32f42b6e12963e13e026dcd` fix(schema): refuse to pass silently when the check is not given a connection (was `6b53881238e7aa25435d85389537b71b9c8643e2`)
+- `66c92ed3e685befdb8fa17dc203d71e556579a7a` docs(schema): record why the entrypoint probe is not import.meta.main (pre-rebase `cde5545c4054ff1b08920e7f6a2757445537f0c8`)
+
+The header comment in `scripts/schema-parity-check.ts` now carries the measurement in the file itself: on Node
+v24.21.0 `import.meta.main` is `false` for a program piped in as `node < script.ts`, so it is NOT a substitute
+for the `[eval]` pseudo-URL predicate, and the committed test `fails loudly when its source is piped in as the
+program, never passing silently` is what goes red if a future Node release changes that naming.
+
+The checker sits at **397 of 399 permitted code lines**; the owner recorded that budget as **the next slice's
+first task**, explicitly not to be refactored in this one.
