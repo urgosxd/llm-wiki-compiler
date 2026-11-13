@@ -13,8 +13,8 @@
  *   - `none` (exit 0) is a TRUE NEGATIVE: the computation succeeded and found
  *     nothing relevant.
  *   - `global` (exit 78) is a REFUSAL: a suite-wide change was resolved, and the
- *     full unit tier is declined rather than re-run, because it is a subset of
- *     `pnpm test`.
+ *     full unit tier is declined rather than re-run, because CI already runs it as
+ *     `turbo run test --filter=//`.
  *   - `unresolved` (exit 69) is a FAILED COMPUTATION: the base ref or the diff
  *     could not be produced. It must never borrow the `none` wording, or a broken
  *     computation would read as a clean run.
@@ -35,7 +35,10 @@ import {
 } from "../scripts/run-affected-tests.js";
 
 /** The full-tier refusal, byte for byte, including its `affected:` prefix. */
-const FULL_TIER_LINE = 'affected: scope resolves to the full unit tier; run `pnpm test` instead\n';
+const FULL_TIER_LINE =
+  'affected: scope resolves to the full unit tier; run what CI runs instead:\n' +
+  '  PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" corepack pnpm exec turbo run test --filter=//\n' +
+  'not bare `pnpm test`: it never enters turbo, so the strict-env pass-through `//#test` depends on is never exercised.\n';
 
 /** The `none` message the module already printed before this change. */
 const NOTHING_TO_RUN_LINE = "test-affected: nothing to run — no changes since origin/main\n";

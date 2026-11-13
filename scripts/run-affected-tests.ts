@@ -11,10 +11,11 @@
  *   - `files`      → `vitest related <changed files>`, which runs only tests
  *                    that import them.
  *   - `global`     → DECLINED. A build/test-config change CAN reach any file, so
- *                    the scope resolved and the escalation decision stands, but
- *                    the full unit tier is a subset of `pnpm test` and running it
- *                    here pays for the same files twice. This prints
- *                    {@link FULL_TIER_LINE} and exits {@link EXIT_FULL_TIER_DECLINED}.
+ *                    the scope resolved and the escalation decision stands, but the
+ *                    full unit tier is what CI itself runs (`turbo run test
+ *                    --filter=//`), so paying for the same files here buys nothing.
+ *                    This prints {@link FULL_TIER_LINE} and exits
+ *                    {@link EXIT_FULL_TIER_DECLINED}.
  *   - `unresolved` → the changed set could not be computed at all (no base ref,
  *                    or a failed merge-base/diff). Not an escalation and not a
  *                    `none`: it prints which step failed and exits
@@ -71,8 +72,18 @@ export const EXIT_SCOPE_UNRESOLVED = 69;
  *
  * The `affected:` prefix is NOT this module's `test-affected:` convention and
  * must not be normalised to it: the mandated contract is asserted byte-exactly.
+ *
+ * The command is the CI gate itself, `turbo run test --filter=//`, not bare
+ * `pnpm test`: bare pnpm never enters turbo, so it never exercises the
+ * `globalPassThroughEnv` pass-through that `//#test` needs. It is three lines so
+ * the copy-pasteable command sits alone on its own, with no backticks nested
+ * inside backticks. Concatenated, never a template literal, so `$HOME` passes
+ * through literally.
  */
-const FULL_TIER_LINE = 'affected: scope resolves to the full unit tier; run `pnpm test` instead\n';
+const FULL_TIER_LINE =
+  'affected: scope resolves to the full unit tier; run what CI runs instead:\n' +
+  '  PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" corepack pnpm exec turbo run test --filter=//\n' +
+  'not bare `pnpm test`: it never enters turbo, so the strict-env pass-through `//#test` depends on is never exercised.\n';
 
 /** Runs a plan; the seam a test replaces so it can count invocations without spawning. */
 export type AffectedRunner = (plan: readonly VitestInvocation[]) => number;
