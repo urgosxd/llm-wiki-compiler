@@ -24,6 +24,18 @@
 # argument that is not `--check` is the connection target, and `$DATABASE_URL` is the
 # fallback when none is given.
 #
+# `--check` answers TWO questions, and it answers both or it fails:
+#
+#   1. does every tenant table enforce row-level security (below), and
+#   2. does the database have every COLUMN the registered files declare
+#      (`scripts/schema-parity-check.ts`, invoked through `node`).
+#
+# The column half was added after a deployment ran for months with
+# `wiki.pages.aliases` absent: the production reader selects it, `schema.sql` declares
+# it, `migration_wiki_db_parity.sql` adds it, and this mode reported a green because it
+# only ever asked the first question. It is deliberately ONE mode and not a second
+# script, because a second script is one someone runs the wrong one of.
+#
 # Requires `psql` on PATH, or set PSQL to a wrapper (the dev container is reachable
 # with `docker exec -i llmwiki-kg-db-1 psql -U aks -d aks`).
 
@@ -189,12 +201,41 @@ check_tenant_isolation() {
   return "$missing"
 }
 
+# Compare the database's actual columns against what the registered files declare.
+#
+# The comparison itself is `scripts/schema-parity-check.ts`, run through `node`: reading a
+# column list out of 17 SQL files needs depth-0 comma splitting (a `numeric(12,2)` type or a
+# `check (x in ('a','b'))` predicate would otherwise be split), comment removal that leaves
+# quoted literals alone, and quoted-identifier handling. None of that is expressible as a
+# `psql` query, and a bash parse of it would be a second, silently different parser.
+#
+# It inherits the connection this script already resolved — `PSQL` first, then the target —
+# so there is one connection and one check. A missing `node` FAILS: reporting a green that
+# only validated row-level security is the exact defect this half exists to close, and
+# skipping quietly would reproduce it.
+run_parity_check() {
+  local node_bin="" status=0
+  if ! node_bin="$(command -v node)"; then
+    echo "error: node is required for the schema parity check and is not on PATH." >&2
+    echo "error: refusing to report a row-level-security-only result as a schema check." >&2
+    exit 2
+  fi
+  local -a invocation=("$REPO_ROOT/scripts/schema-parity-check.ts")
+  if [[ -n "$TARGET" ]]; then invocation+=("$TARGET"); fi
+  "$node_bin" "${invocation[@]}" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    if [[ "$status" -eq 1 ]]; then echo "drift detected." >&2; fi
+    exit "$status"
+  fi
+}
+
 main() {
   require_connection
   if [[ "$CHECK_ONLY" == "true" ]]; then
     local count=0
     count="$(psql_run -tAc "select count(*) from pg_policies" | tr -d '[:space:]')"
     echo "policies: $count"
+    run_parity_check
     check_tenant_isolation || { echo "drift detected." >&2; exit 1; }
     echo "ok: every tenant table enforces row-level security."
     return 0

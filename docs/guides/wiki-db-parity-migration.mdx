@@ -200,8 +200,10 @@ Expect `relrowsecurity` and `relforcerowsecurity` true on all three.
 
 ### The runner reports drift for a database that skipped it
 
-`--check` mode verifies the tenant tables that a complete database must expose, and this
-migration added three of them to that list. On a database that has not applied it:
+`--check` mode verifies the tenant tables that a complete database must expose — and, since
+the parity checker was wired into it, every **column** the registered SQL files declare.
+This migration added three tables and two columns to that declared surface. On a database
+that has not applied it:
 
 ```bash
 CHECK_ONLY=true ./scripts/apply-schemas.sh postgresql://aks:aks@localhost:5434/aks
@@ -223,6 +225,56 @@ Exit code `1`. The `policies:` count is that database's own; the three `MISSING 
 are the ones this migration accounts for. Once the file is applied, the same run finds
 every table present and secured and ends with `ok: every tenant table enforces row-level
 security.`
+
+### The same mode compares columns, not only row-level security
+
+A deployment ran for months with `wiki.pages.aliases` missing: the row reader selects it,
+`schema.sql` declares it, this migration adds it, and `--check` reported a green because it
+asked only about row-level security. So the mode now asks both questions, in one command:
+
+- **Does every tenant table enforce row-level security?** (unchanged, same output)
+- **Does the database have every column the registered SQL files declare?**
+  (`scripts/schema-parity-check.ts`, invoked through `node`, over the same connection —
+  `PSQL` wrapper first, then the target or `DATABASE_URL`. There is no separate script to
+  run, no `package.json` entry and no workflow step: CI already runs this command.)
+
+The declaration side is read from the `SCHEMA_FILES` list in `scripts/apply-schemas.sh`
+itself, so there is no second manifest that can drift from the runner.
+
+**Errors and warnings are different on purpose.** A declared table or column the database
+does not have is an **error** — every one of them is printed, grouped by table, each line
+naming the column and the file that provides it, and the run exits `1`. Nothing is
+filtered or thresholded: on the `aks` database that first ran it, the report was 86 missing
+columns across 10 tables plus 5 missing tables, and all of it was real. A column the
+database has and no registered file declares is a **warning**: listed, and the exit code is
+unaffected, because a real deployment legitimately carries legacy tables that no file in
+the repository creates.
+
+A correctly migrated database passes with no fixtures and no corpus — an empty database
+built by this runner is the pass case.
+
+**The comparison is bounded to two schemas.** The catalogue side reads `public` and `wiki`
+and nothing else (`COMPARED_SCHEMAS` in `scripts/schema-parity-check.ts`), which matches the
+declaration side as it stands: every `create table` in the registered files qualifies `wiki`
+or declares nothing, so nothing declared today falls outside them. A declaration in a third
+schema would be **invisible** to this check rather than reported, and a table living outside
+those two schemas is never listed as undeclared either. Passing a connection does not widen
+it: the bound is in the checker, not in the target.
+
+**What it does NOT catch**, stated plainly: a wrong column **type**, a changed **default**,
+a changed **nullability**, a missing **index**, a missing **constraint**, a column in the
+wrong **order**, a migration applied **out of order** (only the end state is visible), a
+table that exists but is not granted to the application role, row-level security problems
+beyond the tenant-table check above, or anything declared in a schema other than `public`
+and `wiki`. It compares column **names** and the existence of tables. Types and indexes were
+left out deliberately: comparing them means
+normalising `format_type` output, index definitions and default expressions, which is a
+different check with a different failure mode rather than a cheap addition. For the full
+structural comparison — types, indexes, constraints, RLS flags and policies — use
+`test/dimensions/db-parity-migration.test.ts`, which compares whole catalogues.
+
+To prove the check can fail, drop one declared column in a throwaway database and re-run:
+the same command exits non-zero and names that column and its providing file.
 
 ## After migrating
 
