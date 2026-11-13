@@ -15,8 +15,11 @@
  * scores, and never invents text: a demoted link becomes the plain words of its
  * own visible text, so the sentence, the mention and the reader's paragraph all
  * survive and only the link markup is gone. The ANCHOR is the visible text — the
- * words the reader actually sees — and it must name the target concept by
- * canonical key, either the target page's title or one of its declared aliases.
+ * words the reader actually sees — and it must name the target concept by its
+ * canonical TOKENS: a consecutive run of the target page's title, or of one of its
+ * declared aliases. Covering the whole name is the run that equals it, so an exact
+ * canonical match still holds; a shorter run is the same concept stated more
+ * briefly, and a reordered one is a different claim.
  *
  * WHERE THE ONE GATE SITS, AND WHY THERE. Links reach a body through two channels:
  * the model types them inline, and `resolveLinks` wraps plain-text mentions of
@@ -87,6 +90,13 @@ const WIKILINK_PATTERN = /\[\[([^\]]+)\]\]/g;
 
 /** Separator between a wikilink's target and the text the reader sees. */
 const ALIAS_SEPARATOR = "|";
+
+/**
+ * Separator `canonicalConceptKey` joins its tokens with, restated here because it is
+ * not exported. No canonical token can contain one, so splitting a key on it recovers
+ * the exact token array.
+ */
+const CANONICAL_TOKEN_SEPARATOR = " ";
 
 /** An ATX heading at the start of a line: every heading opens a new section. */
 const HEADING_PATTERN = /^#{1,6}[ \t]/gmu;
@@ -532,8 +542,8 @@ async function decideLink(rawInner: string, offset: number, state: ValidationSta
  * Whether this link's visible text anchors the target it resolved to.
  *
  * Two ways, and the second exists because the wiki resolves links two ways. The
- * mention may NAME the target (its title or a declared alias) — the normal case. Or
- * the link was resolved by the wiki's own repair rule, which reads the written
+ * mention may NAME the target (a run of its title or of a declared alias) — the
+ * normal case. Or the link was resolved by the wiki's own repair rule, which reads the written
  * target as an abbreviation of exactly one page: there the visible text IS the
  * written target, and `link-repair` keeps those words as the label of the page it
  * canonicalises, so a label that no longer matched would be a defect repair created.
@@ -615,19 +625,65 @@ function resolveLinkTarget(index: LinkAnchoringIndex, target: string): string | 
 /**
  * Whether the visible text actually names the target concept.
  *
- * Compared by canonical key, the same identity rule the merge tiers use, so
- * "Vector DB" anchors a page titled "Vector Database" that declares it, and a
- * mention of something else does not anchor a link to it at all.
+ * A label names the target when its canonical tokens are a consecutive run of one of
+ * the target's OWN names — its title or a declared alias. The whole name is the run
+ * that covers all of it, so an exact canonical match still holds. Anything shorter is
+ * accepted when it is a leading, trailing or interior run: "BR-DW-15" anchors
+ * "BR-DW-15: Feedback visual" and "Search (BFS)" anchors "Breadth-First Search
+ * (BFS)", because a run is the same concept stated more briefly. A mention of
+ * something else does not anchor a link to it at all, and neither does a run of
+ * ANOTHER page's title: being a run of a different name is not being a run of this
+ * one, which is what keeps "SHA-256" off a target whose title never says it.
  *
  * @param mention - The words the reader sees.
  * @param identity - The target page's title and declared aliases.
  * @returns True when the mention names the target.
  */
 function namesTarget(mention: string, identity: LinkTargetIdentity): boolean {
-  const anchorKey = canonicalConceptKey(mention);
-  if (anchorKey === "") return false;
+  const label = canonicalTokens(mention);
+  if (label.length === 0) return false;
   return [identity.title, ...identity.aliases]
-    .some((name) => canonicalConceptKey(name) === anchorKey);
+    .some((name) => isTokenRunOf(label, canonicalTokens(name)));
+}
+
+/**
+ * The canonical tokens of one name, as `canonicalConceptKey` reasons in them.
+ *
+ * The key is exactly those tokens joined by a single space, and no token can contain
+ * one — punctuation is a separator, and an acronym expansion is itself split on spaces
+ * — so splitting the key recovers the array. That is the gate's own domain:
+ * plural-stemmed and acronym-expanded by the identity rule the merge tiers use, never a
+ * tokeniser of this module's own. An empty key means no word characters at all, and
+ * `"".split(" ")` would be one empty token, so it is answered as no tokens.
+ *
+ * @param name - A page title, a declared alias, or a link's visible text.
+ * @returns Its canonical tokens, or none when the name carries no word characters.
+ */
+function canonicalTokens(name: string): string[] {
+  const key = canonicalConceptKey(name);
+  return key === "" ? [] : key.split(CANONICAL_TOKEN_SEPARATOR);
+}
+
+/**
+ * Whether `label` is a consecutive run of `name` — leading, trailing or interior.
+ *
+ * ORDER is the whole point, so nothing here sorts, deduplicates or compares as a set:
+ * "BFS Breadth-First" carries the same words as "Breadth-First Search (BFS)" and makes
+ * a different claim, so it is not a run and is not accepted. A run may be SHORTER than
+ * the name; a label longer than the name, or one carrying a token the name lacks, is
+ * not a run of it.
+ *
+ * @param label - The visible text's canonical tokens.
+ * @param name - One name of the target page, in canonical tokens.
+ * @returns True when the whole label appears consecutively in the name.
+ */
+function isTokenRunOf(label: readonly string[], name: readonly string[]): boolean {
+  if (label.length === 0 || label.length > name.length) return false;
+  for (let start = 0; start + label.length <= name.length; start += 1) {
+    const run = name.slice(start, start + label.length);
+    if (run.every((token, offset) => token === label[offset])) return true;
+  }
+  return false;
 }
 
 /**
