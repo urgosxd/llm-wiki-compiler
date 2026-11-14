@@ -1,5 +1,5 @@
+import { createKgApp } from "./app.js";
 import { config, validateConfig } from "./config.js";
-import { createApp } from "./server.js";
 
 const DEFAULT_PORT = 8000;
 const HOST = "0.0.0.0";
@@ -33,7 +33,7 @@ try {
   process.exit(1);
 }
 
-const app = createApp();
+const app = createKgApp();
 
 const server = app.listen(port, HOST, () => {
   console.log(
