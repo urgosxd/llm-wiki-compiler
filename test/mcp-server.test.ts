@@ -187,6 +187,8 @@ describe("read_page tool and readPageRecord helper", () => {
       title: "Neural Networks",
       summary: "ML model",
       body: "Deep learning basics.",
+      // The body names no other page, so the outgoing-link list is present and empty.
+      links: [],
     });
   });
 

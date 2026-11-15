@@ -223,11 +223,14 @@ describe("payloads the retired parity captures used to freeze", () => {
     // Exactly the four fields the retired capture compared, and nothing about the
     // corpus the golden described: a row page carries no path. `body` is the text
     // left after the frontmatter block, verbatim — including its leading blank line.
+    // `links` is the fifth field the payload grew: this body names no other page, so it
+    // is an empty array — present on the wire, never omitted.
     expect(page).toEqual({
       slug: "fresh-page",
       title: "Fresh",
       summary: "fresh summary",
       body: `\n${BODY_LONG_ENOUGH}\n`,
+      links: [],
     });
   }, 60_000);
 });

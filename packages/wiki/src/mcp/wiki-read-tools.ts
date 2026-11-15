@@ -39,7 +39,8 @@ import { createPageListingSource } from "../dimensions/wiki/page-write-sink.js";
 import { lint } from "../linter/index.js";
 import { getPage } from "../pages/list.js";
 import type { PageListingSource } from "../pages/list.js";
-import { readPageRecord } from "../pages/read.js";
+import { readPageRecord, pageLinkRefs } from "../pages/read.js";
+import type { PageLinkRef } from "../pages/read.js";
 import { pickSearchRefs, loadSelectedRefs } from "../search/retrieval.js";
 import { collectStatus } from "../status/collect.js";
 import { ensureProviderAvailable } from "../utils/provider-guard.js";
@@ -185,15 +186,39 @@ async function readPageBySlug(
   root: string,
   slug: string,
   pageSource: PageListingSource | undefined,
-): Promise<{ slug: string; title: string; summary: string; body: string } | null> {
-  if (pageSource === undefined) return readPageRecord(root, slug);
+): Promise<{
+  slug: string;
+  title: string;
+  summary: string;
+  body: string;
+  links: readonly PageLinkRef[];
+} | null> {
+  if (pageSource === undefined) {
+    const record = await readPageRecord(root, slug);
+    if (record === null) return null;
+    // `links` is OPTIONAL on `PageRecord` because other producers of that shape cannot
+    // fill it; the WIRE field is not optional, so it is resolved here from the same
+    // helper `readPageRecord` uses.
+    return { ...record, links: record.links ?? pageLinkRefs(record.body) };
+  }
   for (const pageDirectory of READ_DIRECTORIES) {
     const page = await getPage(root, { pageDirectory, slug }, pageSource);
     // Orphaned pages are skipped to match `readPageRecord`, which only reports a page
     // whose sources still exist. Serving one would answer with a body no compilation
     // claims any more.
     if (page !== null && !page.orphaned) {
-      return { slug: page.slug, title: page.title, summary: page.summary, body: page.body ?? "" };
+      const body = page.body ?? "";
+      // Both branches take the links from the SAME helper over the body, so the wire
+      // object cannot differ by source. The body is already in hand, so this costs no
+      // extra query — and it reads the page's own wikilinks rather than the curated
+      // overlay, which is a different (review-added) edge set.
+      return {
+        slug: page.slug,
+        title: page.title,
+        summary: page.summary,
+        body,
+        links: pageLinkRefs(body),
+      };
     }
   }
   return null;
@@ -231,7 +256,13 @@ function registerReadTool(server: McpServer, root: string): void {
       title: "Read Page",
       description:
         "Read one compiled wiki page by slug, including its frontmatter and full " +
-        "body. Searches concepts/ then queries/. Read-only. " +
+        "body. Searches concepts/ then queries/. Read-only. Returns the page plus " +
+        "`links`: an array of `{ slug, label }` describing the page's OUTGOING " +
+        "wikilinks, where `slug` is the target page's slug that can be passed " +
+        "straight back to `read_page` to follow the reference, and `label` is the " +
+        "anchor text the page used (the target text itself when the wikilink has no " +
+        "alias). `links` is always an array and is empty when the page links " +
+        "nowhere. " +
         STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         slug: z.string().describe("Page slug, without the .md extension."),
