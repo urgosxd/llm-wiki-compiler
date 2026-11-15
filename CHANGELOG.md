@@ -346,6 +346,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`GATEWAY_EMBEDDINGS_BASE_URL` and `GATEWAY_EMBEDDINGS_API_KEY` let the `kg`
+  dimension send embeddings to a different host than chat.** `GATEWAY_URL` named
+  both the chat completions endpoint and the embeddings endpoint, so a gateway
+  serving them from two hosts with two credentials could satisfy only one of them
+  with any single value. The two new variables are optional and inherit
+  `GATEWAY_URL` and `GATEWAY_API_KEY` when unset, so a deployment that sets neither
+  resolves exactly as it does today and no existing configuration changes on
+  upgrade. Chat resolution is untouched: extraction still reads `GATEWAY_URL` and
+  `GATEWAY_API_KEY`. Set both together — splitting the URL alone sends the chat
+  gateway credential to the embeddings host. The inheritance is performed by the
+  application when it resolves configuration, not by the compose files, which only
+  forward the two variables and never substitute a fallback of their own; the `kg`
+  dimension reports at startup which variable supplied the embeddings endpoint and
+  which supplied its credential, by variable name and never by value.
+
+  The `ConfigValidationError` raised for a misconfigured `EMBEDDING_PROVIDER=gateway`
+  now names all four variables instead of two, because the previous message —
+  `EMBEDDING_PROVIDER=gateway but GATEWAY_URL or GATEWAY_API_KEY is not set` — no
+  longer describes how the endpoint and credential resolve.
+
 - **`llmwiki ingest` accepts `.docx`, and refuses `.doc` and `.xlsx` with a named
   reason.** A Word document saved as Office Open XML (`.docx`) now ingests as
   plain text with paragraph breaks preserved, extracted with `mammoth`
@@ -541,6 +561,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`createWiki({ root, env }).compile()` and `.status()` now use the Stack `env` names, instead of the one the process is bound to.** A handle could record its compile state under the process' Stack and then answer `status` from a different one, so a single status object could describe two deployments. **`status()` on a Stack-bound handle now requires a reachable database**: an embedder whose database is briefly unavailable used to get a degraded status and now gets an exception.
 
 - **`createWiki({ root, env }).lint()` and `.lintByTier()` now use the Stack `env` names, instead of the one the process is bound to.** A handle naming one Stack could report the findings of another, and a process bound to no Stack got the findings of the files on disk. **`lint()` and `lintByTier()` on a Stack-bound handle now require a reachable database**: an embedder whose database is briefly unavailable gets an exception instead of filesystem-based results.
+
+- **A store recorded in another embedding space is refused instead of answered
+  with an empty result.** An existing deployment whose stored header disagrees with
+  the active embedding configuration — a store built by a different model, or by the
+  same model name against a different provider or endpoint — used to get an empty
+  answer plus an `embedding-index-outdated` warning, which reads as "nothing here is
+  relevant" about a corpus that was never comparable. Retrieval now throws
+  `EmbeddingSpaceMismatchError` on both retrieval paths, and the message names the
+  model and width the store records and the model the active configuration resolves
+  to, so both sides are visible and it is clear which one to change. Service returns
+  either by rebuilding the index through the `compile_wiki` MCP tool or by restoring
+  the configuration that built the store. No stored vector is written, migrated or
+  invalidated by the refusal: the rows are left exactly as they are, and a project
+  that has not been embedded yet still degrades to "build the index", because an
+  absent store is not a disagreement.
 
 ## [1.3.0] - 2026-09-11
 
