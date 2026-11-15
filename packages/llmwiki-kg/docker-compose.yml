@@ -37,10 +37,21 @@ services:
       EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
 
       # Provider credentials
+      #
+      # The two `GATEWAY_EMBEDDINGS_*` entries are bare pass-throughs: they carry
+      # the operator's value verbatim and go empty when it is unset. No fallback is
+      # substituted here on purpose -- compose resolves before the container starts,
+      # so a value substituted here would reach the process as if the operator had
+      # configured it, and the embeddings inheritance rule would be implemented in
+      # two layers that can disagree. The application inherits from `GATEWAY_URL`
+      # and `GATEWAY_API_KEY` at resolution time when these are blank, and reports
+      # at startup which variable supplied the embeddings endpoint and credential.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GATEWAY_URL: ${GATEWAY_URL:-}
+      GATEWAY_EMBEDDINGS_BASE_URL: ${GATEWAY_EMBEDDINGS_BASE_URL:-}
       GATEWAY_API_KEY: ${GATEWAY_API_KEY:-}
+      GATEWAY_EMBEDDINGS_API_KEY: ${GATEWAY_EMBEDDINGS_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy

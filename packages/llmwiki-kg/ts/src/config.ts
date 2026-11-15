@@ -1,4 +1,4 @@
-import { bridgeEnvWithWikiCredentials } from "./wiki-credential-fallback.js";
+import { bridgeEnvWithWikiCredentials, isBlank } from "./wiki-credential-fallback.js";
 import { z } from "zod";
 
 /**
@@ -88,6 +88,29 @@ const EnvSchema = z.object({
   GATEWAY_API_KEY: z.string().default(""),
 
   /**
+   * The embeddings half of the `gateway` provider.
+   *
+   * `GATEWAY_URL` used to name TWO services: the chat-completions host and the
+   * embeddings host. A deployment whose two services live on different hosts
+   * could therefore satisfy one and not the other, and no configuration could
+   * satisfy both. These two variables name the embeddings service on its own,
+   * following the `<PROVIDER>_EMBEDDINGS_BASE_URL` shape `OPENAI_EMBEDDINGS_BASE_URL`
+   * already publishes.
+   *
+   * Both are blank by default and BLANK MEANS INHERIT: the embeddings endpoint
+   * resolves from `GATEWAY_EMBEDDINGS_BASE_URL` when it is set and from
+   * `GATEWAY_URL` otherwise, and the credential the same way. Upgrade changes
+   * nothing for a deployment that sets only the old pair — which is every
+   * deployment that exists today. See {@link resolveGatewayEmbeddings}.
+   *
+   * Trimmed like `GATEWAY_URL`, so a whitespace-only value cannot resolve to a
+   * host, and `GATEWAY_EMBEDDINGS_API_KEY` trimmed where `GATEWAY_API_KEY` is
+   * not, so "blank" answers the same question in both halves of the fallback.
+   */
+  GATEWAY_EMBEDDINGS_BASE_URL: z.string().default("").transform((value) => value.trim()),
+  GATEWAY_EMBEDDINGS_API_KEY: z.string().default("").transform((value) => value.trim()),
+
+  /**
    * Whether to send `strict: true` in the tool definition.
    *
    * Defaults on for `openai`, where structured outputs are guaranteed, and off
@@ -116,6 +139,109 @@ export interface Config extends z.infer<typeof EnvSchema> {
 }
 
 /**
+ * The subset of the config {@link resolveGatewayEmbeddings} reads.
+ *
+ * Structural rather than `Config`, so the resolution can be exercised against a
+ * literal in a test without building a whole config — and so the function states
+ * exactly which four variables it is allowed to look at.
+ */
+export interface GatewayEmbeddingsEnv {
+  readonly GATEWAY_URL: string;
+  readonly GATEWAY_API_KEY: string;
+  readonly GATEWAY_EMBEDDINGS_BASE_URL: string;
+  readonly GATEWAY_EMBEDDINGS_API_KEY: string;
+}
+
+/** The variables the embeddings base URL can come from, most specific first. */
+export type GatewayEmbeddingsUrlSource =
+  | "GATEWAY_EMBEDDINGS_BASE_URL"
+  | "GATEWAY_URL";
+
+/** The variables the embeddings credential can come from, most specific first. */
+export type GatewayEmbeddingsKeySource =
+  | "GATEWAY_EMBEDDINGS_API_KEY"
+  | "GATEWAY_API_KEY";
+
+/** Where the `gateway` provider's embedding request goes, and which variables said so. */
+export interface GatewayEmbeddingsResolution {
+  /** Resolved base URL, or `""` when neither variable names one. */
+  readonly baseUrl: string;
+  /** Resolved credential, or `""` when neither variable names one. */
+  readonly apiKey: string;
+  /** Variable the base URL came from, or `undefined` when neither is set. */
+  readonly baseUrlSource: GatewayEmbeddingsUrlSource | undefined;
+  /** Variable the credential came from, or `undefined` when neither is set. */
+  readonly apiKeySource: GatewayEmbeddingsKeySource | undefined;
+}
+
+/** `name`, or `undefined` when `value` is not a setting. */
+function sourceOf<T extends string>(name: T, value: string): T | undefined {
+  return isBlank(value) ? undefined : name;
+}
+
+/**
+ * The embeddings endpoint and credential of the `gateway` provider.
+ *
+ * ONE resolution for the whole process, on purpose: `embeddingEndpoint()` builds
+ * the URL from it, `validateConfig()` refuses a blank result from it, and the
+ * startup line names the source variables it reports. Three sites reading the
+ * fallback three ways is how a request ends up sent somewhere validation never
+ * checked.
+ *
+ * The fallback happens HERE and nowhere else. `config` is never mutated: an
+ * operator who leaves the new variables unset must keep a config that says so,
+ * and nothing may write the inherited value back into it — that is what the
+ * credential bridge does for its OWN variables and deliberately not for these
+ * (see `KG_BRIDGED_VARIABLES`, which this must not grow).
+ *
+ * @param cfg - The parsed config, or any object carrying the four variables.
+ * @returns The resolved endpoint, credential, and the variable behind each.
+ */
+export function resolveGatewayEmbeddings(
+  cfg: GatewayEmbeddingsEnv,
+): GatewayEmbeddingsResolution {
+  const hasOwnUrl = !isBlank(cfg.GATEWAY_EMBEDDINGS_BASE_URL);
+  const hasOwnKey = !isBlank(cfg.GATEWAY_EMBEDDINGS_API_KEY);
+  return {
+    baseUrl: hasOwnUrl ? cfg.GATEWAY_EMBEDDINGS_BASE_URL : cfg.GATEWAY_URL,
+    apiKey: hasOwnKey ? cfg.GATEWAY_EMBEDDINGS_API_KEY : cfg.GATEWAY_API_KEY,
+    baseUrlSource: hasOwnUrl
+      ? "GATEWAY_EMBEDDINGS_BASE_URL"
+      : sourceOf("GATEWAY_URL", cfg.GATEWAY_URL),
+    apiKeySource: hasOwnKey
+      ? "GATEWAY_EMBEDDINGS_API_KEY"
+      : sourceOf("GATEWAY_API_KEY", cfg.GATEWAY_API_KEY),
+  };
+}
+
+/**
+ * The one startup line naming which variables supplied the gateway embeddings
+ * endpoint and credential.
+ *
+ * WHY NAMES AND NOT VALUES. The inheritance above is a decision the operator did
+ * not make, so it has to be observable rather than inferred: a deployment that
+ * meant to split the endpoint and mistyped the variable name inherits the old
+ * one silently, and the only symptom is a request to the wrong host. Printing
+ * the two NAMES makes that self-evident; printing the values would put an
+ * endpoint and a credential in a log file, which is the incident this whole
+ * change is downstream of.
+ *
+ * One fixed-size line: it names at most two variables and never enumerates the
+ * configuration, so it cannot grow into a config dump.
+ *
+ * @param cfg - The parsed config.
+ * @returns The line, or `undefined` when no gateway embeddings endpoint applies.
+ */
+export function gatewayEmbeddingsSourceLine(cfg: Config): string | undefined {
+  if (cfg.EMBEDDING_PROVIDER !== "gateway") return undefined;
+  const { baseUrlSource, apiKeySource } = resolveGatewayEmbeddings(cfg);
+  return (
+    "[AKS] Gateway embeddings source: " +
+    `endpoint ${baseUrlSource ?? "unset"}, credential ${apiKeySource ?? "unset"}`
+  );
+}
+
+/**
  * Error raised by {@link validateConfig}. Python raises a plain `ValueError`;
  * a dedicated subclass keeps the exact message while staying identifiable.
  */
@@ -136,6 +262,15 @@ export function parseConfig(env: NodeJS.ProcessEnv): Config {
 }
 
 /**
+ * Refusal raised when the gateway embeddings endpoint or credential is blank
+ * AFTER the fallback, naming both chains so the reader learns which variables
+ * can supply each half.
+ */
+const GATEWAY_EMBEDDINGS_PROBLEM =
+  "EMBEDDING_PROVIDER=gateway but GATEWAY_EMBEDDINGS_BASE_URL or GATEWAY_URL is not set, " +
+  "or GATEWAY_EMBEDDINGS_API_KEY or GATEWAY_API_KEY is not set";
+
+/**
  * Validates that the chosen providers have the credentials they need.
  * Called at startup so misconfiguration fails fast with a clear message.
  *
@@ -148,13 +283,18 @@ export function validateConfig(cfg: Config): void {
       "EMBEDDING_PROVIDER=openai but OPENAI_API_KEY is not set",
     );
   }
+  // The embeddings arm judges the RESOLVED pair, not the old variables: a
+  // deployment that names only `GATEWAY_EMBEDDINGS_BASE_URL` and
+  // `GATEWAY_EMBEDDINGS_API_KEY` is configured, and refusing it because
+  // `GATEWAY_URL` is blank would undo the split. Blankness is still refused
+  // after resolution, which is where it matters — an empty base URL would
+  // otherwise resolve to "/embeddings", a relative request to nowhere.
+  const embeddings = resolveGatewayEmbeddings(cfg);
   if (
     cfg.EMBEDDING_PROVIDER === "gateway" &&
-    (!cfg.GATEWAY_URL || !cfg.GATEWAY_API_KEY)
+    (isBlank(embeddings.baseUrl) || isBlank(embeddings.apiKey))
   ) {
-    throw new ConfigValidationError(
-      "EMBEDDING_PROVIDER=gateway but GATEWAY_URL or GATEWAY_API_KEY is not set",
-    );
+    throw new ConfigValidationError(GATEWAY_EMBEDDINGS_PROBLEM);
   }
   if (cfg.EXTRACTION_PROVIDER === "anthropic" && !cfg.ANTHROPIC_API_KEY) {
     throw new ConfigValidationError(

@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   ConfigValidationError,
   config,
+  gatewayEmbeddingsSourceLine,
   parseConfig,
   validateConfig,
   type Config,
@@ -14,6 +15,27 @@ const PROVIDER_CREDENTIALS = {
   OPENAI_API_KEY: "sk-openai-test",
   ANTHROPIC_API_KEY: "sk-anthropic-test",
 } as const;
+
+/** The exact refusal a blank RESOLVED gateway embeddings pair raises. */
+const GATEWAY_EMBEDDINGS_PROBLEM =
+  "EMBEDDING_PROVIDER=gateway but GATEWAY_EMBEDDINGS_BASE_URL or GATEWAY_URL is not set, " +
+  "or GATEWAY_EMBEDDINGS_API_KEY or GATEWAY_API_KEY is not set";
+
+/**
+ * A gateway embeddings config, so a case states only the variable it varies.
+ *
+ * @param overrides - Variables this case is about.
+ * @returns The parsed config for the gateway provider.
+ */
+function gatewayConfig(overrides: NodeJS.ProcessEnv): Config {
+  return parseConfig({
+    ...PROVIDER_CREDENTIALS,
+    EMBEDDING_PROVIDER: "gateway",
+    GATEWAY_URL: "http://gateway:4000",
+    GATEWAY_API_KEY: "gw-key",
+    ...overrides,
+  });
+}
 
 /** Runs `parseConfig` and returns the ZodError it throws. */
 function parseError(env: NodeJS.ProcessEnv): z.ZodError {
@@ -64,6 +86,8 @@ describe("parseConfig defaults (mirrors app/core/config.py)", () => {
     expect(cfg.ANTHROPIC_API_KEY).toBe("");
     expect(cfg.GATEWAY_URL).toBe("");
     expect(cfg.GATEWAY_API_KEY).toBe("");
+    expect(cfg.GATEWAY_EMBEDDINGS_BASE_URL).toBe("");
+    expect(cfg.GATEWAY_EMBEDDINGS_API_KEY).toBe("");
   });
 
   it("derives authEnabled=false from the empty default key", () => {
@@ -91,6 +115,12 @@ describe("the config singleton and the wiki credential bridge (S2)", () => {
     // to import it again with the wiki-side variables in place. A config that
     // ignored the bridge would still report an empty OPENAI_API_KEY here.
     vi.resetModules();
+    // Unset, not blanked: the bridge DERIVES `EMBEDDING_PROVIDER` only when the
+    // KG side left it absent, and this suite is run with the provider selectors
+    // pinned in the caller's shell (a vendor-name provider in a gate command is
+    // what once sent a real credential to `api.openai.com`). Without this the
+    // ambient `EMBEDDING_PROVIDER` decides what the bridge is allowed to derive.
+    vi.stubEnv("EMBEDDING_PROVIDER", undefined);
     vi.stubEnv("LLMWIKI_EMBEDDING_PROVIDER", "openai");
     vi.stubEnv("OPENAI_API_KEY", "");
     vi.stubEnv("OPENAI_EMBEDDINGS_API_KEY", "test-key-not-real");
@@ -181,9 +211,126 @@ describe("string stripping", () => {
     );
   });
 
+  it("strips GATEWAY_EMBEDDINGS_BASE_URL, so spaces cannot name a host", () => {
+    const cfg = parseConfig({
+      GATEWAY_EMBEDDINGS_BASE_URL: "  http://embed:4000/v1  ",
+    });
+    expect(cfg.GATEWAY_EMBEDDINGS_BASE_URL).toBe("http://embed:4000/v1");
+  });
+
+  it("strips GATEWAY_EMBEDDINGS_API_KEY, so a blank key inherits", () => {
+    // The inherited `GATEWAY_API_KEY` is deliberately NOT stripped (Python reads
+    // it with bare `os.getenv`), but the new variable has to answer "is this
+    // blank?" the same way its base URL does, or the fallback splits in two.
+    const key = (value: string) =>
+      parseConfig({ GATEWAY_EMBEDDINGS_API_KEY: value }).GATEWAY_EMBEDDINGS_API_KEY;
+    expect(key("  key-not-real  ")).toBe("key-not-real");
+    expect(key("   ")).toBe("");
+  });
+
   it("leaves provider API keys unstripped, like Python's os.getenv", () => {
     const cfg = parseConfig({ OPENAI_API_KEY: " sk-openai " });
     expect(cfg.OPENAI_API_KEY).toBe(" sk-openai ");
+  });
+});
+
+describe("validateConfig judges the RESOLVED gateway embeddings pair (S8)", () => {
+  /**
+   * Gateway env with BOTH old variables blank.
+   *
+   * The cases below vary exactly one thing from here, and they are written as
+   * environments rather than as parsed configs on purpose: `parseConfig` reads an
+   * environment, so handing it a `Config` re-parses `EMBEDDING_DIM` as a number
+   * and throws a ZodError before `validateConfig` is ever reached.
+   */
+  const GATEWAY_BLANK: NodeJS.ProcessEnv = {
+    ...PROVIDER_CREDENTIALS,
+    EMBEDDING_PROVIDER: "gateway",
+    GATEWAY_URL: "",
+    GATEWAY_API_KEY: "",
+  };
+
+  it("refuses a blank resolved pair, keeping the fail-fast refusal", () => {
+    expect(validationError(GATEWAY_BLANK)).toBe(GATEWAY_EMBEDDINGS_PROBLEM);
+  });
+
+  it("refuses a resolved endpoint with no credential behind it", () => {
+    // Neither variable supplied the key: the URL cannot stand alone, and the
+    // refusal has to fire BEFORE the first request rather than as a 401 later.
+    const borrowed: NodeJS.ProcessEnv = {
+      ...GATEWAY_BLANK,
+      GATEWAY_EMBEDDINGS_BASE_URL: "http://embed:4000/v1",
+    };
+    expect(validationError(borrowed)).toBe(GATEWAY_EMBEDDINGS_PROBLEM);
+  });
+
+  it("accepts a pair resolved entirely from the new variables", () => {
+    // The old variables are blank on purpose: an upgrade that names only the
+    // split pair is configured, and refusing it because `GATEWAY_URL` is unset
+    // would undo the split it just made.
+    const split: NodeJS.ProcessEnv = {
+      ...GATEWAY_BLANK,
+      GATEWAY_EMBEDDINGS_BASE_URL: "http://embed:4000/v1",
+      GATEWAY_EMBEDDINGS_API_KEY: "embed-key",
+    };
+    expect(() => validateConfig(parseConfig(split))).not.toThrow();
+  });
+
+  it("does not let the new variables satisfy the extraction arm", () => {
+    // The chat host is a different service: a credential for the embeddings host
+    // does not authenticate a chat request, and a check that accepted it would
+    // turn a 401 at the wrong host into a startup that looks healthy.
+    const split: NodeJS.ProcessEnv = {
+      ...GATEWAY_BLANK,
+      EXTRACTION_PROVIDER: "gateway",
+      GATEWAY_EMBEDDINGS_BASE_URL: "http://embed:4000/v1",
+      GATEWAY_EMBEDDINGS_API_KEY: "embed-key",
+    };
+    expect(validationError(split)).toBe(
+      "EXTRACTION_PROVIDER=gateway but GATEWAY_URL or GATEWAY_API_KEY is not set",
+    );
+  });
+});
+
+describe("the startup source line (S5)", () => {
+  it("names the old pair when the new variables are unset", () => {
+    expect(gatewayEmbeddingsSourceLine(gatewayConfig({}))).toBe(
+      "[AKS] Gateway embeddings source: endpoint GATEWAY_URL, credential GATEWAY_API_KEY",
+    );
+  });
+
+  it("names the new variables when they resolve their half", () => {
+    const split = gatewayConfig({
+      GATEWAY_EMBEDDINGS_BASE_URL: "http://embed:4000/v1",
+      GATEWAY_EMBEDDINGS_API_KEY: "embed-key",
+    });
+    expect(gatewayEmbeddingsSourceLine(split)).toBe(
+      "[AKS] Gateway embeddings source: endpoint GATEWAY_EMBEDDINGS_BASE_URL, " +
+        "credential GATEWAY_EMBEDDINGS_API_KEY",
+    );
+  });
+
+  it("names each half independently, and no value ever", () => {
+    const line = gatewayEmbeddingsSourceLine(
+      gatewayConfig({ GATEWAY_EMBEDDINGS_BASE_URL: "http://embed:4000/v1" }),
+    );
+    expect(line).toContain("endpoint GATEWAY_EMBEDDINGS_BASE_URL");
+    expect(line).toContain("credential GATEWAY_API_KEY");
+    // Same source variables, different values: the line must not change, which
+    // is the strongest way to say "names, never values".
+    const other = gatewayConfig({
+      GATEWAY_URL: "http://gateway:5000/elsewhere",
+      GATEWAY_API_KEY: "another-key-not-real",
+      GATEWAY_EMBEDDINGS_BASE_URL: "http://embed:5000/other",
+    });
+    expect(gatewayEmbeddingsSourceLine(other)).toBe(line);
+  });
+});
+
+describe("the startup source line only exists for a gateway endpoint", () => {
+  it("says nothing when embeddings do not come from a gateway", () => {
+    const openai = gatewayConfig({ EMBEDDING_PROVIDER: "openai" });
+    expect(gatewayEmbeddingsSourceLine(openai)).toBeUndefined();
   });
 });
 
@@ -213,26 +360,22 @@ describe("validateConfig", () => {
     );
   });
 
-  it("rejects embedding gateway without GATEWAY_URL", () => {
+  it("rejects embedding gateway without any endpoint", () => {
     const message = validationError({
       ...PROVIDER_CREDENTIALS,
       EMBEDDING_PROVIDER: "gateway",
       GATEWAY_API_KEY: "gw-key",
     });
-    expect(message).toBe(
-      "EMBEDDING_PROVIDER=gateway but GATEWAY_URL or GATEWAY_API_KEY is not set",
-    );
+    expect(message).toBe(GATEWAY_EMBEDDINGS_PROBLEM);
   });
 
-  it("rejects embedding gateway without GATEWAY_API_KEY", () => {
+  it("rejects embedding gateway without any credential", () => {
     const message = validationError({
       ...PROVIDER_CREDENTIALS,
       EMBEDDING_PROVIDER: "gateway",
       GATEWAY_URL: "http://gateway:4000",
     });
-    expect(message).toBe(
-      "EMBEDDING_PROVIDER=gateway but GATEWAY_URL or GATEWAY_API_KEY is not set",
-    );
+    expect(message).toBe(GATEWAY_EMBEDDINGS_PROBLEM);
   });
 
   it("rejects extraction anthropic without ANTHROPIC_API_KEY", () => {

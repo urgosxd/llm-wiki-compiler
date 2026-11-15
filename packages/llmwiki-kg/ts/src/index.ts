@@ -1,5 +1,5 @@
 import { createKgApp } from "./app.js";
-import { config, validateConfig } from "./config.js";
+import { config, gatewayEmbeddingsSourceLine, validateConfig } from "./config.js";
 
 const DEFAULT_PORT = 8000;
 const HOST = "0.0.0.0";
@@ -35,6 +35,21 @@ try {
 
 const app = createKgApp();
 
+/**
+ * The gateway embeddings source line, resolved ONCE, before the socket is bound.
+ *
+ * A deployment can satisfy the gateway embeddings endpoint from either the
+ * split variables or the old `GATEWAY_URL`/`GATEWAY_API_KEY` pair, and the
+ * inheritance is silent by design: it prints nothing when the same variable
+ * supplied both halves. Running this at startup — not per request — is what
+ * makes that inheritance observable, which is the condition the whole
+ * unset-inherits decision was accepted on. `gatewayEmbeddingsSourceLine()`
+ * returns `undefined` for every provider that is not `gateway` and names
+ * variables only, never a value, so this adds exactly one fixed-size line or
+ * none.
+ */
+const embeddingsSourceLine = gatewayEmbeddingsSourceLine(config);
+
 const server = app.listen(port, HOST, () => {
   console.log(
     [
@@ -46,6 +61,7 @@ const server = app.listen(port, HOST, () => {
       `  Mode:       ${process.env["NODE_ENV"] ?? "development"}`,
       `  Inference:  extraction via ${config.EXTRACTION_PROVIDER} (${config.EXTRACTION_MODEL}),` +
         ` embeddings via ${config.EMBEDDING_PROVIDER} (${config.EMBEDDING_MODEL})`,
+      ...(embeddingsSourceLine === undefined ? [] : [`  ${embeddingsSourceLine}`]),
       `  Auth:       ${config.authEnabled ? "enabled (X-API-Key required)" : "disabled (open access)"}`,
       "",
     ].join("\n"),

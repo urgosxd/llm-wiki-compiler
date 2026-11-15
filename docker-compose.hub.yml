@@ -90,10 +90,25 @@ services:
       LLMWIKI_EMBEDDING_MODEL: ${LLMWIKI_EMBEDDING_MODEL:-text-embedding-3-small}
       # El lado KG lee estas tres, NO las de arriba. Si faltan sigue llamando a su
       # vendor por defecto y falla con "Could not resolve authentication method".
+      # Los embeddings de ese lado leen GATEWAY_EMBEDDINGS_BASE_URL y
+      # GATEWAY_EMBEDDINGS_API_KEY: así un gateway con hosts distintos para chat y
+      # embeddings se declara una vez cada uno.
+      #
+      # COMPOSE SOLO REENVÍA; HEREDA LA APLICACIÓN. Las dos entradas
+      # `GATEWAY_EMBEDDINGS_*` de abajo son passthrough con default vacío: si el
+      # operador no las define llegan vacías, y acá NO se sustituye el valor de
+      # chat a propósito. Compose resuelve antes de que arranque el contenedor, así
+      # que un valor sustituido acá llegaría al proceso como si el operador lo
+      # hubiera configurado, y la regla de herencia quedaría escrita en dos capas
+      # que pueden contradecirse. La aplicación hereda la variable de chat al
+      # resolver cuando estas están vacías, e informa en el arranque qué variable
+      # aportó el endpoint y la credencial de embeddings.
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-gateway}
       EXTRACTION_PROVIDER: ${EXTRACTION_PROVIDER:-gateway}
       GATEWAY_URL: ${OPENAI_BASE_URL}
+      GATEWAY_EMBEDDINGS_BASE_URL: ${GATEWAY_EMBEDDINGS_BASE_URL:-}
       GATEWAY_API_KEY: ${OPENAI_API_KEY}
+      GATEWAY_EMBEDDINGS_API_KEY: ${GATEWAY_EMBEDDINGS_API_KEY:-}
       EMBEDDING_MODEL: ${LLMWIKI_EMBEDDING_MODEL:-text-embedding-3-small}
       # Debe coincidir con el `vector(N)` del schema (768). El schema NO lo valida:
       # una diferencia guarda vectores que el store no puede comparar.

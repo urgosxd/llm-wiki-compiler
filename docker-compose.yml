@@ -124,7 +124,18 @@ services:
       #   KG side (packages/llmwiki-kg config.ts)
       #     EMBEDDING_PROVIDER=gateway + EXTRACTION_PROVIDER=gateway + GATEWAY_URL,
       #     which resolves to `${GATEWAY_URL}/chat/completions` and
-      #     `${GATEWAY_URL}/embeddings` — the OpenAI wire format.
+      #     `${GATEWAY_EMBEDDINGS_BASE_URL}/embeddings` — the OpenAI wire format.
+      #     Chat and embeddings can therefore name different hosts.
+      #
+      #     COMPOSE FORWARDS; THE APPLICATION INHERITS. The two
+      #     `GATEWAY_EMBEDDINGS_*` entries below are bare pass-throughs that go
+      #     empty when the operator sets nothing. No fallback is substituted
+      #     here on purpose: compose resolves before the container starts, so a
+      #     value substituted here would reach the process as if the operator had
+      #     configured it, and the inheritance rule would live in two layers that
+      #     can disagree. The application inherits the chat variable at
+      #     resolution time when these are blank, and reports at startup which
+      #     variable supplied the embeddings endpoint and credential.
       #
       # Verified end-to-end against a local OpenAI-compatible mock: ingest returned
       # 200 and the mock received /v1/chat/completions and /v1/embeddings.
@@ -138,7 +149,9 @@ services:
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-gateway}
       EXTRACTION_PROVIDER: ${EXTRACTION_PROVIDER:-gateway}
       GATEWAY_URL: ${OPENAI_BASE_URL}
+      GATEWAY_EMBEDDINGS_BASE_URL: ${GATEWAY_EMBEDDINGS_BASE_URL:-}
       GATEWAY_API_KEY: ${PROVIDER_API_KEY}
+      GATEWAY_EMBEDDINGS_API_KEY: ${GATEWAY_EMBEDDINGS_API_KEY:-}
       EMBEDDING_MODEL: ${LLMWIKI_EMBEDDING_MODEL:-text-embedding-3-small}
       # Must match the `vector(N)` column in `db/schema.sql`, which is 768. A
       # mismatch is not caught by the schema and produces vectors the store refuses

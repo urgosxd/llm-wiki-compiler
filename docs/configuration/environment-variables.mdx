@@ -343,7 +343,9 @@ is empty or whitespace-only.
 | `EMBEDDING_PROVIDER` | `EMBEDDING_PROVIDER` | `gateway`, derived when `W` is `openai` and the wiki embedding endpoint override is set | `openai`, derived when `W` is `openai` | schema default `openai` |
 | `OPENAI_API_KEY` | `OPENAI_API_KEY` | `OPENAI_EMBEDDINGS_API_KEY`, only when the resolved provider is `openai` | — | `""`, then the error below |
 | `GATEWAY_URL` | `GATEWAY_URL` | `OPENAI_EMBEDDINGS_BASE_URL`, then `OPENAI_BASE_URL`; only when the resolved provider is `gateway` | — | `""`, then the error below |
+| `GATEWAY_EMBEDDINGS_BASE_URL` | `GATEWAY_EMBEDDINGS_BASE_URL` | — | — | `GATEWAY_URL` |
 | `GATEWAY_API_KEY` | `GATEWAY_API_KEY` | `OPENAI_EMBEDDINGS_API_KEY`, then `OPENAI_API_KEY`; only when the resolved provider is `gateway` | — | `""`, then the error below |
+| `GATEWAY_EMBEDDINGS_API_KEY` | `GATEWAY_EMBEDDINGS_API_KEY` | — | — | `GATEWAY_API_KEY` |
 | `EMBEDDING_MODEL` | `EMBEDDING_MODEL` | `LLMWIKI_EMBEDDING_MODEL`, only when you set it | — | the `kg` schema default, then the 768-width error below |
 
 `W` is the wiki embedding provider: `LLMWIKI_EMBEDDING_PROVIDER` when set, otherwise
@@ -359,6 +361,23 @@ columns are `vector(768)`, so inheriting a default would inherit an unusable mod
 `EMBEDDING_DIM`, `DATABASE_URL`, and `AKS_API_KEY` keep their own resolution and are
 never derived from the wiki side: they describe storage shape and unrelated
 credentials, not the shared credential.
+
+The two `GATEWAY_EMBEDDINGS_*` rows are the `kg` dimension's own and the bridge never
+fills them, so they matter only when the resolved embedding provider is `gateway`:
+they name where embedding requests go and which credential authenticates them, while
+extraction keeps using `GATEWAY_URL` and `GATEWAY_API_KEY`. They exist because a
+gateway may serve chat completions and embeddings from different hosts holding
+different credentials, and one variable cannot name two hosts. When unset,
+embeddings use `GATEWAY_URL` and `GATEWAY_API_KEY`, so a deployment that sets neither
+behaves exactly as it does today. Set both together: splitting the URL alone sends
+the chat gateway credential to the embeddings host. Chat is unchanged either way.
+
+The inheritance happens in the application, when it resolves configuration, and not
+in the container definition: the compose files forward these two variables verbatim
+and leave them empty when you set neither, so compose never substitutes a fallback
+of its own. At startup the `kg` dimension reports which variable supplied the
+embeddings endpoint and which supplied its credential — by variable name, never by
+value — so the inheritance is observed instead of inferred.
 
 Extraction is in scope too, through a second, independent mechanism described in
 [Reusing the wiki dimension's chat backend](#reusing-the-wiki-dimensions-chat-backend):

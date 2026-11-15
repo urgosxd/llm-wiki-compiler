@@ -16,7 +16,7 @@
  * even in a deployment whose two services live on different hosts.
  */
 
-import { config } from "../../config.js";
+import { config, resolveGatewayEmbeddings } from "../../config.js";
 import { injectedEmbeddingEndpoint } from "../../embedding-backend.js";
 import { injectedChatEndpoint, injectedChatModel, isChatBackendInjected } from "../../chat-backend.js";
 import { ANTHROPIC_BASE_URL, OPENAI_BASE_URL } from "./constants.js";
@@ -102,16 +102,21 @@ export function extractionUsesAnthropicScheme(): boolean {
  * already resolved an OpenAI-compatible endpoint hands over the endpoint and
  * credential it will actually use, so the kg dimension reaches the same service
  * instead of a second, separately-derived one.
+ *
+ * The `gateway` arm reads the EMBEDDINGS variables, not the chat ones: the two
+ * services may live on different hosts with different credentials, and a request
+ * built from `GATEWAY_URL` here is a request sent to the chat host. Blank new
+ * variables inherit the old pair (see `resolveGatewayEmbeddings`), so the
+ * single-variable deployment this replaces resolves byte-identically.
  */
 export function embeddingEndpoint(): ExtractionEndpoint {
   const injected = injectedEmbeddingEndpoint();
   if (injected !== undefined) return injected;
   switch (config.EMBEDDING_PROVIDER) {
-    case "gateway":
-      return {
-        endpoint: `${config.GATEWAY_URL}/embeddings`,
-        apiKey: config.GATEWAY_API_KEY,
-      };
+    case "gateway": {
+      const { baseUrl, apiKey } = resolveGatewayEmbeddings(config);
+      return { endpoint: `${baseUrl}/embeddings`, apiKey };
+    }
     case "openai":
       return { endpoint: `${OPENAI_BASE_URL}/embeddings`, apiKey: config.OPENAI_API_KEY };
   }
