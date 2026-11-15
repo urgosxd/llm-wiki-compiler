@@ -107,3 +107,32 @@ Do not relax the pin to `toMatchObject`, `objectContaining`, `expect.anything()`
 first time someone adds a key, and it does so silently: the diff looks like a passing
 test. An updated exact pin is a record of an intentional change; a relaxed one is a
 record of a change nobody noticed.
+
+## A relayed `path:line` is not evidence
+
+Every range below arrived in a handoff where the surrounding claim was true. Both looked
+right, and both were wrong in the same way: measured somewhere else, quoted here.
+
+- **A range is only valid for the tree it was derived on.** Three citations were relayed
+  from a measurement taken on `main`. On this branch the `pickSearchRefs` call is
+  `wiki-read-tools.ts:150` because the `search_pages` description grew by eight lines,
+  while `main` has it at `:141`; the `readPageBySlug` projection the relayed ranges were
+  meant to identify **is not cited in this document at all** — its correct one-line
+  citation would be `wiki-read-tools.ts:189-195`, with the `links` key at `:194`.
+  Re-deriving every citation against this branch found **four of four already correct
+  and none needing repair**. The same re-derivation did find two other defects in the
+  surrounding prose: a file count of "three" where the change touched four, and the
+  false absolute corrected in the section above.
+- **A confidence-shaped absolute is a claim to check, not a sentence to copy.** One
+  relayed sentence read "every ref is therefore `kind:"index"` and every `score` is
+  absent, whatever the database holds". It was false: when no embedding source is passed
+  the ranking always comes from the on-disk store and falls to the index path only when
+  that store is empty, so a file-backed wiki holding a local embedding store does return
+  `chunk`/`page` refs **with** scores. It was corrected rather than pasted, and the
+  corrected version is the one that shipped.
+
+**Rule:** re-derive the range with `sed -n '<start>,<end>p'` against **the tree you are
+writing about**, read the output back, and treat a relayed absolute as an assertion to
+verify. This holds for a teammate, a subagent, and a manager alike — the origin of a
+range says nothing about the tree it applies to. Nine relayed ranges were checked while
+producing this document; the ones that mattered were the ones re-derived.
