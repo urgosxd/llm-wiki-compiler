@@ -7,8 +7,22 @@
  * selection over LIVE, surface-eligible, pageId-keyed candidates (NOT the
  * rendered `index.md` — see {@link selectFallbackRefs}). Every hit carries its
  * qualified `pageId`, so a concept `foo` and a query `foo` are distinct, and a
- * typed page surfaces under its `EntityId`. A degraded (non-v3 / unavailable)
- * store yields a structured warning instead of silently contributing nothing.
+ * typed page surfaces under its `EntityId`.
+ *
+ * ## What degrades, and the one thing that refuses
+ *
+ * An UNAVAILABLE store (absent, older version, failed integrity validation) and a
+ * failed EMBEDDING CALL both surface a structured warning instead of silently
+ * contributing nothing: each is a loss of capability, and the answer can still be
+ * assembled more weakly from the LLM/index fallback.
+ *
+ * A store recorded in ANOTHER EMBEDDING SPACE does neither. It throws
+ * `EmbeddingSpaceMismatchError` through BOTH catch-alls below, including when the
+ * caller passed `embeddingFailure: "fallback"`: that opt-in recovers from a request
+ * that did not complete, while a mismatch is a completed store whose vectors are not
+ * comparable. Ranking it scores noise, and answering without it says "nothing
+ * matched" about a corpus that was never comparable — the confidently-wrong answer
+ * this refusal exists to remove.
  *
  * `pickSearchSlugs` is the bare-slug compatibility shim (the legacy contract);
  * `loadSelectedRefs` rehydrates refs to full records from the LIVE files via the
@@ -25,6 +39,9 @@ import {
   type EmbeddingStoreSource,
 } from "../utils/embeddings-load.js";
 import type { EmbeddingStoreV3 } from "../utils/embeddings-store.js";
+// A VALUE import, not a type: the refusal is recognised by CLASS below, so that no
+// message text ever has to be matched to tell it from an embedder failure.
+import { EmbeddingSpaceMismatchError } from "../utils/embeddings-store.js";
 import {
   loadSelectedPagesByPageId,
   loadPageRecordPairsByPageId,
@@ -66,7 +83,7 @@ export interface SearchSelection {
   warnings: SearchWarning[];
 }
 
-/** Opt-in recovery from embedder failures; omitted preserves public error semantics. */
+/** Opt-in recovery from embedding EMBEDDER failures; omitted preserves public error semantics. */
 export interface RetrievalOptions {
   embeddingFailure?: "throw" | "fallback";
   /**
@@ -194,6 +211,12 @@ async function selectViaEmbeddings(
     const refs = pageHits.map((p) => ({ pageId: p.pageId, slug: p.slug, title: p.title, kind: "page" as const }));
     return { refs, stalePageIds: [...chunkStale, ...pageStale] };
   } catch (err) {
+    // A wrong SPACE is not a failure of the embedding CALL. The opt-in below exists
+    // to survive a request that could not complete; this one completed, and its
+    // vectors cannot be compared with the store. Degrading it to a warning is the
+    // "confidently and wrongly" answer the refusal was added to prevent, so it
+    // escapes before the opt-in is consulted.
+    if (err instanceof EmbeddingSpaceMismatchError) throw err;
     if (options.embeddingFailure !== "fallback") throw err;
     const message = err instanceof Error ? err.message : String(err);
     return {
@@ -214,9 +237,15 @@ async function selectViaEmbeddings(
  * than throwing: a page level that cannot be loaded degrades to the LLM/index
  * fallback, which is the branch the caller already takes for "no refs".
  *
+ * The one exception is a mismatch, which is rethrown. The header that got us here
+ * AGREED, so a full store that disagrees is the same refusal arriving one level
+ * lower; returning null would erase it into "no refs", the empty answer this
+ * pipeline must refuse to produce rather than report.
+ *
  * @param root - Wiki root, used when the store lives on disk.
  * @param source - Backend to read from; undefined reads the file.
  * @returns The full store, or null when it cannot be read.
+ * @throws {@link EmbeddingSpaceMismatchError} when the store names another embedding space.
  */
 async function materializeForPages(
   root: string,
@@ -225,7 +254,8 @@ async function materializeForPages(
   try {
     const outcome = await loadEmbeddingsForSearch(root, source);
     return outcome.store ?? null;
-  } catch {
+  } catch (err) {
+    if (err instanceof EmbeddingSpaceMismatchError) throw err;
     return null;
   }
 }

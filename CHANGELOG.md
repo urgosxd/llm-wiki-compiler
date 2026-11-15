@@ -577,6 +577,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that has not been embedded yet still degrades to "build the index", because an
   absent store is not a disagreement.
 
+### Fixed
+
+- **A store recorded in another embedding space no longer becomes an empty page
+  list.** The refusal above was raised correctly and then swallowed one call site
+  up: the page-materialisation and retrieval-cascade paths in
+  `packages/wiki/src/search/retrieval.ts` and the wiki reader's `searchChunks` in
+  `packages/wiki/src/dimensions/wiki/reader.ts` each caught it in a catch-all meant
+  for embedder failures, so a mismatched store still reached the caller as an empty
+  result on all three paths — no warning, no fallback, and an answer that reads as
+  "nothing here is relevant" about a corpus that was never comparable. All three
+  rethrow `EmbeddingSpaceMismatchError` now, and every other error keeps its
+  previous behaviour byte-for-byte, including the wiki reader's capability-gap
+  degradation. The refusal is classified by error **class**, never by message text,
+  so changing the message cannot silently turn a refusal back into silence. The
+  `embeddingFailure: "fallback"` opt-in deliberately does not cover a space
+  mismatch: it is documented as opt-in recovery from *embedder* failures, and a
+  space mismatch is a completed request that produced incomparable vectors — not
+  transient, not retryable — so the opt-in must not reach it; genuine embedder
+  failures still degrade to the LLM and index fallbacks exactly as they did. The
+  diagnostic also stopped claiming a store "records no fingerprint" when a
+  fingerprint *was* recorded but cannot be printed safely, since an absent header
+  and an unprintable one need different fixes; and a store model id is printed only
+  when it has a model-id shape, because a hand-edited row could otherwise place a
+  URL — and therefore the credential sitting in its userinfo — into an operator's
+  log.
+
 ## [1.3.0] - 2026-09-11
 
 ### Highlights

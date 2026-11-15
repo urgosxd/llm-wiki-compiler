@@ -6,6 +6,7 @@ import {
   config,
   gatewayEmbeddingsSourceLine,
   parseConfig,
+  resolveGatewayEmbeddings,
   validateConfig,
   type Config,
 } from "./config.js";
@@ -423,5 +424,64 @@ describe("validateConfig", () => {
     expect(message).toBe(
       "EMBEDDING_PROVIDER=openai but OPENAI_API_KEY is not set",
     );
+  });
+});
+
+/**
+ * The RESOLUTION behind the gateway embeddings endpoint, one half at a time.
+ *
+ * A URL that looks right is not evidence about WHICH variable supplied it, which is
+ * why the startup line names the source variables: the fallback is a decision the
+ * operator did not make, and a mistyped variable name inherits the old one silently.
+ * The two cases below are the two ways the halves can disagree. Hosts are `.invalid`
+ * (RFC 6761: never resolvable, never routed) and every key is a fake literal.
+ */
+describe("the gateway embeddings split resolves each half on its own", () => {
+  /** Chat host fixture: never resolves. */
+  const CHAT_BASE_URL = "https://chat.invalid/api/v1";
+  /** Embeddings host fixture: a different host from {@link CHAT_BASE_URL}. */
+  const EMBEDDINGS_BASE_URL = "https://embeddings.invalid/openai/v1";
+  /** The fake chat credential; only the NAME it came from is asserted. */
+  const CHAT_KEY = "chat-key-not-real";
+
+  it("treats whitespace-only embeddings halves as unset even when the schema is bypassed", () => {
+    // `parseConfig` trims both embeddings variables, so spaces never survive it.
+    // This probe BYPASSES the schema on purpose: a resolver written as a truthiness
+    // check on the raw value would treat "   " as a host and post to "   /embeddings",
+    // leaving the schema as the only thing between that and production.
+    const resolution = resolveGatewayEmbeddings({
+      GATEWAY_URL: CHAT_BASE_URL,
+      GATEWAY_API_KEY: CHAT_KEY,
+      GATEWAY_EMBEDDINGS_BASE_URL: "   ",
+      GATEWAY_EMBEDDINGS_API_KEY: "\t\n ",
+    });
+
+    expect(resolution).toEqual({
+      baseUrl: CHAT_BASE_URL,
+      apiKey: CHAT_KEY,
+      baseUrlSource: "GATEWAY_URL",
+      apiKeySource: "GATEWAY_API_KEY",
+    });
+  });
+
+  it("PINNED HAZARD: setting the embeddings URL alone sends the GATEWAY_API_KEY credential to the embeddings host", () => {
+    // Not a bug report, a TRIPWIRE. One URL and one key name one service each:
+    // moving the host while the credential stays behind is exactly how a working key
+    // reaches a host it was never issued for, and the 401 that follows accuses the
+    // wrong side. The docs warn about it; this case makes the warning executable, so
+    // a later "fix" to the inherited credential has to confront the documentation.
+    const resolution = resolveGatewayEmbeddings({
+      GATEWAY_URL: CHAT_BASE_URL,
+      GATEWAY_API_KEY: CHAT_KEY,
+      GATEWAY_EMBEDDINGS_BASE_URL: EMBEDDINGS_BASE_URL,
+      GATEWAY_EMBEDDINGS_API_KEY: "",
+    });
+
+    expect(resolution.baseUrl).toBe(EMBEDDINGS_BASE_URL);
+    expect(resolution.baseUrlSource).toBe("GATEWAY_EMBEDDINGS_BASE_URL");
+    // The credential was NOT split, and the source NAME says so: a deployment in
+    // this state logs `GATEWAY_API_KEY`, which is the visible half of the hazard.
+    expect(resolution.apiKey).toBe(CHAT_KEY);
+    expect(resolution.apiKeySource).toBe("GATEWAY_API_KEY");
   });
 });

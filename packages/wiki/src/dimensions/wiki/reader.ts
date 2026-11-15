@@ -31,6 +31,7 @@ import {
 } from "../../pages/list.js";
 import { withPageSource } from "./page-source-seam.js";
 import { pickSearchRefs } from "../../search/retrieval.js";
+import { EmbeddingSpaceMismatchError } from "../../utils/embeddings-store.js";
 import type {
   DimensionAnswer,
   DimensionQuery,
@@ -117,10 +118,17 @@ async function readByName(
  * embedding store still has pages, and saying "no matches" would be
  * indistinguishable from "search is off".
  *
+ * A store recorded in ANOTHER embedding space is not that kind of gap: it exists,
+ * it ranks, and its vectors simply are not comparable with the question's. That
+ * refusal is rethrown rather than turned into `[]`, because an empty list here
+ * answers "nothing matched" about a corpus that could never be compared — and it
+ * drops the LLM/index fallback this path otherwise takes.
+ *
  * @param root - Project root.
  * @param text - Query text.
  * @param limit - Cap on returned passages.
  * @returns Matching passages, or an empty list when the store is absent.
+ * @throws {@link EmbeddingSpaceMismatchError} when the store names another embedding space.
  */
 async function searchChunks(
   root: string,
@@ -141,9 +149,12 @@ async function searchChunks(
       });
     }
     return chunks;
-  } catch {
+  } catch (error) {
     // An absent or unusable embedding store is a capability gap, not a failure of
     // the question, so the listing still answers and the chunks are simply empty.
+    // A mismatched space is neither: the store is there and disagrees, so the
+    // refusal travels to the caller instead of becoming an empty answer.
+    if (error instanceof EmbeddingSpaceMismatchError) throw error;
     return [];
   }
 }

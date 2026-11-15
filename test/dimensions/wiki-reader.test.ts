@@ -10,12 +10,28 @@
  * The pages are written by hand rather than compiled, because compiling needs a
  * provider and what is under test is the read path, not page generation.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createWikiReader } from "../../packages/wiki/src/dimensions/wiki/reader.js";
+import { EmbeddingSpaceMismatchError } from "../../packages/wiki/src/utils/embeddings-store.js";
 import { expectNamedLookupContract } from "../fixtures/reader-assertions.js";
+import { createEnvSnapshot } from "../fixtures/env-snapshot.js";
+
+const { setEnv, restore } = createEnvSnapshot([
+  "LLMWIKI_PROVIDER",
+  "LLMWIKI_EMBEDDING_PROVIDER",
+  "LLMWIKI_EMBEDDING_MODEL",
+  "OPENAI_BASE_URL",
+  "OPENAI_EMBEDDINGS_BASE_URL",
+  "OLLAMA_HOST",
+  "OLLAMA_EMBEDDINGS_HOST",
+]);
+
+afterEach(() => {
+  restore();
+});
 
 /** A project with three compiled concept pages and one query page. */
 async function projectWithPages(): Promise<string> {
@@ -88,5 +104,22 @@ describe("the wiki dimension as a DimensionReader", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.entities.length).toBeGreaterThan(0);
+  }, 30_000);
+
+  it("surfaces a foreign embedding space instead of answering with no chunks", async () => {
+    setEnv({ LLMWIKI_PROVIDER: "openai", LLMWIKI_EMBEDDING_MODEL: "active-space-model" });
+    const root = await projectWithPages();
+    await mkdir(path.join(root, ".llmwiki"), { recursive: true });
+    await writeFile(
+      path.join(root, ".llmwiki", "embeddings.json"),
+      JSON.stringify({ version: 3, model: "hf:another-space/model", dimensions: 768, entries: [], chunks: [] }),
+      "utf8",
+    );
+    const reader = createWikiReader(root, process.env);
+
+    // The failure this pins: the catch below used to turn the refusal into `chunks: []`,
+    // which is indistinguishable from "nothing matched" and drops the fallback the
+    // read path used to take. A capability gap is not a disagreement about vectors.
+    await expect(reader.read({ limit: 50, text: "agents" })).rejects.toThrow(EmbeddingSpaceMismatchError);
   }, 30_000);
 });

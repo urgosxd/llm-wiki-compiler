@@ -517,8 +517,75 @@ function matchesSafely(store: Record<string, unknown>): boolean {
 /** Shown in place of the store's model when none was recorded. */
 const NO_MODEL = "(none recorded)";
 
+/**
+ * Shown in place of a recorded model id whose SHAPE this refusal will not print.
+ *
+ * A distinct marker from {@link NO_MODEL} on purpose: something WAS recorded, and a
+ * diagnostic that said otherwise would be false about the very row being refused.
+ */
+const WITHHELD_MODEL = "(withheld: not a model id)";
+
 /** Shown in place of a fingerprint this refusal has no printable value for. */
 const NO_FINGERPRINT = "(not recorded)";
+
+/**
+ * Shown in place of a fingerprint that IS recorded but cannot be printed safely.
+ *
+ * Separate from {@link NO_FINGERPRINT} for the same reason as {@link WITHHELD_MODEL}:
+ * "nothing was recorded" and "something was recorded that this build will not print"
+ * are different facts, and the second one is actionable.
+ */
+const WITHHELD_FINGERPRINT = "(recorded, not printable)";
+
+/**
+ * The characters a model id is made of, per the ids every backend records.
+ *
+ * Deliberately conservative: alphanumerics plus the separators real ids use (`.`, `_`,
+ * `-`, `/`, `:`) — `hf:nomic-ai/nomic-embed-text-v1.5`, `text-embedding-3-small`,
+ * `qwen2.5:7b`. No whitespace, no quotes, and a bounded length.
+ */
+const MODEL_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
+
+/**
+ * A recorded model id, or null when it does not have the shape of one.
+ *
+ * WHY A SHAPE TEST AND NOT A TRUST EXERCISE. `store.model` reaches this message
+ * verbatim, and a store header can be hand-edited — or written by another build — so
+ * the value is not guaranteed to be a model id at all. `//` and `@` are then refused
+ * explicitly, because they are what turns a string into a URL: a scheme separator and
+ * the userinfo delimiter that carries a credential.
+ *
+ * Environment-derived model names never reach here unshaped, so this is defence in
+ * depth rather than a live leak: the guard exists so that a hand-edited row cannot
+ * put an endpoint into an operator's logs. A bare `host:port/path` string would still
+ * pass — it fits the shape of an id — which is stated rather than hidden: it carries
+ * no credential, and nothing in an id namespace can tell it from `qwen2.5:7b`.
+ *
+ * @param value - The recorded model, of unknown shape.
+ * @returns The value, or null when it must be withheld.
+ */
+function printableModelId(value: string): string | null {
+  if (!MODEL_ID_SHAPE.test(value)) return null;
+  if (value.includes("//") || value.includes("@")) return null;
+  return value;
+}
+
+/**
+ * The stored model as a message fragment, quoted when printable and marked otherwise.
+ *
+ * @param recorded - `store.model`, or `""` when absent.
+ * @returns `"id"`, `(none recorded)` or `(withheld: not a model id)`.
+ */
+function displayModel(recorded: string): string {
+  if (recorded === "") return NO_MODEL;
+  const printable = printableModelId(recorded);
+  return printable === null ? WITHHELD_MODEL : `"${printable}"`;
+}
+
+/** Whether the header records a fingerprint at all, whatever its shape. */
+function fingerprintWasRecorded(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== "";
+}
 
 /**
  * A fingerprint shortened for display, or null when there is nothing printable.
@@ -558,9 +625,12 @@ const MISMATCH_REMEDY = [
 /**
  * The operator-facing message: BOTH sides, so it is clear which one to change.
  *
- * Model ids and dimension counts are configuration and are printed. An environment
- * variable's VALUE never is: an endpoint routinely carries a credential as userinfo
- * or a query parameter, which is why {@link embeddingIdentityDigest} hashes it.
+ * Model ids and dimension counts are configuration and are printed — but only when
+ * they have the SHAPE of one (see {@link printableModelId}): the stored model arrives
+ * from a store header, which can be hand-edited, and a URL in an operator's log is
+ * how a credentialed endpoint escapes. An environment variable's VALUE never is
+ * printed: an endpoint routinely carries a credential as userinfo or a query
+ * parameter, which is why {@link embeddingIdentityDigest} hashes it.
  *
  * The active side's WIDTH is deliberately absent rather than guessed. Dimensions are
  * a property of what the provider returns, not of the configuration, and nothing
@@ -573,20 +643,23 @@ const MISMATCH_REMEDY = [
  * and hide the endpoint or provider that actually moved.
  */
 function describeSpaceMismatch(store: Record<string, unknown>): string {
-  const storedModel = typeof store.model === "string" && store.model !== "" ? store.model : NO_MODEL;
+  const recordedModel = typeof store.model === "string" ? store.model : "";
   const dimensions = typeof store.dimensions === "number" ? store.dimensions : 0;
   const activeModel = activeModelName();
+  // The comparison uses the RAW value (two equal ids is one fact, not two sides),
+  // while the printed form is guarded: an unprintable stored model is named as
+  // withheld instead of being quoted into the log it would leak into.
   const sides =
-    storedModel === activeModel
-      ? sameModelSides(storedModel, dimensions, store.fingerprint)
-      : differentModelSides(storedModel, dimensions, activeModel);
+    recordedModel !== "" && recordedModel === activeModel
+      ? sameModelSides(recordedModel, dimensions, store.fingerprint)
+      : differentModelSides(displayModel(recordedModel), dimensions, activeModel);
   return `Embedding space mismatch: ${sides} ${MISMATCH_REMEDY}`;
 }
 
 /** Both sides disagree on the model id itself, so both ids are printed. */
 function differentModelSides(storedModel: string, dimensions: number, activeModel: string): string {
   return [
-    `the stored index holds vectors from model "${storedModel}" at ${dimensions} dimensions;`,
+    `the stored index holds vectors from model ${storedModel} at ${dimensions} dimensions;`,
     `the active embedding configuration resolves to model "${activeModel}".`,
   ].join(" ");
 }
@@ -604,14 +677,40 @@ function sameModelSides(model: string, dimensions: number, storedFingerprint: un
     `the stored index holds vectors from model "${model}" at ${dimensions} dimensions, and the active`,
     "embedding configuration resolves to that same model id through a different embedding configuration",
     "— a different endpoint or provider — so the two sides are not the same vector space.",
-    `Stored configuration fingerprint ${stored ?? NO_FINGERPRINT};`,
+    `Stored configuration fingerprint ${stored ?? absentOrWithheld(storedFingerprint)};`,
     `active configuration fingerprint ${activeFingerprintShort() ?? NO_FINGERPRINT}.`,
-    stored === null
-      ? "The store records no fingerprint of its own, and it cannot be vouched for while the embedding backend or endpoint is overridden."
-      : "",
+    stored === null ? missingFingerprintSentence(storedFingerprint) : "",
   ]
     .filter((part) => part !== "")
     .join(" ");
+}
+
+/**
+ * The marker for a stored fingerprint that is either absent or unprintable.
+ *
+ * @param storedFingerprint - The header's fingerprint, of unknown shape.
+ * @returns `(not recorded)` or `(recorded, not printable)`.
+ */
+function absentOrWithheld(storedFingerprint: unknown): string {
+  return fingerprintWasRecorded(storedFingerprint) ? WITHHELD_FINGERPRINT : NO_FINGERPRINT;
+}
+
+/**
+ * Why a store with no PRINTABLE fingerprint still cannot be vouched for.
+ *
+ * Two situations, two sentences. The withheld one says a value is there and that
+ * this build will not print it — never that nothing was recorded, which would be a
+ * false statement about a header that does hold something, and never any part of the
+ * withheld value itself.
+ *
+ * @param storedFingerprint - The header's fingerprint, of unknown shape.
+ * @returns The sentence for whichever situation applies.
+ */
+function missingFingerprintSentence(storedFingerprint: unknown): string {
+  const cannotVouch = "and it cannot be vouched for while the embedding backend or endpoint is overridden.";
+  return fingerprintWasRecorded(storedFingerprint)
+    ? `The store records a fingerprint that this build will not print, ${cannotVouch}`
+    : `The store records no fingerprint of its own, ${cannotVouch}`;
 }
 
 /** The active model name, or a marker when the configuration cannot be resolved. */
