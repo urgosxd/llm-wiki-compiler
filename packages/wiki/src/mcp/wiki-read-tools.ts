@@ -126,6 +126,14 @@ function registerSearchTool(server: McpServer, root: string): void {
         "Select pages relevant to a question and return their full content. " +
         "Uses semantic embeddings when available, falling back to LLM-based " +
         "selection over the wiki index. Requires an LLM provider. " +
+        "Returns `{ pages, refs, warnings }`: `pages` holds the full page " +
+        "records, `refs` the ranked references. Each ref is " +
+        "`{ pageId, slug, title, kind, score? }` where `kind` is `chunk`, `page` " +
+        "or `index`; `score` is the cosine similarity between the query embedding " +
+        "and that page's or chunk's embedding, in -1..1 where higher is more " +
+        "similar (in practice roughly 0..1), and `refs` of kind `chunk`/`page` " +
+        "are ordered by it descending. `score` is OMITTED for kind `index` refs, " +
+        "which are chosen by an LLM over the index and carry no similarity. " +
         STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         question: z.string().describe("The query used to rank pages."),

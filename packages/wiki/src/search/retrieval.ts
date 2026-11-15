@@ -35,6 +35,8 @@ import {
   isMetaOnlyStore,
   findRelevantChunksV3,
   findRelevantPagesV3,
+  type ChunkHitV3,
+  type PageHitV3,
   type EmbeddingWarning,
   type EmbeddingStoreSource,
 } from "../utils/embeddings-load.js";
@@ -75,6 +77,23 @@ export interface SelectedPageRef {
   title: string;
   /** Whether the ref came from chunk-level, page-level, or index selection. */
   kind: "chunk" | "page" | "index";
+  /**
+   * Cosine similarity between the query embedding and this page's (or chunk's)
+   * embedding: `-1`..`1`, higher meaning more similar, and in practice roughly
+   * `0`..`1` for text embeddings. Read it as "how close was this to the query",
+   * so `0.8` is a strong match while `0.1` is barely related.
+   *
+   * It is the EXACT value the retrieval ranked by, not a re-derivation: refs of
+   * kind `"chunk"`/`"page"` come back sorted by it descending, which makes the
+   * array monotonically non-increasing. A caller may therefore threshold on it
+   * and still see the same pages the pipeline preferred.
+   *
+   * ABSENT for kind `"index"` refs. That fallback path selects pages with an LLM
+   * over the live page index and computes no similarity at all, so there is no
+   * honest number to report — the key is omitted (not `0`, not `null`) rather
+   * than fabricating one a client could threshold on.
+   */
+  score?: number;
 }
 
 /** Outcome of a search: ordered refs plus any degrade warnings (S6). */
@@ -103,6 +122,35 @@ export interface RetrievalOptions {
    * that no longer exists while its row sits right there.
    */
   registrySource?: RegistryPageSource;
+}
+
+/**
+ * Project chunk hits into refs, carrying the cosine score the chunk ranking used.
+ *
+ * `score` is not recomputed and not re-ranked: it is the value the pipeline sorted
+ * by, so the refs keep the pipeline's order. `title` stays blank because
+ * `ChunkHitV3` carries no title and the chunk query never loads one; the same
+ * response already carries full page records (titles included) under `pages`.
+ */
+function chunkHitsToRefs(hits: readonly ChunkHitV3[]): SelectedPageRef[] {
+  return hits.map((hit) => ({
+    pageId: hit.pageId,
+    slug: hit.slug,
+    title: "",
+    kind: "chunk" as const,
+    score: hit.score,
+  }));
+}
+
+/** Project page hits into refs, carrying the cosine score the page ranking used. */
+function pageHitsToRefs(hits: readonly PageHitV3[]): SelectedPageRef[] {
+  return hits.map((hit) => ({
+    pageId: hit.pageId,
+    slug: hit.slug,
+    title: hit.title,
+    kind: "page" as const,
+    score: hit.score,
+  }));
 }
 
 /** Deduplicate refs by pageId, preserving first-seen ordering. */
@@ -195,8 +243,7 @@ async function selectViaEmbeddings(
       options.registrySource, options.embeddingStoreSource,
     );
     if (chunkHits.length > 0) {
-      const refs = chunkHits.map((c) => ({ pageId: c.pageId, slug: c.slug, title: "", kind: "chunk" as const }));
-      return { refs, stalePageIds: chunkStale };
+      return { refs: chunkHitsToRefs(chunkHits), stalePageIds: chunkStale };
     }
     // The page level needs `store.entries`, and a lightweight store deliberately
     // has none: it carries the header only. Falling through with `entries: []`
@@ -208,8 +255,9 @@ async function selectViaEmbeddings(
     if (pageStore === null) return { refs: [], stalePageIds: chunkStale };
     const { hits: pageHits, stalePageIds: pageStale } =
       await findRelevantPagesV3(root, pageStore, "search", question, EMBEDDING_TOP_K, profile, options.registrySource);
-    const refs = pageHits.map((p) => ({ pageId: p.pageId, slug: p.slug, title: p.title, kind: "page" as const }));
-    return { refs, stalePageIds: [...chunkStale, ...pageStale] };
+    // Same score the page ranking used (`PageHitV3.score`), carried through so the
+    // ordering a caller sees is the ordering the pipeline chose.
+    return { refs: pageHitsToRefs(pageHits), stalePageIds: [...chunkStale, ...pageStale] };
   } catch (err) {
     // A wrong SPACE is not a failure of the embedding CALL. The opt-in below exists
     // to survive a request that could not complete; this one completed, and its
@@ -303,6 +351,8 @@ export async function selectFallbackRefs(
   const refs = pages
     .map((token) => byPageId.get(token))
     .filter((c): c is SurfaceCandidate => c !== undefined)
+    // No `score`: index selection picks pages with an LLM over the live index and
+    // computes no similarity, so the ref omits the key rather than carrying a 0.
     .map((c) => ({ pageId: c.pageId, slug: c.slug, title: c.title, kind: "index" as const }));
   return { refs, reasoning };
 }
