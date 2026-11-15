@@ -39,6 +39,7 @@ import { databaseEmbeddingSource, splitPageId } from "../packages/wiki/src/utils
 import { loadEmbeddingsForSearch } from "../packages/wiki/src/utils/embeddings-load.js";
 import { writeEmbeddingStoreToDb } from "../packages/wiki/src/utils/embeddings-database-write.js";
 import {
+  EmbeddingSpaceMismatchError,
   resolveEmbeddingFingerprint,
   resolveEmbeddingModel,
   storeMatchesActiveEmbedding,
@@ -162,7 +163,9 @@ describe("the header records the fingerprint's inputs", () => {
     expect(row.backend).toBeNull();
     expect(row.endpoint).toBeNull();
     expect(row.fingerprint).toBe("b".repeat(64));
-    expect((await load(harness)).store).toBeNull();
+    // The NULLs never stand in for the digest, so the store is still refused -- now
+    // by a throw, which is the refusal this gate makes.
+    await expect(load(harness)).rejects.toThrow(EmbeddingSpaceMismatchError);
   });
 });
 
@@ -181,10 +184,11 @@ describe("recording an input never substitutes for the digest", () => {
          endpoint = 'http://localhost:8000/v1' where stack_id = '${harness.stackId}'`,
     );
 
-    const outcome = await load(harness);
+    const outcome = await load(harness).catch((error: unknown) => error);
 
-    expect(outcome.store).toBeNull();
-    expect(outcome.warnings.map((w) => w.code)).toContain("embedding-index-outdated");
+    // Refused outright, not reported as an outdated index: the digest decides, and
+    // populated columns cannot stand in for it.
+    expect(outcome).toBeInstanceOf(EmbeddingSpaceMismatchError);
     expect(storeMatchesActiveEmbedding({
       model: resolveEmbeddingModel(), fingerprint: elsewhere, backend: "openai",
       endpoint: "http://localhost:8000/v1",
@@ -380,11 +384,11 @@ describe("the blank-input boundary and the gate it must not relax", () => {
     // would have been relaxed. It must refuse exactly as it does with a populated endpoint.
     setEnv({ ...LOCAL_ENDPOINT_ENV, OPENAI_EMBEDDINGS_BASE_URL: "\u0000host:1/v1" });
     await writeStamped(harness, "b".repeat(64));
-    const refused = await load(harness);
     const row = await readHeaderInputs(harness);
 
     expect(row.backend).toBeNull();
     expect(row.endpoint).toBeNull();
-    expect(refused.store).toBeNull();
+    // Refused exactly as a populated endpoint is: the stored NULLs cannot admit it.
+    await expect(load(harness)).rejects.toThrow(EmbeddingSpaceMismatchError);
   });
 });

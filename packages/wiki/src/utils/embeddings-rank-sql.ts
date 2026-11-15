@@ -42,7 +42,7 @@ import type { DatabaseHandle } from "@repo/foundation";
 import type { ChunkRanking, RankedChunk, RankScope } from "./embeddings-load.js";
 import { toVectorLiteral } from "./embeddings-database-write.js";
 import { bindStack } from "./embeddings-tenant.js";
-import { storeMatchesActiveEmbedding } from "./embeddings-store.js";
+import { embeddingSpaceMismatch } from "./embeddings-store.js";
 
 /** One ranking row as it leaves Postgres. */
 interface RankedChunkRow extends Record<string, unknown> {
@@ -66,6 +66,9 @@ interface RankedChunkRow extends Record<string, unknown> {
  * @param k - Maximum hits to return.
  * @param scope - Eligibility and scope constraints applied as SQL predicates.
  * @returns `ranked` with hits (possibly none), or `degraded` with a warning code.
+ * @throws {@link EmbeddingSpaceMismatchError} when the stored header names another
+ * embedding space, exactly as the in-memory path does: both retrieval paths must
+ * refuse together, or one of them answers confidently for vectors it cannot compare.
  */
 export async function rankChunksInSql(
   db: DatabaseHandle,
@@ -121,6 +124,12 @@ export async function rankChunksInSql(
  * The fingerprint/model comparison is the same one `storeMatchesActiveEmbedding`
  * makes — it reads only those two fields, so the header is enough for it.
  *
+ * A header that names ANOTHER embedding space is not degradable here either: it
+ * THROWS the same {@link EmbeddingSpaceMismatchError} the in-memory gate raises, so a
+ * caller cannot get "no relevant pages" from one path and a refusal from the other
+ * for the same store. The decision and the message both come from
+ * `embeddingSpaceMismatch`, never from a second comparison written here.
+ *
  * @param tx - Transaction already bound to the tenant.
  * @param stackId - Stack being ranked.
  * @returns A degraded result when the store cannot be ranked, else null.
@@ -155,16 +164,16 @@ async function assertStoreIntegrityInSql(
       reason: "Embedding index declares 0 dimensions but vectors are present.",
     };
   }
-  // Reuses the exact predicate the in-memory gate applies. It reads only
-  // `fingerprint` and `model`, so passing the header shape is sufficient and the two
-  // paths cannot drift on configuration staleness.
-  if (!storeMatchesActiveEmbedding({ model: row.model, fingerprint: row.fingerprint ?? undefined })) {
-    return {
-      kind: "degraded",
-      code: "embedding-index-outdated",
-      reason: "Embedding index was built with a different embedding configuration; rebuild with the MCP tool `compile_wiki`.",
-    };
-  }
+  // Reuses the exact predicate the in-memory gate applies, AND its message: the pair
+  // of paths must not drift on either, or a store could be refused on one and
+  // silently emptied on the other. Passing `dimensions` is what lets the message name
+  // the stored width beside the recorded model.
+  const mismatch = embeddingSpaceMismatch({
+    model: row.model,
+    dimensions: row.dimensions,
+    fingerprint: row.fingerprint ?? undefined,
+  });
+  if (mismatch !== null) throw mismatch;
   return null;
 }
 

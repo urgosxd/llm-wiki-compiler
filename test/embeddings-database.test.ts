@@ -32,12 +32,13 @@ import { collectStats } from "../packages/wiki/src/eval/stats.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { resolveEmbeddingModel } from "../packages/wiki/src/utils/embeddings-store.js";
+import { EmbeddingSpaceMismatchError, resolveEmbeddingModel } from "../packages/wiki/src/utils/embeddings-store.js";
 import {
   toVectorLiteral,
   writeEmbeddingStoreToDb,
 } from "../packages/wiki/src/utils/embeddings-database-write.js";
 import type { ChunkEmbeddingV3, EmbeddingStoreV3, PageEmbeddingV3 } from "../packages/wiki/src/utils/embeddings-store.js";
+import { expectSpaceRefusalNamesBothSides, spaceRefusalOf } from "./fixtures/embedding-space-refusal.js";
 
 /** Probe whether the vector extension and the embedding tables are both present. */
 const harnessReachable = await (async (): Promise<boolean> => {
@@ -248,11 +249,13 @@ describe.skipIf(!harnessReachable)("embedding vectors in Postgres", () => {
 });
 
 /**
- * Assert the loader refused the Stack's store as outdated.
+ * Assert the loader reports a Stack with no store YET as outdated, not as a fault.
  *
- * Both cases below end in exactly this pair -- `null` store plus the
- * `embedding-index-outdated` code -- and asserting only the first half would pass
- * while the caller lost the reason it branches on.
+ * Absence is not a disagreement: a first-run deployment has nothing to disagree
+ * with, so this path must keep degrading instead of refusing. A store whose header
+ * DOES disagree is refused outright -- an `EmbeddingSpaceMismatchError`, asserted in
+ * the mismatch case below, because the `embedding-index-outdated` code is no longer
+ * the outcome of a mismatch.
  *
  * @param harness - Stack to load from.
  * @returns The load outcome.
@@ -264,6 +267,28 @@ async function expectOutdatedStore(
   expect(outcome.store).toBeNull();
   expect(outcome.warnings.map((w) => w.code)).toContain("embedding-index-outdated");
   return outcome;
+}
+
+/**
+ * Assert the loader REFUSED the Stack's store as a record of another embedding space.
+ *
+ * The refusal is a THROW, not a degraded outcome: a mismatch no longer produces the
+ * `embedding-index-outdated` code, and no store is handed back, so not one vector
+ * from the other space can be ranked or returned.
+ *
+ * @param harness - Stack to load from.
+ * @param storedModel - Model id the store records, which the message must name.
+ * @returns The refusal, for a caller that wants to assert more.
+ */
+async function expectSpaceRefusal(
+  harness: KgPostgresHarness,
+  storedModel: string,
+): Promise<EmbeddingSpaceMismatchError> {
+  const call = loadEmbeddingsForSearch("", databaseEmbeddingSource(harness.db, harness.stackId));
+  const refusal = await spaceRefusalOf(call);
+  // S4: BOTH sides -- the store's model and width, and the active model.
+  expectSpaceRefusalNamesBothSides(refusal, { model: storedModel, dimensions: 768 }, resolveEmbeddingModel());
+  return refusal;
 }
 
 /**
@@ -323,7 +348,7 @@ describe.skipIf(!harnessReachable)("the loader reads its store through the datab
     await expectOutdatedStore(harness);
   });
 
-  it("degrades a store whose configuration does not match the active model", async () => {
+  it("refuses a store whose configuration does not match the active model", async () => {
     await seedPages(harness, ["concepts/alpha"]);
     await writeEmbeddingStoreToDb(harness.db, harness.stackId, {
       version: 3,
@@ -332,7 +357,9 @@ describe.skipIf(!harnessReachable)("the loader reads its store through the datab
       entries: [pageEntry("concepts/alpha", 0.5)],
     });
 
-    await expectOutdatedStore(harness);
+    // Refused, not degraded: the vectors belong to a space this reader cannot
+    // compare, so refusing is the only answer that is not a confident lie.
+    await expectSpaceRefusal(harness, "some-other-model");
   });
 });
 

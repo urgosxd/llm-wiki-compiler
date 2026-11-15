@@ -462,3 +462,163 @@ export function storeMatchesActiveEmbedding(store: Record<string, unknown> | nul
   if (hasEmbeddingConfigurationOverride()) return false;
   return store.model === resolveEmbeddingModel();
 }
+
+/**
+ * A store whose recorded embedding space is not the one the ACTIVE configuration
+ * produces.
+ *
+ * A distinct class rather than a generic `Error` because this is the one failure
+ * a caller must never confuse with "there is nothing relevant": ranking across two
+ * spaces is not a weaker answer, it is a wrong one, and code that catches broadly
+ * still has to be able to tell them apart.
+ */
+export class EmbeddingSpaceMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EmbeddingSpaceMismatchError";
+  }
+}
+
+/**
+ * The refusal a store from another embedding space deserves, or null when there is
+ * nothing to refuse.
+ *
+ * `null` covers BOTH acceptable states on purpose, because they must reach the
+ * caller identically:
+ *  - the store agrees with the active configuration (the normal path), and
+ *  - there is NO store at all — a first-run deployment has nothing to disagree
+ *    with, and refusing there would break every fresh install.
+ *
+ * A throw from `storeMatchesActiveEmbedding` (an unresolvable configuration, e.g. a
+ * misspelled LLMWIKI_EMBEDDING_PROVIDER) is treated as a disagreement: the store
+ * cannot be VOUCHED for, and a read path that several callers do not guard must
+ * fail closed rather than rank vectors it cannot attribute.
+ *
+ * @param store - The header of the store about to be read, or null/undefined.
+ * @returns The named refusal, or null.
+ */
+export function embeddingSpaceMismatch(
+  store: Record<string, unknown> | null | undefined,
+): EmbeddingSpaceMismatchError | null {
+  if (!store) return null;
+  if (matchesSafely(store)) return null;
+  return new EmbeddingSpaceMismatchError(describeSpaceMismatch(store));
+}
+
+/** Whether `store` matches, failing CLOSED when the active side cannot be resolved. */
+function matchesSafely(store: Record<string, unknown>): boolean {
+  try {
+    return storeMatchesActiveEmbedding(store);
+  } catch {
+    return false;
+  }
+}
+
+/** Shown in place of the store's model when none was recorded. */
+const NO_MODEL = "(none recorded)";
+
+/** Shown in place of a fingerprint this refusal has no printable value for. */
+const NO_FINGERPRINT = "(not recorded)";
+
+/**
+ * A fingerprint shortened for display, or null when there is nothing printable.
+ *
+ * Printing a PREFIX is safe only because a fingerprint is opaque: it is
+ * {@link embeddingIdentityDigest}, a truncated SHA-256 hex string, and nothing
+ * reads it back. It is never the raw configuration, so no endpoint and no
+ * credential in that endpoint can be recovered from it.
+ *
+ * A stored value that is not that shape is withheld entirely. A fingerprint
+ * written by another build is not guaranteed to be a digest, and this function
+ * has no way to tell one from a raw string that embeds a URL.
+ *
+ * @param value - The fingerprint, of unknown shape.
+ * @returns A 12-character prefix, or null.
+ */
+function shortenedFingerprint(value: unknown): string | null {
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/i.test(value)) return null;
+  return value.slice(0, 12);
+}
+
+/** The ACTIVE fingerprint shortened for display, or null when unresolvable. */
+function activeFingerprintShort(): string | null {
+  try {
+    return shortenedFingerprint(resolveEmbeddingFingerprint());
+  } catch {
+    return null;
+  }
+}
+
+/** Why any mismatch refuses, and the two ways out of it. */
+const MISMATCH_REMEDY = [
+  "Vectors from two spaces are not comparable, so retrieval is refused instead of answering with noise.",
+  "Rebuild the index with the MCP tool `compile_wiki`, or restore the embedding configuration it was built with.",
+].join(" ");
+
+/**
+ * The operator-facing message: BOTH sides, so it is clear which one to change.
+ *
+ * Model ids and dimension counts are configuration and are printed. An environment
+ * variable's VALUE never is: an endpoint routinely carries a credential as userinfo
+ * or a query parameter, which is why {@link embeddingIdentityDigest} hashes it.
+ *
+ * The active side's WIDTH is deliberately absent rather than guessed. Dimensions are
+ * a property of what the provider returns, not of the configuration, and nothing
+ * records them before the first embedding — inventing a number here would be a
+ * confident statement about a fact this path cannot observe.
+ *
+ * Two mismatches are possible and they need different sentences. Different model ids
+ * is self-describing. The SAME model id under a different fingerprint is not: naming
+ * that id on both sides would present the one fact that agrees as the disagreement
+ * and hide the endpoint or provider that actually moved.
+ */
+function describeSpaceMismatch(store: Record<string, unknown>): string {
+  const storedModel = typeof store.model === "string" && store.model !== "" ? store.model : NO_MODEL;
+  const dimensions = typeof store.dimensions === "number" ? store.dimensions : 0;
+  const activeModel = activeModelName();
+  const sides =
+    storedModel === activeModel
+      ? sameModelSides(storedModel, dimensions, store.fingerprint)
+      : differentModelSides(storedModel, dimensions, activeModel);
+  return `Embedding space mismatch: ${sides} ${MISMATCH_REMEDY}`;
+}
+
+/** Both sides disagree on the model id itself, so both ids are printed. */
+function differentModelSides(storedModel: string, dimensions: number, activeModel: string): string {
+  return [
+    `the stored index holds vectors from model "${storedModel}" at ${dimensions} dimensions;`,
+    `the active embedding configuration resolves to model "${activeModel}".`,
+  ].join(" ");
+}
+
+/**
+ * Both sides agree on the model id and disagree on the configuration behind it.
+ *
+ * The id is printed ONCE, as the fact that is not in dispute, and then the
+ * fingerprints — the only thing that differs — so an operator can see that the
+ * configuration moved without being told two equal ids are two sides.
+ */
+function sameModelSides(model: string, dimensions: number, storedFingerprint: unknown): string {
+  const stored = shortenedFingerprint(storedFingerprint);
+  return [
+    `the stored index holds vectors from model "${model}" at ${dimensions} dimensions, and the active`,
+    "embedding configuration resolves to that same model id through a different embedding configuration",
+    "— a different endpoint or provider — so the two sides are not the same vector space.",
+    `Stored configuration fingerprint ${stored ?? NO_FINGERPRINT};`,
+    `active configuration fingerprint ${activeFingerprintShort() ?? NO_FINGERPRINT}.`,
+    stored === null
+      ? "The store records no fingerprint of its own, and it cannot be vouched for while the embedding backend or endpoint is overridden."
+      : "",
+  ]
+    .filter((part) => part !== "")
+    .join(" ");
+}
+
+/** The active model name, or a marker when the configuration cannot be resolved. */
+function activeModelName(): string {
+  try {
+    return resolveEmbeddingModel();
+  } catch {
+    return "(unresolvable embedding configuration)";
+  }
+}

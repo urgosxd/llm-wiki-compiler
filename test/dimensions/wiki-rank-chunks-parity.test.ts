@@ -55,7 +55,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { databaseEmbeddingSource, readEmbeddingStoreFromDb } from "../../packages/wiki/src/utils/embeddings-database.js";
-import { resolveEmbeddingModel, resolveEmbeddingFingerprint } from "../../packages/wiki/src/utils/embeddings-store.js";
+import {
+  resolveEmbeddingModel,
+  resolveEmbeddingFingerprint,
+} from "../../packages/wiki/src/utils/embeddings-store.js";
 import { writeEmbeddingStoreToDb } from "../../packages/wiki/src/utils/embeddings-database-write.js";
 import { cosineSimilarity } from "../../packages/wiki/src/utils/embeddings-search.js";
 import { createRegistryPageSource } from "../../packages/wiki/src/dimensions/wiki/page-registry-source.js";
@@ -64,6 +67,7 @@ import * as providerMod from "../../packages/wiki/src/utils/provider.js";
 import type { ChunkEmbeddingV3, EmbeddingStoreV3 } from "../../packages/wiki/src/utils/embeddings-store.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { provisionStack } from "../fixtures/stack-harness.js";
+import { expectSpaceRefusalNamesBothSides, spaceRefusalOf } from "../fixtures/embedding-space-refusal.js";
 
 /** The ranking contract this file specifies. Absent until the adapter implements it. */
 interface RankedChunk {
@@ -93,6 +97,9 @@ interface RankChunksCapable {
 
 /** Dimensions of every vector in this file; matches the shipped column width. */
 const DIMS = 768;
+
+/** A model id no active configuration resolves to, standing for a foreign space. */
+const STORED_MODEL = "definitely-not-the-active-model";
 
 /** Unrestricted scope over the search surface. */
 const OPEN_SCOPE: RankScope = { excludedNamespaces: [], surface: "search" };
@@ -372,11 +379,16 @@ describe("SQL chunk ranking", () => {
     expect(outcome.stalePageIds).toContain("concepts/normal");
   });
 
-  it("degrades with embedding-index-outdated when the store was built by another model", async () => {
+  it("refuses a store built by another model instead of ranking its chunks", async () => {
     // The stale-configuration gate, covered by the file that specifies the
     // contract. Without this case the gate is untested here: every other case uses
     // a store that matches the active config, so deleting the gate would leave them
     // all green.
+    //
+    // It REFUSES rather than degrading: chunks from another space have no comparable
+    // score, so an empty ranking would say "nothing is relevant" about a corpus that
+    // was never comparable. The throw is also why nothing can be ranked -- there is
+    // no outcome to carry a hit.
     //
     // This is also why the fixture resolves its model instead of hardcoding one --
     // a hardcoded name fails this gate in any environment whose active model
@@ -384,17 +396,16 @@ describe("SQL chunk ranking", () => {
     await seedPage(CLASSES[0] as SeedClass);
     await writeEmbeddingStoreToDb(harness.db, harness.stackId, {
       ...storeOf([chunkEntry("normal", SEEDS.normal as number)]),
-      model: "definitely-not-the-active-model",
+      model: STORED_MODEL,
       fingerprint: "a-fingerprint-that-does-not-match",
     });
     const source = databaseEmbeddingSource(harness.db as never, harness.stackId);
     const rankChunks = requireRankChunks(source);
 
-    const outcome = await rankChunks!(vector(0.85), 5, OPEN_SCOPE);
+    const refusal = await spaceRefusalOf(rankChunks!(vector(0.85), 5, OPEN_SCOPE));
 
-    expect(outcome.kind).toBe("degraded");
-    if (outcome.kind !== "degraded") throw new Error("unreachable");
-    expect(outcome.code).toBe("embedding-index-outdated");
+    // S4: BOTH sides -- the store's model and width, and the active model.
+    expectSpaceRefusalNamesBothSides(refusal, { model: STORED_MODEL, dimensions: DIMS }, resolveEmbeddingModel());
   });
 
   it("treats the PREFILTER as the eligibility gate, not the hash read", async () => {

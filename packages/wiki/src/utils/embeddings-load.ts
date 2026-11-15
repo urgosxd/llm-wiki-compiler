@@ -29,7 +29,7 @@ import { getEmbeddingProvider } from "./embedding-provider.js";
 import { assertVectorValid, EmbeddingIntegrityError } from "./embeddings-validate.js";
 import {
   validateV3ForSearch,
-  storeMatchesActiveEmbedding,
+  embeddingSpaceMismatch,
   type EmbeddingStoreV3,
   type PageEmbeddingV3,
   type ChunkEmbeddingV3,
@@ -364,7 +364,8 @@ export async function loadMetaForSearch(root: string, source: EmbeddingStoreSour
  * `null` from `readMeta` is the row store's "this Stack has never been embedded",
  * which is the same condition `gateActiveStore` reports as ABSENT. A failed read
  * rethrows instead: an unavailable database must not look like an empty Stack, or
- * the caller rebuilds a corpus that was never lost.
+ * the caller rebuilds a corpus that was never lost. A header that names ANOTHER
+ * embedding space is refused here, before the ranking query runs.
  *
  * @param source - Backend that exposes a header.
  * @returns A store carrying the header only, or a degraded outcome.
@@ -374,6 +375,7 @@ async function loadMetaOnly(
 ): Promise<EmbeddingLoadOutcome> {
   const meta = await source.readMeta();
   if (meta === null) return degraded("embedding-index-outdated", "No embedding index found.");
+  refuseSpaceMismatch({ model: meta.model, dimensions: meta.dimensions, fingerprint: meta.fingerprint });
   const store: MetaOnlyStore = {
     [META_ONLY_STORE]: true,
     version: 3,
@@ -402,8 +404,13 @@ export async function loadEmbeddingsForContext(
  * Parse + gate the on-disk store READ-ONLY. Returns a usable v3 store, or a
  * degraded outcome (`store: null`) with a structured warning when the store is
  * not v3 (older version — the writer has not flipped yet), failed the search
- * gate (corrupt vectors / over-cap), was built by a different embedding
- * configuration (provider, endpoint, or model), or is absent.
+ * gate (corrupt vectors / over-cap), or is absent.
+ *
+ * A store built by a DIFFERENT embedding configuration is neither usable nor
+ * degradable: it THROWS {@link EmbeddingSpaceMismatchError}. Ranking its vectors
+ * against a query from another space scores noise, and returning nothing instead
+ * says "no relevant pages" about a corpus that was never comparable — the two
+ * available lies are why this is the one gate that refuses.
  */
 async function gateActiveStore(
   root: string,
@@ -420,30 +427,21 @@ async function gateActiveStore(
   if (!validation.available) {
     return degraded("embedding-store-unavailable", "Embedding index failed integrity validation; rebuilt on next compile.");
   }
-  if (isStaleConfiguration(parsed.store)) {
-    return degraded(
-      "embedding-index-outdated",
-      "Embedding index was built with a different embedding configuration; rebuild with the MCP tool `compile_wiki`.",
-    );
-  }
+  refuseSpaceMismatch(parsed.store);
   return { store: parsed.store as unknown as EmbeddingStoreV3, warnings: [], stalePageIds: [] };
 }
 
 /**
- * True when the persisted store came from a different embedding configuration
- * (provider, model, or endpoint) than the active one.
+ * Throw when `store`'s recorded embedding space disagrees with the active one.
  *
- * Still fails CLOSED on a throw: `resolveEmbeddingFingerprint` validates the
- * configured provider name, so a misspelled LLMWIKI_EMBEDDING_PROVIDER degrades
- * retrieval rather than propagating out of a read path that several callers do
- * not guard.
+ * One helper for every entry point, so the file path, the header path and the SQL
+ * path cannot drift on either the decision or the message.
+ *
+ * @param store - Header of the store about to be read (`fingerprint`, `model`, `dimensions`).
  */
-function isStaleConfiguration(store: Record<string, unknown>): boolean {
-  try {
-    return !storeMatchesActiveEmbedding(store);
-  } catch {
-    return true;
-  }
+function refuseSpaceMismatch(store: Record<string, unknown> | null | undefined): void {
+  const mismatch = embeddingSpaceMismatch(store);
+  if (mismatch !== null) throw mismatch;
 }
 
 /** Build a degraded (store-null) outcome with one structured warning. */

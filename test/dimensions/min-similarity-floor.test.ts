@@ -35,9 +35,9 @@ import type { RegistryPageSource } from "../../packages/wiki/src/utils/page-regi
  * Stub ONLY the embedding provider, returning the query vector `[1, 0]`.
  *
  * Every other field is stubbed explicitly for the reason `context-pack-embeddings`
- * documents: `isStaleConfiguration` asks `hasEmbeddingConfigurationOverride` and
- * `resolveEmbeddingEndpoint`, and a mock that omits them throws, is swallowed, and
- * makes every store read as stale for a reason unrelated to this suite.
+ * documents: `storeMatchesActiveEmbedding` asks `hasEmbeddingConfigurationOverride`
+ * and `resolveEmbeddingEndpoint`, and a mock that omits them throws, is swallowed,
+ * and makes every store read as a mismatch for a reason unrelated to this suite.
  */
 vi.mock("../../packages/wiki/src/utils/embedding-provider.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../packages/wiki/src/utils/embedding-provider.js")>();

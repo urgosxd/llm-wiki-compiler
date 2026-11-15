@@ -16,6 +16,7 @@ import {
 } from "../packages/wiki/src/utils/embeddings.js";
 import { loadEmbeddingsForSearch } from "../packages/wiki/src/utils/embeddings-load.js";
 import { expectDegradedStore } from "./fixtures/embeddings-degrade.js";
+import { expectSpaceRefusalNamesBothSides, spaceRefusalOf } from "./fixtures/embedding-space-refusal.js";
 import { EmbeddingIntegrityError } from "../packages/wiki/src/utils/embeddings-batch.js";
 import { OpenAIProvider } from "../packages/wiki/src/providers/openai.js";
 import * as providerMod from "../packages/wiki/src/utils/provider.js";
@@ -81,8 +82,9 @@ describe("read-side embedding validation", () => {
   // These assert on `loadEmbeddingsForSearch`, which is the function production
   // actually calls. They used to go through `findRelevantPages`, a v1/v2 helper
   // keyed by bare `slug` that had no production caller and has been removed. The
-  // gate itself is unchanged: a store whose vectors cannot be trusted must degrade
-  // retrieval rather than rank poisoned data.
+  // integrity gate is unchanged: a store whose vectors cannot be trusted must degrade
+  // retrieval rather than rank poisoned data. A store from ANOTHER embedding space is
+  // a different fact and is refused outright -- see the mismatch case below.
   it("degrades instead of ranking a store whose vectors fail integrity validation", async () => {
     const root = await makeRoot();
     setupOpenAI([1, 0]);
@@ -91,14 +93,18 @@ describe("read-side embedding validation", () => {
     await expectDegradedStore(root, "embedding-store-unavailable");
   });
 
-  it("degrades instead of ranking a store built by a different embedding model", async () => {
+  it("refuses instead of ranking a store built by a different embedding model", async () => {
     const root = await makeRoot();
     setupOpenAI([1, 0]);
     const stale = pageStore([1, 0]);
     stale.model = "some-other-model";
     await writeRawStore(root, stale);
 
-    await expectDegradedStore(root, "embedding-index-outdated");
+    const refusal = await spaceRefusalOf(loadEmbeddingsForSearch(root));
+
+    // A degradation would answer `embedding-index-outdated` and return nothing, which
+    // reads as "nothing here is relevant" about vectors that were never comparable.
+    expectSpaceRefusalNamesBothSides(refusal, { model: "some-other-model", dimensions: 2 }, "test-embed");
   });
 
   it("loads a healthy v3 store without warnings", async () => {
