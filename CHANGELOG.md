@@ -577,8 +577,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that has not been embedded yet still degrades to "build the index", because an
   absent store is not a disagreement.
 
-### Fixed
-
 - **A store recorded in another embedding space no longer becomes an empty page
   list.** The refusal above was raised correctly and then swallowed one call site
   up: the page-materialisation and retrieval-cascade paths in
