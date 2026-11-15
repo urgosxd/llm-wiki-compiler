@@ -118,24 +118,36 @@ function registerQueryTool(server: McpServer, root: string): void {
   );
 }
 
+/**
+ * The `search_pages` description, hoisted out of `registerSearchTool` because
+ * that function already sits at the `max-lines-per-function` limit and this
+ * operand is longer than the remaining headroom. At that ceiling the fix is
+ * extraction, never compaction of the prose.
+ */
+const SEARCH_PAGES_DESCRIPTION =
+  "Select pages relevant to a question and return their full content. " +
+  "Ranks with semantic embeddings whenever an embedding store is reachable, " +
+  "including one stored in a Stack's rows; otherwise it falls back to " +
+  "LLM-based selection over the wiki index. Ranking from embeddings embeds " +
+  "the question, so that path needs an embedding provider and bills one " +
+  "embedding request per call. Requires an LLM provider. " +
+  "Returns `{ pages, refs, warnings }`: `pages` holds the full page " +
+  "records, `refs` the ranked references. Each ref is " +
+  "`{ pageId, slug, title, kind, score? }` where `kind` is `chunk`, `page` " +
+  "or `index`; `score` is present only when an embedding scored that ref: " +
+  "it is the cosine similarity between the query embedding and that page's " +
+  "or chunk's embedding, in -1..1 where higher is more similar (in practice " +
+  "roughly 0..1), and refs of kind `chunk`/`page` are ordered by it " +
+  "descending. `score` is OMITTED for kind `index` refs, which are chosen " +
+  "by an LLM over the index and carry no similarity. " +
+  STACK_ARG_REQUIRED_NOTE;
+
 function registerSearchTool(server: McpServer, root: string): void {
   server.registerTool(
     "search_pages",
     {
       title: "Search Pages",
-      description:
-        "Select pages relevant to a question and return their full content. " +
-        "Uses semantic embeddings when available, falling back to LLM-based " +
-        "selection over the wiki index. Requires an LLM provider. " +
-        "Returns `{ pages, refs, warnings }`: `pages` holds the full page " +
-        "records, `refs` the ranked references. Each ref is " +
-        "`{ pageId, slug, title, kind, score? }` where `kind` is `chunk`, `page` " +
-        "or `index`; `score` is the cosine similarity between the query embedding " +
-        "and that page's or chunk's embedding, in -1..1 where higher is more " +
-        "similar (in practice roughly 0..1), and `refs` of kind `chunk`/`page` " +
-        "are ordered by it descending. `score` is OMITTED for kind `index` refs, " +
-        "which are chosen by an LLM over the index and carry no similarity. " +
-        STACK_ARG_REQUIRED_NOTE,
+      description: SEARCH_PAGES_DESCRIPTION,
       inputSchema: {
         question: z.string().describe("The query used to rank pages."),
         stackId: STACK_ID_SCHEMA,
@@ -143,16 +155,32 @@ function registerSearchTool(server: McpServer, root: string): void {
     },
     async ({ question, stackId }) => {
       ensureProviderAvailable();
-      // One source for ranking AND hydration, or a Stack-backed wiki ranks against
-      // rows and then finds none of them on disk.
+      // TWO sources, composed exactly as `query_wiki` composes them, because they
+      // answer different questions and neither substitutes for the other: the
+      // embedding store says which VECTORS exist (a Stack keeps them in
+      // `wiki.page_embeddings` / `wiki.page_chunk_embeddings` and has no
+      // `embeddings.json` to find), and the registry says which of their pages are
+      // still live.
+      //
+      // Supplying only the registry source -- which is what this tool did -- made
+      // `pickSearchRefs` take its ON-DISK branch and rank nothing, so a corpus with
+      // 114 chunk embeddings answered with index refs plus "No embedding index
+      // found." Dropping the registry source instead would rank from rows and then
+      // hydrate against files that a Stack does not have, discarding every hit as
+      // absent. Both, or the answer is wrong either way.
       const found = await withRequestEnv(stackId, (env) =>
-        withRegistrySource(env, async (registrySource) => {
-          const selected = await pickSearchRefs(root, question, { registrySource });
-          return {
-            ...selected,
-            records: await loadSelectedRefs(root, selected.refs, registrySource),
-          };
-        }),
+        withEmbeddingStoreSource(env, (embeddingStoreSource) =>
+          withRegistrySource(env, async (registrySource) => {
+            const selected = await pickSearchRefs(root, question, {
+              registrySource,
+              embeddingStoreSource,
+            });
+            return {
+              ...selected,
+              records: await loadSelectedRefs(root, selected.refs, registrySource),
+            };
+          }),
+        ),
       );
       if (isRefusal(found)) return refusalResult(found);
       // `records` is the internal name; the envelope has always called it `pages`.

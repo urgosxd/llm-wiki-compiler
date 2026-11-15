@@ -40,6 +40,7 @@ import { collectStatus } from "../status/collect.js";
 import { pickSearchRefs, loadSelectedRefs } from "../search/retrieval.js";
 import { getPage, listPages } from "../pages/list.js";
 import {
+  withEmbeddingStoreSource,
   withPageScan,
   withPageSource,
   withRegistrySource,
@@ -118,12 +119,26 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     search: (question, opts = {}) =>
       runQuiet(async () => {
         ensureProviderAvailable();
-        // One source for ranking AND hydration: selecting against rows and then
-        // reading files would drop every ref of a Stack-backed wiki as absent.
-        const selected = await withRegistrySource(env, async (registrySource) => {
-          const { refs, warnings } = await pickSearchRefs(root, question, { ...opts, registrySource });
-          return { refs, warnings, pages: await loadSelectedRefs(root, refs, registrySource) };
-        });
+        // TWO sources, composed the way `query_wiki` composes them, because they
+        // answer different questions: the embedding store says which VECTORS exist
+        // (a Stack keeps them in rows and has no `embeddings.json` to find), and the
+        // registry says which of their pages are still live.
+        //
+        // With only the registry source -- what this facade passed -- retrieval took
+        // its on-disk branch and ranked nothing on a Stack-backed corpus, answering
+        // with index refs and an `embedding-index-outdated` warning while the
+        // vectors sat in `wiki.page_chunk_embeddings`. With only the store, every
+        // hit would then be dropped as absent against files a Stack does not have.
+        const selected = await withEmbeddingStoreSource(env, (embeddingStoreSource) =>
+          withRegistrySource(env, async (registrySource) => {
+            const { refs, warnings } = await pickSearchRefs(root, question, {
+              ...opts,
+              registrySource,
+              embeddingStoreSource,
+            });
+            return { refs, warnings, pages: await loadSelectedRefs(root, refs, registrySource) };
+          }),
+        );
         return selected;
       }),
 

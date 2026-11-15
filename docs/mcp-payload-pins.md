@@ -68,24 +68,56 @@ them — the inconsistency is KNOWN, and the fix is to copy the score those prod
 already hold at their construction sites, exactly as `search_pages` does. It is not a
 discovery to be re-investigated.
 
-In practice `search_pages` is index-only today — see the known defect below; that section is about
-the producers, not about what the tool currently reaches.
+In practice `search_pages` now ranks from the embedding store in both configurations — the on-disk
+store and a Stack's row store — so the refs it scored carry `score`, and `kind:"index"` refs carry
+none. Reaching the row store introduced one
+failure mode; the section below records it. The asymmetry above is about the two `query` producers,
+not about what the tool reaches.
 
-## Known defect: `search_pages` ranks without embeddings
+## Former defect, fixed: `search_pages` used to rank without embeddings
 
-`pickSearchRefs` is called with `registrySource` only at
-`packages/wiki/src/mcp/wiki-read-tools.ts:150` and `packages/wiki/src/sdk/core.ts:124`, so it
-never receives `embeddingStoreSource` and always ranks from the on-disk store, falling to the index
-path when that store is empty. On a Stack-backed corpus every ref is therefore `kind:"index"` and
-every `score` is absent, whatever the database holds. `query_wiki` passes both sources.
+`pickSearchRefs` used to be called with `registrySource` only, at
+`packages/wiki/src/mcp/wiki-read-tools.ts` and `packages/wiki/src/sdk/core.ts`, so it never received
+`embeddingStoreSource` and always ranked from the on-disk store, falling to the index path when that
+store was empty. On a Stack-backed corpus every ref was therefore `kind:"index"` and every `score`
+absent, whatever the database held, while `query_wiki` passed both sources.
 
-This is a defect, not a configuration. A Stack-backed corpus can hold a fully populated embedding
-store — measured on one: 21 page embeddings and 114 chunk embeddings, paid for with 40 provider
-requests — and `search_pages` still answers `kind:"index"` with
-`warnings: [{"code":"embedding-index-outdated"}]`, because ranking falls to the on-disk store, which
-does not exist for a Stack-backed corpus. The embed rung was never reached, not missing.
+The signature of that defect, kept because it is what an operator actually saw: a Stack-backed corpus
+could hold a fully populated embedding store — measured on one: 21 page embeddings and 114 chunk
+embeddings, paid for with 40 provider requests — and `search_pages` still answered `kind:"index"`
+with `warnings: [{"code":"embedding-index-outdated"}]`, because ranking fell to the on-disk store,
+which does not exist for a Stack-backed corpus. The embed rung was never reached, not missing.
 
-Tracked as its own fix; this document describes the current behaviour, not the intended one.
+Both call sites now pass `embeddingStoreSource`, so `search_pages` ranks from the Stack's row store
+and the refs that path scores carry `score`, while `kind:"index"` refs carry none. That is the
+current behaviour; the paragraph above is history.
+
+### The failure mode reaching the row store introduced
+
+Handing `pickSearchRefs` an `embeddingStoreSource` makes the Stack's row store reachable, and the
+store load refuses a store built in a different embedding space before any ranking runs. The refusal
+is `refuseSpaceMismatch` in `packages/wiki/src/utils/embeddings-load.ts`, which throws
+`EmbeddingSpaceMismatchError` from both entry points the tool can take: the header-only load for a
+source that can rank without a store, and the materializing load otherwise. Both are reached from the
+store load inside `pickSearchRefs`, in `packages/wiki/src/search/retrieval.ts`, which runs BEFORE
+`selectViaEmbeddings` is entered — so for a store whose header already disagrees, the load refuses
+first, and the rethrows inside `selectViaEmbeddings` are not the deciding site.
+
+The symptom from outside is not a degraded answer. A Stack whose stored vectors were built by another
+embedding configuration makes `search_pages` FAIL: the MCP client receives `isError: true` whose text
+begins `Embedding space mismatch:` and names the stored model and dimensions against the active
+embedding configuration. The tool handler has no `catch`, so the message is all the client sees — no
+class name, and no `kind:"index"` refs to fall back on.
+
+This is intended, and it is not a defect in either change. Refusing beats answering confidently
+wrong: a partial answer computed across two incomparable vector spaces is noise wearing the shape of
+a result. The refusal is also not new in kind — it already fires for a file-backed wiki whose store
+was built in another space. What is new is that a Stack-backed corpus reaches it at all: before, that
+corpus never loaded a store, so it degraded to index refs and never had a space to disagree about.
+
+An operator who meets `Embedding space mismatch:` from `search_pages` on a Stack should rebuild the
+index with the `compile_wiki` tool, or restore the embedding configuration the store was built with.
+Both are named in the error's own remedy text.
 
 ## An exact whole-object pin on a payload that is meant to grow costs every file that pins it
 
@@ -114,13 +146,16 @@ Every range below arrived in a handoff where the surrounding claim was true. Bot
 right, and both were wrong in the same way: measured somewhere else, quoted here.
 
 - **A range is only valid for the tree it was derived on.** Three citations were relayed
-  from a measurement taken on `main`. On this branch the `pickSearchRefs` call is
-  `wiki-read-tools.ts:150` because the `search_pages` description grew by eight lines,
-  while `main` has it at `:141`; the `readPageBySlug` projection the relayed ranges were
-  meant to identify **is not cited in this document at all** — its correct one-line
-  citation would be `wiki-read-tools.ts:189-195`, with the `links` key at `:194`.
-  Re-deriving every citation against this branch found **four of four already correct
-  and none needing repair**. The same re-derivation did find two other defects in the
+  from a measurement taken on `main`. The `pickSearchRefs` call in `registerSearchTool`
+  sits at a different line on every tree — the `search_pages` description it follows has
+  changed length more than once — so no numeric offset for it is quoted here; the
+  `readPageBySlug` projection the relayed ranges were
+  meant to identify **is not cited in this document at all** — cite it by symbol instead,
+  as the return projection of `readPageBySlug` in
+  `packages/wiki/src/mcp/wiki-read-tools.ts`.
+  Re-deriving every citation against this branch found the numeric offsets this bullet used to
+  quote were wrong on the tree that shipped them, so they are gone rather than corrected.
+  The same re-derivation did find two other defects in the
   surrounding prose: a file count of "three" where the change touched four, and the
   false absolute corrected in the section above.
 - **A confidence-shaped absolute is a claim to check, not a sentence to copy.** One
