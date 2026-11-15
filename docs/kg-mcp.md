@@ -355,6 +355,10 @@ tools while every call fails, because all four are HTTP clients of the KG API an
 the process listening on 8000 has nowhere to send its requests. `list_stacks` is the
 call to make because it hits `/stacks`, reads the graph, and needs no spend.
 
+`docs/kg-mcp-stdio-entrypoint.md` is the page that answers the question this paragraph
+raises — why there is no `serve`-style stdio subcommand for these four tools — and is what
+to read before proposing one.
+
 The negative control for that route costs more than a footnote: an unmatched path such
 as `/mcp-nope` must answer the router-never-ran body `{"detail":"Not Found"}`, and that
 answer only means something because `/mcp/mcp` and `/mcp/<anything>` were briefly served
