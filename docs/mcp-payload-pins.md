@@ -29,6 +29,9 @@ reason the key is omitted, so:
 - if a caller needs a uniform shape, the caller decides how to treat an absent score,
   and the tool description says which refs carry one and which do not.
 
+A synthetic zero against index-fallback refs would have been worse than absent: it would have been a
+confident wrong number on every result.
+
 ## A page's outgoing links are its body wikilinks, not `wiki.curated_links`
 
 When `read_page` reports the links a page carries, the source is the page BODY, parsed
@@ -64,6 +67,25 @@ giving them a score nobody consumes would be a field to keep correct for no read
 them — the inconsistency is KNOWN, and the fix is to copy the score those producers
 already hold at their construction sites, exactly as `search_pages` does. It is not a
 discovery to be re-investigated.
+
+In practice `search_pages` is index-only today — see the known defect below; that section is about
+the producers, not about what the tool currently reaches.
+
+## Known defect: `search_pages` ranks without embeddings
+
+`pickSearchRefs` is called with `registrySource` only at
+`packages/wiki/src/mcp/wiki-read-tools.ts:150` and `packages/wiki/src/sdk/core.ts:124`, so it
+never receives `embeddingStoreSource` and always falls to the index path. Every ref is therefore
+`kind:"index"` and every `score` is absent, whatever the database holds. `query_wiki` passes both
+sources.
+
+This is a defect, not a configuration. A Stack-backed corpus can hold a fully populated embedding
+store — measured on one: 21 page embeddings and 114 chunk embeddings, paid for with 40 provider
+requests — and `search_pages` still answers `kind:"index"` with
+`warnings: [{"code":"embedding-index-outdated"}]`, because ranking falls to the on-disk store, which
+does not exist for a Stack-backed corpus. The embed rung was never reached, not missing.
+
+Tracked as its own fix; this document describes the current behaviour, not the intended one.
 
 ## An exact whole-object pin on a payload that is meant to grow costs every file that pins it
 
