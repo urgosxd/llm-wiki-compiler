@@ -75,9 +75,9 @@ the producers, not about what the tool currently reaches.
 
 `pickSearchRefs` is called with `registrySource` only at
 `packages/wiki/src/mcp/wiki-read-tools.ts:150` and `packages/wiki/src/sdk/core.ts:124`, so it
-never receives `embeddingStoreSource` and always falls to the index path. Every ref is therefore
-`kind:"index"` and every `score` is absent, whatever the database holds. `query_wiki` passes both
-sources.
+never receives `embeddingStoreSource` and always ranks from the on-disk store, falling to the index
+path when that store is empty. On a Stack-backed corpus every ref is therefore `kind:"index"` and
+every `score` is absent, whatever the database holds. `query_wiki` passes both sources.
 
 This is a defect, not a configuration. A Stack-backed corpus can hold a fully populated embedding
 store — measured on one: 21 page embeddings and 114 chunk embeddings, paid for with 40 provider
@@ -96,7 +96,7 @@ key, so it is what freezes a wire shape.
 
 The cost is that an additive change is not a one-file edit and not even reliably a
 two-file edit: it is the producer plus EVERY exact pin that covers that shape. Adding
-`links` to `read_page` touched three files — the producer (`pages/read.ts` and the
+`links` to `read_page` touched four files — the producer (`pages/read.ts` and the
 tool's serializer) and two frozen values, `retired-parity-payloads.test.ts` and
 `mcp-server.test.ts`, and each additional pin on the same shape adds one more. Pay it.
 Add the new key with its REAL expected value in every one of them and keep each
