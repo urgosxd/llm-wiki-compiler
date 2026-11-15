@@ -53,13 +53,14 @@ two gateway hosts is not part of the store fingerprint. Record it here; do not f
 - **T1** — RED: a test that presents a store whose recorded model or dimensions disagree with the active
   configuration and asserts a named error, not an empty result. Assert every observable effect: the
   error, its message content naming both sides, and that no scored results are returned. Route:
-  `gentle-ai-worker`. Commit: pending.
+  `gentle-ai-worker`. Commit: `59ff6eb8` (T1).
 - **T2** — S6 pin: a test that proves a matching store still returns scored results with no error.
-  Route: `gentle-ai-worker`. Commit: pending.
+  Route: `gentle-ai-worker`. Commit: `59ff6eb8` (T2).
 - **T3** — S2, S4, S5: turn the degraded branch into a named error at the retrieval entry point, leaving
-  the no-store path degrading as today. Route: `gentle-ai-worker`. Commit: pending.
+  the no-store path degrading as today. Route: `gentle-ai-worker`. Commit: `59ff6eb8` (T3).
 - **T4** — Gates with Node 24 PATH (`gates:static`, `build`, `test:affected`) and the work-unit commit.
-  Route: `gentle-ai-worker`. Commit: pending.
+  Route: `gentle-ai-worker`. Commit: `59ff6eb8` (T4, the gates and the work-unit commit); the changelog
+  lands separately in `bf79a294`.
 
 ## Log
 
@@ -137,3 +138,84 @@ failed `max-lines-per-function` at 44 lines. The `describe` was split into two �
 entry-point/no-value-leak pairing — leaving callbacks of 38 and 23 effective lines, no assertion dropped, and
 249 effective lines in the file (cap 399). `pnpm run lint` → `ESLint ratchet: 1687 files scanned; 558
 baseline violations in 396 files across 423 rule/file entries; no regression.` `lint:update` was NOT run.
+
+**L10 — L7 undercounted the tests that pinned the retired contract: there was a FIFTH.** L7 records FOUR DB-backed
+tests asserting the degraded behaviour. The suite-wide run (`turbo run test --filter=//`, `Test Files 838 passed |
+4 skipped (842)`, `Tests 6319 passed | 11 skipped (6330)`) proved a fifth that the four-file search had missed:
+`test/embeddings-validation.test.ts`, case `degrades instead of ranking a store built by a different embedding
+model`, which asserted `expectDegradedStore(root, "embedding-index-outdated")` for a store whose model was
+`some-other-model`. It now reads `refuses instead of ranking a store built by a different embedding model` and
+asserts the refusal and both sides through `spaceRefusalOf` / `expectSpaceRefusalNamesBothSides`.
+
+This is a correction to L7's count, not a change to any spec. S1 and S2 always covered this case; L7's list was
+simply incomplete, and it was found by running the whole suite rather than by reading harder. The file also
+carries the deliberate contrast in its header comment: integrity failures still degrade, a store from another
+embedding space does not.
+
+**L11 — `fallow:ci` found three clone groups introduced by this change set, all test-only.** Two flavours:
+duplicated space-refusal assertions across the re-pointed test files, and an alpha-page seed that
+re-implemented an existing fixture. Remedy: a new shared fixture `test/fixtures/embedding-space-refusal.ts`,
+mirroring the existing
+`test/fixtures/embeddings-degrade.ts` on the other side of the same contract, exporting `spaceRefusalOf` and
+`expectSpaceRefusalNamesBothSides` so both sides of the contract are asserted the same way by every suite.
+
+No assertion was dropped: `test/embedding-space-mismatch.test.ts` had 11 tests before and after this
+consolidation. The duplication was worth removing on its own terms — a copy that drifted to assert only the
+class, or only one of the two sides, would stay green while the diagnostic it guards lost the half an operator
+needs to act on.
+
+**L12 — a `@repo/foundation` type-only edge was introduced, and not by declaring it.**
+`test/embedding-space-mismatch.test.ts` imported `DatabaseHandle` for its scripted handle, which made the root
+test tier a type-only dependent of `@repo/foundation`; `test/package-selection-union.test.ts` requires every
+such dependent to be declared, so the suite refused it. Resolved instead by expressing the type structurally as
+`Parameters<typeof rankChunksInSql>[0]` (`test/embedding-space-mismatch.test.ts:187`), which keeps the file a
+behavioural test of the function it calls rather than a declared consumer of an internal package type, and
+leaves `TYPE_ONLY_DEPENDENTS` in `scripts/package-selection.ts` untouched.
+
+The alternative a reviewer may prefer: declare the edge rather than infer the type — a two-line revert of that
+import plus one annotation entry in `TYPE_ONLY_DEPENDENTS`. It names the dependency honestly and reads more
+directly, at the cost of a test-side declaration the union test now has to keep in step with the package graph.
+
+**L13 — S4 was initially unmet for a fingerprint-only mismatch, and the fix is a different sentence, not a
+wider one.** The first implementation printed the same model id on both sides and never showed the one thing
+that differed. `describeSpaceMismatch` now branches on which side disagrees: model ids that differ keep their
+original wording byte-for-byte, and a store whose id AGREES while its fingerprint does not is described as a
+configuration change — the id printed once as the shared fact, then a 12-character prefix of each side's
+SHA-256 digest (`embeddingIdentityDigest`).
+
+Recorded guard: a stored value that is not a 64-hex digest is withheld and rendered `(not recorded)`, because a
+value of another shape could be raw configuration — an endpoint, or something carrying a credential — and
+printing a prefix of it would leak exactly what the fingerprint exists to keep unprintable. L8 holds the
+behavioural detail; this entry records why the branch exists at all.
+
+**L14 — the verifier round found the refusal swallowed at THREE call sites, not one, and the correction is
+this feature's last code change.** `59ff6eb8` raised `EmbeddingSpaceMismatchError` correctly and every
+catch-all above it turned it back into an empty answer: `materializeForPages` (`search/retrieval.ts:258`)
+and `selectViaEmbeddings` (`search/retrieval.ts:216`), plus `searchChunks`
+(`dimensions/wiki/reader.ts:156`). Before the fix, a store from another embedding space produced an empty
+page list with no warning and no fallback on those paths — the loud refusal silently reduced to silence one
+call site up, which is L5's measured behaviour arriving by a second route. All three rethrow now, and every
+other error keeps its previous behaviour, including the reader's capability-gap `return []`.
+
+The refusal is classified by error **class**, never by message text. A message-matching guard would let a
+future rewording of `describeSpaceMismatch` quietly restore the swallow, and L13 shows that message has
+already been rewritten once.
+
+**The governing principle, stated so it survives its authors.** `embeddingFailure: "fallback"` is documented
+as opt-in recovery from *embedder* failures. A space mismatch is a completed request that produced
+incomparable vectors — not transient, not retryable — so that opt-in must not reach it. Genuine embedder
+failures still degrade to the LLM and index fallbacks, byte-identically. The opt-in is a tolerance for a
+flaky dependency, not a licence to rank vectors from a different space.
+
+`describeSpaceMismatch` no longer states that a store "records no fingerprint" when a fingerprint exists
+but cannot be printed safely. The two cases now read differently, because they need different fixes: an
+absent header means rebuild the index, an unprintable one means the row holds something that is not a
+digest. A store model id is printed only when it matches a model-id shape, for L13's reason at one more
+surface — a hand-edited row could otherwise place a URL, and therefore the credential sitting in its
+userinfo, into an operator's log.
+
+Commit: `a3255f2a00bc9234b76d8f8972048aee9d23dee2`. Gates at that tree, Node 24 PATH: `gates:static` all
+6 passed (24.2 s, ratchet `1689 files scanned; 558 baseline violations in 396 files across 423 rule/file
+entries; no regression`), `build` exit 0, and the full unit tier through turbo (`Test Files 839 passed |
+4 skipped (843)`, `Tests 6329 passed | 11 skipped (6340)`, `1 successful`, `Cached: 0 cached`) because
+`test:affected` exits 78 by design and refuses to choose a narrower scope.

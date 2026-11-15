@@ -62,16 +62,17 @@ blast radius, different spec, different test matrix over the four provider/branc
 
 - **T1** — RED: tests for S1 and S2 that assert resolved endpoints (`extractionEndpoint().endpoint` vs
   `embeddingEndpoint().endpoint`) and the gateway arms' resolved API key, through a scripted double or
-  local `.invalid` host. Route: `gentle-ai-worker`. Commit: pending.
+  local `.invalid` host. Route: `gentle-ai-worker`. Commit: `650d15f2` (T1).
 - **T2** — S3, S4, S6, S8: add both schema entries, resolve the embeddings gateway arm from the new
   variables with inheritance, leave the chat arm on `GATEWAY_URL`/`GATEWAY_API_KEY`. Route:
-  `gentle-ai-worker`. Commit: pending.
+  `gentle-ai-worker`. Commit: `650d15f2` (T2).
 - **T3** — S5: one startup line naming the source variable, once, value-free. Route: `gentle-ai-worker`.
-  Commit: pending.
+  Commit: `650d15f2` (T3).
 - **T4** — S7: compose allowlists, example env files, the two docs tables. Route: `gentle-ai-worker`.
-  Commit: pending.
+  Commit: `650d15f2` (T4); the compose and docs surfaces are in that commit.
 - **T5** — Gates with Node 24 PATH (`gates:static`, `build`, `test:affected`) and the work-unit commit.
-  Route: `gentle-ai-worker`. Commit: pending.
+  Route: `gentle-ai-worker`. Commit: `650d15f2` (T5, the gates and the work-unit commit); the
+  changelog lands separately in `bf79a294`.
 
 ## Log
 
@@ -147,3 +148,93 @@ Wiring proof, deliberately not committed: a disposable copy of `index.ts`/`confi
 no key substring, the split names when the split variables supply their half, and no line at all for
 `EMBEDDING_PROVIDER=openai`. No committed test exercises the banner: `index.ts` binds a socket on import and no
 test-file edit surface for it was granted, so this remains a review focus rather than a pinned behavior.
+
+**L7 — compose forwards both variables blank, and that is the point.** All three allowlists
+(`docker-compose.yml:152`, `docker-compose.hub.yml:109`, `packages/llmwiki-kg/docker-compose.yml:52`) carry
+`GATEWAY_EMBEDDINGS_BASE_URL: ${GATEWAY_EMBEDDINGS_BASE_URL:-}` and
+`GATEWAY_EMBEDDINGS_API_KEY: ${GATEWAY_EMBEDDINGS_API_KEY:-}`, not a pre-substituted fallback. Rationale: the
+application is the single owner of the inheritance (S5), and only an unsubstituted pass-through keeps the
+startup line truthful about *which* variable supplied the endpoint. A compose-level
+`${GATEWAY_EMBEDDINGS_BASE_URL:-${GATEWAY_URL}}` would hand the application a filled-in value, so the banner
+would name `GATEWAY_EMBEDDINGS_BASE_URL` as the source for a deployment that set only `GATEWAY_URL` — the
+inheritance would be asserted by compose and observed nowhere. A first attempt did exactly that and was
+rejected for exactly that reason.
+
+**L8 — one tracked example env file still lacks the new entries; a human must edit it.** Updated:
+`docker/env.example` and `docker/hub.env.example`, both tracked and both now carrying the two
+`GATEWAY_EMBEDDINGS_*` names. Not updated: `packages/llmwiki-kg/.env.example` and the repository-root
+`.env.synthetic.example`, because the harness credential-path policy denies `.env*` paths to agents, so no
+agent could read or edit them.
+
+One premise in the handoff is corrected here, from repository evidence rather than memory: neither file is
+gitignored — `git check-ignore -v` matches neither, and both are tracked (`git ls-files`). The blocker is the
+credential-path policy alone. The gap is real for `packages/llmwiki-kg/.env.example`, which mentions
+`GATEWAY_URL` three times and `GATEWAY_EMBEDDINGS_*` zero times. It is *not* a content gap for
+`.env.synthetic.example`, which mentions neither variable, so nothing in S7's scope is missing from it.
+Residual: a human adds the two entries beside the existing `GATEWAY_URL` block in
+`packages/llmwiki-kg/.env.example`.
+
+**L9 — a `ConfigValidationError` message changed on a pre-existing failure path, deliberately.** For a
+misconfigured `EMBEDDING_PROVIDER=gateway` whose *resolved* endpoint or credential is blank, the message now
+names all four variables (`packages/llmwiki-kg/ts/src/config.ts:270-271`):
+
+```
+EMBEDDING_PROVIDER=gateway but GATEWAY_EMBEDDINGS_BASE_URL or GATEWAY_URL is not set, or GATEWAY_EMBEDDINGS_API_KEY or GATEWAY_API_KEY is not set
+```
+
+The previous text, `EMBEDDING_PROVIDER=gateway but GATEWAY_URL or GATEWAY_API_KEY is not set`, no longer
+exists anywhere. This is a user-visible text change on a path that already failed before this feature, and it
+is deliberate: S8 keeps refusing a blank resolved endpoint, and a message naming only the old pair would send
+an operator whose deployment sets only the split variables to check a variable their deployment never used.
+
+**L10 — the S5 startup line is proven, but not pinned by a committed test. Follow-up surface.**
+`packages/llmwiki-kg/ts/src/index.ts:53` calls `app.listen` at module import, so importing the module binds a
+socket; that is why L6 could only prove the banner with a disposable harness. That harness is evidence about
+this tree and cannot regress-guard a later edit. Recorded as a follow-up: pin it either by extracting the
+banner rendering from the socket-binding module, or by asserting `gatewayEmbeddingsSourceLine(config)` over
+the four source combinations plus a seam that defers `listen`.
+
+**L11 — S9 stays out of scope and becomes its own task.**
+`OPENAI_BASE_URL = "https://api.openai.com/v1"` (`packages/llmwiki-kg/ts/src/core/llm/constants.ts:31`) is
+untouched, per D3. It is a separate task rather than a rider on this one because its defect is *destination
+and credential egress*, not reachability: a provider name that silently means "the vendor's own endpoint"
+because no configured base URL is threaded through that branch at all. The split fixes which host the gateway
+arms resolve to; it does not make the `openai` arm respect a configured gateway. That question needs its own
+matrix over the four provider/branch combinations and its own tests, and hiding it inside a
+configuration-splitting diff is the failure mode L4 of the sibling document names.
+
+**L12 — independent verification: every S# met by reading, none unmet.** S1 and S2 through the committed
+resolved-endpoint assertions on both arms; S3 and S4 at `config.ts`'s two EnvSchema entries plus the
+resolved-value arms; S5 through `gatewayEmbeddingsSourceLine` and its single production caller; S6 because
+`KG_BRIDGED_VARIABLES` still has literal length 5; S7 across the three compose allowlists, the tracked
+example files and both docs tables, with L8's residual still a human edit; S8 because the refusal is on the
+*resolved* value and names all four variables (L9); S9 untouched, as L11 records. No spec was found unmet.
+
+**Two constraints the next change on this branch will hit.** Both were paid for once already and should not
+be rediscovered:
+
+(a) **A root `test/` file may not name `packages/llmwiki-kg/**` or `@repo/kg`.** `WIKI_TO_KG`
+(`eslint.config.mjs:149`) restricts exactly those two shapes — the path regex `(^|/)packages/llmwiki-kg(/|$)`
+and the specifier regex `^@repo/kg(/|$)` — for the `wiki must not import kg` boundary, and the lint ratchet
+freezes no allowance for a new violator, so the ratchet gate fails rather than the test. Any root-test probe
+of gateway resolution must therefore live in `packages/llmwiki-kg/ts/src/**`, which is where
+`config.test.ts` already carries the S1/S2/S8 cases. This is also why an earlier instruction to probe this
+area from a root `test/` file was unbuildable: the probe cannot be written where it was asked for.
+
+(b) **`docker/hub.env.example` and `docker/env.example` are correct against their own compose and must not
+be cross-corrected.** `docker-compose.hub.yml:110` maps `GATEWAY_API_KEY` from `OPENAI_API_KEY`, while
+`docker-compose.yml:153` maps it from `PROVIDER_API_KEY`. Each example file's comment describes the compose
+file it documents. Making them agree would make one of them describe a mapping that does not exist — a
+plausible-looking "consistency" fix that turns a correct file into a wrong one.
+
+**A remaining honest gap, recorded rather than closed: the half-split hazard is documented, not refused.**
+Setting `GATEWAY_EMBEDDINGS_BASE_URL` while leaving the credential to inherit sends `GATEWAY_API_KEY` to the
+embeddings host — S4's whole reason for existing. It is pinned by a test whose name must not be renamed, and
+it is not refused at validation time, because the two cases are observationally identical: a deployment
+legitimately holding one key valid on two hosts looks exactly like a mistake. A refusal would break a
+correct deployment to catch a wrong one, so the split stays permitted and the asymmetry stays observable
+through S5's startup line, which names the *source* of each half by variable name. Half of a split is
+visible in the log; it is not an error. Residual risk, not a defect.
+
+Commit: `a3255f2a00bc9234b76d8f8972048aee9d23dee2` (the swallow fix and the changelog; this feature's own
+code commit remains `650d15f2`).
