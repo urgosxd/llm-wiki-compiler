@@ -53,18 +53,18 @@ root as cwd for `dotenv/config` — otherwise it demands Anthropic credentials."
 
 | ID | Covers | Route | Commit |
 | --- | --- | --- | --- |
-| T1 | S1-S5 (this document) | inline | `81bca374` |
-| T2 | S2, S3, S4 — RED: static Dockerfile/script assertions in `test/artifact/kg-container-entry.test.ts` | inline | `81bca374` |
-| T3 | S1, S2, S3 — GREEN: `packages/llmwiki-kg/docker/entry.sh` plus `ENTRYPOINT`/`COPY`/`chmod` in the KG `Dockerfile` | inline | `81bca374` |
-| T4 | S4 — pin the root image guard and lint as unchanged | inline | `81bca374` |
-| T5 | S5 — run line, tag and rollback recorded from the live `docker run <tag>` proof | inline | `1b2018ea` |
+| T1 | S1-S5 (this document) | inline | `5661ee4e` |
+| T2 | S2, S3, S4 — RED: static Dockerfile/script assertions in `test/artifact/kg-container-entry.test.ts` | inline | `5661ee4e` |
+| T3 | S1, S2, S3 — GREEN: `packages/llmwiki-kg/docker/entry.sh` plus `ENTRYPOINT`/`COPY`/`chmod` in the KG `Dockerfile` | inline | `5661ee4e` |
+| T4 | S4 — pin the root image guard and lint as unchanged | inline | `5661ee4e` |
+| T5 | S5 — run line, tag and rollback recorded from the live `docker run <tag>` proof | inline | `4c38826c` |
 | T6 | S6, S7, S8 — RED: new static assertions in `test/artifact/kg-container-entry.test.ts`; GREEN: DSN bridge
-  and `AKS_BASE_URL` loopback default in `packages/llmwiki-kg/docker/entry.sh` | inline | `1b2018ea` |
-| T7 | T2, T4 — register `test/artifact/kg-container-entry.test.ts` in the frozen orphan ratchet so the CI-form gate of record selects the whole suite (L6) | inline | `65bbd113` |
+  and `AKS_BASE_URL` loopback default in `packages/llmwiki-kg/docker/entry.sh` | inline | `4c38826c` |
+| T7 | T2, T4 — register `test/artifact/kg-container-entry.test.ts` in the frozen orphan ratchet so the CI-form gate of record selects the whole suite (L6) | inline | `ad8422ec` |
 | T8 | S9, S10, S11, S12 — RED: guard assertions in `test/artifact/kg-container-entry.test.ts`; GREEN: boot-time
-  `hf:` validation in `packages/llmwiki-kg/docker/entry.sh`; DOC: contract, provider-gap and finding sections | inline | `6848a113` |
+  `hf:` validation in `packages/llmwiki-kg/docker/entry.sh`; DOC: contract, provider-gap and finding sections | inline | `070c7c09` |
 | T9 | S9, S10 (amended by L10) — RED: the ordering assertion now requires the guard BEFORE the caller-command
-  passthrough; GREEN: the guard moved above the passthrough in `packages/llmwiki-kg/docker/entry.sh` | inline | `5375640e` |
+  passthrough; GREEN: the guard moved above the passthrough in `packages/llmwiki-kg/docker/entry.sh` | inline | `a9eda1ee` |
 
 ## Spec status
 
@@ -320,3 +320,35 @@ provider configuration that the published entry does not carry.
 - **L11** — Work-unit commit for T9: `5375640ee99d5b8d4c735d763ee097066262f391`
   (`fix(kg-image): validate the embedding model before command dispatch`), three paths and nothing else. Its
   follow-up doc-only commit records that SHA in `## Tasks` above. Nothing was pushed.
+- **L12** — The ledger was repointed after the rebase, and this entry is what keeps it both honest and resolvable.
+  `chore/kg-image-with-extraction-budget-fix` was rebased onto `61a684c81ce28e671948d146002a9270f2645732` and then
+  fast-forwarded into `main` as `5bd17d4c9f71cf6394e40914b9206eb2ccea1ce4`. All ten of its commits were therefore
+  rewritten, and the ten pre-rebase SHAs are **no longer ancestors of `main`** — `git merge-base --is-ancestor`
+  returns 1 for every one of them, so they are unreachable from the branch of record and resolve to nothing.
+  `## Tasks` above was repointed at the post-rebase equivalents because that column is a live ledger and must name
+  commits that exist. The Log entries above this one are left EXACTLY as written: they are historical statements
+  about what happened at those commits, and rewriting them would be worse than a dangling reference. Two of them,
+  L8 and L11, still cite full 40-char pre-rebase SHAs by design, and so does the `## Run line` section, which
+  records the image that was actually built and booted (`03548e392cf8`, a real artifact, not a pointer).
+  - **Proof the pairing is positional, not guessed.** `git rev-list --reverse bb28a587..f30c9d9a` and
+    `git rev-list --reverse 61a684c8..5bd17d4c` each yield exactly ten commits; paired position by position they
+    match on the subject AND on `git patch-id --stable`, 10/10, so the replay neither dropped, reordered nor altered
+    a single commit's content. No pair was inferred from proximity.
+  - **The complete old -> new mapping.**
+
+    | Position | Subject | Pre-rebase (unreachable) | Post-rebase (reachable from `main`) |
+    | --- | --- | --- | --- |
+    | 1 | `feat(kg-image): ship provider wiring in a container entrypoint` | `81bca3745829f2acf391f840a36fc048b2a5fca7` | `5661ee4e1f346a300637a36d8ff35f7b40bb3bab` |
+    | 2 | `docs(odd): record the work-unit commit in the kg-image wiring tasks` | `afb8b08b52520436f7355c6d5befbbf6092ab0b7` | `3dff86ddc5eff8d37bbf0105e4404e0e46fc86eb` |
+    | 3 | `feat(kg-image): bridge the published DSN name and default the tools' base URL` | `1b2018ea41351dd290a028fcdab88032da240751` | `4c38826ccc3e0f071d7cfff8515f33dd806e23c1` |
+    | 4 | `docs(odd): record the DSN bridge unit's commit in the kg-image wiring tasks` | `09a9987938008943b70c52078fd4ee98f2bfac21` | `719455392246a50313fbb00c7900240ce3b3d8eb` |
+    | 5 | `test(kg-image): register the container entry guard as a frozen orphan` | `65bbd1139414b677bb0299b90e19d5e80093a776` | `ad8422ec402bddbc6a409a0504b8d5cdc2d53618` |
+    | 6 | `docs(odd): record the frozen-orphan unit's commit in the kg-image wiring tasks` | `a3b85b1533bb78b2c0826c5fd8903c5d882ca998` | `bac57fb98277d1fd0697b342c22d649816ad2002` |
+    | 7 | `feat(kg-image): fail fast on a malformed embedding model id` | `6848a113d94313d065fc6447aaf1a4fa3c81b4ce` | `070c7c09afe65bb90f4ee04dad7d33c89761fb2a` |
+    | 8 | `docs(odd): record the embedding-guard unit's commit in the kg-image wiring tasks` | `b15ca3a7ed02b042664ec31ab46ca03e11a2fa4a` | `216f3eb1901fb9c9a396131e2fa6b0d5bbd9d61d` |
+    | 9 | `fix(kg-image): validate the embedding model before command dispatch` | `5375640ee99d5b8d4c735d763ee097066262f391` | `a9eda1ee3dd2494f3992a3d972adbc0a2b13cb0b` |
+    | 10 | `docs(odd): record the embedding-guard ordering unit commit in the kg-image wiring tasks` | `f30c9d9a923346244a87cac3cecff01af4d7d957` | `5bd17d4c9f71cf6394e40914b9206eb2ccea1ce4` |
+
+  - **Nothing else changed.** Only the `## Tasks` commit column and this entry; `entry.sh`, the `Dockerfile`, the
+    tests and every other Log line are byte-identical to the pre-fix tree. Nothing was pushed, amended, squashed or
+    rebased again to produce this; it is a documentation commit on top of `5bd17d4c`.
