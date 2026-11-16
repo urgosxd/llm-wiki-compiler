@@ -7,6 +7,7 @@
  * allowlist did not admit arbitrary binary extensions.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, expect, it } from "vitest";
 import { makeTempRoot } from "./fixtures/temp-root.js";
 import { useViewerProcessLifecycle } from "./fixtures/run-cli-server.js";

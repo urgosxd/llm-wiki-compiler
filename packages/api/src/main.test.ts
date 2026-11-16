@@ -38,6 +38,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AKS_DATABASE_URL_ENV_VAR, AKS_STACK_ID_ENV_VAR } from "../../../packages/wiki/src/dimensions/activation.js";
+// The launcher cases below measure a FILE-BACKED wiki, so this file declares that mode the way
+// `test/fixtures/file-mode.ts` documents: no database configured. Without it the child inherits the
+// database URL the runner seeds into every worker and refuses to start, because a database with no
+// Stack named is a failure and not a mode (spec S2 of `odd/tasks/single-stack-authority.md`).
+import "../../../test/fixtures/file-mode.js";
 
 /** Repository root, from this file's own location rather than the worker's cwd. */
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -131,8 +137,8 @@ function spawnCaptured(args: readonly string[], cwd: string, env: NodeJS.Process
 }
 
 /** Start the launcher bundle with `args`, rooted at `cwd`. */
-function launch(args: readonly string[], cwd: string): Running {
-  const captured = spawnCaptured(args, cwd);
+function launch(args: readonly string[], cwd: string, env: NodeJS.ProcessEnv = process.env): Running {
+  const captured = spawnCaptured(args, cwd, env);
   const exited = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
     captured.child.on("close", (code) => resolve({ code, stdout: captured.stdout(), stderr: captured.stderr() }));
   });
@@ -147,8 +153,12 @@ function launch(args: readonly string[], cwd: string): Running {
 }
 
 /** Run the launcher to completion, for the cases that only assert on the exit. */
-async function runToExit(args: readonly string[], cwd: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return launch(args, cwd).exited;
+async function runToExit(
+  args: readonly string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return launch(args, cwd, env).exited;
 }
 
 /**
@@ -297,6 +307,32 @@ describe("the container launcher's SIGTERM stop contract", () => {
     expect(settled.stdout, "the child must reach readiness, or it never met the stop path this case measures").toContain("Host ready at");
     expect(settled.signal, "the child died FROM the signal: readiness must imply the stop path is already armed").toBeNull();
     expect(settled.code, "host must still exit 0 on SIGTERM, as the container's stop path requires").toBe(0);
+  });
+});
+
+describe("the mode the launcher is handed", () => {
+  /**
+   * A well-formed but unreachable DSN: this case is about WHICH mode a child was asked for, not
+   * about reaching anything, and the refusal below is raised before a socket is opened.
+   */
+  const UNREACHABLE_DSN = "postgres://unused@127.0.0.1:1/unused";
+
+  it("refuses a database-backed child that names no Stack, instead of starting file-backed", async () => {
+    // The mirror image of this file's file-mode declaration, and the pin that keeps the
+    // declaration a CHOICE: a caller that asks for a database explicitly still gets one, and a
+    // database with no Stack named is then the loud, named refusal rather than a silent
+    // degradation to the file backend (spec S1/S5 of `odd/tasks/single-stack-authority.md`).
+    const settled = await runToExit(["host", "--port", "0"], root, {
+      ...process.env,
+      [AKS_DATABASE_URL_ENV_VAR]: UNREACHABLE_DSN,
+      [AKS_STACK_ID_ENV_VAR]: "",
+    });
+    expect(settled.code, `a Stack-less database-backed host must exit 1; stderr: ${settled.stderr}`).toBe(1);
+    expect(
+      settled.stderr,
+      "the failure must name the variable whose configuration made the run impossible",
+    ).toContain(`${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack`);
+    expect(settled.stdout, "a refused run must never announce a listener").not.toContain("Host ready at");
   });
 });
 

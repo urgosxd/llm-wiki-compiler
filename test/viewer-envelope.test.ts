@@ -6,6 +6,7 @@
  * future refactor cannot quietly drop a field the dashboard renders.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, expect, it } from "vitest";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";

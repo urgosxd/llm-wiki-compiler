@@ -34,6 +34,7 @@
  * and no case accepts a readiness line on stdout.
  */
 
+import "../../../test/fixtures/file-mode.js";
 import { execFile, type ExecFileException } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";

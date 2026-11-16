@@ -14,6 +14,7 @@
  * `::1` route — CI on some Linux configs.
  */
 
+import "./fixtures/file-mode.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import http from "http";
 import net from "net";

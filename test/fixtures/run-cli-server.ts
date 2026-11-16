@@ -29,11 +29,26 @@
  * does not exist as a subcommand of the launcher, so its argv is rejected at
  * startup rather than served — a fast, loud failure instead of a 30s
  * readiness timeout.
+ *
+ * ## The child's MODE is declared here, once, at the spawn
+ *
+ * These suites assert the viewer handler's own behaviour from a file-backed wiki,
+ * and the file mode has to be explicit rather than incidental (spec S2 of
+ * `odd/tasks/single-stack-authority.md`): a run with a database configured and no
+ * Stack named is a FAILURE, and it is the failure every suite here used to walk
+ * into, because the runner seeds a database URL into every worker and the child
+ * inherited it. {@link childEnv} is the one place that decides, so the whole
+ * population cannot drift back one suite at a time.
  */
 
 import { ChildProcess, spawn } from "child_process";
 import path from "path";
 import { afterEach } from "vitest";
+import {
+  AKS_DATABASE_URL_ENV_VAR,
+  AKS_STACK_ID_ENV_VAR,
+  isDatabaseConfigured,
+} from "../../packages/wiki/src/dimensions/activation.js";
 import { testDotenvEnv } from "./test-dotenv.js";
 
 /** The surviving executable: the container launcher, which dispatches `host` and `serve`. */
@@ -62,24 +77,78 @@ export interface ViewerProcessHandle {
 }
 
 /**
+ * The child's environment, with the run's mode declared rather than inherited.
+ *
+ * The parent's half of this fact is `test/fixtures/file-mode.ts`: a suite that asserts
+ * file-backed behaviour says so by having no database configured. That declaration cannot
+ * cross a process boundary — and a plain `delete` here would not be enough either, because
+ * the launcher loads `dotenv/config` before anything snapshots the environment
+ * (`packages/api/src/load-environment.ts`) and dotenv does not overwrite a key that already
+ * exists, so a DELETED variable is refilled from the committed corpus {@link testDotenvEnv}
+ * points at, which names a database. Pinning the variable BLANK is what both stops that
+ * refill and reads as "no database configured" to {@link isDatabaseConfigured} — the one
+ * predicate the production refusal branches on, so the fixture asks the question the same
+ * way the code under test does instead of deriving the mode a second time.
+ *
+ * A caller that genuinely wants rows gets a database-backed child by asking for one, which
+ * is the only way the corpus-supplied DSN survives: either it passes a DSN of its own through
+ * `envOverrides`, or its own environment names a Stack (`AKS_STACK_ID`, which `useStackEnv`
+ * installs). `test/commands/host-command.test.ts` is the suite that takes the second route;
+ * every viewer suite asks for neither and therefore runs file-backed.
+ *
+ * @param envOverrides - Variables the caller sets explicitly; they win over both the
+ *   inherited environment and the corpus, and a DSN among them is the explicit request.
+ * @returns The environment to hand the child process.
+ */
+function childEnv(envOverrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env = { ...process.env, ...testDotenvEnv(), ...envOverrides };
+  if (askedForDatabase(envOverrides, env)) return env;
+  env[AKS_DATABASE_URL_ENV_VAR] = "";
+  return env;
+}
+
+/**
+ * Whether the caller asked for a database-backed child.
+ *
+ * Two shapes of one request, both of them the caller's own statement of intent rather than
+ * something inherited: a DSN it supplied itself, or a Stack it named in the environment it
+ * built. Neither is read from the ambient worker environment, because a database nobody named
+ * is exactly the inheritance this fixture exists to stop guessing about.
+ *
+ * @param envOverrides - Variables the caller set explicitly.
+ * @param env - The environment those overrides were merged into.
+ * @returns True when the caller asked for rows.
+ */
+function askedForDatabase(envOverrides: NodeJS.ProcessEnv, env: NodeJS.ProcessEnv): boolean {
+  const namedStack = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim() !== "";
+  return isDatabaseConfigured(envOverrides) || namedStack;
+}
+
+/**
  * Spawn the launcher's viewer-bearing mode (`host --no-graph`) in `cwd`, wait
  * for the readiness line, and resolve with a handle. Thin wrapper around the
  * shared `spawnAwaitingReadiness` core so the viewer and quickstart paths
  * share one timeout/stderr-capture/cleanup story.
+ *
+ * The child runs file-backed unless {@link childEnv} is told otherwise; a suite that needs
+ * rows passes `envOverrides` naming a Stack or a DSN (and `undefined` for the timeout, since
+ * the parameter order predates the mode).
  */
 export async function startViewerCLI(
   args: string[],
   cwd: string,
   timeoutMs: number = DEFAULT_READY_TIMEOUT_MS,
+  envOverrides: NodeJS.ProcessEnv = {},
 ): Promise<ViewerProcessHandle> {
-  return spawnAwaitingReadiness([...VIEWER_ARGV, ...args], cwd, timeoutMs, "viewer", { env: { ...process.env, ...testDotenvEnv() } });
+  return spawnAwaitingReadiness([...VIEWER_ARGV, ...args], cwd, timeoutMs, "viewer", { env: childEnv(envOverrides) });
 }
 
 /**
  * Spawn `<launcher> quickstart <args>` in `cwd`, wait for the readiness line
  * that `quickstart`'s viewer handoff used to emit, and resolve with a handle.
  * `envOverrides` is merged on top of `process.env` so tests can inject
- * aimock credentials the same way `runCLI` does.
+ * aimock credentials the same way `runCLI` does, and it is the channel that
+ * asks {@link childEnv} for a database-backed child.
  *
  * Retained for caller stability only: see this file's header. `quickstart` is
  * not a launcher subcommand, so the argv is rejected at startup.
@@ -95,7 +164,7 @@ export async function startQuickstartCLI(
     cwd,
     timeoutMs,
     "quickstart",
-    { env: { ...process.env, ...testDotenvEnv(), ...envOverrides } },
+    { env: childEnv(envOverrides) },
   );
 }
 

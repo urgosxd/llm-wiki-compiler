@@ -8,6 +8,7 @@
  * and DNS-rebind-style `Host` mismatch are rejected with HTTP 403.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import http from "http";
 import { makeTempRoot } from "./fixtures/temp-root.js";

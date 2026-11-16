@@ -33,6 +33,7 @@
  * cases above are what fail against `process.once`.
  */
 
+import "../../../test/fixtures/file-mode.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";

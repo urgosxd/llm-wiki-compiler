@@ -8,6 +8,7 @@
  * here so the test fixture proves the signal handlers actually fire.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdir, rm, symlink, writeFile } from "fs/promises";
 import path from "path";

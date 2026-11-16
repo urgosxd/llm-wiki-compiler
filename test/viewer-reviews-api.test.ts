@@ -18,6 +18,7 @@
  *    class of leak once already.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import path from "path";
 import { makeTempRoot } from "./fixtures/temp-root.js";
