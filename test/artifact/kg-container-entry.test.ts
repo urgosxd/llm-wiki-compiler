@@ -29,11 +29,20 @@
  *    (`packages/llmwiki-kg/ts/src/config.ts:212-213`).
  * 3. **The embeddings pair is derived from the wiki's published names**, nested and
  *    preserving, so the embeddings host does not have to follow the chat host.
- * 4. **No credential, no DSN, no endpoint is written.** The script carries variable
- *    NAMES only: the DSN and the keys arrive from the caller.
+ * 4. **No credential and no DSN is written, and the only endpoint named is the image's own
+ *    loopback listener.** The script carries variable NAMES: the DSN and the keys arrive from
+ *    the caller. The single exception is `AKS_BASE_URL`, which must point at the server the
+ *    MCP tools run inside (see item 6).
  * 5. **`CMD` still names the server bundle.** The entrypoint composes with the
  *    existing `CMD`, and the no-argument branch execs that same bundle, so the
  *    process that finally runs is the one that reaches `app.listen`.
+ * 6. **The published DSN name and the tools' own base URL are bridged, preserving.**
+ *    The KG server reads `DATABASE_URL` (`packages/llmwiki-kg/ts/src/config.ts`), while the
+ *    operator publishes `AKS_DATABASE_URL`, which only `packages/wiki/src/dimensions/activation.ts`
+ *    reads — a name that is not in this image. With only `AKS_DATABASE_URL` set, live proof
+ *    returned `/health` 200 and the exact bare 21-byte `Internal Server Error` on `/stacks`.
+ *    Likewise `AKS_BASE_URL`, unset, makes the MCP tools proxy to `localhost:8000` instead of
+ *    their own listener. Both are bridged here as `${NAME:-fallback}`, never assigned.
  *
  * ## Why no Docker, and no spawn
  *
@@ -66,6 +75,9 @@ const DEFAULT_PROVIDER = "gateway";
 
 /** The `export NAME=...` form, which is what reaches the exec'd server. */
 const EXPORT_PREFIX = "export ";
+
+/** The only endpoint this script may name: the image's own listener, read from `PORT`. */
+const LOOPBACK_DEFAULT = "http://127.0.0.1:${PORT:-8000}";
 
 /**
  * Read one tracked file from the repository root.
@@ -221,19 +233,93 @@ describe("KG entrypoint provider defaults", () => {
   });
 });
 
-describe("KG entrypoint carries no configuration of its own", () => {
-  it("writes no DSN, credential or endpoint value of its own", async () => {
+describe("KG entrypoint honours the published DSN name", () => {
+  it("seeds DATABASE_URL from AKS_DATABASE_URL without overriding a caller's DATABASE_URL", async () => {
     const script = await readRepoFile(ENTRY_SOURCE);
 
-    for (const name of ["DATABASE_URL", "GATEWAY_URL", "GATEWAY_API_KEY"]) {
+    expectPreservingDefault(script, "DATABASE_URL", "\${AKS_DATABASE_URL:-}");
+
+    const unconditional = assignmentLines(script, "DATABASE_URL").filter((line) =>
+      /^DATABASE_URL=("?)\$AKS_DATABASE_URL\1$/.test(line),
+    );
+    expect(
+      unconditional,
+      "an unconditional `DATABASE_URL=\"$AKS_DATABASE_URL\"` would overwrite a caller's own DATABASE_URL, which " +
+        "always wins; `${DATABASE_URL:-…}` keeps it, and its blank arm covers a blank DATABASE_URL too",
+    ).toEqual([]);
+
+    expect(
+      script,
+      `\`${ENTRY_SOURCE}\` must carry no DSN literal: the connection string arrives from the caller, and a value ` +
+        "written here would be a credential baked into the image",
+    ).not.toMatch(/postgres(?:ql)?:\/\//i);
+  });
+});
+
+describe("KG entrypoint lets the MCP tools reach their own listener", () => {
+  it("defaults AKS_BASE_URL to the loopback listener built from PORT", async () => {
+    const script = await readRepoFile(ENTRY_SOURCE);
+
+    expectPreservingDefault(script, "AKS_BASE_URL", LOOPBACK_DEFAULT);
+
+    const statements = script.split("\n").filter((line) => line.trim() !== "" && !line.trim().startsWith("#"));
+    const hosts = statements.flatMap((line) =>
+      [...line.matchAll(/[a-z][a-z0-9+.-]*:\/\/([^\s"'/:]+)/gi)].map((match) => match[1] ?? ""),
+    );
+    expect(
+      hosts,
+      "the only endpoint this script may name is the image's own loopback listener: a non-loopback host here " +
+        "would point the MCP tools' proxy away from the server they run inside",
+    ).toEqual(["127.0.0.1"]);
+    expect(
+      script,
+      `\`${ENTRY_SOURCE}\` must build the default from \`PORT\` (default 8000), so it follows the port the ` +
+        "server actually listens on instead of a number that can drift",
+    ).toContain("${PORT:-8000}");
+  });
+});
+
+describe("KG entrypoint ordering", () => {
+  it("defaults the wiring before the explicit-command branch and still execs the server last", async () => {
+    const lines = (await readRepoFile(ENTRY_SOURCE)).split("\n").map((line) => line.trim());
+    const statements = lines.filter((line) => line !== "" && !line.startsWith("#"));
+
+    expect(
+      statements.at(-1),
+      `\`${ENTRY_SOURCE}\` must end in \`exec node ${SERVER_ENTRY}\`, so PID 1 is the server and it gets SIGTERM`,
+    ).toBe(`exec node ${SERVER_ENTRY}`);
+
+    const branchAt = lines.indexOf('if [ "$#" -gt 0 ]; then');
+    expect(branchAt, `\`${ENTRY_SOURCE}\` must carry an explicit-command-wins branch`).toBeGreaterThan(-1);
+
+    for (const name of ["DATABASE_URL", "AKS_BASE_URL", "EXTRACTION_PROVIDER", "EMBEDDING_PROVIDER"]) {
+      const at = lines.findIndex((line) => line.startsWith(`${EXPORT_PREFIX}${name}=`));
+      expect(at, `\`${ENTRY_SOURCE}\` must default \`${name}\` before the caller's command can run`).toBeGreaterThan(-1);
+      expect(
+        at,
+        `the \`${name}\` default must precede the explicit-command branch, or a caller-supplied command runs ` +
+          "without the image's wiring",
+      ).toBeLessThan(branchAt);
+    }
+  });
+});
+
+describe("KG entrypoint carries no configuration of its own", () => {
+  it("writes no credential, no DSN value and no endpoint beyond the loopback default", async () => {
+    const script = await readRepoFile(ENTRY_SOURCE);
+
+    for (const name of ["GATEWAY_URL", "GATEWAY_API_KEY", "OPENAI_EMBEDDINGS_BASE_URL", "OPENAI_EMBEDDINGS_API_KEY"]) {
       expect(
         assignmentLines(script, name),
         `\`${ENTRY_SOURCE}\` must not assign \`${name}\`: it arrives from the caller, and a value written here ` +
-          `is either a credential in the image or a wiring the caller cannot override`,
+          "is either a credential in the image or a wiring the caller cannot override",
       ).toEqual([]);
     }
 
-    expect(script, `\`${ENTRY_SOURCE}\` must carry no hard-coded http(s) endpoint`).not.toMatch(/https?:\/\//);
+    expect(
+      script,
+      "no endpoint may arrive through a URL with userinfo (a credential smuggling shape)",
+    ).not.toMatch(/\/\/[^\s/'"@]+@/);
 
     const credentialLike = script
       .split("\n")
