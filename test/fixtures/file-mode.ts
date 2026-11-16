@@ -24,9 +24,16 @@
  * Importing this module IS the declaration: it registers the hook below for the file that imports
  * it. A file-scope import also runs before every `beforeAll`, which a `beforeEach` cannot promise,
  * so a suite that spawns a child process in `beforeAll` still starts that child without a database.
- * {@link useFileMode} is exported for the narrower case: a file that mixes both modes and wants the
- * declaration scoped to one `describe` block registers it there instead. A file that does both is
- * only redundant, never wrong — the hook deletes the same variable twice.
+ *
+ * ## What this module cannot do: a file with BOTH modes
+ *
+ * The mode it declares is the FILE's, so a suite that asserts rows in some cases and files in others
+ * must not import it at all: importing it would leave its row-backed cases without the database they
+ * need. Such a suite declares the mode itself — dropping `AKS_DATABASE_URL` where the file path is
+ * asserted and restoring it where rows are — and that is a per-case decision no fixture can make.
+ * {@link useFileMode} exists for the caller that wants the declaration written as a call beside its
+ * own hooks rather than as a bare import; it registers the same hook for the same file. Neither form
+ * is scoped to one `describe`: a scoped mode inside an importing file does not exist.
  *
  * ## Why `beforeEach`, and why nothing is restored
  *
@@ -56,10 +63,10 @@ function declareFileMode(): void {
 }
 
 /**
- * Declare file mode for the enclosing scope.
+ * Declare file mode for this file, written as a call rather than as a bare import.
  *
- * For a file that mixes both modes: call it inside the `describe` whose cases assert file-backed
- * behaviour. A file that only ever wants files imports this module and calls nothing.
+ * The same declaration {@link declareFileMode} registers on import, for a caller that wants it beside
+ * its own hooks. Not a scoped form: see the module header on suites that need both modes.
  */
 export function useFileMode(): void {
   declareFileMode();
