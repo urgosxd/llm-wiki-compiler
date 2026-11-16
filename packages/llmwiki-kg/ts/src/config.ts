@@ -1,4 +1,10 @@
-import { bridgeEnvWithWikiCredentials, isBlank } from "./wiki-credential-fallback.js";
+import {
+  bridgeEnvWithWikiCredentials,
+  hasHfPrefix,
+  isBlank,
+  readPresent,
+  WIKI_CHAT_MODEL_VARIABLE,
+} from "./wiki-credential-fallback.js";
 import { z } from "zod";
 
 /**
@@ -239,6 +245,46 @@ export function gatewayEmbeddingsSourceLine(cfg: Config): string | undefined {
     "[AKS] Gateway embeddings source: " +
     `endpoint ${baseUrlSource ?? "unset"}, credential ${apiKeySource ?? "unset"}`
   );
+}
+
+/**
+ * The KG-side extraction-model variable, spelled as the schema above spells it.
+ *
+ * The line prints this name, so the literal is the output contract rather than a
+ * lookup key; it stays beside the schema line that defines it.
+ */
+const EXTRACTION_MODEL_VARIABLE = "EXTRACTION_MODEL";
+
+/**
+ * The one startup line naming WHICH variable supplied the extraction model.
+ *
+ * WHY NAMES AND NOT VALUES. The extraction model is the second thing the
+ * operator configures on the wiki side and the KG side consumes, so a deployment
+ * that meant to pin its own model and mistyped the variable name silently
+ * extracts with an inherited one — and the only symptom is a provider rejecting
+ * a model id. Naming the source makes that self-evident; printing the value would
+ * put a model id in a log file, and a model id is the thing the operator's
+ * provider credentials are spent on.
+ *
+ * WHY IT TAKES THE RAW ENVIRONMENT rather than the parsed config, unlike
+ * {@link gatewayEmbeddingsSourceLine}. The bridge fills `EXTRACTION_MODEL` from
+ * `LLMWIKI_MODEL` before the schema ever sees it, so the parsed config cannot say
+ * which of the two names supplied the value it holds — the filled copy erases
+ * exactly the distinction this line exists to report. One fixed-size line, and it
+ * names at most one variable, so it cannot grow into a config dump.
+ *
+ * @param env - The environment the config resolves from, BEFORE bridging.
+ * @returns The line, always present: every configuration has a model source.
+ */
+export function extractionModelSourceLine(env: NodeJS.ProcessEnv): string {
+  const prefix = "[AKS] Extraction model source: ";
+  if (readPresent(env, EXTRACTION_MODEL_VARIABLE) !== undefined) {
+    return `${prefix}${EXTRACTION_MODEL_VARIABLE}`;
+  }
+  const wikiModel = readPresent(env, WIKI_CHAT_MODEL_VARIABLE);
+  if (wikiModel === undefined) return `${prefix}built-in default`;
+  const prefixState = hasHfPrefix(wikiModel) ? "already present" : "applied";
+  return `${prefix}${WIKI_CHAT_MODEL_VARIABLE}, hf: prefix ${prefixState}`;
 }
 
 /**

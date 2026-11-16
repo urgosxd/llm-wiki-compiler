@@ -15,10 +15,30 @@
  *
  * ## What is bridged, and what deliberately is not
  *
- * Only the five variables above. `EMBEDDING_DIM`, `EXTRACTION_*`, `DATABASE_URL`
- * and `AKS_API_KEY` describe storage shape or unrelated credentials and keep
- * their own resolution: deriving them from the wiki side would silently reshape
- * the graph to match the wiki.
+ * Only the five variables above, plus ONE model name. `EMBEDDING_DIM`,
+ * `EXTRACTION_PROVIDER`, `DATABASE_URL` and `AKS_API_KEY` describe storage shape
+ * or unrelated credentials and keep their own resolution: deriving them from the
+ * wiki side would silently reshape the graph to match the wiki, or send a request
+ * to a provider nobody configured.
+ *
+ * `EXTRACTION_MODEL` is the single `EXTRACTION_*` exception, and it is the
+ * credential's counterpart rather than a preference: the wiki's provider
+ * configuration already names the chat model this deployment sends to that
+ * provider, extraction is a chat call to that same provider, and making the
+ * operator spell one model id under a second name is how a request reaches a
+ * gateway with a name it rejects. Only the NAME crosses — `EXTRACTION_PROVIDER`
+ * and its credential stay the KG side's own — so the bridged model decides what
+ * to ask for and never where, or with which credential.
+ *
+ * ## Why only the extraction model is normalised
+ *
+ * `EMBEDDING_MODEL` is bridged as a VERBATIM pass-through, and it stays one: it
+ * is a provider-resolution contract existing deployments already consume, and
+ * normalising it was not asked for. The gateway's `hf:` requirement is therefore
+ * applied to the extraction value alone ({@link withHfPrefix}), which is a NEW
+ * bridge and breaks nothing by carrying it.
+ *
+ * ## Why the embedding model is named and never defaulted
  *
  * `EMBEDDING_MODEL` is bridged, but ONLY from a value the operator actually
  * named (`LLMWIKI_EMBEDDING_MODEL`). The wiki's own default table is never
@@ -76,7 +96,8 @@ export const KG_BACKEND_VARIABLES = [
 ] as const;
 
 /**
- * Every KG-side variable this module fills, in the order the table documents.
+ * Every KG-side EMBEDDING variable this module fills, in the order the table
+ * documents.
  *
  * EXPORTED AS THE SINGLE SOURCE OF TRUTH for the conformance check against the
  * wiki dimension's own variable tables. The test derives the names the wiki side
@@ -86,6 +107,12 @@ export const KG_BACKEND_VARIABLES = [
  * Stated rather than derived from {@link KG_BACKEND_VARIABLES}: `OPENAI_API_KEY`
  * is bridged but is NOT a kg-only backend choice (see that constant), so the two
  * lists answer two different questions.
+ *
+ * WHY `EXTRACTION_MODEL` IS NOT A MEMBER although this module does fill it: this
+ * list IS the embedding conformance contract, asserted as an exact set against
+ * the wiki's embedding tables, so a chat variable in it would widen a contract
+ * every deployment's tests already pin. The extraction half is stated on its own
+ * terms in the table on {@link bridgeEnvWithWikiCredentials}.
  */
 export const KG_BRIDGED_VARIABLES = [
   KG_PROVIDER,
@@ -103,6 +130,23 @@ const WIKI_EMBEDDING_ENDPOINT = "OPENAI_EMBEDDINGS_BASE_URL";
 const WIKI_SHARED_ENDPOINT = "OPENAI_BASE_URL";
 /** The model the operator named for the wiki dimension's embeddings. */
 const WIKI_EMBEDDING_MODEL = "LLMWIKI_EMBEDDING_MODEL";
+/**
+ * The model the operator named for the wiki dimension's CHAT client.
+ *
+ * EXPORTED because the startup source line prints this NAME, and a second copy
+ * of the string in the config module is a second answer to what it is called.
+ */
+export const WIKI_CHAT_MODEL_VARIABLE = "LLMWIKI_MODEL";
+/** The KG-side variable that names the extraction model. */
+const KG_EXTRACTION_MODEL = "EXTRACTION_MODEL";
+/**
+ * The prefix a gateway requires on every model id it is asked for.
+ *
+ * One constant, because the requirement is one rule: {@link withHfPrefix}
+ * applies it and {@link hasHfPrefix} detects it, and a literal spelled at a third
+ * site is how the two drift apart.
+ */
+const HF_PREFIX = "hf:";
 /**
  * Width of the kg dimension's `vector(768)` embedding columns (`schema.ts`).
  *
@@ -151,6 +195,35 @@ export interface EmbeddingCredentialConfig {
   readonly OPENAI_API_KEY: string;
   readonly GATEWAY_URL: string;
   readonly GATEWAY_API_KEY: string;
+}
+
+/**
+ * True when `model` already carries the gateway's `hf:` prefix.
+ *
+ * Exported for the startup source line, which reports whether the prefix was
+ * applied or already present: reading the rule from one place keeps the line and
+ * the bridge from disagreeing about the same value.
+ *
+ * @param model - A model id as configured, prefixed or not.
+ * @returns True when the trimmed id already starts with the prefix.
+ */
+export function hasHfPrefix(model: string): boolean {
+  return model.trim().startsWith(HF_PREFIX);
+}
+
+/**
+ * `model` with the gateway's `hf:` prefix, applied at most once.
+ *
+ * The trimmed value is what gets prefixed, so a padded wiki value cannot bridge
+ * a model id with a leading space, and a value that already carries the prefix is
+ * returned unchanged rather than doubling it.
+ *
+ * @param model - The wiki-side model id, which {@link readPresent} found non-blank.
+ * @returns The prefixed model id.
+ */
+function withHfPrefix(model: string): string {
+  const trimmed = model.trim();
+  return hasHfPrefix(trimmed) ? trimmed : `${HF_PREFIX}${trimmed}`;
 }
 
 /**
@@ -266,13 +339,14 @@ function fillIfAbsent(
  * | `OPENAI_API_KEY` | itself | the wiki embedding key, when the provider is `openai` | — | `""` |
  * | `GATEWAY_URL` | itself | the wiki endpoint, when the provider is `gateway` | — | `""` |
  * | `GATEWAY_API_KEY` | itself | the wiki embedding key, when the provider is `gateway` | — | `""` |
- * | `EMBEDDING_MODEL` | itself | `LLMWIKI_EMBEDDING_MODEL`, and only when that is set | — | schema default, then {@link findEmbeddingModelProblem} |
+ * | `EMBEDDING_MODEL` | itself | `LLMWIKI_EMBEDDING_MODEL`, verbatim, and only when that is set | — | schema default, then {@link findEmbeddingModelProblem} |
+ * | `EXTRACTION_MODEL` | itself, verbatim | `LLMWIKI_MODEL` trimmed, with `hf:` applied once, and only when that is set | — | schema default |
  *
  * Every other variable is copied through unchanged, and the argument is never
  * mutated: callers rely on `process.env` staying exactly as it was.
  *
  * @param env - Environment to bridge; never modified.
- * @returns A new environment object with the five KG variables filled.
+ * @returns A new environment object with the bridged variables filled.
  */
 export function bridgeEnvWithWikiCredentials(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const bridged: NodeJS.ProcessEnv = { ...env };
@@ -282,6 +356,16 @@ export function bridgeEnvWithWikiCredentials(env: NodeJS.ProcessEnv): NodeJS.Pro
   // so it is derived whichever provider resulted — and only when the operator
   // named one on the wiki side.
   fillIfAbsent(bridged, KG_MODEL, readPresent(env, WIKI_EMBEDDING_MODEL));
+  // The extraction model crosses by the same rule — only when the KG side named
+  // none — and it is the one value that carries the prefix, because the gateway
+  // demands it and this bridge is new. An explicit `EXTRACTION_MODEL` never
+  // reaches `withHfPrefix`: it is used byte for byte, as it is today.
+  const wikiChatModel = readPresent(env, WIKI_CHAT_MODEL_VARIABLE);
+  fillIfAbsent(
+    bridged,
+    KG_EXTRACTION_MODEL,
+    wikiChatModel === undefined ? undefined : withHfPrefix(wikiChatModel),
+  );
   // A blank value is not a setting. Leaving `EMBEDDING_MODEL=` in the copy would
   // defeat the schema default and make the width refusal interpolate an empty
   // model name; dropping it lets the schema answer exactly as when it is absent.

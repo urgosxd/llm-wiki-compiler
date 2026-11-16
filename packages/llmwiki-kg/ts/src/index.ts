@@ -1,5 +1,10 @@
 import { createKgApp } from "./app.js";
-import { config, gatewayEmbeddingsSourceLine, validateConfig } from "./config.js";
+import {
+  config,
+  extractionModelSourceLine,
+  gatewayEmbeddingsSourceLine,
+  validateConfig,
+} from "./config.js";
 
 const DEFAULT_PORT = 8000;
 const HOST = "0.0.0.0";
@@ -50,6 +55,17 @@ const app = createKgApp();
  */
 const embeddingsSourceLine = gatewayEmbeddingsSourceLine(config);
 
+/**
+ * The extraction model's source line, resolved at the same startup site.
+ *
+ * It reports which variable supplied the model the KG extracts with — the KG's
+ * own, the wiki's, or the schema default — and it names variables and prefix
+ * presence only, never a model id. Read from the raw environment on purpose: the
+ * bridge has already filled `EXTRACTION_MODEL` from the wiki side by the time the
+ * config exists, so only the unbridged environment can say which name won.
+ */
+const extractionSourceLine = extractionModelSourceLine(process.env);
+
 const server = app.listen(port, HOST, () => {
   console.log(
     [
@@ -62,6 +78,7 @@ const server = app.listen(port, HOST, () => {
       `  Inference:  extraction via ${config.EXTRACTION_PROVIDER} (${config.EXTRACTION_MODEL}),` +
         ` embeddings via ${config.EMBEDDING_PROVIDER} (${config.EMBEDDING_MODEL})`,
       ...(embeddingsSourceLine === undefined ? [] : [`  ${embeddingsSourceLine}`]),
+      `  ${extractionSourceLine}`,
       `  Auth:       ${config.authEnabled ? "enabled (X-API-Key required)" : "disabled (open access)"}`,
       "",
     ].join("\n"),

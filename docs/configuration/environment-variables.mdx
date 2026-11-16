@@ -453,6 +453,18 @@ its own resolution, and the `extracted_by_model` column records the model that
 actually produced each row: the wiki chat backend's model under rule 2, and the
 `kg` configuration's `EXTRACTION_MODEL` under rules 1 and 3.
 
+**The extraction model is bridged on its own too.** With no host-injected chat
+backend, the `kg` dimension's model resolves in this order, first applicable rule
+winning: (1) an explicitly set `EXTRACTION_MODEL`, sent exactly as written; (2)
+otherwise `LLMWIKI_MODEL`, trimmed and sent with the leading `hf:` the gateway
+requires, and a value that already begins with `hf:` is sent unchanged rather than
+prefixed twice; (3) otherwise the built-in default. A blank value on either side
+bridges nothing. No variable is added: the model is configured once, in the wiki's
+own `LLMWIKI_MODEL`. The startup banner names which of the three supplied the model —
+variable name only, never a model id — plus whether the `hf:` prefix was applied or
+already present. The storage DSN is deliberately not bridged, and `EMBEDDING_MODEL`
+keeps its existing verbatim pass-through.
+
 When the kg dimension takes its extraction configuration from the resolved
 provider, it does not send `strict: true` in the tool definition: that flag is
 derived from `EXTRACTION_PROVIDER`, which is unset in this path. Extraction stays
