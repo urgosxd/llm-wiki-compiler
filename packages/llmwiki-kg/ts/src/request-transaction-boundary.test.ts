@@ -56,12 +56,13 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import express from "express";
-import type { Express, NextFunction, Request, Response } from "express";
+import type { Express, Request } from "express";
 import request from "supertest";
 import { sql } from "drizzle-orm";
 import type { Sql } from "postgres";
 
 import { createClient, createDatabase, createRequestTransactionWrapper } from "./db.js";
+import { handleError } from "./server.js";
 import type { Database, TransactionalHandler } from "./db.js";
 import { noDatabase } from "./testing/no-database.js";
 import { perRunDatabase } from "./testing/per-run-database.js";
@@ -226,28 +227,15 @@ const throwBeforeAnswering: TransactionalHandler = async (req, _res, tx) => {
 };
 
 /**
- * `handleError`'s 5xx branch, reproduced because `server.ts` does not export it.
+ * An app that serves the three probe handlers through the REAL wrapper and the
+ * REAL error handler.
  *
- * A non-5xx status keeps the live JSON `detail` shape; nothing here produces one,
- * and diverging from the live handler would make the error assertions meaningless.
+ * The 5xx branch used to be reproduced here line for line because `server.ts` did
+ * not export it, and a reproduction is exactly what drifts: the budget branch the
+ * middleware gained would have had to be copied too, and the copies would
+ * disagree the first time either side changed. The handler is exported for this
+ * mount and for nothing else.
  */
-function answerLikeTheServer(
-  err: unknown,
-  _req: Request,
-  res: Response,
-  _next: NextFunction,
-): void {
-  const declared = typeof err === "object" && err !== null && "status" in err ? err.status : 500;
-  const status = typeof declared === "number" ? declared : 500;
-  if (status >= 500) {
-    res.status(status).type("text/plain").send("Internal Server Error");
-    return;
-  }
-  const detail = err instanceof Error && err.message !== "" ? err.message : "Bad Request";
-  res.status(status).json({ detail });
-}
-
-/** An app that serves the three probe handlers through the REAL wrapper. */
 function buildProbeApp(): Express {
   const wrap = createRequestTransactionWrapper(createDatabase(pool()));
   const app = express();
@@ -255,7 +243,7 @@ function buildProbeApp(): Express {
   app.post("/probe/respond-then-stall", wrap(respondThenStall));
   app.post("/probe/fail-at-commit", wrap(failAtCommit));
   app.post("/probe/throw-before-answering", wrap(throwBeforeAnswering));
-  app.use(answerLikeTheServer);
+  app.use(handleError);
   return app;
 }
 

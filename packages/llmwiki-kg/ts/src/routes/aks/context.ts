@@ -47,6 +47,37 @@ type CatalogRow = {
 const CONTEXT_CHUNK_LIMIT = 8;
 const CONTEXT_CATALOG_LIMIT = 200;
 
+/**
+ * Tokens the selection ANSWER needs: a small JSON object of entity names.
+ *
+ * This is what the old `complete(prompt, 1024)` was actually sized for, and it
+ * stays the answer half of the request budget below.
+ */
+const SELECTION_ANSWER_TOKENS = 1024;
+
+/**
+ * Tokens the model spends BEFORE answering, which the answer budget cannot cover.
+ *
+ * Measured against OpenRouter with a realistic 8.3 kB extraction prompt: at
+ * `max_tokens: 1024` every response came back `finish_reason: "length"` with
+ * `content: null` (0 of 8 usable), while at 4096 eight of eight answered with at
+ * most 748 reasoning tokens. The upstream was healthy (HTTP 200 in 46 of 46
+ * calls, no 429), so the budget was the defect. 3072 is the headroom that turns
+ * the measured-good 4096 back into a sum the call itself justifies.
+ */
+const SELECTION_REASONING_HEADROOM_TOKENS = 3072;
+
+/**
+ * Output budget of the one selection call: what it must answer plus the reasoning
+ * a model spends getting there.
+ *
+ * DERIVED, not a bumped constant: a number sized for one model's answer shape is
+ * exactly the defect this replaces when the model reasons first. A model that
+ * answers without reasoning simply leaves the headroom unused — an unused budget
+ * costs nothing, while a missing one costs the whole call.
+ */
+const SELECTION_MAX_TOKENS = SELECTION_ANSWER_TOKENS + SELECTION_REASONING_HEADROOM_TOKENS;
+
 /** The three confidence levels the response model allows. */
 const CONFIDENCE_LEVELS = ["HIGH", "MEDIUM", "LOW"] as const;
 
@@ -379,7 +410,7 @@ async function selectEntities(
     catalog.map((entry) => `- ${entry.name} (${entry.type})`).join("\n"),
     payload.max_entities,
   );
-  const selection = parseSelection(await complete(prompt, 1024));
+  const selection = parseSelection(await complete(prompt, SELECTION_MAX_TOKENS));
   if (selection === null) {
     return { selection: null, earlyReason: "LLM returned malformed entity selection.", earlyPath: [] };
   }

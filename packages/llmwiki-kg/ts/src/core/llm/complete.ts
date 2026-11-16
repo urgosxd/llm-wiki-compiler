@@ -17,8 +17,16 @@ import {
   extractionModel,
   extractionUsesAnthropicScheme,
 } from "./endpoints.js";
-import { LlmError } from "./errors.js";
+import { LlmBudgetExhaustedError, LlmError } from "./errors.js";
 import { asArray, asRecord, asString, postJson } from "./json.js";
+
+/**
+ * `finish_reason` a provider sets when `max_tokens` ran out mid-answer.
+ *
+ * The same reason a model that never reached its answer reports, which is why the
+ * budget and not the length is what a 200 with no `content` is blamed on.
+ */
+const TRUNCATION_FINISH_REASON = "length";
 
 // ---------------------------------------------------------------------------
 // Plain text completion
@@ -71,21 +79,36 @@ export async function complete(
       messages: [{ role: "user", content: prompt }],
     },
   );
-  return chatMessageContent(body, endpoint).trim();
+  return chatMessageContent(body, endpoint, maxTokens).trim();
 }
 
 /**
  * `response.choices[0].message.content` from an OpenAI-compatible body.
  *
  * Python reads the same path and would raise `IndexError`/`AttributeError` on a
- * missing one; here it is a typed {@link LlmError}, which the route turns into a
- * 500 instead of an unhandled rejection.
+ * missing one; here it is a typed error the route layer renders. A body the
+ * provider truncated on `max_tokens` is the one case that is not an unknown
+ * failure: it is a budget that was too small, and it says so with its own status
+ * (see {@link LlmBudgetExhaustedError}) instead of the opaque 500 a status-less
+ * error used to become.
+ *
+ * @param body the provider payload, still untyped.
+ * @param endpoint the URL these bytes came from, for the log.
+ * @param maxTokens the budget the request asked for, when the caller knows it.
  */
-export function chatMessageContent(body: unknown, endpoint: string): string {
+export function chatMessageContent(
+  body: unknown,
+  endpoint: string,
+  maxTokens?: number,
+): string {
   const choices = asArray(asRecord(body)?.["choices"]);
-  const message = asRecord(asRecord(choices?.[0])?.["message"]);
+  const choice = asRecord(choices?.[0]);
+  const message = asRecord(choice?.["message"]);
   const content = asString(message?.["content"]);
   if (content === undefined) {
+    if (asString(choice?.["finish_reason"]) === TRUNCATION_FINISH_REASON) {
+      throw new LlmBudgetExhaustedError(endpoint, maxTokens);
+    }
     throw new LlmError(
       `${endpoint} response has no choices[0].message.content`,
       endpoint,

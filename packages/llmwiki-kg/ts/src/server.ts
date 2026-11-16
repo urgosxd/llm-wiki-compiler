@@ -2,6 +2,7 @@ import express from "express";
 import type { Express, NextFunction, Request, Response } from "express";
 
 import { createMethodNotAllowed } from "./http-contract.js";
+import { BUDGET_EXHAUSTED_DETAIL, BUDGET_EXHAUSTED_STATUS, LlmBudgetExhaustedError } from "./core/llm/errors.js";
 import { createAksRouter } from "./routes/aks.js";
 import type { AksRouterDependencies } from "./routes/aks.js";
 import { createBackfeedRouter } from "./routes/backfeed.js";
@@ -260,8 +261,25 @@ function installFallbacks(app: Express): void {
  * Error", status_code=500)` — measured: `content-type: text/plain; charset=utf-8`,
  * 21 bytes, no `detail` wrapper. Client errors keep their JSON shape and a safe,
  * caller-relevant message; 5xx stays opaque so internals never leak.
+ *
+ * ONE 5xx-class exception, and it is a deliberate departure from the oracle: a
+ * completion whose output budget ran out before the model answered. That case is
+ * a configuration defect with nothing to leak — the detail is a fixed string that
+ * names no endpoint, no model and no credential — and answering it with 21 opaque
+ * bytes is how it stayed invisible until a full extraction pass produced nothing.
+ * Every other 5xx keeps the measured oracle body byte for byte.
+ *
+ * Exported because `request-transaction-boundary.test.ts` used to reproduce this
+ * branch by hand — the reproduction and the real branch then drifted apart, which
+ * is the one thing an error-shape test cannot afford. It mounts the real handler
+ * instead.
  */
-function handleError(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
+export function handleError(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
+  if (err instanceof LlmBudgetExhaustedError) {
+    res.status(BUDGET_EXHAUSTED_STATUS).json({ detail: BUDGET_EXHAUSTED_DETAIL });
+    return;
+  }
+
   const status = errorStatus(err);
 
   if (status >= 500) {
