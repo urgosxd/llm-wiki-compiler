@@ -20,6 +20,13 @@
  * The route cases drive the real HTTP surface (`POST /aks/v1/context`) against
  * the per-run database, with only the provider stubbed: a truncated answer is not
  * something a live model can be asked to produce on cue.
+ *
+ * The last four route cases pin the RETRY, and its boundary is the point: an
+ * exhausted budget is repeated exactly once with a strictly larger derived budget
+ * and then reported, while a failure of any other class is not repeated at all.
+ * That scoping is only expressible because the budget failure is its own error
+ * class; without it the route could either retry every failure (spending the
+ * request again on an outage a larger budget cannot fix) or none.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,6 +36,7 @@ import { sql } from "drizzle-orm";
 
 import { toVectorLiteral } from "../retrieval.js";
 import { chatMessageContent } from "./complete.js";
+import { SELECTION_MAX_TOKENS, SELECTION_RETRY_MAX_TOKENS } from "../../routes/aks/context.js";
 import {
   createFixture,
   createTestApp,
@@ -50,6 +58,21 @@ const ENDPOINT = "https://chat.invalid/v1/chat/completions";
 const TRUNCATED_COMPLETION = {
   choices: [{ message: { content: null }, finish_reason: "length" }],
 };
+
+/** A selection answer the route can parse, so a retried call can succeed. */
+const SELECTION_COMPLETION = {
+  choices: [
+    {
+      message: {
+        content: '{"entity_names":["Gateway"],"reasoning":"named in the passage","confidence":"HIGH"}',
+      },
+      finish_reason: "stop",
+    },
+  ],
+};
+
+/** A 200 body with no completion at all: a plain, status-less `LlmError`. */
+const UNKNOWN_COMPLETION = { choices: [] };
 
 /** Reasoning tokens measured at a 4096 budget: the floor an adequate one must cover. */
 const MEASURED_REASONING_TOKENS = 748;
@@ -90,15 +113,21 @@ function okResponse(body: unknown): Response {
   } as unknown as Response;
 }
 
-/** Answers every provider call locally and records the chat bodies that were sent. */
-function stubProvider(chatBody: unknown): { chatRequests: readonly Record<string, unknown>[] } {
+/**
+ * Answers every provider call locally and records the chat bodies that were sent.
+ *
+ * The chat bodies are a SEQUENCE, one per call, the last one repeating: a retry
+ * test needs a different answer for the second call than for the first, and the
+ * recorded requests are how a test counts the calls a route actually made.
+ */
+function stubProvider(...chatBodies: unknown[]): { chatRequests: readonly Record<string, unknown>[] } {
   const chatRequests: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
     if (String(input).endsWith("/embeddings")) {
       return okResponse({ data: [{ index: 0, embedding: QUERY_VECTOR }] });
     }
     chatRequests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-    return okResponse(chatBody);
+    return okResponse(chatBodies[Math.min(chatRequests.length - 1, chatBodies.length - 1)]);
   });
   return { chatRequests };
 }
@@ -176,5 +205,101 @@ describe.skipIf(state.skipReason !== false)("POST /aks/v1/context under an exhau
     // Adequate means the measured reasoning spend plus the answer the call must
     // produce; the number that carries it is deliberately not pinned here.
     expect(budget).toBeGreaterThanOrEqual(MEASURED_REASONING_TOKENS + SELECTION_ANSWER_TOKENS);
+  });
+});
+
+/**
+ * The retry, and its boundary.
+ *
+ * One escalation on the budget class alone is what turns a legible failure into a
+ * recovering one without also repeating a provider outage, which no larger budget
+ * can fix.
+ */
+describe.skipIf(state.skipReason !== false)("POST /aks/v1/context: one escalation", () => {
+  beforeEach(async () => {
+    await deleteFixtureRows();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  afterAll(async () => {
+    await deleteFixtureRows();
+  });
+
+  it("retries once at a strictly larger budget, and the retry answers", async () => {
+    const provider = stubProvider(TRUNCATED_COMPLETION, SELECTION_COMPLETION);
+    const fixture = await seedReachableStack();
+    const response = await request(createTestApp())
+      .post("/aks/v1/context")
+      .send({ domain: fixture.domain, query: QUERY });
+
+    // The escalation answers the request the first attempt could not.
+    expect(response.status).toBe(200);
+    expect(provider.chatRequests).toHaveLength(2);
+    // The relationship, not the literal: larger than the budget that ran out, and
+    // exactly the derived escalation constant.
+    const retryBudget = Number(provider.chatRequests[1]?.["max_tokens"]);
+    expect(retryBudget).toBeGreaterThan(SELECTION_MAX_TOKENS);
+    expect(retryBudget).toBe(SELECTION_RETRY_MAX_TOKENS);
+  });
+
+  it("fails after the one retry instead of looping", async () => {
+    const provider = stubProvider(TRUNCATED_COMPLETION);
+    const fixture = await seedReachableStack();
+    const response = await request(createTestApp())
+      .post("/aks/v1/context")
+      .send({ domain: fixture.domain, query: QUERY });
+
+    expect(response.status).toBe(502);
+    // Two calls: the original attempt and its single escalation, never a third.
+    expect(provider.chatRequests).toHaveLength(2);
+  });
+});
+
+/**
+ * What the escalation must NOT touch.
+ *
+ * The class boundary is the entire justification for retrying at all, so the
+ * negative case is pinned as tightly as the positive one: an outage and a
+ * first-attempt success both stay at one call.
+ */
+describe.skipIf(state.skipReason !== false)("POST /aks/v1/context: retry scope", () => {
+  beforeEach(async () => {
+    await deleteFixtureRows();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  afterAll(async () => {
+    await deleteFixtureRows();
+  });
+
+  it("does not retry a failure of any other class", async () => {
+    // No completion at all is a plain status-less `LlmError`, the shape a provider
+    // outage leaves. A larger budget cannot fix it, so a repeat would only spend
+    // the request again and report the wrong system.
+    const provider = stubProvider(UNKNOWN_COMPLETION);
+    const fixture = await seedReachableStack();
+    const response = await request(createTestApp())
+      .post("/aks/v1/context")
+      .send({ domain: fixture.domain, query: QUERY });
+
+    expect(response.status).toBe(500);
+    expect(provider.chatRequests).toHaveLength(1);
+  });
+
+  it("makes one call when the first attempt already answers", async () => {
+    const provider = stubProvider(SELECTION_COMPLETION);
+    const fixture = await seedReachableStack();
+    const response = await request(createTestApp())
+      .post("/aks/v1/context")
+      .send({ domain: fixture.domain, query: QUERY });
+
+    expect(response.status).toBe(200);
+    expect(provider.chatRequests).toHaveLength(1);
   });
 });

@@ -12,7 +12,7 @@ import type { Request, Response } from "express";
 
 import { resolveStack } from "../../core/stack_resolver.js";
 import { embedQuery } from "../../core/extraction.js";
-import { complete } from "../../core/llm_clients.js";
+import { complete, LlmBudgetExhaustedError } from "../../core/llm_clients.js";
 import { retrieveRelevantChunks } from "../../core/retrieval.js";
 import type { Database } from "../../db.js";
 import { AKSContextRequest, AKSContextResponse, legacyStackFieldFailure } from "../../dto.js";
@@ -76,7 +76,45 @@ const SELECTION_REASONING_HEADROOM_TOKENS = 3072;
  * answers without reasoning simply leaves the headroom unused — an unused budget
  * costs nothing, while a missing one costs the whole call.
  */
-const SELECTION_MAX_TOKENS = SELECTION_ANSWER_TOKENS + SELECTION_REASONING_HEADROOM_TOKENS;
+export const SELECTION_MAX_TOKENS = SELECTION_ANSWER_TOKENS + SELECTION_REASONING_HEADROOM_TOKENS;
+
+/**
+ * Output budget of the ONE escalation attempt, derived from the budget above.
+ *
+ * Derived, not tuned: escalation exists to let an answer the provider truncated
+ * finish, so it doubles the budget that was demonstrably too small rather than
+ * introducing a second magic number for the same boundary. It is a one-shot
+ * allowance, never a tuning knob and never the request's default.
+ */
+export const SELECTION_RETRY_MAX_TOKENS = SELECTION_MAX_TOKENS * 2;
+
+/**
+ * One selection call: the answer budget, and ONE escalation when it runs out.
+ *
+ * WHY the error CLASS and not every failure. An exhausted budget is the one
+ * provider failure a larger budget can actually fix — the model was billed for
+ * reasoning and never reached its answer — so repeating it is worth a second
+ * request. A provider outage is not: a bigger budget does not repair a dead
+ * upstream, so a repeat there only spends the request again and reports the wrong
+ * system. That distinction is expressible only because the truncation case is its
+ * own class ({@link LlmBudgetExhaustedError}, 502) instead of a status-less
+ * `LlmError`; before it existed the route had to choose between retrying every
+ * failure and retrying none.
+ *
+ * WHY exactly one escalation. The budget is a measurement, not a knob: if double
+ * the measured-adequate budget still truncates, the answer is not small enough to
+ * finish inside any budget this call can justify, and looping would spend a
+ * growing number of requests to learn nothing. The failure then surfaces with its
+ * own status, so the operator still sees which condition it was.
+ */
+async function completeSelection(prompt: string): Promise<string> {
+  try {
+    return await complete(prompt, SELECTION_MAX_TOKENS);
+  } catch (error) {
+    if (!(error instanceof LlmBudgetExhaustedError)) throw error;
+    return complete(prompt, SELECTION_RETRY_MAX_TOKENS);
+  }
+}
 
 /** The three confidence levels the response model allows. */
 const CONFIDENCE_LEVELS = ["HIGH", "MEDIUM", "LOW"] as const;
@@ -410,7 +448,7 @@ async function selectEntities(
     catalog.map((entry) => `- ${entry.name} (${entry.type})`).join("\n"),
     payload.max_entities,
   );
-  const selection = parseSelection(await complete(prompt, SELECTION_MAX_TOKENS));
+  const selection = parseSelection(await completeSelection(prompt));
   if (selection === null) {
     return { selection: null, earlyReason: "LLM returned malformed entity selection.", earlyPath: [] };
   }

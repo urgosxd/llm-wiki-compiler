@@ -58,7 +58,7 @@ export {
   EXTRACTION_TEMPERATURE,
 } from "./llm/constants.js";
 
-export { LlmError } from "./llm/errors.js";
+export { LlmBudgetExhaustedError, LlmError } from "./llm/errors.js";
 
 export { complete } from "./llm/complete.js";
 export { embedTexts, embedQuery } from "./llm/embeddings.js";
