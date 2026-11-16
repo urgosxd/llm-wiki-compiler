@@ -1,31 +1,30 @@
 import { defineConfig, configDefaults } from "vitest/config";
 import { fileURLToPath } from "node:url";
-import { testDatabaseUrl } from "./test/fixtures/test-database.js";
 
 const TEST_TIMEOUT_MS = 30_000;
 const HOOK_TIMEOUT_MS = 60_000;
 
 /**
- * Database every test worker sees, resolved once by the safe fixture resolver.
+ * NO DATABASE IS SEEDED HERE, and that is deliberate. `test.env` used to carry
+ * `AKS_DATABASE_URL: testDatabaseUrl()` for every worker, for a real reason: production code reads
+ * `AKS_DATABASE_URL` and treats a MISSING value as "use the vendored default", which is
+ * `localhost:5432` — the PRODUCTION port. Ten suites call `createDimensionsDatabase(process.env)`
+ * directly, so on a machine with nothing on 5432 they failed with `ECONNREFUSED` and read like
+ * product bugs, and on a machine where production IS reachable they would have run their assertions
+ * against operator data.
  *
- * WHY THE WORKER ENV AND NOT EACH SUITE. Production code reads
- * `AKS_DATABASE_URL` and treats a MISSING value as "use the vendored default",
- * which is `localhost:5432` — the PRODUCTION port. Ten suites call
- * `createDimensionsDatabase(process.env)` directly, so on a machine with nothing
- * on 5432 they failed with `ECONNREFUSED` and read like product bugs, and on a
- * machine where production IS reachable they would have run their assertions
- * against operator data. Neither is acceptable and neither is fixable one suite
- * at a time without leaving the next suite free to reintroduce it.
+ * It was still the wrong place, because it was the SECOND channel for one fact. The block is a
+ * STATIC object re-applied in every worker, so it cannot follow what the run decided: it carried a
+ * value computed in the main process, while the run's real database is resolved once by
+ * `test/global-setup.ts` and published to workers by `test/setup/test-database-url.ts`. The two
+ * disagreed exactly where it mattered — a run that had declared `LLMWIKI_TEST_ALLOW_NO_DATABASE=1`
+ * had the hatch's deletion undone by a seed the hatch could not reach.
  *
- * Seeding the worker environment closes it for every suite at once: no consumer
- * can inherit the production port by omission. A suite that specifically needs
- * the unconfigured case still deletes the variable itself, which the degrade and
- * backend-selection tests already do.
+ * So the seeding lives in one channel, the setup file, which runs in EVERY worker before any test
+ * module loads and therefore covers every suite the static seed covered: no consumer can inherit
+ * the production port by omission, and no run can hold a database it declared it did not have. Do
+ * not reintroduce an `env` block here; `test/hatch-means-no-database.test.ts` pins that.
  */
-const TEST_DATABASE_ENV = {
-  AKS_DATABASE_URL: testDatabaseUrl(),
-} as const;
-
 export default defineConfig({
   // In-repository tests exercise source. Packed consumers still import the
   // installed compiler peer by name; this resolver is not shipped at runtime.
@@ -37,9 +36,11 @@ export default defineConfig({
   test: {
     globals: true,
     // Runs inside EVERY worker before any test module loads, and publishes the database the global
-    // setup resolved into `LLMWIKI_TEST_DATABASE_URL` + `AKS_DATABASE_URL`. It cannot be the `env:`
-    // object below: that one is static and re-applied per worker, which would clobber the
-    // dynamically resolved URL (see test/fixtures/testcontainers-postgres.ts).
+    // setup resolved into `LLMWIKI_TEST_DATABASE_URL` + `AKS_DATABASE_URL`. This is the ONLY channel
+    // that seeds a worker's database, and it has to be a setup file rather than the `env:` object
+    // this config no longer has: that one is static and re-applied per worker, which would clobber
+    // the dynamically resolved URL (see test/fixtures/testcontainers-postgres.ts) and cannot honour
+    // the no-database hatch (see the header).
     setupFiles: ["./test/setup/test-database-url.ts"],
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: HOOK_TIMEOUT_MS,
@@ -71,9 +72,6 @@ export default defineConfig({
     // number without the integration tier's per-worker peak in hand.
     maxWorkers: 4,
     minWorkers: 1,
-    // Seed, do not default: see TEST_DATABASE_ENV for why omission is the bug.
-    // The per-run fixture overrides this per process; without the seed an un-provisioned suite would reach production's 5432.
-    env: { ...TEST_DATABASE_ENV },
     // Don't pick up tests from sibling worktrees living under local worktree dirs.
     // Worktrees share the parent's working directory tree, so without this
     // exclude vitest discovers and runs every feature branch's tests.

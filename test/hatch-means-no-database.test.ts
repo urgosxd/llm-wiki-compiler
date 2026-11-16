@@ -18,6 +18,12 @@
  * production must never depend on a variable only the suite sets. So the proof is a spawned run —
  * the child's exit status, its skipped count, and the environment its own worker reports.
  *
+ * The seed is gone: the setup file is the ONLY channel that puts a database into a worker's
+ * environment, so the run's declared state and the run's variable cannot drift apart. That is why
+ * the last describe block here also pins the seeding decisions directly. Importing the setup module
+ * re-runs its import-time publication in this worker, which is idempotent: it publishes the same
+ * record this worker already adopted, or the same override/fallback value.
+ *
  * ## Why a child vitest, and why an unreachable override
  *
  * The property belongs to the RUN, not to a function, so the only honest observation is a real
@@ -30,8 +36,9 @@
  * ## What the child does NOT inherit
  *
  * `AKS_DATABASE_URL` is stripped from the child's inherited environment, so the only way a worker
- * can hold one is the static seed in `vitest.config.ts` or the setup file. That is what makes the
- * assertion mean "the seeding chain removed it" rather than "the parent did not have one".
+ * can hold one is the setup file — the runner seeds nothing statically any more (see the last
+ * describe block, which pins that). That is what makes the assertion mean "the seeding chain
+ * removed it" rather than "the parent did not have one".
  * `AKS_TEST_DATABASE_URL` outranks the test URL inside the ingest harness, and the `VITEST*`
  * variables are stripped because a nested vitest that believes it is a worker of its parent
  * misreports its own run.
@@ -43,18 +50,22 @@
  * is a documented incident (`test/fixtures/test-database-handoff.ts`). `LLMWIKI_TEST_DB_HANDOFF_FILE`
  * points the child at a fresh temp file instead, removed as soon as the child exits.
  */
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AKS_DATABASE_URL_ENV_VAR } from "../packages/wiki/src/dimensions/activation.js";
+import vitestConfig from "../vitest.config.js";
+import { publishTestDatabaseUrl } from "../test/setup/test-database-url.js";
 import {
   DATABASE_OPT_OUT_ENV_VAR,
   TEST_DATABASE_HANDOFF_FILE_ENV_VAR,
+  buildHandoff,
+  writeTestDatabaseHandoff,
 } from "./fixtures/test-database-handoff.js";
-import { TEST_DATABASE_URL_ENV_VAR } from "./fixtures/test-database.js";
+import { TEST_DATABASE_URL_ENV_VAR, testDatabaseUrl } from "./fixtures/test-database.js";
 
 /** Repository root, resolved from this file so the child runs from the same tree. */
 const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -64,6 +75,9 @@ const VITEST_BIN = path.join(REPOSITORY_ROOT, "node_modules", ".bin", "vitest");
 
 /** A valid URL that no server answers: connection refused, immediately, on loopback. */
 const UNREACHABLE_URL = "postgresql://aks:aks@127.0.0.1:1/aks";
+
+/** The URL a fake handoff record carries; distinct from the override so the two cannot be confused. */
+const RECORDED_URL = "postgresql://aks:aks@127.0.0.1:1/recorded";
 
 /** The probe that reports a spawned worker's own environment (see its own header). */
 const PROBE_FILE = "test/fixtures/hatch-worker-env-probe.test.ts";
@@ -84,6 +98,19 @@ const CHILD_TIMEOUT_MS = 300_000;
 
 /** Colour escapes vitest writes around every count; stripped so a regex cannot fail on paint. */
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/g;
+
+/**
+ * One count off the reporter's `Tests` summary line, e.g. `Tests  1 passed | 4 skipped (5)`.
+ *
+ * Parsed rather than matched whole, because vitest lists only the labels that happened: a run where
+ * every case skipped prints no `passed` count at all, and a regex for the one shape this run
+ * happens to produce would fail for a reason unrelated to the rule.
+ */
+function summaryCount(output: string, label: "passed" | "skipped"): number {
+  const summary = /^\s*Tests\s+(.+)$/m.exec(output)?.[1] ?? "";
+  const counted = new RegExp(`(\\d+)\\s+${label}`).exec(summary);
+  return counted === null ? 0 : Number(counted[1]);
+}
 
 /** What one child run reported. */
 interface ChildRun {
@@ -156,7 +183,9 @@ describe("LLMWIKI_TEST_ALLOW_NO_DATABASE means this run has no database", () => 
 
     expect(run.status).toBe(0);
     // A skip is the behaviour the hatch exists to preserve: debugging with no database at all.
-    expect(run.output).toMatch(/Tests\s+[1-9]\d* skipped/);
+    // NON-ZERO, not a fixed number: the rule is "these cases did not run", and the case that runs
+    // them file-backed would report 0 here (or exit non-zero, above).
+    expect(summaryCount(run.output, "skipped")).toBeGreaterThan(0);
     expect(run.output).toContain("every case in this file will be skipped");
     // The printed reason names the hatch itself, and is quoted back on stderr.
     expect(run.output).toContain(DATABASE_OPT_OUT_ENV_VAR);
@@ -175,5 +204,88 @@ describe("LLMWIKI_TEST_ALLOW_NO_DATABASE means this run has no database", () => 
 
     expect(run.status).toBe(0);
     expect(run.output).toContain("[hatch-probe] AKS_DATABASE_URL=present isDatabaseConfigured=true");
+  });
+});
+
+// One channel. `vitest.config.ts` used to seed `AKS_DATABASE_URL` into every worker through a static
+// `env` object, which is a SECOND source of the same fact and the reason a hatch run still held a
+// database. The seed is gone; these cases pin that the setup file alone decides, for every way a run
+// can come by a URL — and that it carries the value the static seed used to carry, because removing
+// a channel that every worker depended on must not remove the value it delivered.
+
+/** Temp directories the cases below create, removed when this file's worker finishes. */
+const seedingScratchDirectories: string[] = [];
+
+/** Every scratch directory this file created, gone. */
+afterAll(() => {
+  for (const directory of seedingScratchDirectories) rmSync(directory, { recursive: true, force: true });
+});
+
+/**
+ * An environment for one seeding decision: no inherited database, and a record of its own.
+ *
+ * The record path is a fresh temp location that holds nothing, which is the "no global-setup
+ * record" state (a caller that runs a worker without one). It is never the repository's own
+ * record, so these cases cannot move the database under the run that spawned this worker.
+ */
+function seedingEnvironment(): NodeJS.ProcessEnv {
+  const directory = mkdtempSync(path.join(tmpdir(), "llmwiki-seed-channel-"));
+  seedingScratchDirectories.push(directory);
+  return {
+    [TEST_DATABASE_HANDOFF_FILE_ENV_VAR]: path.join(directory, "test-database.json"),
+  } as NodeJS.ProcessEnv;
+}
+
+describe("the setup file is the only channel that seeds a worker", () => {
+  it("seeds the caller's explicit URL when this run published no record", () => {
+    // The regression the collapse could have caused: with the static seed gone, an operator's
+    // explicit override must still reach the code under test, record or no record.
+    const env = seedingEnvironment();
+    env[TEST_DATABASE_URL_ENV_VAR] = UNREACHABLE_URL;
+
+    expect(publishTestDatabaseUrl(env)).toBe(UNREACHABLE_URL);
+    expect(env[AKS_DATABASE_URL_ENV_VAR]).toBe(UNREACHABLE_URL);
+  });
+
+  it("adopts the URL this run recorded when the caller gave no override", () => {
+    const env = seedingEnvironment();
+    writeTestDatabaseHandoff(
+      buildHandoff({ source: "container", url: RECORDED_URL, container: null, reused: false }),
+      env,
+    );
+
+    expect(publishTestDatabaseUrl(env)).toBe(RECORDED_URL);
+    // Both variables, always: publishing into one splits the run in two (see the module's header).
+    expect(env[AKS_DATABASE_URL_ENV_VAR]).toBe(RECORDED_URL);
+    expect(env[TEST_DATABASE_URL_ENV_VAR]).toBe(RECORDED_URL);
+  });
+
+  it("keeps the documented local default when there is neither a record nor an override", () => {
+    // This is the value the static seed in `vitest.config.ts` used to deliver to every worker of a
+    // run whose record it could not read. The channel moved; the answer must not.
+    const env = seedingEnvironment();
+
+    expect(publishTestDatabaseUrl(env)).toBe(testDatabaseUrl({}));
+    expect(env[AKS_DATABASE_URL_ENV_VAR]).toBe(testDatabaseUrl({}));
+  });
+});
+
+describe("the hatch outranks every seed, and the runner seeds none", () => {
+  it("removes a seeded URL from a worker of a run that declared it has no database", () => {
+    const env = seedingEnvironment();
+    env[TEST_DATABASE_URL_ENV_VAR] = UNREACHABLE_URL;
+    env[DATABASE_OPT_OUT_ENV_VAR] = "1";
+    env[AKS_DATABASE_URL_ENV_VAR] = UNREACHABLE_URL;
+
+    expect(publishTestDatabaseUrl(env)).toBeUndefined();
+    // DELETED, not blanked: an empty value reads as "use the vendored default" to production code.
+    expect(AKS_DATABASE_URL_ENV_VAR in env).toBe(false);
+  });
+
+  it("seeds no database URL statically in the runner configuration", () => {
+    // The pin against the defect returning: one channel, and it is the setup file.
+    const seeded = (vitestConfig.test?.env ?? {}) as Record<string, unknown>;
+
+    expect(seeded[AKS_DATABASE_URL_ENV_VAR]).toBeUndefined();
   });
 });
