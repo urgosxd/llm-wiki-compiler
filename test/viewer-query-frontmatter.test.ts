@@ -19,7 +19,15 @@ import { writePage } from "./fixtures/write-page.js";
 import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
 import { pageTimestamp, resolvePageKind } from "../packages/wiki/src/viewer/page-fields.js";
 import { useViewerProcessLifecycle } from "./fixtures/run-cli-server.js";
+import { useFileMode } from "./fixtures/file-mode.js";
 import { fetchJson } from "./fixtures/viewer-fetch.js";
+
+/**
+ * Every case here reads a root this suite wrote to DISK — the snapshots, the `/api/pages`
+ * envelope, and the pure `page-fields` helpers — so the file's mode is the named
+ * no-database mode of S2, declared once for the file.
+ */
+useFileMode();
 
 const SAVED_AT = "2026-08-01T07:30:12.889Z";
 

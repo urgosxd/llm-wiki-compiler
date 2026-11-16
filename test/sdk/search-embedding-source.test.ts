@@ -33,6 +33,11 @@ import {
 } from "../fixtures/search-embedding-corpus.js";
 import { createWikiCore } from "../../packages/wiki/src/sdk/core.js";
 import { callClaude } from "../../packages/wiki/src/utils/llm.js";
+import { withFileMode, usePerCaseFileMode } from "../fixtures/file-mode.js";
+
+// Both backends are covered on purpose: the Stack-backed case needs the database it was
+// seeded with, the file-backed one declares the absence of a database for itself.
+usePerCaseFileMode();
 
 vi.mock("../../packages/wiki/src/utils/llm.js", () => ({ callClaude: vi.fn() }));
 
@@ -74,17 +79,22 @@ describe("SDK search over a file-backed corpus with no embeddings", () => {
   });
 
   it("keeps the index fallback and its warning exactly as before", async () => {
-    // No Stack and no `embeddings.json`: the behaviour this change must not touch.
-    await stubSelectPages(["concepts/alpha"]);
+    // A file-backed corpus is the named no-database mode (S2), not a Stack that went
+    // missing, so the case states it: `bindSearchEnvironment` pointed the process at a
+    // database for the row-backed case above, and this one takes it back away.
+    await withFileMode(async () => {
+      // No Stack and no `embeddings.json`: the behaviour this change must not touch.
+      await stubSelectPages(["concepts/alpha"]);
 
-    const outcome = await createWikiCore({
-      root,
-      env: { ...process.env, AKS_STACK_ID: "" },
-    }).search("what is alpha");
+      const outcome = await createWikiCore({
+        root,
+        env: { ...process.env, AKS_STACK_ID: "" },
+      }).search("what is alpha");
 
-    expect(refKinds(outcome)).toEqual(["index"]);
-    expect(refSlugs(outcome)).toEqual(["alpha"]);
-    expect(warningCodes(outcome)).toEqual(["embedding-index-outdated"]);
-    expect(JSON.stringify(outcome)).toContain("No embedding index found.");
+      expect(refKinds(outcome)).toEqual(["index"]);
+      expect(refSlugs(outcome)).toEqual(["alpha"]);
+      expect(warningCodes(outcome)).toEqual(["embedding-index-outdated"]);
+      expect(JSON.stringify(outcome)).toContain("No embedding index found.");
+    });
   });
 });

@@ -18,8 +18,8 @@
  * probe cannot be put under one. Two honest observations stand in for that, and
  * neither is dressed up as more than it is:
  *
- *   - the connection string names a port nothing answers, so a graph resolution that
- *     QUERIED would fail the run rather than pass it quietly;
+ *   - the run declares no database at all, so there is no connection for a graph
+ *     resolution to open in the first place;
  *   - the supplied port throws if it is called at all, so any dimension resolution
  *     for the graph — the only thing that would need the graph's handle — is loud.
  *
@@ -38,11 +38,20 @@ import type { Dimension } from "../../packages/wiki/src/dimensions/types.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
 import { seedDeletedSourceProject } from "./retirement-port-project.js";
 
-/** A connection string nothing answers: any query against it fails the run. */
-const UNREACHABLE_DSN = "postgresql://aks:aks@127.0.0.1:1/aks";
-
-/** A bare checkout: no Stack id, and the switch left at its `wiki`-only default. */
-const DEFAULT_SWITCH_ENV: NodeJS.ProcessEnv = { AKS_DATABASE_URL: UNREACHABLE_DSN };
+/**
+ * A bare checkout with no database at all — the named file mode of S2 — and the switch
+ * left at its `wiki`-only default.
+ *
+ * This case used to carry an unreachable DSN here (`postgresql://…@127.0.0.1:1/aks`) as a
+ * second witness that no graph connection was attempted. That witness is gone, and not
+ * because the property weakened: once a CONFIGURED database means "this run must have a
+ * Stack" (S2), a stackless compile cannot carry a DSN without contradicting itself — the
+ * authority refuses the run before any graph decision is reached, which is exactly what
+ * it did. The property is still observed, by the thing that actually observes it: the port
+ * below throws if it is called at all, and `deleted` proves the run got far enough to need
+ * it had the graph been enabled.
+ */
+const DEFAULT_SWITCH_ENV: NodeJS.ProcessEnv = {};
 
 /** The same checkout with the wiki named out loud, which is also graph-disabled. */
 const WIKI_ONLY_ENV: NodeJS.ProcessEnv = { ...DEFAULT_SWITCH_ENV, LLMWIKI_DIMENSIONS: "wiki" };

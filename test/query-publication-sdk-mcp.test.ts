@@ -5,9 +5,12 @@
  *
  * The two surfaces read DIFFERENT backends, on purpose. `createWiki`/`queryCommand`
  * resolve their corpus from `process.env`, which is left unbound, so the SDK cases
- * keep exercising the staged `wiki/` tree. `query_wiki` takes a REQUIRED `stackId`,
- * and a named Stack resolves its pages and its review candidates from Postgres — so
- * the MCP cases seed those same rows on a provisioned Stack and pass its id.
+ * keep exercising the staged `wiki/` tree — and because the runner seeds a database
+ * into every worker, those cases declare the no-database mode for themselves with
+ * `withFileMode` rather than inheriting one they never use. `query_wiki` takes a
+ * REQUIRED `stackId`, and a named Stack resolves its pages and its review candidates
+ * from Postgres — so the MCP cases seed those same rows on a provisioned Stack and
+ * pass its id, and they keep the database this file was seeded with.
  */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -25,6 +28,11 @@ import { SAMPLE_PROFILE } from "./fixtures/profile-fixtures.js";
 import { buildServer } from "./fixtures/mcp-test-env.js";
 import { createProbeStack } from "./dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "./dimensions/harness-lifecycle.js";
+import { withFileMode, usePerCaseFileMode } from "./fixtures/file-mode.js";
+
+// The SDK/CLI cases read the staged `wiki/` tree and declare file mode each; the MCP cases
+// seed rows on a provisioned Stack and keep the database this worker was seeded with.
+usePerCaseFileMode();
 
 vi.mock("../packages/wiki/src/utils/llm.js", () => ({ callClaude: vi.fn() }));
 const ctx = useTempRoot();
@@ -114,12 +122,14 @@ it("guards missing credentials at the SDK entrypoint", async () => {
 });
 
 it("refuses the query command on a project with no compiled pages", async () => {
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  const status = vi.spyOn(console, "log").mockImplementation(() => {});
-  await expect(queryCommand(path.join(ctx.dir, "uncompiled"), "Explain alpha", { save: true })).resolves.toBeUndefined();
-  expect(status.mock.calls.flat().join(" ")).toContain("No compiled pages found");
-  expect(callClaude).not.toHaveBeenCalled();
-  expect(error).not.toHaveBeenCalled();
+  await withFileMode(async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const status = vi.spyOn(console, "log").mockImplementation(() => {});
+    await expect(queryCommand(path.join(ctx.dir, "uncompiled"), "Explain alpha", { save: true })).resolves.toBeUndefined();
+    expect(status.mock.calls.flat().join(" ")).toContain("No compiled pages found");
+    expect(callClaude).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
 });
 
 it.each([
@@ -128,45 +138,51 @@ it.each([
   { save: false, answer: "Broken [[missing]].", field: undefined },
 ])("returns distinct quiet SDK result $field", async ({ save, answer, field }) => {
   answerWith(answer);
-  const log = vi.spyOn(console, "log").mockImplementation(() => {});
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  const stdout = vi.spyOn(process.stdout, "write");
-  const stderr = vi.spyOn(process.stderr, "write");
-  const { query } = createWiki({ root: ctx.dir });
-  const result = await query("Explain alpha", { save });
-  expect(result.answer).toBe(answer);
-  for (const key of ["saved", "publicationRefusal"] as const) {
-    if (key === field) expect(result[key]).toBeTruthy();
-    else expect(result).not.toHaveProperty(key);
-  }
-  expect(result).not.toHaveProperty("candidateId");
-  expect(callClaude).toHaveBeenCalledTimes(2);
-  expect(log).not.toHaveBeenCalled();
-  expect(warn).not.toHaveBeenCalled();
-  expect(error).not.toHaveBeenCalled();
-  expect(stdout).not.toHaveBeenCalled();
-  expect(stderr).not.toHaveBeenCalled();
+  await withFileMode(async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stdout = vi.spyOn(process.stdout, "write");
+    const stderr = vi.spyOn(process.stderr, "write");
+    const { query } = createWiki({ root: ctx.dir });
+    const result = await query("Explain alpha", { save });
+    expect(result.answer).toBe(answer);
+    for (const key of ["saved", "publicationRefusal"] as const) {
+      if (key === field) expect(result[key]).toBeTruthy();
+      else expect(result).not.toHaveProperty(key);
+    }
+    expect(result).not.toHaveProperty("candidateId");
+    expect(callClaude).toHaveBeenCalledTimes(2);
+    expect(log).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(stdout).not.toHaveBeenCalled();
+    expect(stderr).not.toHaveBeenCalled();
+  });
 });
 
 
 it("writes a saved answer as a queries page, never as a review candidate", async () => {
   await writeFile(path.join(ctx.dir, ".llmwiki/profile.json"), JSON.stringify(SAMPLE_PROFILE));
-  const log = vi.spyOn(console, "log").mockImplementation(() => {});
-  const result = await createWiki({ root: ctx.dir }).query("Explain alpha", { save: true });
-  expect(result.answer).toBe("Retained [[alpha]].");
-  expect(result.saved).toBe("explain-alpha");
-  expect(result.publicationRefusal).toBeUndefined();
-  expect(result).not.toHaveProperty("candidateId");
-  expect(await readFile(path.join(ctx.dir, "wiki/queries/explain-alpha.md"), "utf8")).toContain("Retained [[alpha]]");
-  expect(log).not.toHaveBeenCalled();
-  expect(callClaude).toHaveBeenCalledTimes(2);
+  await withFileMode(async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const result = await createWiki({ root: ctx.dir }).query("Explain alpha", { save: true });
+    expect(result.answer).toBe("Retained [[alpha]].");
+    expect(result.saved).toBe("explain-alpha");
+    expect(result.publicationRefusal).toBeUndefined();
+    expect(result).not.toHaveProperty("candidateId");
+    expect(await readFile(path.join(ctx.dir, "wiki/queries/explain-alpha.md"), "utf8")).toContain("Retained [[alpha]]");
+    expect(log).not.toHaveBeenCalled();
+    expect(callClaude).toHaveBeenCalledTimes(2);
+  });
 });
 
 it("propagates an actual SDK save failure", async () => {
   await mkdir(path.join(ctx.dir, "wiki/queries/explain-alpha.md"));
-  await expect(createWiki({ root: ctx.dir }).query("Explain alpha", { save: true })).rejects.toMatchObject({ code: "EISDIR" });
-  expect(callClaude).toHaveBeenCalledTimes(2);
+  await withFileMode(async () => {
+    await expect(createWiki({ root: ctx.dir }).query("Explain alpha", { save: true })).rejects.toMatchObject({ code: "EISDIR" });
+    expect(callClaude).toHaveBeenCalledTimes(2);
+  });
 });
 
 it.each([false, true])("real MCP query returns the answer with save=%s and observable refusal only when requested", async (save) => {

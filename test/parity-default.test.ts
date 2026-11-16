@@ -41,7 +41,15 @@ import { createWiki } from "../packages/wiki/src/index.js";
 import { buildViewerSnapshot } from "../packages/wiki/src/viewer/snapshot.js";
 import { buildParityCorpus } from "./fixtures/parity-corpus.js";
 import { connectMcpClient } from "./fixtures/mcp-test-env.js";
+import { useFileMode } from "./fixtures/file-mode.js";
 import { assertGolden } from "./parity/golden.js";
+
+/**
+ * Every surface captured below reads the parity corpus from DISK — that is what the
+ * goldens freeze — so the file's mode is the named no-database mode of S2 and it is
+ * declared here, once, instead of case by case.
+ */
+useFileMode();
 
 /** Every deterministic, no-LLM surface the profile refactor must reproduce. */
 const DETERMINISTIC_SURFACES = [

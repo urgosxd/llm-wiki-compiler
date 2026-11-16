@@ -40,7 +40,7 @@
  * `sources/` files and the compile state are the ones a caller actually gets.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
@@ -49,11 +49,16 @@ import type { Page } from "../../packages/wiki/src/pages/list.js";
 import type { SourceRecord } from "../../packages/wiki/src/sources/store.js";
 import type { LintResult, LintSummary } from "../../packages/wiki/src/linter/types.js";
 import type { TieredLintReportV1 } from "../../packages/wiki/src/linter/tiers.js";
-import { AKS_STACK_ID_ENV_VAR } from "../../packages/wiki/src/dimensions/activation.js";
+import { AKS_STACK_ID_ENV_VAR, isDatabaseConfigured } from "../../packages/wiki/src/dimensions/activation.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";
 import { seedConceptPage } from "../fixtures/mcp-stack-rows.js";
 import { keylessly } from "../fixtures/keyless-provider.js";
+import { withFileMode, usePerCaseFileMode } from "../fixtures/file-mode.js";
+
+// Both modes live in this file: the two Stack-bound describes keep the database the
+// worker was seeded with, and the file-mode cases take it away for themselves.
+usePerCaseFileMode();
 
 /** A facade handle, as `createWiki` returns it. */
 type Wiki = ReturnType<typeof createWiki>;
@@ -271,24 +276,47 @@ describe("SDK facade compile and status honour CreateWikiOptions.env", () => {
 // PRESERVE: the documented DEFAULT this change must not move.
 describe("SDK facade with no env and no Stack configured", () => {
   it("keeps reading and writing the file backend", async () => {
-    delete process.env.AKS_STACK_ID;
+    // THE DECLARATION, and it is the point of the case rather than a way to make it
+    // pass: a Stack-less run is legitimate only when no database is configured at all
+    // (S2), so the file mode is STATED here instead of inherited from a worker that was
+    // seeded with a database this case never uses. The two proofs below sit either side
+    // of it — inside, that the run had no database; after, that the backend it used was
+    // the file one and not a row store it could have reached.
+    await withFileMode(async () => {
+      delete process.env.AKS_STACK_ID;
+      // Proven with the PRODUCTION predicate, so this case cannot drift from the
+      // question the Stack authority itself asks.
+      expect(isDatabaseConfigured(process.env)).toBe(false);
 
-    const wiki = createWiki({ root: tenants.boundRoot });
-    await wiki.ingestText({ title: "Local", text: bodyFor("Local") });
-    await keylessly(() => wiki.compile());
+      const wiki = createWiki({ root: tenants.boundRoot });
+      await wiki.ingestText({ title: "Local", text: bodyFor("Local") });
+      await keylessly(() => wiki.compile());
 
-    const status = await statusOf(wiki);
-    expect(status.stateStatus).toBe("ok");
-    expect(status.sources).toBe(1);
-    expect((await sourcesOf(wiki)).length).toBe(1);
-    expect(status.pages.total).toBe((await pagesOf(wiki)).length);
+      const status = await statusOf(wiki);
+      expect(status.stateStatus).toBe("ok");
+      expect(status.sources).toBe(1);
+      expect((await sourcesOf(wiki)).length).toBe(1);
+      expect(status.pages.total).toBe((await pagesOf(wiki)).length);
 
-    // `lint` keeps reading the file corpus too: one page written to disk, named as
-    // the only empty page, and no database anywhere in the answer.
-    await mkdir(path.join(tenants.boundRoot, "wiki", "concepts"), { recursive: true });
-    const hollowPath = path.join(tenants.boundRoot, "wiki", "concepts", "hollow.md");
-    await writeFile(hollowPath, hollowPageBody("Hollow"), "utf-8");
-    expect(emptyPageSlugs(((await wiki.lint()) as LintSummary).results)).toEqual(["hollow"]);
+      // `lint` keeps reading the file corpus too: one page written to disk, named as
+      // the only empty page, and no database anywhere in the answer.
+      await mkdir(path.join(tenants.boundRoot, "wiki", "concepts"), { recursive: true });
+      const hollowPath = path.join(tenants.boundRoot, "wiki", "concepts", "hollow.md");
+      await writeFile(hollowPath, hollowPageBody("Hollow"), "utf-8");
+      expect(emptyPageSlugs(((await wiki.lint()) as LintSummary).results)).toEqual(["hollow"]);
+
+      // The file backend really was the one that WROTE: the compile state is the file
+      // the row-backed path does not produce.
+      await expect(readFile(path.join(tenants.boundRoot, ".llmwiki/state.json"), "utf-8")).resolves.toContain("version");
+    });
+
+    // ...and it was used BECAUSE no database was configured, not because a row backend
+    // was unavailable: the Stack this test provisioned is reachable and holds none of
+    // the rows an ingest-and-compile would have written had the run gone row-backed.
+    // A file mode that quietly reached for rows on the way here would fail both counts.
+    expect(tenants.bound.harness.reachable).toBe(true);
+    expect(await rowsOf(tenants.bound, "wiki.pages")).toBe(0);
+    expect(await rowsOf(tenants.bound, "wiki.source_compile_state")).toBe(0);
   }, 180_000);
 });
 

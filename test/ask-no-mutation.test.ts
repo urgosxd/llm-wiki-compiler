@@ -23,6 +23,11 @@ import { changedPaths as changed, fingerprintTree as fingerprint } from "./fixtu
 import { journalDescriptions, seedConceptPage } from "./fixtures/mcp-stack-rows.js";
 import { createProbeStack } from "./dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "./dimensions/harness-lifecycle.js";
+import { withFileMode, usePerCaseFileMode } from "./fixtures/file-mode.js";
+
+// The MCP case below asserts a Stack's rows and keeps the database; the three CLI cases
+// assert the staged `wiki/` tree and declare the absence of a database each for itself.
+usePerCaseFileMode();
 
 // The selector call is answered with a page id and every other call echoes its
 // prompt, which is what `echoCallClaudeModule` does — extended here because a
@@ -61,8 +66,9 @@ async function project(suffix: string): Promise<string> {
  * The Stack the MCP route is asked about.
  *
  * `query_wiki` takes a REQUIRED `stackId`, so the call below names one. Provisioning
- * it is cheap and keeps the three filesystem-only cases untouched: nothing is bound
- * in `process.env`, so the CLI route keeps reading the staged `wiki/` tree.
+ * it is cheap and keeps the three filesystem-only cases untouched: no Stack is bound
+ * in `process.env`, and those three declare file mode for themselves with
+ * `withFileMode`, so the CLI route keeps reading the staged `wiki/` tree.
  */
 let stack: ProbeStack;
 
@@ -89,17 +95,36 @@ async function mcpQueryHandler(root: string): Promise<(args: Record<string, unkn
   return handler;
 }
 
+/**
+ * Ask `question` through the CLI route and answer which paths changed.
+ *
+ * One definition of "what did asking change" for the three CLI cases, which differ only
+ * in the question's options and in the allowlist they assert.
+ *
+ * @param prefix - Temp-root prefix, unique per case.
+ * @param question - The question to ask.
+ * @param options - Query options the case varies (`save`, `pageScope`).
+ * @returns The relative paths the run changed.
+ */
+async function changesAfterAsking(
+  prefix: string,
+  question: string,
+  options: { pageScope?: string[]; save?: boolean } = {},
+): Promise<string[]> {
+  const root = await project(prefix);
+  const { generateAnswer } = await import("../packages/wiki/src/commands/query.js");
+  const before = await fingerprint(root);
+  // Pins the precondition: an empty fingerprint would pass regardless.
+  expect(before.size).toBeGreaterThan(0);
+  await generateAnswer(root, question, options);
+  return changed(before, await fingerprint(root));
+}
+
 describe("asking a question without saving", () => {
   it("changes only the public activity log on the CLI route", async () => {
-    const root = await project("ask-cli");
-    const { generateAnswer } = await import("../packages/wiki/src/commands/query.js");
-    const before = await fingerprint(root);
-    // Pins the precondition: an empty fingerprint would pass regardless.
-    expect(before.size).toBeGreaterThan(0);
-
-    await generateAnswer(root, "scaling?");
-
-    expect(changed(before, await fingerprint(root))).toEqual(["log.md"]);
+    await withFileMode(async () => {
+      expect(await changesAfterAsking("ask-cli", "scaling?")).toEqual(["log.md"]);
+    });
   });
 
   it("journals the MCP route's question to the named Stack, not the deployment's log.md", async () => {
@@ -134,22 +159,18 @@ describe("asking a question without saving", () => {
   });
 
   it("keeps an explicitly scoped read byte-identical", async () => {
-    const root = await project("ask-scoped");
-    const { generateAnswer } = await import("../packages/wiki/src/commands/query.js");
-    const before = await fingerprint(root);
-    expect(before.size).toBeGreaterThan(0);
-    await generateAnswer(root, "scaling?", { pageScope: ["concepts/foo", "papers/foo"] });
-    expect(changed(before, await fingerprint(root))).toEqual([]);
+    await withFileMode(async () => {
+      const changedPaths = await changesAfterAsking("ask-scoped", "scaling?", {
+        pageScope: ["concepts/foo", "papers/foo"],
+      });
+      expect(changedPaths).toEqual([]);
+    });
   });
 
   it("DOES journal when the answer is saved — the write path is unchanged", async () => {
     // Saving remains an explicit write as well as recording query activity.
-    const root = await project("ask-saved");
-    const { generateAnswer } = await import("../packages/wiki/src/commands/query.js");
-    const before = await fingerprint(root);
-
-    await generateAnswer(root, "scaling?", { save: true });
-
-    expect(changed(before, await fingerprint(root))).toContain("log.md");
+    await withFileMode(async () => {
+      expect(await changesAfterAsking("ask-saved", "scaling?", { save: true })).toContain("log.md");
+    });
   });
 });

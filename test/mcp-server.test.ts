@@ -20,6 +20,12 @@ import {
 import { appendHistory } from "../packages/wiki/src/eval/stats.js";
 import { makeEvalReport } from "./fixtures/eval-report.js";
 import { useStatusStackFixture } from "./fixtures/stack-status-fixtures.js";
+import { withFileMode, usePerCaseFileMode } from "./fixtures/file-mode.js";
+
+// Both modes: the tool cases assert a named Stack's rows and keep the database the worker
+// was seeded with, while every resource case (and `run_eval`) reads this temp root from disk
+// and declares the absence of a database for itself.
+usePerCaseFileMode();
 
 const rootHandle = useMcpRoot("llmwiki-mcp");
 
@@ -287,12 +293,36 @@ describe("error handling", () => {
 
 type ResourceMap = Record<string, { readCallback: (uri: URL) => Promise<{ contents: Array<{ text: string }> }> }>;
 
+/** The registered resource TEMPLATE map: a template takes the decoded variables too. */
+type TemplateMap = Record<string, {
+  readCallback: (uri: URL, vars: Record<string, string>) => Promise<{ contents: Array<{ text: string }> }>;
+}>;
+
 /** Read a static resource and return its first content block's raw text. */
 async function readStaticResourceText(uri: string): Promise<string> {
   const server = buildServer();
   const resource = (getRegisteredResources(server) as ResourceMap)[uri];
   const result = await resource.readCallback(new URL(uri));
   return result.contents[0].text;
+}
+
+/**
+ * Read one resource TEMPLATE through the registered server and parse its payload.
+ *
+ * @param name - Template the client addressed (`wiki-concept`, `wiki-query`).
+ * @param uri - The URI, encoded the way a client sends it.
+ * @param vars - The variables the client decoded out of that URI.
+ * @returns The parsed JSON payload the template answered with.
+ */
+async function readTemplateResource(
+  name: string,
+  uri: string,
+  vars: Record<string, string>,
+): Promise<Record<string, unknown>> {
+  const server = buildServer();
+  const template = (getRegisteredResourceTemplates(server) as TemplateMap)[name];
+  const result = await template.readCallback(new URL(uri), vars);
+  return JSON.parse(result.contents[0].text) as Record<string, unknown>;
 }
 
 describe("MCP resources", () => {
@@ -305,7 +335,7 @@ describe("MCP resources", () => {
   });
 
   it("resolves the wiki-state static resource", async () => {
-    const parsed = JSON.parse(await readStaticResourceText("llmwiki://state"));
+    const parsed = await withFileMode(async () => JSON.parse(await readStaticResourceText("llmwiki://state")));
     expect(parsed).toMatchObject({ version: 1, sources: expect.any(Object) });
   });
 
@@ -317,12 +347,14 @@ describe("MCP resources", () => {
       path.join(root, ".llmwiki/state.json"),
       JSON.stringify({ version: 3, indexHash: "secret", sources: { "leak.md": {} } }),
     );
-    const text = await readStaticResourceText("llmwiki://state");
-    const parsed = JSON.parse(text);
-    expect(parsed.stateStatus).toBe("too-new");
-    expect(parsed.error).toMatch(/newer llmwiki version/);
-    expect(parsed).not.toHaveProperty("sources");
-    expect(text).not.toContain("secret");
+    return await withFileMode(async () => {
+      const text = await readStaticResourceText("llmwiki://state");
+      const parsed = JSON.parse(text);
+      expect(parsed.stateStatus).toBe("too-new");
+      expect(parsed.error).toMatch(/newer llmwiki version/);
+      expect(parsed).not.toHaveProperty("sources");
+      expect(text).not.toContain("secret");
+    });
   });
 
   it("resolves the wiki-sources static resource", async () => {
@@ -345,13 +377,9 @@ describe("MCP resources", () => {
       "Concept body.",
     );
 
-    const server = buildServer();
-    const template = (getRegisteredResourceTemplates(server) as Record<string, { readCallback: (uri: URL, vars: Record<string, string>) => Promise<{ contents: Array<{ text: string }> }> }>)["wiki-concept"];
-    const result = await template.readCallback(
-      new URL("llmwiki://concept/alpha"),
-      { slug: "alpha" },
+    const parsed = await withFileMode(() =>
+      readTemplateResource("wiki-concept", "llmwiki://concept/alpha", { slug: "alpha" }),
     );
-    const parsed = JSON.parse(result.contents[0].text);
     expect(parsed).toMatchObject({ slug: "alpha", body: "Concept body." });
   });
 
@@ -363,13 +391,9 @@ describe("MCP resources", () => {
       "Saved query body.",
     );
 
-    const server = buildServer();
-    const template = (getRegisteredResourceTemplates(server) as Record<string, { readCallback: (uri: URL, vars: Record<string, string>) => Promise<{ contents: Array<{ text: string }> }> }>)["wiki-query"];
-    const result = await template.readCallback(
-      new URL("llmwiki://query/what-is-x"),
-      { slug: "what-is-x" },
+    const parsed = await withFileMode(() =>
+      readTemplateResource("wiki-query", "llmwiki://query/what-is-x", { slug: "what-is-x" }),
     );
-    const parsed = JSON.parse(result.contents[0].text);
     expect(parsed).toMatchObject({ slug: "what-is-x", body: "Saved query body." });
   });
 
@@ -377,13 +401,12 @@ describe("MCP resources", () => {
     const slug = "Foo #1";
     await writePage(path.join(root, "wiki/concepts"), slug, { title: "Foo One", summary: "S" }, "Hashy body.");
 
-    const server = buildServer();
-    const template = (getRegisteredResourceTemplates(server) as Record<string, { readCallback: (uri: URL, vars: Record<string, string>) => Promise<{ contents: Array<{ text: string }> }> }>)["wiki-concept"];
     // The list URI percent-encodes the slug; the read decodes it back to the
     // raw slug var — `#` does not truncate the page-part at the fragment.
     const encoded = encodeURIComponent(slug);
-    const result = await template.readCallback(new URL(`llmwiki://concept/${encoded}`), { slug });
-    const parsed = JSON.parse(result.contents[0].text);
+    const parsed = await withFileMode(() =>
+      readTemplateResource("wiki-concept", `llmwiki://concept/${encoded}`, { slug }),
+    );
     expect(parsed).toMatchObject({ slug, body: "Hashy body." });
   });
 });
@@ -391,18 +414,27 @@ describe("MCP resources", () => {
 describe("run_eval tool", () => {
   it("returns EvalReport shape for an empty project (fast suite)", async () => {
     if (!fixture().reachable) return;
-    const server = buildServer();
-    const result = await callTool(server, "run_eval", { suite: "fast", stackId: stackId() });
-    const payload = result.structuredContent?.result as Record<string, unknown>;
-    expect(payload).toMatchObject({
-      suite: "fast",
-      timestamp: expect.any(String),
-      health: expect.objectContaining({ score: expect.any(Number) }),
-      citationCoverage: expect.objectContaining({ coveragePercent: expect.any(Number) }),
-      stats: expect.objectContaining({ pageCount: expect.any(Number) }),
-      thresholdViolations: expect.any(Array),
+    // FILE MODE, and the declaration is the finding: `run_eval` evaluates the ON-DISK
+    // corpus (`evaluateGraphHealth` reads `process.env` through the seams, and the rest
+    // of `runEval` reads `root`), so with no database configured the report describes
+    // this temp project and nothing else. The `stackId` the schema requires is
+    // validated and then not threaded into `runEval` at all — `tools.ts` passes no env
+    // to it — which is a product gap this case neither pins nor hides: it asks for the
+    // SHAPE a well-formed empty report has.
+    return await withFileMode(async () => {
+      const server = buildServer();
+      const result = await callTool(server, "run_eval", { suite: "fast", stackId: stackId() });
+      const payload = result.structuredContent?.result as Record<string, unknown>;
+      expect(payload).toMatchObject({
+        suite: "fast",
+        timestamp: expect.any(String),
+        health: expect.objectContaining({ score: expect.any(Number) }),
+        citationCoverage: expect.objectContaining({ coveragePercent: expect.any(Number) }),
+        stats: expect.objectContaining({ pageCount: expect.any(Number) }),
+        thresholdViolations: expect.any(Array),
+      });
+      expect(payload.citationSupport).toBeUndefined();
     });
-    expect(payload.citationSupport).toBeUndefined();
   });
 
   it("throws credentials error when suite=full and no provider configured", async () => {

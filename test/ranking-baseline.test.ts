@@ -19,6 +19,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { buildRankingBaseline, type RankingBaseline } from "./fixtures/ranking-baseline.js";
+import { withFileMode } from "./fixtures/file-mode.js";
 import { assertGolden } from "./parity/golden.js";
 
 /** Golden name — maps to test/parity/__golden__/ranking-baseline.json. */
@@ -29,7 +30,11 @@ let baseline: RankingBaseline;
 
 beforeAll(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "llmwiki-rank-baseline-"));
-  baseline = await buildRankingBaseline(root);
+  // The baseline reads a FILE-BACKED project — pages on disk, vectors in
+  // `embeddings.json` — which is the named no-database mode (S2), so the whole build
+  // runs with no database configured. Declared here, in `beforeAll`, because that is
+  // where the work happens: a per-test hook would run after this and too late.
+  baseline = await withFileMode(() => buildRankingBaseline(root));
 });
 
 afterAll(async () => {
