@@ -64,7 +64,7 @@ root as cwd for `dotenv/config` — otherwise it demands Anthropic credentials."
 | T8 | S9, S10, S11, S12 — RED: guard assertions in `test/artifact/kg-container-entry.test.ts`; GREEN: boot-time
   `hf:` validation in `packages/llmwiki-kg/docker/entry.sh`; DOC: contract, provider-gap and finding sections | inline | `6848a113` |
 | T9 | S9, S10 (amended by L10) — RED: the ordering assertion now requires the guard BEFORE the caller-command
-  passthrough; GREEN: the guard moved above the passthrough in `packages/llmwiki-kg/docker/entry.sh` | inline | `pending` |
+  passthrough; GREEN: the guard moved above the passthrough in `packages/llmwiki-kg/docker/entry.sh` | inline | `5375640e` |
 
 ## Spec status
 
@@ -317,5 +317,6 @@ provider configuration that the published entry does not carry.
   - **Not proven.** S9 and S10 are `pending live re-proof`: no image was rebuilt and no container was run in this
     unit, so nothing here shows the guard firing on the baked-`CMD` path. That needs a rebuilt image, which the
     brief's rebuild step owns.
-- **L11** — Work-unit commit for T9 and its follow-up doc-only commit are recorded in `## Tasks` above; both SHAs
-  are full 40-character ids and nothing was pushed.
+- **L11** — Work-unit commit for T9: `5375640ee99d5b8d4c735d763ee097066262f391`
+  (`fix(kg-image): validate the embedding model before command dispatch`), three paths and nothing else. Its
+  follow-up doc-only commit records that SHA in `## Tasks` above. Nothing was pushed.
