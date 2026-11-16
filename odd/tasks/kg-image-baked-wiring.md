@@ -60,7 +60,7 @@ root as cwd for `dotenv/config` — otherwise it demands Anthropic credentials."
   and `AKS_BASE_URL` loopback default in `packages/llmwiki-kg/docker/entry.sh` | inline | `1b2018ea` |
 | T7 | T2, T4 — register `test/artifact/kg-container-entry.test.ts` in the frozen orphan ratchet so the CI-form gate of record selects the whole suite (L6) | inline | `65bbd113` |
 | T8 | S9, S10, S11, S12 — RED: guard assertions in `test/artifact/kg-container-entry.test.ts`; GREEN: boot-time
-  `hf:` validation in `packages/llmwiki-kg/docker/entry.sh`; DOC: contract, provider-gap and finding sections | inline | `<this unit's commit — see L8>` |
+  `hf:` validation in `packages/llmwiki-kg/docker/entry.sh`; DOC: contract, provider-gap and finding sections | inline | `6848a113` |
 
 ## Spec status
 
@@ -254,7 +254,8 @@ provider configuration that the published entry does not carry.
   exactly the class of thing that turns into a support ticket six weeks later." Recorded as observed and NOT fixed:
   "`mcp.json`'s `llmwiki` entry carries no provider variables, and `dist/api.js` needs the operator project root as
   cwd for `dotenv/config` — otherwise it demands Anthropic credentials." S9-S12 are derived from this entry.
-- **L8** — Evidence from this unit (T8). RED before the script changed: `test/artifact/kg-container-entry.test.ts`
+- **L8** — Evidence from this unit (T8), whose work-unit commit is `6848a113d94313d065fc6447aaf1a4fa3c81b4ce`
+  (three paths, plus this follow-up doc-only commit recording it). RED before the script changed: `test/artifact/kg-container-entry.test.ts`
   reported `Tests 3 failed | 11 passed (14)` — "must test the required prefix: expected '#!/bin/sh', '#', …(92) to
   contain 'hf:*)'", "must be conditional on a NON-EMPTY value …: expected [ '#!/bin/sh', '#', …(92) ] to include
   'if [ -n "${LLMWIKI_EMBEDDING_MODEL:-}" ]; then'", and "must carry the embedding-model guard: expected -1 to be
