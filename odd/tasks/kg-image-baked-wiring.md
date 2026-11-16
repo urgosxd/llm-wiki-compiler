@@ -37,8 +37,10 @@ reach the vendor and 404." (L7, verbatim.)
 
 **S10** — DERIVED from S9 audited against L2 (evidence: `.github/scripts/docker-images-check.sh:255-274` boots
 this image with NO `LLMWIKI_EMBEDDING_MODEL` at all), not new operator words: "The guard refuses only a SET value
-that lacks the `hf:` prefix. UNSET or EMPTY passes silently, and a caller-supplied command still runs verbatim and
-unvalidated."
+that lacks the `hf:` prefix. UNSET or EMPTY passes silently, and a caller-supplied command still runs verbatim."
+AMENDED by L10 (manager decision, quoted there): environment validation runs BEFORE command dispatch, so the
+caller's command still wins but only after the environment validates. The original clause "and unvalidated" is
+withdrawn: it described a guard that the baked `CMD` made unreachable.
 
 **S11** — "Six named variables with a reason each is honest. Record them in the recipe with the reason per name."
 (L7, verbatim. Recorded as `## Operator-supplied contract` below.)
@@ -61,6 +63,8 @@ root as cwd for `dotenv/config` — otherwise it demands Anthropic credentials."
 | T7 | T2, T4 — register `test/artifact/kg-container-entry.test.ts` in the frozen orphan ratchet so the CI-form gate of record selects the whole suite (L6) | inline | `65bbd113` |
 | T8 | S9, S10, S11, S12 — RED: guard assertions in `test/artifact/kg-container-entry.test.ts`; GREEN: boot-time
   `hf:` validation in `packages/llmwiki-kg/docker/entry.sh`; DOC: contract, provider-gap and finding sections | inline | `6848a113` |
+| T9 | S9, S10 (amended by L10) — RED: the ordering assertion now requires the guard BEFORE the caller-command
+  passthrough; GREEN: the guard moved above the passthrough in `packages/llmwiki-kg/docker/entry.sh` | inline | `pending` |
 
 ## Spec status
 
@@ -74,8 +78,8 @@ root as cwd for `dotenv/config` — otherwise it demands Anthropic credentials."
 | S6 | Static-only | `test/artifact/kg-container-entry.test.ts` asserts the preserving bridge; the live proof supplied `DATABASE_URL` directly, so no boot has exercised the `AKS_DATABASE_URL`-only path yet. |
 | S7 | Static-only | The same test asserts the loopback `AKS_BASE_URL` default built from `PORT`; the live proof set `AKS_BASE_URL` explicitly (E2), so the default itself is untested by a boot. |
 | S8 | Static-only | The same test asserts no DSN, no remote endpoint, no credential and no userinfo literal, and that ordering keeps the wiring before the explicit-command branch and `exec` last. |
-| S9 | Static-only | `test/artifact/kg-container-entry.test.ts` asserts the `hf:` prefix test, the exact named error on stderr and the `exit 1`; the guard was also exercised by hand (L8). No image has been rebuilt, so no BOOT has refused a malformed id yet. |
-| S10 | Static-only | The same test asserts the `[ -n "${LLMWIKI_EMBEDDING_MODEL:-}" ]` emptiness guard, the absence of a required-variable form, and that the guard sits after the explicit-command branch and before the server `exec`. The CI boot path is asserted by reading `.github/scripts/docker-images-check.sh`, not by running Docker. |
+| S9 | Static-only, `pending live re-proof` (L10) | `test/artifact/kg-container-entry.test.ts` asserts the `hf:` prefix test, the exact named error on stderr and the `exit 1`, and now that the guard precedes the caller-command passthrough. The guard was exercised by hand only with `--entrypoint` and ZERO args (L8), which is NOT the documented boot path: with the baked `CMD` it never fired (L10). An image rebuild must prove it fires on the baked-`CMD` path; that proof is NOT claimed. |
+| S10 | Static-only, `pending live re-proof` (L10) | The same test asserts the `[ -n "${LLMWIKI_EMBEDDING_MODEL:-}" ]` emptiness guard, the absence of a required-variable form, and that the guard sits BEFORE the explicit-command branch and before the server `exec`. The unset case is asserted by reading the script, not proven by a boot: `.github/scripts/docker-images-check.sh:126` boots with the baked `CMD` and no such variable, so that path now depends on the guard's non-empty test passing, which no live CI run has re-exercised since the move. |
 | S11 | Proven by this document | `## Operator-supplied contract` below carries the six functional slots with a reason per name. |
 | S12 | Recorded only, never actioned | `## Provider discovery gap (out of scope, recorded)` below; `mcp.json` is not edited here. |
 
@@ -150,10 +154,10 @@ with `hf:` fails fast, before the server starts:
 [kg-entry] Invalid LLMWIKI_EMBEDDING_MODEL: the embedding model id must start with "hf:" — refusing to start.
 ```
 
-That line goes to stderr and the entry script exits `1`. An UNSET or EMPTY value passes silently, because the CI
-image check boots this image without the variable; and a caller-supplied command still wins verbatim and
-unvalidated, because `docker run … <command>` must not be swallowed. The message names the required prefix and
-never a value.
+That line goes to stderr and the entry script exits `1`. An UNSET or EMPTY value passes silently, because
+`.github/scripts/docker-images-check.sh` boots this image's baked `CMD` with no such variable; and a caller-supplied
+command still wins verbatim, because `docker run … <command>` must not be swallowed — but it runs only AFTER the
+environment validates (L10). The message names the required prefix and never a value.
 
 ## Provider discovery gap (out of scope, recorded)
 
@@ -172,6 +176,14 @@ provider configuration that the published entry does not carry.
   record ran on the COMMITTED tree rather than the working tree — that is the argument for running it there.** A
   working-tree run sees the census list and the new orphan file together in one uncommitted state; the
   committed-tree run saw the file arrive without its census entry, which is the state CI actually gates (L6, L9).
+
+## Lessons
+
+- A guard placed after an always-taken passthrough is dead code. The image bakes `CMD ["node", …]`, so the
+  entrypoint always has arguments; the `hf:` guard sat after `exec "$@"` and never ran on the documented boot path.
+- Only execution proves a guard fires. Two hand runs with `--entrypoint` and ZERO args showed `exit 1` and the exact
+  named error while the real path sailed past the guard, and the script's own comment called the CI boot coverage.
+  A static assertion on line order and a hand run from a different entry shape are not a boot proof.
 
 ## Known residuals
 
@@ -272,3 +284,38 @@ provider configuration that the published entry does not carry.
 - **L9** — Finding: the frozen-census regression in `test/package-selection-union.test.ts` (L6) was caught only
   because the gate of record ran on the COMMITTED tree rather than the working tree — that is the argument for
   running it there.
+- **L10** — DEFECT, observed by execution, quoted verbatim: "`entry.sh:92-93` runs `if [ "$#" -gt 0 ]; then exec "$@"; fi`
+  BEFORE the guard at `entry.sh:102`. The Dockerfile bakes `CMD ["node","packages/llmwiki-kg/ts/dist/index.js"]`, so
+  the entrypoint always receives 2 args → `exec "$@"` fires → lines 102-107 never execute." Observed: with
+  `LLMWIKI_EMBEDDING_MODEL=not-a-hf-model` and the baked CMD, the container reached `Status=running, ExitCode=0` and
+  logged `embeddings via gateway (not-a-hf-model)` — the guard did not fire. With `--entrypoint /usr/local/bin/entry.sh`
+  and ZERO args the same env correctly gave `exit 1` and exactly one stderr line:
+  `[kg-entry] Invalid LLMWIKI_EMBEDDING_MODEL: the embedding model id must start with "hf:" — refusing to start.`
+  Also, verbatim: "`.github/scripts/docker-images-check.sh:126` boots with `docker run --detach --name "$name" "$@"`
+  (baked CMD), so the guard is unreachable in the CI image check too — it is not 'covered by CI' as the entry.sh
+  comment claims." The L8 hand-exercise that reported "the caller's command ran, so the explicit-command branch still
+  wins and stays unvalidated" is exactly this defect seen from the other side; that observation no longer describes
+  the script.
+  - **Decision (manager, stated plainly):** environment validation runs BEFORE command dispatch. A malformed
+    configuration is malformed regardless of which command was requested; refusing a `docker run <tag> sh` whose env
+    carries a bad embedding model is correct, and a caller can still bypass with `--entrypoint`. The
+    caller-command-wins behaviour is preserved — the caller's command is still what runs — but it runs only after the
+    environment validates. S10 is amended accordingly and its "unvalidated" clause is withdrawn.
+  - **Correction (T9).** The whole `if [ -n "${LLMWIKI_EMBEDDING_MODEL:-}" ]; then … fi` block moved to sit
+    immediately after `export AKS_BASE_URL=…` and BEFORE the `if [ "$#" -gt 0 ]` passthrough; its semantics are
+    unchanged (conditional on non-empty, `case` on `hf:*`, one named stderr line, `exit 1`), `exec "$@"` still runs
+    the caller's command verbatim, and `exec node …` is still last. The comments now say the guard runs before
+    command dispatch, that it therefore covers the baked-`CMD` path, and that an unset/blank value still passes so
+    `.github/scripts/docker-images-check.sh` (baked CMD, no such variable) keeps starting; the claim that CI covered
+    the guard is gone.
+  - **Evidence (T9).** RED, `test/artifact/kg-container-entry.test.ts` before the script moved:
+    `Tests 1 failed | 13 passed (14)` — "the guard must precede the explicit-command branch … expected 101 to be less
+    than 91". GREEN after the move: `Tests 14 passed (14)`. `sh -n packages/llmwiki-kg/docker/entry.sh`: SYNTAX OK.
+    Siblings: `test/artifact/container-entry.test.ts` (7) plus `test/package-selection-union.test.ts` (12) →
+    `Test Files 2 passed (2)`, `Tests 19 passed (19)`, `orphan=31 uncovered=0`, with no edit to the census file.
+    `pnpm run lint`: `558 baseline violations in 396 files across 423 rule/file entries; no regression`.
+  - **Not proven.** S9 and S10 are `pending live re-proof`: no image was rebuilt and no container was run in this
+    unit, so nothing here shows the guard firing on the baked-`CMD` path. That needs a rebuilt image, which the
+    brief's rebuild step owns.
+- **L11** — Work-unit commit for T9 and its follow-up doc-only commit are recorded in `## Tasks` above; both SHAs
+  are full 40-character ids and nothing was pushed.

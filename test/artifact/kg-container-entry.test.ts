@@ -353,15 +353,18 @@ describe("KG entrypoint refuses an embedding model id the vendor would reject", 
 });
 
 describe("KG entrypoint places the embedding-model guard before the server starts", () => {
-  it("validates after the explicit-command branch and before the server exec", async () => {
+  it("validates before the explicit-command branch and before the server exec", async () => {
     const lines = (await readRepoFile(ENTRY_SOURCE)).split("\n").map((line) => line.trim());
     const guardAt = lines.indexOf(`if ${EMBEDDING_MODEL_SET_TEST}; then`);
+    const branchAt = lines.indexOf('if [ "$#" -gt 0 ]; then');
 
     expect(guardAt, `\`${ENTRY_SOURCE}\` must carry the embedding-model guard`).toBeGreaterThan(-1);
+    expect(branchAt, `\`${ENTRY_SOURCE}\` must carry an explicit-command-wins branch`).toBeGreaterThan(-1);
     expect(
       guardAt,
-      "a caller-supplied command still wins verbatim and unvalidated, so the guard sits AFTER that branch",
-    ).toBeGreaterThan(lines.indexOf('if [ "$#" -gt 0 ]; then'));
+      "the guard must precede the explicit-command branch: the image bakes `CMD [\"node\", …]`, so the " +
+        "passthrough always fires and a guard placed after it is dead code on the documented boot path",
+    ).toBeLessThan(branchAt);
     expect(guardAt, `the guard must run BEFORE \`exec node ${SERVER_ENTRY}\`, or the server boots anyway`).toBeLessThan(
       lines.indexOf(`exec node ${SERVER_ENTRY}`),
     );

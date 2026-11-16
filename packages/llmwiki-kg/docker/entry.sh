@@ -57,9 +57,14 @@
 # ## Why the embedding model id is validated instead of defaulted
 #
 # The vendor requires an `hf:`-prefixed embedding model id and answers 400 for anything else, so a
-# malformed id fails far from its cause. This script refuses it at boot with one named error. It
-# validates only a NON-EMPTY value, so the CI image check — which boots without the variable — still
-# starts, and it never invents a model id: that stays operator configuration.
+# malformed id fails far from its cause. This script refuses it at boot with one named error, BEFORE
+# any command is dispatched: a malformed configuration is malformed whichever command was requested,
+# and the image bakes `CMD ["node", …/dist/index.js]`, so a guard placed after the caller-command
+# passthrough never runs on the documented boot path. Because the guard precedes that passthrough it
+# covers the baked-`CMD` path too; a caller that really wants to run something else against a bad id
+# can still bypass it with `--entrypoint`. It validates only a NON-EMPTY value — an unset or blank id
+# passes silently, so `.github/scripts/docker-images-check.sh` (which boots the baked `CMD` with no
+# such variable) keeps starting — and it never invents a model id: that stays operator configuration.
 set -eu
 
 # `gateway` for both halves. It is the provider satisfied by a URL and a key alone,
@@ -85,20 +90,17 @@ export DATABASE_URL="${DATABASE_URL:-${AKS_DATABASE_URL:-}}"
 # own `PORT` default, so the tools always talk to this server and never to a remote host.
 export AKS_BASE_URL="${AKS_BASE_URL:-http://127.0.0.1:${PORT:-8000}}"
 
-# A caller-supplied command runs verbatim: this image is also the only place the
-# server lives, so `docker run … <command>` must not be swallowed by a fixed
-# entrypoint. Before this branch existed, `--entrypoint node` was the only way to
-# start anything other than the baked command.
-if [ "$#" -gt 0 ]; then
-  exec "$@"
-fi
-
 # The vendor rejects an embedding model id that does not start with `hf:` and answers 400,
 # which reaches the operator as an opaque failure well after boot. Refuse it here instead, in
-# one greppable line. The guard is CONDITIONAL on a non-empty value: an unset or blank
-# `LLMWIKI_EMBEDDING_MODEL` passes silently, because the application still owns its own default
-# and `.github/scripts/docker-images-check.sh` boots this image without the variable at all.
-# The model id is operator configuration, so it is validated and never defaulted or echoed.
+# one greppable line. This guard runs BEFORE command dispatch on purpose: the image bakes
+# `CMD ["node", …/dist/index.js]`, so the entrypoint always receives two arguments and the
+# caller-command passthrough below always fires — a guard placed after it would be dead code on
+# the documented `docker run <tag>` path. Refusing a malformed environment whichever command was
+# asked for is correct; `--entrypoint` still lets a caller skip this script entirely.
+# The guard is CONDITIONAL on a non-empty value: an unset or blank `LLMWIKI_EMBEDDING_MODEL`
+# passes silently, because `.github/scripts/docker-images-check.sh` boots this image's baked `CMD`
+# with no such variable and must keep starting. The model id is operator configuration, so it is
+# validated and never defaulted or echoed.
 if [ -n "${LLMWIKI_EMBEDDING_MODEL:-}" ]; then
   case "${LLMWIKI_EMBEDDING_MODEL}" in
     hf:*) ;;
@@ -107,6 +109,14 @@ if [ -n "${LLMWIKI_EMBEDDING_MODEL:-}" ]; then
       exit 1
       ;;
   esac
+fi
+
+# A caller-supplied command runs verbatim once the environment validates: this image is also the
+# only place the server lives, so `docker run … <command>` must not be swallowed by a fixed
+# entrypoint. Before this branch existed, `--entrypoint node` was the only way to start anything
+# other than the baked command.
+if [ "$#" -gt 0 ]; then
+  exec "$@"
 fi
 
 # `exec` so the server owns PID 1 and receives SIGTERM directly; without it the
