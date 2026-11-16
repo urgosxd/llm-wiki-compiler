@@ -25,10 +25,10 @@ nothing else."
 
 | ID | Covers | Route | Commit |
 | --- | --- | --- | --- |
-| T1 | S1-S5 (this document) | inline | pending |
-| T2 | S2, S3, S4 — RED: static Dockerfile/script assertions in `test/artifact/kg-container-entry.test.ts` | inline | pending |
-| T3 | S1, S2, S3 — GREEN: `packages/llmwiki-kg/docker/entry.sh` plus `ENTRYPOINT`/`COPY`/`chmod` in the KG `Dockerfile` | inline | pending |
-| T4 | S4 — pin the root image guard and lint as unchanged | inline | pending |
+| T1 | S1-S5 (this document) | inline | `81bca374` |
+| T2 | S2, S3, S4 — RED: static Dockerfile/script assertions in `test/artifact/kg-container-entry.test.ts` | inline | `81bca374` |
+| T3 | S1, S2, S3 — GREEN: `packages/llmwiki-kg/docker/entry.sh` plus `ENTRYPOINT`/`COPY`/`chmod` in the KG `Dockerfile` | inline | `81bca374` |
+| T4 | S4 — pin the root image guard and lint as unchanged | inline | `81bca374` |
 | T5 | S5 — run line, tag and rollback recorded after the live `docker run <tag>` proof | later unit | pending |
 
 ## Run line (filled after live proof)
