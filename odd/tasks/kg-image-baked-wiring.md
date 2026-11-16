@@ -32,6 +32,21 @@ so the MCP tools can reach the server they run inside."
 **S8** — DERIVED from S1 audited against L4 (evidence E1/E2), not new operator words: "No credential, DSN or
 URL literal may be baked into the script; only preserving defaulting."
 
+**S9** — "`LLMWIKI_EMBEDDING_MODEL` without an `hf:` prefix should fail fast with a named error rather than
+reach the vendor and 404." (L7, verbatim.)
+
+**S10** — DERIVED from S9 audited against L2 (evidence: `.github/scripts/docker-images-check.sh:255-274` boots
+this image with NO `LLMWIKI_EMBEDDING_MODEL` at all), not new operator words: "The guard refuses only a SET value
+that lacks the `hf:` prefix. UNSET or EMPTY passes silently, and a caller-supplied command still runs verbatim and
+unvalidated."
+
+**S11** — "Six named variables with a reason each is honest. Record them in the recipe with the reason per name."
+(L7, verbatim. Recorded as `## Operator-supplied contract` below.)
+
+**S12** — "`mcp.json`'s `llmwiki` entry carries no provider variables, and `dist/api.js` needs the operator project
+root as cwd for `dotenv/config` — otherwise it demands Anthropic credentials." (L7, verbatim.) RECORDED ONLY:
+`mcp.json` is not edited by this task, and fixing it is OUT OF SCOPE here.
+
 ## Tasks
 
 | ID | Covers | Route | Commit |
@@ -44,6 +59,8 @@ URL literal may be baked into the script; only preserving defaulting."
 | T6 | S6, S7, S8 — RED: new static assertions in `test/artifact/kg-container-entry.test.ts`; GREEN: DSN bridge
   and `AKS_BASE_URL` loopback default in `packages/llmwiki-kg/docker/entry.sh` | inline | `1b2018ea` |
 | T7 | T2, T4 — register `test/artifact/kg-container-entry.test.ts` in the frozen orphan ratchet so the CI-form gate of record selects the whole suite (L6) | inline | `65bbd113` |
+| T8 | S9, S10, S11, S12 — RED: guard assertions in `test/artifact/kg-container-entry.test.ts`; GREEN: boot-time
+  `hf:` validation in `packages/llmwiki-kg/docker/entry.sh`; DOC: contract, provider-gap and finding sections | inline | `<this unit's commit — see L8>` |
 
 ## Spec status
 
@@ -57,6 +74,10 @@ URL literal may be baked into the script; only preserving defaulting."
 | S6 | Static-only | `test/artifact/kg-container-entry.test.ts` asserts the preserving bridge; the live proof supplied `DATABASE_URL` directly, so no boot has exercised the `AKS_DATABASE_URL`-only path yet. |
 | S7 | Static-only | The same test asserts the loopback `AKS_BASE_URL` default built from `PORT`; the live proof set `AKS_BASE_URL` explicitly (E2), so the default itself is untested by a boot. |
 | S8 | Static-only | The same test asserts no DSN, no remote endpoint, no credential and no userinfo literal, and that ordering keeps the wiring before the explicit-command branch and `exec` last. |
+| S9 | Static-only | `test/artifact/kg-container-entry.test.ts` asserts the `hf:` prefix test, the exact named error on stderr and the `exit 1`; the guard was also exercised by hand (L8). No image has been rebuilt, so no BOOT has refused a malformed id yet. |
+| S10 | Static-only | The same test asserts the `[ -n "${LLMWIKI_EMBEDDING_MODEL:-}" ]` emptiness guard, the absence of a required-variable form, and that the guard sits after the explicit-command branch and before the server `exec`. The CI boot path is asserted by reading `.github/scripts/docker-images-check.sh`, not by running Docker. |
+| S11 | Proven by this document | `## Operator-supplied contract` below carries the six functional slots with a reason per name. |
+| S12 | Recorded only, never actioned | `## Provider discovery gap (out of scope, recorded)` below; `mcp.json` is not edited here. |
 
 ## Run line (filled after live proof)
 
@@ -102,15 +123,63 @@ docker rename kg-mcp-live-prev-6dc57c6db056 kg-mcp-live-openrouter
 docker start kg-mcp-live-openrouter
 ```
 
+## Operator-supplied contract
+
+The image ships its own wiring, so what is left for the operator is the deployment facts. There are **six
+functional slots**. Two of them cover a PAIR of variables, so the literal count of names below is eight. That is
+the whole contract, stated plainly here so nobody has to reconstruct it from a remembered `docker run` line.
+
+| # | Slot (variables) | Reason the operator supplies it |
+| --- | --- | --- |
+| 1 | `AKS_DATABASE_URL` | The DSN, and the only connection string in the stack. Bridged to `DATABASE_URL` because the KG server reads that name (`packages/llmwiki-kg/ts/src/config.ts`) while `mcp.json` publishes the `AKS_` name; a caller's own `DATABASE_URL` always wins. |
+| 2 | `GATEWAY_URL` + `GATEWAY_API_KEY` | The chat pair used for extraction. The image's `gateway` provider is satisfied by a URL and a key alone, and both are deployment facts the image cannot invent. |
+| 3 | `OPENAI_EMBEDDINGS_BASE_URL` + `OPENAI_EMBEDDINGS_API_KEY` | The embeddings pair, on their own host. The entry script derives `GATEWAY_EMBEDDINGS_*` from these two names, so embeddings never follow the chat host; when both are blank the application inherits the chat pair. |
+| 4 | `EXTRACTION_MODEL` | The extraction model id. The application default is not the deployed model, so it cannot be baked in. |
+| 5 | `LLMWIKI_EMBEDDING_MODEL` | The embedding model id, which MUST be `hf:`-prefixed — a vendor constraint, now enforced at boot with a named error (S9, S10). Never defaulted here: it is operator configuration. |
+| 6 | `PORT` | The listener. `AKS_BASE_URL` self-defaults from it (`http://127.0.0.1:$PORT`) so the MCP tools reach the server they run inside. |
+
+Everything else is the image's own: `EXTRACTION_PROVIDER`, `EMBEDDING_PROVIDER`, `GATEWAY_EMBEDDINGS_BASE_URL`,
+`GATEWAY_EMBEDDINGS_API_KEY`, `DATABASE_URL` (from slot 1) and `AKS_BASE_URL` are defaulted by
+`packages/llmwiki-kg/docker/entry.sh`. The eight-name list under `## Run line` is these six slots spelled out as
+variables — not a second contract.
+
+**The one enforcement in this contract is slot 5.** A `LLMWIKI_EMBEDDING_MODEL` that is SET and does not start
+with `hf:` fails fast, before the server starts:
+
+```text
+[kg-entry] Invalid LLMWIKI_EMBEDDING_MODEL: the embedding model id must start with "hf:" — refusing to start.
+```
+
+That line goes to stderr and the entry script exits `1`. An UNSET or EMPTY value passes silently, because the CI
+image check boots this image without the variable; and a caller-supplied command still wins verbatim and
+unvalidated, because `docker run … <command>` must not be swallowed. The message names the required prefix and
+never a value.
+
+## Provider discovery gap (out of scope, recorded)
+
+Recorded verbatim as observed, and deliberately NOT fixed here:
+
+> `mcp.json`'s `llmwiki` entry carries no provider variables, and `dist/api.js` needs the operator project root as
+> cwd for `dotenv/config` — otherwise it demands Anthropic credentials.
+
+**`mcp.json` is NOT edited in this task. Fixing it is OUT OF SCOPE for this unit** (S12). It is a gap in the
+published MCP entry, not in the container: the image now carries its own wiring, while the wiki side still needs a
+provider configuration that the published entry does not carry.
+
+## Findings
+
+- **The frozen-census regression in `test/package-selection-union.test.ts` was caught only because the gate of
+  record ran on the COMMITTED tree rather than the working tree — that is the argument for running it there.** A
+  working-tree run sees the census list and the new orphan file together in one uncommitted state; the
+  committed-tree run saw the file arrive without its census entry, which is the state CI actually gates (L6, L9).
+
 ## Known residuals
 
 - **The extraction budget is still not fully closed.** One run truncated on 1 of 8 calls with
   `LLM output budget exhausted before the model answered (finish_reason: "length")` even at the raised 4096
   budget.
-- **Provider discovery is outside the image.** `mcp.json`'s `llmwiki` entry carries no provider variables, and
-  `dist/api.js` needs the operator project root as cwd for `dotenv/config`; without it the wiki side fails with
-  `Anthropic credentials are required for the "anthropic" provider.` That is a configuration gap in the
-  published entry, not a container one.
+- **Provider discovery is outside the image.** See `## Provider discovery gap (out of scope, recorded)` above:
+  `mcp.json` carries no provider variables and is not edited by this task (S12).
 
 ## Log
 
@@ -179,3 +248,26 @@ docker start kg-mcp-live-openrouter
     `orphan=31`. The guard itself is unaffected: `test/artifact/kg-container-entry.test.ts` (10) plus
     `test/artifact/container-entry.test.ts` (7) -> `Test Files 2 passed (2)`, `Tests 17 passed (17)`.
     `pnpm run lint`: `558 baseline violations in 396 files across 423 rule/file entries; no regression`.
+- **L7** — Manager's request for T8, verbatim: "Six named variables with a reason each is honest. Record them in
+  the recipe with the reason per name, and add one boot-time validation: `LLMWIKI_EMBEDDING_MODEL` without an
+  `hf:` prefix should fail fast with a named error rather than reach the vendor and 404. That vendor constraint is
+  exactly the class of thing that turns into a support ticket six weeks later." Recorded as observed and NOT fixed:
+  "`mcp.json`'s `llmwiki` entry carries no provider variables, and `dist/api.js` needs the operator project root as
+  cwd for `dotenv/config` — otherwise it demands Anthropic credentials." S9-S12 are derived from this entry.
+- **L8** — Evidence from this unit (T8). RED before the script changed: `test/artifact/kg-container-entry.test.ts`
+  reported `Tests 3 failed | 11 passed (14)` — "must test the required prefix: expected '#!/bin/sh', '#', …(92) to
+  contain 'hf:*)'", "must be conditional on a NON-EMPTY value …: expected [ '#!/bin/sh', '#', …(92) ] to include
+  'if [ -n "${LLMWIKI_EMBEDDING_MODEL:-}" ]; then'", and "must carry the embedding-model guard: expected -1 to be
+  greater than -1". GREEN after the guard: `Tests 14 passed (14)`. `sh -n packages/llmwiki-kg/docker/entry.sh`:
+  SYNTAX OK. Root image guard plus the frozen census: `Test Files 2 passed (2)`, `Tests 19 passed (19)`,
+  `orphan=31`, `uncovered=0`. `pnpm run lint` first reported ONE new violation, which was FIXED and not baselined:
+  `test/artifact/kg-container-entry.test.ts:321 max-lines-per-function Arrow function has too many lines (62).
+  Maximum allowed is 39`, on the new `describe` callback, split into two `describe` blocks. Re-run: `558 baseline
+  violations in 396 files across 423 rule/file entries; no regression`. `lint:update` was never used.
+  - **Hand-exercised guard, four runs.** SET without the prefix: the named error on stderr and `exit=1`. UNSET and
+    EMPTY: the guard passes and the server's own configuration error appears instead, which proves node was
+    reached. SET without the prefix plus a trailing command: the caller's command ran, so the explicit-command
+    branch still wins and stays unvalidated (S10).
+- **L9** — Finding: the frozen-census regression in `test/package-selection-union.test.ts` (L6) was caught only
+  because the gate of record ran on the COMMITTED tree rather than the working tree — that is the argument for
+  running it there.

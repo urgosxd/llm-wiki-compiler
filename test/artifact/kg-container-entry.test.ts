@@ -304,6 +304,85 @@ describe("KG entrypoint ordering", () => {
   });
 });
 
+/** The vendor-enforced prefix on an embedding model id; without it the vendor 400s. */
+const REQUIRED_MODEL_PREFIX = "hf:";
+
+/** The variable whose value the vendor rejects when it lacks that prefix. */
+const EMBEDDING_MODEL_VAR = "LLMWIKI_EMBEDDING_MODEL";
+
+/** The one-line named error the guard prints, verbatim: greppable in a log, stable to assert. */
+const EMBEDDING_MODEL_ERROR =
+  `[kg-entry] Invalid ${EMBEDDING_MODEL_VAR}: the embedding model id must start with ` +
+  `"${REQUIRED_MODEL_PREFIX}" — refusing to start.`;
+
+/** The non-empty form: `set -eu` makes a bare `$VAR` fatal when it is unset. */
+const EMBEDDING_MODEL_SET_TEST = `[ -n "\${${EMBEDDING_MODEL_VAR}:-}" ]`;
+
+describe("KG entrypoint refuses an embedding model id the vendor would reject", () => {
+  it("fails fast with one named error when the model id lacks the required prefix", async () => {
+    const script = await readRepoFile(ENTRY_SOURCE);
+    const errorLines = script.split("\n").filter((line) => line.includes(EMBEDDING_MODEL_ERROR));
+
+    expect(script, `\`${ENTRY_SOURCE}\` must test the required \`${REQUIRED_MODEL_PREFIX}\` prefix`).toContain(
+      `${REQUIRED_MODEL_PREFIX}*)`,
+    );
+    expect(errorLines, `\`${ENTRY_SOURCE}\` must print the named error \`${EMBEDDING_MODEL_ERROR}\``).toHaveLength(1);
+    expect(errorLines[0], "the named error must go to stderr so a log scrape can tell the two apart").toContain(">&2");
+    expect(script, "the guard must refuse to start, not warn and continue into a vendor 400").toMatch(/^\s+exit 1$/m);
+  });
+
+  it("stays silent when the variable is unset or empty, because CI boots the image without it", async () => {
+    const script = await readRepoFile(ENTRY_SOURCE);
+    const guardLine = `if ${EMBEDDING_MODEL_SET_TEST}; then`;
+
+    expect(
+      script.split("\n").map((line) => line.trim()),
+      `the guard must be conditional on a NON-EMPTY value (\`${guardLine}\`): ` +
+        "`.github/scripts/docker-images-check.sh:255-274` boots the image with no " +
+        `\`${EMBEDDING_MODEL_VAR}\` at all, so an unset variable must pass silently`,
+    ).toContain(guardLine);
+    expect(
+      script,
+      `\`${ENTRY_SOURCE}\` must not DEMAND \`${EMBEDDING_MODEL_VAR}\`: a required-variable form exits on the CI boot`,
+    ).not.toContain(`${EMBEDDING_MODEL_VAR}:?`);
+    expect(
+      assignmentLines(script, EMBEDDING_MODEL_VAR),
+      `the model id is operator configuration: \`${ENTRY_SOURCE}\` must not default or assign it`,
+    ).toEqual([]);
+  });
+});
+
+describe("KG entrypoint places the embedding-model guard before the server starts", () => {
+  it("validates after the explicit-command branch and before the server exec", async () => {
+    const lines = (await readRepoFile(ENTRY_SOURCE)).split("\n").map((line) => line.trim());
+    const guardAt = lines.indexOf(`if ${EMBEDDING_MODEL_SET_TEST}; then`);
+
+    expect(guardAt, `\`${ENTRY_SOURCE}\` must carry the embedding-model guard`).toBeGreaterThan(-1);
+    expect(
+      guardAt,
+      "a caller-supplied command still wins verbatim and unvalidated, so the guard sits AFTER that branch",
+    ).toBeGreaterThan(lines.indexOf('if [ "$#" -gt 0 ]; then'));
+    expect(guardAt, `the guard must run BEFORE \`exec node ${SERVER_ENTRY}\`, or the server boots anyway`).toBeLessThan(
+      lines.indexOf(`exec node ${SERVER_ENTRY}`),
+    );
+  });
+
+  it("names the required prefix and no model value, credential, DSN or non-loopback endpoint", async () => {
+    const script = await readRepoFile(ENTRY_SOURCE);
+    const hosts = script
+      .split("\n")
+      .filter((line) => line.trim() !== "" && !line.trim().startsWith("#"))
+      .flatMap((line) =>
+        [...line.matchAll(/[a-z][a-z0-9+.-]*:\/\/([^\s"'/:]+)/gi)].map((match) => match[1] ?? ""),
+      );
+
+    expect(script, "the guard must never bake a model id: only the bare prefix is named").not.toMatch(/hf:[A-Za-z0-9]/);
+    expect(script, `${ENTRY_SOURCE} must carry no DSN literal`).not.toMatch(/postgres(?:ql)?:\/\//i);
+    expect(script, "no endpoint may arrive through a URL with userinfo").not.toMatch(/\/\/[^\s/'"@]+@/);
+    expect(hosts, "the only endpoint this script may name is the image's own loopback listener").toEqual(["127.0.0.1"]);
+  });
+});
+
 describe("KG entrypoint carries no configuration of its own", () => {
   it("writes no credential, no DSN value and no endpoint beyond the loopback default", async () => {
     const script = await readRepoFile(ENTRY_SOURCE);

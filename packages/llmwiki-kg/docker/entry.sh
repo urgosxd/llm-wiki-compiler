@@ -53,6 +53,13 @@
 # caller. The one endpoint named is the image's own loopback listener, because the MCP tools
 # proxy to `AKS_BASE_URL` and must reach the server they run inside. This file carries
 # variable names and three defaults, nothing else.
+#
+# ## Why the embedding model id is validated instead of defaulted
+#
+# The vendor requires an `hf:`-prefixed embedding model id and answers 400 for anything else, so a
+# malformed id fails far from its cause. This script refuses it at boot with one named error. It
+# validates only a NON-EMPTY value, so the CI image check — which boots without the variable — still
+# starts, and it never invents a model id: that stays operator configuration.
 set -eu
 
 # `gateway` for both halves. It is the provider satisfied by a URL and a key alone,
@@ -84,6 +91,22 @@ export AKS_BASE_URL="${AKS_BASE_URL:-http://127.0.0.1:${PORT:-8000}}"
 # start anything other than the baked command.
 if [ "$#" -gt 0 ]; then
   exec "$@"
+fi
+
+# The vendor rejects an embedding model id that does not start with `hf:` and answers 400,
+# which reaches the operator as an opaque failure well after boot. Refuse it here instead, in
+# one greppable line. The guard is CONDITIONAL on a non-empty value: an unset or blank
+# `LLMWIKI_EMBEDDING_MODEL` passes silently, because the application still owns its own default
+# and `.github/scripts/docker-images-check.sh` boots this image without the variable at all.
+# The model id is operator configuration, so it is validated and never defaulted or echoed.
+if [ -n "${LLMWIKI_EMBEDDING_MODEL:-}" ]; then
+  case "${LLMWIKI_EMBEDDING_MODEL}" in
+    hf:*) ;;
+    *)
+      echo '[kg-entry] Invalid LLMWIKI_EMBEDDING_MODEL: the embedding model id must start with "hf:" — refusing to start.' >&2
+      exit 1
+      ;;
+  esac
 fi
 
 # `exec` so the server owns PID 1 and receives SIGTERM directly; without it the
