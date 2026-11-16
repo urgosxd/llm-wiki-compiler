@@ -158,3 +158,23 @@ docker start kg-mcp-live-openrouter
     `export T="${T:-seeded}"` printed `<seeded>`. The bridge would have been inert in exactly the case E1 describes.
     The `:-` arm also covers the blank case S6 names, which `z.string().default` does not (it only substitutes for
     `undefined`, so a blank `DATABASE_URL` would reach the server).
+- **L6** — The new guard had a cost the earlier units did not see: registering it made it an ORPHAN. The CI-form
+  gate of record on commit `09a99879` failed, verbatim:
+  `FAIL test/package-selection-union.test.ts > freezes the orphan ratchet so a new unreachable test cannot slip in silently`
+  → `AssertionError: expected [ …(31) ] to deeply equal [ …(30) ]`, received-extra
+  `"test/artifact/kg-container-entry.test.ts"`. Population otherwise healthy: `Test Files 1 failed | 845 passed | 4 skipped (850)`,
+  `Tests 1 failed | 6367 passed | 11 skipped (6379)`, exit 1, turbo `Failed: //#test`.
+  - **Attribution.** `test/artifact/kg-container-entry.test.ts` was added by `81bca374`, and
+    `git diff --stat bb28a587..HEAD -- test/package-selection-union.test.ts` is EMPTY: the frozen list was never
+    updated for it. The file imports only `vitest` and `node:fs/promises`, `node:path`, `node:url` — no repo module —
+    so no `@repo/*` package filter can ever select it. That is precisely the class the ratchet governs, not a hole
+    the ratchet should have caught more loudly.
+  - **Fix.** Registered as a frozen orphan in its alphabetical position with an investigated-not-pasted
+    justification: it is a static text guard over `packages/llmwiki-kg/Dockerfile` and
+    `packages/llmwiki-kg/docker/entry.sh`, read via `readFile`/`stat` under `REPO_ROOT`, and it pins the image
+    entrypoint so a hand-written `docker run` `Cmd` is no longer required. The literal list was edited; the ratchet
+    has no update mode or snapshot and none was used.
+  - **GREEN.** `test/package-selection-union.test.ts`: `Test Files 1 passed (1)`, `Tests 12 passed (12)`,
+    `orphan=31`. The guard itself is unaffected: `test/artifact/kg-container-entry.test.ts` (10) plus
+    `test/artifact/container-entry.test.ts` (7) -> `Test Files 2 passed (2)`, `Tests 17 passed (17)`.
+    `pnpm run lint`: `558 baseline violations in 396 files across 423 rule/file entries; no regression`.

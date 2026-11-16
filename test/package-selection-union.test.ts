@@ -83,6 +83,16 @@ const UNATTRIBUTABLE: readonly string[] = [];
 const FROZEN_ORPHANS: readonly string[] = [
   "test/apply-schemas-check-flag.test.ts",
   "test/artifact/dist-specifiers.test.ts",
+  // LEGITIMATELY ORPHAN, investigated not pasted: this file is a STATIC TEXT GUARD over
+  // the image recipe `packages/llmwiki-kg/Dockerfile` and its entry script
+  // `packages/llmwiki-kg/docker/entry.sh`, both read as text through `readFile`/`stat`
+  // under `REPO_ROOT`. It imports no repo module — only `vitest` and `node:fs/promises`,
+  // `node:path`, `node:url` — so no `@repo/*` package filter can ever select it, which is
+  // exactly the orphan rule. Its subject is the image entrypoint, and it exists so the
+  // provider selection and embeddings split are baked in rather than supplied by a
+  // hand-written `docker run` `Cmd`. There is nothing to fix; a test written this way
+  // lands here by construction.
+  "test/artifact/kg-container-entry.test.ts",
   "test/boundary-gate-visible-forms.test.ts",
   "test/build-stamp-source-coverage.test.ts",
   "test/ci/fallow-report-gate.test.ts",
