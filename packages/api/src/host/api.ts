@@ -55,7 +55,7 @@ import type { IngestJobAccepted } from "@repo/wiki/job-types";
 import type { CompileResult, IngestResult } from "@repo/wiki/utils-types";
 import { requireDimensionsPort, stackIdProblem } from "@repo/foundation";
 import { buildIngestEnv } from "@repo/wiki/ingest-env";
-import { AKS_DATABASE_URL_ENV_VAR, createDimensionsDatabase } from "@repo/wiki/dimensions-activation";
+import { createDimensionsDatabase, isDatabaseConfigured } from "@repo/wiki/dimensions-activation";
 import { stackExists } from "@repo/wiki/stack-store";
 import type { createDimensionsPort } from "../dimensions/port.js";
 
@@ -326,12 +326,17 @@ interface StackRefusal {
  * up, and refusing there would break a supported deployment. A FAILED lookup is still a
  * refusal, because an unreachable database must not read as a valid Stack.
  *
+ * "Is a database configured" is asked through {@link isDatabaseConfigured}, which is the
+ * ONE answer to that question: the Stack authority reads the same predicate, so "is this run
+ * file-backed" has one derivation instead of a copy here and another there. This function
+ * used to carry its own `(process.env[…] ?? "").trim() === ""`, which is the same test with
+ * a second place to change it.
+ *
  * @param stackId - The Stack id taken from the request.
  * @returns The refusal to send, or `undefined` when the Stack may be used.
  */
 async function unknownStackRefusal(stackId: string): Promise<StackRefusal | undefined> {
-  const configured = (process.env[AKS_DATABASE_URL_ENV_VAR] ?? "").trim();
-  if (configured === "") return undefined;
+  if (!isDatabaseConfigured()) return undefined;
   const dimensionsDb = createDimensionsDatabase();
   try {
     if (await stackExists(dimensionsDb.db, stackId)) return undefined;

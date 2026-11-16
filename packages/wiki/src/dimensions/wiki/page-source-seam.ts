@@ -20,7 +20,18 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import type { PageListingSource } from "../../pages/list.js";
-import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js";
+import {
+  createDimensionsDatabase,
+  AKS_DATABASE_URL_ENV_VAR,
+  AKS_STACK_ID_ENV_VAR,
+  isDatabaseConfigured,
+} from "../activation.js";
+import {
+  NO_DATABASE_CONFIGURED,
+  StackAuthorityError,
+  resolveStackAuthority,
+  type StackAuthority,
+} from "../stack-authority.js";
 import { generateIndex } from "../../compiler/indexgen.js";
 import { generateMOC } from "../../compiler/obsidian.js";
 import { createPageListingSource, createPageRemoveSink, createPageWriteSink } from "./page-write-sink.js";
@@ -55,26 +66,93 @@ import {
 } from "./page-scan-source.js";
 
 /**
+ * The Stack one seam call works on: the one the caller resolved, or a fresh answer.
+ *
+ * The id `env` carries is precedence 1 of {@link resolveStackAuthority} and is handed
+ * over as the request's caller-supplied id, so a run whose environment already names a
+ * Stack never reaches the database for it. What `env` does NOT do is decide the mode:
+ * that is the authority's `kind`, answered once by that function.
+ *
+ * @param env - Environment the call was given.
+ * @param supplied - An authority the caller already resolved, when it has one.
+ * @returns The authority to branch on.
+ * @throws {StackAuthorityError} when a database is configured and no Stack resolves.
+ */
+async function authorityFor(
+  env: NodeJS.ProcessEnv,
+  supplied: StackAuthority | undefined,
+): Promise<StackAuthority> {
+  if (supplied !== undefined) return supplied;
+  return await resolveStackAuthority({ stackId: env[AKS_STACK_ID_ENV_VAR], env });
+}
+
+/** The `stack` kind of the authority, as the shared runner hands it to a body. */
+type ResolvedStack = Extract<StackAuthority, { kind: "stack" }>;
+
+/** The database handle the dimension factories accept, as the runner opens it. */
+type SeamDatabaseHandle = ReturnType<typeof createDimensionsDatabase>["db"];
+
+/**
+ * Run one body against whichever backend the authority names, and own the handle.
+ *
+ * THE ONE PLACE a seam call opens and closes a dimensions handle, and the one place that
+ * reads the authority's `kind`. It decides nothing: the authority was resolved before it is
+ * called ({@link authorityFor}), so `file` here means "the resolved answer was the file
+ * mode", never "some variable was empty" -- the distinction this whole change exists for.
+ *
+ * The two bodies stay the caller's, so each seam keeps its own shape -- a listing, a scan, a
+ * remover beside its batch transaction, the empty seam bundle, a state read -- without a
+ * union that would hide how they differ. Every one of them used to repeat the same four
+ * lines before its own body, which is what the duplication gate counted.
+ *
+ * The handle is closed before returning, whatever the body does.
+ *
+ * @param env - Environment the handle is opened with.
+ * @param authority - The Stack this run already resolved, or `undefined` to resolve one from
+ *   `env`.
+ * @param bodies - `file` runs with no database; `stack` receives the open handle and the
+ *   resolved `stack` authority.
+ * @returns Whatever the body returned.
+ * @throws {StackAuthorityError} when a database is configured and no Stack resolves.
+ */
+async function withResolvedBackend<T>(
+  env: NodeJS.ProcessEnv,
+  authority: StackAuthority | undefined,
+  bodies: {
+    readonly file: () => Promise<T>;
+    readonly stack: (db: SeamDatabaseHandle, stack: ResolvedStack) => Promise<T>;
+  },
+): Promise<T> {
+  const resolved = await authorityFor(env, authority);
+  if (resolved.kind === "file") return await bodies.file();
+  const dimensionsDb = createDimensionsDatabase(env);
+  try {
+    return await bodies.stack(dimensionsDb.db, resolved);
+  } finally {
+    await dimensionsDb.close();
+  }
+}
+
+/**
  * Run `fn` against the page source for this environment, or against the file path.
  *
  * The handle is closed before returning, whatever `fn` does.
  *
  * @param env - Environment to read the Stack from; defaults to `process.env`.
  * @param fn - Receives the row source, or `undefined` to keep reading `wiki/`.
+ * @param authority - The Stack this run already resolved; omitted, this call resolves
+ *   one from `env` and branches on its kind.
  * @returns Whatever `fn` returns.
  */
 export async function withPageSource<T>(
   env: NodeJS.ProcessEnv,
   fn: (source: PageListingSource | undefined) => Promise<T>,
+  authority?: StackAuthority,
 ): Promise<T> {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return fn(undefined);
-  const dimensionsDb = createDimensionsDatabase(env);
-  try {
-    return await fn(createPageListingSource(dimensionsDb.db, stackId));
-  } finally {
-    await dimensionsDb.close();
-  }
+  return await withResolvedBackend(env, authority, {
+    file: async () => await fn(undefined),
+    stack: async (db, stack) => await fn(createPageListingSource(db, stack.stackId)),
+  });
 }
 
 /**
@@ -87,20 +165,19 @@ export async function withPageSource<T>(
  *
  * @param env - Environment to read the Stack from.
  * @param fn - Receives the scan source, or `undefined` to read `wiki/` from disk.
+ * @param authority - The Stack this run already resolved; omitted, this call resolves
+ *   one from `env`.
  * @returns Whatever `fn` returns.
  */
 export async function withPageScan<T>(
   env: NodeJS.ProcessEnv,
   fn: (source: PageScanSource | undefined) => Promise<T>,
+  authority?: StackAuthority,
 ): Promise<T> {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return fn(undefined);
-  const dimensionsDb = createDimensionsDatabase(env);
-  try {
-    return await fn(createPageScanSource(dimensionsDb.db, stackId));
-  } finally {
-    await dimensionsDb.close();
-  }
+  return await withResolvedBackend(env, authority, {
+    file: async () => await fn(undefined),
+    stack: async (db, stack) => await fn(createPageScanSource(db, stack.stackId)),
+  });
 }
 
 /**
@@ -120,22 +197,20 @@ export async function withPageScan<T>(
  *
  * @param env - Environment to read the Stack from.
  * @param fn - Receives the listing, or `undefined` to read `sources/` from disk.
+ * @param authority - The Stack this run already resolved; omitted, this call resolves
+ *   one from `env`.
  * @returns Whatever `fn` returns.
  */
 export async function withSourceDocuments<T>(
   env: NodeJS.ProcessEnv,
   fn: (listing: SourceDocumentListing | undefined) => Promise<T>,
+  authority?: StackAuthority,
 ): Promise<T> {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return fn(undefined);
-  const dimensionsDb = createDimensionsDatabase(env);
-  try {
-    return await fn({
-      list: async () => listSourceDocuments(dimensionsDb.db, stackId),
-    });
-  } finally {
-    await dimensionsDb.close();
-  }
+  return await withResolvedBackend(env, authority, {
+    file: async () => await fn(undefined),
+    stack: async (db, stack) =>
+      await fn({ list: async () => listSourceDocuments(db, stack.stackId) }),
+  });
 }
 
 /**
@@ -152,11 +227,14 @@ export async function withSourceDocuments<T>(
  *
  * @param root - Project root, used by the on-disk scan.
  * @param env - Environment to read the Stack from.
+ * @param authority - The Stack this run already resolved; omitted, the scan seam
+ *   resolves one from `env`.
  * @returns True when at least one page exists in either backend.
  */
 export async function hasCompiledPages(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
+  authority?: StackAuthority,
 ): Promise<boolean> {
   return withPageSource(env, async (source) => {
     if (source !== undefined) return (await source.list()).length > 0;
@@ -168,7 +246,7 @@ export async function hasCompiledPages(
       if (entries.some((entry) => entry.endsWith(".md"))) return true;
     }
     return false;
-  });
+  }, authority);
 }
 
 /**
@@ -181,21 +259,20 @@ export async function hasCompiledPages(
  * @param root - Project root, used only to synthesize a diagnostic path per page.
  * @param env - Environment to read the Stack from.
  * @param fn - Receives the raw source, or `undefined` to read `wiki/` from disk.
+ * @param authority - The Stack this run already resolved; omitted, this call resolves
+ *   one from `env`.
  * @returns Whatever `fn` returns.
  */
 export async function withRawPageSource<T>(
   root: string,
   env: NodeJS.ProcessEnv,
   fn: (source: RawPageSource | undefined) => Promise<T>,
+  authority?: StackAuthority,
 ): Promise<T> {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return fn(undefined);
-  const dimensionsDb = createDimensionsDatabase(env);
-  try {
-    return await fn(createRawPageSource(dimensionsDb.db, stackId, root));
-  } finally {
-    await dimensionsDb.close();
-  }
+  return await withResolvedBackend(env, authority, {
+    file: async () => await fn(undefined),
+    stack: async (db, stack) => await fn(createRawPageSource(db, stack.stackId, root)),
+  });
 }
 
 /**
@@ -212,18 +289,20 @@ export async function withRawPageSource<T>(
  *
  * @param root - Project root.
  * @param env - Environment to read the Stack from, and to store the renders in.
- * @param options - `skipMoc` for the index-only caller.
+ * @param options - `skipMoc` for the index-only caller, and the `authority` this run
+ *   already resolved so the pair is rendered from the Stack it resolved instead of
+ *   from a second look at `env`.
  * @returns Resolves when both artifacts are written.
  */
 export async function regenerateIndices(
   root: string,
   env: NodeJS.ProcessEnv,
-  options: { skipMoc?: boolean } = {},
+  options: { skipMoc?: boolean; authority?: StackAuthority } = {},
 ): Promise<void> {
   await withPageScan(env, async (source) => {
     await generateIndex(root, env, source);
     if (options.skipMoc !== true) await generateMOC(root, env, source);
-  });
+  }, options.authority);
 }
 
 /**
@@ -236,20 +315,19 @@ export async function regenerateIndices(
  *
  * @param env - Environment carrying the Stack id and database URL.
  * @param fn - Receives the row source, or `undefined` to read files.
+ * @param authority - The Stack this run already resolved; omitted, this call resolves
+ *   one from `env`.
  * @returns Whatever `fn` returns.
  */
 export async function withRegistrySource<T>(
   env: NodeJS.ProcessEnv,
   fn: (source: RegistryPageSource | undefined) => Promise<T>,
+  authority?: StackAuthority,
 ): Promise<T> {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return fn(undefined);
-  const dimensionsDb = createDimensionsDatabase(env);
-  try {
-    return await fn(createRegistryPageSource(dimensionsDb.db, stackId));
-  } finally {
-    await dimensionsDb.close();
-  }
+  return await withResolvedBackend(env, authority, {
+    file: async () => await fn(undefined),
+    stack: async (db, stack) => await fn(createRegistryPageSource(db, stack.stackId)),
+  });
 }
 
 /**
@@ -264,20 +342,19 @@ export async function withRegistrySource<T>(
  *
  * @param env - Environment to read the Stack from.
  * @param fn - Receives the source, or `undefined` for the file-backed path.
+ * @param authority - The Stack this run already resolved; omitted, this call resolves
+ *   one from `env`.
  * @returns Whatever `fn` returns.
  */
 export async function withEmbeddingStoreSource<T>(
   env: NodeJS.ProcessEnv,
   fn: (source: EmbeddingStoreSource | undefined) => Promise<T>,
+  authority?: StackAuthority,
 ): Promise<T> {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return fn(undefined);
-  const dimensionsDb = createDimensionsDatabase(env);
-  try {
-    return await fn(databaseEmbeddingSource(dimensionsDb.db as never, stackId));
-  } finally {
-    await dimensionsDb.close();
-  }
+  return await withResolvedBackend(env, authority, {
+    file: async () => await fn(undefined),
+    stack: async (db, stack) => await fn(databaseEmbeddingSource(db as never, stack.stackId)),
+  });
 }
 
 /**
@@ -300,24 +377,25 @@ export async function withEmbeddingStoreSource<T>(
  * @param env - Environment to read the Stack from.
  * @param fn - Receives the row remover (or `undefined` to unlink files) and the
  *   batch transaction (or `undefined` for the file path).
+ * @param authority - The Stack this run already resolved; omitted, this call resolves
+ *   one from `env`.
  * @returns Whatever `fn` returns.
  */
 export async function withPageRemover<T>(
   env: NodeJS.ProcessEnv,
   fn: (remover: PageRemover | undefined, transaction?: PageBatchTransaction) => Promise<T>,
+  authority?: StackAuthority,
 ): Promise<T> {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return fn(undefined, undefined);
-  const dimensionsDb = createDimensionsDatabase(env);
-  try {
-    const db = dimensionsDb.db as never;
-    return await fn(
-      createPageRemoveSink(db, stackId),
-      createPageBatchTransaction(db, stackId),
-    );
-  } finally {
-    await dimensionsDb.close();
-  }
+  return await withResolvedBackend(env, authority, {
+    file: async () => await fn(undefined, undefined),
+    stack: async (db, stack) => {
+      const store = db as never;
+      return await fn(
+        createPageRemoveSink(store, stack.stackId),
+        createPageBatchTransaction(store, stack.stackId),
+      );
+    },
+  });
 }
 
 /**
@@ -391,27 +469,57 @@ export interface PageSeams {
 }
 
 /**
+ * The authority a SYNCHRONOUS factory can establish by itself.
+ *
+ * `resolveStackAuthority` is asynchronous because its second precedence step asks the
+ * database, and {@link resolvePageSeams} is called synchronously by the compile
+ * pipeline, which cannot await a factory. A caller that hands it a resolved authority
+ * skips this entirely; one that does not gets the two questions a synchronous read CAN
+ * answer -- the id `env` carries, then whether a database exists at all -- and a third
+ * outcome that is a named refusal, never the file backend.
+ *
+ * @param env - Environment to read the Stack from.
+ * @returns A `stack` authority, or the named `file` authority when no database exists.
+ * @throws {StackAuthorityError} when a database is configured and `env` names no Stack.
+ */
+function authorityFromEnv(env: NodeJS.ProcessEnv): StackAuthority {
+  const supplied = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
+  if (supplied !== "") return { kind: "stack", stackId: supplied };
+  if (!isDatabaseConfigured(env)) return { kind: "file", reason: NO_DATABASE_CONFIGURED };
+  throw new StackAuthorityError(
+    `${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack, but ` +
+      `resolvePageSeams was given no resolved authority and cannot ask the database ` +
+      `resolver itself. Pass the authority the run resolved, or name the Stack in ` +
+      `${AKS_STACK_ID_ENV_VAR}.`,
+  );
+}
+
+/**
  * Resolve the page seams this run should use.
  *
  * @param db - The run's database handle.
  * @param env - Environment to read the Stack from; defaults to `process.env`.
- * @returns The seams, empty when no Stack is configured.
+ * @param authority - The Stack this run already resolved; omitted, this call derives
+ *   one from `env` as {@link authorityFromEnv} describes.
+ * @returns The seams, empty in the named `file` mode.
+ * @throws {StackAuthorityError} when a database is configured and no Stack resolved.
  */
 export function resolvePageSeams(
   db: PageStoreHandle,
   env: NodeJS.ProcessEnv = process.env,
+  authority?: StackAuthority,
 ): PageSeams {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return {};
+  const resolved = authority ?? authorityFromEnv(env);
+  if (resolved.kind === "file") return {};
   return {
-    content: createPageContentSource(db, stackId),
-    scan: createPageScanSource(db, stackId),
-    sink: createPageWriteSink(db as never, stackId),
-    remover: createPageRemoveSink(db as never, stackId),
-    resolver: createResolverPageSource(db as never, stackId),
-    transaction: createPageBatchTransaction(db as never, stackId),
-    curatedLinks: createRowCuratedLinkStore(db as never, stackId),
-    categories: createRowCategoryStore(db as never, stackId),
+    content: createPageContentSource(db, resolved.stackId),
+    scan: createPageScanSource(db, resolved.stackId),
+    sink: createPageWriteSink(db as never, resolved.stackId),
+    remover: createPageRemoveSink(db as never, resolved.stackId),
+    resolver: createResolverPageSource(db as never, resolved.stackId),
+    transaction: createPageBatchTransaction(db as never, resolved.stackId),
+    curatedLinks: createRowCuratedLinkStore(db as never, resolved.stackId),
+    categories: createRowCategoryStore(db as never, resolved.stackId),
   };
 }
 
@@ -464,20 +572,19 @@ interface TransactionCapableTx {
  *
  * @param env - Environment to read the Stack from.
  * @param fn - Receives the seams; all undefined on a file-backed project.
+ * @param authority - The Stack this run already resolved; omitted, this call resolves
+ *   one from `env` -- once, and every seam inside is built from that one answer.
  * @returns Whatever `fn` returns.
  */
 export async function withPageSeams<T>(
   env: NodeJS.ProcessEnv,
   fn: (seams: PageSeams) => Promise<T>,
+  authority?: StackAuthority,
 ): Promise<T> {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return fn({});
-  const dimensionsDb = createDimensionsDatabase(env);
-  try {
-    return await fn(resolvePageSeams(dimensionsDb.db as never, env));
-  } finally {
-    await dimensionsDb.close();
-  }
+  return await withResolvedBackend(env, authority, {
+    file: async () => await fn({}),
+    stack: async (db, stack) => await fn(resolvePageSeams(db as never, env, stack)),
+  });
 }
 
 /**
@@ -498,9 +605,10 @@ export async function withPageSeams<T>(
  *
  * ## Why files are the default and rows are not a fallback
  *
- * A project with no Stack keeps its categories in `wiki/categories/<categoryId>.md`, so
- * with no Stack addressed the file port is the correct answer, not a degradation. The
- * two cases are decided ONCE, by the same empty-variable test the seams use.
+ * A project with no database keeps its categories in `wiki/categories/<categoryId>.md`,
+ * so the authority's named `file` mode is the correct answer there, not a degradation.
+ * The two cases are decided ONCE, by {@link resolveStackAuthority}, and this function
+ * branches on which kind it answered.
  *
  * The dangerous case is the third one: a Stack IS addressed and its database cannot be
  * reached. There the file port is NOT substituted, because a checkout can hold leftover
@@ -511,15 +619,46 @@ export async function withPageSeams<T>(
  * @param root - Project root, used only by the file backend.
  * @param env - Environment to read the Stack from.
  * @param fn - Receives the port; only its read operations are meaningful to a reader.
+ * @param authority - The Stack this run already resolved; omitted, this call resolves
+ *   one from `env` and hands it to {@link withPageSeams} instead of resolving twice.
  * @returns Whatever `fn` returns.
  */
 export async function withCategoryStore<T>(
   root: string,
   env: NodeJS.ProcessEnv,
   fn: (store: CategoryStorePort) => Promise<T>,
+  authority?: StackAuthority,
 ): Promise<T> {
-  return await withPageSeams(env, async (seams) =>
-    await fn(seams.categories ?? createFileCategoryStore(root)));
+  const resolved = await authorityFor(env, authority);
+  if (resolved.kind === "file") return await fn(createFileCategoryStore(root));
+  return await withPageSeams(
+    env,
+    async (seams) => await fn(rowBackedCategoryStore(seams)),
+    resolved,
+  );
+}
+
+/**
+ * The category port a STACK-mode run resolved, or a named refusal.
+ *
+ * `PageSeams` keeps every field optional because the `file` mode has none of them, and
+ * narrowing the interface per mode would change a shape thirty callers read. In the
+ * `stack` mode {@link resolvePageSeams} always sets this one, so its absence there is a
+ * defect in the factory -- and answering it with the file port is the exact degradation
+ * this file no longer does.
+ *
+ * @param seams - The seams a Stack-mode run resolved.
+ * @returns The row-backed category store.
+ * @throws {StackAuthorityError} when the factory produced none for a run that has a Stack.
+ */
+function rowBackedCategoryStore(seams: PageSeams): CategoryStorePort {
+  const store = seams.categories;
+  if (store === undefined) {
+    throw new StackAuthorityError(
+      "this run has a Stack, but resolvePageSeams resolved no category store for it",
+    );
+  }
+  return store;
 }
 
 /**
@@ -533,17 +672,20 @@ export async function withCategoryStore<T>(
  *
  * @param root - Project root, used only by the file backend.
  * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @param authority - The Stack this run already resolved; omitted, this call resolves
+ *   one from `env`.
  * @returns The status plus the carried state.
  */
 export async function readStateClassifiedFor(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
+  authority?: StackAuthority,
 ): Promise<{ status: StateStatus; state: WikiState }> {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return readStateClassified(root);
+  const resolved = await authorityFor(env, authority);
+  if (resolved.kind === "file") return readStateClassified(root);
   const dimensionsDb = createDimensionsDatabase(env);
   try {
-    return await readStateClassifiedFromRows(dimensionsDb.db, stackId);
+    return await readStateClassifiedFromRows(dimensionsDb.db, resolved.stackId);
   } finally {
     await dimensionsDb.close();
   }
@@ -560,20 +702,23 @@ export async function readStateClassifiedFor(
  * @param root - Project root, used only by the file backend.
  * @param state - The state to persist.
  * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @param authority - The Stack this run already resolved; omitted, this call resolves
+ *   one from `env`.
  */
 export async function writeStateFor(
   root: string,
   state: WikiState,
   env: NodeJS.ProcessEnv = process.env,
+  authority?: StackAuthority,
 ): Promise<void> {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") {
+  const resolved = await authorityFor(env, authority);
+  if (resolved.kind === "file") {
     await writeState(root, state);
     return;
   }
   const dimensionsDb = createDimensionsDatabase(env);
   try {
-    await writeWikiStateToRows(dimensionsDb.db, stackId, state);
+    await writeWikiStateToRows(dimensionsDb.db, resolved.stackId, state);
   } finally {
     await dimensionsDb.close();
   }

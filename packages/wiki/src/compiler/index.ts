@@ -141,10 +141,9 @@ import type {
  */
 type DimensionsDatabaseHandle = ReturnType<typeof createDimensionsDatabase>["db"];
 
-import {
-  createDimensionsDatabase,
-  AKS_STACK_ID_ENV_VAR,
-} from "../dimensions/index.js";
+import { createDimensionsDatabase } from "../dimensions/index.js";
+import { resolveStackAuthority } from "../dimensions/stack-authority.js";
+import type { StackAuthority } from "../dimensions/stack-authority.js";
 import type { Dimension, DimensionName } from "../dimensions/index.js";
 import { createDefaultDimensionsPort } from "../dimensions/activation.js";
 import type { DimensionsPort } from "@repo/foundation";
@@ -803,6 +802,7 @@ async function seedThenFinalize(
   embeddingPageSource?: EmbeddingPageSource,
   seams: PageSeams = {},
   stateRows?: WikiStateRowsBackend,
+  stackAuthority?: StackAuthority,
   totals?: RunReportTotals,
 ): Promise<void> {
   await maybeSeedPages(root, schema, generation, options, seams);
@@ -825,6 +825,7 @@ async function seedThenFinalize(
     embeddingPageSource,
     seams,
     stateRows,
+    stackAuthority,
     totals,
     jobObserver: options.jobObserver,
   });
@@ -1003,7 +1004,7 @@ interface NothingToCompileInput {
   readonly root: string;
   readonly options: CompileOptions;
   readonly db: DimensionsDatabaseHandle;
-  readonly env: NodeJS.ProcessEnv;
+  readonly stackAuthority: StackAuthority;
   readonly schema: Awaited<ReturnType<typeof loadSchema>>;
   readonly draft: CompileStateDraft;
   readonly seams: ReturnType<typeof resolvePageSeams>;
@@ -1026,7 +1027,7 @@ interface NothingToCompileInput {
 async function finalizeNothingToCompile(
   input: NothingToCompileInput,
 ): Promise<CompileResult> {
-  const { root, options, db, env, schema, draft, seams, stateRows, reconciliationSlugs } = input;
+  const { root, options, db, stackAuthority, schema, draft, seams, stateRows, reconciliationSlugs } = input;
   output.status("✓", output.success("Nothing to compile — all sources up to date."));
   // Seed pages are cheap deterministic writes — always run them even when no source
   // files changed, so adding a seed page to schema.json takes effect on the next
@@ -1048,11 +1049,12 @@ async function finalizeNothingToCompile(
     emptyGeneration,
     options,
     hasOwnerlessFrozen ? draft : null,
-    embeddingStoreLocation(db),
-    resolverSourceReading(db, env),
-    embeddingPageReading(db, env),
+    embeddingStoreLocation(db, stackAuthority),
+    resolverSourceReading(db, stackAuthority),
+    embeddingPageReading(db, stackAuthority),
     seams,
     stateRows,
+    stackAuthority,
     // Seed pages are regenerated on this path too, so their links are gated and
     // reported per page; the run total has no compile result to ride on here.
     {
@@ -1090,6 +1092,11 @@ async function runCompilePipeline(
   // concurrent runs cannot see each other's. Omitted means `process.env`, which keeps
   // every existing caller byte-identical.
   const env = options.env ?? process.env;
+  // The ONE Stack resolution this run performs. Every seam below is handed this value
+  // instead of each re-deciding on an empty `AKS_STACK_ID`: a file-backed wiki is a
+  // NAMED mode here, and a configured database that resolves no Stack fails loudly
+  // instead of quietly writing files next to the rows the run was asked for.
+  const stackAuthority = await resolveStackAuthority({ env, db });
   // The ONE dimensions resolution this run performs, resolved here rather than inside
   // the helper that asks for it: a default built per deleted source would be a second
   // answer to one question, and the caller's port must be the one retirement uses.
@@ -1102,23 +1109,23 @@ async function runCompilePipeline(
   // Read and write state from the SAME backend. A run that seeded from
   // `state.json` and flushed to rows would report every source as new on the next
   // pass, because the file it compared against was never the one updated.
-  const stateRows = wikiStateRowsBackend(db, env);
+  const stateRows = wikiStateRowsBackend(db, stackAuthority);
   const draft = await CompileStateDraft.load(root, stateRows);
   const state = draft.read();
   // Resolve every page seam ONCE, from one variable: a run that stores rows while
   // repairing files -- or reads rows while writing `wiki/` -- would split the
   // corpus in half and is the defect this migration kept re-introducing.
-  const seams = resolvePageSeams(db, env);
+  const seams = resolvePageSeams(db, env, stackAuthority);
   const compileReporter = options.jobObserver?.compile;
   const detected = await timeStage("compile.detect-changes", () =>
-    detectChanges(root, state, sourceChangeDetection(db, env), env),
+    detectChanges(root, state, sourceChangeDetection(db, stackAuthority), env),
     () => reportCompileStage(compileReporter, "compile.detect-changes"));
   // A `--recompile` request is resolved and VALIDATED before any work, so an unusable
   // one is a refusal that wrote nothing rather than a run that silently did nothing.
   const scope = await resolveRunScope(root, state, detected, options, seams);
   if (!isRunScope(scope)) return scope;
   const changes = scope.changes;
-  await markUnchangedPendingSources(root, changes, sourceContentReading(db, env));
+  await markUnchangedPendingSources(root, changes, sourceContentReading(db, stackAuthority));
   const reusableSources = reusableSourceFiles(state, changes, detected);
   augmentWithAffectedSources(changes, findAffectedSources(state, changes, detected));
   const reconciliationSlugs = findReconciliationSlugs(state, changes);
@@ -1126,7 +1133,7 @@ async function runCompilePipeline(
   const buckets = bucketChanges(changes);
   if (buckets.toCompile.length === 0 && buckets.deleted.length === 0) {
     return await finalizeNothingToCompile({
-      root, options, db, env, schema, draft, seams, stateRows,
+      root, options, db, stackAuthority, schema, draft, seams, stateRows,
       reconciliationSlugs, unchangedCount: buckets.unchanged.length,
     });
   }
@@ -1154,10 +1161,10 @@ async function runCompilePipeline(
   const concurrency = resolveCompileConcurrency(options.concurrency);
   const extractions = await timeStage("compile.extraction", () => runExtractionPhases(
     root, buckets.toCompile, state, { scoped: changes, detected }, concurrency, reusableSources,
-    sourceContentReading(db, env),
+    sourceContentReading(db, stackAuthority),
     // The extraction prompt asks the model not to duplicate an existing concept,
     // which needs each page's title -- the scan shape, not the listing.
-    scanSourceReading(db, env),
+    scanSourceReading(db, stackAuthority),
     // Extraction is often the longest stage, so it reports its own per-source
     // count instead of sitting at "working" for minutes.
     {
@@ -1200,11 +1207,12 @@ async function runCompilePipeline(
   // single durable state write, done inside finalizeWiki after resolution
   // commits.
   await timeStage("compile.finalize", () => seedThenFinalize(
-    root, schema, generation, options, draft, embeddingStoreLocation(db),
-    resolverSourceReading(db, env),
-    embeddingPageReading(db, env),
+    root, schema, generation, options, draft, embeddingStoreLocation(db, stackAuthority),
+    resolverSourceReading(db, stackAuthority),
+    embeddingPageReading(db, stackAuthority),
     seams,
     stateRows,
+    stackAuthority,
     totals,
   ), () => reportCompileStage(compileReporter, "compile.finalize"));
   const reportGeneration: PageGenerationResult = {
@@ -1505,6 +1513,17 @@ interface FinalizeFlags {
    */
   env: NodeJS.ProcessEnv;
   /**
+   * The Stack authority the pipeline resolved once, for the derived artifacts.
+   *
+   * `index.md` and `MOC.md` are regenerated here and stored in a Stack, so the
+   * render has to be told WHICH one instead of asking the environment again: the
+   * resolution belongs to the pipeline boundary, and a second read here is the
+   * `stackId === ""` re-decision this change removes. Omitted, the render falls
+   * back to resolving from the environment, which is what a file-backed run
+   * already is.
+   */
+  stackAuthority?: StackAuthority;
+  /**
    * Refresh the embedding store after the durable state write. `false` skips it
    * entirely, including the pending-embeddings drain, for a caller that keeps
    * its own semantic index.
@@ -1745,7 +1764,8 @@ async function finalizeWiki(
 ): Promise<void> {
   const {
     env, scoped = false, embeddings = true, embeddingStore, resolverSource,
-    embeddingPageSource, seams = {}, stateRows, jobObserver, totals, regenerateOnly = false,
+    embeddingPageSource, seams = {}, stateRows, stackAuthority, jobObserver, totals,
+    regenerateOnly = false,
   } = flags;
   const conceptChangedSlugs = pages.map((entry) => entry.slug);
   const conceptNewSlugs = pages
@@ -1816,7 +1836,7 @@ async function finalizeWiki(
     await draft.flush(root, stateRows);
   }
 
-  await regenerateIndices(root, env);
+  await regenerateIndices(root, env, { authority: stackAuthority });
   if (embeddings) {
     await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(
       root, allChangedSlugs, embeddingStore, embeddingPageSource, jobObserver?.compile,
@@ -1892,21 +1912,20 @@ async function currentContentHash(
 /**
  * Where this compile should WRITE the pages it generates.
  *
- * Returns `undefined` when no Stack is configured, which keeps the on-disk write.
- * Paired with {@link sourceChangeDetection} on the same variable because a run that
+ * The authority's `file` kind is the on-disk write, and its `stack` kind the row sink.
+ * Paired with {@link sourceChangeDetection} on the same authority because a run that
  * read rows and wrote files would be reading one corpus and publishing another.
  *
  * @param db - The run's database handle.
- * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @param authority - The Stack this run resolved once, or the named file-backed mode.
  * @returns The row sink, or undefined to keep writing `wiki/concepts/*.md`.
  */
 function sourcePageSink(
   db: DimensionsDatabaseHandle,
-  env: NodeJS.ProcessEnv = process.env,
+  authority: StackAuthority,
 ): PageSink | undefined {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return undefined;
-  return createPageWriteSink(db, stackId);
+  if (authority.kind === "file") return undefined;
+  return createPageWriteSink(db, authority.stackId);
 }
 
 /**
@@ -1917,117 +1936,109 @@ function sourcePageSink(
  * requirement.
  *
  * @param db - The run's database handle.
- * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @param authority - The Stack this run resolved once, or the named file-backed mode.
  * @returns The scan source, or undefined to read `wiki/index.md`.
  */
 function scanSourceReading(
   db: DimensionsDatabaseHandle,
-  env: NodeJS.ProcessEnv = process.env,
+  authority: StackAuthority,
 ): PageScanSource | undefined {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return undefined;
-  return createPageScanSource(db, stackId);
+  if (authority.kind === "file") return undefined;
+  return createPageScanSource(db, authority.stackId);
 }
 
 /**
  * Where this compile should read page text for LINK RESOLUTION.
  *
  * Resolution is read-modify-write over the pages themselves, so it has to agree with
- * what compile just wrote. Paired with the write sink on the same variable: reading
+ * what compile just wrote. Paired with the write sink on the same authority: reading
  * rows while writing files (or the reverse) would rewrite pages against a body that
  * does not match the one being published.
  *
  * @param db - The run's database handle.
- * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @param authority - The Stack this run resolved once, or the named file-backed mode.
  * @returns The resolver source, or undefined to read `wiki/concepts` from disk.
  */
 function embeddingPageReading(
   db: DimensionsDatabaseHandle,
-  env: NodeJS.ProcessEnv = process.env,
+  authority: StackAuthority,
 ): EmbeddingPageSource | undefined {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return undefined;
-  return createEmbeddingPageSource(db, stackId);
+  if (authority.kind === "file") return undefined;
+  return createEmbeddingPageSource(db, authority.stackId);
 }
 
 function resolverSourceReading(
   db: DimensionsDatabaseHandle,
-  env: NodeJS.ProcessEnv = process.env,
+  authority: StackAuthority,
 ): ResolverPageSource | undefined {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return undefined;
-  return createResolverPageSource(db, stackId);
+  if (authority.kind === "file") return undefined;
+  return createResolverPageSource(db, authority.stackId);
 }
 
 /**
  * Where this compile should read document text from.
  *
- * Paired with {@link sourceChangeDetection} and gated on the same variable, because
+ * Paired with {@link sourceChangeDetection} and gated on the same authority, because
  * the two must agree: reading rows that were discovered in a directory -- or the
  * reverse -- would leave every document unreadable.
  *
  * @param db - The run's database handle.
- * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @param authority - The Stack this run resolved once, or the named file-backed mode.
  * @returns The content source, or undefined to keep reading `sources/`.
  */
 function sourceContentReading(
   db: DimensionsDatabaseHandle,
-  env: NodeJS.ProcessEnv = process.env,
+  authority: StackAuthority,
 ): SourceContentSource | undefined {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return undefined;
-  return sourceDocumentsContentSource(db, stackId);
+  if (authority.kind === "file") return undefined;
+  return sourceDocumentsContentSource(db, authority.stackId);
 }
 
 /**
  * Where this compile should read its source corpus from.
  *
- * Returns `undefined` when no Stack is configured, which keeps the on-disk scan:
- * a project that never opted into the knowledge backend must not start requiring a
- * database to compile. When a Stack IS configured, change detection reads rows, so
- * an ingest that wrote a row is visible to the compiler.
+ * The `file` kind keeps the on-disk scan: a wiki with no database at all is a
+ * legitimate mode and must not start requiring one to compile. The `stack` kind reads
+ * rows, so an ingest that wrote a row is visible to the compiler.
  *
  * @param db - The run's database handle.
- * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @param authority - The Stack this run resolved once, or the named file-backed mode.
  * @returns The detection source, or undefined to keep scanning `sources/`.
  */
 function sourceChangeDetection(
   db: DimensionsDatabaseHandle,
-  env: NodeJS.ProcessEnv = process.env,
+  authority: StackAuthority,
 ): ChangeDetectionSource | undefined {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return undefined;
-  return sourceDocumentsChangeSource(db, stackId);
+  if (authority.kind === "file") return undefined;
+  return sourceDocumentsChangeSource(db, authority.stackId);
 }
 
 /**
  * Where this compile should read and write its incremental state.
  *
- * Returns `undefined` when no Stack is configured, which keeps `state.json`. Gated
- * on the same variable as every other seam because the state a run reads must be the
- * state it writes: an ingest and a compile that disagreed about the backend would
- * each see the other's work as missing.
+ * The `file` kind keeps `state.json`; the `stack` kind keeps rows. Gated on the same
+ * authority as every other seam because the state a run reads must be the state it
+ * writes: an ingest and a compile that disagreed about the backend would each see the
+ * other's work as missing.
  *
  * @param db - The run's database handle.
- * @param env - Environment to read the Stack from; defaults to `process.env`.
+ * @param authority - The Stack this run resolved once, or the named file-backed mode.
  * @returns The rows backend, or undefined to keep `.llmwiki/state.json`.
  */
 function wikiStateRowsBackend(
   db: DimensionsDatabaseHandle,
-  env: NodeJS.ProcessEnv = process.env,
+  authority: StackAuthority,
 ): WikiStateRowsBackend | undefined {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return undefined;
-  return createWikiStateRowsBackend(db, stackId);
+  if (authority.kind === "file") return undefined;
+  return createWikiStateRowsBackend(db, authority.stackId);
 }
 
 function embeddingStoreLocation(
   db: DimensionsDatabaseHandle,
-  env: NodeJS.ProcessEnv = process.env,
+  authority: StackAuthority,
 ): EmbeddingStoreLocation | undefined {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return undefined;
-  return databaseEmbeddingLocation(db, stackId);
+  if (authority.kind === "file") return undefined;
+  return databaseEmbeddingLocation(db, authority.stackId);
 }
 
 async function safelyUpdateEmbeddings(
