@@ -40,9 +40,9 @@ URL literal may be baked into the script; only preserving defaulting."
 | T2 | S2, S3, S4 — RED: static Dockerfile/script assertions in `test/artifact/kg-container-entry.test.ts` | inline | `81bca374` |
 | T3 | S1, S2, S3 — GREEN: `packages/llmwiki-kg/docker/entry.sh` plus `ENTRYPOINT`/`COPY`/`chmod` in the KG `Dockerfile` | inline | `81bca374` |
 | T4 | S4 — pin the root image guard and lint as unchanged | inline | `81bca374` |
-| T5 | S5 — run line, tag and rollback recorded from the live `docker run <tag>` proof | inline | `PENDING-SHA` |
+| T5 | S5 — run line, tag and rollback recorded from the live `docker run <tag>` proof | inline | `1b2018ea` |
 | T6 | S6, S7, S8 — RED: new static assertions in `test/artifact/kg-container-entry.test.ts`; GREEN: DSN bridge
-  and `AKS_BASE_URL` loopback default in `packages/llmwiki-kg/docker/entry.sh` | inline | `PENDING-SHA` |
+  and `AKS_BASE_URL` loopback default in `packages/llmwiki-kg/docker/entry.sh` | inline | `1b2018ea` |
 
 ## Spec status
 
@@ -146,3 +146,15 @@ docker start kg-mcp-live-openrouter
     or the vendor returns 400; that is operator configuration and stays documented, not defaulted.
   - Consequence for this document: S6, S7 and S8 above are DERIVED from S2 audited against E1 and E2. S1-S5 keep
     their text verbatim.
+- **L5** — Evidence from this unit (T6). RED before the script changed: `test/artifact/kg-container-entry.test.ts`
+  reported `Tests 3 failed | 7 passed (10)` — `must assign \`DATABASE_URL\` exactly once: expected [] to have a length of 1 but got +0`,
+  the same for `AKS_BASE_URL`, and `must default \`DATABASE_URL\` before the caller's command can run: expected -1 to be greater than -1`.
+  GREEN after the two preserving exports: `Tests 10 passed (10)`. Root image guard
+  `test/artifact/container-entry.test.ts` stayed at `Tests 7 passed (7)`; `sh -n packages/llmwiki-kg/docker/entry.sh`
+  reported SYNTAX OK; `pnpm run lint` reported `558 baseline violations … no regression`.
+  - **Deviation from the recipe, with the reason observed.** The requested `: "${DATABASE_URL:=${AKS_DATABASE_URL:-}}"`
+    was implemented as `export DATABASE_URL="${DATABASE_URL:-${AKS_DATABASE_URL:-}}"`. Measured in `sh`: a plain
+    `: "${T:=seeded}"` leaves a previously UNSET variable unexported, so a child process printed `<>`, while
+    `export T="${T:-seeded}"` printed `<seeded>`. The bridge would have been inert in exactly the case E1 describes.
+    The `:-` arm also covers the blank case S6 names, which `z.string().default` does not (it only substitutes for
+    `undefined`, so a blank `DATABASE_URL` would reach the server).
