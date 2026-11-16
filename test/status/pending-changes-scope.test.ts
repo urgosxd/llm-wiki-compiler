@@ -23,6 +23,7 @@
  * A project with no Stack keeps reading `sources/`. That deployment is supported and
  * the directory is genuinely its corpus.
  */
+import "../fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import { collectStatus } from "../../packages/wiki/src/status/collect.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";

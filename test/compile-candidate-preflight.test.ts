@@ -2,6 +2,7 @@
  * @file Public-default compatibility: an unrelated malformed candidate is
  * retained and skipped, not promoted into a global compile prerequisite.
  */
+import "./fixtures/file-mode.js";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";

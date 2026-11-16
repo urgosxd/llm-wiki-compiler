@@ -2,6 +2,7 @@
  * Tests for src/eval/graph-health.ts.
  */
 
+import "./fixtures/file-mode.js";
 import { evaluateGraphHealth } from "../packages/wiki/src/eval/graph-health.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 

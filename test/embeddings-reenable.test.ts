@@ -4,6 +4,7 @@
  * embedding refreshes without changing source files during recovery.
  */
 
+import "./fixtures/file-mode.js";
 import { existsSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import path from "path";

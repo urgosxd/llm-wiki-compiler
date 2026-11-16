@@ -1,4 +1,5 @@
 /** Selected nested sources must appear in status, eval, next-action and MCP guidance. */
+import "./fixtures/file-mode.js";
 import { beforeEach, expect, it } from "vitest";
 import { writeFile, symlink } from "node:fs/promises";
 import path from "node:path";

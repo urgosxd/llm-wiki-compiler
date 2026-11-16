@@ -14,6 +14,7 @@
  * each source maps to a distinct, predictable slug.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi } from "vitest";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";

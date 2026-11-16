@@ -1,4 +1,5 @@
 // test/okf-run-import.test.ts
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, mkdir, rm, readFile, writeFile, stat } from "fs/promises";
 import { tmpdir } from "os";

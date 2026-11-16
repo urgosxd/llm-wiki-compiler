@@ -15,6 +15,7 @@
  * `emptyGeneration.errors` is propagated into the result.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi } from "vitest";
 import { mkdir, writeFile, readFile } from "fs/promises";
 import { existsSync } from "fs";

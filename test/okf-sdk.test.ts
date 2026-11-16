@@ -7,6 +7,7 @@
  * retired because no surface promotes a candidate into the wiki, so the untrusted call
  * REFUSES through the same public facade the docs teach.
  */
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, stat } from "fs/promises";
 import { tmpdir } from "os";

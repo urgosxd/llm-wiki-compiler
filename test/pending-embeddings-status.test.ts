@@ -8,6 +8,7 @@
  * BOTH codes in the single `warnings[]` array.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";

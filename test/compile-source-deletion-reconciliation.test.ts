@@ -4,6 +4,7 @@
  * from its surviving owners after one contributing source is deleted.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, expect, it, vi } from "vitest";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";

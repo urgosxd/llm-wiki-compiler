@@ -16,6 +16,7 @@
  * a page is always a live write now, so there is no branch left off the executor.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi } from "vitest";
 import { existsSync } from "fs";
 import path from "path";

@@ -6,6 +6,7 @@
  * never produces a `.bak` side-effect (the read-only contract).
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync } from "fs";
 import { rm } from "fs/promises";

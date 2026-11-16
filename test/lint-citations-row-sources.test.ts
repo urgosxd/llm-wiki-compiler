@@ -15,6 +15,7 @@
  * row already carries its text, so both halves are answerable from the corpus — no
  * disk read, and no second query.
  */
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { rm, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";

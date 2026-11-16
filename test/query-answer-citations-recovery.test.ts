@@ -3,6 +3,7 @@
  * Only the LLM provider is mocked: strict collection, retrieval, persistence,
  * activity logging, and SDK quiet scopes all exercise production code.
  */
+import "./fixtures/file-mode.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";

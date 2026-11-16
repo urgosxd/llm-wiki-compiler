@@ -10,6 +10,7 @@
  * in any test directory.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import os from "os";

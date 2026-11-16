@@ -14,6 +14,7 @@
  * extraction / page-generation calls are deterministic and no real API is hit.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi } from "vitest";
 import { writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";

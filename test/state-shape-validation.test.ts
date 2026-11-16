@@ -12,6 +12,7 @@
  * without deep-validating a format this build does not understand.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import { readStateClassified } from "../packages/wiki/src/utils/state.js";
 import { collectStatus } from "../packages/wiki/src/status/collect.js";

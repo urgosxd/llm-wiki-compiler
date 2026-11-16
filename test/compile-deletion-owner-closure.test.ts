@@ -4,6 +4,7 @@
  * after a shared source is deleted.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, expect, it } from "vitest";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";

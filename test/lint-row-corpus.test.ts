@@ -14,6 +14,7 @@
  * tests pin the two halves that can each fail silently: the row corpus is what the
  * rules see, and the disk path is untouched when no Stack is configured.
  */
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { rm } from "node:fs/promises";
 import { lint } from "../packages/wiki/src/linter/index.js";

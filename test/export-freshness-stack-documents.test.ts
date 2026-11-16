@@ -20,6 +20,7 @@
  * snapshot must use the ROWS, and with none it must keep hashing disk exactly as
  * before.
  */
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";

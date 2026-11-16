@@ -22,6 +22,7 @@
  * directory under the OS temp dir, removed by the fixture afterwards.
  */
 
+import "../fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import { readFile, writeFile } from "fs/promises";
 import path from "path";

@@ -1,4 +1,5 @@
 /** Recursive selection must survive real compilation, retirement and reselection. */
+import "./fixtures/file-mode.js";
 import { beforeEach, expect, it, vi } from "vitest";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";

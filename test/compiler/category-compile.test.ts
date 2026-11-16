@@ -21,6 +21,7 @@
  * The provider is stubbed, so no network, no key and no cost are involved.
  */
 
+import "../fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 import path from "node:path";

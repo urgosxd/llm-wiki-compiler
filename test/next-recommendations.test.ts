@@ -33,6 +33,7 @@
  *   - the recommendation never mutates the project it inspects
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

@@ -19,6 +19,7 @@
  * stubbed: no network, no key, and a throwaway project under the OS temp dir.
  */
 
+import "../fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import { readFile } from "fs/promises";
 import path from "path";

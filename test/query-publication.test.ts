@@ -2,6 +2,7 @@
  * Direct publication witnesses pin no-write refusals, exact canonical bytes,
  * mandatory fresh resolution and failures outside the citation recovery scope.
  */
+import "./fixtures/file-mode.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";

@@ -6,6 +6,7 @@
  * planner, so getting this right is what lets the rest of them move.
  */
 
+import "../fixtures/file-mode.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

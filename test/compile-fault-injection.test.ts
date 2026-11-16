@@ -18,6 +18,7 @@
  * the journalled batch exactly as a real mid-write fault would.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { existsSync } from "fs";
 import { readdir, mkdir } from "fs/promises";

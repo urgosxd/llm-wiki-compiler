@@ -6,6 +6,7 @@
  * with an `embedding-degraded` warning, instead of aborting the whole query.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, expect, it, vi } from "vitest";
 import { useAlphaPageFixture, mockEmbeddingFailure } from "./fixtures/alpha-page.js";
 import { generateAnswer } from "../packages/wiki/src/commands/query.js";

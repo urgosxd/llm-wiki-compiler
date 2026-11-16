@@ -34,6 +34,7 @@
  * regex is what forbids traversal, which is why it is asserted byte-for-byte.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

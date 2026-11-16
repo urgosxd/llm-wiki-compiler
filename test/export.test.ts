@@ -5,6 +5,7 @@
  * and the --target filter.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFile } from "fs/promises";
 import path from "path";

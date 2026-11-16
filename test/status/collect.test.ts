@@ -1,3 +1,4 @@
+import "../fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";

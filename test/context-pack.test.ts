@@ -11,6 +11,7 @@
  * builder consumes the same viewer snapshot path that production uses.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import os from "os";

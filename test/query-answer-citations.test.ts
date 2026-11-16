@@ -2,6 +2,7 @@
  * Public SDK and query-pipeline tests keep provider traffic stubbed at the LLM
  * boundary while exercising real selection, admission, reports, and saving.
  */
+import "./fixtures/file-mode.js";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import path from "node:path";

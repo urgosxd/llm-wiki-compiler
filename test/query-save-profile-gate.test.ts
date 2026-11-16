@@ -10,6 +10,7 @@
  * full LLM answer pipeline.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync } from "fs";
 import { readdir } from "fs/promises";

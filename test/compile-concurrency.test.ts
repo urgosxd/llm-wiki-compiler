@@ -9,6 +9,7 @@
  *     mergeExtractions' first-seen-wins reconciliation is unchanged.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { rm, writeFile, readFile, readdir } from "fs/promises";
 import path from "path";

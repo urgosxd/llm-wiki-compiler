@@ -16,6 +16,7 @@
  * be worse than no tiering at all, because it would look authoritative.
  */
 
+import "../fixtures/file-mode.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";

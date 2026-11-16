@@ -3,6 +3,7 @@
  * integration with the schema layer.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";

@@ -1,3 +1,4 @@
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, readFile } from "fs/promises";
 import { tmpdir } from "os";

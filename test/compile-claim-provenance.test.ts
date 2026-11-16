@@ -12,6 +12,7 @@
  * The compiled output is then read back and inspected for marker presence.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi } from "vitest";
 import { readFile } from "fs/promises";
 import path from "path";

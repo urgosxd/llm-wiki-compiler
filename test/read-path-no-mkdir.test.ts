@@ -12,6 +12,7 @@
  * This file pins every affected surface with a concrete assertion.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, symlink } from "node:fs/promises";
 import { existsSync } from "node:fs";

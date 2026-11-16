@@ -28,6 +28,7 @@
  * directory under the OS temp dir that the fixture removes afterwards.
  */
 
+import "../fixtures/file-mode.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { readFile } from "node:fs/promises";
 import path from "node:path";

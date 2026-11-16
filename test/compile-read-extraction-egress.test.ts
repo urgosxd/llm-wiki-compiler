@@ -9,6 +9,7 @@
  * secret. We capture the system prompt by spying on `AnthropicProvider.toolCall`.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi } from "vitest";
 import { writeFile, symlink } from "fs/promises";
 import path from "path";

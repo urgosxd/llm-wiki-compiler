@@ -15,6 +15,7 @@
  * subject left.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import path from "node:path";

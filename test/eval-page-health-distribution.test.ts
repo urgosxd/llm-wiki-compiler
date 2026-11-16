@@ -2,6 +2,7 @@
  * Tests for src/eval/page-health-distribution.ts.
  */
 
+import "./fixtures/file-mode.js";
 import { evaluatePageHealthDistribution } from "../packages/wiki/src/eval/page-health-distribution.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";
 import { sha256Hex, writeSourceState, writeSourceFile } from "./fixtures/state-json.js";

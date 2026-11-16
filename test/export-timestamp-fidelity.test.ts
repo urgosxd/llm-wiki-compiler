@@ -12,6 +12,7 @@
  * agree by luck, which would let the regression back in unnoticed.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { rm } from "fs/promises";
 import path from "path";

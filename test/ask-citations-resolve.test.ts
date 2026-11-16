@@ -15,6 +15,7 @@
  * the derived page directly, and the status index records that gap.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
 import path from "node:path";

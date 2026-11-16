@@ -6,6 +6,7 @@
  * wikilink errors, and they should not lower eval health.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import { lint } from "../packages/wiki/src/linter/index.js";
 import { evaluateHealth } from "../packages/wiki/src/eval/health.js";

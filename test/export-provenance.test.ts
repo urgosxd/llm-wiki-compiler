@@ -11,6 +11,7 @@
  *  - `contentHash` is stable for the same body and changes when the body does.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
 import { existsSync } from "fs";

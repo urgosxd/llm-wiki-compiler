@@ -14,6 +14,7 @@
  * traversal spelling reaches a page.
  */
 
+import "./fixtures/file-mode.js";
 import { afterEach, describe, it, expect } from "vitest";
 import { mkdir, symlink, writeFile, realpath } from "fs/promises";
 import path from "path";

@@ -12,6 +12,7 @@
  * src/import/run.ts) — the same bytes, without needing the project lock.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { rm, mkdir } from "fs/promises";
 import path from "path";

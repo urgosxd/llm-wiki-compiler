@@ -8,6 +8,7 @@
  * grounding and surface as a `page-hydration-dropped` warning instead.
  */
 
+import "./fixtures/file-mode.js";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";

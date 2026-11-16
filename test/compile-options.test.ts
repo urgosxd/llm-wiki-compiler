@@ -3,6 +3,7 @@
  * @description Public compile-option coverage for embedding suppression.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, expect, it, vi } from "vitest";
 import { createWiki } from "../packages/wiki/src/sdk/wiki.js";
 import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";

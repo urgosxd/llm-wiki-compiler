@@ -7,6 +7,7 @@
  * throws a typed `StateTooNewError`. v1/v2/missing/corrupt behavior is unchanged.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";

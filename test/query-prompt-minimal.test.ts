@@ -18,6 +18,7 @@
  * because dropping any of them would change answers.
  */
 
+import "./fixtures/file-mode.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAlphaPageFixture } from "./fixtures/alpha-page.js";
 import { generateAnswer } from "../packages/wiki/src/commands/query.js";

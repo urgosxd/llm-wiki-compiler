@@ -11,6 +11,7 @@
  * the context pack reflects it.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { rm } from "fs/promises";
 import path from "path";

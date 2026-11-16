@@ -16,6 +16,7 @@
  * compile throw at resolution and the second proceed normally.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { existsSync } from "fs";
 import { readFile, mkdtemp, writeFile, mkdir, symlink, readdir } from "fs/promises";

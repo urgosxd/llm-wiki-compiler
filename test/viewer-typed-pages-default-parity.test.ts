@@ -17,6 +17,7 @@
  * the page `html` (whose loopback citation chip embeds the absolute temp root).
  */
 
+import "./fixtures/file-mode.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";

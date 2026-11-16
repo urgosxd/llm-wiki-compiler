@@ -16,6 +16,7 @@
  * RESOLVES.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi } from "vitest";
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";

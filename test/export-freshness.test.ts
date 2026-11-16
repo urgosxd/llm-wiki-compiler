@@ -5,6 +5,7 @@
  * export stays active-page-only and never emits `freshnessStatus: "orphaned"`.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import path from "path";
 import { writePage } from "./fixtures/write-page.js";

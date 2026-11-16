@@ -4,6 +4,7 @@
  * and asserts the expected diagnostics.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, rm, writeFile } from "fs/promises";
 import path from "node:path";

@@ -6,6 +6,7 @@
  * scoring, and context-specific suggested-action suffixes.
  */
 
+import "./fixtures/file-mode.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import os from "os";

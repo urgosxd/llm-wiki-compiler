@@ -16,6 +16,7 @@
  * operator actually reads it.
  */
 
+import "../fixtures/file-mode.js";
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";

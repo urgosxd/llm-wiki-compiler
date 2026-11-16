@@ -8,6 +8,7 @@
  * never the tool-calling fallback. No `vi.mock`, no spy, no network.
  */
 
+import "./fixtures/file-mode.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chmod, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";

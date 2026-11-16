@@ -3,6 +3,7 @@
  * Only provider generation is mocked; advisory reporting, fresh authoritative
  * resolution, persistence, and activity logging exercise production code.
  */
+import "./fixtures/file-mode.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";

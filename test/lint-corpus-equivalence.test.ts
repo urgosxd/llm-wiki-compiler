@@ -18,6 +18,7 @@
  * `RULES_UNAVAILABLE_ON_ROWS`, whose exclusions are asserted by behaviour in
  * `lint-corpus-parity.test.ts`.
  */
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";

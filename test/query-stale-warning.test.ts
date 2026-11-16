@@ -12,6 +12,7 @@
  * forward into `QueryResult.warnings`. A clean store adds no such warning.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { EmbeddingStoreV3 } from "../packages/wiki/src/utils/embeddings-store.js";
 import {

@@ -9,6 +9,7 @@
  * boots the viewer's HTTP server in-process to assert the envelope.
  */
 
+import "./fixtures/file-mode.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../packages/wiki/src/viewer/render.js", () => ({

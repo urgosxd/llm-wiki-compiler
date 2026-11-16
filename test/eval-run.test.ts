@@ -5,6 +5,7 @@
  * and does write when record=true.
  */
 
+import "./fixtures/file-mode.js";
 import { existsSync } from "fs";
 import path from "path";
 import { runEval } from "../packages/wiki/src/eval/index.js";

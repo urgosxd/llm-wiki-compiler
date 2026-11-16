@@ -19,6 +19,7 @@
  * call site can forget. What this pins is that an explicit corpus wins, which is
  * the path the status tests and the MCP tool actually drive.
  */
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";

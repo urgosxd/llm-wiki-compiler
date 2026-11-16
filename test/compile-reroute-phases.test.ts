@@ -19,6 +19,7 @@
  *    clean no-op — byte-identical output, NO batch entry for that page.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi } from "vitest";
 import { existsSync } from "fs";
 import { readFile, writeFile, mkdir, rm } from "fs/promises";

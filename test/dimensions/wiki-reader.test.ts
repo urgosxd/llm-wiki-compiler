@@ -10,6 +10,7 @@
  * The pages are written by hand rather than compiled, because compiling needs a
  * provider and what is under test is the read path, not page generation.
  */
+import "../fixtures/file-mode.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

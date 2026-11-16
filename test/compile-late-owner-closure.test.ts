@@ -4,6 +4,7 @@
  * reveals an owner whose extraction reveals another shared owner.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, expect, it } from "vitest";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";

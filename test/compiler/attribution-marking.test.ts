@@ -35,6 +35,7 @@
  * lives in a throwaway directory under the OS temp dir that the fixture removes.
  */
 
+import "../fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";

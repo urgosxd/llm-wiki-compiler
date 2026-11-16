@@ -6,6 +6,7 @@
  * pages array rather than throwing.
  */
 
+import "../fixtures/file-mode.js";
 import { describe, it, expect } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";

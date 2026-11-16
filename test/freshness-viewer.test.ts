@@ -8,6 +8,7 @@
  * `.bak` side-effect.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync } from "fs";
 import { rm } from "fs/promises";

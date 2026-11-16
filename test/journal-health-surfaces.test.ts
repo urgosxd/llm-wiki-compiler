@@ -28,6 +28,7 @@
  * full `search`/`listPages`/`okf`/`json` envelopes do.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile, access } from "fs/promises";
 import { tmpdir } from "os";

@@ -12,6 +12,7 @@
  *  - A7: a reader leaves a v2 store byte-unchanged (read-only).
  */
 
+import "./fixtures/file-mode.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, writeFile, readFile, symlink } from "fs/promises";
 import path from "path";

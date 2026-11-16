@@ -22,6 +22,7 @@
  * to return `MAX_SOURCE_CHARS` for the compile origin.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi } from "vitest";
 import { writeFile } from "fs/promises";
 import path from "path";

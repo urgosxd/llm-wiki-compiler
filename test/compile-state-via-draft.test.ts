@@ -14,6 +14,7 @@
  * without tripping either throwing helper.
  */
 
+import "./fixtures/file-mode.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { writeFile, rm } from "fs/promises";
 import path from "path";

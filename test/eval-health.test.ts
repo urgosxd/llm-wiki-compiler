@@ -3,6 +3,7 @@
  * Verifies weight map, per-rule deductions, and clamping.
  */
 
+import "./fixtures/file-mode.js";
 import { evaluateHealth } from "../packages/wiki/src/eval/health.js";
 import { seedPendingCandidate } from "./fixtures/candidate-queue.js";
 import { useLintTempRoot } from "./fixtures/lint-temp-root.js";

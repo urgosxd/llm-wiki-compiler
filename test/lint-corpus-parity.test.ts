@@ -23,6 +23,7 @@
  * so the day the schema grows a column, the test that should start failing is the
  * one that says "unavailable".
  */
+import "./fixtures/file-mode.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { rm } from "node:fs/promises";
 import {
