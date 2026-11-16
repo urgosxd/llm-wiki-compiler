@@ -255,15 +255,26 @@ Non-numeric, zero, or negative values are silently ignored and the next source i
 ## Stacks
 
 Stack configuration is optional. A single checkout configures none of these and
-still compiles: the resolution order is `AKS_STACK_ID`, then
-the default Stack - documented once in
-[Tenant isolation](/concepts/tenant-isolation#choosing-which-stack-a-command-uses).
+still compiles: the resolution order is the Stack the caller named (`--stack <id>`
+or `AKS_STACK_ID`), then the default Stack, then a named refusal - documented once
+in [Tenant isolation](/concepts/tenant-isolation#choosing-which-stack-a-command-uses).
 
 | Variable | Default | Description |
 |---|---|---|
-| `AKS_STACK_ID` | The default Stack | The Stack `ingest`, `compile`, `refresh`, `query` and `watch` read and write. Unset or blank means the default Stack is used, announced once on stderr |
+| `AKS_STACK_ID` | The default Stack | An **optional override** naming the Stack `ingest`, `compile`, `refresh`, `query` and `watch` read and write. It is precedence 1 of the resolution order and never a requirement: unset or blank resolves the default Stack instead, so nothing has to be configured for a single checkout |
 | `AKS_STACK_NAME` | The Stack id | Display name recorded for the Stack in the graph dimension |
-| `AKS_DATABASE_URL` | The `llmwiki-kg` DSN | Connection string for the dimensions database that holds Stack-scoped rows. Setting it is how a project points at a different database, not a requirement |
+| `AKS_DATABASE_URL` | The `llmwiki-kg` DSN | Connection string for the dimensions database that holds Stack-scoped rows. Setting it is how a project points at a different database, not a requirement. Absent or blank means no database is configured at all, and the run is file-backed |
+
+<Note>
+  Unsetting `AKS_STACK_ID` is supported, and it does not move every backend in one
+  step. The event log, the lint cache, the pending-embedding marker, the compile
+  lock, the Stack-scoped project config, the review-candidate queue, the activity
+  journal, the derived-artifact store, and the host's ingest-job durability still
+  choose their row backend by reading this variable directly. A deployment that
+  removes an existing line therefore keeps `ingest` and `compile` working on the
+  default Stack, while those nine fall back to their file-backed and in-memory
+  forms.
+</Note>
 
 ---
 
