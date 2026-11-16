@@ -22,8 +22,13 @@
  * ## Why an import, and not a call
  *
  * Importing this module IS the declaration: it registers the hook below for the file that imports
- * it. A file-scope import also runs before every `beforeAll`, which a `beforeEach` cannot promise,
- * so a suite that spawns a child process in `beforeAll` still starts that child without a database.
+ * it. `useFileMode()` registers the same hook written as a call, for a file that wants the
+ * declaration beside its own hooks instead of as a bare import.
+ *
+ * Either way the hook is a `beforeEach`, so it runs before each TEST and AFTER every `beforeAll`.
+ * A suite whose work happens in `beforeAll` — a corpus built once, a child spawned once — is
+ * therefore not covered by it: that setup declares the mode for itself with {@link withFileMode},
+ * which is the only form that can wrap a one-off body.
  *
  * ## A file with BOTH modes: {@link withFileMode}, and never the file-wide hook
  *
@@ -59,7 +64,8 @@
  * reach another file's worker. `test/fixtures/env-stack.ts` documents the same measurement for the
  * mirror-image case, and the same reasoning applies one level down: within one file this hook and
  * {@link withFileMode} are the only two places a suite drops its inherited database, both in this
- * module, and a file uses one or the other — never neither.
+ * module — the hook for every case of a file that has ONE mode, the window for the cases of a file
+ * that has TWO.
  */
 
 import { beforeEach } from "vitest";
@@ -78,6 +84,20 @@ const DIMENSIONS_DATABASE_URL_ENV_VAR = "AKS_DATABASE_URL";
 const DATABASE_URL_ENV_VARS = [DIMENSIONS_DATABASE_URL_ENV_VAR, TEST_DATABASE_URL_ENV_VAR] as const;
 
 /**
+ * The spelling of "no database configured" this module writes: PRESENT and BLANK.
+ *
+ * Not a deletion, and the difference is measured rather than stylistic. `dotenv` does not overwrite
+ * a key that already exists, so a DELETE leaves the key free for a loader to refill — and one does:
+ * `packages/api/src/load-environment.ts` loads `dotenv/config` with `DOTENV_CONFIG_PATH` pointing at
+ * the committed corpus (`test/fixtures/test-dotenv.ts`), which names a database. A blank value
+ * survives that load, and reads as "not configured" to every reader in the product: every one of
+ * them asks `(env[VAR] ?? "").trim() !== ""` or an equivalent, which is the same answer `''` and an
+ * absent key give. `test/fixtures/run-cli-server.ts` pins a spawned child's variable BLANK for the
+ * same reason, so the two sides of the process boundary state the mode the same way.
+ */
+const NO_DATABASE = "";
+
+/**
  * Whether the file-wide hook still acts.
  *
  * True for the 103 suites whose import IS the declaration. A mixed file turns it off from its own
@@ -94,7 +114,6 @@ function declareFileMode(): void {
     delete process.env[DIMENSIONS_DATABASE_URL_ENV_VAR];
   });
 }
-
 /**
  * Declare that THIS file decides its mode per case, so the file-wide hook does nothing.
  *
@@ -126,9 +145,10 @@ export function useFileMode(): void {
  *
  * THE per-case declaration, for a file that asserts rows in some cases and files in others. Inside
  * the body the run looks to the code under test exactly like a deployment with no database: both
- * variables that could name one are absent, so `isDatabaseConfigured` (the one predicate the Stack
- * authority and the host's Stack refusal share) answers `false`, which is the named `file` mode of
- * `odd/tasks/single-stack-authority.md` S2 rather than a Stack that went missing.
+ * variables that could name one are blank ({@link NO_DATABASE}, not deleted — see there), so
+ * `isDatabaseConfigured` (the one predicate the Stack authority and the host's Stack refusal share)
+ * answers `false`, which is the named `file` mode of `odd/tasks/single-stack-authority.md` S2 rather
+ * than a Stack that went missing.
  *
  * Restored in a `finally`, and restored to what was there — a value returns as itself and an absent
  * variable returns as absent — so a case of the same file that asserts rows keeps the database it
@@ -139,7 +159,7 @@ export function useFileMode(): void {
  */
 export async function withFileMode<T>(fn: () => T | Promise<T>): Promise<T> {
   const saved = DATABASE_URL_ENV_VARS.map((name) => [name, process.env[name]] as const);
-  for (const name of DATABASE_URL_ENV_VARS) delete process.env[name];
+  for (const name of DATABASE_URL_ENV_VARS) process.env[name] = NO_DATABASE;
   try {
     return await fn();
   } finally {
