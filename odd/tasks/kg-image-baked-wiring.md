@@ -43,6 +43,7 @@ URL literal may be baked into the script; only preserving defaulting."
 | T5 | S5 — run line, tag and rollback recorded from the live `docker run <tag>` proof | inline | `1b2018ea` |
 | T6 | S6, S7, S8 — RED: new static assertions in `test/artifact/kg-container-entry.test.ts`; GREEN: DSN bridge
   and `AKS_BASE_URL` loopback default in `packages/llmwiki-kg/docker/entry.sh` | inline | `1b2018ea` |
+| T7 | T2, T4 — register `test/artifact/kg-container-entry.test.ts` in the frozen orphan ratchet so the CI-form gate of record selects the whole suite (L6) | inline | `65bbd113` |
 
 ## Spec status
 
