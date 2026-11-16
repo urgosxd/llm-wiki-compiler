@@ -13,6 +13,9 @@ Branch `feat/unify-on-openrouter`. The KG's `/aks/v1/context` selection call sen
 - **S4 — Client-side distinguishability.** Verbatim: `a client must be able to tell budget too small from provider down`
 - **S5 — What the budget test pins.** Verbatim: `pin the behaviour: the request's max_tokens is adequate for the prompt, and an exhausted budget is reported as such`
 - **S6 — What the budget test must not pin.** Verbatim: `Do not pin the literal 4096.`
+- **S7 — The close is one scoped retry on the budget error class alone, at a derived escalation, never a second magic number.** Verbatim:
+  > The step that closes it is a retry on that error class alone — one retry with a larger budget, then fail.
+  > **Do not raise 4096 again.** A second magic number would just move the boundary and lose the measurement that justified the first one.
 
 ## Tasks
 
@@ -22,6 +25,7 @@ Branch `feat/unify-on-openrouter`. The KG's `/aks/v1/context` selection call sen
 | [x] T2 | Derive the selection output budget from the answer shape plus named reasoning headroom, citing the measurement, and send it from `routes/aks/context.ts`. | S1, S5 | inline | `33fbddda41e1ca1f2647268175de1039bc784110` |
 | [x] T3 | Raise a distinguishable budget-exhausted error with an explicit status at the source, and answer it legibly where it was being swallowed. | S2, S3, S4 | inline | `33fbddda41e1ca1f2647268175de1039bc784110` |
 | [x] T4 | Record `docs/kg-extraction-budget-findings.md`: the image `Cmd` beats `--env-file`, embeddings must not follow `GATEWAY_URL`, and the adopted `AKS_DATABASE_URL` verdict. | S1, S3 | inline | docs slice below this table's slice; SHA recorded in L4 |
+| [x] T5 | Repeat the selection call once on `LlmBudgetExhaustedError` alone, at an escalation budget DERIVED from `SELECTION_MAX_TOKENS` (not a new literal), leaving `SELECTION_MAX_TOKENS` unchanged at 4096. | S7 | inline | `3ba273527d35b48944e936b3717973c640426466` |
 
 ## Log
 
@@ -108,5 +112,14 @@ The three changes (which of #1's approaches you chose and its justification; whi
 - **Gates, final state.** `pnpm run gates:static`: all six passed in 28.4 s (`tsc` 7.5 s, `typecheck:kg` 7.7 s, `typecheck:tests` 18.6 s, `fallow:ci` 2.8 s, `fallow:kg` 1.0 s, `lint` 13.2 s). `pnpm run build`: exit 0. Nothing skipped, and no `--no-verify` was used: the pre-commit hook refused under Node 22, so the commits were made with the Node 24 bin directory ahead of `PATH`, which is the hook's own instruction.
 - **Test scope, exact.** `vitest run packages/llmwiki-kg/ts/src/core/llm/content-null.test.ts` → 4 passed. `vitest run` over `core/llm/`, `server.test.ts` and `request-transaction-boundary.test.ts` → 48 passed. `vitest related --run` over the five changed source paths → 481 files passed, 4 skipped, 3085 tests passed, 11 skipped, 0 failed. The skips are the intentional ones: `vendor-contract.test.ts` (no vendor key, contract UNVERIFIED) and the live-gateway suites (`pages-gateway.test.ts`, and the `AKS_TEST_GATEWAY` blocks), which are loud about it. **No full `pnpm test`**: that tier belongs to CI.
 - **Remaining risk, stated.** The Anthropic completion path reads `content` blocks and has no truncation branch: a `stop_reason: "max_tokens"` answer is still reported as a generic missing-content error. Out of scope here (the measured defect and every deployment this campaign touches are OpenAI-compatible), and the fix belongs next to `anthropicText` in the same file.
+
+### L5 — the scoped retry, what it measured, and the defect it does not fix
+
+- **What the fix's real gain was: legibility, not zero errors.** A truncated answer now raises a named `LlmBudgetExhaustedError` answered as **502** with its public detail, instead of an opaque 21-byte `500` body. That was the measured defect, and it is closed.
+- **Residual truncation, measured AFTER the fix.** 1 of 8 calls still returned `LLM output budget exhausted before the model answered (finish_reason: "length")`, while other runs were 10/10 and 6/6 clean. So "zero budget errors" is a property of a **run**, not of the image; a report claiming it without a run count is not evidence of anything.
+- **The retry's scope, proven by provider-call count:** exactly **2** provider calls on exhaustion-then-exhaustion, exactly **1** call on a non-budget `LlmError`, exactly **1** on first-attempt success. The escalation happens on the truncation class alone, and a second exhaustion surfaces as the same 502 detail rather than a longer attempt chain.
+- **The derivation, restated for the record.** `SELECTION_RETRY_MAX_TOKENS` is computed from `SELECTION_MAX_TOKENS` (`* 2`), and `SELECTION_MAX_TOKENS` itself is still `SELECTION_ANSWER_TOKENS + SELECTION_REASONING_HEADROOM_TOKENS` = `1024 + 3072` = **4096**, untouched. No new literal entered the file, so the measurement that justified 4096 still justifies the escalation.
+- **OPEN DEFECT, recorded here and NOT fixed in this unit.** `packages/llmwiki-kg/ts/src/core/llm/retry.ts` — `isTransientProviderFailure` treats any `status >= 500` as transient, so a **502** `LlmBudgetExhaustedError` is retried **3× at the SAME budget** on the `withProviderRetry` path. That is the exact opposite of a scoped escalation: it spends the request three times without moving the boundary. It needs its own ticket; fixing it here would change a shared retry policy this unit was not authorized to touch.
+- **Why the gate of record is the COMMITTED tree.** A regression in the frozen orphan census was caught only because the gate ran on the committed tree rather than the working tree. A working-tree gate can pass over content that no commit contains, so its green is not a statement about the branch.
 
 
