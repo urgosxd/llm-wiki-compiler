@@ -53,6 +53,7 @@ import { AKS_STACK_ID_ENV_VAR } from "../../packages/wiki/src/dimensions/activat
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";
 import { seedConceptPage } from "../fixtures/mcp-stack-rows.js";
+import { keylessly } from "../fixtures/keyless-provider.js";
 
 /** A facade handle, as `createWiki` returns it. */
 type Wiki = ReturnType<typeof createWiki>;
@@ -123,18 +124,6 @@ function emptyPageSlugs(results: readonly LintResult[]): string[] {
     .filter((result) => result.rule === "empty-page")
     .map((result) => path.basename(result.file, ".md"))
     .sort();
-}
-
-/** Run `fn` with the shipped keyless provider selected, restoring the selection after. */
-async function keylessly<T>(fn: () => Promise<T>): Promise<T> {
-  const saved = process.env.LLMWIKI_PROVIDER;
-  process.env.LLMWIKI_PROVIDER = "offline";
-  try {
-    return await fn();
-  } finally {
-    if (saved === undefined) delete process.env.LLMWIKI_PROVIDER;
-    else process.env.LLMWIKI_PROVIDER = saved;
-  }
 }
 
 /** The two Stacks and the two project roots their handles address. */

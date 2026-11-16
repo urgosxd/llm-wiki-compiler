@@ -145,6 +145,31 @@ export interface DimensionsDatabase {
 }
 
 /**
+ * Whether this run configured a database at all.
+ *
+ * THE ONE ANSWER to "is there a database behind this run", and the discriminator
+ * the Stack authority reads to tell a file-backed wiki -- a supported mode -- from
+ * a deployment whose Stack went missing. Both look like "no Stack id" to a guard, and
+ * only the second may fail, so the two must not be separated by a guess at a site.
+ *
+ * A blank value is NOT configured: `AKS_DATABASE_URL=` in a shell means what leaving
+ * it unset means, and treating it as configured would send a run that named no
+ * database after a connection nobody asked for.
+ *
+ * It deliberately does not answer {@link createDimensionsDatabase}'s question. That
+ * one asks "which DSN do I connect to" and falls back to the vendored port; this one
+ * asks whether anyone configured a database, where that fallback is exactly the wrong
+ * answer, because it would make every run look configured. The distinction is
+ * already drawn by the host's Stack refusal, which skips its lookup this way.
+ *
+ * @param env - Environment to read; defaults to `process.env`.
+ * @returns True when the connection variable carries a non-blank value.
+ */
+export function isDatabaseConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env[AKS_DATABASE_URL_ENV_VAR] ?? "").trim() !== "";
+}
+
+/**
  * Build the database handle every dimension is backed by.
  *
  * Constructing a client does NOT connect: postgres-js pools lazily, so a process

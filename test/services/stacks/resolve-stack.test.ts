@@ -27,14 +27,12 @@ import type { DatabaseHandle } from "@repo/foundation";
 import { createKgPostgresHarness } from "../../fixtures/kg-postgres.js";
 import { DEFAULT_STACK_DOMAIN } from "../../../packages/wiki/src/dimensions/stack-selection.js";
 import { resolveStackForCommand } from "../../../packages/wiki/src/services/stacks/resolve-stack.js";
+import { isolatedCases } from "../../fixtures/stack-rollback.js";
 
 const harness = await createKgPostgresHarness("resolve-stack");
 const { db, reachable } = harness;
 
 afterAll(() => harness.cleanup());
-
-/** Thrown to abandon a case's transaction; it never surfaces from a case. */
-class DiscardCase extends Error {}
 
 /**
  * Ids of every row claiming the default domain, as they stand on `tx`.
@@ -49,30 +47,8 @@ async function defaultStackIds(tx: DatabaseHandle): Promise<readonly string[]> {
   return rows.map((row) => row.id);
 }
 
-/**
- * Run `body` on a handle where the default domain is free, then discard everything.
- *
- * The delete makes the case independent of a row an earlier run or a sibling suite
- * left behind -- `default-stack.test.ts` commits nothing either, but nothing stops
- * the ingest path from having materialized the default Stack for real (an ingest
- * opens its own connection, so it cannot be wrapped here).
- *
- * @param body - Work to run against the isolated handle.
- * @returns What `body` returned.
- */
-async function isolated<T>(body: (tx: DatabaseHandle) => Promise<T>): Promise<T> {
-  const observed: { value?: T } = {};
-  const run = async (tx: DatabaseHandle): Promise<void> => {
-    await tx.execute(sql`delete from stacks where domain = ${DEFAULT_STACK_DOMAIN}`);
-    observed.value = await body(tx);
-    throw new DiscardCase("roll the case's work back");
-  };
-  await db.transaction((tx) => run(tx as unknown as DatabaseHandle)).catch((error: unknown) => {
-    if (error instanceof DiscardCase) return;
-    throw error;
-  });
-  return observed.value as T;
-}
+/** The isolated case runner: a free default domain, and everything rolled back. */
+const isolated = isolatedCases(db);
 
 describe.skipIf(!reachable)("resolveStackForCommand", () => {
   it("falls back to the default Stack when nothing is configured", async () => {
