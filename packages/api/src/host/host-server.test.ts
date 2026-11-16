@@ -18,6 +18,9 @@
 import { describe, expect, it } from "vitest";
 import { createJobRegistry } from "@repo/wiki/job-registry";
 import { runningHost as startRunningHost, type RunningHost } from "./running-host.js";
+import { useFileMode } from "../../../../test/fixtures/file-mode.js";
+
+useFileMode();
 
 /**
  * Start a host on a scratch project root.

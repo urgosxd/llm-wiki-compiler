@@ -21,6 +21,9 @@ import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
 import { startHost } from "./server.js";
 import { createJobRegistry } from "@repo/wiki/job-registry";
 import { clearTenantSnapshots, tenantSlugOf } from "./tenants.js";
+import { useFileMode } from "../../../../test/fixtures/file-mode.js";
+
+useFileMode();
 
 /** A project whose single concept page is named after `label`. */
 async function projectNamed(label: string): Promise<string> {

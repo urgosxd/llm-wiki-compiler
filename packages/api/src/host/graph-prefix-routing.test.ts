@@ -26,6 +26,9 @@
 import { describe, expect, it } from "vitest";
 import { createJobRegistry } from "@repo/wiki/job-registry";
 import { runningHost } from "./running-host.js";
+import { useFileMode } from "../../../../test/fixtures/file-mode.js";
+
+useFileMode();
 
 /** A UUID that resolves to no Stack, so the graph app fails INSIDE the handler. */
 const UNKNOWN_STACK = "00000000-0000-0000-0000-000000000000";
