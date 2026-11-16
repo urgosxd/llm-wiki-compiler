@@ -1,0 +1,117 @@
+# Feature: Single Stack authority — the env var loses its authority, the silent fallbacks go
+
+Branch: `refactor/single-stack-authority`, base HEAD `17ea3de1716eedb0e482b888b472e56fcced0afa`. Tracking document written BEFORE any source write, per ODD step 5.
+
+HIGH-RISK: item 1 + item 3 + item 6. `public.stacks` stays the single registry and no data is migrated; the change reaches the storage backend every row-backed read and write resolves through (a wrong answer is a wrong-tenant read, not an error), and the surfaces that transitively consume it are the published SDK and the host's durability pair. Continuing work recorded in `odd/tasks/multi-tenant-stack-only.md` and its successor `odd/tasks/wiki-on-postgres.md`.
+
+## Specs
+
+**S1 — One precedence, everywhere (verbatim).** "One precedence, everywhere, in this order: 1. The id the caller supplied — MCP, ingest, CLI when a Stack is named. 2. The database-backed resolver — ensureDefaultStack by DEFAULT_STACK_DOMAIN, which already exists. 3. Fail, loudly and named. Never a silent return to the file backend."
+
+**S2 — File mode is explicit (verbatim).** "a wiki with no database at all is a legitimate mode." — "the absence of a Stack must be an explicit mode — a named, deliberate condition that the code checks once — not the accidental consequence of a guard returning undefined twenty times."
+
+**S3 — What must not move (verbatim).** "Do not change public.stacks schema, do not add a table, do not migrate data." — "Do not touch the MCP tool path's behaviour — tenant-db.ts:157 is correct as written."
+
+**S4 — `AKS_STACK_ID` becomes inert (verbatim).** "Do not remove AKS_STACK_ID from any .env — the operator owns that file. Make the code stop requiring it and report that the line is now inert."
+
+**S5 — The RED is the masquerade, and file mode survives (verbatim).** "The RED must show the current defect: a missing Stack id produces a working file-backed result instead of a failure. Write it at the level a user reaches — the public function or command — and report the literal failure." — "whatever file-mode support exists today must still work, explicitly. A refactor that makes absent-Stack always fatal and thereby deletes the file mode is not the requested change; if the file mode is real, it survives with a name."
+
+**S6 — Hard prohibitions (verbatim).** "Do not push." — "Never print a connection string, token, key, env value or model value." — "Do not read or edit .env. Do not contact aks."
+
+**S7 — Two Manager requirements appended after the split was recorded (verbatim, two parts).**
+
+**S7a — The extraction comes first, and it is reported separately (verbatim).** "Extract `api.ts:330`'s check; do not write a second copy of it." — "`unknownStackRefusal` already asks the right question — is a database configured — and already carries the right sentence in its comment." — “If your explicit `file` mode is a new predicate that asks the same question a different way, we end up with two derivations of "is this file-backed", which is the same drift this whole day has been removing.” — "pull that check into the one place the boundary can call it, and have `unknownStackRefusal` consume it too rather than keep its own copy." — "Report the extraction separately from the mode work, because it is the one part that could silently change `api.ts`'s behaviour."
+
+**S7b — The durability pair is in scope, and it is the most dangerous (verbatim).** "`durableJobReadsFor` and `durableRegistryFor` are in scope, and they are the most dangerous of the four." — "job state is accepted and then lost on exit, with no error" — "Apply the same discriminator: no database → explicit file mode; database configured and no stack → loud failure." — "If that is genuinely a separate change, say so and stop rather than half-doing it — but it cannot stay as an accepted-and-discarded write."
+
+## Tasks
+
+- [ ] T1 · S1,S2,S5 · explicit stack-authority module: precedence 1→2→3 resolved ONCE at the boundary, typed named `file` mode when no database is configured, loud named error when a database is configured and no Stack resolves · route: gentle-ai-worker · commit:
+- [ ] T2 · S5 · the RED: with a per-run database configured and `AKS_STACK_ID` absent, `createWiki({root}).compile()` currently succeeds file-backed; test asserts the row-backed outcome. Record the literal RED output · route: gentle-ai-worker · commit:
+- [ ] T3 · S1,S2 · compiler layer: the 8 factory guards around `packages/wiki/src/compiler/index.ts:1903-2031` stop deciding on an empty string and branch on the explicit authority · route: gentle-ai-worker · commit:
+- [ ] T4 · S1,S2 · seam layer: the guards in `packages/wiki/src/dimensions/wiki/page-source-seam.ts`, same change (see L2 for the measured count) · route: gentle-ai-worker · commit:
+- [ ] T5 · S1,S7b · entry wiring: ingest (`packages/wiki/src/services/ingest/service.ts:190`), compile (`packages/wiki/src/compiler/index.ts:1382`), and the `packages/api/src/host/server.ts:187/226` durability pair (`durableJobReadsFor`/`durableRegistryFor`), which must no longer fall back to an in-memory registry when a database is configured and no Stack resolves — that must be a loud failure; a database-less deployment keeps an explicit file mode · route: gentle-ai-worker · commit:
+- [ ] T6 · S4 · report `AKS_STACK_ID` inert: confirm no code path requires it, update docs/help text that describe it, do not edit `.env` · route: gentle-ai-worker · commit:
+- [ ] T7 · S1,S2,S5 · the file-mode pins stay green: `test/sdk/facade-env-threading.test.ts:284`, `test/dimensions/state-seam-backend.test.ts:77`, `test/export-freshness-stack-documents.test.ts:82` · route: gentle-ai-verify · commit:
+- [ ] T8 · S3,S6 · independent verification + gate of record, pre-committed population · route: gentle-ai-verify · commit:
+- [ ] T9 · S7a · extract the "is a database configured" predicate into one home and make `packages/api/src/host/api.ts:330` `unknownStackRefusal` consume it instead of keeping its own copy; report separately because it can silently change `api.ts` behaviour · route: gentle-ai-worker · commit:
+- [ ] T10a · S5,S6 · collapse the static database seed: make the `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` hatch reach the `vitest.config.ts:26` seed so a hatched worker's environment is provably DSN-free, and commit the spawned probe (`test/hatch-means-no-database.test.ts` + `test/fixtures/hatch-worker-env-probe.test.ts`) once it observes that · route: gentle-ai-worker · commit:
+- [ ] T10b · S5 · align the ~60 file-mode tests that assert a file-backed outcome while the runner seeds a database DSN, in ONE uniform shape, after T10a lands · route: gentle-ai-worker · commit:
+
+## Log
+
+L1 — The operator's original request, verbatim and in full (the project brief this feature is derived from; reproduced in a fenced block so that its own headings do not break this document's outline):
+
+```text
+One Stack authority. Kill the env variable's authority and the silent file-backend fallbacks. The hard part is not deleting 20 guards — it is telling "no Stack because this is a file-mode wiki" apart from "no Stack because a variable is missing", and only the second may fail.
+
+## The decision, already taken by the operator
+**`public.stacks` stays the single registry.** **No per-dimension Stack identity, no schema change, no data migration.** **The caller's id or the database-backed resolver becomes the only source; the `.env` variable loses its authority; the silent fallbacks go.**
+
+## Established, do not re-derive
+- **`public.stacks` is one shared record with two writers: the KG route (`stacks.ts:268-273`) and the wiki (`default-stack.ts:75-79`).** **Nine wiki tables carry `references public.stacks(id)`.** **No `wiki.stacks` exists.**
+- **Two resolution systems coexist: `activation.requireStackId` (env-only, throws, `activation.ts:231`) and `resolve-stack`/`ensureDefaultStack` (database-backed, by domain), the latter already wired into ingest (`services/ingest/service.ts:190`) and compile (`compiler/index.ts:1382`).**
+- **20 silent sites of the shape `if (stackId === "") return undefined;` — 8 in `compiler/index.ts` (factories at `:1907, 1927, 1948, 1957, 1977, 1998, 2019, 2028`) and 12 in `dimensions/wiki/page-source-seam.ts` — each degrading the row-backed store to the file backend.**
+- **`tenant-db.ts:157` builds a copy of `process.env` and never mutates it, so the MCP path already sees the caller's id. MCP is not the problem and must not change behaviour.**
+
+## The design to implement
+**One precedence, everywhere, in this order:**
+1. **The id the caller supplied** — MCP, ingest, CLI when a Stack is named.
+2. **The database-backed resolver** — `ensureDefaultStack` by `DEFAULT_STACK_DOMAIN`, which already exists.
+3. **Fail, loudly and named.** **Never a silent return to the file backend.**
+
+**And the distinction that decides whether this is a fix or an outage: a wiki with no database at all is a legitimate mode.** **If the file backend is a supported mode, the absence of a Stack must be an **explicit** mode — a named, deliberate condition that the code checks once — not the accidental consequence of a guard returning `undefined` twenty times.**
+
+**So:** **enumerate which of the 20 sites can legitimately be reached with no Stack because the wiki is file-backed, and which are only ever reached with a Stack that should exist.** **Report that split before changing them.** **If you cannot tell them apart from the code, that itself is the finding and the answer is to make the mode explicit rather than to guess per site.**
+
+## Test-first, and the RED is the masquerade
+**The RED must show the current defect: a missing Stack id produces a working file-backed result instead of a failure.** **Write it at the level a user reaches — the public function or command — and report the literal failure.**
+**And the touched-behaviour pin: whatever file-mode support exists today must still work, explicitly.** **A refactor that makes absent-Stack always fatal and thereby deletes the file mode is not the requested change; if the file mode is real, it survives with a name.**
+
+## Do not
+- **Do not change `public.stacks` schema, do not add a table, do not migrate data.**
+- **Do not touch the MCP tool path's behaviour** — `tenant-db.ts:157` is correct as written.
+- **Do not remove `AKS_STACK_ID` from any `.env`** — the operator owns that file. **Make the code stop requiring it and report that the line is now inert.**
+- **Do not push.**
+
+## Constraints
+- **Never print a connection string, token, key, env value or model value.** **A credential was pasted into the live conversation and is being rotated: never copy a key into a report, commit or message.**
+- **Do not read or edit `.env`. Do not contact `aks`.**
+- **Gate of record: `PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" corepack pnpm exec turbo run test --filter=//` — read file and test counts from its own summary, confirm `1 successful`, and pre-commit the expected population before running it.** **If it reds with exit 137 and no diagnostics, re-run standalone once and say so.**
+
+## Deliverable
+**The 20-site split with its reason · the RED literal · the precedence implemented with the file mode made explicit · the full 40-char SHA · the suite counts against the pre-committed number · and one sentence: is there any path left where a missing Stack silently produces a working result.**
+```
+
+L2 — Split decision taken from reconnaissance, and it is the answer L1 asks for when the sites cannot be told apart. The silent sites are **structurally identical**: each is `const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim(); if (stackId === "") return <file backend>;` — same guard, same input, no per-site information that would let a reader distinguish "this wiki has no database, file mode is correct" from "a Stack should exist here and does not". They cannot be told apart per site from the code, so per L1 that is itself the finding and the mode becomes **explicit at the boundary**: one authority module decides once, and every site branches on its verdict instead of re-deciding on an empty string. The discriminator is **whether a database is configured**, following the existing correct pattern at `packages/api/src/host/api.ts:330` (`unknownStackRefusal`), which reads `const configured = (process.env[AKS_DATABASE_URL_ENV_VAR] ?? "").trim(); if (configured === "") return undefined;` and refuses loudly once a database exists — that guard is the named, deliberate condition to generalize, not a twentieth silent fallback.
+
+Measured against HEAD `17ea3de1` while writing this document, so the counts below are observed and not inherited:
+
+| Measure | Command | Observed |
+| --- | --- | --- |
+| guards in `packages/wiki/src/compiler/index.ts` | `grep -c 'stackId === ""'` | **8** — `:1908, :1928, :1949, :1958, :1978, :1999, :2020, :2029` |
+| guards in `packages/wiki/src/dimensions/wiki/page-source-seam.ts` | `grep -c 'stackId === ""'` | **11** — `:71, :97, :130, :192, :246, :274, :310, :405, :474, :543, :570` |
+| total in the two files L1 names | both above | **19**, not the 20 L1 states |
+
+The seam count is **11** and the pair totals **19**: the brief's "12 in `page-source-seam.ts`" and its "20 silent sites" overstate by one, and the compiler's eight factory line numbers each sit one line below the brief's list (`:1908` where the brief says `:1907`, and so on) because a doc comment line shifted them. T4's scope is the measured set, and no task may be widened to manufacture a twentieth site. Two anchors L1 asked not to be re-derived were re-verified anyway, cheaply, and hold: `packages/wiki/src/services/stacks/default-stack.ts:69` `export async function ensureDefaultStack(db: DatabaseHandle): Promise<string>` with `DEFAULT_STACK_DOMAIN = "default"` at `packages/wiki/src/dimensions/stack-selection.ts:35`; and the two already-wired entry points, `packages/wiki/src/services/ingest/service.ts:190` `const stackId = explicitStackId ?? await resolveStackForCommand(dimensionsDb.db, env);` and `packages/wiki/src/compiler/index.ts:1382` `const stackId = await resolveStackForDimensions(db, env, RETIREMENT_DIMENSIONS);`.
+
+L3 — Decision and evidence appended after L2, before any source write under this document. Two Manager requirements, plus three corrections to how this feature was being framed. Recorded here because they change what T5 means and add T9 to the plan.
+
+**Two new requirements.** (1) **The extraction precedes the mode work and is reported on its own.** The predicate that `packages/api/src/host/api.ts:330` `unknownStackRefusal` already uses — is a database configured — is the one home for the discriminator; the explicit `file` mode must consume it rather than derive "is this file-backed" a second way, and `unknownStackRefusal` must consume it too rather than keep its own copy. The full operator text is S7a above, not repeated here. (2) **The durability pair is in scope.** `packages/api/src/host/server.ts:186` `durableJobReadsFor` and `:225` `durableRegistryFor` (guards at `:187` and `:226`) today return the file-backed answer — `undefined` reads and a plain in-memory registry — whenever `AKS_STACK_ID` is empty, even with a database configured, so job state is accepted and then lost on exit without any error. Same discriminator applies: no database → explicit file mode; database configured and no Stack → loud failure. Full operator text is S7b above. T5's line was rewritten to state that requirement explicitly instead of describing the current fallback as if it were acceptable, and T9 was added for the extraction so the one part that can silently change `api.ts` behaviour is reviewable alone.
+
+**Framing correction: wrong subject, not missing check.** This defect was not a missing check. It was a check with the WRONG SUBJECT, twenty times over. A missing check is a gap; a check with the wrong subject is a design error, and recording which one it was decides whether the same mistake can recur. Every one of the silent sites asks "is the env variable empty" when the question that discriminates the two legitimate outcomes is "is a database configured". A future guard written from the old framing would be born with the same defect, so the feature states the question once, at the boundary, and every site branches on that verdict.
+
+**Measured count discrepancy — 19, not 20.** `grep -c 'stackId === ""'` on HEAD `17ea3de1` observes **8** in `packages/wiki/src/compiler/index.ts` and **11** in `packages/wiki/src/dimensions/wiki/page-source-seam.ts`: **19** measured against the **20** the brief states. The brief's "12 in `page-source-seam.ts`" is the overstatement, as L2 already measured. The instruction that follows from this: the true enumeration must be settled **by evidence — all falsy-Stack guards, not only the `=== ""` form** — and never by padding the list to reach twenty. If the evidence settles on a number other than 19 once the falsy forms are counted, that measured number governs the work and is recorded in this Log; T4's scope follows the measurement, and no task may be widened to manufacture a site.
+
+**What the RED must assert, and what the pins must keep.** The RED asserts the **ROW-BACKED outcome**, not an error message: with a database configured and no Stack resolvable, the user-reachable path must observe a row-backed result and currently observes a working file-backed one — the literal failure is the masquerade itself, as S5 states. Asserting a message instead would pin wording rather than the defect. And the three file-mode pins — `test/sdk/facade-env-threading.test.ts:284`, `test/dimensions/state-seam-backend.test.ts:77`, `test/export-freshness-stack-documents.test.ts:82` — must keep their **strength**: a pin rewritten to match the new `file` mode must prove the narrower thing with the same strength, never become a looser assertion that passes whether or not the mode is explicit.
+
+L4 — Four rulings and one count correction, recorded after the authority and the wiring landed, plus two tasks they add. T3 and T4 **landed complete under Commits A and B**: the 8 compiler factories and the 12 seam sites branch on the authority's named `kind`, and nothing in either file decides on an empty string any more. The RED of L3 (`test/stack-authority-masquerade.test.ts`) is **observed GREEN** now that the sites are wired: with a per-run database configured and no `AKS_STACK_ID`, one compile writes its state to the Stack's rows and creates no `.llmwiki/state.json`, so the masquerade it pinned is closed rather than merely reported.
+
+**Ruling 1 — the hatch is enforced in the test seeding chain, and NOT by a test-only flag in production.** `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` means "this run has no database", and it did not mean that: the hatch suppressed the container but `vitest.config.ts:26` still seeded `AKS_DATABASE_URL` into every worker through the static `test.env` object, so every "is a database configured" answer in a hatched run was TRUE and production code was handed the database the run had declared it did not have. Measured: a hatched run reported `unavailable` while a database-backed suite passed **6/6** by writing to the container port, with nothing listening on the default one. The rejected option is the one that reads as the smaller change: teach `activation.ts`/`isDatabaseConfigured` to recognise the hatch. It is rejected because production code must never depend on a variable only the suite sets — a run without a database has to look like a run without a database to the code under test, not to a predicate that recognises our test flag. So the setup file (`test/setup/test-database-url.ts`) checks the hatch FIRST and **deletes** `AKS_DATABASE_URL`, because publishing nothing leaves the static seed in place, which is the whole defect. **Honest limit, and it is why T10a exists:** the static seed at `vitest.config.ts:26` is **still live**, so the single-channel collapse is still pending and a hatched worker's environment is **not yet provably DSN-free**. The probe's current colour, measured rather than assumed: spawned by `test/hatch-means-no-database.test.ts` it reports `AKS_DATABASE_URL=absent isDatabaseConfigured=false` and **passes**; collected by an ordinary run, where the hatch is not in play, it reports one skip and asserts nothing, by design.
+
+**Ruling 2 — the count is 20, and the twelfth seam site is one a grep cannot see.** The measured numbers are **8** in `packages/wiki/src/compiler/index.ts` plus **12** in `packages/wiki/src/dimensions/wiki/page-source-seam.ts`. Eleven of the twelve are literal `if (stackId === "") return …` guards, which is exactly what `grep 'stackId === ""'` counts; the twelfth is `withCategoryStore` (`:521`), whose body spells the same decision as `seams.categories ?? createFileCategoryStore(root)` — a `??` fallback with no `stackId` in it at all. So the brief's 20 stands and the earlier **19 was a `grep 'stackId === ""'` artifact**, not a smaller population: the grep measured its own pattern, not the decision. Recorded as that artifact, and deliberately **not** as a padded list — no site was invented to reach twenty, and the twentieth was found by reading the file rather than by counting matches. `withCategoryStore` is now converted too: its `file` case is still the named `file` kind, and its stack case is handed the resolved authority.
+
+**Ruling 3 — the synchronous seam factory refuses instead of guessing (the sync bridge).** `resolvePageSeams` is called synchronously by the compile pipeline and cannot await a database round trip, while `resolveStackAuthority` must ask the database for precedence 2. The bridge is therefore narrow and honest: a caller that already resolved an authority hands it over and no bridge is used; a caller that does not gets the two questions a synchronous read CAN answer — the id `env` carries, then whether a database exists at all — and when a database exists but no Stack was named it **throws** rather than falling back to files. The refusal is what makes the bridge safe: the one thing it must never do is answer "file" because it could not wait. The pipeline's own path takes the first branch (`FinalizeFlags.stackAuthority`), which is why `finalizeWiki` threads the authority into `regenerateIndices` instead of letting the render resolve a second time.
+
+**Ruling 4 — the commit structure is overridden, because preservation outranks tidy history.** The deliverable asks for one 40-character SHA. The work is preserved instead as four labelled commits — `feat` (the authority), `refactor` (the wiring), `test` (the harness opt-out), `docs` (this record) — because the alternative was losing a complete, typechecking feature that three writers had already finished and died on top of, and a single squashed commit would have buried the one thing a reviewer needs to see here: that the suite is **intentionally red between Commits A/B and Commit T10b**, loud in the wrong layer rather than silent in the right one. Each commit states its own red state in its body, so the history is honest at every step, which is the property that made the override acceptable at all.
+
