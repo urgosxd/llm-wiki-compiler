@@ -31,7 +31,9 @@ import {
   StackAuthorityError,
   requireStackId,
   resolveStackAuthority,
+  resolveStackAuthorityWithoutLookup,
   stackIdOf,
+  type StackAuthority,
 } from "../packages/wiki/src/dimensions/stack-authority.js";
 import { isolatedCases } from "./fixtures/stack-rollback.js";
 
@@ -55,6 +57,16 @@ function refusingDatabase(): DatabaseHandle {
 
 /** The isolated case runner: a free default domain, and everything rolled back. */
 const isolated = isolatedCases(db);
+
+/** The error a synchronous call throws, so its exact message can be pinned. */
+function thrownBy(work: () => unknown): unknown {
+  try {
+    work();
+    return undefined;
+  } catch (error: unknown) {
+    return error;
+  }
+}
 
 /** Ids of every row claiming the default domain, read through `tx`. */
 async function defaultStackIds(tx: DatabaseHandle): Promise<readonly string[]> {
@@ -135,6 +147,53 @@ describe("resolveStackAuthority: a configured database", () => {
     }));
 
     expect(observed.authority).toEqual({ kind: "stack", stackId: observed.rows[0] });
+  });
+});
+
+describe("resolveStackAuthorityWithoutLookup: what a synchronous caller can settle", () => {
+  it("returns an authority the caller already resolved as-is, database or not", () => {
+    const settled: StackAuthority = { kind: "file", reason: NO_DATABASE_CONFIGURED };
+
+    const authority = resolveStackAuthorityWithoutLookup(
+      { authority: settled, env: { [AKS_DATABASE_URL_ENV_VAR]: UNREACHABLE_DSN } },
+      "a synchronous caller",
+    );
+
+    expect(authority).toBe(settled);
+  });
+
+  it("answers the caller's Stack id when nothing was resolved", () => {
+    const authority = resolveStackAuthorityWithoutLookup(
+      { stackId: `  ${CALLER_STACK}  `, env: {} },
+      "a synchronous caller",
+    );
+
+    expect(authority).toEqual({ kind: "stack", stackId: CALLER_STACK });
+  });
+
+  it("names the file mode when no database is configured", () => {
+    const authority = resolveStackAuthorityWithoutLookup(
+      { stackId: "   ", env: {} },
+      "a synchronous caller",
+    );
+
+    expect(authority).toEqual({ kind: "file", reason: NO_DATABASE_CONFIGURED });
+  });
+
+  it("refuses, in resolvePageSeams' own words, when a database is configured and nothing was supplied", () => {
+    const outcome = thrownBy(() =>
+      resolveStackAuthorityWithoutLookup(
+        { env: { [AKS_DATABASE_URL_ENV_VAR]: UNREACHABLE_DSN } },
+        "resolvePageSeams",
+      ),
+    );
+
+    expect(outcome).toBeInstanceOf(StackAuthorityError);
+    expect((outcome as Error).message).toBe(
+      `${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack, but resolvePageSeams ` +
+        `was given no resolved authority and cannot ask the database resolver itself. ` +
+        `Pass the authority the run resolved, or name the Stack in AKS_STACK_ID.`,
+    );
   });
 });
 

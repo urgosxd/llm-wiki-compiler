@@ -20,16 +20,11 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import type { PageListingSource } from "../../pages/list.js";
+import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js";
 import {
-  createDimensionsDatabase,
-  AKS_DATABASE_URL_ENV_VAR,
-  AKS_STACK_ID_ENV_VAR,
-  isDatabaseConfigured,
-} from "../activation.js";
-import {
-  NO_DATABASE_CONFIGURED,
   StackAuthorityError,
   resolveStackAuthority,
+  resolveStackAuthorityWithoutLookup,
   type StackAuthority,
 } from "../stack-authority.js";
 import { generateIndex } from "../../compiler/indexgen.js";
@@ -469,38 +464,14 @@ export interface PageSeams {
 }
 
 /**
- * The authority a SYNCHRONOUS factory can establish by itself.
- *
- * `resolveStackAuthority` is asynchronous because its second precedence step asks the
- * database, and {@link resolvePageSeams} is called synchronously by the compile
- * pipeline, which cannot await a factory. A caller that hands it a resolved authority
- * skips this entirely; one that does not gets the two questions a synchronous read CAN
- * answer -- the id `env` carries, then whether a database exists at all -- and a third
- * outcome that is a named refusal, never the file backend.
- *
- * @param env - Environment to read the Stack from.
- * @returns A `stack` authority, or the named `file` authority when no database exists.
- * @throws {StackAuthorityError} when a database is configured and `env` names no Stack.
- */
-function authorityFromEnv(env: NodeJS.ProcessEnv): StackAuthority {
-  const supplied = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (supplied !== "") return { kind: "stack", stackId: supplied };
-  if (!isDatabaseConfigured(env)) return { kind: "file", reason: NO_DATABASE_CONFIGURED };
-  throw new StackAuthorityError(
-    `${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack, but ` +
-      `resolvePageSeams was given no resolved authority and cannot ask the database ` +
-      `resolver itself. Pass the authority the run resolved, or name the Stack in ` +
-      `${AKS_STACK_ID_ENV_VAR}.`,
-  );
-}
-
-/**
  * Resolve the page seams this run should use.
  *
  * @param db - The run's database handle.
  * @param env - Environment to read the Stack from; defaults to `process.env`.
- * @param authority - The Stack this run already resolved; omitted, this call derives
- *   one from `env` as {@link authorityFromEnv} describes.
+ * @param authority - The Stack this run already resolved; omitted, the authority a
+ *   synchronous read can settle is resolved from `env` by
+ *   {@link resolveStackAuthorityWithoutLookup}, which refuses rather than answering
+ *   `file` when a database is configured and nothing settled it.
  * @returns The seams, empty in the named `file` mode.
  * @throws {StackAuthorityError} when a database is configured and no Stack resolved.
  */
@@ -509,7 +480,10 @@ export function resolvePageSeams(
   env: NodeJS.ProcessEnv = process.env,
   authority?: StackAuthority,
 ): PageSeams {
-  const resolved = authority ?? authorityFromEnv(env);
+  const resolved = resolveStackAuthorityWithoutLookup(
+    { authority, stackId: env[AKS_STACK_ID_ENV_VAR], env },
+    "resolvePageSeams",
+  );
   if (resolved.kind === "file") return {};
   return {
     content: createPageContentSource(db, resolved.stackId),

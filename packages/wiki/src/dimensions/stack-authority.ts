@@ -44,7 +44,7 @@
  */
 
 import type { DatabaseHandle } from "@repo/foundation";
-import { AKS_DATABASE_URL_ENV_VAR, isDatabaseConfigured } from "./activation.js";
+import { AKS_DATABASE_URL_ENV_VAR, AKS_STACK_ID_ENV_VAR, isDatabaseConfigured } from "./activation.js";
 import { DEFAULT_STACK_DOMAIN } from "./stack-selection.js";
 import { resolveStackForCommand } from "../services/stacks/resolve-stack.js";
 
@@ -95,6 +95,61 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** What a caller that cannot wait for a database already knows. */
+export interface SettledStackAuthorityRequest {
+  /** An authority the caller resolved earlier; handed back untouched when present. */
+  readonly authority?: StackAuthority | undefined;
+  /** Stack id the caller named — MCP, ingest, a CLI `--stack`. Blank means none. */
+  readonly stackId?: string | undefined;
+  /** The one environment the run reads; defaults to `process.env`. */
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+/** The Stack id a caller named, without surrounding space; `""` when it named none. */
+function namedStackId(stackId: string | undefined): string {
+  return stackId?.trim() ?? "";
+}
+
+/**
+ * The authority the caller's OWN facts settle, or `undefined` when only a database can.
+ *
+ * THE caller-id test and THE file-mode decision of this module: a non-blank id is a
+ * Stack, and no configured database is the named file mode. Both entries below branch
+ * on this one answer, so neither keeps its own copy of either question — which is the
+ * drift this module was built to end.
+ *
+ * @param stackId - The id the caller named, if any.
+ * @param env - The one environment the run reads.
+ * @returns The settled authority, or `undefined` when a database is configured and the
+ *   caller named no Stack.
+ */
+function settledAuthority(
+  stackId: string | undefined,
+  env: NodeJS.ProcessEnv,
+): StackAuthority | undefined {
+  const supplied = namedStackId(stackId);
+  if (supplied !== "") return { kind: "stack", stackId: supplied };
+  if (!isDatabaseConfigured(env)) return { kind: "file", reason: NO_DATABASE_CONFIGURED };
+  return undefined;
+}
+
+/**
+ * THE refusal for "a database is configured, so this run must have a Stack".
+ *
+ * One sentence stem, one error type, for every caller that reaches it; what THAT caller
+ * must do next is the only part that genuinely differs, so it is supplied here instead
+ * of being reworded at each site.
+ *
+ * @param whatHappened - Why this caller reached the refusal, as a clause.
+ * @param remedy - What would end it, as a sentence.
+ * @returns The refusal to throw.
+ */
+function missingStackRefusal(whatHappened: string, remedy: string): StackAuthorityError {
+  return new StackAuthorityError(
+    `${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack, but ${whatHappened} ${remedy}`,
+  );
+}
+
 /**
  * Resolve which Stack this run works on.
  *
@@ -109,19 +164,54 @@ function messageOf(error: unknown): string {
 export async function resolveStackAuthority(
   request: StackAuthorityRequest = {},
 ): Promise<StackAuthority> {
-  const supplied = request.stackId?.trim() ?? "";
-  if (supplied !== "") return { kind: "stack", stackId: supplied };
-
   const env = request.env ?? process.env;
-  if (!isDatabaseConfigured(env)) return { kind: "file", reason: NO_DATABASE_CONFIGURED };
+  const settled = settledAuthority(request.stackId, env);
+  if (settled !== undefined) return settled;
   if (request.db === undefined) {
-    throw new StackAuthorityError(
-      `${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack, but no database ` +
-        `handle was supplied to resolve it. Pass the handle the run already opened, or pass the ` +
-        `Stack id explicitly.`,
+    throw missingStackRefusal(
+      "no database handle was supplied to resolve it.",
+      "Pass the handle the run already opened, or pass the Stack id explicitly.",
     );
   }
   return { kind: "stack", stackId: await defaultStackOrRefuse(request.db, env) };
+}
+
+/**
+ * Resolve the authority a synchronous caller can settle WITHOUT asking the database.
+ *
+ * Deliberately NOT `resolveStackAuthority` under a second name, and named for the narrower
+ * thing it does: precedence 2 — the database-backed resolver — needs an `await`, so it is
+ * out of this entry's reach, and the entry says so instead of guessing. Its whole contract
+ * is three answers:
+ *
+ *   1. an authority the caller already resolved is returned as-is, untouched;
+ *   2. otherwise a non-blank caller-supplied id yields the `stack` authority;
+ *   3. otherwise it answers the named `file` mode when no database is configured at all,
+ *      and REFUSES when one is: a caller that could not wait must never let a configured
+ *      database turn into a file-backed result.
+ *
+ * A caller that can await, or holds the database handle, uses {@link resolveStackAuthority}
+ * and gets the third precedence step this entry lacks.
+ *
+ * @param request - The authority already resolved, the id the caller named, and the
+ *   environment; all optional, with the environment defaulting to `process.env`.
+ * @param context - What needs the authority, named in the refusal — only the caller can say
+ *   how it would otherwise have obtained a Stack.
+ * @returns The `stack` authority, or the named `file` authority.
+ * @throws {StackAuthorityError} when a database is configured and nothing settled it.
+ */
+export function resolveStackAuthorityWithoutLookup(
+  request: SettledStackAuthorityRequest,
+  context: string,
+): StackAuthority {
+  if (request.authority !== undefined) return request.authority;
+  const env = request.env ?? process.env;
+  const settled = settledAuthority(request.stackId, env);
+  if (settled !== undefined) return settled;
+  throw missingStackRefusal(
+    `${context} was given no resolved authority and cannot ask the database resolver itself.`,
+    `Pass the authority the run resolved, or name the Stack in ${AKS_STACK_ID_ENV_VAR}.`,
+  );
 }
 
 /**
