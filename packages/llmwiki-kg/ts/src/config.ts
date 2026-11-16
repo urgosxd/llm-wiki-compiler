@@ -266,6 +266,15 @@ const EXTRACTION_MODEL_VARIABLE = "EXTRACTION_MODEL";
  * put a model id in a log file, and a model id is the thing the operator's
  * provider credentials are spent on.
  *
+ * WHY EVERY CASE SAYS "configuration". This line reports what the CONFIGURATION
+ * resolved, which is not always what a request sends. When the wiki dimension's
+ * chat backend is injected into the kg dimension, `injectedChatModel()` returns
+ * that backend's own model verbatim — unprefixed — and it takes precedence per
+ * request (see `embedding-backend.ts`). A line a reader takes as "the model the
+ * next request will use" would therefore be false in exactly the deployment this
+ * bridge exists for, so each case names itself as the configuration-side
+ * resolution and claims nothing about a request.
+ *
  * WHY IT TAKES THE RAW ENVIRONMENT rather than the parsed config, unlike
  * {@link gatewayEmbeddingsSourceLine}. The bridge fills `EXTRACTION_MODEL` from
  * `LLMWIKI_MODEL` before the schema ever sees it, so the parsed config cannot say
@@ -277,7 +286,7 @@ const EXTRACTION_MODEL_VARIABLE = "EXTRACTION_MODEL";
  * @returns The line, always present: every configuration has a model source.
  */
 export function extractionModelSourceLine(env: NodeJS.ProcessEnv): string {
-  const prefix = "[AKS] Extraction model source: ";
+  const prefix = "[AKS] Extraction model configuration source: ";
   if (readPresent(env, EXTRACTION_MODEL_VARIABLE) !== undefined) {
     return `${prefix}${EXTRACTION_MODEL_VARIABLE}`;
   }

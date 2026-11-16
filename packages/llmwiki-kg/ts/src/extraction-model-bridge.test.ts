@@ -91,24 +91,24 @@ describe("the startup line names the source, never a value (S6.5)", () => {
         EXTRACTION_MODEL: KG_OWN_MODEL,
         LLMWIKI_MODEL: WIKI_CHAT_MODEL,
       }),
-    ).toBe("[AKS] Extraction model source: EXTRACTION_MODEL");
+    ).toBe("[AKS] Extraction model configuration source: EXTRACTION_MODEL");
   });
 
   it("names LLMWIKI_MODEL and that the prefix was applied", () => {
     expect(extractionModelSourceLine({ LLMWIKI_MODEL: WIKI_CHAT_MODEL })).toBe(
-      "[AKS] Extraction model source: LLMWIKI_MODEL, hf: prefix applied",
+      "[AKS] Extraction model configuration source: LLMWIKI_MODEL, hf: prefix applied",
     );
   });
 
   it("names LLMWIKI_MODEL and that the prefix was already present", () => {
     expect(extractionModelSourceLine({ LLMWIKI_MODEL: WIKI_CHAT_MODEL_PREFIXED })).toBe(
-      "[AKS] Extraction model source: LLMWIKI_MODEL, hf: prefix already present",
+      "[AKS] Extraction model configuration source: LLMWIKI_MODEL, hf: prefix already present",
     );
   });
 
   it("names the built-in default when nobody named a model", () => {
     expect(extractionModelSourceLine({})).toBe(
-      "[AKS] Extraction model source: built-in default",
+      "[AKS] Extraction model configuration source: built-in default",
     );
   });
 

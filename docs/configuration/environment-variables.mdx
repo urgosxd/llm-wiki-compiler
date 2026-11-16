@@ -462,7 +462,10 @@ prefixed twice; (3) otherwise the built-in default. A blank value on either side
 bridges nothing. No variable is added: the model is configured once, in the wiki's
 own `LLMWIKI_MODEL`. The startup banner names which of the three supplied the model —
 variable name only, never a model id — plus whether the `hf:` prefix was applied or
-already present. The storage DSN is deliberately not bridged, and `EMBEDDING_MODEL`
+already present. When the wiki's chat backend is injected into the `kg` dimension, that
+backend's model takes precedence on every request, so read the startup source line as a
+statement about the resolved configuration, not about the model such a backend sends.
+The storage DSN is deliberately not bridged, and `EMBEDDING_MODEL`
 keeps its existing verbatim pass-through.
 
 When the kg dimension takes its extraction configuration from the resolved
