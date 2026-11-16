@@ -13,7 +13,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { LlmError } from "./errors.js";
+import { LlmBudgetExhaustedError, LlmError } from "./errors.js";
 import {
   ProviderUnavailableError,
   TRANSIENT_ATTEMPTS,
@@ -82,6 +82,14 @@ describe("isTransientProviderFailure", () => {
     expect(isTransientProviderFailure(statusError(404))).toBe(false);
   });
 
+  it("treats an exhausted output budget as permanent, because the budget will not grow", () => {
+    // The provider answered 200 and billed the tokens; the only variable left is
+    // our own output budget, so the second attempt fails identically and spends
+    // the request again. Its 502 is what reaches the caller, never the reason.
+    const endpoint = "https://gateway.invalid/v1/chat/completions";
+    expect(isTransientProviderFailure(new LlmBudgetExhaustedError(endpoint, 1024))).toBe(false);
+  });
+
   it("treats a non-provider error as permanent, because nothing says it will clear", () => {
     // A programming error (a TypeError while parsing a response) would fail
     // identically every time, so retrying it only hides the bug.
@@ -114,6 +122,41 @@ describe("withProviderRetry", () => {
     await expect(withProviderRetry(work, { sleep: async () => {} })).rejects.toThrow(/401/);
     // One call: the answer would be identical the second time.
     expect(work).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not multiply a budget exhaustion: one attempt, the same error", async () => {
+    const exhausted = new LlmBudgetExhaustedError(
+      "https://gateway.invalid/v1/chat/completions",
+      1024,
+    );
+    const work = vi.fn().mockRejectedValue(exhausted);
+
+    const error = await withProviderRetry(work, { sleep: async () => {} }).catch(
+      (caught: unknown) => caught,
+    );
+
+    // ONE call: three attempts at a budget that did not move is the defect this
+    // classification exists to prevent, and it costs three provider calls.
+    expect(work).toHaveBeenCalledTimes(1);
+    // The same instance surfaces, un-wrapped: the caller must be able to tell a
+    // configuration defect from an outage, and the retry wrapper would erase that.
+    expect(error).toBe(exhausted);
+    expect(error).not.toBeInstanceOf(ProviderUnavailableError);
+  });
+
+  it("still retries a genuine 502, because the status alone does not mean the budget", async () => {
+    // The exclusion is by error identity, not by status number: a provider that
+    // really answered Bad Gateway has recovered before and will again.
+    expect(isTransientProviderFailure(statusError(502))).toBe(true);
+    const work = vi.fn().mockRejectedValue(statusError(502));
+
+    const error = await withProviderRetry(work, { sleep: async () => {} }).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(work).toHaveBeenCalledTimes(TRANSIENT_ATTEMPTS);
+    expect(error).toBeInstanceOf(ProviderUnavailableError);
+    expect((error as ProviderUnavailableError).failures).toHaveLength(TRANSIENT_ATTEMPTS);
   });
 
   it("stops after the attempt budget and keeps every failure it saw", async () => {

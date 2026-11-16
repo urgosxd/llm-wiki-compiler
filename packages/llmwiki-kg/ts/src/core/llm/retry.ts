@@ -34,7 +34,7 @@
  * the wrong system.
  */
 
-import { LlmError } from "./errors.js";
+import { LlmBudgetExhaustedError, LlmError } from "./errors.js";
 
 /**
  * Total attempts for a transient failure: the first try plus two retries.
@@ -82,13 +82,23 @@ export class ProviderUnavailableError extends Error {
  * connection refused, abort), a rate limit, or a server-side error.
  *
  * Permanent: every other status (the provider understood and refused: a bad
- * credential, a malformed request, a missing model), and anything that is not an
+ * credential, a malformed request, a missing model), an exhausted output budget
+ * (see {@link LlmBudgetExhaustedError}), and anything that is not an
  * {@link LlmError} (a bug here, not a provider condition).
+ *
+ * A budget exhaustion is permanent however it is STATUSED. The provider answered
+ * `200` and billed the tokens; the only variable left is our own output budget,
+ * so a second attempt at the same budget fails identically and spends the
+ * request again. It is therefore excluded by TYPE, before the status heuristic,
+ * rather than by moving its 502 out of the 5xx range -- a status chosen to fit
+ * this helper would be the tail wagging the dog, and a genuine 502 stays
+ * retryable below.
  *
  * @param error - Whatever a provider call threw.
  * @returns True when a second attempt could plausibly succeed.
  */
 export function isTransientProviderFailure(error: unknown): boolean {
+  if (error instanceof LlmBudgetExhaustedError) return false;
   if (!(error instanceof LlmError)) return false;
   // No status means the request never got an answer, which is the most
   // recoverable case there is.
