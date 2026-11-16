@@ -116,8 +116,25 @@ COPY --from=build /code/packages/foundation ./packages/foundation
 
 EXPOSE 8000
 
-# The entrypoint reads configuration from the environment, so nothing is baked
-# into the image. See .env.example for the variables it expects. The path is the
+# The entrypoint carries the provider wiring this image needs in order to start
+# from a bare `docker run <tag>`: both provider selections defaulted to `gateway`
+# and the embeddings pair seeded from the wiki-side names, so the embeddings host
+# never has to follow the chat host. It carries variable NAMES only — the DSN and
+# the keys still arrive from the caller — and every default is PRESERVING
+# (`${VAR:-…}`), so an explicit value always wins over the image's fallback.
+#
+# Copied and chmodded next to the other runtime copies: a COPY without the chmod
+# builds green and fails at container start with `permission denied`, and this
+# image has no `USER` line, so nothing has to be dropped first.
+COPY packages/llmwiki-kg/docker/entry.sh /usr/local/bin/entry.sh
+RUN chmod +x /usr/local/bin/entry.sh
+
+# The entrypoint runs this command when nothing else is supplied, so
+# `docker run <tag>` with only the DSN and the keys reaches `app.listen`; an
+# explicit command still wins, as the script's own branch documents. The
+# entrypoint reads configuration from the environment, so nothing is baked into
+# the image. See .env.example for the variables it expects. The path is the
 # workspace-relative one the filtered build writes to; `node_modules` stays hoisted
 # at `/code`, which this script resolves by walking up.
+ENTRYPOINT ["/usr/local/bin/entry.sh"]
 CMD ["node", "packages/llmwiki-kg/ts/dist/index.js"]
