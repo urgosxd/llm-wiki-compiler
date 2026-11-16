@@ -22,6 +22,7 @@ import { describe, expect, it } from "vitest";
 import { runningHost } from "./running-host.js";
 import { MCP_HTTP_PATH } from "./mcp-http.js";
 import { createWikiMcpServer } from "@repo/wiki/mcp";
+import { createJobRegistry } from "@repo/wiki/job-registry";
 
 /** Read a server's registered-tool map, so tool sets can be compared directly. */
 function registeredToolNames(server: { _registeredTools?: Record<string, unknown> }): string[] {
@@ -59,7 +60,7 @@ describe("the host serves MCP over streamable HTTP", () => {
   it("is reachable at /mcp rather than falling through to the viewer", async () => {
     // MCP is mounted alongside the mutation endpoints, so the host needs a project
     // root; without one there is nothing for a mutating tool to operate on.
-    const { handle, base } = await runningHost("mcp-http-", { projectRoot: process.cwd(), mcpServerFactory: mcpFactory(process.cwd()) });
+    const { handle, base } = await runningHost("mcp-http-", { projectRoot: process.cwd(), mcpServerFactory: mcpFactory(process.cwd()), ingestJobs: createJobRegistry() });
     try {
       const response = await fetch(`${base}${MCP_HTTP_PATH}`, {
         method: "POST",
@@ -86,7 +87,7 @@ describe("the host serves MCP over streamable HTTP", () => {
   }, 60_000);
 
   it("lists every tool the stdio server registers, including the job reads", async () => {
-    const { handle, base } = await runningHost("mcp-tools-", { projectRoot: process.cwd(), mcpServerFactory: mcpFactory(process.cwd()) });
+    const { handle, base } = await runningHost("mcp-tools-", { projectRoot: process.cwd(), mcpServerFactory: mcpFactory(process.cwd()), ingestJobs: createJobRegistry() });
     try {
       const payload = await rpc(base, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
       const result = payload.result as { tools: { name: string }[] };
@@ -111,7 +112,7 @@ describe("the host serves MCP over streamable HTTP", () => {
   }, 60_000);
 
   it("answers a malformed body with a JSON-RPC parse error, not a crash", async () => {
-    const { handle, base } = await runningHost("mcp-bad-", { projectRoot: process.cwd(), mcpServerFactory: mcpFactory(process.cwd()) });
+    const { handle, base } = await runningHost("mcp-bad-", { projectRoot: process.cwd(), mcpServerFactory: mcpFactory(process.cwd()), ingestJobs: createJobRegistry() });
     try {
       const response = await fetch(`${base}${MCP_HTTP_PATH}`, {
         method: "POST",

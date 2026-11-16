@@ -115,6 +115,7 @@ async function ingestThroughHost(
     port: 0,
     projectRoot: root,
     includeGraph: false,
+    ingestJobs: createJobRegistry(),
     ...(dimensionsPort === undefined ? {} : { dimensionsPort }),
   });
   try {

@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
 import { startHost } from "./server.js";
+import { createJobRegistry } from "@repo/wiki/job-registry";
 import { clearTenantSnapshots, tenantSlugOf } from "./tenants.js";
 
 /** A project whose single concept page is named after `label`. */
@@ -57,6 +58,7 @@ describe("a host serving two projects", () => {
     const handle = await startHost({
       viewerSnapshot: snapshot,
       port: 0,
+      ingestJobs: createJobRegistry(),
       tenants: [{ slug: "alpha", root: alphaRoot }],
     });
     try {
@@ -82,7 +84,9 @@ describe("a host serving two projects", () => {
   it("answers 404 for a slug that was never registered", async () => {
     const root = await projectNamed("solo");
     const snapshot = await buildViewerSnapshot(root);
-    const handle = await startHost({ viewerSnapshot: snapshot, port: 0, tenants: [] });
+    const handle = await startHost({
+      viewerSnapshot: snapshot, port: 0, tenants: [], ingestJobs: createJobRegistry(),
+    });
     try {
       const res = await fetch(`http://${handle.host}:${handle.port}/p/ghost/api/pages`);
       // An unknown tenant must not fall through to the default project, which
@@ -105,6 +109,7 @@ describe("a host serving two projects", () => {
     const handle = await startHost({
       viewerSnapshot: snapshot,
       port: 0,
+      ingestJobs: createJobRegistry(),
       tenants: [
         { slug: "alpha", root: alpha },
         { slug: "beta", root: beta },
@@ -131,6 +136,7 @@ describe("a host serving two projects", () => {
     const handle = await startHost({
       viewerSnapshot: snapshot,
       port: 0,
+      ingestJobs: createJobRegistry(),
       tenants: [{ slug: "other", root: other }],
     });
     try {

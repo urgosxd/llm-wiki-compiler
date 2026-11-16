@@ -18,6 +18,7 @@ import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
+import type { JobRegistry } from "@repo/wiki/job-registry";
 import { startHost, type HostHandle } from "./server.js";
 
 /** A running host plus the base URL to reach it. */
@@ -42,6 +43,14 @@ export async function runningHost(
     includeGraph?: boolean;
     projectRoot?: string;
     mcpServerFactory?: () => { connect(transport: never): Promise<void>; close(): Promise<void> };
+    /**
+     * Job registry the host writes jobs into.
+     *
+     * Forwarded so a suite can DECLARE the in-memory registry instead of receiving it
+     * as a fallback: with a database configured a host now refuses to start without a
+     * named Stack, so "memory only" has to be asked for.
+     */
+    ingestJobs?: JobRegistry;
   } = {},
 ): Promise<RunningHost> {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), prefix)));

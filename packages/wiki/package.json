@@ -17,6 +17,7 @@
     "./viewer-snapshot": "./src/viewer/snapshot.ts",
     "./compiler": "./src/compiler/index.ts",
     "./dimensions-activation": "./src/dimensions/activation.ts",
+    "./dimensions-stack-authority": "./src/dimensions/stack-authority.ts",
     "./http-listen": "./src/utils/http-listen.ts",
     "./ingest-env": "./src/services/ingest/ingest-env.ts",
     "./ingest-service": "./src/services/ingest/service.ts",

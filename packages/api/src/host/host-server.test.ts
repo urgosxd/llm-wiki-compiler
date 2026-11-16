@@ -16,6 +16,7 @@
  *     reachable without credentials (fail-open), in the same process.
  */
 import { describe, expect, it } from "vitest";
+import { createJobRegistry } from "@repo/wiki/job-registry";
 import { runningHost as startRunningHost, type RunningHost } from "./running-host.js";
 
 /**
@@ -26,7 +27,9 @@ import { runningHost as startRunningHost, type RunningHost } from "./running-hos
  * from its neighbour is asserting against a different server than it thinks.
  */
 function runningHost(options: { includeGraph?: boolean } = {}): Promise<RunningHost> {
-  return startRunningHost("host-test-", options);
+  // ASKED FOR, not fallen into: with a database configured a host refuses to serve
+  // jobs without a named Stack, so the in-memory registry is a declaration here.
+  return startRunningHost("host-test-", { ...options, ingestJobs: createJobRegistry() });
 }
 
 describe("the host serves two sub-apps behind one listener", () => {

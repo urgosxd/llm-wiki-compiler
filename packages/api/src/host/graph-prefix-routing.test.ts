@@ -24,6 +24,7 @@
  * FastAPI's `{detail}`.
  */
 import { describe, expect, it } from "vitest";
+import { createJobRegistry } from "@repo/wiki/job-registry";
 import { runningHost } from "./running-host.js";
 
 /** A UUID that resolves to no Stack, so the graph app fails INSIDE the handler. */
@@ -37,7 +38,7 @@ function isViewerEnvelope(body: unknown): boolean {
 
 /** Boot a host for this suite; the fixture keeps every host suite on one path. */
 function bootHost(): ReturnType<typeof runningHost> {
-  return runningHost("host-prefix-");
+  return runningHost("host-prefix-", { ingestJobs: createJobRegistry() });
 }
 
 describe("the host routes the /domain extension prefix to the graph app", () => {

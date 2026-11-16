@@ -81,6 +81,11 @@ import {
   AKS_STACK_ID_ENV_VAR,
   createDimensionsDatabase,
 } from "@repo/wiki/dimensions-activation";
+import {
+  resolveStackAuthorityWithoutLookup,
+  stackIdOf,
+  type StackAuthority,
+} from "@repo/wiki/dimensions-stack-authority";
 import { resolveTenant, tenantSlugOf, type TenantEntry } from "./tenants.js";
 import { writeJsonError } from "@repo/wiki/viewer-respond";
 import type { ViewerSnapshot } from "@repo/wiki/viewer-types";
@@ -174,18 +179,52 @@ export interface HostOptions {
   readonly ingestJobs?: JobRegistry;
 }
 
+/** What the durable reads need the authority for, named in a refusal. */
+const DURABLE_READS_CONTEXT = "The host's durable ingest-job reads";
+
+/** What the durable registry needs the authority for, named in a refusal. */
+const DURABLE_REGISTRY_CONTEXT = "The host's durable ingest-job registry";
+
 /**
- * The durable job reads the viewer needs, or nothing when no Stack is configured.
+ * The authority these two synchronous entries are allowed to settle.
  *
- * `undefined` is the honest answer rather than a stub: the viewer then falls back to
- * the in-memory registry, which is all a Stack-less host ever had.
+ * ONE decision, in ONE place, for both of them, and it is the feature's module rather
+ * than a local test: {@link resolveStackAuthorityWithoutLookup} answers a Stack the run
+ * named, the named FILE mode when no database is configured at all, and a named refusal
+ * when a database is configured and nothing named a Stack. The host's own Stack id is
+ * precedence 1 — a host started from a CLI or a container names the Stack it serves.
  *
- * @param env - Environment carrying the Stack id; defaults to `process.env`.
- * @returns Readers bound to this host's Stack, or `undefined`.
+ * Precedence 2 is out of reach HERE, and that is a limitation rather than a choice: the
+ * database-backed default Stack needs an `await`, and both callers below are synchronous.
+ * So a host with a database and no named Stack is TOLD to name one, never handed state
+ * that will discard the write.
+ *
+ * @param env - The environment this host was started with.
+ * @param context - What needs the authority, named in the refusal.
+ * @returns The settled authority: a Stack, or the explicit file mode.
  */
-function durableJobReadsFor(env: NodeJS.ProcessEnv = process.env): DurableJobReads | undefined {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return undefined;
+function jobAuthorityFor(env: NodeJS.ProcessEnv, context: string): StackAuthority {
+  return resolveStackAuthorityWithoutLookup(
+    { stackId: env[AKS_STACK_ID_ENV_VAR], env },
+    context,
+  );
+}
+
+/**
+ * The durable job reads the viewer needs, or nothing in the explicit file mode.
+ *
+ * `undefined` is the honest answer rather than a stub, and it is now reached ONLY when
+ * the authority says this run is file-backed: no database configured at all. A run with
+ * a database and no Stack refuses instead, because `undefined` here makes the viewer
+ * answer from a registry that dies with the process.
+ *
+ * @param env - Environment this host was started with; defaults to `process.env`.
+ * @returns Readers bound to this host's Stack, or `undefined` in file mode.
+ * @throws {StackAuthorityError} when a database is configured and no Stack is named.
+ */
+export function durableJobReadsFor(env: NodeJS.ProcessEnv = process.env): DurableJobReads | undefined {
+  const stackId = stackIdOf(jobAuthorityFor(env, DURABLE_READS_CONTEXT));
+  if (stackId === undefined) return undefined;
   const dimensionsDb = createDimensionsDatabase(env);
   return {
     list: (limit: number) => listIngestJobs(dimensionsDb.db, stackId, limit),
@@ -216,15 +255,19 @@ function durableJobReadsFor(env: NodeJS.ProcessEnv = process.env): DurableJobRea
  * A write failure is logged and swallowed: durability serves a later reader and must
  * never fail the ingest it is describing.
  *
- * Without a Stack there is nowhere durable to write, so the plain in-memory registry
- * is returned and the durable reader answers 503 rather than pretending.
+ * With NO database there is nowhere durable to write, so the plain in-memory registry is
+ * returned: that is the explicit file mode the authority names, not an empty variable.
+ * With a database and no Stack nothing is returned at all — the authority refuses — since
+ * a registry that accepts every transition and loses them on exit is worse than a failed
+ * boot, which is what this pair did before.
  *
- * @param env - Environment carrying the Stack id; defaults to `process.env`.
+ * @param env - Environment this host was started with; defaults to `process.env`.
  * @returns The registry the host should use.
+ * @throws {StackAuthorityError} when a database is configured and no Stack is named.
  */
-function durableRegistryFor(env: NodeJS.ProcessEnv = process.env): JobRegistry {
-  const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
-  if (stackId === "") return createJobRegistry();
+export function durableRegistryFor(env: NodeJS.ProcessEnv = process.env): JobRegistry {
+  const stackId = stackIdOf(jobAuthorityFor(env, DURABLE_REGISTRY_CONTEXT));
+  if (stackId === undefined) return createJobRegistry();
   const dimensionsDb = createDimensionsDatabase(env);
   return createDurableJobRegistry(createJobRegistry(), {
     db: dimensionsDb.db,
@@ -441,9 +484,9 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // The live registry is mirrored into Postgres when a Stack is configured, because
   // the memory view is readable only by THIS process and the MCP server is a
   // different one. Without the mirror an agent polling over MCP could never see a
-  // job the host is running. A host with no Stack keeps the plain in-memory
-  // registry: there is nowhere durable to write, and the read side already answers
-  // 503 in that configuration rather than pretending.
+  // job the host is running. A host with NO database keeps the plain in-memory
+  // registry, which is now the authority's explicit file mode; a host WITH a database
+  // and no named Stack refuses to start HERE instead of accepting jobs it will lose.
   const ingestJobs = options.ingestJobs ?? durableRegistryFor();
   // The read routes are mounted ONLY when this host serves a project to mutate:
   // a viewer without a project root has no jobs, and answering an empty list would
