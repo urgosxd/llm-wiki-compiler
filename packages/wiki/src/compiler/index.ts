@@ -145,7 +145,11 @@ import { createDimensionsDatabase } from "../dimensions/index.js";
 import { resolveStackAuthority } from "../dimensions/stack-authority.js";
 import type { StackAuthority } from "../dimensions/stack-authority.js";
 import type { Dimension, DimensionName } from "../dimensions/index.js";
-import { createDefaultDimensionsPort } from "../dimensions/activation.js";
+import {
+  AKS_DATABASE_URL_ENV_VAR,
+  createDefaultDimensionsPort,
+  enabledDimensionNames,
+} from "../dimensions/activation.js";
 import type { DimensionsPort } from "@repo/foundation";
 import { resolveStackForDimensions } from "../services/stacks/resolve-stack.js";
 import type { EmbeddingStoreLocation } from "../utils/embeddings.js";
@@ -1149,7 +1153,9 @@ async function runCompilePipeline(
   // Graph retirement reuses the identities captured above rather than re-reading the
   // state the orphaning just deleted them from.
   forgetErrors.push(
-    ...(await forgetDeletedSources(root, retiredIdentities, db, env, dimensionsPort)),
+    ...(await forgetDeletedSources(
+      root, retiredIdentities, db, env, dimensionsPort, stackAuthority,
+    )),
   );
 
   // Only extraction failures in THIS run freeze a page. Deletion and persisted
@@ -1373,6 +1379,12 @@ function dimensionsPortFor(options: CompileOptions): DimensionsPort<Dimension> {
  * When the answer is "nothing to do" it returns no dimensions and asks the port
  * nothing, so the database the pre-check spared stays untouched.
  *
+ * THE FILE MODE NEVER REACHES HERE. A run with no database configured is file-backed
+ * on purpose, and a graph document is keyed by a Stack that such a run cannot have, so
+ * {@link forgetDeletedSources} declines before calling this — see the skip it announces
+ * there. Keeping the pre-check reachable only from a run that HAS a Stack is what stops
+ * a database-less compile from demanding a connection it does not have.
+ *
  * @param root - Project root, for dimension resolution.
  * @param db - Database handle every dimension is backed by.
  * @param env - The one environment this run reads.
@@ -1452,6 +1464,14 @@ function deletedSourceIdentities(
  * preserves pages other sources still support); retiring here too would duplicate
  * that decision in a second place.
  *
+ * THE FILE MODE RETIRES NOTHING FROM THE GRAPH, AND SAYS SO. A run with no database
+ * configured still deletes sources — its state is `.llmwiki/state.json`, where the
+ * removal is visible — but it has no Stack, and a graph document cannot be addressed
+ * without one. Skipping is the honest answer to a dimension that cannot exist;
+ * demanding a Stack there is the wrong-subject defect this whole change removes, one
+ * dimension out. The skip is announced, with what it skipped and why, so a run whose
+ * retirement genuinely does not happen cannot be mistaken for one that succeeded.
+ *
  * @param root - Project root, for dimension resolution.
  * @param sources - Identities captured by {@link deletedSourceIdentities} BEFORE
  *   orphaning removed their state entries. Passed in rather than re-read from state
@@ -1459,6 +1479,8 @@ function deletedSourceIdentities(
  * @param db - Database handle every dimension is backed by.
  * @param env - The one environment this run reads, used to resolve the Stack.
  * @param port - The dimensions port the run resolves through.
+ * @param authority - The Stack authority this run resolved ONCE; its `file` kind is the
+ *   one condition under which the graph work is skipped instead of performed.
  * @returns One message per (source, dimension) pair whose `forget` threw.
  */
 async function forgetDeletedSources(
@@ -1467,8 +1489,35 @@ async function forgetDeletedSources(
   db: DimensionsDatabaseHandle,
   env: NodeJS.ProcessEnv,
   port: DimensionsPort<Dimension>,
+  authority: StackAuthority,
 ): Promise<string[]> {
   const failures: string[] = [];
+  // THE FILE MODE IS DECIDED ONCE, by the authority this run already resolved: no
+  // database is configured, so no Stack exists and a graph document — which
+  // `forgetDocumentRows` deletes `where stack_id = ...` — cannot be addressed at all.
+  // The pre-check below would provision the default Stack and demand a connection this
+  // run does not have, which is why a database-less compile used to refuse a deletion
+  // it could plainly see in `.llmwiki/state.json`. A dimension that CANNOT exist is not
+  // a precondition, so the graph work is skipped here instead of being demanded.
+  //
+  // WHAT IS SKIPPED, precisely: `forget` on the `kg` dimension for every deleted source.
+  // WHY IT CANNOT BE DONE HERE: no Stack exists to key a graph document by, and asking
+  // the port without the Stack its request requires would be the silent degradation the
+  // authority exists to remove. The switch is read through its ONE reader for two things
+  // that are not a second backend decision — an unknown dimension name is refused in
+  // every mode, and a wiki-only run skipped nothing and must announce nothing.
+  if (authority.kind === "file") {
+    const enabled = enabledDimensionNames(env);
+    if (sources.length > 0 && RETIREMENT_DIMENSIONS.some((name) => enabled.includes(name))) {
+      output.status("~", output.warn(
+        `Graph retirement skipped for ${sources.length} deleted source(s): this wiki is ` +
+          `file-backed (no ${AKS_DATABASE_URL_ENV_VAR} configured), so no Stack exists to ` +
+          `key a graph document by. Their pages were removed from the wiki; nothing was ` +
+          `retired from the graph, because this mode has no graph to retire from.`,
+      ));
+    }
+    return failures;
+  }
   // Graph retirement is the ONLY concern here, so ask for the graph dimension
   // alone (`only`) instead of building every enabled dimension and filtering the
   // wiki out. Building and discarding was harmless while the wiki was
