@@ -8,10 +8,17 @@
  * keeps it honest is parity against the real one. That parity is frozen here as two
  * literal arrays produced by `vitest related` at commit
  * a12fd91f1fe850e77b46a0698cec29ae22e188fa: 6 files for
- * `packages/wiki/src/index.ts`, and 22 for that file plus
+ * `packages/wiki/src/index.ts`, and 23 for that file plus
  * `packages/wiki/src/sdk/compiler-composition.ts`.
  *
- * THE PAIR ORACLE WAS RE-FROZEN AT 22 BY THE CORE COLLAPSE, AND ONE ENTRY LEFT IT.
+ * THE PAIR ORACLE WAS LAST RE-FROZEN AT 23 BY `test/stack-authority-masquerade.test.ts`.
+ * That suite drives `createWiki({ root }).ingest()` and `.compile()` through the SDK
+ * facade, so it reaches both oracle inputs: the live `vitest related` above returns it in
+ * the pair selection and not in the single one. It is an addition to the frozen oracle,
+ * not a loosening of it -- the list still names every file exactly, and the entry below
+ * that the core collapse removed stays out for the reason recorded here.
+ *
+ * THE PAIR ORACLE HAD ALREADY BEEN RE-FROZEN AT 22 BY THE CORE COLLAPSE, AND ONE ENTRY LEFT IT.
  * It listed 23 and included `test/artifact/entries-load.test.ts`. That file reached
  * `sdk/compiler-composition.ts` only THROUGH the root bundle it evaluates: at the
  * oracle commit `dist/index.js` was a 108 KB facade whose one engine statement was
@@ -32,7 +39,7 @@
  *
  * THE DEPTH CONTRAST IS LOAD-BEARING. `transformRequest` records only a module's
  * own imports, so a single pass yields depth-1 closures and stops. The pair of
- * inputs selects 22 files while the single input selects 6 — those are the two
+ * inputs selects 23 files while the single input selects 6 — those are the two
  * frozen oracles below, i.e. the selections the real `vitest related` returned for
  * those inputs, not counts this file derives from the crawl it is testing. A
  * regression back to one pass cannot reach the second number, which is what the
@@ -76,7 +83,7 @@ const SINGLE_TESTS: readonly string[] = [
   "test/query-publication-sdk-mcp.test.ts",
 ];
 
-/** Oracle input two, and the exactly-22 selection `vitest related` returned for it. */
+/** Oracle input two, and the exactly-23 selection `vitest related` returned for it. */
 const PAIR_SOURCES: readonly string[] = [
   "packages/wiki/src/index.ts",
   "packages/wiki/src/sdk/compiler-composition.ts",
@@ -102,6 +109,7 @@ const PAIR_TESTS: readonly string[] = [
   "test/sdk/ingest-request-env.test.ts",
   "test/sdk/source-api.test.ts",
   "test/sdk/surface.test.ts",
+  "test/stack-authority-masquerade.test.ts",
   "test/status/sources-count-matches-selection.test.ts",
   "test/system-policy-invalidation.test.ts",
 ];

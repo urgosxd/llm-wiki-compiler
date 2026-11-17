@@ -13,6 +13,7 @@
  *   - `connectMcpClient(root)` spawns the real stdio server from the
  *     surviving executable (`dist/api.js serve --root <root>`) over a
  *     `StdioClientTransport`, so the JSON-RPC framing is exercised for real.
+ *     The child's MODE is decided here, once (see {@link childEnv}).
  *   - `buildServer(root)` returns a fresh `McpServer` with the wiki tools,
  *     the resources, and the OKF export tool — the same inventory the
  *     production factory serves.
@@ -33,6 +34,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { testDotenvEnv } from "./test-dotenv.js";
+import {
+  AKS_DATABASE_URL_ENV_VAR,
+  isDatabaseConfigured,
+} from "../../packages/wiki/src/dimensions/activation.js";
 import { registerWikiTools } from "../../packages/wiki/src/mcp/tools.js";
 import { registerOkfTools } from "../../packages/wiki/src/mcp/okf-tools.js";
 import { registerWikiResources } from "../../packages/wiki/src/mcp/resources.js";
@@ -83,10 +88,76 @@ export interface McpClientHandle {
 }
 
 /**
+ * The spelling of "no database configured" this fixture pins into a spawned child.
+ *
+ * PRESENT and BLANK, never deleted — the same declaration `test/fixtures/file-mode.ts`
+ * makes for the parent process and `test/fixtures/run-cli-server.ts` makes for its own
+ * child, and for the same measured reason: `packages/api/src/load-environment.ts` loads
+ * `dotenv/config` before anything reads the environment, dotenv does not overwrite a key
+ * that already exists, so a DELETED variable is refilled from the corpus
+ * {@link testDotenvEnv} points at — and that corpus names a database. A blank value
+ * survives the load and reads as "not configured" to every production reader, which all
+ * ask `(env[VAR] ?? "").trim() !== ""`.
+ *
+ * Measured, not assumed: `test/parity-default.test.ts` declares file mode with
+ * `useFileMode()`, whose hook DELETES the variable, so the child used to inherit an
+ * absent key, refill it from the corpus and run against a database it was never given —
+ * `serve` then refused every read with "AKS_DATABASE_URL is configured, so this run must
+ * have a Stack, but no database handle was supplied to resolve it".
+ */
+const NO_DATABASE = "";
+
+/**
+ * The child's environment, with the run's mode carried across the process boundary.
+ *
+ * A mode declaration cannot cross a boundary by itself, so this is the one place that
+ * decides what a spawned MCP server sees, and it asks the SAME question production asks
+ * ({@link isDatabaseConfigured}) instead of deriving the mode a second way:
+ *
+ *   1. the caller named the variable itself in `envOverrides` — including pinning it
+ *      blank — so the answer is the caller's, untouched;
+ *   2. the parent has a database configured, so the child inherits that database: the
+ *      suite seeded rows on it deliberately and its tools are called with a `stackId`;
+ *   3. otherwise the parent is the named file mode, and the child is made the same mode
+ *      by pinning {@link NO_DATABASE}.
+ *
+ * Step 2 is the inherited case, and it is not a guess: a suite that never configures a
+ * database cannot reach a row-backed assertion through a spawned child, and a suite that
+ * does wants that database in the child. So the file mode is what crosses the boundary
+ * BY DEFAULT, and a database-backed child is what a suite gets by asking — either by
+ * leaving its own worker database in place (`test/mcp-stdio.test.ts` and
+ * `test/okf-mcp-stdio.test.ts`, which seed a Stack and pass `stackId` per call) or by
+ * handing a DSN through `envOverrides`, the same explicit request `childEnv` in
+ * `test/fixtures/run-cli-server.ts` documents.
+ *
+ * @param envOverrides - Variables the caller sets explicitly; they win over both the
+ *   inherited environment and the corpus.
+ * @returns The environment to hand the child process.
+ */
+function childEnv(envOverrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...process.env, ...testDotenvEnv(), ...envOverrides };
+  if (AKS_DATABASE_URL_ENV_VAR in envOverrides) return env;
+  if (isDatabaseConfigured(process.env)) return env;
+  env[AKS_DATABASE_URL_ENV_VAR] = NO_DATABASE;
+  return env;
+}
+
+/**
  * Spawn the launcher's `serve` subcommand over stdio and connect an SDK Client
  * through the full JSON-RPC stack. Shared by every MCP stdio integration test.
+ *
+ * The child runs file-backed unless its suite declares a database (see {@link childEnv});
+ * a suite that needs rows passes a DSN in `envOverrides`.
+ *
+ * @param root - Project root the server is bound to.
+ * @param envOverrides - Variables the caller sets explicitly, including a DSN that asks
+ *   for a database-backed child.
+ * @returns The connected client and its transport.
  */
-export async function connectMcpClient(root: string): Promise<McpClientHandle> {
+export async function connectMcpClient(
+  root: string,
+  envOverrides: NodeJS.ProcessEnv = {},
+): Promise<McpClientHandle> {
   const transport = new StdioClientTransport({
     command: "node",
     args: [MCP_ENTRY, "serve", "--root", root],
@@ -94,7 +165,7 @@ export async function connectMcpClient(root: string): Promise<McpClientHandle> {
     cwd: path.resolve("."),
     // The SDK inherits only a handful of variables, so the corpus override has to be
     // handed over explicitly or the subprocess reads the operator's real `.env`.
-    env: { ...process.env, ...testDotenvEnv() },
+    env: childEnv(envOverrides),
   });
   const client = new Client({ name: "test-client", version: "0.0.0" });
   await client.connect(transport);
