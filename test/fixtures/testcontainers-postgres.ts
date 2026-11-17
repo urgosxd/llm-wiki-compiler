@@ -44,6 +44,18 @@
  * database belongs to the caller and this run does not own its state; migrating somebody's server
  * because a test harness felt like it is not a fix, it is a hazard.
  *
+ * ## There is no fallback to a server this run did not create
+ *
+ * When no container can be obtained, this run does NOT continue on whatever answers at
+ * `DEFAULT_TEST_DATABASE_URL` — in practice a developer's hand-migrated compose instance on 5434.
+ * That fallback used to announce itself with a WARNING and then proceed, which is the worst of both
+ * worlds: a log line nobody reads in a suite summary, describing a run that is green against state
+ * it never produced and can therefore pass on another run's leftovers. It is now REFUSED:
+ * {@link noContainerHandoff} publishes the `unavailable` record with a reason that names the
+ * answering server, says this run neither created nor owns it, and states both ways out. The
+ * existing chokepoint turns that record into the loud failure, so no second skip mechanism exists.
+ * `LLMWIKI_TEST_DATABASE_URL` remains the way to say "yes, that server, on purpose".
+ *
  * ## Reuse semantics, measured and not assumed
  *
  * `@testcontainers/postgresql` reuse was probed on this machine before this module relied on it:
@@ -261,34 +273,24 @@ async function startContainerHandoff(): Promise<ServerOutcome> {
 }
 
 /**
- * Fall back to a server a developer already has on the documented local port.
+ * Why a server already answering on the documented local port is NOT this run's database.
  *
- * Authorized and deliberately NOT silent: the log line names the adopted server, because a suite
- * that quietly borrowed someone's database is exactly the false confidence this feature removes.
- * The adopted server is NOT schema-initialized either — same rule as the explicit override: this
- * run did not create it and does not own its state.
+ * `answers` is injectable for one reason: the condition this rule is written against (a container
+ * that cannot be started, while a server answers anyway) cannot be produced without stopping
+ * somebody else's container, so the rule is checked by driving the probe instead.
  */
-async function adoptDocumentedServer(): Promise<ServerOutcome> {
-  if (!(await answersQuery(DEFAULT_TEST_DATABASE_URL, PROBE_TIMEOUT_SECONDS))) {
-    return {
-      ok: false,
-      reason: `nothing answers at ${DEFAULT_TEST_DATABASE_URL} either`,
-      fatal: false,
-    };
+async function documentedServerRefusal(
+  answers: (url: string) => Promise<boolean>,
+): Promise<string> {
+  if (!(await answers(DEFAULT_TEST_DATABASE_URL))) {
+    return `nothing answers at ${DEFAULT_TEST_DATABASE_URL} either`;
   }
-  console.log(
-    `[test-database] WARNING: adopted the pre-existing server at ${DEFAULT_TEST_DATABASE_URL} ` +
-      `instead of starting a container; this run is not isolated from that server`,
+  return (
+    `a server answers at ${DEFAULT_TEST_DATABASE_URL}, but this run neither created nor owns it, ` +
+    `so it is not used as this run's database: start Docker so the run can start its pinned ` +
+    `${SHARED_POSTGRES_IMAGE} container, or set ${TEST_DATABASE_URL_ENV_VAR} to that URL if you ` +
+    `really mean to run against that server`
   );
-  return {
-    ok: true,
-    handoff: buildHandoff({
-      source: "adopted",
-      url: DEFAULT_TEST_DATABASE_URL,
-      container: null,
-      reused: false,
-    }),
-  };
 }
 
 /** Nothing answered: record why, without throwing. The loud failure belongs to the chokepoint. */
@@ -298,19 +300,39 @@ function unavailableHandoff(reason: string): TestDatabaseHandoff {
 }
 
 /**
+ * The record this run publishes when no container could be obtained.
+ *
+ * There is no adoption: a server this run did not create is reported as unavailable, with a reason
+ * that says which server answered and what to do instead. The failure itself belongs to the
+ * chokepoint (`missingTestDatabase`), which already words it from the recorded reason.
+ *
+ * @param containerReason - Why Docker provided no container, kept so both causes are reported.
+ * @param answers - Probe for the documented local port; the caller passes the real `select 1`.
+ * @returns An `unavailable` record, never one that publishes another run's server.
+ */
+export async function noContainerHandoff(
+  containerReason: string,
+  answers: (url: string) => Promise<boolean>,
+): Promise<TestDatabaseHandoff> {
+  const refusal = await documentedServerRefusal(answers);
+  return unavailableHandoff(`${containerReason}; ${refusal}`);
+}
+
+/**
  * Obtain a database a container provides, or explain why none was obtainable.
  *
- * Container first, then the documented local server, then an `unavailable` record. A container that
- * was obtained but could not be prepared stops here with its own reason, because a fallback would
- * report a healthy run against a server this module never validated.
+ * Container first, then — when Docker gave nothing — an `unavailable` record that also reports
+ * whether a server merely answered on the documented port. A container that was obtained but could
+ * not be prepared stops here with its own reason, because a fallback would report a healthy run
+ * against a server this module never validated.
  */
 async function runDecidedHandoff(): Promise<TestDatabaseHandoff> {
   const container = await startContainerHandoff();
   if (container.ok) return container.handoff;
   if (container.fatal) return unavailableHandoff(container.reason);
-  const adopted = await adoptDocumentedServer();
-  if (adopted.ok) return adopted.handoff;
-  return unavailableHandoff(`${container.reason}; ${adopted.reason}`);
+  return noContainerHandoff(container.reason, url =>
+    answersQuery(url, PROBE_TIMEOUT_SECONDS),
+  );
 }
 
 /**

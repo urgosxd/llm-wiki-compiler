@@ -124,9 +124,11 @@ export function testDatabaseHandoffFile(env: NodeJS.ProcessEnv = process.env): s
  *
  * - `override` — an explicit `LLMWIKI_TEST_DATABASE_URL` won; no container was started.
  * - `container` — a pgvector container was started (or adopted, see `reused`) for this run.
- * - `adopted` — no container could be obtained, but a server already listening on the documented
- *   local port answered, so it was adopted with a logged warning. Never silent.
- * - `unavailable` — nothing answered. `reason` says why; the failure belongs to the chokepoint.
+ * - `adopted` — retired, and read-only: no code publishes it any more, because continuing on a
+ *   server this run did not create is the defect this record format exists to report. It stays
+ *   ACCEPTED so a record written by an older run still parses instead of being misread as corrupt.
+ * - `unavailable` — nothing answered, or the only thing that answered was a server this run does
+ *   not own. `reason` says why; the failure belongs to the chokepoint.
  */
 export type TestDatabaseSource = "override" | "container" | "adopted" | "unavailable";
 
