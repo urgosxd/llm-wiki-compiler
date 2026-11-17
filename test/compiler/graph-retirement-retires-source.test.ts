@@ -68,9 +68,10 @@
  * ## Why these cases need a database, and why the deletion is staged in ROWS
  *
  * Retirement is only reached with the graph enabled, and the graph's Stack has to
- * exist before anything can be keyed by it. With no Stack named, that is the
- * default-Stack provisioning query — so these cases run against the shared Postgres
- * harness, exactly as `graph-retirement-port-invocation.test.ts` does.
+ * exist before anything can be keyed by it. It exists because this suite CREATED it and
+ * names it — nothing is provisioned any more (S1 of
+ * `odd/tasks/stack-authority-per-request.md`) — so these cases run against the shared
+ * Postgres harness, exactly as `graph-retirement-port-invocation.test.ts` does.
  *
  * The deletion is staged in `wiki.source_compile_state`, because that is the backend
  * this run reads. What decides the backend is the PRESENCE OF A DATABASE, not the
@@ -81,8 +82,7 @@
  * that one authority. An earlier version of this file claimed the opposite — that
  * absence of the Stack id kept the seams file-backed — and every case here measured
  * `deleted: 0` while the seeded `.llmwiki/state.json` was never read. `AKS_STACK_ID`
- * still stays absent, but only so the Stack is resolved (and provisioned) at the
- * default domain through the same resolver the run uses.
+ * names this suite's own Stack, and nothing else resolves one.
  *
  * The staged row has NO `wiki.source_documents` row behind it: that absence IS the
  * deletion, and the compile record that outlives the document — the tombstone — is the
@@ -112,13 +112,19 @@ import {
   seedTwoDeletedSourceRows,
 } from "./retirement-port-project.js";
 
-/** Graph enabled, no Stack named: row-backed seams, default Stack provisioned. */
+const harness = await createKgPostgresHarness("graph-retirement-retires-source");
+
+/**
+ * Graph enabled, and the Stack this suite created: row-backed seams.
+ *
+ * It used to name no Stack and rely on the default one being provisioned; S1 deletes that,
+ * so the run names the Stack it owns.
+ */
 const RETIREMENT_ENV: NodeJS.ProcessEnv = {
   AKS_DATABASE_URL: DATABASE_URL,
   LLMWIKI_DIMENSIONS: "kg",
+  AKS_STACK_ID: harness.stackId,
 };
-
-const harness = await createKgPostgresHarness("graph-retirement-retires-source");
 
 afterAll(() => harness.cleanup());
 

@@ -1,7 +1,7 @@
 /**
  * @file test/dimensions/default-stack-both-dimensions.test.ts
- * @description A checkout that configured NO Stack still writes both dimensions into
- * ONE Stack: the id is resolved once and the same value is handed to each.
+ * @description A checkout that names ONE Stack still writes both dimensions into that
+ * one Stack: the id is resolved once and the same value is handed to each.
  *
  * ## The gap this file closes
  *
@@ -32,25 +32,25 @@
  *
  * ## Why the real database is used, and what it leaves behind
  *
- * Step 1 of the scenario is the command's own resolution, so the default Stack has to
- * be genuinely materialized — `ensureDefaultStack` is a real write, and stubbing it
- * would mean asserting on a stub. The `default` domain is a single global row
- * (`stacks.domain` is unique), so there is no per-suite slice to own: like
- * `default-stack-ingest.test.ts`, this case asserts through real rows and leaves that
- * one row in place rather than deleting a row another suite may be using.
+ * Step 1 of the scenario is the command's own resolution, so the case runs it against
+ * a real handle rather than a stub. It used to be the site of a defect: the scenario
+ * was "no Stack configured", and step 1 materialized a default Stack. That Stack is
+ * gone (S1 of `odd/tasks/stack-authority-per-request.md` — nothing is created
+ * implicitly), so the case now NAMES the Stack it owns, exactly as an operator would
+ * after `POST /stacks`. The property under test is unchanged and is why the file
+ * survives the deletion: whichever Stack a run works on, both dimensions must be
+ * built with that SAME id.
  *
- * Never operator data: every handle here comes from `testDatabaseUrl()`.
+ * Never operator data: every handle here comes from `testDatabaseUrl()`, and the
+ * Stack is the harness's own, removed by its cleanup.
  */
 
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { sql } from "drizzle-orm";
 
-import { DIMENSIONS_ENV_VAR } from "../../packages/wiki/src/dimensions/activation.js";
+import { AKS_STACK_ID_ENV_VAR, DIMENSIONS_ENV_VAR } from "../../packages/wiki/src/dimensions/activation.js";
 import { resolveDimensions } from "../../packages/wiki/src/dimensions/index.js";
-import { DEFAULT_STACK_DOMAIN } from "../../packages/wiki/src/dimensions/stack-selection.js";
 import type { KgDimensionOptions } from "../../packages/wiki/src/dimensions/kg/index.js";
 import type { WikiStoreDimensionOptions } from "../../packages/wiki/src/dimensions/wiki/database.js";
-import type { DatabaseHandle } from "@repo/foundation";
 import { resolveStackForCommand } from "../../packages/wiki/src/services/stacks/resolve-stack.js";
 import { createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { testDatabaseUrl } from "../fixtures/test-database.js";
@@ -92,41 +92,28 @@ const { db, reachable } = harness;
 afterAll(() => harness.cleanup());
 
 /**
- * The environment a bare checkout has: a reachable database and the switch, and NO
- * Stack id — `AKS_STACK_ID` is deliberately absent rather than blank, so the case
- * covers "not configured" and not only "configured to nothing".
+ * The environment a deployment has once it has created its one Stack: a reachable
+ * database, the switch, and the Stack's id — the id an operator would copy out of
+ * the `POST /stacks` response.
  */
-function bareCheckoutEnv(): NodeJS.ProcessEnv {
+function namedStackEnv(): NodeJS.ProcessEnv {
   return {
     AKS_DATABASE_URL: testDatabaseUrl(),
     [DIMENSIONS_ENV_VAR]: "wiki,kg",
+    [AKS_STACK_ID_ENV_VAR]: harness.stackId,
   };
 }
 
-/**
- * The id of the row owning the default domain, read back independently of the
- * resolver so the assertion does not trust the value it is checking.
- *
- * @param handle - Handle to read through.
- * @returns The default Stack's id, or undefined when no row carries the domain.
- */
-async function defaultStackRowId(handle: DatabaseHandle): Promise<string | undefined> {
-  const rows = await handle.execute<{ id: string }>(
-    sql`select id from stacks where domain = ${DEFAULT_STACK_DOMAIN}`,
-  );
-  return rows[0]?.id;
-}
-
-describe.skipIf(!reachable)("both dimensions on a checkout with no Stack configured", () => {
-  it("hands wiki and kg the same resolved default Stack id", async () => {
-    const env = bareCheckoutEnv();
-    // The scenario itself, asserted rather than assumed: neither `--stack` (which the
-    // CLI forwards as an environment value) nor `AKS_STACK_ID` is set.
-    expect(env.AKS_STACK_ID).toBeUndefined();
+describe.skipIf(!reachable)("both dimensions on a deployment that named one Stack", () => {
+  it("hands wiki and kg the same resolved Stack id", async () => {
+    const env = namedStackEnv();
+    // The scenario itself, asserted rather than assumed: the Stack is NAMED, and
+    // nothing resolves it from a default that does not exist any more.
+    expect(env[AKS_STACK_ID_ENV_VAR]).toBe(harness.stackId);
 
     // 1. The command's Stack, resolved the way the CLI resolves it.
     const stackId = await resolveStackForCommand(db, env);
-    expect(stackId).toBe(await defaultStackRowId(db));
+    expect(stackId).toBe(harness.stackId);
 
     // 2. The dimensions, built the way the write path builds them: the SAME resolved
     //    id is supplied, which is the property under test.

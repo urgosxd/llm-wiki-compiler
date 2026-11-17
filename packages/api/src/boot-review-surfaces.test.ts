@@ -24,6 +24,7 @@
  * precondition instead of reporting a bare `ENOENT` from the spawn.
  */
 
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -33,7 +34,6 @@ import {
   AKS_STACK_ID_ENV_VAR,
   createDimensionsDatabase,
 } from "../../../packages/wiki/src/dimensions/activation.js";
-import { resolveStackAuthority } from "../../../packages/wiki/src/dimensions/stack-authority.js";
 import { saveStoredCandidate } from "../../../packages/wiki/src/dimensions/wiki/candidate-store.js";
 import { createSuiteDatabase } from "../../../test/fixtures/per-run-database.js";
 // A MIXED file: one case asserts a Stack's rows, the other a project's files. It imports this
@@ -85,6 +85,28 @@ async function readSurfaces(base: string): Promise<ReviewSurfaces> {
 /** The throwaway checkout this case's child runs in, made fresh for every case. */
 let root: string;
 
+/**
+ * Create ONE Stack in the throwaway database, the way `POST /stacks` does.
+ *
+ * Both row-backed cases used to name no Stack and let the BOOT create a default one. S1 of
+ * `odd/tasks/stack-authority-per-request.md` deletes that, so each case creates the Stack it
+ * is about and names it — which is what a deployment does after its first `POST /stacks`.
+ *
+ * @param dimensions - Handle on the throwaway database.
+ * @param domain - The Stack's domain.
+ * @returns The id of the row it created.
+ */
+async function createStackRow(
+  dimensions: ReturnType<typeof createDimensionsDatabase>,
+  domain: string,
+): Promise<string> {
+  const id = randomUUID();
+  await dimensions.db.execute(
+    `insert into public.stacks (id, name, domain) values ('${id}', '${domain}', '${domain}')`,
+  );
+  return id;
+}
+
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), "boot-review-surfaces-"));
 });
@@ -96,19 +118,21 @@ afterEach(async () => {
 describe("a Stack-backed host whose checkout carries a candidate file", () => {
   it("reports ONE review queue on both surfaces, counting nothing from the checkout", async () => {
     const suite = await createSuiteDatabase("boot-review-surfaces");
+    const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
     try {
+      const stackId = await createStackRow(dimensions, "boot-review-surfaces");
       await plantFileCandidate(root);
-      // A database configured, no Stack named: the shape a first deployment has, and the only one
-      // where the boot's resolution and the process environment give DIFFERENT answers.
+      // A database configured and ONE Stack named: the shape a deployment has once its owner has
+      // created the Stack. Both roots of the boot's answer must still agree about that Stack.
       const host = launch(["host", "--port", "0"], root, {
         ...process.env,
         [AKS_DATABASE_URL_ENV_VAR]: suite.url,
-        [AKS_STACK_ID_ENV_VAR]: "",
+        [AKS_STACK_ID_ENV_VAR]: stackId,
       });
       try {
         const base = await waitForReady(host);
         const surfaces = await readSurfaces(base);
-        // The provisioned Stack's queue is EMPTY: the planted file is the only thing that could
+        // The named Stack's queue is EMPTY: the planted file is the only thing that could
         // make either number anything but zero.
         expect(surfaces.count, "the count must read the Stack's empty queue, not the checkout's files").toBe(0);
         // The claim, in one assertion: whatever the count says, the list must say the same. This is
@@ -123,6 +147,7 @@ describe("a Stack-backed host whose checkout carries a candidate file", () => {
         await host.exited;
       }
     } finally {
+      await dimensions.close();
       await suite.drop();
     }
   });
@@ -138,18 +163,15 @@ describe("a Stack-backed host whose queue really holds a row", () => {
     const suite = await createSuiteDatabase("boot-review-surfaces-rows");
     const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
     try {
-      const authority = await resolveStackAuthority({
-        env: { [AKS_DATABASE_URL_ENV_VAR]: suite.url, [AKS_STACK_ID_ENV_VAR]: "" }, db: dimensions.db,
-      });
-      if (authority.kind !== "stack") throw new Error(`expected a stack authority, got ${authority.kind}`);
-      await saveStoredCandidate(dimensions.db, authority.stackId, {
+      const stackId = await createStackRow(dimensions, "boot-review-surfaces-rows");
+      await saveStoredCandidate(dimensions.db, stackId, {
         id: "row-1", title: "Row", slug: "row", summary: "", sources: [],
         body: "---\ntitle: Row\n---\n\nBody.\n", generatedAt: "2026-01-02T00:00:00.000Z",
         reviewMode: "forced", heldReasons: [{ code: "manual-review-requested" }],
       });
       await plantFileCandidate(root);
       const host = launch(["host", "--port", "0"], root, {
-        ...process.env, [AKS_DATABASE_URL_ENV_VAR]: suite.url, [AKS_STACK_ID_ENV_VAR]: "",
+        ...process.env, [AKS_DATABASE_URL_ENV_VAR]: suite.url, [AKS_STACK_ID_ENV_VAR]: stackId,
       });
       try {
         const surfaces = await readSurfaces(await waitForReady(host));

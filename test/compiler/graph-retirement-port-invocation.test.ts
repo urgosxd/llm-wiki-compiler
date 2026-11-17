@@ -31,10 +31,10 @@
  *
  * ## Why the first case needs a database, and why it stages the deletion in ROWS
  *
- * Retirement is only reached with the graph enabled, and with the graph enabled the
- * Stack pre-check provisions the default Stack when the environment names none. That
- * provisioning is a real query, so the case runs against the shared harness database,
- * and the default Stack row it leaves behind is the same one other suites leave.
+ * Retirement is only reached with the graph enabled, and with the graph enabled the run
+ * must have a Stack. That Stack is the one this suite CREATED and names — nothing is
+ * provisioned any more (S1 of `odd/tasks/stack-authority-per-request.md`) — so the case
+ * runs against the shared harness database.
  *
  * The port is asked by the retirement helper, so the run has to REACH retirement: it
  * needs a deletion. What decides the backend of the state, change detection and content
@@ -72,8 +72,19 @@ import { DATABASE_URL, createKgPostgresHarness } from "../fixtures/kg-postgres.j
 import { captureProcessIo } from "../fixtures/process-io.js";
 import { seedDeletedSourceProject, seedDeletedSourceRows } from "./retirement-port-project.js";
 
-/** The environment that enables the graph without naming a Stack. */
-const GRAPH_ENV: NodeJS.ProcessEnv = { AKS_DATABASE_URL: DATABASE_URL, LLMWIKI_DIMENSIONS: "kg" };
+const harness = await createKgPostgresHarness("compile-port-invocation");
+
+/**
+ * The environment that enables the graph and names this suite's Stack.
+ *
+ * It used to name no Stack and let the run provision the default one; S1 deletes that, so
+ * the run names the Stack it owns — what an operator does after `POST /stacks`.
+ */
+const GRAPH_ENV: NodeJS.ProcessEnv = {
+  AKS_DATABASE_URL: DATABASE_URL,
+  LLMWIKI_DIMENSIONS: "kg",
+  AKS_STACK_ID: harness.stackId,
+};
 
 /**
  * The FILE mode: the graph enabled, and nothing configured a database.
@@ -84,7 +95,7 @@ const GRAPH_ENV: NodeJS.ProcessEnv = { AKS_DATABASE_URL: DATABASE_URL, LLMWIKI_D
  */
 const FILE_MODE_ENV: NodeJS.ProcessEnv = { LLMWIKI_DIMENSIONS: "kg" };
 
-const harness = await createKgPostgresHarness("compile-port-invocation");
+afterAll(() => harness.cleanup());
 
 afterAll(() => harness.cleanup());
 
@@ -161,7 +172,11 @@ describe.skipIf(!harness.reachable)("a supplied port on the compile path", () =>
     expect(received[0].env).toEqual({ ...GRAPH_ENV, AKS_STACK_ID: stackId });
     // And publishing did not MUTATE the caller's object: the env this case passed in is
     // still exactly the env it declared, so a run cannot leak its Stack into its caller.
-    expect(GRAPH_ENV).toEqual({ AKS_DATABASE_URL: DATABASE_URL, LLMWIKI_DIMENSIONS: "kg" });
+    expect(GRAPH_ENV).toEqual({
+      AKS_DATABASE_URL: DATABASE_URL,
+      LLMWIKI_DIMENSIONS: "kg",
+      AKS_STACK_ID: harness.stackId,
+    });
     expect(received[0].stackId).toEqual(expect.any(String));
     expect(typeof received[0].db).toBe("object");
     expect(result.errors).toEqual([]);

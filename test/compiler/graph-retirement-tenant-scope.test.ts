@@ -47,6 +47,7 @@
  */
 
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -62,16 +63,23 @@ import { seedDeletedSourceRows } from "./retirement-port-project.js";
 /** Identity the seed records, and the `storage_path` the graph keys it under. */
 const DELETED_SOURCE_IDENTITY = "https://example.test/deleted-source";
 
-/** Graph enabled, no Stack named: the compile provisions and retires in one tenant. */
+const harness = await createKgPostgresHarness("graph-retirement-tenant-scope");
+
+/**
+ * Graph enabled, and the Stack this suite created: the compile retires inside ONE tenant.
+ *
+ * The Stack used to be resolved (and provisioned) at the default domain because this
+ * environment named none. That provisioning is deleted by S1, so the run NAMES the Stack
+ * it owns — exactly what an operator does once `POST /stacks` has answered.
+ */
 const RETIREMENT_ENV: NodeJS.ProcessEnv = {
   AKS_DATABASE_URL: DATABASE_URL,
   LLMWIKI_DIMENSIONS: "kg",
+  AKS_STACK_ID: harness.stackId,
 };
 
-/** Compile options shared by the provisioning run and the measured run. */
+/** Compile options shared by the seeding run and the measured run. */
 const COMPILE_OPTIONS: Partial<CompileOptions> = { env: RETIREMENT_ENV, embeddings: false };
-
-const harness = await createKgPostgresHarness("graph-retirement-tenant-scope");
 
 afterAll(() => harness.cleanup());
 
@@ -130,18 +138,38 @@ async function chunkRows(stackId: string): Promise<number> {
   return rows.map((row) => row.count)[0] ?? 0;
 }
 
+/**
+ * The OTHER tenant, created beside the one the run names.
+ *
+ * This case used to get its second tenant for free: the run resolved the default Stack, and
+ * `harness.stackId` was a different row. S1 deletes that Stack, the run now names
+ * `harness.stackId`, and the boundary the case measures would collapse into one tenant — the
+ * deletion seeded under the run's own Stack twice, measured against itself. So the second
+ * tenant is created here, by name, like any other Stack.
+ *
+ * @returns The id of the row it created.
+ */
+async function otherTenant(): Promise<string> {
+  const id = randomUUID();
+  const domain = `other-tenant-${randomUUID().slice(0, 8)}`;
+  await harness.db.execute(
+    sql`insert into stacks (id, name, domain) values (${id}::uuid, ${domain}, ${domain})`,
+  );
+  return id;
+}
+
 describe("graph retirement tenant scope", () => {
   it("retires the deleted source only inside the Stack that owns it", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "retirement-tenant-"));
     try {
       captureProcessIo();
-      // The Stack this run will resolve, provisioned through the SAME resolver the run
-      // uses. The deletion has to belong to the tenant the compile reads, or the run
-      // has nothing to retire and the boundary below would prove nothing.
+      // The Stack this run NAMES, so the deletion belongs to the tenant the compile reads —
+      // otherwise the run has nothing to retire and the boundary below would prove nothing.
       const owningStack = await resolveStackForCommand(harness.db, RETIREMENT_ENV);
+      const untouched = await otherTenant();
       await seedDeletedSourceRows(harness.db, owningStack);
       await seedDocumentWithChunk(owningStack);
-      await seedDocumentWithChunk(harness.stackId);
+      await seedDocumentWithChunk(untouched);
       const totalBefore = await documentRows();
 
       const result = await compileAndReport(dir, COMPILE_OPTIONS);
@@ -150,8 +178,8 @@ describe("graph retirement tenant scope", () => {
       // observed scoped retirement rather than a run that never got that far.
       expect(result).toMatchObject({ deleted: 1, errors: [] });
       // The other tenant's rows — same `storage_path`, different Stack — are intact.
-      expect(await documentRows(harness.stackId)).toBe(1);
-      expect(await chunkRows(harness.stackId)).toBe(1);
+      expect(await documentRows(untouched)).toBe(1);
+      expect(await chunkRows(untouched)).toBe(1);
       // And exactly one row left the table: the owning Stack's, no more.
       expect(await documentRows()).toBe(totalBefore - 1);
     } finally {

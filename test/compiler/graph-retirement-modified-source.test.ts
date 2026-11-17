@@ -69,13 +69,19 @@ const COMPILED_CONTENT = "# Modified Topic\n\nThe body this source had when it w
 /** The body the source has now: same identity, different bytes. */
 const EDITED_CONTENT = "# Modified Topic\n\nThe body this source has now, after the edit.\n";
 
-/** Graph enabled, no Stack named: rows everywhere, default Stack provisioned. */
+const harness = await createKgPostgresHarness("graph-retirement-modified-source");
+
+/**
+ * Graph enabled, and the Stack this suite created: rows everywhere.
+ *
+ * It used to name no Stack, and the run provisioned the default one. That is deleted by
+ * S1, so the run names the Stack it owns instead.
+ */
 const MODIFIED_ENV: NodeJS.ProcessEnv = {
   AKS_DATABASE_URL: DATABASE_URL,
   LLMWIKI_DIMENSIONS: "kg",
+  AKS_STACK_ID: harness.stackId,
 };
-
-const harness = await createKgPostgresHarness("graph-retirement-modified-source");
 
 afterAll(() => harness.cleanup());
 
