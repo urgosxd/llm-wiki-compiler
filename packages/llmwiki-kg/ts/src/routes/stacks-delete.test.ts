@@ -34,20 +34,11 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it, beforeEach } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
-import { RESPONSE_KEYS, buildApp, createBody, currentDomainPrefix, database, deleteFixtureRows, skipReason, tick, useDomainPrefix } from "./stacks-harness.js";
+import { RESPONSE_KEYS, buildApp, createBody, currentDomainPrefix, database, deleteFixtureRows, skipReason, tick, uniqueDomain, useDomainPrefix } from "./stacks-harness.js";
 
 // This file owns its own domain namespace: the split suites run in parallel
 // against one database and the cleanup deletes by prefix.
 useDomainPrefix("delete");
-
-/** Fixture domain counter, so two cases cannot collide inside one millisecond. */
-let sequence = 0;
-
-/** Unique domain per call, carrying the cleanup prefix. */
-function uniqueDomain(label: string): string {
-  sequence += 1;
-  return `${currentDomainPrefix()}${label}-${Date.now().toString(36)}-${String(sequence)}`;
-}
 
 /**
  * Create one Stack over HTTP and return its id.

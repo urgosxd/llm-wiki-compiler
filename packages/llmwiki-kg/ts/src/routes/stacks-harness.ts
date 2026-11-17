@@ -72,6 +72,25 @@ export function currentDomainPrefix(): string {
   return domainPrefix;
 }
 
+/** Fixture domain counter, so two cases cannot collide inside one millisecond. */
+let sequence = 0;
+
+/**
+ * A unique domain per call, carrying this file's cleanup prefix.
+ *
+ * The same shape `documents-harness` exports for the documents suites: the counter,
+ * not the clock, is what makes two calls in the same millisecond differ. The prefix is
+ * read through {@link currentDomainPrefix} rather than a local copy of the variable, so
+ * a suite that changed its namespace cannot keep handing out the old one.
+ *
+ * @param label - What the fixture is for, kept in the domain to make a failure readable.
+ * @returns A domain under this suite's prefix that no other call returns.
+ */
+export function uniqueDomain(label: string): string {
+  sequence += 1;
+  return `${currentDomainPrefix()}${label}-${Date.now().toString(36)}-${String(sequence)}`;
+}
+
 /**
  * The response keys every Stack row carries, in order.
  *

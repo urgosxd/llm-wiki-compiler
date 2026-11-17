@@ -5,7 +5,7 @@
 
 import { describe, expect, it, beforeEach } from "vitest";
 import request from "supertest";
-import { RESPONSE_KEYS, buildApp, countFixtureRows, createBody, currentDomainPrefix, deleteFixtureRows, expectOracleTimestamp, skipReason, useDomainPrefix } from "./stacks-harness.js";
+import { RESPONSE_KEYS, buildApp, countFixtureRows, createBody, deleteFixtureRows, expectOracleTimestamp, skipReason, uniqueDomain, useDomainPrefix } from "./stacks-harness.js";
 
 
 
@@ -18,14 +18,6 @@ useDomainPrefix("create");
 
 
 describe.skipIf(skipReason !== false)("/stacks create (live database)", () => {
-    let sequence = 0;
-
-    /** Unique domain per call, carrying the cleanup prefix. */
-    function uniqueDomain(label: string): string {
-      sequence += 1;
-      return `${currentDomainPrefix()}${label}-${Date.now().toString(36)}-${String(sequence)}`;
-    }
-
     // Start every test from a known state, and clean up even if a test failed
     // before its own assertions ran.
     beforeEach(deleteFixtureRows);

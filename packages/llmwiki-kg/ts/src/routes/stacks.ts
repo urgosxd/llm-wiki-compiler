@@ -304,32 +304,55 @@ async function listStacks(
   res.json(rows.map(toStackResponse));
 }
 
+/**
+ * Validates `:stackId` and binds it as the caller's own reference, in that order.
+ *
+ * Every handler whose route carries a path id does both, so both happen here once.
+ * The order is the contract: validating first keeps a malformed id a 422 instead of
+ * the unbound 404 a lookup would answer, and binding before the query is what lets
+ * the `stacks` read policy see the row at all — it matches only the bound tenant, so
+ * an unbound lookup answers 404 for a Stack that exists. `:stackId` is the caller's
+ * own reference and the query's own filter, so binding it grants nothing extra.
+ *
+ * @param req - The request, for its `:stackId` path parameter.
+ * @param res - The response a validation failure is written to.
+ * @param tx - The transaction the request runs in; the binding is per transaction.
+ * @returns The canonical id, or `undefined` when this call already answered 422.
+ */
+async function boundStackId(
+  req: Request,
+  res: Response,
+  tx: Database,
+): Promise<string | undefined> {
+  const stackId = parseStackId(req.params["stackId"]);
+  if (!stackId.ok) {
+    sendValidationError(res, stackId.failure);
+    return undefined;
+  }
+  await bindCallerStack(tx, stackId.stackId, null);
+  return stackId.stackId;
+}
+
 /** `GET /stacks/:stackId` — one Stack, or 404. */
 async function getStack(
   req: Request,
   res: Response,
   tx: Database,
 ): Promise<void> {
-  const stackId = parseStackId(req.params["stackId"]);
-  if (!stackId.ok) {
-    sendValidationError(res, stackId.failure);
+  const stackId = await boundStackId(req, res, tx);
+  if (stackId === undefined) {
     return;
   }
 
-  // Bind the tenant named in the path before reading. The `stacks` read policy
-  // matches only the bound tenant, so an unbound lookup answers 404 for a Stack
-  // that exists. `:stackId` is the caller's own reference and the query's own
-  // filter, so binding it grants nothing extra — it lets the policy see the row.
-  await bindCallerStack(tx, stackId.stackId, null);
   const rows = await tx.execute<StackRow>(sql`
     select ${sql.raw(STACK_COLUMNS)}
     from stacks
-    where id = ${stackId.stackId}
+    where id = ${stackId}
   `);
 
   const row = rows[0];
   if (row === undefined) {
-    sendApiError(res, apiError(404, `Stack ${stackId.stackId} not found`));
+    sendApiError(res, apiError(404, `Stack ${stackId} not found`));
     return;
   }
 
@@ -529,24 +552,20 @@ async function deleteStack(
   res: Response,
   tx: Database,
 ): Promise<void> {
-  const stackId = parseStackId(req.params["stackId"]);
-  if (!stackId.ok) {
-    sendValidationError(res, stackId.failure);
+  const stackId = await boundStackId(req, res, tx);
+  if (stackId === undefined) {
     return;
   }
 
-  // Same reason as `getStack`: without the binding the UPDATE matches nothing under RLS
-  // and this reports a 404 for a Stack that exists.
-  await bindCallerStack(tx, stackId.stackId, null);
   const inactivated = await tx.execute<{ id: string }>(sql`
     update stacks
     set active = false, updated_at = now()
-    where id = ${stackId.stackId} and active
+    where id = ${stackId} and active
     returning id
   `);
 
-  if (inactivated.length === 0 && !(await stackRowExists(tx, stackId.stackId))) {
-    sendApiError(res, apiError(404, `Stack ${stackId.stackId} not found`));
+  if (inactivated.length === 0 && !(await stackRowExists(tx, stackId))) {
+    sendApiError(res, apiError(404, `Stack ${stackId} not found`));
     return;
   }
 

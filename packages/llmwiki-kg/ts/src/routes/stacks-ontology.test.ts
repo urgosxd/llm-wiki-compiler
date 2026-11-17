@@ -27,7 +27,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import request from "supertest";
 import { sql } from "drizzle-orm";
 
-import { RESPONSE_KEYS, buildApp, currentDomainPrefix, database, deleteFixtureRows, skipReason, useDomainPrefix } from "./stacks-harness.js";
+import { RESPONSE_KEYS, buildApp, database, deleteFixtureRows, skipReason, uniqueDomain, useDomainPrefix } from "./stacks-harness.js";
 
 useDomainPrefix("ontology");
 
@@ -41,14 +41,6 @@ const DECLARATION = {
 const STORED_DECLARATION = { ...DECLARATION, subtypes: [], relationships: [] };
 
 describe.skipIf(skipReason !== false)("/stacks ontology (live database)", () => {
-  let sequence = 0;
-
-  /** Unique domain per call, carrying the cleanup prefix. */
-  function uniqueDomain(label: string): string {
-    sequence += 1;
-    return `${currentDomainPrefix()}${label}-${Date.now().toString(36)}-${String(sequence)}`;
-  }
-
   beforeEach(deleteFixtureRows);
 
   /** Reads the stored column back as the database actually holds it. */
