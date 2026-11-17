@@ -157,6 +157,29 @@ export async function resolveStackAuthority(
 }
 
 /**
+ * Does this run have a database configured and NO Stack it could serve?
+ *
+ * The ONE question a caller that must build something BEFORE a Stack exists asks: the
+ * launcher's boot, which freezes a viewer snapshot before it can know which Stack a request
+ * will name. It is answered from {@link settledAuthority}, the same single decision both
+ * resolvers above use, so a boot can never reach a different conclusion about what the
+ * environment settles than the resolution it is standing in for.
+ *
+ * Deliberately NOT a third authority kind. An authority is a value a caller branches on to
+ * pick a BACKEND, and the two kinds are exactly the two backends; this answers a question
+ * about the ENVIRONMENT that precedes the choice. A caller that gets `true` must read no
+ * backend at all and must not call itself file-backed — `false` is returned for the named
+ * file mode (`{ kind: "file" }`) just as it is for a run that named a Stack. S14 of
+ * `odd/tasks/stack-authority-per-request.md` records what such a caller can honestly serve.
+ *
+ * @param env - The environment this process reads; defaults to `process.env`.
+ * @returns True only when a database is configured and no Stack was named for it.
+ */
+export function hasNoResolvableStack(env: NodeJS.ProcessEnv = process.env): boolean {
+  return settledAuthority(env[AKS_STACK_ID_ENV_VAR], env) === undefined;
+}
+
+/**
  * Resolve the authority a synchronous caller can settle WITHOUT asking the database.
  *
  * Deliberately NOT `resolveStackAuthority` under a second name, and named for the narrower
@@ -235,6 +258,26 @@ async function namedStackOrRefuse(db: DatabaseHandle, env: NodeJS.ProcessEnv): P
  */
 export function stackIdOf(authority: StackAuthority): string | undefined {
   return authority.kind === "stack" ? authority.stackId : undefined;
+}
+
+/**
+ * THE refusal for an ingest job that names no Stack on a host that bound none at boot.
+ *
+ * The same sentence stem as every other configured-database refusal ({@link missingStackRefusal}),
+ * because the situation is the resolver's; only what THIS caller must do differs, and that is
+ * supplied here. It became reachable when the launcher's boot stopped resolving a Stack (S6 of
+ * `odd/tasks/stack-authority-per-request.md`): the process no longer holds a Stack a job could be
+ * filed under, so a job that names none has nothing to be attributed to, and the honest answer is
+ * to refuse it by name rather than mirror it under whatever the environment last said.
+ *
+ * @param context - What received the job, named in the refusal.
+ * @returns The refusal text, without a trailing newline.
+ */
+export function unnamedJobStackRefusal(context: string): string {
+  return missingStackRefusal(
+    `${context} received a job that names no Stack, and this host bound none at boot.`,
+    `Name the Stack on the job (POST /api/ingest with a stackId), or start the host with ${AKS_STACK_ID_ENV_VAR}.`,
+  );
 }
 
 /**

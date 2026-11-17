@@ -72,11 +72,7 @@ import { createWikiMcpServer, startMCPServer } from "@repo/wiki/mcp";
 import { startHost } from "./host/server.js";
 import { createDimensionsPort } from "./dimensions/port.js";
 import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
-import {
-  createDimensionsDatabase,
-  isDatabaseConfigured,
-} from "@repo/wiki/dimensions-activation";
-import { resolveStackAuthority, type StackAuthority } from "@repo/wiki/dimensions-stack-authority";
+import { hasNoResolvableStack } from "@repo/wiki/dimensions-stack-authority";
 import { buildReadyUrl, registerShutdown, resolveBindConfig, type BindOptions } from "./serve-bind.js";
 
 /** The subcommand that starts the unified HTTP listener. */
@@ -275,45 +271,17 @@ function resolveVersion(): string {
 }
 
 /**
- * The Stack this process serves, resolved ONCE — before anything reads a backend.
- *
- * ## Why the boot owns this resolution
- *
- * The viewer is built before the listener binds, and three reads under it (the raw page
- * source, the classified compile state, the freshness corpus) each need to know which
- * backend answers. Asked on their own they call the authority resolver with no database
- * handle in hand, and with `AKS_DATABASE_URL` configured that is a refusal raised before
- * the process ever listens — so a first deployment against an empty `public.stacks` could
- * not boot at all. Resolving HERE, through a handle opened for exactly this purpose,
- * reaches precedence 2: the idempotent provisioning of the default Stack. The answer is
- * then handed down as a value to everything that would otherwise ask again.
- *
- * ## Why the handle does not outlive the call
- *
- * The resolved authority is a plain value (`{ kind, stackId }`), so nothing downstream
- * needs the pool that produced it. It is closed in the `finally`, which keeps this boot
- * from holding a connection for the life of the listener.
- *
- * With NO database configured, not even a client is constructed: that path is the named
- * file mode, and `resolveStackAuthority` answers it without a connection.
- *
- * @param env - The environment this process reads.
- * @returns The resolved authority: the Stack this host serves, or the explicit file mode.
- * @throws {StackAuthorityError} when a database is configured and its Stack cannot be
- *   provisioned — the case the refusal was written for, and the only one left to it.
- */
-async function resolveBootAuthority(env: NodeJS.ProcessEnv): Promise<StackAuthority> {
-  if (!isDatabaseConfigured(env)) return await resolveStackAuthority({ env });
-  const dimensionsDb = createDimensionsDatabase(env);
-  try {
-    return await resolveStackAuthority({ env, db: dimensionsDb.db });
-  } finally {
-    await dimensionsDb.close();
-  }
-}
-
-/**
  * Start the unified HTTP listener and stay alive until a signal closes it.
+ *
+ * The boot resolves NO Stack. That is S6 of `odd/tasks/stack-authority-per-request.md`, and it
+ * is what makes the bootstrap path possible: `POST /stacks` creates the first Stack, and a host
+ * that refuses to listen cannot receive that request. Authority is a REQUEST input now — the
+ * mutation mount and `/api/reviews` resolve the Stack a caller names, per request.
+ *
+ * What replaces the boot resolution is not "resolve nothing everywhere" but "say honestly what
+ * was resolved": with a database configured and no Stack named, the frozen snapshot built here
+ * is EMPTY rather than answered from the checkout (S3), and every surface that cannot serve
+ * without a Stack refuses by name (see `hasNoResolvableStack`).
  *
  * @param parsed - What the caller supplied.
  */
@@ -321,13 +289,16 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
   const root = process.cwd();
   const { host, port } = resolveBindConfig(bindOptions(parsed));
   const version = resolveVersion();
-  // Resolved ONCE here, and consumed by everything below: the snapshot's Stack-scoped
-  // reads and the host's durability pair. Two resolutions on this path would be the drift
-  // the authority module exists to end, reborn at the entry point.
-  const stackAuthority = await resolveBootAuthority(process.env);
   // Built before binding so the listener never accepts a request against a
-  // half-constructed snapshot.
-  const viewerSnapshot = await buildViewerSnapshot(root, process.env, stackAuthority);
+  // half-constructed snapshot. `undefined` as the authority is the point: the boot resolved
+  // none, so either the environment names this deployment's Stack or the snapshot is the
+  // explicit Stack-less one — never a second resolution and never a file fallback.
+  const viewerSnapshot = await buildViewerSnapshot(
+    root,
+    process.env,
+    undefined,
+    hasNoResolvableStack(process.env) ? { stackUnresolved: true } : undefined,
+  );
   // ONE port for the whole host: the listener's mutation mount and the
   // MCP-over-HTTP factory both ingest through it, so a request handled over either
   // surface writes the dimensions the same way. Composed HERE because this module is
@@ -342,9 +313,6 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
     projectRoot: root,
     version,
     dimensionsPort,
-    // The ONE boot resolution, handed to the synchronous durability pair so it consumes
-    // this host's Stack instead of refusing a database it cannot ask about.
-    stackAuthority,
     // The MCP-over-HTTP factory is built HERE because this module is imported by
     // nothing: it is the one place a host→mcp edge cannot close a cycle.
     mcpServerFactory: () => createWikiMcpServer({ root, version, dimensionsPort }),

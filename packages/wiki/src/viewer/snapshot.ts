@@ -55,6 +55,78 @@ const RECENT_PAGES_LIMIT = 8;
 const INDEX_HREF = "/#/index";
 
 /**
+ * What the boot knew about the Stack, beyond the authority it resolved.
+ *
+ * A parameter of its own rather than a third {@link StackAuthority} kind: the authority
+ * answers "which backend", and this answers "was there one to ask at all". S14 of
+ * `odd/tasks/stack-authority-per-request.md` is the reason it exists.
+ */
+export interface SnapshotOptions {
+  /**
+   * The boot resolved NO Stack (`hasNoResolvableStack`), so this snapshot holds an EMPTY
+   * corpus instead of resolving a backend from the environment.
+   *
+   * Set by the launcher's boot on the one deployment shape S6 requires to listen: a database
+   * configured and `public.stacks` empty, because `POST /stacks` is how the first Stack
+   * arrives and a host that refuses to bind cannot receive it. Without this flag such a boot
+   * cannot build a snapshot at all: every Stack-scoped read below resolves an authority from
+   * `env` with no database handle in hand, which is the named refusal.
+   *
+   * What it must NEVER become is a file-backed snapshot. A configured database forbids
+   * answering from the checkout (S3), so the corpus is empty and the counts are zero — no
+   * `sources/` listing, no `.llmwiki/candidates`, no `state.json` — which also makes the
+   * emptiness measurable from outside instead of inferred.
+   *
+   * That emptiness is a PROPERTY OF THIS READ MODEL, not of the deployment: the snapshot is
+   * built once per process and served to every request, so it cannot describe a Stack created
+   * after boot (S14). Requests that name their Stack resolve it per request on the surfaces
+   * listed there; this snapshot is the part T14 must turn into a per-Stack read.
+   */
+  readonly stackUnresolved?: true;
+}
+
+/**
+ * The snapshot a boot freezes when it has a database and no Stack yet.
+ *
+ * Every field is the empty value of its own type and NO read is performed — not the page
+ * corpus, not the compile state, not the candidate directory, not the index file, not the
+ * source listing. That is the whole contract: a host that resolved no Stack serves nothing
+ * rather than serving the checkout it happens to be running in, which is what S3 forbids and
+ * what would otherwise be invisible in a 200 response.
+ *
+ * `stateStatus` is `missing` because that is the honest classification of a state that was
+ * never read: `StateStatus` describes the OUTCOME of a state read (`utils/state.ts:102`), and
+ * no state was read here. It is deliberately NOT a fifth value — that union lives in files
+ * outside this change and is carried in a published `/api/health` payload that clients switch
+ * on, and the REASON behind the classification belongs to the boot (S14), not to the state.
+ *
+ * @param root - Absolute project root the snapshot is labelled with.
+ * @returns A snapshot with no pages, no counts and no warnings.
+ */
+function unresolvedStackSnapshot(root: string): ViewerSnapshot {
+  return {
+    root,
+    generatedAt: new Date().toISOString(),
+    stateStatus: "missing",
+    project: buildProject(root),
+    counts: {
+      concepts: 0,
+      queries: 0,
+      sourceFiles: 0,
+      pendingReviews: 0,
+      compiledSources: 0,
+      stale: 0,
+      orphaned: 0,
+    },
+    index: { available: false, href: INDEX_HREF, body: "", outgoingLinks: [] },
+    recentPages: [],
+    pages: [],
+    sourceFilenames: [],
+    graph: { nodes: [], edges: [] },
+  };
+}
+
+/**
  * Build the immutable startup snapshot for a project root. Reads pages,
  * counts, source state, candidates, and the optional `wiki/index.md`
  * exactly once and returns a fully populated `ViewerSnapshot`. Callers
@@ -69,21 +141,24 @@ const INDEX_HREF = "/#/index";
  * @param authority - The Stack the caller already resolved; omitted, each Stack-scoped
  *   read below resolves one from `env`.
  *
- *   A caller that resolved an authority -- the launcher's boot, which resolves it ONCE
- *   with a database handle before this snapshot exists -- passes it, so the four reads
- *   that branch on a backend (pages, compile state, freshness corpus, review queue)
- *   branch on the same answer instead of each asking the environment again with no handle
- *   in hand. That second question is the refusal, and it fires before the listener binds;
- *   for the review queue it is worse than a refusal -- `AKS_STACK_ID` names nothing there,
- *   so the count would come from the checkout's `.llmwiki/candidates` while every other
- *   read came from the Stack's rows.
+ *   A caller that resolved an authority normally passes it, so the four reads that branch on a
+ *   backend (pages, compile state, freshness corpus, review queue) branch on the same answer
+ *   instead of each asking the environment again. The launcher's boot passes `undefined` on
+ *   purpose since S6: it resolves no Stack, so the environment is the only thing that can
+ *   speak for a deployment that names one, and `options.stackUnresolved` covers the deployment
+ *   that names none.
+ * @param options - What the boot knew about the Stack beyond the authority, if anything.
  * @returns The frozen startup snapshot.
  */
 export async function buildViewerSnapshot(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
   authority?: StackAuthority,
+  options?: SnapshotOptions,
 ): Promise<ViewerSnapshot> {
+  // The boot resolved nothing, so there is nothing to read: answering from `env` here is the
+  // named refusal, and answering from the checkout is the silent file fallback S3 deletes.
+  if (options?.stackUnresolved === true) return unresolvedStackSnapshot(root);
   const [defaultPages, classified, pendingReviews, sourceFilenames, index] =
     await Promise.all([
       withRawPageSource(root, env, (source) => collectViewerPages(root, source), authority),

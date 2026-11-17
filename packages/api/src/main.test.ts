@@ -58,8 +58,9 @@ import {
 import { createSuiteDatabase } from "../../../test/fixtures/per-run-database.js";
 // The launcher cases below measure a FILE-BACKED wiki, so this file declares that mode the way
 // `test/fixtures/file-mode.ts` documents: no database configured. Without it the child inherits the
-// database URL the runner seeds into every worker and refuses to start, because a database with no
-// Stack named is a failure and not a mode (spec S2 of `odd/tasks/single-stack-authority.md`).
+// database URL the runner seeds into every worker and would serve the EMPTY Stack-less snapshot
+// instead of the checkout's files — a database with no Stack is no longer a refusal at boot (S6 of
+// `odd/tasks/stack-authority-per-request.md`), but it is still not the file backend.
 import "../../../test/fixtures/file-mode.js";
 
 /**
@@ -167,9 +168,7 @@ async function waitForJsonRpc(running: Running): Promise<JsonRpcResponse> {
 async function bootAndStop(env: NodeJS.ProcessEnv, label: string): Promise<void> {
   const running = launch(["host", "--port", "0"], root, env);
   try {
-    const announced = await announcedOrEmpty(running);
-    expect(announced, `${label} must announce the listener it bound; child stderr: ${running.stderr()}`).toMatch(/^http:\/\//);
-    expect(await healthStatus(announced), `${label} must answer /health; child stderr: ${running.stderr()}`).toBe(200);
+    await expectHealthyListener(running, label);
   } finally {
     running.terminate();
     await running.exited;
@@ -181,7 +180,7 @@ async function bootAndStop(env: NodeJS.ProcessEnv, label: string): Promise<void>
  *
  * The Stack id is a value an operator copies out of the `POST /stacks` response: this is
  * what a deployment looks like once its owner has created the Stack, as opposed to the
- * empty-database shape the refusal case below arranges.
+ * empty-database shape the S6 case below arranges.
  *
  * @param databaseUrl - The throwaway database the boot is pointed at.
  * @param stackId - The Stack the run names.
@@ -212,6 +211,54 @@ async function createStackRow(dimensions: DimensionsDatabase, domain: string): P
     `insert into public.stacks (id, name, domain) values ('${id}', '${domain}', '${domain}')`,
   );
   return id;
+}
+
+/**
+ * Require that `running` announced a listener and that the listener answers `/health`.
+ *
+ * The two halves are inseparable in every case that needs one: an announcement proves the process
+ * decided to serve, and a 200 proves the socket behind it is really bound.
+ *
+ * @param running - The spawned child.
+ * @param label - Which boot this is, so a failure names the right one.
+ * @returns The base URL it announced.
+ */
+async function expectHealthyListener(running: Running, label: string): Promise<string> {
+  const announced = await announcedOrEmpty(running);
+  expect(
+    announced,
+    `${label} must announce the listener it bound; child stderr: ${running.stderr()}`,
+  ).toMatch(/^http:\/\//);
+  expect(
+    await healthStatus(announced),
+    `${label} must answer /health; child stderr: ${running.stderr()}`,
+  ).toBe(200);
+  return announced;
+}
+
+/**
+ * The Stack-less boot's own two promises, on top of a live listener: an EMPTY corpus, because
+ * nothing was read rather than because nothing was found.
+ *
+ * @param running - The spawned child.
+ * @returns The base URL it announced.
+ */
+async function expectStackLessSurfaces(running: Running): Promise<string> {
+  // The counts are the measurable half: a snapshot that fell back to the checkout would report the
+  // planted candidate and the `sources/` listing, so both are asserted rather than the empty list.
+  const announced = await expectHealthyListener(running, "a Stack-less database-backed host");
+  const pages = await fetch(`${announced}/api/pages`);
+  expect(pages.status, `GET ${announced}/api/pages must answer; child stderr: ${running.stderr()}`).toBe(200);
+  const body = (await pages.json()) as { counts: { pendingReviews: number; sourceFiles: number } };
+  expect(
+    body.counts.pendingReviews,
+    "a host that resolved no Stack must count NO review queue, not the checkout's files",
+  ).toBe(0);
+  expect(
+    body.counts.sourceFiles,
+    "a host that resolved no Stack must read no source listing from the checkout",
+  ).toBe(0);
+  return announced;
 }
 
 let root: string;
@@ -264,31 +311,30 @@ describe("the container launcher's SIGTERM stop contract", () => {
 });
 
 describe("a deployment whose database holds no Stack yet", () => {
-  it("refuses by name and provisions nothing, instead of creating a default Stack and binding", async () => {
+  it("binds with no Stack resolved, provisioning none and reading nothing from the checkout", async () => {
     const suite = await createSuiteDatabase("boot-precedence");
     const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
     try {
       // Measured, never assumed: a case that started from a populated database would
       // prove nothing about the empty-database boot it exists to arrange.
       expect(await countStacks(dimensions), "the throwaway database must start with ZERO Stacks").toBe(0);
-      const { running, announced } = await launchDatabaseHost(root, suite.url);
-      const settled = await running.exited;
-      // The OUTCOME, all three halves of it: a refusal by name, no row written, and no
-      // listener. This case used to assert the OPPOSITE — that the boot provisioned the
-      // default Stack and bound — and the assertion is REVERSED on purpose (S1 and S12 of
-      // `odd/tasks/stack-authority-per-request.md`): no Stack may be created implicitly.
-      expect(settled.code, `a Stack-less database-backed host must exit 1; stderr: ${settled.stderr}`).toBe(1);
-      expect(
-        settled.stderr,
-        "the refusal must name the configuration that made the run impossible",
-      ).toContain(`${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack`);
-      expect(
-        await countStacks(dimensions),
-        `the boot must provision NO Stack; child stderr: ${settled.stderr}`,
-      ).toBe(0);
-      // ABSENT, not merely unreported: a boot that refused and never pretended to serve.
-      expect(announced, `a Stack-less boot must announce no listener; child stderr: ${settled.stderr}`).toBe("");
-      expect(settled.stdout, "a refused run must never announce a listener").not.toContain("Host ready at");
+      // A candidate file in the checkout is what makes the "no file fallback" half measurable.
+      await plantFileCandidate(root);
+      const { running } = await launchDatabaseHost(root, suite.url);
+      try {
+        // S6 of `odd/tasks/stack-authority-per-request.md`: creating a Stack cannot require being
+        // served BY a Stack, so a host whose database holds no Stack has to listen — `POST /stacks`
+        // is how the first one arrives. This case used to assert the OPPOSITE (exit 1, no listener).
+        await expectStackLessSurfaces(running);
+        // Still ZERO: binding must not have become a new way to provision a Stack (S1).
+        expect(
+          await countStacks(dimensions),
+          `the boot must provision NO Stack; child stderr: ${running.stderr()}`,
+        ).toBe(0);
+      } finally {
+        running.terminate();
+        await running.exited;
+      }
     } finally {
       await dimensions.close();
       await suite.drop();
@@ -401,9 +447,7 @@ describe("a deployment with no database configured", () => {
       NODE_OPTIONS: `--require ${preload}`,
     });
     try {
-      const announced = await announcedOrEmpty(running);
-      expect(announced, `a file-backed host must announce its listener; child stderr: ${running.stderr()}`).toMatch(/^http:\/\//);
-      expect(await healthStatus(announced), `GET ${announced}/health must answer; child stderr: ${running.stderr()}`).toBe(200);
+      await expectHealthyListener(running, "a file-backed host");
       expect(running.stderr(), "a file-mode boot must open NO outbound connection").not.toContain(
         OUTBOUND_SOCKET_MARKER,
       );
@@ -416,27 +460,29 @@ describe("a deployment with no database configured", () => {
 
 describe("the mode the launcher is handed", () => {
   /**
-   * A well-formed but unreachable DSN: this case is about WHICH mode a child was asked for, not
-   * about reaching anything, and the refusal below is raised before a socket is opened.
+   * A well-formed but unreachable DSN: this case is about whether the BOOT needs the database, and
+   * an unreachable one makes any eager query fail. It carries no credentials.
    */
   const UNREACHABLE_DSN = "postgres://unused@127.0.0.1:1/unused";
 
-  it("refuses a database-backed child that names no Stack, instead of starting file-backed", async () => {
-    // The mirror image of this file's file-mode declaration, and the pin that keeps the
-    // declaration a CHOICE: a caller that asks for a database explicitly still gets one, and a
-    // database with no Stack named is then the loud, named refusal rather than a silent
-    // degradation to the file backend (spec S1/S5 of `odd/tasks/single-stack-authority.md`).
-    const settled = await runToExit(["host", "--port", "0"], root, {
+  it("binds a database-backed child that names no Stack, without needing to reach the database", async () => {
+    // The mirror image of this file's file-mode declaration, and a pin that is REVERSED on purpose.
+    // It used to assert exit 1 with the by-name refusal (S1/S5 of the earlier feature), which was
+    // right while boot provisioned a Stack. S6 of `odd/tasks/stack-authority-per-request.md` makes
+    // the bootstrap path the point: the process must listen with zero Stacks and no reachable
+    // database, because nothing it does at boot is a query — the first `POST /stacks` needs a
+    // listener, and the Stack is resolved per request afterwards.
+    const running = launch(["host", "--port", "0"], root, {
       ...process.env,
       [AKS_DATABASE_URL_ENV_VAR]: UNREACHABLE_DSN,
       [AKS_STACK_ID_ENV_VAR]: "",
     });
-    expect(settled.code, `a Stack-less database-backed host must exit 1; stderr: ${settled.stderr}`).toBe(1);
-    expect(
-      settled.stderr,
-      "the failure must name the variable whose configuration made the run impossible",
-    ).toContain(`${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack`);
-    expect(settled.stdout, "a refused run must never announce a listener").not.toContain("Host ready at");
+    try {
+      await expectStackLessSurfaces(running);
+    } finally {
+      running.terminate();
+      await running.exited;
+    }
   });
 });
 

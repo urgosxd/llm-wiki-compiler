@@ -85,7 +85,6 @@ import {
 import {
   StackAuthorityError,
   unnamedJobStackRefusal,
-  type StackAuthority,
 } from "@repo/wiki/dimensions-stack-authority";
 import { resolveTenant, tenantSlugOf, type TenantEntry } from "./tenants.js";
 import { writeJsonError } from "@repo/wiki/viewer-respond";
@@ -181,16 +180,6 @@ export interface HostOptions {
    * read each other's ingest history.
    */
   readonly ingestJobs?: JobRegistry;
-  /**
-   * The Stack this host serves, as the boot resolved it.
-   *
-   * Supplied so the durability pair below -- both synchronous, by decision -- consume the
-   * ONE resolution the boot made with a database handle in hand, instead of asking the
-   * environment a second time.
-   *
-   * Omitted keeps each entry settling what the environment alone can settle.
-   */
-  readonly stackAuthority?: StackAuthority;
 }
 
 /** What the durable reads need a bound Stack for, named in a refusal. */
@@ -620,7 +609,6 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
     ...jobDeps,
     ...durableJobDeps,
     ...(options.viewerDeps ?? {}),
-    ...(options.stackAuthority === undefined ? {} : { stackAuthority: options.stackAuthority }),
   };
   // Mutable holder: the origin policy needs the ACTUALLY bound port, which only
   // exists after `listen`, so this record is filled in below rather than at
