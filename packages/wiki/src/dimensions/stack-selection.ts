@@ -5,8 +5,7 @@
  * ## Why this is a resolved VALUE and not an environment read
  *
  * The Stack used to be read inline from `AKS_STACK_ID` at each seam that needed
- * one, so "which Stack am I on" had as many answers as it had readers, and a
- * checkout with nothing configured was a refusal rather than a default. Selection
+ * one, so "which Stack am I on" had as many answers as it had readers. Selection
  * now resolves ONCE, into a value that says both what was chosen and why, and every
  * consumer downstream formats or defers to that one answer.
  *
@@ -14,43 +13,43 @@
  *
  *   1. `--stack <id>` on the command line.
  *   2. `AKS_STACK_ID`.
- *   3. The deterministic default Stack (see `DEFAULT_STACK_DOMAIN`).
+ *   3. Nothing: the run selected NO Stack.
  *
- * Absence is never an error: the third step always applies. Steps 1 and 2 treat a
- * blank or whitespace-only value as ABSENT, because a shell that expands
- * `--stack "$UNSET"` to the empty string meant nothing by it, and refusing there
- * would reintroduce the requirement this module removes.
+ * ## Why there is no third answer to invent
+ *
+ * Step 3 used to be a deterministic default Stack, materialized on first use. That
+ * is gone by decision (S1 of `odd/tasks/stack-authority-per-request.md`): no Stack
+ * is created implicitly, so a Stack exists because its owner created it over HTTP
+ * or declared it explicitly at boot. Selection therefore has no row to name and
+ * says so — `{ kind: "none" }` — instead of naming a domain nobody created.
+ *
+ * Absence is still not an error HERE: steps 1 and 2 treat a blank or whitespace-only
+ * value as ABSENT, because a shell that expands `--stack "$UNSET"` to the empty
+ * string meant nothing by it. Turning "nothing named" into a refusal by name is the
+ * resolver's job, and it happens once, in `services/stacks/resolve-stack.ts`.
  *
  * ## What this module deliberately does NOT do
  *
- * It resolves nothing against the database and provisions nothing. Turning the
- * default selection into a real Stack row is `ensureDefaultStack`, and turning an
- * explicit id into a verified one is the caller's fail-closed check. Keeping
- * selection pure is what lets it be tested without a connection.
+ * It resolves nothing against the database and provisions nothing. Keeping selection
+ * pure is what lets it be tested without a connection.
  */
 
 import { AKS_STACK_ID_ENV_VAR } from "./activation.js";
 
-/** Domain of the Stack a workspace falls back to when it configured none. */
-export const DEFAULT_STACK_DOMAIN = "default";
-
-/** Name given to that Stack the one time it is created. */
-export const DEFAULT_STACK_NAME = "Default";
-
 /** Where a resolved Stack came from. */
-export type StackSelectionSource = "flag" | "env" | "default";
+export type StackSelectionSource = "flag" | "env";
 
 /**
  * A Stack a command will use.
  *
  * The two shapes are kept apart rather than collapsed into a nullable id because
- * they mean different things downstream: an `explicit` id names a Stack that must
- * already exist (a caller that cannot honour it must fail), while `default` names a
- * domain that must be provisioned first.
+ * they mean different things downstream: an `explicit` id names a Stack the caller
+ * asked for out loud, while `none` says the caller asked for no Stack at all and
+ * this build will not invent one.
  */
 export type StackSelection =
-  | { readonly kind: "explicit"; readonly source: "flag" | "env"; readonly stackId: string }
-  | { readonly kind: "default"; readonly source: "default"; readonly domain: string };
+  | { readonly kind: "explicit"; readonly source: StackSelectionSource; readonly stackId: string }
+  | { readonly kind: "none" };
 
 /** Trim a possibly-absent value, so blank and missing are the same answer. */
 function trimmedOrEmpty(value: string | undefined): string {
@@ -62,7 +61,7 @@ function trimmedOrEmpty(value: string | undefined): string {
  *
  * @param options - The command-line flag, when one was given, and the environment
  *   to read; `env` defaults to `process.env`.
- * @returns The explicit Stack the caller named, or the default domain.
+ * @returns The Stack the caller named, or `{ kind: "none" }` when it named none.
  * @throws Never: an unconfigured workspace is a supported state, not an error.
  */
 export function selectStack(
@@ -75,23 +74,23 @@ export function selectStack(
   const configured = trimmedOrEmpty(environment[AKS_STACK_ID_ENV_VAR]);
   if (configured !== "") return { kind: "explicit", source: "env", stackId: configured };
 
-  return { kind: "default", source: "default", domain: DEFAULT_STACK_DOMAIN };
+  return { kind: "none" };
 }
 
 /**
  * State which Stack a command used, and where that choice came from.
  *
- * The three wordings live in ONE place because several surfaces report them (the
- * CLI's active-Stack line, its diagnostics) and two copies of a sentence that must
- * agree eventually disagree.
+ * The wordings live in ONE place because several surfaces report them (the CLI's
+ * active-Stack line, its diagnostics) and two copies of a sentence that must agree
+ * eventually disagree.
  *
  * @param selection - A resolved selection.
- * @returns A single line naming the Stack and its origin.
+ * @returns A single line naming the Stack and its origin, or saying none was named.
  */
 export function describeStackSelection(selection: StackSelection): string {
   if (selection.kind === "explicit") {
     const origin = selection.source === "flag" ? "--stack" : AKS_STACK_ID_ENV_VAR;
     return `Stack ${selection.stackId} (from ${origin})`;
   }
-  return `Stack ${selection.domain} (from the default Stack)`;
+  return `No Stack named (no --stack and no ${AKS_STACK_ID_ENV_VAR})`;
 }

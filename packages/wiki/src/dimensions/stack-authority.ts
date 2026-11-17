@@ -22,31 +22,36 @@
  * ## The precedence, and what it reuses
  *
  *   1. A caller-supplied Stack id (non-blank) wins outright. Nothing is looked up.
- *   2. Otherwise, with a database configured, the database-backed resolver supplies
- *      it: `resolveStackForCommand`, which honours an explicitly selected Stack and
- *      otherwise provisions the Stack at {@link DEFAULT_STACK_DOMAIN} through
- *      `ensureDefaultStack`. Both are CALLED, never re-implemented — a second copy
- *      of either would be a second answer to "which Stack am I on".
+ *   2. Otherwise, with a database configured, the caller MUST have named one: nothing
+ *      is provisioned and nothing is read from the filesystem, so the run refuses by
+ *      name — see {@link unnamedStackRefusal}.
  *   3. Otherwise — no database configured at all — the explicit file-backed mode.
  *
+ * Step 2 used to resolve a Stack through the database-backed resolver, which
+ * provisioned a default one. That is deleted, not bypassed (S1 of the feature spec):
+ * a Stack exists because its owner created it, and a run that names none is refused
+ * in the resolver's words instead of being handed a row nobody asked for.
+ *
  * And the case this module exists for: a database IS configured and no Stack can be
- * resolved. That throws {@link StackAuthorityError} naming the Stack that is missing
- * and what would fix it. It never returns a file authority and never returns
- * `undefined`.
+ * resolved. That throws {@link StackAuthorityError} naming what is missing and what
+ * would fix it. It never returns a file authority and never returns `undefined`.
  *
  * ## The one question it does not answer
  *
- * Whether a Stack has to be provisioned AT ALL — the pre-check `resolve-stack` makes
- * from the dimension switch before spending a connection. That question is answered
- * there, and a caller that must skip provisioning asks it there first; the two kinds
+ * Whether a Stack is needed AT ALL — the pre-check `resolve-stack` makes from the
+ * dimension switch before spending any resolution. That question is answered there,
+ * and a caller that may skip asking for a Stack asks it there first; the two kinds
  * here cannot express "no Stack needed", and inventing a third one would let a
  * caller skip the decision this module was built to make.
  */
 
 import type { DatabaseHandle } from "@repo/foundation";
 import { AKS_DATABASE_URL_ENV_VAR, AKS_STACK_ID_ENV_VAR, isDatabaseConfigured } from "./activation.js";
-import { DEFAULT_STACK_DOMAIN } from "./stack-selection.js";
-import { resolveStackForCommand } from "../services/stacks/resolve-stack.js";
+import {
+  missingStackRefusal,
+  resolveStackForCommand,
+  unnamedStackRefusal,
+} from "../services/stacks/resolve-stack.js";
 
 /** Why a run is file-backed, as a value rather than an absent id. */
 export type FileBackedReason = "no-database-configured";
@@ -82,17 +87,14 @@ export interface StackAuthorityRequest {
   /**
    * The database handle this run already opened.
    *
-   * Required only when a database is configured: resolving via
-   * `resolveStackForCommand` provisions the default Stack, which needs a connection.
-   * The handle is supplied by the caller instead of opened here so that resolving an
-   * authority never owns the lifetime of a pool it did not create.
+   * Accepted for the caller's convenience and never read: resolution now provisions
+   * nothing, so which Stack a run works on is never a database question at this
+   * layer. The field stays because callers that open a handle for their own reasons
+   * should not have to branch before calling, and the handle is supplied by the
+   * caller instead of opened here so that resolving an authority never owns the
+   * lifetime of a pool it did not create.
    */
   readonly db?: DatabaseHandle | undefined;
-}
-
-/** A message from an unknown thrown value. */
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** What a caller that cannot wait for a database already knows. */
@@ -134,32 +136,15 @@ function settledAuthority(
 }
 
 /**
- * THE refusal for "a database is configured, so this run must have a Stack".
- *
- * One sentence stem, one error type, for every caller that reaches it; what THAT caller
- * must do next is the only part that genuinely differs, so it is supplied here instead
- * of being reworded at each site.
- *
- * @param whatHappened - Why this caller reached the refusal, as a clause.
- * @param remedy - What would end it, as a sentence.
- * @returns The refusal to throw.
- */
-function missingStackRefusal(whatHappened: string, remedy: string): StackAuthorityError {
-  return new StackAuthorityError(
-    `${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack, but ${whatHappened} ${remedy}`,
-  );
-}
-
-/**
  * Resolve which Stack this run works on.
  *
- * @param request - The caller's Stack id, the environment, and the handle to use when
- *   a database is configured; all optional, with the environment defaulting to
- *   `process.env` and an empty request meaning "nothing configured".
+ * @param request - The caller's Stack id, the environment, and the handle it already
+ *   opened; all optional, with the environment defaulting to `process.env` and an
+ *   empty request meaning "nothing configured".
  * @returns A `stack` authority, or the named `file` authority when no database is
  *   configured at all.
- * @throws {StackAuthorityError} when a database is configured and no Stack can be
- *   resolved, or when one is configured and no handle was supplied.
+ * @throws {StackAuthorityError} when a database is configured and the caller named no
+ *   Stack — the resolver's own refusal, in this module's error type.
  */
 export async function resolveStackAuthority(
   request: StackAuthorityRequest = {},
@@ -167,22 +152,16 @@ export async function resolveStackAuthority(
   const env = request.env ?? process.env;
   const settled = settledAuthority(request.stackId, env);
   if (settled !== undefined) return settled;
-  if (request.db === undefined) {
-    throw missingStackRefusal(
-      "no database handle was supplied to resolve it.",
-      "Pass the handle the run already opened, or pass the Stack id explicitly.",
-    );
-  }
-  return { kind: "stack", stackId: await defaultStackOrRefuse(request.db, env) };
+  if (request.db === undefined) throw new StackAuthorityError(unnamedStackRefusal());
+  return { kind: "stack", stackId: await namedStackOrRefuse(request.db, env) };
 }
 
 /**
  * Resolve the authority a synchronous caller can settle WITHOUT asking the database.
  *
  * Deliberately NOT `resolveStackAuthority` under a second name, and named for the narrower
- * thing it does: precedence 2 — the database-backed resolver — needs an `await`, so it is
- * out of this entry's reach, and the entry says so instead of guessing. Its whole contract
- * is three answers:
+ * thing it does: the async resolver needs an `await`, so it is out of this entry's reach,
+ * and the entry says so instead of guessing. Its whole contract is three answers:
  *
  *   1. an authority the caller already resolved is returned as-is, untouched;
  *   2. otherwise a non-blank caller-supplied id yields the `stack` authority;
@@ -190,8 +169,12 @@ export async function resolveStackAuthority(
  *      and REFUSES when one is: a caller that could not wait must never let a configured
  *      database turn into a file-backed result.
  *
- * A caller that can await, or holds the database handle, uses {@link resolveStackAuthority}
- * and gets the third precedence step this entry lacks.
+ * The refusal is worded for THIS caller, because only the caller can say how it would
+ * otherwise have obtained a Stack; the situation is the resolver's, so the sentence stem
+ * is the resolver's too.
+ *
+ * A caller that can await uses {@link resolveStackAuthority} and gets the resolution step
+ * this entry lacks.
  *
  * @param request - The authority already resolved, the id the caller named, and the
  *   environment; all optional, with the environment defaulting to `process.env`.
@@ -208,38 +191,35 @@ export function resolveStackAuthorityWithoutLookup(
   const env = request.env ?? process.env;
   const settled = settledAuthority(request.stackId, env);
   if (settled !== undefined) return settled;
-  throw missingStackRefusal(
-    `${context} was given no resolved authority and cannot ask the database resolver itself.`,
-    `Pass the authority the run resolved, or name the Stack in ${AKS_STACK_ID_ENV_VAR}.`,
+  throw new StackAuthorityError(
+    missingStackRefusal(
+      `${context} was given no resolved authority and cannot ask the database resolver itself.`,
+      `Pass the authority the run resolved, or name the Stack in ${AKS_STACK_ID_ENV_VAR}.`,
+    ),
   );
 }
 
 /**
- * The Stack the database-backed resolver answers, refusing to answer nothing.
+ * The Stack the database-backed resolver names, refusing to answer nothing.
  *
- * `resolveStackForCommand` throws for its own reasons and can only answer an empty
- * id on a defect; both are the same outcome here — a configured database that
- * produced no Stack — so both are reported with THIS module's wording, naming the
- * Stack that is missing and the two ways to fix it.
+ * `resolveStackForCommand` answers the id the caller named or refuses, and can only
+ * answer a blank id on a defect; both are the same outcome here — a configured
+ * database that produced no Stack — so both are reported in THIS module's error type,
+ * carrying the resolver's own sentence rather than a second wording of it.
  *
- * @param db - Handle to resolve through.
+ * @param db - Handle accepted for the caller's convenience; the resolver reads nothing
+ *   from it, because nothing is provisioned any more.
  * @param env - The one environment the run reads.
  * @returns The resolved, non-blank Stack id.
  * @throws {StackAuthorityError} when nothing was resolvable.
  */
-async function defaultStackOrRefuse(db: DatabaseHandle, env: NodeJS.ProcessEnv): Promise<string> {
+async function namedStackOrRefuse(db: DatabaseHandle, env: NodeJS.ProcessEnv): Promise<string> {
   try {
     const stackId = await resolveStackForCommand(db, env);
     if (stackId.trim() === "") throw new Error("the resolver answered with a blank Stack id");
     return stackId;
   } catch (error) {
-    throw new StackAuthorityError(
-      `${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack, but no Stack was ` +
-        `resolvable at domain "${DEFAULT_STACK_DOMAIN}": ${messageOf(error)}. ` +
-        `Either pass the Stack id explicitly, or make the configured database reachable with the ` +
-        `stacks table so the default Stack can be created.`,
-      { cause: error },
-    );
+    throw new StackAuthorityError(unnamedStackRefusal(), { cause: error });
   }
 }
 

@@ -70,8 +70,6 @@ export type { DimensionsDatabase, ResolveDimensionsOptions } from "./activation.
  * costs none of the query-builder weight the comment above is about.
  */
 export {
-  DEFAULT_STACK_DOMAIN,
-  DEFAULT_STACK_NAME,
   describeStackSelection,
   selectStack,
 } from "./stack-selection.js";
