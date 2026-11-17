@@ -11,6 +11,16 @@
  * The last case is the PRESERVE half of the ruling: candidate records written BEFORE
  * the retirement are data that stops being produced, never data that is destroyed, so
  * the store must still list and read a record planted on disk.
+ *
+ * ## Why the refusal case declares FILE MODE by name
+ *
+ * It plants the retired policy in `.llmwiki/config.json` and expects the refusal, so it
+ * asserts the file backend. The file is authoritative only for a project with no Stack —
+ * once one resolves, `wiki.project_config` is the config and the checkout's file is not
+ * read — so the case has to say which mode it means instead of inheriting the runner's
+ * database, or it would hold only while a database-resolved compile kept reading the
+ * checkout's config. Declared per case, not per file: the sibling cases below do not
+ * depend on the backend and keep the environment they had.
  */
 import { existsSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
@@ -21,6 +31,11 @@ import { listCandidates, readCandidate } from "../packages/wiki/src/compiler/can
 import { AnthropicProvider } from "../packages/wiki/src/providers/anthropic.js";
 import { CANDIDATES_DIR, CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
+import { usePerCaseFileMode, withFileMode } from "./fixtures/file-mode.js";
+
+// This file has BOTH modes, so the mode is declared per case. Without this the file-wide
+// hook would strip the database from the cases that do not ask about a backend.
+usePerCaseFileMode();
 
 const project = useCompileProject({ dirSuffix: "hold-retired" });
 
@@ -58,16 +73,18 @@ async function stagedRecordNames(): Promise<string[]> {
 
 describe("a review.hold policy refuses the compile at config load", () => {
   it("refuses with the exact message and writes neither a page nor a record", async () => {
-    stubOneLowConfidencePage();
-    await holdEveryPage();
+    await withFileMode(async () => {
+      stubOneLowConfidencePage();
+      await holdEveryPage();
 
-    // The old contract was "compiles and writes the page live". Ignoring the key is the
-    // defect, so the run must now refuse BEFORE it writes anything at all.
-    await expect(compileAndReport(project.dir)).rejects.toThrow(REFUSAL);
+      // The old contract was "compiles and writes the page live". Ignoring the key is the
+      // defect, so the run must now refuse BEFORE it writes anything at all.
+      await expect(compileAndReport(project.dir)).rejects.toThrow(REFUSAL);
 
-    expect(await readdir(path.join(project.dir, CONCEPTS_DIR))).toEqual([]);
-    expect(await stagedRecordNames()).toEqual([]);
-    expect(await listCandidates(project.dir)).toEqual([]);
+      expect(await readdir(path.join(project.dir, CONCEPTS_DIR))).toEqual([]);
+      expect(await stagedRecordNames()).toEqual([]);
+      expect(await listCandidates(project.dir)).toEqual([]);
+    });
   });
 
   it("promises no review split and no candidate ids on the compile result", async () => {

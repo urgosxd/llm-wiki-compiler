@@ -22,6 +22,16 @@
  * That `review.hold` is gone, and that pages which would previously have been held are
  * now written live. The first fact alone would let a user delete the key and never
  * learn their corpus changed.
+ *
+ * ## Why the two `.llmwiki/config.json` cases declare FILE MODE by name
+ *
+ * The file stays authoritative only for a project with no Stack: once a Stack resolves,
+ * `wiki.project_config` IS the config and the checkout's file is not read. These two
+ * cases plant a retired key in that file and expect the refusal, so they assert the
+ * file backend and must say so — otherwise they would inherit the runner's database and
+ * hold only for as long as a database-resolved compile kept reading the checkout, which
+ * is the degradation the compile boundary stopped doing. Declared per case, not per
+ * file: the Stack-row case below needs no database of its own but must not be moved.
  */
 import { existsSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
@@ -32,6 +42,11 @@ import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
 import { loadSourceSelection } from "../packages/wiki/src/sources/selection.js";
 import { CANDIDATES_DIR, CONCEPTS_DIR } from "../packages/wiki/src/utils/constants.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
+import { usePerCaseFileMode, withFileMode } from "./fixtures/file-mode.js";
+
+// This file has BOTH modes, so the mode is declared per case: the file-config cases
+// below enter file mode themselves, and the Stack-row case keeps the environment it had.
+usePerCaseFileMode();
 
 /** The exact refusal, asserted verbatim: a user reads this instead of a silent write. */
 const REFUSAL =
@@ -56,24 +71,28 @@ async function configWithRetiredPolicy(): Promise<void> {
 
 describe("a `review` key in .llmwiki/config.json", () => {
   it("refuses the compile with the exact message and writes nothing", async () => {
-    await configWithRetiredPolicy();
+    await withFileMode(async () => {
+      await configWithRetiredPolicy();
 
-    await expect(compileAndReport(project.dir)).rejects.toThrow(REFUSAL);
+      await expect(compileAndReport(project.dir)).rejects.toThrow(REFUSAL);
 
-    expect(await writtenPageNames()).toEqual([]);
-    expect(existsSync(path.join(project.dir, CANDIDATES_DIR))).toBe(false);
-    expect(existsSync(path.join(project.dir, ".llmwiki", "state.json"))).toBe(false);
+      expect(await writtenPageNames()).toEqual([]);
+      expect(existsSync(path.join(project.dir, CANDIDATES_DIR))).toBe(false);
+      expect(existsSync(path.join(project.dir, ".llmwiki", "state.json"))).toBe(false);
+    });
   });
 
   it("refuses even when the policy would have held no page", async () => {
-    await writeFile(
-      path.join(project.dir, ".llmwiki", "config.json"),
-      JSON.stringify({ version: 1, review: { hold: [] } }),
-      "utf-8",
-    );
+    await withFileMode(async () => {
+      await writeFile(
+        path.join(project.dir, ".llmwiki", "config.json"),
+        JSON.stringify({ version: 1, review: { hold: [] } }),
+        "utf-8",
+      );
 
-    await expect(compileAndReport(project.dir)).rejects.toThrow(REFUSAL);
-    expect(await writtenPageNames()).toEqual([]);
+      await expect(compileAndReport(project.dir)).rejects.toThrow(REFUSAL);
+      expect(await writtenPageNames()).toEqual([]);
+    });
   });
 });
 
