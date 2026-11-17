@@ -14,6 +14,11 @@
     "./stack-id": "./src/stack-id.ts",
     "./stack-migration": "./src/stack-migration.ts"
   },
+  "imports": {
+    "#stack-id": "./src/stack-id.ts",
+    "#stack-migration": "./src/stack-migration.ts",
+    "#dimensions-port": "./src/dimensions-port.ts"
+  },
   "engines": {
     "node": ">=24"
   },

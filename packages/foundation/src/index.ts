@@ -39,6 +39,36 @@
  * depend on this package, it depends on none of the three, so it can never become
  * the edge it exists to remove and no cycle can route through it.
  *
+ * ## Why the value re-exports below name a `#` specifier, and not `./stack-id.js`
+ *
+ * The manifest publishes this file as raw TypeScript — `"exports"."."` is
+ * `"./src/index.ts"`, and no `dist/` is built for this package — so the specifiers in
+ * this file are resolved by NODE, at runtime, not by tsup. A relative `./stack-id.js`
+ * asks for a file that does not exist: the `.js`→`.ts` remap that makes that legal is a
+ * TypeScript and esbuild rule, and Node's ESM resolver does not apply it. Measured on
+ * the root entry alone: `ERR_MODULE_NOT_FOUND: Cannot find module
+ * '.../foundation/src/stack-id.js'`, while `@repo/foundation/stack-id` and
+ * `@repo/foundation/stack-migration` loaded fine.
+ *
+ * So every LOAD-BEARING (value) re-export resolves through this manifest's `imports`
+ * map — `#stack-id`, `#stack-migration`, `#dimensions-port` — whose targets name the
+ * real `./src/*.ts` files. Node resolves that map natively and strips the types on the
+ * way in, so no remap is ever needed; TypeScript resolves it under
+ * `moduleResolution: "bundler"`. A `#` specifier is internal by construction: Node and
+ * TypeScript apply `imports` only to files inside this package's own directory scope, so
+ * the public `exports` map is untouched and no consumer can reach these names.
+ *
+ * The two forms therefore coexist for different reasons. A type-only re-export is ERASED
+ * by Node's type stripping, so no resolution ever happens and either form works;
+ * `DimensionsPort` and `DimensionsRequest` follow `#dimensions-port` because that is the
+ * specifier the value bindings taken from that same module — `MissingDimensionsPortError`,
+ * `requireDimensionsPort` — already use below, while `AdvisoryLock`, `AdvisoryLockProvider`
+ * and `ProjectConfigProvider` keep `./providers.js` because `providers.ts` publishes no
+ * subpath and holds nothing value-bearing, so there is no reason to mint an interior name
+ * for it. `test/artifact/foundation-root-entry.test.ts` loads this entry in a plain Node
+ * child process, so the day one of those type-only re-exports stops being type-only and
+ * starts being load-bearing, that test fails instead of a consumer's process.
+ *
  * ## What the seam is, and what it is not
  *
  * {@link DatabaseHandle} is a structural description of the handle the wiki side
@@ -152,7 +182,7 @@ export interface DatabaseHandle {
  * the documentation that says why the canonical 8-4-4-4-12 form is the contract and
  * why the three permissive UUID shapes are refused.
  */
-export { STACK_ID_PATTERN, isStackId, stackIdProblem } from "./stack-id.js";
+export { STACK_ID_PATTERN, isStackId, stackIdProblem } from "#stack-id";
 
 /**
  * The one refusal for a database that predates the `stacks.active` migration, and the
@@ -165,11 +195,14 @@ export {
   MissingStackColumnError,
   missingActiveColumnCause,
   missingActiveColumnRefusal,
-} from "./stack-migration.js";
+} from "#stack-migration";
 
 /**
  * The two provider seams. Interfaces only — the implementation is `@repo/api`'s, and
  * the receiving dimension takes it by injection; see `providers.ts`.
+ *
+ * Type-only, so the relative specifier is never resolved at runtime — see the header
+ * section on specifier shape, which is also why no `#providers` interior name exists.
  */
 export type { AdvisoryLock, AdvisoryLockProvider, ProjectConfigProvider } from "./providers.js";
 
@@ -178,5 +211,5 @@ export type { AdvisoryLock, AdvisoryLockProvider, ProjectConfigProvider } from "
  * why the join is injected rather than imported, and why its absence is an error
  * instead of an empty dimension set.
  */
-export type { DimensionsPort, DimensionsRequest } from "./dimensions-port.js";
-export { MissingDimensionsPortError, requireDimensionsPort } from "./dimensions-port.js";
+export type { DimensionsPort, DimensionsRequest } from "#dimensions-port";
+export { MissingDimensionsPortError, requireDimensionsPort } from "#dimensions-port";

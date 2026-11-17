@@ -70,6 +70,12 @@
  * the port asks for it, and an unused field on a seam is the same dead configuration
  * as an unused setting.
  */
+/**
+ * Type-only, so Node erases it and never resolves the specifier: the relative `.js` form
+ * stays here for that reason. See `index.ts`'s header on specifier shape — the value
+ * re-exports there resolve through the manifest's internal `imports` map because Node
+ * does resolve those.
+ */
 import type { DatabaseHandle } from "./index.js";
 
 /**
