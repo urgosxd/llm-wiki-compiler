@@ -52,13 +52,34 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      # The suites read the two `*_DATABASE_URL` variables below. The schema steps further down do
-      # not: `scripts/apply-schemas.sh` takes its target from the first non-flag argument or from
+      # The schema steps further down do not read the variables below except `DATABASE_URL`:
+      # `scripts/apply-schemas.sh` takes its target from the first non-flag argument or from
       # `DATABASE_URL` and exits 2 when both are empty, so `DATABASE_URL` is the one definition
       # only the schema runner reads.
       DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
-      LLMWIKI_TEST_DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
+      # `AKS_DATABASE_URL` stays, and it is harmless because it does not survive: the setup file
+      # below overwrites it in every worker with the URL this run resolved.
       AKS_DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
+      # `LLMWIKI_TEST_DATABASE_URL` is deliberately ABSENT here, and re-adding it is a regression.
+      # With it set, `test/fixtures/testcontainers-postgres.ts` takes its override branch and logs
+      # `[test-database] LLMWIKI_TEST_DATABASE_URL is set; no container started`, so CI creates no
+      # container and every worker's per-run database lands on the one `localhost:5432/aks` server
+      # this job's `services:` block owns for the whole run. Unset, `test/global-setup.ts` owns a
+      # container for this run and publishes it, and `test/setup/test-database-url.ts` puts that
+      # URL into both `*_DATABASE_URL` variables of every worker.
+      #
+      # Measured both ways at `0507318eb237b97fa92f84cfbebac9881ddc1d54`, from cold, empty
+      # residual both arms: 6498 tests / 6486 passed / 12 skipped / 0 failed, exit 0, in
+      # 6:28.95-7:02.83 with the variable set and 6:40.25 without it against a container this run
+      # started. Honesty here costs no multi-fold slowdown, which is the only reason this line is
+      # allowed to go.
+      #
+      # It is NOT sufficient on its own: removing it changes which SERVER the per-run databases
+      # live on, not whether a suite owns one. A run with the variable unset still let one file's
+      # row satisfy another file's assertion, which is what S2, S4 and S5 in
+      # `odd/tasks/test-database-isolation.md` fix, and why this line lands with them.
+      # `LLMWIKI_TEST_ALLOW_NO_DATABASE` must never appear in a workflow (`AGENTS.md`), and
+      # `TESTCONTAINERS_REUSE_ENABLE` is inert on an ephemeral runner: neither substitutes for it.
     steps:
       - uses: actions/checkout@v4
         with:
