@@ -37,6 +37,11 @@
  */
 
 import { sql } from "drizzle-orm";
+import {
+  MissingStackColumnError,
+  missingActiveColumnCause,
+  missingActiveColumnRefusal,
+} from "@repo/foundation/stack-migration";
 import { withTenant } from "../../dimensions/wiki/page-store.js";
 
 /** The database handle shape, taken from `withTenant` for the reason in `job-store.ts`. */
@@ -117,88 +122,18 @@ function toStackSummary(row: StackRow, currentStackId: string): StackSummary {
 export type StackResolution = "active" | "inactive" | "absent";
 
 /**
- * The migration that adds the one column every lookup here selects.
- *
- * Named as an operator meets it — the file inside the repository's `db/` directory —
- * because a refusal that does not say which file to apply cannot be acted on.
- */
-export const STACKS_ACTIVE_MIGRATION = "db/migration_stack_active.sql";
-
-/**
- * THE refusal for a database that never ran {@link STACKS_ACTIVE_MIGRATION}.
- *
- * The column is not optional and no code path reads around it, so the only useful thing
- * to say is which file is missing and that serving traffic cannot continue without it.
- * Exported, like `missingStackRefusal` in `resolve-stack.ts`, so a surface that wants to
- * recognise this gap reads one copy of the sentence instead of rewording it.
- *
- * @returns The refusal text, without a trailing newline.
- */
-export function missingActiveColumnRefusal(): string {
-  return (
-    `This database is missing the column stacks.active: it has not run ${STACKS_ACTIVE_MIGRATION}. ` +
-    "Apply it before serving traffic."
-  );
-}
-
-/**
- * A database whose `stacks` table predates the migration this build requires.
- *
- * Deliberately NOT `StackAuthorityError`: that family is about which Stack a request may
- * act on, and this is about the schema being too old to ask the question at all. Folding
- * the two would make "the database was never migrated" indistinguishable from "this
- * request named no Stack", which are refusals an operator fixes in completely different
- * places.
- */
-export class MissingStackColumnError extends Error {
-  constructor(message: string, options?: { readonly cause?: unknown }) {
-    super(message, options);
-    this.name = "MissingStackColumnError";
-  }
-}
-
-/** Postgres `undefined_column`, the code an unmigrated database answers with. */
-const UNDEFINED_COLUMN = "42703";
-
-/** How deep a driver error chain is searched for {@link UNDEFINED_COLUMN}. */
-const MAX_CAUSE_DEPTH = 4;
-
-/**
- * The innermost error in this chain that says Postgres could not read `stacks.active`.
- *
- * The chain is walked because the driver error does not arrive unwrapped: drizzle throws
- * its own `Failed query: select active from stacks …`, which carries the `PostgresError`
- * as `cause`. Both signals are accepted — the SQLSTATE, and the message — so a driver
- * that sets only one of them is still recognised; the innermost match is returned so the
- * `cause` a reader inspects is Postgres's own error rather than drizzle's wrap of it.
- *
- * @param error - Whatever the query threw.
- * @param depth - How many `cause` hops were already followed.
- * @returns That error, or `undefined` when the gap is something else entirely.
- */
-function missingActiveColumnCause(error: unknown, depth = 0): unknown {
-  if (typeof error !== "object" || error === null) return undefined;
-  const { code, message, cause } = error as {
-    code?: unknown;
-    message?: unknown;
-    cause?: unknown;
-  };
-  const inner = depth < MAX_CAUSE_DEPTH ? missingActiveColumnCause(cause, depth + 1) : undefined;
-  if (inner !== undefined) return inner;
-  if (code === UNDEFINED_COLUMN) return error;
-  if (typeof message === "string" && message.includes('column "active" does not exist')) {
-    return error;
-  }
-  return undefined;
-}
-
-/**
  * The `active` flag of one `stacks` row, or `undefined` when no row carries the id.
  *
  * The whole of this module's dependence on the migration, in one place: the query is the
  * ONE read of `stacks.active` here, so the check that the column exists costs no extra
  * round trip and cannot be missed by a new caller. Anything that reads the column gains
  * the named refusal by going through this function.
+ *
+ * The sentence, the error type and the `42703` recognition are `@repo/foundation`'s, not
+ * this module's: the `/stacks` routes select the same column from a package that may not
+ * import this one, and two copies of the instruction an operator reads is exactly the
+ * drift the bottom layer exists to prevent. What is local here is only WHERE the guard
+ * sits — at this single read, so it costs no extra round trip.
  *
  * @param db - Handle from `createDimensionsDatabase`.
  * @param stackId - A validated Stack id.

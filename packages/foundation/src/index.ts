@@ -12,6 +12,8 @@
  * - {@link DatabaseHandle}, the seam below, declared in this file because it is the
  *   one the wiki side holds everywhere;
  * - the Stack-id rule in `stack-id.ts`, which is pure and imports nothing at all;
+ * - the missing-`stacks.active` refusal in `stack-migration.ts`, for the same reason and
+ *   in the same shape: two dimensions answer that gap and both must name one file;
  * - the two injection seams in `providers.ts` — an advisory lock and one Stack's
  *   config — implemented by `@repo/api` and received by the owning dimension;
  * - the third injection seam in `dimensions-port.ts` — the configured dimensions
@@ -151,6 +153,19 @@ export interface DatabaseHandle {
  * why the three permissive UUID shapes are refused.
  */
 export { STACK_ID_PATTERN, isStackId, stackIdProblem } from "./stack-id.js";
+
+/**
+ * The one refusal for a database that predates the `stacks.active` migration, and the
+ * matcher that recognises the driver error it replaces. Re-exported rather than restated,
+ * for the reason in `stack-migration.ts`: `@repo/wiki` and `@repo/kg` both answer this
+ * gap, may not import each other, and must not word it twice.
+ */
+export {
+  STACKS_ACTIVE_MIGRATION,
+  MissingStackColumnError,
+  missingActiveColumnCause,
+  missingActiveColumnRefusal,
+} from "./stack-migration.js";
 
 /**
  * The two provider seams. Interfaces only — the implementation is `@repo/api`'s, and

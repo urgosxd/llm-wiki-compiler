@@ -1,7 +1,13 @@
 import { sql, type SQL } from "drizzle-orm";
 import { Router } from "express";
-import type { Request, RequestHandler, Response } from "express";
+import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { z } from "zod";
+
+import {
+  MissingStackColumnError,
+  missingActiveColumnCause,
+  missingActiveColumnRefusal,
+} from "@repo/foundation/stack-migration";
 
 import { requireApiKey, type ApiKeyMiddleware } from "../auth.js";
 import {
@@ -218,6 +224,90 @@ function toStackResponse(row: StackRow): StackResponseDto {
 }
 
 /**
+ * Runs one `stacks` statement, naming the missing migration instead of letting Postgres's
+ * `42703` reach the caller as a driver error.
+ *
+ * ## Why every statement here goes through it
+ *
+ * {@link STACK_COLUMNS} selects `active`, so a database that never ran
+ * `db/migration_stack_active.sql` cannot answer ANY route in this module — and the two
+ * bootstrap routes are the ones an operator meets during a failed upgrade: `GET /stacks`
+ * is where they go to find out what the deployment thinks it has, and `POST /stacks` is
+ * where they declare the Stack they meant to exist. Both used to answer drizzle's
+ * `Failed query: select id, name, … active from stacks …`, which reads as a broken SELECT
+ * and names neither the file nor the step that is missing.
+ *
+ * ## Why it is not a `catch`-all
+ *
+ * {@link missingActiveColumnCause} recognises only Postgres refusing `stacks.active`. A
+ * `42703` on any other column still propagates untouched, because a guard that reported
+ * this migration for every schema gap would send an operator to apply a file that is
+ * already applied and leave the real problem unnamed.
+ *
+ * The sentence, the error type and the recognition are `@repo/foundation`'s, shared with
+ * the wiki side's Stack store: this package may not import that one, and two copies of the
+ * instruction an operator reads is the drift the bottom layer exists to prevent. What is
+ * local here is only the mapping from that error to THIS surface's envelope.
+ *
+ * @param run - The statement to execute.
+ * @returns Whatever the statement returned.
+ * @throws {MissingStackColumnError} when the database never ran the migration.
+ */
+async function stacksStatement<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    const cause = missingActiveColumnCause(error);
+    if (cause === undefined) throw error;
+    // Named, and never swallowed: Postgres's own error stays reachable as `cause`, so a
+    // reader can still see its words and its SQLSTATE.
+    throw new MissingStackColumnError(missingActiveColumnRefusal(), { cause });
+  }
+}
+
+/**
+ * Answers the missing-migration gap in the graph surface's own envelope.
+ *
+ * ## Why the envelope is `{"detail": "<string>"}` and nothing else
+ *
+ * This router is the byte-faithful port of `app/routers/stacks.py`, whose error bodies are
+ * measured. Adding a `code` or a `migration` field here to carry the same sentence again
+ * would be a contract change to a surface no client expected to grow — so the named
+ * sentence, and only it, goes in `detail`.
+ *
+ * ## Why 503
+ *
+ * Deliberately not a new status and deliberately not a 4xx. This surface already answers
+ * 503 for a failure that PREVENTED an answer rather than one the caller caused (the
+ * reclassifier with no classifier configured), and that is exactly this: the service
+ * cannot answer until an operator applies the file, and the same request succeeds
+ * afterwards. A 4xx would blame the caller, and a 404 in particular would send a client
+ * looking for a Stack that does exist.
+ *
+ * ## Why it is mounted on the router rather than in each handler
+ *
+ * Every route in this module selects `active`, and a route added later will too. One
+ * boundary handler cannot be forgotten by one of them.
+ *
+ * @param err - Whatever a handler threw.
+ * @param _req - Unused; the refusal is the same for every route here.
+ * @param res - The response to write the refusal to.
+ * @param next - Continues express's own chain for every other error, untouched.
+ */
+function handleMissingMigration(
+  err: unknown,
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (!(err instanceof MissingStackColumnError)) {
+    next(err);
+    return;
+  }
+  sendApiError(res, apiError(503, err.message));
+}
+
+/**
  * `POST /stacks` — create a Stack, 201 with `StackResponse`.
  *
  * The uniqueness check is the app-level `select id from stacks where domain = %s`
@@ -269,14 +359,16 @@ async function createStack(
     return;
   }
 
-  const rows = await tx.execute<StackRow>(sql`
-    insert into stacks (name, domain, description, scope,
-                        compilation_strategy, synthesize_descriptions, ontology)
-    values (${payload.name}, ${payload.domain}, ${payload.description},
-            ${payload.scope}, ${payload.compilation_strategy},
-            ${payload.synthesize_descriptions}, ${ontologyLiteral(payload.ontology)})
-    returning ${sql.raw(STACK_COLUMNS)}
-  `);
+  const rows = await stacksStatement(() =>
+    tx.execute<StackRow>(sql`
+      insert into stacks (name, domain, description, scope,
+                          compilation_strategy, synthesize_descriptions, ontology)
+      values (${payload.name}, ${payload.domain}, ${payload.description},
+              ${payload.scope}, ${payload.compilation_strategy},
+              ${payload.synthesize_descriptions}, ${ontologyLiteral(payload.ontology)})
+      returning ${sql.raw(STACK_COLUMNS)}
+    `),
+  );
 
   const row = rows[0];
   if (row === undefined) {
@@ -295,11 +387,13 @@ async function listStacks(
   // `order by updated_at desc` is contractual: after touching the middle row it
   // moves to the front of the list. Omitting the ORDER BY would let Postgres
   // return heap order, which only looks sorted until a row is updated.
-  const rows = await tx.execute<StackRow>(sql`
-    select ${sql.raw(STACK_COLUMNS)}
-    from stacks
-    order by updated_at desc
-  `);
+  const rows = await stacksStatement(() =>
+    tx.execute<StackRow>(sql`
+      select ${sql.raw(STACK_COLUMNS)}
+      from stacks
+      order by updated_at desc
+    `),
+  );
 
   res.json(rows.map(toStackResponse));
 }
@@ -344,11 +438,13 @@ async function getStack(
     return;
   }
 
-  const rows = await tx.execute<StackRow>(sql`
-    select ${sql.raw(STACK_COLUMNS)}
-    from stacks
-    where id = ${stackId}
-  `);
+  const rows = await stacksStatement(() =>
+    tx.execute<StackRow>(sql`
+      select ${sql.raw(STACK_COLUMNS)}
+      from stacks
+      where id = ${stackId}
+    `),
+  );
 
   const row = rows[0];
   if (row === undefined) {
@@ -468,12 +564,14 @@ async function updateStackRow(
   // Same reason as `getStack`: without the binding the UPDATE matches nothing
   // under RLS and this reports a 404 for a Stack that exists.
   await bindCallerStack(tx, stackId, null);
-  const rows = await tx.execute<StackRow>(sql`
-    update stacks
-    set ${sql.join(assignments, sql`, `)}, updated_at = now()
-    where id = ${stackId}
-    returning ${sql.raw(STACK_COLUMNS)}
-  `);
+  const rows = await stacksStatement(() =>
+    tx.execute<StackRow>(sql`
+      update stacks
+      set ${sql.join(assignments, sql`, `)}, updated_at = now()
+      where id = ${stackId}
+      returning ${sql.raw(STACK_COLUMNS)}
+    `),
+  );
   return rows[0];
 }
 
@@ -557,12 +655,14 @@ async function deleteStack(
     return;
   }
 
-  const inactivated = await tx.execute<{ id: string }>(sql`
-    update stacks
-    set active = false, updated_at = now()
-    where id = ${stackId} and active
-    returning id
-  `);
+  const inactivated = await stacksStatement(() =>
+    tx.execute<{ id: string }>(sql`
+      update stacks
+      set active = false, updated_at = now()
+      where id = ${stackId} and active
+      returning id
+    `),
+  );
 
   if (inactivated.length === 0 && !(await stackRowExists(tx, stackId))) {
     sendApiError(res, apiError(404, `Stack ${stackId} not found`));
@@ -608,6 +708,10 @@ export function createStacksRouter(
   router.get("/:stackId", deps.wrap(getStack));
   router.patch("/:stackId", deps.wrap(updateStack));
   router.delete("/:stackId", deps.wrap(deleteStack));
+
+  // Last, so it sees what any route above threw. See {@link handleMissingMigration} for
+  // why the missing-migration refusal is answered here and nowhere else.
+  router.use(handleMissingMigration);
 
   return router;
 }

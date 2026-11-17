@@ -11,7 +11,8 @@
   },
   "exports": {
     ".": "./src/index.ts",
-    "./stack-id": "./src/stack-id.ts"
+    "./stack-id": "./src/stack-id.ts",
+    "./stack-migration": "./src/stack-migration.ts"
   },
   "engines": {
     "node": ">=24"
