@@ -144,10 +144,25 @@ export async function buildFreshnessSnapshot(
  * `env`. That keeps the forget-proof default while letting an injected listing win
  * — which is the injection path the status tests drive.
  *
+ * ## The state read takes the same `env`, because it answers the same question
+ *
+ * A snapshot is TWO reads: the compile state, and the corpus it judges. Only the corpus
+ * was resolved from `env`; the state read was called with no environment at all, so it
+ * silently used ambient `process.env` while the corpus came from the caller's. One object
+ * therefore described two projects: a request that named its Stack got that Stack's rows
+ * for the corpus and the ambient environment's answer for the state — a file-backed state
+ * beside a row-backed corpus, which is the masquerade S5 of
+ * `odd/tasks/single-stack-authority.md` removes, or, once that masquerade became a named
+ * refusal, a hard failure reading `no database handle was supplied to resolve it`.
+ *
+ * Both reads are handed the SAME `env` now, so the one authority decides the backend for
+ * both halves of one snapshot from the environment the caller actually supplied.
+ *
  * @param root - Project root, used by the state read and the on-disk hash pass.
  * @param classified - Optional pre-read classified state, to avoid a redundant read.
  * @param documents - A corpus the caller already resolved; omitted means "resolve it".
- * @param env - Environment naming the Stack; `process.env` when omitted.
+ * @param env - Environment naming the Stack, for BOTH the corpus and the state read;
+ *   `process.env` when omitted.
  * @returns The snapshot for whichever corpus this project has.
  */
 export async function buildProjectFreshnessSnapshot(
@@ -158,7 +173,8 @@ export async function buildProjectFreshnessSnapshot(
 ): Promise<FreshnessSnapshot> {
   const corpus = documents ?? await withSourceDocuments(env, async (listing) =>
     listing === undefined ? undefined : await listing.list());
-  return await buildFreshnessSnapshot(root, classified, corpus);
+  const state = classified ?? await readStateClassifiedFor(root, env);
+  return await buildFreshnessSnapshot(root, state, corpus);
 }
 
 /**
