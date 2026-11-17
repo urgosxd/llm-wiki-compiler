@@ -18,7 +18,6 @@ import { deleteCandidateBySlug } from "./candidates.js";
 import * as output from "../utils/output.js";
 import type { SchemaConfig } from "../schema/index.js";
 import type { StackAuthority } from "../dimensions/stack-authority.js";
-import type { CompileOptions } from "../utils/types.js";
 import type { MergedConcept, MergedPageOutcome } from "./types.js";
 
 /**
@@ -38,7 +37,12 @@ import type { MergedConcept, MergedPageOutcome } from "./types.js";
  * @param root - Project root directory.
  * @param entry - The merged concept this page renders.
  * @param schema - The run's schema, used by the renderer and the prefilter.
- * @param options - The compile options; `options.env` is the request's environment.
+ * @param env - The run's environment, and it is the PUBLISHED one: the compile resolved one
+ *   Stack authority and wrote its id into this env before handing it down. The candidate
+ *   seam branches on the id it finds here, so a run whose Stack came from the database
+ *   clears its duplicate in THAT Stack's queue instead of in `.llmwiki/candidates`.
+ *   Re-deriving it here from `options.env` was the defect: the request's env knows nothing
+ *   about a Stack the database resolved.
  * @param contentSource - The run's page reader, or `undefined` to read `wiki/concepts`.
  * @param authority - The Stack this run RESOLVED, handed down as a value. The candidate
  *   custody seam branches on it rather than on the ambient `AKS_STACK_ID`, so a
@@ -49,21 +53,18 @@ export async function generateMergedPage(
   root: string,
   entry: MergedConcept,
   schema: SchemaConfig,
-  options: CompileOptions,
+  env: NodeJS.ProcessEnv,
   contentSource: PageContentSource | undefined,
   authority: StackAuthority,
 ): Promise<MergedPageOutcome> {
-  // THE BOUNDARY. `generateMergedPage` is where the request enters the page pipeline:
-  // `CompileOptions` carries the caller's `env`, and this is the ONE place it is
-  // resolved. Every seam below is handed the result, so a run answering for a NAMED
-  // Stack clears its duplicate in THAT Stack instead of in whichever tenant the
-  // process happens to be bound to.
+  // `env` is the run's PUBLISHED environment and `authority` is the Stack it resolved. Both
+  // arrive as values: the compile resolved once, and neither this function nor the seams
+  // below ask the environment a question the resolution already answered.
   //
-  // The Stack's identity arrives as `authority` and is NOT re-derived from `env` here:
-  // the compile resolved it once, and a second reading of the environment is exactly
-  // the ambient answer this chain exists to replace. `env` stays for the seams that
-  // open a connection with it.
-  const env = options.env ?? process.env;
+  // `env` stays alongside `authority` because the seam below selects its backend FROM the
+  // env (`candidate-source.ts` reads the id the publication wrote) and opens a connection
+  // with it, while `authority` is what the custody branch reads. One resolution, two
+  // transports of the same answer.
   const fullPage = await renderMergedPageContent(root, entry, schema, contentSource);
 
   if (!validateWikiPage(fullPage)) {

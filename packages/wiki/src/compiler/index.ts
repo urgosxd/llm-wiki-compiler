@@ -479,7 +479,7 @@ async function generatePagesPhase(
   root: string,
   merged: MergedConcept[],
   schema: SchemaConfig,
-  options: CompileOptions,
+  env: NodeJS.ProcessEnv,
   concurrency: number,
   pageSink: PageSink | undefined,
   pageRemover: PageRemover | undefined,
@@ -514,7 +514,7 @@ async function generatePagesPhase(
     renderable.map((entry) => limit(async () => {
       try {
         const result = await generateMergedPage(
-          root, entry, schema, options, contentSource, stackAuthority,
+          root, entry, schema, env, contentSource, stackAuthority,
         );
         return { entry, result };
       } finally {
@@ -975,7 +975,14 @@ interface GenerationStageInput {
   readonly frozenSlugs: Set<string>;
   readonly reconciliationSlugs: ReadonlySet<string>;
   readonly schema: SchemaConfig;
-  readonly options: CompileOptions;
+  /**
+   * The environment every seam in this stage is handed: the run's with the resolved
+   * Stack id PUBLISHED into it. It replaces the `CompileOptions` the stage used to carry,
+   * because the one thing it read from them was `options.env` — and re-deriving that here
+   * handed the candidate seam an environment with no id in it, which made a database-
+   * resolved run search and clear `.llmwiki/candidates` instead of the Stack's rows.
+   */
+  readonly stackEnv: NodeJS.ProcessEnv;
   readonly concurrency: number;
   readonly seams: PageSeams;
   readonly compileReporter: CompileProgressReporter | undefined;
@@ -1061,7 +1068,7 @@ async function runGenerationStage(
     root,
     merged,
     input.schema,
-    input.options,
+    input.stackEnv,
     input.concurrency,
     input.seams.sink,
     input.seams.remover,
@@ -1220,7 +1227,7 @@ async function runCompilePipeline(
   const scope = await resolveRunScope(root, state, detected, options, seams);
   if (!isRunScope(scope)) return scope;
   const changes = scope.changes;
-  await markUnchangedPendingSources(root, changes, sourceContentReading(db, stackAuthority));
+  await markUnchangedPendingSources(root, changes, stackEnv, sourceContentReading(db, stackAuthority));
   const reusableSources = reusableSourceFiles(state, changes, detected);
   augmentWithAffectedSources(changes, findAffectedSources(state, changes, detected));
   const reconciliationSlugs = findReconciliationSlugs(state, changes);
@@ -1272,7 +1279,7 @@ async function runCompilePipeline(
   recordExtractionFreezes(draft, extractions, frozenSlugs);
 
   const { identity, canonicalExtractions, generation, existingIds } = await runGenerationStage({
-    root, extractions, frozenSlugs, reconciliationSlugs, schema, options,
+    root, extractions, frozenSlugs, reconciliationSlugs, schema, stackEnv,
     concurrency, seams, compileReporter, stackAuthority,
     regenerateOnly: slugsToRegenerate(scope.recompilePlan),
   });
@@ -1363,9 +1370,10 @@ function recordExtractionFreezes(
 async function markUnchangedPendingSources(
   root: string,
   changes: SourceChange[],
+  env: NodeJS.ProcessEnv,
   contentSource?: SourceContentSource,
 ): Promise<void> {
-  const pending = await collectPendingSourceStates(root);
+  const pending = await collectPendingSourceStates(root, env);
   if (pending.size === 0) return;
   const requested = promptModifiersDigest();
   for (const change of changes) {
@@ -1384,12 +1392,22 @@ async function markUnchangedPendingSources(
  *
  * A candidate written before the digest was recorded reads as "none selected",
  * matching how an absent state digest is read.
+ *
+ * The queue is read through the environment the RUN published its resolved Stack into,
+ * not the ambient one: `listCandidates` falls back to `process.env`, so a root-only call
+ * looked for the Stack's rows in `.llmwiki/candidates` — the same reader defect the page
+ * pipeline's duplicate delete carries, one stage earlier.
+ *
+ * @param root - Project root directory.
+ * @param env - The run's environment, carrying the Stack id the compile resolved.
+ * @returns Each source's recorded hash and the modifiers it was generated under.
  */
 async function collectPendingSourceStates(
   root: string,
+  env: NodeJS.ProcessEnv,
 ): Promise<Map<string, { hash: string; modifiers: string }>> {
   const states = new Map<string, { hash: string; modifiers: string }>();
-  for (const candidate of await listCandidates(root)) {
+  for (const candidate of await listCandidates(root, {}, env)) {
     const modifiers = candidate.promptModifiers ?? "";
     for (const [source, entry] of Object.entries(candidate.sourceStates ?? {})) {
       states.set(source, { hash: entry.hash, modifiers });
