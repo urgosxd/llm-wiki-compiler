@@ -175,12 +175,22 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      # The test suites read these two: LLMWIKI_TEST_DATABASE_URL is the explicit
-      # override, and vitest.config.ts seeds AKS_DATABASE_URL from the same target.
-      LLMWIKI_TEST_DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
+      # `AKS_DATABASE_URL` stays, and it is harmless because it does not survive: the setup file
+      # (`test/setup/test-database-url.ts`) overwrites it in every worker with the URL this run
+      # resolved.
       AKS_DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
-      # scripts/apply-schemas.sh reads DATABASE_URL specifically (not the two above),
-      # so the schema steps and the tests hit the same database.
+      # `LLMWIKI_TEST_DATABASE_URL` is deliberately ABSENT here, for the same reason and with the
+      # same measured evidence as `.github/workflows/ci.yml`: with it set,
+      # `test/fixtures/testcontainers-postgres.ts` takes its override branch and logs
+      # `[test-database] LLMWIKI_TEST_DATABASE_URL is set; no container started`, so this job
+      # creates no container and every worker's per-run database lands on the one
+      # `localhost:5432/aks` server the `services:` block owns for the whole run. A gate that is
+      # honest while the release pipeline is not is half the fix, and a false green costs the most
+      # here; re-adding the variable is a regression. `LLMWIKI_TEST_ALLOW_NO_DATABASE` must never
+      # appear in a workflow (`AGENTS.md`).
+      #
+      # `scripts/apply-schemas.sh` reads `DATABASE_URL` specifically (not the two above), so the
+      # schema steps and this job's service database keep the same target.
       DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
     steps:
       - name: Checkout public_sha
