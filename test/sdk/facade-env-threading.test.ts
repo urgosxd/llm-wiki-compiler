@@ -295,6 +295,14 @@ describe("SDK facade with no env and no Stack configured", () => {
 
       const wiki = createWiki({ root: tenants.boundRoot });
       await wiki.ingestText({ title: "Local", text: bodyFor("Local") });
+      // WHAT A FILE-MODE INGEST WRITES, measured here rather than assumed, because a
+      // row-backed dimension write is impossible in this mode and the remaining work
+      // has to be named: the raw source in `sources/`, the journal entry in `log.md`,
+      // and an EMPTY `.llmwiki/` — the lock is taken and released, and `state.json` is
+      // written by the compile below, not by the ingest. No page file exists yet either.
+      expect(await readdir(path.join(tenants.boundRoot, "sources"))).toEqual(["local.md"]);
+      expect((await readdir(tenants.boundRoot)).sort()).toEqual([".llmwiki", "log.md", "sources"]);
+      expect(await readdir(path.join(tenants.boundRoot, ".llmwiki"))).toEqual([]);
       await keylessly(() => wiki.compile());
 
       const status = await statusOf(wiki);
