@@ -19,6 +19,16 @@
  * that dumped every tenant's Stacks would be a cross-tenant leak dressed as a
  * convenience, and it would only appear to work because the default deployment
  * happens to connect as a policy-bypassing role.
+ *
+ * ## Why `stackId` stays optional, and why omitting it is REFUSED
+ *
+ * A discovery tool cannot demand the identifier of the thing it discovers, so this is the
+ * one Stack-scoped tool whose `stackId` is not required. That exemption is about the
+ * ARGUMENT, not about where a Stack may come from: the argument is the only source, so a
+ * call that names none is refused by name instead of being answered from
+ * `AKS_STACK_ID` (S5 of `odd/tasks/stack-authority-per-request.md`). The refusal lives in
+ * `tenant-db.ts` beside the other Stack refusals, so a tool added later cannot re-invent
+ * the ambient fallback here.
  */
 
 import { z } from "zod";
@@ -27,11 +37,44 @@ import { listStacks } from "../services/stacks/stack-store.js";
 // Relative, not through `compiler-cli`, for the reason recorded in `job-tools.ts`.
 import { jsonResult } from "./result.js";
 import {
-  boundStackOrProblem,
   isRefusal,
   refusalResult,
+  unnamedArgumentProblem,
   withTenantDatabase,
 } from "./tenant-db.js";
+
+/** The arguments `list_stacks` accepts, both optional: it is the discovery exemption. */
+interface ListStacksArgs {
+  readonly limit?: number | undefined;
+  readonly stackId?: string | undefined;
+}
+
+/**
+ * Answer one `list_stacks` call.
+ *
+ * ## Why the omission is a refusal and not a lookup
+ *
+ * No Stack is resolved from the environment anywhere on this surface, so the argument is
+ * the only way to name one. A call that names none is refused by name, and the wording for
+ * each mode (database configured, or the named file mode) lives in `tenant-db.ts` beside
+ * the other Stack refusals so a later tool cannot re-invent the ambient fallback here.
+ *
+ * @param args - The optional `limit`, and the Stack the caller named.
+ * @returns The listing envelope, or the refusal.
+ */
+async function answerListStacks({ limit, stackId }: ListStacksArgs): Promise<
+  | ReturnType<typeof jsonResult>
+  | ReturnType<typeof refusalResult>
+> {
+  const named = stackId?.trim() ?? "";
+  if (named === "") return refusalResult(unnamedArgumentProblem(process.env));
+  const result = await withTenantDatabase(
+    (db, resolved) => listStacks(db, resolved, limit ?? 50),
+    named,
+  );
+  if (isRefusal(result)) return refusalResult(result);
+  return jsonResult({ stacks: result, count: result.length });
+}
 
 /** Register the Stack discovery tool. */
 export function registerStackTools(server: McpServer): void {
@@ -41,7 +84,7 @@ export function registerStackTools(server: McpServer): void {
       title: "List Stacks",
       description:
         "List the Stacks this endpoint can reach, most recently updated first, " +
-        "marking which one this connection is bound to. Use it to discover a " +
+        "marking the one you named with stackId as current. Use it to discover a " +
         "StackId before calling a Stack-scoped tool. Read-only.",
       inputSchema: {
         limit: z
@@ -56,24 +99,12 @@ export function registerStackTools(server: McpServer): void {
           .optional()
           .describe(
             "Stack to treat as the current one. This does NOT narrow the listing — " +
-              "it only decides which entry is marked isCurrent. Omit for the bound Stack.",
+              "it only decides which entry is marked isCurrent. Required in practice: " +
+              "this deployment reads no Stack from its environment, so a call that " +
+              "omits this argument is refused — pass stackId.",
           ),
       },
     },
-    async ({ limit, stackId }) => {
-      // `list_stacks` is the ONE tool exempt from the required-argument rule: a
-      // discovery tool cannot demand the identifier of the thing it discovers. An
-      // omitted argument therefore still means "the Stack this deployment is bound
-      // to" — resolved here, at the only call site allowed to do it, and never inside
-      // the shared helper the other tools use.
-      const effectiveStackId = stackId ?? boundStackOrProblem(process.env);
-      if (isRefusal(effectiveStackId)) return refusalResult(effectiveStackId);
-      const result = await withTenantDatabase(
-        (db, resolved) => listStacks(db, resolved, limit ?? 50),
-        effectiveStackId,
-      );
-      if (isRefusal(result)) return refusalResult(result);
-      return jsonResult({ stacks: result, count: result.length });
-    },
+    answerListStacks,
   );
 }

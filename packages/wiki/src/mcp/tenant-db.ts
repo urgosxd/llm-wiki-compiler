@@ -19,31 +19,37 @@
  *
  * ## Why nothing here reads the ambient environment for a Stack
  *
- * The Stack now arrives only as the tool argument. Substituting `AKS_STACK_ID` when a
- * caller left the argument out meant a call with no tenant in mind was answered from
- * whichever Stack the process happened to serve — silently, and indistinguishably
- * from a deliberate request. The environment is still read for the DATABASE and, in
- * {@link withRequestEnv}, still carries the Stack id into the seams for the duration
- * of one call; it is never used to fill a missing argument.
+ * The Stack arrives only as the tool argument. Substituting `AKS_STACK_ID` when a caller
+ * left the argument out meant a call with no tenant in mind was answered from whichever
+ * Stack the process happened to serve — silently, and indistinguishably from a deliberate
+ * request. The environment is still read for the DATABASE and, in {@link withRequestEnv},
+ * still carries the Stack id into the seams for the duration of one call; it is never used
+ * to fill a missing argument.
+ *
+ * The last survivor of that substitution was the discovery exemption: `list_stacks` used
+ * to resolve the deployment's Stack when the caller named none. It refuses instead now
+ * ({@link unnamedArgumentProblem}) — see S5 of
+ * `odd/tasks/stack-authority-per-request.md`. Being exempt from the ARGUMENT is not the
+ * same as being handed one by the environment.
  */
 
 import { sql } from "drizzle-orm";
 import {
-  AKS_DATABASE_URL_ENV_VAR,
   AKS_STACK_ID_ENV_VAR,
   createDimensionsDatabase,
-  resolveStackId,
+  isDatabaseConfigured,
 } from "../dimensions/activation.js";
 import { stackIdProblem } from "@repo/foundation";
+import { missingStackRefusal } from "../services/stacks/resolve-stack.js";
 import { stackExists } from "../services/stacks/stack-store.js";
 
 /**
- * What this module says when a deployment has no Stack bound at all.
+ * What this module says when a deployment has no database at all.
  *
- * Module-local on purpose: {@link boundStackOrProblem} is the only producer, and it
+ * Module-local on purpose: {@link unnamedArgumentProblem} is the only producer, and it
  * hands the wording out inside a refusal rather than as a symbol a caller could
  * import. Nothing outside this file needs the constant itself, so nothing outside it
- * gets one — the one tool that can still be called without a Stack, `list_stacks`,
+ * gets one — `list_stacks`, the one tool that can still be called without a Stack,
  * reports the refusal envelope and never the raw text.
  */
 const NO_STACK_MESSAGE =
@@ -51,27 +57,46 @@ const NO_STACK_MESSAGE =
   "Set AKS_STACK_ID to the Stack this deployment serves.";
 
 /**
- * The Stack a DISCOVERY tool marks as current when the caller named none.
+ * What `list_stacks` says when the caller named no Stack on a run WITH a database.
  *
- * `list_stacks` is the one Stack-scoped tool exempt from the required-argument rule:
- * a discovery tool cannot require the identifier of the thing it discovers, and a
- * caller that has no id yet is exactly its audience. So it — and only it — still
- * resolves the Stack this deployment is bound to, which is what its own `stackId`
- * schema documents as "Omit for the bound Stack".
- *
- * Kept HERE, beside the helpers that no longer do any such thing, so the single
- * surviving ambient resolution is visible in one place instead of being re-implemented
- * by a tool. Every other tool takes its Stack from the argument and nothing else.
- *
- * @param env - Environment to resolve the deployment binding from.
- * @returns The bound Stack id, or the refusal an unbound deployment reports.
+ * Module-local for the same reason as {@link NO_STACK_MESSAGE}: this module is the only
+ * producer, and it hands the wording out inside a refusal rather than as a symbol. It
+ * shares the resolver's sentence stem ({@link missingStackRefusal}) because the situation
+ * is the resolver's; only what THIS caller must do differs, and that is the remedy here.
  */
-export function boundStackOrProblem(env: NodeJS.ProcessEnv = process.env): string | Refusal {
-  try {
-    return resolveStackId(env);
-  } catch {
-    return { unavailable: NO_STACK_MESSAGE };
-  }
+const UNNAMED_ARGUMENT_MESSAGE = missingStackRefusal(
+  "list_stacks was called with no stackId, and omitting it no longer means " +
+    '"the Stack this process is bound to".',
+  "Pass the stackId argument — GET /stacks lists the ids a client can choose from.",
+);
+
+/**
+ * The refusal for a discovery call that named no Stack.
+ *
+ * ## Why a discovery tool may still be called without a Stack
+ *
+ * `list_stacks` is the one Stack-scoped tool exempt from the required-argument rule: a
+ * discovery tool cannot require the identifier of the thing it discovers, and a caller
+ * that has no id yet is exactly its audience. Being exempt from the ARGUMENT is not the
+ * same as being handed one, and that distinction is the whole of this function. It used to
+ * resolve `AKS_STACK_ID` and report that Stack as "the bound one", which is ambient
+ * resolution wearing a tool's clothes: two callers who meant different things got the same
+ * answer, and the deployment's identity leaked into a request that never named a tenant.
+ *
+ * ## Why the two modes answer differently
+ *
+ * With a database configured, the omission is a caller error and is refused by name: the
+ * argument is the only way to name a Stack. With NO database configured the run is the
+ * named `file` mode, which has no Stacks to list at all, and the answer is the wording it
+ * has always given — unchanged, because S7 preserves file mode and rewording that message
+ * would be a contract change nobody asked for.
+ *
+ * @param env - Environment to read the configured-database fact from.
+ * @returns The refusal the tool reports.
+ */
+export function unnamedArgumentProblem(env: NodeJS.ProcessEnv = process.env): Refusal {
+  if (!isDatabaseConfigured(env)) return { unavailable: NO_STACK_MESSAGE };
+  return { unavailable: UNNAMED_ARGUMENT_MESSAGE };
 }
 
 /**
@@ -195,8 +220,9 @@ async function namedStackProblem(
 ): Promise<Refusal | undefined> {
   const malformed = stackIdProblem(stackId);
   if (malformed !== undefined) return { unavailable: malformed };
-  const configured = (env[AKS_DATABASE_URL_ENV_VAR] ?? "").trim();
-  if (configured === "") return undefined;
+  // The ONE predicate for "is there a database behind this run", rather than a second
+  // copy of the same test: two spellings of one fact eventually disagree.
+  if (!isDatabaseConfigured(env)) return undefined;
   const dimensionsDb = createDimensionsDatabase(env);
   try {
     return (await stackExists(dimensionsDb.db, stackId)) ? undefined : { unknownStack: stackId };

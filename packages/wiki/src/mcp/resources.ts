@@ -4,11 +4,32 @@
  * Resources expose read-only views of the wiki under the llmwiki:// URI
  * scheme. Hosts can attach these as context without invoking a tool —
  * useful for letting agents browse the wiki passively.
+ *
+ * ## The price of "do not invent ambient resolution", stated here on purpose
+ *
+ * A resource URI has nowhere to put a Stack: there is no `stackId` argument on this
+ * surface, and this build no longer invents one from the process environment. So on a
+ * run WITH a database configured, every resource that reads a Stack REFUSES BY NAME —
+ * `llmwiki://state`, `llmwiki://concept/{slug}` and `llmwiki://query/{slug}` are
+ * unusable there until the URI itself can carry a Stack.
+ *
+ * Making them usable again means changing the URI contract: `llmwiki://pages/foo`
+ * becomes `llmwiki://<stack>/pages/foo`. That renames a surface clients already
+ * consume, so it is a DELIBERATE breaking change to a published interface, named as
+ * S5's price in `odd/tasks/stack-authority-per-request.md` so that it is never later
+ * filed as a stylistic gap or an open question.
+ *
+ * The resources that read only THIS checkout's files and never consulted a database —
+ * `llmwiki://index`, `llmwiki://sources`, `llmwiki://eval/report`,
+ * `llmwiki://eval/history` — keep answering. Refusing them would invent a failure the
+ * old code did not have, and S3 forbids falling back to files only where a database
+ * actually holds the rows.
  */
 
 import path from "path";
 import { readdir } from "fs/promises";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { isDatabaseConfigured } from "../dimensions/activation.js";
 import {
   readStateClassifiedFor,
   withPageScan,
@@ -16,6 +37,7 @@ import {
 } from "../dimensions/wiki/page-source-seam.js";
 import { loadPreviousReport, loadHistory } from "../eval/stats.js";
 import type { PageDirectory } from "../export/types.js";
+import { missingStackRefusal } from "../services/stacks/resolve-stack.js";
 import { listSelectedSourceFiles } from "../sources/scan.js";
 import { CONCEPTS_DIR, INDEX_FILE, QUERIES_DIR, SOURCES_DIR, STATE_FILE } from "../utils/constants.js";
 import { safeReadFile, parseFrontmatter } from "../utils/markdown.js";
@@ -31,6 +53,37 @@ function jsonContent(uri: URL, payload: unknown): {
     mimeType: "application/json",
     text: JSON.stringify(payload, null, 2),
   };
+}
+
+/**
+ * Refuse a Stack-scoped resource read on a run that has a database configured.
+ *
+ * ## Why the reason is the SHAPE of the surface
+ *
+ * The caller did not forget anything: an `llmwiki://` URI has no argument in which to
+ * carry a Stack, so "name one" would be advice it cannot follow. The refusal says so,
+ * and points at the surface that CAN carry one — which is the sentence a client learns
+ * the limits of this API from.
+ *
+ * ## Why it runs BEFORE anything else
+ *
+ * A database-configured run must not read this checkout's files and present them as the
+ * Stack's answer (S3), and it must not resolve a Stack from the environment either (S5).
+ * Refusing at the top means neither can happen for want of a check later on.
+ *
+ * @param read - The URI, or the URI template, the caller asked for.
+ * @throws {Error} always, when a database is configured; the resource surface's only
+ *   failure channel, since a resource read has no `isError` envelope.
+ */
+function refuseStackScopedResource(read: string): void {
+  if (!isDatabaseConfigured(process.env)) return;
+  throw new Error(
+    missingStackRefusal(
+      `${read} was read as an MCP resource, and a resource URI cannot carry a Stack.`,
+      "Call a tool that takes a stackId argument instead (read_page, wiki_status), " +
+        "or run this server with no database configured.",
+    ),
+  );
 }
 
 /** Standard markdown content block for an MCP resource read result. */
@@ -102,6 +155,7 @@ function registerStateResource(server: McpServer, root: string): void {
       mimeType: "application/json",
     },
     async (uri) => {
+      refuseStackScopedResource(uri.href);
       const { status, state } = await readStateClassifiedFor(root);
       // Fail closed on a too-new state: every sibling surface branches on
       // `status`, so the resource must too rather than streaming a body written
@@ -133,9 +187,12 @@ function registerConceptResource(server: McpServer, root: string): void {
       description: "A single concept page from wiki/concepts/ — frontmatter plus body.",
       mimeType: "application/json",
     },
-    async (uri, { slug }) => ({
-      contents: [jsonContent(uri, await loadPageWithMeta(root, CONCEPTS_DIR, String(slug), "concepts"))],
-    }),
+    async (uri, { slug }) => {
+      refuseStackScopedResource(uri.href);
+      return {
+        contents: [jsonContent(uri, await loadPageWithMeta(root, CONCEPTS_DIR, String(slug), "concepts"))],
+      };
+    },
   );
 }
 
@@ -150,9 +207,12 @@ function registerQueryResource(server: McpServer, root: string): void {
       description: "A single saved query page from wiki/queries/ — frontmatter plus body.",
       mimeType: "application/json",
     },
-    async (uri, { slug }) => ({
-      contents: [jsonContent(uri, await loadPageWithMeta(root, QUERIES_DIR, String(slug), "queries"))],
-    }),
+    async (uri, { slug }) => {
+      refuseStackScopedResource(uri.href);
+      return {
+        contents: [jsonContent(uri, await loadPageWithMeta(root, QUERIES_DIR, String(slug), "queries"))],
+      };
+    },
   );
 }
 
@@ -242,6 +302,9 @@ async function listPagesUnder(
   scheme: "concept" | "query",
   directory?: PageDirectory,
 ): Promise<{ resources: Array<{ uri: string; name: string }> }> {
+  // A listing is a resource read too: on a database-configured run it would enumerate the
+  // rows of a Stack nobody named. An empty list would read as "this Stack has no pages".
+  refuseStackScopedResource(`llmwiki://${scheme}/{slug}`);
   if (directory !== undefined) {
     const fromRows = await withPageScan(process.env, (scan) =>
       scan === undefined ? Promise.resolve(undefined) : scan.scan(directory));

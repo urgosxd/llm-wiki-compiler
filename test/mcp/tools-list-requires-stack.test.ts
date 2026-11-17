@@ -186,7 +186,7 @@ describe("tools/list declares the Stack argument required", () => {
     }
   });
 
-  it("keeps list_stacks exempt: stackId present, optional and still documented", async () => {
+  it("keeps list_stacks exempt: stackId present, optional and demanding to be named", async () => {
     const listStacks = await withListedTools((tools) => tools.get("list_stacks"));
     const stackId = listStacks?.inputSchema.properties?.stackId;
 
@@ -194,8 +194,15 @@ describe("tools/list declares the Stack argument required", () => {
     expect(stackId).toBeDefined();
     // Optional, NOT required: a discovery tool cannot demand the id it discovers.
     expect(listStacks?.inputSchema.required ?? []).not.toContain("stackId");
-    // Still the omission wording `test/mcp/list-stacks.test.ts` is built on.
-    expect(stackId?.description ?? "").toContain("Omit for the bound Stack");
+    // But the omission is REFUSED, and the schema has to say so. It used to promise
+    // "Omit for the bound Stack", which is precisely the ambient resolution S5 deletes:
+    // a tool whose own documentation recommends the forbidden behaviour is the defect,
+    // so this asserts the replacement sentence rather than merely asserting nothing.
+    const description = stackId?.description ?? "";
+    expect(description).toContain("Required in practice");
+    expect(description).toContain("omits this argument is refused");
+    expect(description).toContain("pass stackId");
+    expect(description).not.toContain("bound Stack");
   });
 
   it("states in the shared stackId description that the Stack has no default", async () => {

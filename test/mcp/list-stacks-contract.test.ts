@@ -17,18 +17,20 @@
  * order, the same `type`, the same `minimum`/`maximum`, the same `limit` description,
  * and NO `required` list in either. The `stackId` description is the one field a
  * dimension is entitled to finish in its own words, because the omission rule genuinely
- * differs: the wiki deployment IS bound to a Stack and marks it, while the KG dimension
- * reads no Stack from its environment at all and therefore marks nothing. Forcing those
- * two sentences to be byte-identical would make one of them false, which is the
- * papering-over L11 refused. Both halves are asserted separately here — the shared
- * sentence byte for byte, then each dimension's own tail — so drift in either fails.
+ * differs: the wiki dimension READS no Stack from its environment, so on a
+ * database-configured run an omission is refused with an error, while the KG dimension
+ * marks nothing and answers. Forcing those two sentences to be byte-identical would make
+ * one of them false, which is the papering-over L11 refused. Both halves are asserted
+ * separately here — the shared sentence byte for byte, then each dimension's own tail —
+ * so drift in either fails.
  *
  * ## Why the wiki side needs a database but asserts anyway
  *
  * The wiki `list_stacks` reads Postgres under a tenant policy, so the harness provisions
- * a real Stack and the process is bound to it. When no database is reachable the fixture
- * cannot provision one and the case returns early, the same convention the other
- * database-backed suites use.
+ * a real Stack. The process is ALSO bound to it, deliberately: that binding is what the
+ * refusing case below proves the tool ignores (S5 — no Stack is resolved from the
+ * environment). When no database is reachable the fixture cannot provision one and the
+ * case returns early, the same convention the other database-backed suites use.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { rm } from "node:fs/promises";
@@ -52,8 +54,10 @@ const SHARED_STACK_ID_SENTENCE =
   "Stack to treat as the current one. This does NOT narrow the listing — " +
   "it only decides which entry is marked isCurrent.";
 
-/** What the WIKI dimension adds: it IS bound to a Stack, so omission means that one. */
-const WIKI_STACK_ID_TAIL = " Omit for the bound Stack.";
+/** What the WIKI dimension adds: it reads no Stack from its environment, so it refuses. */
+const WIKI_STACK_ID_TAIL =
+  " Required in practice: this deployment reads no Stack from its environment, so a " +
+  "call that omits this argument is refused — pass stackId.";
 
 /** What the KG dimension adds: it is bound to nothing, so omission marks nothing. */
 const KG_STACK_ID_TAIL = " Omit it to mark no entry current: this endpoint has no bound Stack.";
@@ -153,18 +157,20 @@ async function listedSchema(client: Client): Promise<ListedSchema> {
   return tool.inputSchema as unknown as ListedSchema;
 }
 
-/** Decode a `tools/call` answer, refusing to proceed on a refusal envelope. */
-function decode(result: unknown): Payload {
-  const envelope = result as {
-    isError?: boolean;
-    content?: ReadonlyArray<{ type?: string; text?: string }>;
-  };
-  expect(envelope.isError ?? false, "list_stacks refused a call it must answer").toBe(false);
-  const text = (envelope.content ?? [])
+/** The text a `tools/call` answer carries, joined from its content blocks. */
+function textOf(result: unknown): string {
+  const envelope = result as { content?: ReadonlyArray<{ type?: string; text?: string }> };
+  return (envelope.content ?? [])
     .filter((block) => block.type === "text")
     .map((block) => block.text ?? "")
     .join("");
-  return JSON.parse(text) as Payload;
+}
+
+/** Decode a `tools/call` answer, refusing to proceed on a refusal envelope. */
+function decode(result: unknown): Payload {
+  const envelope = result as { isError?: boolean };
+  expect(envelope.isError ?? false, "list_stacks refused a call it must answer").toBe(false);
+  return JSON.parse(textOf(result)) as Payload;
 }
 
 /** One wiki-dimension `list_stacks` call, against the Stack the deployment is bound to. */
@@ -264,7 +270,7 @@ describe("list_stacks declares one input schema across both dimensions", () => {
 describe("list_stacks answers one envelope across both dimensions", () => {
   it("answers `stacks` then `count` with the ten contract keys, field for field", async () => {
     if (!stack.reachable) return;
-    const wiki = await wikiPayload({});
+    const wiki = await wikiPayload({ stackId: stack.stackId });
     const kg = await kgPayload({});
 
     for (const payload of [wiki, kg]) expectContractShape(shapeOf(payload));
@@ -292,14 +298,20 @@ describe("list_stacks answers one envelope across both dimensions", () => {
     }
   });
 
-  it("keeps the WIKI dimension exempt: no stackId is refused, the bound Stack answers", async () => {
+  it("refuses a WIKI call that names no Stack, even with the process bound to one", async () => {
     if (!stack.reachable) return;
-    // Not refused — `decode` fails on an error envelope — and the omission means the
-    // Stack this deployment is bound to, which is what its schema sentence says.
-    const wiki = await wikiPayload({});
-    const current = wiki.stacks.filter((entry) => entry["isCurrent"] === true);
-    expect(current).toHaveLength(1);
-    expect(current[0]?.["id"]).toBe(stack.stackId);
+    // REVERSED ON PURPOSE (S5). This case used to assert the opposite — "no stackId is
+    // refused, the bound Stack answers" — which is the ambient resolution the feature
+    // deletes. `beforeEach` still binds `process.env.AKS_STACK_ID` to a real Stack, so the
+    // answer the old code gave is present and must be ignored rather than returned.
+    const envelope = await withClient(buildServer(root), async (client) => {
+      const answer = await client.callTool({ name: "list_stacks", arguments: {} });
+      return { isError: answer.isError, text: textOf(answer) };
+    });
+
+    expect(envelope.isError).toBe(true);
+    expect(envelope.text).toContain("list_stacks was called with no stackId");
+    expect(envelope.text).not.toContain(stack.stackId);
   });
 
   it("keeps the KG dimension exempt: no stackId is refused, and nothing is marked", async () => {
