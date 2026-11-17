@@ -97,6 +97,7 @@ describe("StackResponse", () => {
     created_at: TS,
     updated_at: TS,
     ontology: null,
+    active: true,
   };
 
   it("parses a full response and keeps timestamps as strings", () => {

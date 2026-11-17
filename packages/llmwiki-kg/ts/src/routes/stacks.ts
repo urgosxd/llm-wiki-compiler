@@ -42,21 +42,23 @@ import type { ApiError, ValidationFailure } from "../errors.js";
  */
 
 /**
- * Column list, in oracle order, with the ontology extension appended.
+ * Column list, in oracle order, with the ontology extension and the inactivation flag
+ * appended.
  *
  * The first nine are `_STACK_COLUMNS` from the Python module verbatim, including
- * order, because response key order is contractual. `ontology` is APPENDED rather
- * than inserted among them, for the same reason `core/stack_resolver.ts` appends
- * it: a projection compared against the oracle still holds for the fields the
- * oracle returns, and the extension cannot perturb them.
+ * order, because response key order is contractual. `ontology` and `active` are
+ * APPENDED rather than inserted among them, for the same reason
+ * `core/stack_resolver.ts` appends `ontology`: a projection compared against the
+ * oracle still holds for the fields the oracle returns, and the extension cannot
+ * perturb them.
  *
- * It has to be selected at all because `StackResponse` now requires the key. A
+ * Each has to be selected at all because `StackResponse` requires the key. A
  * response field added to the DTO without being selected here turns every Stack
  * read into a 500 — the schema parse fails on the absent key, inside the same
  * transaction, before anything can name the cause.
  */
 const STACK_COLUMNS =
-  "id, name, domain, description, scope, compilation_strategy, synthesize_descriptions, created_at, updated_at, ontology";
+  "id, name, domain, description, scope, compilation_strategy, synthesize_descriptions, created_at, updated_at, ontology, active";
 
 /** A `stacks` row as selected by {@link STACK_COLUMNS}. */
 type StackRow = {
@@ -71,6 +73,8 @@ type StackRow = {
   updated_at: string;
   /** The stored declaration, `null` when unconfigured. Raw: the DTO validates. */
   ontology: unknown;
+  /** False once the Stack has been retired by `DELETE`; never NULL in the column. */
+  active: boolean;
 };
 
 /**
@@ -87,6 +91,7 @@ const STACK_UPDATE_FIELDS = [
   "compilation_strategy",
   "synthesize_descriptions",
   "ontology",
+  "active",
 ] as const;
 
 /**
@@ -474,7 +479,51 @@ async function updateStack(
   res.json(toStackResponse(row));
 }
 
-/** `DELETE /stacks/:stackId` — 204 with a genuinely empty body. */
+/**
+ * Does a row carry this id?
+ *
+ * Asked only after an inactivation matched nothing, which is the one moment "already
+ * inactive" and "absent" look the same from the UPDATE's side. A `false` here is the 404;
+ * a `true` is the idempotent no-op.
+ *
+ * @param tx - Transaction the request is running in.
+ * @param stackId - A validated Stack id.
+ * @returns True when a `stacks` row carries that id, whatever its `active` flag says.
+ */
+async function stackRowExists(tx: Database, stackId: string): Promise<boolean> {
+  const rows = await tx.execute<{ id: string }>(
+    sql`select id from stacks where id = ${stackId}`,
+  );
+  return rows.length > 0;
+}
+
+/**
+ * `DELETE /stacks/:stackId` — 204 with a genuinely empty body. The Stack is INACTIVATED.
+ *
+ * ## Why this is not a `delete`
+ *
+ * It used to be `delete from stacks where id = %s returning id`, and nine production
+ * tables reference `stacks(id)` with `on delete cascade` (`db/schema.sql`), so that
+ * statement answered 204 while silently destroying the Stack's documents, chunks,
+ * entities, relationships, pages, backfeed items, candidates and evidence. Nothing refused
+ * it and nothing reported what it took. S13 of
+ * `odd/tasks/stack-authority-per-request.md` records it as a live data-loss defect, which
+ * is why the repair is a work unit of its own rather than a detail of the authority
+ * change.
+ *
+ * ## The three outcomes, and why each is what it is
+ *
+ *  - A live Stack: the flag flips, `updated_at` moves (the response field the listing
+ *    orders by), 204.
+ *  - An already-inactive Stack: 204 and NOT a write. `and active` in the predicate is
+ *    what makes a retried delete idempotent instead of reordering the listing on every
+ *    attempt, and the second read is what still tells this case from the next one.
+ *  - An id no row carries: the 404 this route always answered, with the same detail.
+ *    Preserved exactly — a delete of nothing was never the defect.
+ *
+ * Nothing else in the response changes: same status, same empty body, so no client's
+ * delete call changes shape.
+ */
 async function deleteStack(
   req: Request,
   res: Response,
@@ -486,13 +535,17 @@ async function deleteStack(
     return;
   }
 
-  // Same reason as `getStack`. The cascade removes the Stack's content, and it
-  // cannot reach another tenant because the parent is already scoped by the policy.
+  // Same reason as `getStack`: without the binding the UPDATE matches nothing under RLS
+  // and this reports a 404 for a Stack that exists.
   await bindCallerStack(tx, stackId.stackId, null);
-  const rows = await tx.execute<{ id: string }>(
-    sql`delete from stacks where id = ${stackId.stackId} returning id`,
-  );
-  if (rows.length === 0) {
+  const inactivated = await tx.execute<{ id: string }>(sql`
+    update stacks
+    set active = false, updated_at = now()
+    where id = ${stackId.stackId} and active
+    returning id
+  `);
+
+  if (inactivated.length === 0 && !(await stackRowExists(tx, stackId.stackId))) {
     sendApiError(res, apiError(404, `Stack ${stackId.stackId} not found`));
     return;
   }

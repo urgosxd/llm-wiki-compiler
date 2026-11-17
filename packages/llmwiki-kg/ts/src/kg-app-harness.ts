@@ -94,6 +94,7 @@ const STUB_ROWS = [
     created_at: "2026-10-21T17:05:32.366119Z",
     updated_at: "2026-10-21T17:05:32.366119Z",
     ontology: null,
+    active: true,
   },
 ];
 

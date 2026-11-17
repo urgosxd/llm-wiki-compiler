@@ -274,6 +274,20 @@ export const StackUpdate = z.object({
   // Extension, not oracle. Absence (not `null`) is what means "unchanged" here:
   // PATCH turns `undefined` into "not present" and `null` into "write NULL".
   ontology: OntologyInput,
+  /**
+   * The reactivation switch, and the only way back from `DELETE`.
+   *
+   * `DELETE /stacks/:id` inactivates rather than deletes, and `domain` is `unique`, so an
+   * inactive row keeps its domain forever: without this field a retired Stack's slug
+   * would be burned with no way to reclaim it.
+   *
+   * `.optional()` and NOT `.nullable().default(null)` like its siblings, and the reason is
+   * the column: `active` is `not null`, so `null` is not a state it can hold. Accepting it
+   * here would defer the refusal to a constraint violation inside the UPDATE, which
+   * surfaces as a 500; as an optional boolean, `{"active": null}` is a 422 on the field
+   * and nothing is written.
+   */
+  active: pydanticBoolean().optional(),
 });
 
 /**
@@ -311,6 +325,21 @@ export const StackResponse = z.object({
    * guarantees new rows are valid.
    */
   ontology: OntologyDocument.nullable(),
+  /**
+   * False when the Stack has been retired, true while it is usable.
+   *
+   * APPENDED LAST for the same reason as `ontology`: the oracle's nine keys keep their
+   * exact order and positions, so a consumer diffing against a Python response sees an
+   * addition rather than a reshuffle. This IS a deliberate contract addition — `DELETE`
+   * inactivates instead of destroying the row, so an operator who cannot see this flag
+   * cannot discover that a Stack needs reactivating, nor tell a retired Stack from a live
+   * one in a listing.
+   *
+   * Required, like every other column: `STACK_COLUMNS` selects it on every read, so a
+   * missing key here means the projection and the response drifted, and the parse failure
+   * inside the request transaction is what names it.
+   */
+  active: pydanticBoolean(),
 });
 
 // ============================================================

@@ -35,7 +35,10 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { stackIdProblem } from "@repo/foundation";
 import { selectStack } from "../packages/wiki/src/dimensions/stack-selection.js";
-import { stackExists } from "../packages/wiki/src/services/stacks/stack-store.js";
+import {
+  stackExists,
+  stackResolution,
+} from "../packages/wiki/src/services/stacks/stack-store.js";
 import { createKgPostgresHarness } from "./fixtures/kg-postgres.js";
 
 /** A value that is not a uuid, kept obvious so a failure reads as itself. */
@@ -98,5 +101,35 @@ describe.skipIf(!reachable)("an id no Stack carries is unknown, not valid", () =
   it("reports a well-formed id with no row as not existing, and one with a row as existing", async () => {
     expect(await stackExists(harness.db, randomUUID())).toBe(false);
     expect(await stackExists(harness.db, harness.stackId)).toBe(true);
+  });
+});
+
+describe.skipIf(!reachable)("an inactive Stack is unresolvable, and distinguishable from an absent one", () => {
+  it("answers active, inactive and absent as three states", async () => {
+    const id = randomUUID();
+    const domain = `t07-inactive-${Date.now().toString(36)}`;
+    await harness.db.execute(
+      `insert into public.stacks (id, name, domain) values ('${id}', 'Retired', '${domain}')`,
+    );
+
+    expect(await stackResolution(harness.db, id)).toBe("active");
+    expect(await stackExists(harness.db, id)).toBe(true);
+
+    await harness.db.execute(`update public.stacks set active = false where id = '${id}'`);
+
+    // The two refusals S10 requires on the envelope surface are only expressible if the
+    // lookup can tell them apart: `unknown_stack` and `stack_inactive` are not the same
+    // answer, and collapsing both into `false` is what would erase the difference.
+    expect(
+      await stackResolution(harness.db, id),
+      "an inactive Stack must not read as absent",
+    ).toBe("inactive");
+    expect(
+      await stackExists(harness.db, id),
+      "resolution stays a boolean: inactive is not usable",
+    ).toBe(false);
+
+    expect(await stackResolution(harness.db, randomUUID())).toBe("absent");
+    expect(await stackExists(harness.db, randomUUID())).toBe(false);
   });
 });

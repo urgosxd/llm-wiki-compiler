@@ -146,11 +146,15 @@ describe("StackResponse.ontology", () => {
     created_at: TS,
     updated_at: TS,
     ontology: null,
+    active: true,
   };
 
-  it("carries the declaration as the tenth and final key", () => {
+  it("carries the declaration as the tenth key, with `active` appended after it", () => {
     const parsed = parseOk(StackResponse, { ...ROW, ontology: DECLARATION });
-    expect(Object.keys(parsed).at(-1)).toBe("ontology");
+    expect(Object.keys(parsed).at(-2)).toBe("ontology");
+    // The inactivation flag is appended LAST: `DELETE` retires a Stack instead of
+    // destroying it, and an operator has to be able to see that from the response.
+    expect(Object.keys(parsed).at(-1)).toBe("active");
     expect(parsed.ontology).toEqual(DECLARATION);
   });
 

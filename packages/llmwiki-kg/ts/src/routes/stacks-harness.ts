@@ -75,10 +75,15 @@ export function currentDomainPrefix(): string {
 /**
  * The response keys every Stack row carries, in order.
  *
- * The first nine are the Python oracle's, unchanged. `ontology` is appended last
- * because that is also where `STACK_COLUMNS` selects it: an addition to the end
- * of a response is a different, smaller contract change than a reshuffle, and one
+ * The first nine are the Python oracle's, unchanged. `ontology` and `active` are
+ * appended after them, in the order `STACK_COLUMNS` selects them: an addition to the
+ * end of a response is a different, smaller contract change than a reshuffle, and one
  * order is not two that can drift.
+ *
+ * `active` is a DELIBERATE contract addition (S4, T7 of
+ * `odd/tasks/stack-authority-per-request.md`): `DELETE` inactivates rather than
+ * destroys, so an operator has to be able to see the flag or reactivation is
+ * undiscoverable.
  */
 export const RESPONSE_KEYS = [
   "id",
@@ -91,6 +96,7 @@ export const RESPONSE_KEYS = [
   "created_at",
   "updated_at",
   "ontology",
+  "active",
 ] as const;
 
 export const state: {

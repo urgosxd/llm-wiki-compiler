@@ -89,6 +89,45 @@ describe.skipIf(skipReason !== false)("/stacks update (live database)", () => {
       expect(response.body).toEqual({ detail: "At least one field must be provided" });
     });
 
+    it("PATCH /stacks/:stackId touches `active` only when the body names it", async () => {
+      const app = buildApp();
+      const created = await request(app)
+        .post("/stacks")
+        .send(createBody(uniqueDomain("active")));
+      expect(created.status).toBe(201);
+      const id = String(created.body.id);
+      expect(created.body.active).toBe(true);
+
+      // `exclude_unset` applied to the new field: an update that does not mention it
+      // must not silently retire the Stack, and must not rewrite the column either.
+      const untouched = await request(app)
+        .patch(`/stacks/${id}`)
+        .send({ description: "still usable" });
+      expect(untouched.status).toBe(200);
+      expect(untouched.body.active).toBe(true);
+
+      // The column is `not null`, so `null` is not a state it can hold: the refusal is
+      // a 422 on the field, not a 500 from the constraint.
+      const nulled = await request(app).patch(`/stacks/${id}`).send({ active: null });
+      expect(nulled.status).toBe(422);
+      expect(nulled.body.detail).toHaveLength(1);
+      expect(nulled.body.detail[0]).toMatchObject({ loc: ["body", "active"] });
+
+      const uncoerced = await request(app)
+        .patch(`/stacks/${id}`)
+        .send({ active: "yes-please" });
+      expect(uncoerced.status).toBe(422);
+      expect(uncoerced.body.detail[0]).toMatchObject({
+        type: "bool_parsing",
+        loc: ["body", "active"],
+      });
+
+      // Neither refusal wrote anything.
+      const read = await request(app).get(`/stacks/${id}`);
+      expect(read.body.active).toBe(true);
+      expect(read.body.description).toBe("still usable");
+    });
+
     it("PATCH /stacks/:stackId returns 404 for an unknown id", async () => {
       const app = buildApp();
       const missingId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";

@@ -151,6 +151,7 @@ describe("required-nullable versus optional", () => {
         created_at: TS,
         updated_at: TS,
         ontology: null,
+        active: true,
       },
     },
     {
@@ -335,6 +336,7 @@ describe("timestamps", () => {
       created_at: TS,
       updated_at: TS,
       ontology: null,
+      active: true,
     });
     expect(typeof parsed.created_at).toBe("string");
     expect(parsed.created_at).not.toBeInstanceOf(Date);

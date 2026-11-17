@@ -105,7 +105,49 @@ function toStackSummary(row: StackRow, currentStackId: string): StackSummary {
 }
 
 /**
- * Does this Stack exist?
+ * What a Stack id names, as far as the `stacks` table is concerned.
+ *
+ * Three answers, never two. "Inactive" and "absent" are different refusals on the
+ * envelope surface — `stack_inactive` and `unknown_stack`, S10 — and an operator reading
+ * either one needs to know which happened: an inactive Stack keeps its id, its domain and
+ * its content and can be reactivated, while an absent one cannot. Collapsing both into
+ * `false` is what would erase that difference, so the distinction is made HERE, at the one
+ * lookup both surfaces share, rather than re-derived by each caller.
+ */
+export type StackResolution = "active" | "inactive" | "absent";
+
+/**
+ * Resolve what a Stack id names: an active Stack, an inactive one, or nothing.
+ *
+ * One query, no cache. Nothing in this module may cache the answer: a Stack created,
+ * retired or reactivated by one request has to be visible to the next one, which is the
+ * point of per-request authority (S6).
+ *
+ * @param db - Handle from `createDimensionsDatabase`.
+ * @param stackId - A validated Stack id.
+ * @returns `"active"` while the row is usable, `"inactive"` once `DELETE` retired it,
+ *   `"absent"` when no row carries the id at all.
+ */
+export async function stackResolution(
+  db: Database,
+  stackId: string,
+): Promise<StackResolution> {
+  const rows = await db.execute<{ active: boolean }>(
+    sql`select active from stacks where id = ${stackId}`,
+  );
+  const row = rows[0];
+  if (row === undefined) return "absent";
+  return row.active ? "active" : "inactive";
+}
+
+/**
+ * Does this Stack exist, in the sense of "may a request use it"?
+ *
+ * A thin boolean wrapper over {@link stackResolution}, kept because "does it exist" is the
+ * question every caller already asks and none of them needs the third state to answer it:
+ * an INACTIVE Stack is unresolvable, so it is not usable, so it is not "existing" for any
+ * caller of this function. The tri-state is what lets a surface that must name WHICH
+ * refusal it is sending ask {@link stackResolution} instead.
  *
  * Lives here rather than beside a caller because both surfaces that accept a
  * caller-named Stack need it, and neither may import the other: the viewer must stay
@@ -114,15 +156,22 @@ function toStackSummary(row: StackRow, currentStackId: string): StackSummary {
  *
  * @param db - Handle from `createDimensionsDatabase`.
  * @param stackId - A validated Stack id.
- * @returns True when a row exists.
+ * @returns True when an ACTIVE row exists.
  */
 export async function stackExists(db: Database, stackId: string): Promise<boolean> {
-  const rows = await db.execute<{ id: string }>(sql`select id from stacks where id = ${stackId}`);
-  return rows.length > 0;
+  return (await stackResolution(db, stackId)) === "active";
 }
 
 /**
  * List the reachable Stacks, most recently updated first.
+ *
+ * ## Listing stays COMPLETE while resolution stays STRICT
+ *
+ * An inactive Stack is listed exactly like an active one. Deliberately: an operator who
+ * cannot see a retired Stack cannot reactivate it (`PATCH /stacks/:id` with `active:
+ * true`), and the row still holds a unique `domain` that no other Stack can take.
+ * Resolution — {@link stackExists} and {@link stackResolution} — is the strict half of
+ * that asymmetry; this is the complete half.
  *
  * Ordering is contractual, not cosmetic: without it Postgres may return heap order,
  * which only looks sorted until a row is updated — the reasoning `GET /stacks`
