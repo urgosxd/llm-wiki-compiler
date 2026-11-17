@@ -34,8 +34,8 @@
  * `stackId` exists for the CLI, which resolves its Stack ONCE (`selectStack`) and
  * then hands the answer down. When it is supplied, `AKS_STACK_ID` is not consulted
  * AT ALL — not merely preferred — because a second read would be a second answer to
- * the same question: the defaulting path would resolve the default Stack and then
- * this module would refuse for a missing variable the caller had already replaced.
+ * the same question: the caller would work on one Stack outside and this module
+ * would refuse for a missing variable that caller had already replaced.
  *
  * The refusal itself is deliberately unchanged for callers that supply nothing
  * (`resolveStackId`, and the MCP deployment binding behind it): the surfaces that
@@ -105,8 +105,8 @@ function isKnownDimension(name: string): name is DimensionName {
  *
  * THE ONE READER of `LLMWIKI_DIMENSIONS`. Every question about which dimensions
  * are on is answered here, and a caller that needs the answer earlier than
- * {@link resolveDimensions} — such as the Stack pre-check that decides whether a
- * default Stack may have to be provisioned at all — asks this function instead of
+ * {@link resolveDimensions} — such as the Stack pre-check that decides whether this
+ * run needs a Stack at all, which provisions nothing — asks this function instead of
  * parsing the variable a second time.
  *
  * WHY THAT IS NOT MERELY TIDY. A textual copy alongside this one answers correctly

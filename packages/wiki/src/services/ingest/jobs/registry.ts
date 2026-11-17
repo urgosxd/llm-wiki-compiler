@@ -79,7 +79,9 @@ export interface JobRegistry {
    *
    * `stackId` is the Stack the caller named, when it named one. It rides on the
    * creation call rather than on the registry because one host serves several Stacks
-   * and the choice belongs to the request. Omitted, the host's bound Stack applies.
+   * and the choice belongs to the request. Omitted, the job belongs to no Stack: the host
+   * refuses that request by name instead of substituting the Stack its own environment
+   * names.
    */
   create(source: string, now: Date, stackId?: string): IngestJob;
   /** Current snapshot of `id`, or `undefined` when unknown, evicted, or expired. */

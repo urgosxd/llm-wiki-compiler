@@ -159,14 +159,15 @@ export async function buildFreshnessSnapshot(
  * Both reads are handed the SAME `env` now, so the one authority decides the backend for
  * both halves of one snapshot from the environment the caller actually supplied.
  *
- * ## The authority a boot already resolved is consumed here, not asked for again
+ * ## The authority a caller already resolved is consumed here, not asked for again
  *
- * Both reads above branch on a Stack authority, and resolving one needs a database handle
- * for precedence 2 -- the provisioning of the default Stack. A caller that holds an
- * authority (the launcher's boot, which resolved it once with a handle) passes it, so its
- * snapshot describes the Stack that boot provisioned instead of asking the environment a
- * second time. With no database configured there is nothing to pass and nothing to look
- * up: the caller-supplied `env` alone settles the named file mode.
+ * Both reads above branch on a Stack authority. Resolving one takes no database handle and
+ * provisions nothing: it reads the Stack this run's OWN environment names, and a run that
+ * names none while a database is configured is refused by name. A caller that already
+ * holds an authority passes it, so its snapshot describes the Stack that caller resolved
+ * instead of asking the environment a second time. With no database configured there is
+ * nothing to pass and nothing to look up: the caller-supplied `env` alone settles the
+ * named file mode.
  *
  * @param root - Project root, used by the state read and the on-disk hash pass.
  * @param classified - Optional pre-read classified state, to avoid a redundant read.

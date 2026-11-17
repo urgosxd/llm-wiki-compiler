@@ -240,8 +240,9 @@ async function writeToDimensions(
   // Built for this operation and released right after, because an unclosed pool keeps
   // the event loop alive. Building it in the named file mode is harmless and measured,
   // not assumed: the pool is LAZY, so a run that never queries opens no socket. The mode
-  // is not decided here -- the authority below decides it -- and this handle is only the
-  // thing precedence 2 needs WHEN a database is configured.
+  // is not decided here -- the authority below decides it -- and the handle is passed
+  // along for the row-backed work that follows: resolution provisions nothing and never
+  // reads it.
   const dimensionsDb = createDimensionsDatabase(env);
   observer?.ingest.stage("preparing");
   const locked = await tryWithOrdinaryMutationLock(root, async () => {

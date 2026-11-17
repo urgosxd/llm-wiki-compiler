@@ -298,4 +298,6 @@ To state it once, because it is the mistake this page exists to prevent:
 
 - `AKS_STACK_ID` selects *which* Stack a run works on, and
   therefore whose declaration applies. It does not change the declaration, and it is
-  an optional override: leave it unset and the default Stack applies.
+  no default at all: with a database configured, leave it unset and the run is
+  refused by name - a Stack exists because someone created it or seeded it from a
+  declaration, never because a run needed one.

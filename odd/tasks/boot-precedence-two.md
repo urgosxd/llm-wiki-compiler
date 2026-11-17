@@ -13,6 +13,10 @@ Superseded deliberately — see `odd/tasks/stack-authority-per-request.md` S1 an
 
 S2 — RED, asserted on outcome. "boot with a database configured, `public.stacks` empty, `AKS_STACK_ID` absent, and assert the service binds and that a Stack now exists." "Assert the OUTCOME — a listening port and `select count(*) from public.stacks` = 1 — not an error message." "Report the literal failure before the fix."
 
+**SUPERSEDED — the paragraph above is history, not the contract.** It is the RED evidence this document was written to, and it was reversed on purpose. See L18.
+
+Superseded deliberately — see `odd/tasks/stack-authority-per-request.md` S1 and S12. The count this S2 demanded is now `0`, not `1`: with a database configured and an empty `public.stacks`, boot provisions nothing, the process still binds, and the Stack a later request needs is created over `POST /stacks` or seeded from the optional boot declaration. This document supersedes nothing further: the authority for the reversal is `odd/tasks/stack-authority-per-request.md`, and this file is history.
+
 S3 — Refusal narrowed, never deleted. "`main.test.ts:373`'s refusal must still hold where it is still correct — a configured database whose provisioning fails. Do not delete the guard; narrow its trigger." [this sentence originally cited `main.test.ts:334`; only the citation changed, the RULE is untouched — see the correction below]
 
 Corrected: this refusal lives at `main.test.ts:373` (`it("refuses a database-backed child that names no Stack, instead of starting file-backed")`, inside `describe("the mode the launcher is handed")` opening at `:366`). `:334` is not this test: it is a closing brace inside the idempotence case whose digest assertion is at `:330`. The rule stands unchanged — a configured database whose provisioning genuinely fails still refuses.

@@ -48,10 +48,14 @@ export interface DurableRegistryOptions {
    * the live registry got the requested Stack while the durable row went to the host's
    * startup Stack, so reading the job back under the requested id returned 404.
    *
-   * Absent, the host's bound Stack is used, which is the single-tenant behaviour.
+   * Absent, the mirror uses the tenant this wrapper was constructed with (`stackId`
+   * below). That is not a Stack filled in from a request's absence: the host builds one
+   * wrapper per job, bound to the Stack THAT request named, and a request that names none
+   * is refused by name before any job exists -- the process environment never stands in
+   * for it.
    */
   readonly stackIdFor?: (job: IngestJob) => string | undefined;
-  /** Tenant every job of this host belongs to, when none is named. */
+  /** The tenant this wrapper mirrors into when a job's own Stack is not known. */
   readonly stackId: string;
   /** Called when a mirror write fails. Never rethrown: see the file header. */
   readonly onError?: (error: unknown) => void;
@@ -82,7 +86,7 @@ export function createDurableJobRegistry(
    */
   const stacksByJob = new Map<string, string>();
 
-  /** The Stack this job belongs to: the caller's when named, else the bound one. */
+  /** The Stack this job belongs to: the one remembered for it, else the wrapper's tenant. */
   const stackIdOf = (job: IngestJob): string =>
     stacksByJob.get(job.id) ?? options.stackIdFor?.(job) ?? options.stackId;
 
@@ -97,8 +101,8 @@ export function createDurableJobRegistry(
     create(source, now, stackId) {
       const job = inner.create(source, now, stackId);
       if (stackId !== undefined) stacksByJob.set(job.id, stackId);
-      // The Stack comes from THIS call, not from the wrapper's construction: a host
-      // that booted bound to A must still mirror a job the caller created in B.
+      // The Stack comes from THIS call, not from the wrapper's construction: a wrapper
+      // built for one Stack must still mirror a job the caller created in another.
       void saveIngestJob(options.db, stackId ?? options.stackId, job).catch(report);
       return job;
     },

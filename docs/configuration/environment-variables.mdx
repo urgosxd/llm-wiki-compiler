@@ -254,14 +254,15 @@ Non-numeric, zero, or negative values are silently ignored and the next source i
 
 ## Stacks
 
-Stack configuration is optional. A single checkout configures none of these and
-still compiles: the resolution order is the Stack the caller named (`--stack <id>`
-or `AKS_STACK_ID`), then the default Stack, then a named refusal - documented once
-in [Tenant isolation](/concepts/tenant-isolation#choosing-which-stack-a-command-uses).
+Stack configuration is optional for a checkout with no database configured: it
+still compiles from files with none of these set. Once a database is configured, a
+run works on the Stack it named (`--stack <id>` or `AKS_STACK_ID`) and a run that
+names none is refused by name - there is no default Stack - documented once in
+[Tenant isolation](/concepts/tenant-isolation#choosing-which-stack-a-command-uses).
 
 | Variable | Default | Description |
 |---|---|---|
-| `AKS_STACK_ID` | The default Stack | An **optional override** naming the Stack `ingest`, `compile`, `refresh`, `query` and `watch` read and write. It is precedence 1 of the resolution order and never a requirement: unset or blank resolves the default Stack instead, so nothing has to be configured for a single checkout |
+| `AKS_STACK_ID` | None | Names the Stack `ingest`, `compile`, `refresh`, `query` and `watch` read and write. It is precedence 1 of the resolution order and it selects among Stacks that already exist - no code path creates one - so a run with a database configured that leaves it unset or blank is refused by name instead of falling back. With no database configured it is not consulted: the run is file-backed |
 | `AKS_STACK_NAME` | The Stack id | Display name recorded for the Stack in the graph dimension |
 | `AKS_DATABASE_URL` | The `llmwiki-kg` DSN | Connection string for the dimensions database that holds Stack-scoped rows. Setting it is how a project points at a different database, not a requirement. Absent or blank means no database is configured at all, and the run is file-backed |
 
@@ -271,9 +272,10 @@ in [Tenant isolation](/concepts/tenant-isolation#choosing-which-stack-a-command-
   lock, the Stack-scoped project config, the review-candidate queue, the activity
   journal, the derived-artifact store, and the host's ingest-job durability still
   choose their row backend by reading this variable directly. A deployment that
-  removes an existing line therefore keeps `ingest` and `compile` working on the
-  default Stack, while those nine fall back to their file-backed and in-memory
-  forms.
+  removes an existing line therefore does not keep `ingest` and `compile` working:
+  with a database configured the run names no Stack and is refused by name, and
+  those nine reach their file-backed and in-memory forms only where no database is
+  configured at all.
 </Note>
 
 ---
