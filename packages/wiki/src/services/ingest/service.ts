@@ -60,15 +60,19 @@ import type { IngestResult, SourceType, WriteStatus } from "../../utils/types.js
 export interface IngestTextInput { title: string; text: string; source?: string }
 
 /**
- * A Stack a caller ALREADY named, for a surface where no default may be resolved.
+ * A Stack a caller ALREADY named, for a surface that resolves none for itself.
  *
  * The MCP tools carry the Stack as their own argument, so they must not reach
- * `resolveStackForCommand` — that helper provisions a default Stack when the
- * environment names none, which is exactly the fallback the tool path no longer has.
+ * `resolveStackForCommand` — which is not a fallback that finds one: it reads the Stack
+ * an ENVIRONMENT names and REFUSES by name when a database is configured and no Stack is
+ * named. No code path creates a Stack implicitly. A Stack exists because its owner
+ * created it over HTTP (`POST /stacks`), or because an operator seeded it from an
+ * optional declaration at boot.
  * A named id is precedence 1 of `resolveStackAuthority`, which hands it back without
- * a lookup, so a tool call never provisions one.
- * Callers that pass nothing here (the CLI, the HTTP host, the SDK) keep the
- * resolution they have always had.
+ * a lookup.
+ * Callers that pass nothing here (the CLI, the HTTP host, the SDK) read the Stack their
+ * own environment names, and are REFUSED — not provisioned — when they name none and a
+ * database is configured.
  */
 export interface IngestStackArgument { readonly stackId?: string }
 
@@ -183,10 +187,12 @@ async function ingestAsFiles(
  * ## The Stack is decided ONCE, by the authority, and the mode is its answer
  *
  * `resolveStackAuthority` owns the precedence: the caller's id wins; otherwise a
- * configured database supplies one through `resolveStackForCommand`, which honours an
- * explicitly selected Stack and otherwise provisions the default one; otherwise -- no
- * database configured at all -- the NAMED `file` mode; and a configured database that
- * resolves no Stack is a loud, named refusal.
+ * configured database leaves the run to the Stack its environment NAMES, read through
+ * `resolveStackForCommand`, which creates nothing; otherwise -- no database configured at
+ * all -- the NAMED `file` mode. A configured database that names no Stack is a loud,
+ * named refusal, never a provisioned row and never a file fallback: no code path creates
+ * a Stack implicitly, and a Stack exists only because its owner created it over HTTP or
+ * an operator seeded it from an explicit declaration.
  *
  * That is why nothing here reads `AKS_STACK_ID` or asks whether a DSN exists: an empty
  * id used to decide the mode by itself, and the two situations it conflated -- "this
@@ -201,15 +207,16 @@ async function ingestAsFiles(
  * do" about a Stack that did not contain the file at all.
  *
  * A caller that already knows the Stack (the MCP tool, whose argument is required)
- * supplies it as precedence 1: there is no default to fall back to there, and asking
- * for one would provision a Stack nobody named.
+ * supplies it as precedence 1: there is nothing to fall back to there, and a call that
+ * named none is refused by name rather than handed a Stack nobody named. No code path
+ * creates a Stack implicitly.
  *
  * @param root - Project root.
  * @param input - Source identity, title, frontmatter document, and body.
  * @param observer - Optional job observer.
  * @param env - Environment the dimensions write with; defaults to `process.env`.
  * @param explicitStackId - A Stack the CALLER named -- precedence 1 of the authority,
- *   so a caller that knows its Stack costs no lookup and provisions no default.
+ *   so a caller that knows its Stack costs no lookup and creates nothing.
  * @param port - The dimensions, injected by the caller that owns them.
  *   OPTIONAL, and its omission is VALID: absent means "resolve the dimensions
  *   internally, exactly as this function always has", never "throw" and never
@@ -318,7 +325,8 @@ async function ingestIntoStack(
  * @param observer - Optional job observer.
  * @param env - Environment the dimensions write with; defaults to `process.env`.
  * @param stack - A Stack the caller named. Absent for every existing caller, which
- *   keeps the environment's selection (default Stack included) unchanged.
+ *   leaves the run to the Stack its own environment NAMES -- and refuses, naming what
+ *   is missing, when it names none and a database is configured.
  * @param port - The dimensions, injected by the caller that owns them. Omitted means
  *   "resolve internally", exactly as before; see {@link writeToDimensions}.
  * @returns Saved filename, character count, truncation flag, source URI, and source type.

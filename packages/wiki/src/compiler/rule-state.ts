@@ -78,10 +78,13 @@ async function readRuleStateFromRows(
 ): Promise<RuleState> {
   const handle = createDimensionsDatabase(env);
   try {
-    // Resolved through `resolveStackForCommand`, not `resolveStackId`: an unconfigured
-    // checkout reads the default Stack's cursor instead of refusing, and the write half
-    // below resolves through the SAME call, so a read and the advance that follows it
-    // cannot name different Stacks.
+    // Resolved through `resolveStackForCommand`, not `resolveStackId`: the cursor is read
+    // from the Stack this run's environment NAMES, and a run that names none with a
+    // database configured is REFUSED in that resolver's words. That resolver creates no
+    // Stack implicitly -- a Stack exists because its owner created it over HTTP or an
+    // operator seeded it from an explicit declaration. The write half below resolves
+    // through the SAME call, so a read and the advance that follows it cannot name
+    // different Stacks.
     const stackId = await resolveStackForCommand(handle.db, env);
     const stored = await readRuleExtractorState(handle.db, stackId);
     // A cursor that has never been written is EMPTY, not an error: it just means

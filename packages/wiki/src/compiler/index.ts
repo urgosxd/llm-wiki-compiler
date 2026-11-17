@@ -384,7 +384,10 @@ export async function compileAndReport(
     // below is the value the pipeline consumes, threaded in rather than asked for again.
     //
     // The cost, recorded rather than hidden: this now precedes the recovery gate, so a run
-    // with an UNSAFE journal resolves (and may provision the default Stack) before refusing.
+    // with an UNSAFE journal resolves its Stack -- and is refused BY NAME when it names none
+    // while a database is configured -- before refusing on the journal. Nothing is created on
+    // the way past: no code path provisions a Stack, and a Stack exists only because its owner
+    // created it over HTTP or an operator seeded it from an explicit declaration.
     // The refusal itself is unchanged -- same error, nothing written, no lock left held.
     const stackAuthority = await resolveStackAuthority({ env, db: dimensionsDb.db });
     const stackEnv = stackEnvWith(env, stackAuthority);
@@ -1472,12 +1475,14 @@ function dimensionsPortFor(options: CompileOptions): DimensionsPort<Dimension> {
  *     graph rather than from the ambient switch, and this function builds no
  *     dimension itself.
  *   - the PRE-CHECK keeps its own read of the switch, through
- *     `resolveStackForDimensions`. It answers a different question -- does a default
- *     Stack have to be provisioned at all -- and it must be answered BEFORE anything
- *     is resolved: a workspace with no Stack configured gets the default one
- *     provisioned on first use, so resolving unconditionally would make every
- *     wiki-only compile, the ordinary case, open a connection for a dimension it
- *     never uses.
+ *     `resolveStackForDimensions`. It answers a different question -- does this run
+ *     need a Stack AT ALL for the dimensions it will touch -- and it must be answered
+ *     BEFORE anything is resolved: a run that names no Stack and enables none of these
+ *     dimensions has nothing to resolve, so resolving unconditionally would refuse
+ *     every wiki-only compile, the ordinary case, for a Stack it never needed. The
+ *     pre-check creates nothing; a run that does need a Stack and names none is
+ *     refused by name, and a Stack exists only because its owner created it over HTTP
+ *     or an operator seeded it from an explicit declaration.
  *
  * The pre-check cannot move into the port. `DimensionsRequest.stackId` is optional
  * only in the sense that omitting it is INVALID: a resolution without it falls
@@ -1605,10 +1610,11 @@ async function forgetDeletedSources(
   // THE FILE MODE IS DECIDED ONCE, by the authority this run already resolved: no
   // database is configured, so no Stack exists and a graph document — which
   // `forgetDocumentRows` deletes `where stack_id = ...` — cannot be addressed at all.
-  // The pre-check below would provision the default Stack and demand a connection this
-  // run does not have, which is why a database-less compile used to refuse a deletion
-  // it could plainly see in `.llmwiki/state.json`. A dimension that CANNOT exist is not
-  // a precondition, so the graph work is skipped here instead of being demanded.
+  // The pre-check below would refuse this run for naming no Stack -- and demand a
+  // connection this run does not have -- which is why a database-less compile used to
+  // refuse a deletion it could plainly see in `.llmwiki/state.json`. A dimension that
+  // CANNOT exist is not a precondition, so the graph work is skipped here instead of
+  // being demanded.
   //
   // WHAT IS SKIPPED, precisely: `forget` on the `kg` dimension for every deleted source.
   // WHY IT CANNOT BE DONE HERE: no Stack exists to key a graph document by, and asking
