@@ -1,33 +1,33 @@
 /**
  * @file test/services/stacks/resolve-stack.test.ts
- * @description The Stack a command works on, resolved from a selection and, when it
- * is the default, materialized.
+ * @description The Stack a command works on: the id the caller named, or a refusal
+ * that names what is missing — and never a Stack created on the way past.
  *
  * ## What these cases pin
  *
- * Three rules, and the third is the one a careless implementation breaks: an
- * explicitly configured Stack is used AS GIVEN (no provisioning, no second answer),
- * an unconfigured checkout falls back to the one default Stack, and resolving twice
- * reaches the SAME Stack instead of creating a second one.
+ * Two rules: an explicitly configured Stack is used AS GIVEN (no lookup, no second
+ * answer), and a caller that named no Stack is REFUSED by name without a row being
+ * written. The second rule is the reversal of a contract, on purpose (S1 and S12 of
+ * `odd/tasks/stack-authority-per-request.md`): this file used to assert that an
+ * unconfigured run fell back to a default Stack that the resolver materialized, and
+ * now asserts that nothing is materialized at all. The table is read around the
+ * refusal, because a resolver that provisions the Stack it then reports as missing
+ * would pass a message-only assertion.
  *
- * ## Why every case runs inside a transaction that is rolled back
+ * ## Why the rows are read through SQL, on the suite's own database
  *
- * The default Stack is identified by its `domain`, and `stacks.domain` is globally
- * unique. "does the second call reuse the row" therefore has no per-suite slice to
- * own the way {@link createKgPostgresHarness} owns a random Stack: a leftover row, or
- * a concurrent suite, would decide the assertion instead of the code. Each case
- * deletes the `default` domain row, runs, and rolls everything back -- so nothing
- * this file does reaches the database in either direction.
+ * `select id from stacks` is the only observation that answers "did the resolver write
+ * anything": asking the product would let a bug answer for itself. The whole id list is
+ * compared before and after rather than a count alone, so the assertion also names WHICH
+ * rows exist. The database is this process's own (`test/fixtures/per-run-database.ts`), so
+ * no live or shared database is read.
  */
 
 import { afterAll, describe, expect, it } from "vitest";
-import { sql } from "drizzle-orm";
 import type { DatabaseHandle } from "@repo/foundation";
 
 import { createKgPostgresHarness } from "../../fixtures/kg-postgres.js";
-import { DEFAULT_STACK_DOMAIN } from "../../../packages/wiki/src/dimensions/stack-selection.js";
 import { resolveStackForCommand } from "../../../packages/wiki/src/services/stacks/resolve-stack.js";
-import { isolatedCases } from "../../fixtures/stack-rollback.js";
 
 const harness = await createKgPostgresHarness("resolve-stack");
 const { db, reachable } = harness;
@@ -35,50 +35,38 @@ const { db, reachable } = harness;
 afterAll(() => harness.cleanup());
 
 /**
- * Ids of every row claiming the default domain, as they stand on `tx`.
+ * The id of every Stack row, in id order, read through SQL.
  *
- * @param tx - Handle to read through.
- * @returns The matching Stack ids.
+ * @param handle - Handle to read through.
+ * @returns Every Stack id the database holds.
  */
-async function defaultStackIds(tx: DatabaseHandle): Promise<readonly string[]> {
-  const rows = await tx.execute<{ id: string }>(
-    sql`select id from stacks where domain = ${DEFAULT_STACK_DOMAIN}`,
-  );
+async function stackIds(handle: DatabaseHandle): Promise<readonly string[]> {
+  const rows = await handle.execute<{ id: string }>("select id from stacks order by id");
   return rows.map((row) => row.id);
 }
 
-/** The isolated case runner: a free default domain, and everything rolled back. */
-const isolated = isolatedCases(db);
-
 describe.skipIf(!reachable)("resolveStackForCommand", () => {
-  it("falls back to the default Stack when nothing is configured", async () => {
-    const observed = await isolated(async (tx) => {
-      const stackId = await resolveStackForCommand(tx, {});
-      return { stackId, rows: await defaultStackIds(tx) };
-    });
+  it("refuses by name when no Stack is configured, and creates no row", async () => {
+    const before = await stackIds(db);
 
-    expect(observed.stackId).toBeDefined();
-    expect(observed.rows).toEqual([observed.stackId]);
+    await expect(resolveStackForCommand(db, {})).rejects.toThrow(
+      /AKS_DATABASE_URL is configured, so this run must have a Stack/,
+    );
+
+    // After the throw, not before: a resolver that provisions on its way out would still
+    // satisfy the message assertion above.
+    expect(
+      await stackIds(db),
+      "a refusal must not create the Stack it then reports as missing",
+    ).toEqual(before);
   });
 
-  it("returns a configured Stack as given, provisioning no default", async () => {
-    const observed = await isolated(async (tx) => {
-      const stackId = await resolveStackForCommand(tx, { AKS_STACK_ID: harness.stackId });
-      return { stackId, rows: await defaultStackIds(tx) };
-    });
+  it("returns a configured Stack as given, creating no row", async () => {
+    const before = await stackIds(db);
 
-    expect(observed.stackId).toBe(harness.stackId);
-    expect(observed.rows).toEqual([]);
-  });
+    const stackId = await resolveStackForCommand(db, { AKS_STACK_ID: harness.stackId });
 
-  it("resolves the same default twice, leaving exactly one row", async () => {
-    const observed = await isolated(async (tx) => {
-      const first = await resolveStackForCommand(tx, {});
-      const second = await resolveStackForCommand(tx, {});
-      return { first, second, rows: await defaultStackIds(tx) };
-    });
-
-    expect(observed.second).toBe(observed.first);
-    expect(observed.rows).toEqual([observed.first]);
+    expect(stackId).toBe(harness.stackId);
+    expect(await stackIds(db), "an explicit Stack is used as given, not provisioned").toEqual(before);
   });
 });

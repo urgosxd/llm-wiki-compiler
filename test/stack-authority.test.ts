@@ -6,11 +6,17 @@
  * ## What these cases pin
  *
  * The precedence, in its order, and the fourth case that is the whole point: a
- * configured database that answers no Stack must FAIL, not silently degrade to the
- * file backend the guards degraded to. The defect these cases exist for is a
- * masquerade — "no Stack" meaning both "this wiki is file-backed" and "a Stack is
- * missing" — so the file case asserts a named kind, never a falsy value, and the
- * missing case asserts that no authority came back at all.
+ * configured database with no Stack named must FAIL, not silently degrade to the
+ * file backend, and must fail WITHOUT creating the Stack it says is missing. The
+ * defect these cases exist for is a masquerade — "no Stack" meaning both "this wiki
+ * is file-backed" and "a Stack is missing" — so the file case asserts a named kind,
+ * never a falsy value, and the missing case asserts a refusal and an unchanged table.
+ *
+ * The fourth case is the reversal of a contract, on purpose (S1 and S12 of
+ * `odd/tasks/stack-authority-per-request.md`): this file used to assert that the
+ * authority RESOLVED a database-backed default Stack, and now asserts that it
+ * refuses and leaves `public.stacks` empty. A refusal that provisions on its way out
+ * is the defect the count exists to catch, so the count is taken after the throw.
  *
  * ## Why every case names an environment instead of reading process.env
  *
@@ -20,12 +26,14 @@
  * means, and the file-mode cases pass `{}`.
  */
 
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { DatabaseHandle } from "@repo/foundation";
 
-import { createKgPostgresHarness } from "./fixtures/kg-postgres.js";
-import { AKS_DATABASE_URL_ENV_VAR } from "../packages/wiki/src/dimensions/activation.js";
-import { DEFAULT_STACK_DOMAIN } from "../packages/wiki/src/dimensions/stack-selection.js";
+import {
+  AKS_DATABASE_URL_ENV_VAR,
+  createDimensionsDatabase,
+  type DimensionsDatabase,
+} from "../packages/wiki/src/dimensions/activation.js";
 import {
   NO_DATABASE_CONFIGURED,
   StackAuthorityError,
@@ -35,17 +43,12 @@ import {
   stackIdOf,
   type StackAuthority,
 } from "../packages/wiki/src/dimensions/stack-authority.js";
-import { isolatedCases } from "./fixtures/stack-rollback.js";
+import { createSuiteDatabase } from "./fixtures/per-run-database.js";
 
 const CALLER_STACK = "22222222-2222-2222-2222-222222222222";
 
 /** A DSN nothing answers: "configured" without reaching any server. */
 const UNREACHABLE_DSN = "postgresql://unused:unused@127.0.0.1:1/unused";
-
-const harness = await createKgPostgresHarness("stack-authority");
-const { db, reachable } = harness;
-
-afterAll(() => harness.cleanup());
 
 /** A handle whose only transaction fails, standing in for an unreachable database. */
 function refusingDatabase(): DatabaseHandle {
@@ -54,9 +57,6 @@ function refusingDatabase(): DatabaseHandle {
   };
   return { transaction: refuse } as unknown as DatabaseHandle;
 }
-
-/** The isolated case runner: a free default domain, and everything rolled back. */
-const isolated = isolatedCases(db);
 
 /** The error a synchronous call throws, so its exact message can be pinned. */
 function thrownBy(work: () => unknown): unknown {
@@ -68,12 +68,18 @@ function thrownBy(work: () => unknown): unknown {
   }
 }
 
-/** Ids of every row claiming the default domain, read through `tx`. */
-async function defaultStackIds(tx: DatabaseHandle): Promise<readonly string[]> {
-  const rows = await tx.execute<{ id: string }>(
-    `select id from stacks where domain = '${DEFAULT_STACK_DOMAIN}'`,
+/** How many rows `public.stacks` holds in `dimensions` right now, read through SQL. */
+async function countStacks(dimensions: DimensionsDatabase): Promise<number> {
+  const [row] = await dimensions.db.execute<{ n: number }>("select count(*)::int as n from public.stacks");
+  return Number(row?.n);
+}
+
+/** The refusal a promise-returning call produces, so its type and text can be pinned. */
+async function refusalOf(work: Promise<unknown>): Promise<unknown> {
+  return await work.then(
+    () => undefined,
+    (error: unknown) => error,
   );
-  return rows.map((row) => row.id);
 }
 
 describe("resolveStackAuthority: the caller's Stack id", () => {
@@ -110,43 +116,51 @@ describe("resolveStackAuthority: the explicit file-backed mode", () => {
 
 describe("resolveStackAuthority: a configured database", () => {
   it("fails loudly instead of returning a file authority when no Stack resolves", async () => {
-    const outcome = await resolveStackAuthority({
-      env: { [AKS_DATABASE_URL_ENV_VAR]: UNREACHABLE_DSN },
-      db: refusingDatabase(),
-    }).then(
-      () => undefined,
-      (error: unknown) => error,
+    const outcome = await refusalOf(
+      resolveStackAuthority({
+        env: { [AKS_DATABASE_URL_ENV_VAR]: UNREACHABLE_DSN },
+        db: refusingDatabase(),
+      }),
     );
 
     if (!(outcome instanceof StackAuthorityError)) {
       throw new Error(`expected a StackAuthorityError, received ${String(outcome)}`);
     }
-    expect(outcome.message).toContain(DEFAULT_STACK_DOMAIN);
-    expect(outcome.message).toContain(AKS_DATABASE_URL_ENV_VAR);
+    expect(outcome.message).toContain(`${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack`);
+    expect(outcome.message).toContain("POST /stacks");
   });
 
   it("fails loudly when a database is configured and no handle was supplied", async () => {
-    const outcome = await resolveStackAuthority({
-      env: { [AKS_DATABASE_URL_ENV_VAR]: UNREACHABLE_DSN },
-    }).then(
-      () => undefined,
-      (error: unknown) => error,
+    const outcome = await refusalOf(
+      resolveStackAuthority({ env: { [AKS_DATABASE_URL_ENV_VAR]: UNREACHABLE_DSN } }),
     );
 
     expect(outcome).toBeInstanceOf(StackAuthorityError);
   });
 
-  it("resolves the database-backed default Stack when the caller named none", async () => {
-    if (!reachable) return;
-    const observed = await isolated(async (tx) => ({
-      authority: await resolveStackAuthority({
-        env: { [AKS_DATABASE_URL_ENV_VAR]: harness.url },
-        db: tx,
-      }),
-      rows: await defaultStackIds(tx),
-    }));
+  it("refuses when the caller named none, and leaves public.stacks empty", async () => {
+    const suite = await createSuiteDatabase("authority-refusal");
+    const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
+    try {
+      // Measured, never assumed: a case that started from a populated database could
+      // not tell "wrote nothing" apart from "wrote nothing new".
+      expect(await countStacks(dimensions), "the throwaway database must start with ZERO Stacks").toBe(0);
 
-    expect(observed.authority).toEqual({ kind: "stack", stackId: observed.rows[0] });
+      const outcome = await refusalOf(
+        resolveStackAuthority({ env: { [AKS_DATABASE_URL_ENV_VAR]: suite.url }, db: dimensions.db }),
+      );
+
+      expect(outcome).toBeInstanceOf(StackAuthorityError);
+      // The count is taken AFTER the throw on purpose: a refusal that creates the very
+      // Stack it then reports as missing is the defect this case exists for.
+      expect(
+        await countStacks(dimensions),
+        "resolving with no Stack named must create NO Stack, not even on its way out",
+      ).toBe(0);
+    } finally {
+      await dimensions.close();
+      await suite.drop();
+    }
   });
 });
 
