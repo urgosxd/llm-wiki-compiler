@@ -50,7 +50,14 @@ describe("the host mode of the surviving entry", () => {
     try {
       // The endpoints exist and answer like a real API, not a 404.
       expect((await fetch(`${base}/api/health`)).status).toBe(200);
-      expect((await fetch(`${base}/api/compile`, { method: "POST" })).status).toBe(200);
+      // The Stack is NAMED on the request even though the spawned child already inherits
+      // AKS_STACK_ID from this suite. That is the contract, not collateral: a command may read
+      // its own configuration, a request may not inherit it — an unnamed compile on a
+      // database-configured host is refused 409 `stack_unnamed`.
+      const compile = await fetch(`${base}/api/compile?stackId=${process.env.AKS_STACK_ID ?? ""}`, {
+        method: "POST",
+      });
+      expect(compile.status).toBe(200);
     } finally {
       await host.kill();
     }

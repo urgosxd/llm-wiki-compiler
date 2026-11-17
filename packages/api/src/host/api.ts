@@ -40,6 +40,13 @@
  * identity and runs the work detached, so a caller that cannot hold a connection
  * open still gets progress. The synchronous contract is untouched for every
  * existing client.
+ *
+ * ## Every request names its own Stack
+ *
+ * Both routes settle the Stack the REQUEST names and refuse by name when it names none
+ * while a database is configured. Neither reads the host's environment for it: that
+ * inheritance is the ambient authority S3 deletes, and it made a compile of one tenant
+ * indistinguishable from a compile of another.
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
@@ -448,10 +455,55 @@ function passesOriginPolicy(req: IncomingMessage, res: ServerResponse, deps: Api
   return false;
 }
 
-/** `POST /api/compile` — compile sources/ into the wiki. */
-async function handleCompile(root: string, res: ServerResponse): Promise<void> {
+/**
+ * `POST /api/compile` — compile sources/ into the wiki.
+ *
+ * ## The Stack is settled HERE, for the same reason `/api/ingest` settles it
+ *
+ * A compile reads and writes ONE Stack's pages, so a request that names none must be refused
+ * by name instead of compiling under whichever Stack the process was started with (S3 of
+ * `odd/tasks/stack-authority-per-request.md`). This route used to call `compileAndReport(root)`
+ * with no options at all, which meant the run resolved its own Stack from the HOST's
+ * environment -- and a host that named none answered 500 out of the resolver instead of naming
+ * what the request was missing.
+ *
+ * The refusal comes BEFORE the compile, and {@link stackRefusalFor} is the same settlement the
+ * ingest route uses, so one request fact has one spelling across the mount. That ordering is
+ * the promise: a refused compile takes no lock, passes no journal gate, reads no page and
+ * writes no artifact -- the project is untouched, not partly compiled.
+ *
+ * @param root - Project root to compile.
+ * @param req - Incoming request, for the Stack it names.
+ * @param res - Response to answer on.
+ */
+async function handleCompile(
+  root: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  // Query string only: a compile carries no body to put a Stack in, and `POST /api/ingest`
+  // accepts `?stackId=` for exactly this reason -- a client that writes and reads with one
+  // shape must not have to learn a second one here.
+  const stackId = resolveRequestStack(req, undefined);
+  if (stackId !== undefined) {
+    const problem = stackIdProblem(stackId);
+    if (problem !== undefined) {
+      writeJsonError(res, 400, "invalid_request", problem);
+      return;
+    }
+  }
+  const refusal = await stackRefusalFor(stackId);
+  if (refusal !== undefined) {
+    writeStackRefusal(res, refusal);
+    return;
+  }
   try {
-    const result: CompileResult = await compileAndReport(root);
+    // The Stack travels down as the RUN's environment, never into `process.env`: one env for
+    // the whole compile is what lets a per-request host compile two Stacks at once. With no
+    // database configured the request named nothing, there is no Stack to publish, and the run
+    // keeps `process.env` exactly as it always did (S7).
+    const options = stackId === undefined ? {} : { env: buildIngestEnv(stackId) };
+    const result: CompileResult = await compileAndReport(root, options);
     // `busy` means the service returned without doing the work; the request never
     // started rather than failing, so it is a conflict a client can retry.
     if (result.busy === true) {
@@ -489,7 +541,7 @@ export async function handleApiRequest(
   }
   if (req.method === "POST" && pathname === "/api/compile") {
     if (!passesOriginPolicy(req, res, deps)) return true;
-    await handleCompile(root, res);
+    await handleCompile(root, req, res);
     return true;
   }
   return false;
