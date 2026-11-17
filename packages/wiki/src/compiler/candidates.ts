@@ -20,7 +20,7 @@
 
 import { unlink } from "fs/promises";
 import { withCandidateSource } from "../dimensions/wiki/candidate-source.js";
-import { NO_DATABASE_CONFIGURED, type StackAuthority } from "../dimensions/stack-authority.js";
+import type { StackAuthority } from "../dimensions/stack-authority.js";
 import { assertCandidateSlug, candidatePath } from "./candidate-paths.js";
 import {
   candidateTargetKey,
@@ -60,21 +60,6 @@ export interface CandidateDeletionHooks {
   afterCandidateDeleteForTest?: (fileId: string, index: number) => Promise<void>;
 }
 
-/**
- * The custody branch for a caller that resolved no Stack authority.
- *
- * THE COMPILER NEVER REACHES THIS VALUE. `runCompilePipeline` resolves the authority
- * once and hands it down through `generateMergedPage`, so every call the pipeline makes
- * carries the run's answer, and a row-backed run cannot be told it is file-backed.
- *
- * It exists for the entry points whose callers held only an `env` before this chain was
- * threaded, and it answers the FILE branch — which is the branch those calls already
- * took: the row source is chosen by `withCandidateSource(env)`, so a caller that names
- * no Stack there is file-backed. Custody agreeing with that keeps ONE answer per call
- * instead of two. A caller that has a resolved authority passes it and is never here.
- */
-const UNRESOLVED_AUTHORITY: StackAuthority = { kind: "file", reason: NO_DATABASE_CONFIGURED };
-
 /** Remove only the exact pending object authorized by one custody receipt. */
 async function deleteCandidateWithCustody(
   root: string,
@@ -102,8 +87,9 @@ async function deleteCandidateWithCustody(
  * @param env - The run's environment, used to pick the candidate source.
  * @param id - Candidate id to remove.
  * @param hooks - Deterministic test seams; normal callers omit them.
- * @param authority - The Stack this run resolved, when it resolved one; see
- *   {@link UNRESOLVED_AUTHORITY} for the callers that never did.
+ * @param authority - The Stack this run RESOLVED, handed down as a value. REQUIRED: it
+ *   used to default to the file branch, and that default let a caller omit the answer the
+ *   run already had and silently re-open the question at the custody seam.
  * @returns True when the candidate was found and removed.
  */
 export async function deleteCandidate(
@@ -111,7 +97,7 @@ export async function deleteCandidate(
   env: NodeJS.ProcessEnv,
   id: string,
   hooks: CandidateDeletionHooks = {},
-  authority: StackAuthority = UNRESOLVED_AUTHORITY,
+  authority: StackAuthority,
 ): Promise<boolean> {
   // A row has no inode to capture and no parent directory to validate, so the
   // custody preconditions below are vacuous; the delete is the whole operation.
@@ -142,8 +128,9 @@ export async function deleteCandidate(
  * @param env - The run's environment, used to pick the candidate source.
  * @param slug - Default concepts slug whose candidates are deleted.
  * @param hooks - Deterministic test seams; normal callers omit them.
- * @param authority - The Stack this run resolved, when it resolved one; see
- *   {@link UNRESOLVED_AUTHORITY} for the callers that never did.
+ * @param authority - The Stack this run RESOLVED, handed down as a value. REQUIRED: it
+ *   used to default to the file branch, and that default let a caller omit the answer the
+ *   run already had and silently re-open the question at the custody seam.
  * @returns True when at least one candidate was removed.
  */
 export async function deleteCandidateBySlug(
@@ -151,7 +138,7 @@ export async function deleteCandidateBySlug(
   env: NodeJS.ProcessEnv,
   slug: string,
   hooks: CandidateDeletionHooks = {},
-  authority: StackAuthority = UNRESOLVED_AUTHORITY,
+  authority: StackAuthority,
 ): Promise<boolean> {
   assertCandidateSlug(slug);
 

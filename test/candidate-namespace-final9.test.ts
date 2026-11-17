@@ -20,10 +20,16 @@ import {
 import { CANDIDATES_ARCHIVE_DIR } from "../packages/wiki/src/utils/constants.js";
 import { CandidateCustodyUnavailableError } from "../packages/wiki/src/compiler/candidate-custody.js";
 import { readCandidateEntryForMutation } from "../packages/wiki/src/compiler/candidate-read.js";
+import {
+  NO_DATABASE_CONFIGURED,
+  type StackAuthority,
+} from "../packages/wiki/src/dimensions/stack-authority.js";
 import { seedPendingCandidate, type PendingCandidateSeed } from "./fixtures/candidate-queue.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();
+/** The named file mode this file's custody cases run under. */
+const FILE_AUTHORITY: StackAuthority = { kind: "file", reason: NO_DATABASE_CONFIGURED };
 
 /** Minimal record used to probe the real pending namespace. */
 function draft(): PendingCandidateSeed {
@@ -74,7 +80,7 @@ describe("Confined candidate namespaces", () => {
     const planted = await plantInProjectAlias();
 
     expect((await readCandidate(root.dir, process.env, "planted"))?.id).toBe("planted");
-    await expect(deleteCandidate(root.dir, process.env, "planted")).resolves.toBe(true);
+    await expect(deleteCandidate(root.dir, process.env, "planted", {}, FILE_AUTHORITY)).resolves.toBe(true);
     await expect(lstat(planted)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -123,7 +129,7 @@ describe("Confined candidate namespaces", () => {
 
   it("reports unreadable delete authority without removing the candidate", async () => {
     const file = await withUnreadablePending(async (candidateId) => {
-      await expect(deleteCandidate(root.dir, process.env, candidateId))
+      await expect(deleteCandidate(root.dir, process.env, candidateId, {}, FILE_AUTHORITY))
         .rejects.toBeInstanceOf(CandidateCustodyUnavailableError);
     });
 

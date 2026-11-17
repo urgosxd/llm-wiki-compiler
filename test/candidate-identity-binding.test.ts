@@ -19,10 +19,16 @@ import {
   UnsafeCandidateIdError,
   deleteCandidateBySlug,
 } from "../packages/wiki/src/compiler/candidates.js";
+import {
+  NO_DATABASE_CONFIGURED,
+  type StackAuthority,
+} from "../packages/wiki/src/dimensions/stack-authority.js";
 import { CANDIDATES_DIR } from "../packages/wiki/src/utils/constants.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();
+/** The named file mode this file's custody cases run under. */
+const FILE_AUTHORITY: StackAuthority = { kind: "file", reason: NO_DATABASE_CONFIGURED };
 const TARGET_SLUG = "target-topic";
 const UNRELATED_SLUG = "unrelated-topic";
 const TARGET_BODY = "---\ntitle: Target\n---\n\nLatest target body.\n";
@@ -82,7 +88,7 @@ async function expectMismatchRefusal(
   const before = await snapshotQueueFiles();
   let caught: unknown;
   try {
-    await deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG);
+    await deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG, {}, FILE_AUTHORITY);
   } catch (error) {
     caught = error;
   }

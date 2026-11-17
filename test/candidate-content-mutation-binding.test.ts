@@ -12,11 +12,17 @@ import {
   deleteCandidateBySlug,
   UnsafeCandidateIdError,
 } from "../packages/wiki/src/compiler/candidates.js";
+import {
+  NO_DATABASE_CONFIGURED,
+  type StackAuthority,
+} from "../packages/wiki/src/dimensions/stack-authority.js";
 import { CANDIDATES_DIR } from "../packages/wiki/src/utils/constants.js";
 import { snapshotCandidateQueue } from "./fixtures/candidate-queue.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();
+/** The named file mode this file's custody cases run under. */
+const FILE_AUTHORITY: StackAuthority = { kind: "file", reason: NO_DATABASE_CONFIGURED };
 const TARGET_SLUG = "target-topic";
 const OTHER_SLUG = "other-topic";
 
@@ -48,7 +54,8 @@ async function plantCandidate(fixture: CandidateFixture): Promise<void> {
 /** Assert deletion refuses with the expected type and preserves every byte. */
 async function expectDeleteRefusal(errorType: new (...args: any[]) => Error): Promise<void> {
   const before = await snapshotCandidateQueue(root.dir);
-  await expect(deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG)).rejects.toBeInstanceOf(errorType);
+  await expect(deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG, {}, FILE_AUTHORITY))
+    .rejects.toBeInstanceOf(errorType);
   expect(await snapshotCandidateQueue(root.dir)).toEqual(before);
 }
 
@@ -83,7 +90,8 @@ describe("content-selected candidate deletion", () => {
     await plantCandidate({ fileId: "unrelated-file", slug: OTHER_SLUG });
     const unrelated = (await snapshotCandidateQueue(root.dir))["unrelated-file.json"];
 
-    await expect(deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG)).resolves.toBe(true);
+    await expect(deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG, {}, FILE_AUTHORITY))
+      .resolves.toBe(true);
 
     expect(await snapshotCandidateQueue(root.dir)).toEqual({ "unrelated-file.json": unrelated });
   });
@@ -93,7 +101,8 @@ describe("content-selected candidate deletion", () => {
     await plantCandidate({ fileId: "other-file", recordId: "other-record", slug: OTHER_SLUG });
     const before = await snapshotCandidateQueue(root.dir);
 
-    await expect(deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG)).resolves.toBe(true);
+    await expect(deleteCandidateBySlug(root.dir, process.env, TARGET_SLUG, {}, FILE_AUTHORITY))
+      .resolves.toBe(true);
 
     expect(await snapshotCandidateQueue(root.dir)).toEqual({ "other-file.json": before["other-file.json"] });
   });

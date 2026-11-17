@@ -12,9 +12,15 @@ import {
   deleteCandidateBySlug,
 } from "../packages/wiki/src/compiler/candidates.js";
 import { CandidateCustodyUnavailableError } from "../packages/wiki/src/compiler/candidate-custody.js";
+import {
+  NO_DATABASE_CONFIGURED,
+  type StackAuthority,
+} from "../packages/wiki/src/dimensions/stack-authority.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();
+/** The named file mode this file's custody cases run under. */
+const FILE_AUTHORITY: StackAuthority = { kind: "file", reason: NO_DATABASE_CONFIGURED };
 const REPLACEMENT = "UNRELATED-REPLACEMENT";
 
 interface DeletionTestHooks {
@@ -22,12 +28,19 @@ interface DeletionTestHooks {
   afterCandidateDeleteForTest?: (fileId: string, index: number) => Promise<void>;
 }
 
-type DeleteWithHooks = (root: string, env: NodeJS.ProcessEnv, id: string, hooks?: DeletionTestHooks) => Promise<boolean>;
+type DeleteWithHooks = (
+  root: string,
+  env: NodeJS.ProcessEnv,
+  id: string,
+  hooks: DeletionTestHooks | undefined,
+  authority: StackAuthority,
+) => Promise<boolean>;
 type DeleteSlugWithHooks = (
   root: string,
   env: NodeJS.ProcessEnv,
   slug: string,
-  hooks?: DeletionTestHooks,
+  hooks: DeletionTestHooks | undefined,
+  authority: StackAuthority,
 ) => Promise<boolean>;
 /** One target-sharing candidate record with deterministic selection order. */
 function candidateRecord(id: string, generatedAt: string, body = id): string {
@@ -57,16 +70,20 @@ describe("Decision 20 direct candidate deletion authority", () => {
     const leaf = await plant("direct-alias", 0);
     await symlink(".", path.join(root.dir, ".llmwiki", "candidates", "archive"));
 
-    await expect(deleteCandidate(root.dir, process.env, "direct-alias"))
+    await expect(deleteCandidate(root.dir, process.env, "direct-alias", {}, FILE_AUTHORITY))
       .rejects.toBeInstanceOf(CandidateCustodyUnavailableError);
     expect(await readFile(leaf, "utf8")).toContain("direct-alias");
   });
 
   it("direct deletion refuses a replacement installed after custody capture", async () => {
     const leaf = await plant("direct-replaced", 0);
-    const deleting = (deleteCandidate as DeleteWithHooks)(root.dir, process.env, "direct-replaced", {
-      afterCustodyForTest: async () => replaceSelected(leaf),
-    });
+    const deleting = (deleteCandidate as DeleteWithHooks)(
+      root.dir,
+      process.env,
+      "direct-replaced",
+      { afterCustodyForTest: async () => replaceSelected(leaf) },
+      FILE_AUTHORITY,
+    );
 
     await expect(deleting).rejects.toBeInstanceOf(CandidateCustodyUnavailableError);
     expect(await readFile(leaf, "utf8")).toBe(REPLACEMENT);
@@ -77,11 +94,17 @@ describe("Decision 20 selected candidate deletion authority", () => {
   it("slug deletion preserves a later replacement after an earlier unlink", async () => {
     const first = await plant("slug-first", 0);
     const last = await plant("slug-last", 1);
-    const deleting = (deleteCandidateBySlug as DeleteSlugWithHooks)(root.dir, process.env, "shared", {
-      afterCandidateDeleteForTest: async (_id, index) => {
-        if (index === 0) await replaceSelected(last);
+    const deleting = (deleteCandidateBySlug as DeleteSlugWithHooks)(
+      root.dir,
+      process.env,
+      "shared",
+      {
+        afterCandidateDeleteForTest: async (_id, index) => {
+          if (index === 0) await replaceSelected(last);
+        },
       },
-    });
+      FILE_AUTHORITY,
+    );
 
     await expect(deleting).rejects.toBeInstanceOf(CandidateCustodyUnavailableError);
     await expect(access(first)).rejects.toMatchObject({ code: "ENOENT" });

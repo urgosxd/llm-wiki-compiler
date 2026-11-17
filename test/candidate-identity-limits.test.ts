@@ -27,9 +27,15 @@ import {
   MAX_WRITABLE_CANDIDATE_ID_BYTES,
 } from "../packages/wiki/src/compiler/candidate-paths.js";
 import { CANDIDATES_DIR } from "../packages/wiki/src/utils/constants.js";
+import {
+  NO_DATABASE_CONFIGURED,
+  type StackAuthority,
+} from "../packages/wiki/src/dimensions/stack-authority.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();
+/** The named file mode this file's custody cases run under. */
+const FILE_AUTHORITY: StackAuthority = { kind: "file", reason: NO_DATABASE_CONFIGURED };
 const ATOMIC_TEMP_SUFFIX = `.${"a".repeat(16)}.tmp`;
 const SECRET_SENTINEL = "SAFE_ASCII_LIMIT_SENTINEL";
 
@@ -60,7 +66,7 @@ async function plantLegacyCandidate(id: string): Promise<void> {
 
 /** Assert a slug refusal is typed and creates no candidate-store directory. */
 async function expectSlugRefusal(slug: string): Promise<void> {
-  await expect(deleteCandidateBySlug(root.dir, process.env, slug)).rejects.toBeInstanceOf(
+  await expect(deleteCandidateBySlug(root.dir, process.env, slug, {}, FILE_AUTHORITY)).rejects.toBeInstanceOf(
     UnsafeCandidateIdError,
   );
   expect(existsSync(path.join(root.dir, CANDIDATES_DIR))).toBe(false);
@@ -111,7 +117,7 @@ describe("candidate physical identity ceilings", () => {
     const slug = `${"a".repeat(10_000)}${SECRET_SENTINEL}`;
     let caught: unknown;
 
-    try { await deleteCandidateBySlug(root.dir, process.env, slug); } catch (error) { caught = error; }
+    try { await deleteCandidateBySlug(root.dir, process.env, slug, {}, FILE_AUTHORITY); } catch (error) { caught = error; }
 
     expect(caught).toBeInstanceOf(UnsafeCandidateIdError);
     expect((caught as Error).message).not.toContain(SECRET_SENTINEL);

@@ -21,9 +21,15 @@ import {
   readCandidate,
 } from "../packages/wiki/src/compiler/candidates.js";
 import { listCandidateFileIds } from "../packages/wiki/src/utils/candidate-store.js";
+import {
+  NO_DATABASE_CONFIGURED,
+  type StackAuthority,
+} from "../packages/wiki/src/dimensions/stack-authority.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();
+/** The named file mode this file's custody cases run under. */
+const FILE_AUTHORITY: StackAuthority = { kind: "file", reason: NO_DATABASE_CONFIGURED };
 
 const CANDIDATES_DIR = ".llmwiki/candidates";
 
@@ -212,19 +218,19 @@ describe("Finding 3 — deleteCandidateBySlug deletes all duplicate files for a 
     const candidatesDir = path.join(root.dir, CANDIDATES_DIR);
     expect((await listCandidateFileIds(candidatesDir)).filter((id) => id.startsWith("dup-delete-slug"))).toHaveLength(2);
 
-    const deleted = await deleteCandidateBySlug(root.dir, process.env, "dup-delete-slug");
+    const deleted = await deleteCandidateBySlug(root.dir, process.env, "dup-delete-slug", {}, FILE_AUTHORITY);
     expect(deleted).toBe(true);
     expect((await listCandidateFileIds(candidatesDir)).filter((id) => id.startsWith("dup-delete-slug"))).toHaveLength(0);
   });
 
   it("returns false when no candidate exists for the slug", async () => {
-    const result = await deleteCandidateBySlug(root.dir, process.env, "nonexistent-slug");
+    const result = await deleteCandidateBySlug(root.dir, process.env, "nonexistent-slug", {}, FILE_AUTHORITY);
     expect(result).toBe(false);
   });
 
   it("leaves zero candidates in listCandidates after deletion of duplicates", async () => {
     await seedNDuplicates(root.dir, "zero-after-slug", 2);
-    await deleteCandidateBySlug(root.dir, process.env, "zero-after-slug");
+    await deleteCandidateBySlug(root.dir, process.env, "zero-after-slug", {}, FILE_AUTHORITY);
     const remaining = await listCandidates(root.dir);
     expect(remaining.filter((c) => c.slug === "zero-after-slug")).toHaveLength(0);
   });
@@ -235,7 +241,7 @@ describe("Finding 3 — deleteCandidateBySlug deletes all duplicate files for a 
       ...baseCandidate("other-slug-aaaa9999", "other-slug"),
     });
 
-    await deleteCandidateBySlug(root.dir, process.env, "target-slug");
+    await deleteCandidateBySlug(root.dir, process.env, "target-slug", {}, FILE_AUTHORITY);
 
     const remaining = await listCandidates(root.dir);
     expect(remaining.filter((c) => c.slug === "target-slug")).toHaveLength(0);
@@ -248,7 +254,7 @@ describe("Finding 3 — deleteCandidateBySlug deletes all duplicate files for a 
     const candidatesDir = path.join(root.dir, CANDIDATES_DIR);
     expect((await listCandidateFileIds(candidatesDir)).filter((id) => id.startsWith(slug))).toHaveLength(3);
 
-    await deleteCandidateBySlug(root.dir, process.env, slug);
+    await deleteCandidateBySlug(root.dir, process.env, slug, {}, FILE_AUTHORITY);
 
     expect((await listCandidateFileIds(candidatesDir)).filter((id) => id.startsWith(slug))).toHaveLength(0);
   });

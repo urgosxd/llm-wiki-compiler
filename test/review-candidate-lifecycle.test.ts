@@ -14,9 +14,15 @@ import {
   readCandidateBySlug,
 } from "../packages/wiki/src/compiler/candidates.js";
 import { seedPendingCandidate } from "./fixtures/candidate-queue.js";
+import {
+  NO_DATABASE_CONFIGURED,
+  type StackAuthority,
+} from "../packages/wiki/src/dimensions/stack-authority.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
 const root = useTempRoot();
+/** The named file mode this file's custody cases run under. */
+const FILE_AUTHORITY: StackAuthority = { kind: "file", reason: NO_DATABASE_CONFIGURED };
 
 function draft(slug: string, body: string) {
   return {
@@ -34,8 +40,8 @@ describe("pending candidate lifecycle", () => {
     expect(await readCandidateBySlug(root.dir, process.env, "topic")).toMatchObject({ id });
     expect(await listLinkResolvablePendingSlugs(root.dir, process.env)).toEqual(new Set(["topic"]));
 
-    expect(await deleteCandidateBySlug(root.dir, process.env, "topic")).toBe(true);
+    expect(await deleteCandidateBySlug(root.dir, process.env, "topic", {}, FILE_AUTHORITY)).toBe(true);
     expect(await readCandidateBySlug(root.dir, process.env, "topic")).toBeNull();
-    expect(await deleteCandidateBySlug(root.dir, process.env, "topic")).toBe(false);
+    expect(await deleteCandidateBySlug(root.dir, process.env, "topic", {}, FILE_AUTHORITY)).toBe(false);
   });
 });

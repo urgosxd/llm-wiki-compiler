@@ -29,10 +29,16 @@ import {
 } from "../packages/wiki/src/compiler/candidates.js";
 import { UnsafeCandidateDirError } from "../packages/wiki/src/compiler/candidate-store-paths.js";
 import { LLMWIKI_DIR } from "../packages/wiki/src/utils/constants.js";
+import {
+  NO_DATABASE_CONFIGURED,
+  type StackAuthority,
+} from "../packages/wiki/src/dimensions/stack-authority.js";
 import { seedPendingCandidate } from "./fixtures/candidate-queue.js";
 import { useConfinementRoots } from "./fixtures/confinement-roots.js";
 
 const ctx = useConfinementRoots("candidate");
+/** The named file mode this file's custody cases run under. */
+const FILE_AUTHORITY: StackAuthority = { kind: "file", reason: NO_DATABASE_CONFIGURED };
 
 const BODY = "---\ntitle: Safe\n---\n\nBody.\n";
 
@@ -63,7 +69,8 @@ describe("candidate store — symlinked candidates dir (filesystem tampering)", 
   it("deleteCandidate over the symlinked dir fails closed, leaving outside untouched", async () => {
     await writeFile(path.join(ctx.outside, "victim.json"), "{}", "utf8");
     await symlinkCandidatesOutside();
-    await expect(deleteCandidate(ctx.root, process.env, "victim")).rejects.toBeInstanceOf(UnsafeCandidateDirError);
+    await expect(deleteCandidate(ctx.root, process.env, "victim", {}, FILE_AUTHORITY))
+      .rejects.toBeInstanceOf(UnsafeCandidateDirError);
     expect(await outsideEntries()).toEqual(["victim.json"]);
   });
 
