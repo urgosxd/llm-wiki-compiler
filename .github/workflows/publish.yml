@@ -189,8 +189,17 @@ jobs:
       # here; re-adding the variable is a regression. `LLMWIKI_TEST_ALLOW_NO_DATABASE` must never
       # appear in a workflow (`AGENTS.md`).
       #
-      # `scripts/apply-schemas.sh` reads `DATABASE_URL` specifically (not the two above), so the
-      # schema steps and this job's service database keep the same target.
+      # Reuse is DISABLED here too, and DECLARED rather than left unset: unconfigured means a FRESH
+      # container, but in this job unset is fresh only because an ephemeral runner has nothing to
+      # adopt, while `test/fixtures/testcontainers-postgres.ts` calls `.withReuse()` unconditionally
+      # and keeps any container an earlier run left behind adoptable. A release pipeline must never
+      # reuse one. Reuse saves ~1.4 s against a 6–7 minute gate — about 0.35% — which does not buy its
+      # residual risk. It stays available as an explicit local opt-in, where a restart is measured
+      # in a second and the schema-parity drift guard protects the reuse path.
+      TESTCONTAINERS_REUSE_ENABLE: "false"
+      #
+      # `scripts/apply-schemas.sh` reads `DATABASE_URL` specifically (not the variables above), so
+      # the schema steps and this job's service database keep the same target.
       DATABASE_URL: postgresql://aks:aks@localhost:5432/aks
     steps:
       - name: Checkout public_sha

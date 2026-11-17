@@ -78,8 +78,19 @@ jobs:
       # live on, not whether a suite owns one. A run with the variable unset still let one file's
       # row satisfy another file's assertion, which is what S2, S4 and S5 in
       # `odd/tasks/test-database-isolation.md` fix, and why this line lands with them.
-      # `LLMWIKI_TEST_ALLOW_NO_DATABASE` must never appear in a workflow (`AGENTS.md`), and
-      # `TESTCONTAINERS_REUSE_ENABLE` is inert on an ephemeral runner: neither substitutes for it.
+      # `LLMWIKI_TEST_ALLOW_NO_DATABASE` must never appear in a workflow (`AGENTS.md`), and it is
+      # not what makes this run own a fresh container: the line below is.
+      #
+      # That line is DECLARED, not left unset, and the reason is Quarkus Dev Services semantics:
+      # unconfigured means a FRESH container, but here unset is fresh only by the accident of an
+      # ephemeral runner having nothing to adopt. `test/fixtures/testcontainers-postgres.ts` calls
+      # `.withReuse()` unconditionally, so a container an earlier run left behind stays adoptable,
+      # and a pipeline must never reuse one. Reuse saves ~1.4 s against this job's 6–7 minute gate —
+      # about 0.35% — which does not buy its residual risk. It stays available as an explicit local
+      # opt-in, where a restart is measured in a second and the schema-parity drift guard protects
+      # the reuse path. `turbo.json`'s `globalPassThroughEnv` is what carries it to `//#test`, and
+      # `test/control-gates.test.ts` fails closed on a job env key that list does not account for.
+      TESTCONTAINERS_REUSE_ENABLE: "false"
     steps:
       - uses: actions/checkout@v4
         with:

@@ -135,6 +135,11 @@ CI runner has nothing to adopt, so CI was never affected.
 
 **Status** — being closed by T10.
 
+**Status (reuse in the pipelines)** — reuse is DISABLED in every pipeline by workflow-declared env
+(`TESTCONTAINERS_REUSE_ENABLE: "false"` in the `build-and-test` job of `ci.yml` and in the
+`preflight` job of `publish.yml`), and remains available as an explicit local opt-in; the drift
+guard protects the opt-in path.
+
 ## Tasks
 
 - [x] T1 — Measure the CI gate with `LLMWIKI_TEST_DATABASE_URL` set and unset; report population and wall clock for both before changing anything. S1. route: verify. commit: c5a3f6440bb0e542ecc3349abc144f9710c0ef44
@@ -158,6 +163,7 @@ CI runner has nothing to adopt, so CI was never affected.
 - [x] T8 — Declare TESTCONTAINERS_REUSE_ENABLE in turbo.json globalPassThroughEnv and pin it with a control gate test. S8. route: worker. commit: bcc80099d1066a0d8a3bfa9868fe2ae0523b2a5d
 - [x] T9 — Give the two remaining suites that read the default database directly their own per-run database, the way T2 did for test/mcp/stack-id-guard.test.ts: test/lint-honours-request-env.test.ts and test/dimensions/kg-shared-credentials-env-order.test.ts, named in the header of test/fixtures/testcontainers-postgres.ts. S2/S3. route: worker. commit: 4df273db2dc879d760587cc16680a34d2ea53709
 - [ ] T10 — Validate an adopted container's schema before adopting it: adopt when it matches the declared migrations and expected columns, refuse with a stated reason naming the container and the mismatch when it does not. S9. route: worker. commit: pending
+- [ ] T11 — Set TESTCONTAINERS_REUSE_ENABLE: "false" in the gate job env of ci.yml and the test job env of publish.yml, and pin it with the existing control gate. S9/S8. route: worker. commit: pending
 
 T3 and T4 change how every database-backed suite obtains its database; they are the highest-risk
 tasks here and each deserves its own commit and its own risk line.
@@ -178,3 +184,4 @@ tasks here and each deserves its own commit and its own risk line.
 - L12 — S9 recorded rather than closed: the reuse path still adopted a container a previous run left behind, with the schema replay skipped on it. Decision recorded instead of accepted: never adopt blind, so T10 validates the candidate's schema before adoption.
 - L13 — review-load advisory from the commit hook: ~8881 authored lines across 50 commits since `origin/main`, past the ~400-line work-unit slice guidance. The eight commits are individually reviewable and three carry `Risk:` trailers (`f49b40b7` and `9a849e84` on shared test infrastructure, `35a30b4d` on delivery), but the feature as a whole is a large review.
 - L14 — the release workflow carried the same shared-database shape as the gate of record; removing `LLMWIKI_TEST_DATABASE_URL` from `publish.yml` is part of the same decision, because a gate that is honest while the release pipeline is not is half the fix.
+- L15 — decision (Manager, from the human's framing): the pipelines must never reuse a container. Quarkus Dev Services means unconfigured implies fresh, not "fresh unless something from last week answers". Reuse earns its risk where a restart costs about a second; here the gate is 6–7 minutes and the saving is ~1.4 s — about 0.35% — and it was the only residual risk left in this branch. Reuse stays for the local dev loop, protected by the `S9` drift guard.
