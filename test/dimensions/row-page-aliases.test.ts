@@ -39,8 +39,13 @@ import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 import { readConceptPage } from "../fixtures/concept-page.js";
 import { extractionAnswer, stubCompileProvider } from "../fixtures/compile-provider.js";
 import { writeSource } from "../fixtures/curated-scenario.js";
+import { usePerCaseFileMode, withFileMode } from "../fixtures/file-mode.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { withRowsStack } from "../fixtures/rows-only-stack.js";
+
+// Both modes live in this file: the row cases keep the database the worker was seeded
+// with, and the parity case takes it away for its own file-backed half.
+usePerCaseFileMode();
 
 /** Filename the first document is ingested under, and cited as. */
 const ALPHA_FILE = "vectors.md";
@@ -184,18 +189,24 @@ describe("concept aliases through the row seam", () => {
       await compileDocument(root, harness, "second.md", CANONICAL_ONLY);
       const rowsSecondRun = await storedAliases(harness, CANONICAL_SLUG);
 
-      // The same corpus through the file-backed path: no Stack, so every seam is the
-      // on-disk one and the alias lands in the page's frontmatter instead of a column.
-      delete process.env.AKS_STACK_ID;
-      stubNames(SYNONYMS);
-      await compileAndReport(root);
-      const filesFirstRun = await fileAliases(root);
-      stubNames(CANONICAL_ONLY);
-      await writeSource(root, "third.md", DOCUMENT);
-      await compileAndReport(root);
+      // The same corpus through the file-backed path, in the NAMED file mode: no database
+      // configured AND no Stack named, which is what makes every seam the on-disk one and
+      // lands the alias in the page's frontmatter instead of a column. Dropping the Stack
+      // id alone is not that mode any more -- with a database still configured the run
+      // resolves the Stack from it and writes rows, so the page file is never created.
+      const fromFiles = await withFileMode(async () => {
+        delete process.env.AKS_STACK_ID;
+        stubNames(SYNONYMS);
+        await compileAndReport(root);
+        const firstRun = await fileAliases(root);
+        stubNames(CANONICAL_ONLY);
+        await writeSource(root, "third.md", DOCUMENT);
+        await compileAndReport(root);
+        return { firstRun, secondRun: await fileAliases(root) };
+      });
 
-      expect(rowsFirstRun).toEqual(filesFirstRun);
-      expect(rowsSecondRun).toEqual(await fileAliases(root));
+      expect(rowsFirstRun).toEqual(fromFiles.firstRun);
+      expect(rowsSecondRun).toEqual(fromFiles.secondRun);
       expect(rowsSecondRun).toContain("Vector Database");
     }));
 });

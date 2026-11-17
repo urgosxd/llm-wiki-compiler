@@ -41,9 +41,14 @@ import { parseFrontmatter } from "../../packages/wiki/src/utils/markdown.js";
 import { readConceptPage } from "../fixtures/concept-page.js";
 import { extractionAnswer, stubCompileProvider } from "../fixtures/compile-provider.js";
 import { writeSource } from "../fixtures/curated-scenario.js";
+import { usePerCaseFileMode, withFileMode } from "../fixtures/file-mode.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
 import { withRowsStack } from "../fixtures/rows-only-stack.js";
+
+// Both modes live in this file: the row cases keep the database the worker was seeded
+// with, and the parity case takes it away for its own file-backed half.
+usePerCaseFileMode();
 
 /** The concept both documents substantiate: the merged article's slug. */
 const CONCEPT = "Vector DB";
@@ -161,14 +166,19 @@ describe("attribution gaps through the row seam", () => {
       await compileAndReport(root);
       const fromRows = await storedGaps(harness, SLUG);
 
-      // The same corpus through the file-backed path: no Stack, so every seam is the
-      // on-disk one and the gap lands in the page's frontmatter instead of a column.
-      delete process.env.AKS_STACK_ID;
-      stubOnePage(CONCEPT, ALPHA_ONLY_BODY);
-      await compileAndReport(root);
-      const { meta } = parseFrontmatter(await readConceptPage(root, SLUG));
+      // The same corpus through the file-backed path, in the NAMED file mode: no database
+      // configured AND no Stack named, which is what makes every seam the on-disk one and
+      // lands the gap in the page's frontmatter instead of a column. Dropping the Stack id
+      // alone is not that mode any more -- with a database still configured the run
+      // resolves the Stack from it and writes rows, so the page file is never created.
+      const attributedInFiles = await withFileMode(async () => {
+        delete process.env.AKS_STACK_ID;
+        stubOnePage(CONCEPT, ALPHA_ONLY_BODY);
+        await compileAndReport(root);
+        return parseFrontmatter(await readConceptPage(root, SLUG)).meta.attributionGaps;
+      });
 
-      expect(meta.attributionGaps).toEqual(fromRows);
+      expect(attributedInFiles).toEqual(fromRows);
       expect(fromRows).toEqual(["beta.md"]);
     }));
 

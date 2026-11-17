@@ -37,6 +37,7 @@ import { categoryObjectId } from "../../packages/wiki/src/categories/identity.js
 import { criterionTerms, evidenceKeyFor, matchingCriterionTerm } from "../../packages/wiki/src/categories/criteria.js";
 import { getStoredPage } from "../../packages/wiki/src/dimensions/wiki/page-store.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
+import { usePerCaseFileMode, withFileMode } from "../fixtures/file-mode.js";
 import { withRowsStack } from "../fixtures/rows-only-stack.js";
 import {
   answerFor,
@@ -59,6 +60,10 @@ import {
   readCategoryRecord,
   sistemasProposal,
 } from "../fixtures/category-scenario.js";
+
+// Both modes live in this file: the row cases keep the database the worker was seeded
+// with, and the parity case takes it away for its own file-backed half.
+usePerCaseFileMode();
 
 /** The category the sistemas article proposes, named exactly like the article. */
 const CATEGORY_ID = "sistemas-distribuidos";
@@ -207,7 +212,11 @@ describe("categories through the row seam", () => {
     withRowsStack("row-category-parity", async ({ root, harness }) => {
       const { filesRoot, rowsRoot } = await parityRoots(root);
 
-      const fromFiles = await withoutStack(() => runScenario(filesRoot));
+      // The file-backed half runs in the NAMED file mode: no database configured AND no
+      // Stack named. `withoutStack` only drops the Stack id, which is not that mode any
+      // more -- with a database still configured the run resolves the Stack from it and
+      // writes rows, so `wiki/categories/<id>.md` is never created.
+      const fromFiles = await withFileMode(() => withoutStack(() => runScenario(filesRoot)));
       const fromRows = await runScenario(rowsRoot, harness);
 
       expect(fromFiles.category).toBeDefined();

@@ -64,7 +64,12 @@ import { extractionAnswer, stubCompileProvider } from "../fixtures/compile-provi
 import { curatedRecordsFor, writeSource, type StoredCuratedLink } from "../fixtures/curated-scenario.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
+import { usePerCaseFileMode, withFileMode } from "../fixtures/file-mode.js";
 import { withRowsStack } from "../fixtures/rows-only-stack.js";
+
+// Both modes live in this file: the row cases keep the database the worker was seeded
+// with, and the two file-backed halves take it away for themselves.
+usePerCaseFileMode();
 
 /** Source whose page MENTIONS the link target by an alias. */
 const ALPHA_FILE = "alpha.md";
@@ -329,19 +334,27 @@ async function runScenario(
 }
 
 /**
- * Run `body` with NO Stack installed, so every seam resolves to the file backend.
+ * Run `body` in the NAMED file mode, with NO Stack installed.
  *
- * @param body - Work to run without a Stack.
+ * Both halves are needed and neither is enough: dropping `AKS_STACK_ID` alone no longer
+ * selects the file backend, because a database is still configured and the run resolves
+ * the Stack from it, so the file-backed side of a parity case silently becomes a
+ * row-backed run that creates no `wiki/` files at all. `withFileMode` is the declaration
+ * (no database configured); deleting the id keeps the run from naming a Stack anyway.
+ *
+ * @param body - Work to run without a database and without a Stack.
  * @returns Whatever `body` returns.
  */
 async function withoutStack<T>(body: () => Promise<T>): Promise<T> {
-  const saved = process.env.AKS_STACK_ID;
-  delete process.env.AKS_STACK_ID;
-  try {
-    return await body();
-  } finally {
-    if (saved !== undefined) process.env.AKS_STACK_ID = saved;
-  }
+  return await withFileMode(async () => {
+    const saved = process.env.AKS_STACK_ID;
+    delete process.env.AKS_STACK_ID;
+    try {
+      return await body();
+    } finally {
+      if (saved !== undefined) process.env.AKS_STACK_ID = saved;
+    }
+  });
 }
 
 describe("curated links through the row seam", () => {
