@@ -5,18 +5,18 @@
  *
  * ## Why this needs its own file
  *
- * `main.test.ts` pins the COUNT side of the boot's single resolution — a Stack-backed host with a
- * leftover `.llmwiki/candidates` directory must count its OWN empty queue, not the checkout's
- * file. Nothing compared that count with the LIST, and the list is a separate read taken at
- * request time (`packages/wiki/src/viewer/server.ts:486`). Two independent reads can name two
- * different backends, and a suite that only ever asked one of them could not see it.
+ * `main.test.ts` pins the COUNT side — a Stack-backed host with a leftover `.llmwiki/candidates`
+ * directory must count its OWN empty queue, not the checkout's file. Nothing compared that count
+ * with the LIST, and the list is a separate read taken at request time
+ * (`packages/wiki/src/viewer/server.ts`). Two independent reads can name two different backends,
+ * and a suite that only ever asked one of them could not see it.
  *
  * ## Why it spawns the artifact
  *
- * The defect only exists on a process whose boot RESOLVED a Stack: the count is answered from an
- * authority only the boot holds, so an in-process test that builds a snapshot by hand cannot
- * arrange the shape. Every case below boots `dist/api.js host --port 0` and asks the two public
- * HTTP surfaces — never an internal count helper, and never a value compared with itself.
+ * What is measured is a REQUEST-level fact — which Stack a running host serves to a request that
+ * names one — so it needs a real process with a frozen snapshot and a real listener. Every case
+ * below boots `dist/api.js host --port 0` and asks the two public HTTP surfaces — never an
+ * internal count helper, and never a value compared with itself.
  *
  * ## Precondition: the build has run
  *
@@ -65,13 +65,19 @@ interface ReviewSurfaces {
  * anything internal here would let a bug answer for itself.
  *
  * @param base - The base URL the child announced.
+ * @param stackId - The Stack to NAME on the list request, which is what a caller does since the
+ *   review list resolves its Stack per request. Omitted asks the unnamed route, which is the
+ *   file-backed deployment's shape.
  * @returns The count and the number of listed rows.
  */
-async function readSurfaces(base: string): Promise<ReviewSurfaces> {
+async function readSurfaces(base: string, stackId?: string): Promise<ReviewSurfaces> {
   const pages = await fetch(`${base}/api/pages`);
   expect(pages.status, `GET ${base}/api/pages must answer`).toBe(200);
   const counts = (await pages.json()) as { counts: { pendingReviews: number } };
-  const reviews = await fetch(`${base}/api/reviews`);
+  const listUrl = stackId === undefined
+    ? `${base}/api/reviews`
+    : `${base}/api/reviews?stackId=${encodeURIComponent(stackId)}`;
+  const reviews = await fetch(listUrl);
   expect(reviews.status, `GET ${base}/api/reviews must answer`).toBe(200);
   const envelope = (await reviews.json()) as { reviews: { id: string }[]; total: number };
   return {
@@ -107,6 +113,28 @@ async function createStackRow(
   return id;
 }
 
+/**
+ * Leave ONE pending candidate row in ONE Stack's queue, the way a Stack-backed compile does.
+ *
+ * A real stored record rather than a hand-built object: the row source lists what the store
+ * really holds, so the assertions downstream are about this Stack's queue and nothing else.
+ *
+ * @param dimensions - Handle on the throwaway database.
+ * @param stackId - The Stack the row belongs to.
+ * @param id - The candidate id the row carries, which is what the route lists.
+ */
+async function plantStackCandidate(
+  dimensions: ReturnType<typeof createDimensionsDatabase>,
+  stackId: string,
+  id: string,
+): Promise<void> {
+  await saveStoredCandidate(dimensions.db, stackId, {
+    id, title: id, slug: id, summary: "", sources: [],
+    body: `---\ntitle: ${id}\n---\n\nBody.\n`, generatedAt: "2026-01-02T00:00:00.000Z",
+    reviewMode: "forced", heldReasons: [{ code: "manual-review-requested" }],
+  });
+}
+
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), "boot-review-surfaces-"));
 });
@@ -131,7 +159,7 @@ describe("a Stack-backed host whose checkout carries a candidate file", () => {
       });
       try {
         const base = await waitForReady(host);
-        const surfaces = await readSurfaces(base);
+        const surfaces = await readSurfaces(base, stackId);
         // The named Stack's queue is EMPTY: the planted file is the only thing that could
         // make either number anything but zero.
         expect(surfaces.count, "the count must read the Stack's empty queue, not the checkout's files").toBe(0);
@@ -174,10 +202,59 @@ describe("a Stack-backed host whose queue really holds a row", () => {
         ...process.env, [AKS_DATABASE_URL_ENV_VAR]: suite.url, [AKS_STACK_ID_ENV_VAR]: stackId,
       });
       try {
-        const surfaces = await readSurfaces(await waitForReady(host));
+        const surfaces = await readSurfaces(await waitForReady(host), stackId);
         expect(surfaces.count, "the count must read the Stack's own queue").toBe(1);
         expect(surfaces.total, "the total must read the Stack's own queue").toBe(1);
         expect(surfaces.ids, "the list must name the row, never the checkout's file").toEqual(["row-1"]);
+      } finally {
+        host.terminate();
+        await host.exited;
+      }
+    } finally {
+      await dimensions.close();
+      await suite.drop();
+    }
+  }, 120_000);
+});
+
+describe("one boot serving several Stacks", () => {
+  it("reads the Stack EACH request names, with no restart in between", async () => {
+    // S6's own claim, and the reason the boot stopped resolving a Stack: authority is a request
+    // input, so one process must answer for whichever Stack each request names. Two Stacks with
+    // DIFFERENT rows make every wrong answer visible — a boot-frozen Stack names the other id, and
+    // a file fallback names `planted-1`.
+    const suite = await createSuiteDatabase("boot-review-surfaces-per-request");
+    const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
+    try {
+      const first = await createStackRow(dimensions, "per-request-first");
+      const second = await createStackRow(dimensions, "per-request-second");
+      await plantStackCandidate(dimensions, first, "row-first");
+      await plantStackCandidate(dimensions, second, "row-second");
+      await plantFileCandidate(root);
+      // The boot names the FIRST Stack, so the second is served only if the resolution really
+      // happens per request instead of once at startup.
+      const host = launch(["host", "--port", "0"], root, {
+        ...process.env, [AKS_DATABASE_URL_ENV_VAR]: suite.url, [AKS_STACK_ID_ENV_VAR]: first,
+      });
+      try {
+        const base = await waitForReady(host);
+        const firstRead = await readSurfaces(base, first);
+        expect(firstRead.ids, "the first Stack's request must read its OWN row").toEqual(["row-first"]);
+        const secondRead = await readSurfaces(base, second);
+        expect(secondRead.ids, "the second Stack's request must read its OWN row").toEqual(["row-second"]);
+        // The name is VALIDATED, not trusted: an id that names no row is refused through the same
+        // `stackExists` check the mutation surface uses, not served as an empty queue.
+        const unknown = await fetch(`${base}/api/reviews?stackId=${randomUUID()}`);
+        expect(unknown.status, "a Stack id that names no row must be refused").toBe(404);
+        // A request that names NONE must not silently substitute a backend. This asserts the
+        // CHECKOUT is never read, not the envelope: the unnamed-request contract is T4's, so only
+        // T5's own claim — no file fallback — is pinned here.
+        const unnamed = await fetch(`${base}/api/reviews`);
+        const body = (await unnamed.json()) as { reviews?: { id: string }[] };
+        expect(
+          (body.reviews ?? []).map((row) => row.id),
+          "an unnamed request must never fall back to the checkout's candidate file",
+        ).not.toContain("planted-1");
       } finally {
         host.terminate();
         await host.exited;

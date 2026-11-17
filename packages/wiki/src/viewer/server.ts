@@ -35,6 +35,10 @@ import type { ViewerSnapshot } from "./types.js";
 // Type-only: the viewer must not DEPEND on the dimensions database (see
 // `api-ingest-jobs.ts`), it only carries the authority a host already resolved.
 import type { StackAuthority } from "../dimensions/stack-authority.js";
+import { isDatabaseConfigured } from "../dimensions/activation.js";
+import { createDimensionsDatabase } from "../dimensions/activation.js";
+import { stackExists } from "../services/stacks/stack-store.js";
+import { stackIdProblem } from "@repo/foundation";
 import { listenOn } from "../utils/http-listen.js";
 
 /** Host-supplied viewer dependencies. */
@@ -216,7 +220,7 @@ async function routeRegistered(
   if (parsedUrl.pathname === "/") return handleShell(res);
   if (parsedUrl.pathname.startsWith("/assets/")) return handleAsset(res, parsedUrl.pathname);
   const snapshotOnly = SNAPSHOT_ONLY_HANDLERS.get(parsedUrl.pathname);
-  if (snapshotOnly) return snapshotOnly(res, snapshot, deps);
+  if (snapshotOnly) return snapshotOnly(res, snapshot, parsedUrl);
   return routeLiveResources(res, parsedUrl, snapshot, config, deps);
 }
 
@@ -256,17 +260,19 @@ function workflowJourneysEnabled(config: ViewerServerConfig, deps: ViewerDeps): 
  * `snapshot.root` at request time. Routes with extra params (`/api/index`,
  * `/api/search`) and the prefix routes stay as explicit branches.
  *
- * `deps` is handed to every entry because `/api/reviews` needs the Stack authority a
- * host resolved at boot; a handler that ignores it simply declares fewer parameters.
+ * The parsed URL is handed to every entry because `/api/reviews` resolves the Stack the REQUEST
+ * names (`?stackId=`), and a handler that needs no query simply declares fewer parameters. It is
+ * the request's own URL rather than a resolved dependency: authority is a request input now, so
+ * there is no boot value left to pass and nothing here may fall back to one.
  */
 const SNAPSHOT_ONLY_HANDLERS: ReadonlyMap<
   string,
-  (res: ServerResponse, snapshot: ViewerSnapshot, deps: ViewerDeps) => void | Promise<void>
-> = new Map<string, (res: ServerResponse, snapshot: ViewerSnapshot, deps: ViewerDeps) => void | Promise<void>>([
+  (res: ServerResponse, snapshot: ViewerSnapshot, url: URL) => void | Promise<void>
+> = new Map<string, (res: ServerResponse, snapshot: ViewerSnapshot, url: URL) => void | Promise<void>>([
   ["/api/pages", handleApiPages],
   ["/api/health", handleApiHealth],
   ["/api/graph", handleApiGraph],
-  ["/api/reviews", (res, snapshot, deps) => handleApiReviews(res, snapshot.root, authorityFrom(deps))],
+  ["/api/reviews", (res, snapshot, url) => handleApiReviews(res, snapshot.root, url)],
 ]);
 
 /**
@@ -477,43 +483,101 @@ function handleApiGraph(res: ServerResponse, snapshot: ViewerSnapshot): void {
  */
 
 /**
- * `/api/reviews` — read-only projection of the pending review queue.
- * Candidates live under `.llmwiki/candidates/` (NOT in the frozen snapshot),
- * so this reads them at REQUEST time. It reads a BOUNDED page rather than the
- * whole queue: `listCandidatePage` opens only the candidates it serves, so a
- * corpus held wholesale by `heldReasons: "all"` costs the same per request as a
- * handful. `total` still reports the real queue depth, which the client renders
- * as "showing N of M". Deliberately NOT folded into `/api/health`: that payload
- * is fetched by every route at bootstrap and must stay cheap. Strictly
- * read-only — no approve/reject, and the projection drops the candidate `body`
- * and every absolute path (see `buildReviewsEnvelope`).
+ * The Stack `/api/reviews` reads for one request, or the refusal already written.
  *
- * @param authority - The Stack the host resolved at boot, so this page reads the same
- *   backend as the `pendingReviews` count taken from that ONE resolution. Omitted, the
- *   environment decides, which is the file-backed viewer's answer.
+ * A result rather than a bare authority because `undefined` is a real answer — the named FILE
+ * backend — and a refusal is not an authority at all. Conflating them is how a refused request
+ * would answer 200 from the checkout.
  */
-async function handleApiReviews(
-  res: ServerResponse,
-  root: string,
-  authority?: StackAuthority,
-): Promise<void> {
-  const page = await listCandidatePage(root, process.env, REVIEW_LIST_LIMIT, authority);
+type ReviewsStack =
+  | { readonly ok: true; readonly authority: StackAuthority | undefined }
+  | { readonly ok: false };
+
+/**
+ * `/api/reviews` — read-only projection of the pending review queue, for the Stack THIS request
+ * names.
+ *
+ * Candidates live under `.llmwiki/candidates/` (NOT in the frozen snapshot), so this reads them
+ * at REQUEST time. It reads a BOUNDED page rather than the whole queue: `listCandidatePage` opens
+ * only the candidates it serves, so a corpus held wholesale by `heldReasons: "all"` costs the
+ * same per request as a handful. `total` still reports the real queue depth, which the client
+ * renders as "showing N of M". Deliberately NOT folded into `/api/health`: that payload is
+ * fetched by every route at bootstrap and must stay cheap. Strictly read-only — no approve/reject,
+ * and the projection drops the candidate `body` and every absolute path (see
+ * `buildReviewsEnvelope`).
+ *
+ * ## Why this resolves per request, and what it refuses
+ *
+ * The boot no longer resolves a Stack (S6 of `odd/tasks/stack-authority-per-request.md`), so a
+ * value captured at startup cannot describe the Stack this request is about — the exact staleness
+ * this surface was the evidence for. `?stackId=` names it, and the name is checked against the
+ * database on every request (`stackExists` issues one query; nothing is cached), which is what
+ * makes a Stack created by `POST /stacks` usable by the very next request with no restart.
+ *
+ * A request that names NONE is refused as `stack_unnamed` (409) when a database is configured:
+ * falling through would answer from whichever Stack the environment names, or from the checkout's
+ * `.llmwiki/candidates`, and both are the silent substitution S3 forbids. The body is the
+ * viewer's existing envelope — `{"error":{"code":"stack_unnamed","message":…}}` — and the wording
+ * is deliberately minimal, because the unnamed-request contract belongs to the task that owns it
+ * (T4); this produces the shape, not a second definition of it.
+ *
+ * With NO database configured the named file backend answers exactly as before, and a `stackId`
+ * names nothing there because there is no Stack table to check it against.
+ *
+ * @param res - Response to write, including any refusal.
+ * @param root - Project root the file backend reads from.
+ * @param url - This request's URL, carrying the Stack the caller named.
+ */
+async function handleApiReviews(res: ServerResponse, root: string, url: URL): Promise<void> {
+  const stack = await reviewsStackFor(res, (url.searchParams.get("stackId") ?? "").trim());
+  if (!stack.ok) return;
+  const page = await listCandidatePage(root, process.env, REVIEW_LIST_LIMIT, stack.authority);
   writeJson(res, 200, buildReviewsEnvelope(page));
 }
 
 /**
- * The Stack authority the host resolved at boot, when it supplied one.
+ * Settle, and VALIDATE, the Stack one `/api/reviews` request is about.
  *
- * A dependency rather than a second resolution: the boot opened the database handle and
- * answered precedence 2 ONCE, and the review list must read the backend that answer
- * named. Absent, `listCandidatePage` consults the environment exactly as it always has,
- * so a viewer built by the pure `startViewer` entry keeps its file-backed answer.
+ * Validation is the same `stackExists` path the mutation mount uses, deliberately: a Stack id a
+ * client invents must be refused the same way on every surface, and a Stack that was created (or
+ * deactivated) a moment ago must be visible to the next request rather than to the next restart.
  *
- * @param deps - The viewer's dependency bag, as the host filled it.
- * @returns The host's resolved authority, or `undefined` when it supplied none.
+ * @param res - Response to write the refusal on.
+ * @param named - The trimmed `stackId` query value; empty when the request named none.
+ * @returns The backend to read, or `{ ok: false }` after the refusal was written.
  */
-function authorityFrom(deps: ViewerDeps): StackAuthority | undefined {
-  return deps.stackAuthority as StackAuthority | undefined;
+async function reviewsStackFor(res: ServerResponse, named: string): Promise<ReviewsStack> {
+  if (named === "") {
+    // No database: the file backend is this deployment's backend, not a fallback, and the
+    // environment decides exactly as it always has (S7).
+    if (!isDatabaseConfigured(process.env)) return { ok: true, authority: undefined };
+    writeJsonError(
+      res,
+      409,
+      "stack_unnamed",
+      "This request named no Stack, and a database is configured: name one with ?stackId=.",
+    );
+    return { ok: false };
+  }
+  const problem = stackIdProblem(named);
+  if (problem !== undefined) {
+    writeJsonError(res, 400, "invalid_stack_id", problem);
+    return { ok: false };
+  }
+  const dimensionsDb = createDimensionsDatabase(process.env);
+  try {
+    if (await stackExists(dimensionsDb.db, named)) {
+      return { ok: true, authority: { kind: "stack", stackId: named } };
+    }
+    writeJsonError(res, 404, "unknown_stack", `No Stack '${named}' exists.`);
+    return { ok: false };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    writeJsonError(res, 503, "stack_lookup_failed", `Could not verify Stack '${named}': ${detail}`);
+    return { ok: false };
+  } finally {
+    await dimensionsDb.close();
+  }
 }
 
 /** `/api/health` — cheap status summary. */
