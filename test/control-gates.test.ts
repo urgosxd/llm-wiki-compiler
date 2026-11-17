@@ -259,6 +259,21 @@ describe("control gates — the codebase-health job shape", () => {
   });
 });
 
+/**
+ * The switch that decides whether the suite OWNS its database or adopts a leftover one.
+ *
+ * `node_modules/testcontainers/build/generic-container/generic-container.js:91` compares it
+ * to `"false"` before choosing `reuseOrStartContainer` over `startContainer`, and
+ * `test/fixtures/testcontainers-postgres.ts:171` calls `.withReuse()` unconditionally — so
+ * this variable is the ONLY way a run can say "start cold". Measured on this branch: RUN 2
+ * of a comparison believed it had reuse disabled, had it stripped before `//#test` by
+ * turbo's strict env mode, silently adopted a seven-day-old container, and its numbers were
+ * worthless. Same defect class as the shared-database findings: a harness that cannot be
+ * told to own its state. `--env-mode=loose` reaches it too, which is why this is pinned as
+ * a DECLARATION rather than trusted to a flag nobody sets.
+ */
+const CONTAINER_REUSE_ENV = "TESTCONTAINERS_REUSE_ENABLE";
+
 // The env half of the same wiring, and it fails CLOSED: turbo 2 runs tasks in strict env
 // mode, so a variable this job sets and `turbo.json` does not declare never reaches
 // `//#test`. Measured: with the list absent, a probe task printed
@@ -278,6 +293,15 @@ describe("control gates — turbo env pass-through", () => {
     for (const [key, reason] of Object.entries(ENV_EXEMPT)) {
       expect(reason.trim(), `ENV_EXEMPT[${key}] must carry a reason`).not.toBe("");
     }
+  });
+
+  // Structural, through the public artifact: `turbo.json` parsed as JSON, never a grep of
+  // its text and never a run, so the pin holds whether or not a container is available.
+  it("declares the container-reuse switch, so a run can actually stop reusing a container", () => {
+    const forwarded = turboGraph().globalPassThroughEnv ?? [];
+    expect(forwarded, `undeclared here, strict env mode strips ${CONTAINER_REUSE_ENV} before //#test`).toContain(
+      CONTAINER_REUSE_ENV,
+    );
   });
 });
 
