@@ -19,7 +19,9 @@
  * - decide that its durability settings are the throwaway ones ({@link durabilityReport}),
  *   because a rejected `-c` flag is otherwise invisible;
  * - decide that it carries the project schema ({@link prepareContainerDatabase}), because a
- *   fresh Postgres has none and a reused one may have been built by an older image.
+ *   fresh Postgres has none and a reused one may have been built by an older image. "Carries" is
+ *   not two sentinel tables but the COLUMNS the repository declares: a reused container was
+ *   measured serving a gate run while missing two declared columns.
  *
  * ## What is deliberately NOT here
  *
@@ -28,7 +30,10 @@
  * use these primitives without inheriting the other's ownership rules.
  */
 
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
 import postgres from "postgres";
 
@@ -37,8 +42,25 @@ import {
   withClient,
 } from "@repo/kg/testing/per-run-database";
 
+import {
+  diffSchema,
+  parseDeclaredFile,
+  type DeclaredColumn,
+  type ParityReport,
+  type PresentColumn,
+} from "../../scripts/schema-parity-check.js";
+
 /** How long a probe may spend connecting before the server counts as unreachable. */
 export const DEFAULT_PROBE_TIMEOUT_SECONDS = 3;
+
+/** Repository root, resolved from this file so the caller's cwd cannot matter. */
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+
+/** The runner that owns the one authoritative list of schema files. */
+const SCHEMA_RUNNER = "scripts/apply-schemas.sh";
+
+/** How many drifted names one reason may spell out before it summarizes the rest. */
+const MAX_NAMED_DRIFT = 6;
 
 /** How long to wait for a server that is still starting, and how to ask again meanwhile. */
 export interface ReadinessBudget {
@@ -205,8 +227,96 @@ export async function schemaPresent(url: string): Promise<boolean> {
 /** Outcome of preparing a server's database: either it is usable, or why it is not. */
 export interface PrepareOutcome {
   readonly ok: boolean;
-  /** The durability summary on success, the failure otherwise. */
+  /** The durability summary and whether the schema was replayed, or the failure. */
   readonly detail: string;
+}
+
+/**
+ * The repository-relative SQL files `scripts/apply-schemas.sh` registers, in apply order.
+ *
+ * PARSED from the runner, never copied: the file list is what "the schema" means, and a second
+ * copy of it drifts from the file the runner actually applies.
+ */
+async function declaredSchemaFiles(): Promise<string[]> {
+  const runner = await readFile(path.join(REPO_ROOT, SCHEMA_RUNNER), "utf-8");
+  const array = /\bSCHEMA_FILES=\(([\s\S]*?)\n\)/.exec(runner)?.[1] ?? "";
+  const files = array
+    .split("\n")
+    .filter(line => !line.trim().startsWith("#"))
+    .flatMap(line => [...line.matchAll(/"([^"]+\.sql)"/g)].map(match => match[1] ?? ""));
+  if (files.length === 0) throw new Error(`${SCHEMA_RUNNER} lists no schema file`);
+  return files;
+}
+
+/**
+ * Every column the registered files declare, keyed `schema.table.column`.
+ *
+ * The declaration parser is `scripts/schema-parity-check.ts`'s — the one the check mode of the
+ * runner uses — so this comparison and `CHECK_ONLY=true scripts/apply-schemas.sh` cannot disagree
+ * about what the repository declares. A later declaration replaces an earlier one, which is the
+ * order the runner applies them in.
+ */
+async function declaredColumns(): Promise<DeclaredColumn[]> {
+  const columns = new Map<string, DeclaredColumn>();
+  for (const file of await declaredSchemaFiles()) {
+    const sql = await readFile(path.join(REPO_ROOT, file), "utf-8");
+    for (const column of parseDeclaredFile(file, sql)) {
+      columns.set(`${column.table}.${column.column}`, column);
+    }
+  }
+  return [...columns.values()];
+}
+
+/** Every column the database behind `url` reports in the two schemas the declaration covers. */
+async function presentColumns(url: string): Promise<PresentColumn[]> {
+  const rows = await withClient(url, client =>
+    client<{ table: string; column: string }[]>`
+      select table_schema || '.' || table_name as "table", column_name as "column"
+      from information_schema.columns where table_schema in ('public', 'wiki')
+    `,
+  );
+  return rows.map(row => ({ table: row.table, column: row.column }));
+}
+
+/**
+ * What the repository declares against what the database behind `url` actually has.
+ *
+ * @param url - A connection string on the server to compare.
+ * @returns The same report `diffSchema` produces for the runner's own check mode.
+ */
+export async function declaredSchemaDrift(url: string): Promise<ParityReport> {
+  return diffSchema(await declaredColumns(), await presentColumns(url));
+}
+
+/**
+ * Is anything the repository declares ABSENT from the database?
+ *
+ * Only the missing side counts. A column nothing declares is a warning in the runner's check mode
+ * and is one here too: an adopted container carrying a legacy table cannot make a suite pass on
+ * state it does not own, which is the failure this gate exists for.
+ */
+export function hasDrift(report: ParityReport): boolean {
+  return report.missingColumns.length > 0 || report.missingTables.length > 0;
+}
+
+/** A bounded list of drifted names, so a reason stays one readable line. */
+function summarizeDrift(names: readonly string[]): string {
+  const shown = names.slice(0, MAX_NAMED_DRIFT);
+  const rest = names.length - shown.length;
+  return rest === 0 ? shown.join(", ") : `${shown.join(", ")} and ${String(rest)} more`;
+}
+
+/** The drift as one line: the declared tables, then the declared columns, that are absent. */
+function describeDrift(report: ParityReport): string {
+  const parts: string[] = [];
+  if (report.missingTables.length > 0) {
+    parts.push(`missing tables: ${summarizeDrift(report.missingTables)}`);
+  }
+  if (report.missingColumns.length > 0) {
+    const columns = report.missingColumns.map(column => `${column.table}.${column.column}`);
+    parts.push(`missing columns: ${summarizeDrift(columns)}`);
+  }
+  return parts.join("; ");
 }
 
 /**
@@ -217,14 +327,27 @@ export interface PrepareOutcome {
  * pays the replay exactly once. {@link applySchema} is idempotent either way; the check is
  * what keeps reuse fast.
  *
+ * The replay being skipped is exactly why the comparison below exists: "the sentinels are there"
+ * says nothing about the columns a later migration added, and a reused container built by an older
+ * image was measured serving a whole gate run while missing two declared columns. So the verdict
+ * is taken from the declared files against the live catalogue, never from the sentinels: an
+ * adopted database that does not match is REFUSED, which is the only way "never adopt blind" can
+ * be enforced by the caller that publishes the URL.
+ *
  * @param url - The container's default database, as the superuser role.
- * @returns The durability summary, or the reason preparation failed.
+ * @returns Whether the schema was replayed and the durability summary, or the reason it is unusable.
  */
 export async function prepareContainerDatabase(url: string): Promise<PrepareOutcome> {
   try {
     const durability = await durabilityReport(url);
-    if (!(await schemaPresent(url))) await withClient(url, applySchema);
-    return { ok: true, detail: describeDurability(durability) };
+    const replayed = !(await schemaPresent(url));
+    if (replayed) await withClient(url, applySchema);
+    const drift = await declaredSchemaDrift(url);
+    if (hasDrift(drift)) {
+      return { ok: false, detail: `does not match the schema this repository declares: ${describeDrift(drift)}` };
+    }
+    const schema = replayed ? "schema replayed" : "schema matches the declared files, not replayed";
+    return { ok: true, detail: `${describeDurability(durability)}; ${schema}` };
   } catch (error) {
     return { ok: false, detail: describe(error) };
   }

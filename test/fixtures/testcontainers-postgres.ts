@@ -23,22 +23,28 @@
  *
  * ## The shared server also carries the PROJECT SCHEMA, and only the container path gets it
  *
- * Three suites read the container's default database DIRECTLY instead of provisioning a per-run
- * database (`test/lint-honours-request-env.test.ts`, `test/mcp/stack-id-guard.test.ts`,
- * `test/dimensions/kg-shared-credentials-env-order.test.ts`). Against the old default — the tuned
- * compose instance on 5434 — they found tables there because a human had migrated that server.
- * A container starts EMPTY, so the same suites failed with `relation "stacks" does not exist`,
+ * The three suites this passage used to name as direct readers of the container's default database
+ * are gone from that role: `test/lint-honours-request-env.test.ts` and
+ * `test/mcp/stack-id-guard.test.ts` now provision a per-run database of their own through
+ * `test/fixtures/suite-database-ownership.ts`, and
+ * `test/dimensions/kg-shared-credentials-env-order.test.ts` was deleted in
+ * `fec50896056444a1d6ee5886b2dcfbe906385e5c`. They read that database because the old default — the
+ * tuned compose instance on 5434 — had tables on it that a human had migrated by hand, and a
+ * container starts EMPTY, so they failed with `relation "stacks" does not exist`,
  * `relation "wiki.review_candidates" does not exist` and `relation "wiki.event_log" does not
  * exist`: the new default was not equivalent to the old one.
  *
  * So a container this run obtained has its default database initialized with the repository's
- * schema ONCE, before its URL is published. The schema is not re-derived here:
- * `applySchema` from `per-run-database.ts` parses `SCHEMA_FILES` out of
- * `scripts/apply-schemas.sh` and applies it with the `postgres` client, which is why no `psql`
- * binary is needed and why this file cannot drift from the file list.
- * {@link prepareContainerDatabase} owns that replay, and skips it when a reused container already
- * carries the schema. The RLS migration in that list creates the `llmwiki_app` role, so it lands
- * on the container as a side effect of the same replay.
+ * schema ONCE, before its URL is published. That is still load-bearing, for two reasons that
+ * outlive those suites: the replay is how a container started by THIS run proves the server can
+ * take the project schema at all ({@link prepareContainerDatabase} fails loudly rather than
+ * publishing a half-built database), and the schema the default database carries is what the
+ * ADOPTION GATE below reads — an adopted container is identified by the schema it holds, not by
+ * its label. The schema is not re-derived here: `applySchema` from `per-run-database.ts` parses
+ * `SCHEMA_FILES` out of `scripts/apply-schemas.sh` and applies it with the `postgres` client, which
+ * is why no `psql` binary is needed and why this file cannot drift from the file list. The RLS
+ * migration in that list creates the `llmwiki_app` role, so it lands on the container as a side
+ * effect of the same replay.
  *
  * The OVERRIDE path is deliberately NOT initialized. When `LLMWIKI_TEST_DATABASE_URL` is set, that
  * database belongs to the caller and this run does not own its state; migrating somebody's server
@@ -73,6 +79,23 @@
  * producing a new hash on every run. {@link DURABILITY_COMMAND} is part of that hash, so changing a
  * flag replaces the adopted container rather than reusing one started with other settings.
  *
+ * ## Adoption is GATED ON SCHEMA PARITY, measured and not assumed
+ *
+ * The hash says the container was created by THIS repository's options; it says nothing about which
+ * commit built its schema, and `.withReuse()` adopted it unconditionally while
+ * `prepareContainerDatabase` skipped the replay for any database that already held the two sentinel
+ * tables. Measured consequence: a SEVEN-DAY-OLD labelled container was adopted and served a whole
+ * gate run while its default database was missing `wiki.embedding_store_meta.backend` and
+ * `wiki.embedding_store_meta.endpoint`, and while `public.stacks` still held a row from that earlier
+ * run.
+ *
+ * So an adopted candidate is prepared and then COMPARED: the columns the registered SQL files
+ * declare, parsed by `scripts/schema-parity-check.ts` — the same parser the runner's documented
+ * check mode uses — against `information_schema.columns` on the candidate. Matching means adoption
+ * keeps its ~120 ms instead of a ~1.5 s create; not matching means {@link adoptedContainerRefusal}
+ * names the container and the missing tables/columns and the run publishes an `unavailable` record.
+ * The optimisation is kept exactly where it is safe, and nothing is adopted blind.
+ *
  * ## Why the server runs with durability switched OFF
  *
  * Measured independently: the same 6 files / 80 tests took 12.2–13.3 s on the default-durability
@@ -82,9 +105,10 @@
  *
  * {@link DURABILITY_COMMAND} is therefore applied through the container command, exactly like the
  * compose instance's own `command:` block. This is safe for one reason only, and it is worth
- * stating: the container is throwaway. Nothing in it outlives the run, reuse re-validates it with
- * `select 1` before publishing it, and a container whose postgres died is discarded rather than
- * trusted. The flags are read BACK from the server (`durabilityReport` in
+ * stating: the container is throwaway. Nothing in it outlives the run beyond the reuse window, and
+ * reuse re-validates it before publishing it — `select 1` for liveness and the declared schema for
+ * identity — so a container whose postgres died, or whose schema an earlier commit built, is
+ * refused rather than trusted. The flags are read BACK from the server (`durabilityReport` in
  * `container-server-primitives.ts`) instead of being assumed accepted, because a rejected `-c` flag
  * is invisible otherwise.
  */
@@ -129,7 +153,12 @@ const CONTAINER_OPTIONS = {
 /** How long a `select 1` may take before the server counts as unreachable. */
 const PROBE_TIMEOUT_SECONDS = DEFAULT_PROBE_TIMEOUT_SECONDS;
 
-/** The container this run started, kept so teardown can stop it when reuse is off. */
+/**
+ * The container this run obtained, prepared and published, so teardown can give it back.
+ *
+ * Set only once its database was ACCEPTED: a container this run refused is not one it owns, and
+ * teardown must not be able to stop it (`stop()` on a reusable container removes it).
+ */
 let startedContainer: StartedPostgreSqlContainer | undefined;
 
 /** The explicit override, when the caller set one. Empty and whitespace count as absent. */
@@ -235,9 +264,7 @@ type AcquireOutcome =
 /** Obtain the container, converting a Docker failure into a readable reason instead of an abort. */
 async function acquireContainer(): Promise<AcquireOutcome> {
   try {
-    const { container, reused } = await startOrAdoptContainer();
-    startedContainer = container;
-    return { ok: true, container, reused };
+    return { ok: true, ...(await startOrAdoptContainer()) };
   } catch (error) {
     return {
       ok: false,
@@ -247,28 +274,54 @@ async function acquireContainer(): Promise<AcquireOutcome> {
 }
 
 /**
+ * Why an adopted container is NOT this run's database, in the words the run publishes.
+ *
+ * The published record is `unavailable`, so the existing chokepoint raises the loud failure; what
+ * this text adds is the two facts a reader needs to act: WHICH container was refused and WHAT its
+ * database is missing. The container is deliberately left RUNNING — `stop()` on a reusable
+ * container REMOVES it, this run never created it, and deleting somebody else's container to get a
+ * green run is the same class of defect as adopting it.
+ *
+ * @param name - The container's Docker name, without the leading slash.
+ * @param detail - Why its default database is unusable, as preparation reported it.
+ */
+export function adoptedContainerRefusal(name: string, detail: string): string {
+  return (
+    `the adopted container ${name} is not used as this run's database (${detail}). ` +
+    `Remove it with "docker rm -f ${name}" so this run starts a container of its own, or set ` +
+    `${TEST_DATABASE_URL_ENV_VAR} to the database you mean to run against`
+  );
+}
+
+/**
  * Start or adopt the container, prepare its database, and publish its URL.
  *
  * A failure AFTER a container was obtained is FATAL rather than a cue to try something else:
  * falling back to a server a developer happens to run would hide a broken container behind a green
- * run, which is the exact false confidence this feature exists to remove.
+ * run, which is the exact false confidence this feature exists to remove. That includes an adopted
+ * container whose schema is not the repository's: this run cannot vouch for that state, so it is
+ * refused by name instead of published.
  */
 async function startContainerHandoff(): Promise<ServerOutcome> {
   const acquired = await acquireContainer();
   if (!acquired.ok) return { ok: false, reason: acquired.reason, fatal: false };
   const container = acquired.container;
+  const name = containerName(container);
   const prepared = await prepareContainerDatabase(container.getConnectionUri());
   if (!prepared.ok) {
     return {
       ok: false,
-      reason: `the container's default database could not be prepared (${prepared.detail})`,
+      reason: acquired.reused
+        ? adoptedContainerRefusal(name, prepared.detail)
+        : `container ${name}'s default database could not be prepared (${prepared.detail})`,
       fatal: true,
     };
   }
   console.log(
     `[test-database] ${acquired.reused ? "adopted running" : "started"} ${SHARED_POSTGRES_IMAGE} ` +
-      `container ${containerName(container)} on ${container.getConnectionUri()}; ${prepared.detail}`,
+      `container ${name} on ${container.getConnectionUri()}; ${prepared.detail}`,
   );
+  startedContainer = container;
   return { ok: true, handoff: containerHandoff(container, acquired.reused) };
 }
 
