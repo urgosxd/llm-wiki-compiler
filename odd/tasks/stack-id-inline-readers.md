@@ -108,24 +108,66 @@ Note what the substitution preserves and what it destroys: the *file* answer sur
 
 **The recorded exception: `utils/lock.ts`.** The lock is taken at `packages/wiki/src/compiler/index.ts:362` (`const locked = await acquireMutationLock(root, "ordinary", { env: options.env });`), **before** `runCompilePipeline` resolves the authority at `:1103` (`const stackAuthority = await resolveStackAuthority({ env, db });`). **No authority can exist at that point, by construction** — the lock is what makes the resolution safe to perform, so requiring one there would be a cycle in the argument, not a refinement of it. That site therefore removes the ambient default and **threads the env its caller already holds**, and the reason is written down here rather than pressed into the general shape, so that a future reader does not "fix" it into a dependency it cannot satisfy. Its key derivation is unchanged: `stackIdOf`-by-env → `realpath(root)` fallback, one identity wherever it is looked up.
 
+> **Measured correction (L6).** The canonical shape is **required-at-the-boundary**, and T1 shipped two defaulted authority params: `deleteCandidate` (`packages/wiki/src/compiler/candidates.ts:114`) and `deleteCandidateBySlug` (`:154`), both defaulting to `UNRESOLVED_AUTHORITY` (`candidates.ts:76`), which is a file-branch constant — `const UNRESOLVED_AUTHORITY: StackAuthority = { kind: "file", reason: NO_DATABASE_CONFIGURED };`. The independent verification rated S13 **PARTIAL** for exactly that reason, and **T1b closes it.**
+
+**S14 — a row-resolved compile must not degrade to the file backend.** The measured statement, quoted verbatim: "the compile's env is `options.env ?? process.env` with no resolved id merged in".
+
+Three seams are proven to take the FILE branch because of it, each read at its line in a database-resolved compile:
+
+| seam | the reader | the file-branch decision |
+| --- | --- | --- |
+| `dimensions/wiki/candidate-source.ts:55` | `candidateStackId(env: NodeJS.ProcessEnv = process.env)` | consumed at `:91` by `withCandidateSource` |
+| `dimensions/wiki/activity-log-source.ts:45` | `journalStackId(env)` | consumed by `withJournalSource` |
+| `dimensions/wiki/derived-artifact-source.ts:26` | `artifactStackId(env: NodeJS.ProcessEnv = process.env)` | consumed at `:50` by `withDerivedSource` |
+
+Two further readers are **unreachable from the compile** and therefore are not instances of S14: `events/store*` and `linter/cache.ts`. Their unreachability is recorded under T3 and T4 as a downgrade, not as a fix.
+
+Note on the anchor: an earlier transcription of this measurement wrote `derived-artifact-source.ts:116`. That file is 63 lines long, so the anchor is corrected here to the lines actually read — `:26` for the reader and `:50` for the decision.
+
+**S15 — a named defect of its own: a split backend inside a single function.** `generateIndex` (`compiler/indexgen.ts:42`) and `generateMOC` (`compiler/obsidian.ts:116`) scan **rows** when they are given a row-backed `PageScanSource`, which they receive together with the authority through `regenerateIndices` (`dimensions/wiki/page-source-seam.ts:291-299`; the `authority?: StackAuthority` option at `:294`, threaded at `:299`) — and then write `index.md` / `MOC.md` **to disk** whenever `withDerivedSource` hands them `undefined`: `indexgen.ts:73` → `atomicWrite` at `:80`, `obsidian.ts:134` → `atomicWrite` at `:140`, both reached through `derived-artifact-source.ts:50`.
+
+That is one function reading one backend and writing another. It is a named defect with a downstream obligation attached: **T9 may fix it, and the T9 result must state whether it did** — it must not be left implied by the commit. If publishing the authority into the env does not fix it, it stays open as this named defect.
+
+**S16 — the lock is a concurrency defect and it ships in this branch.** Measured: `acquireMutationLock` runs at `packages/wiki/src/compiler/index.ts:362`, **before** the authority resolves at `:1114`, so the lock key falls back to `realpath(root)` (`utils/lock.ts:330`, `lockKeyFor`) and `databaseUrlFor` (`utils/lock.ts:345`) returns `undefined` — because it refuses a DSN without a Stack — which makes `acquireDatabaseLock` (`lock.ts:277`) return `undefined` and sends the acquisition down the **file** path. **No advisory lock is attempted at all** on a database-resolved compile.
+
+The framing, quoted: "a lock that silently does not happen reads exactly like a lock held."
+
+Required fix direction, recorded so a worker does not invent a third shape: **resolution must happen before the lock is taken, or the lock must re-key once the authority is known.** A key that is computed from an environment the resolution has not yet written into is a key for the wrong Stack.
+
+It also corrects an earlier reading in this document: "concurrency is permitted by the database, not validated, because only `pg_try_advisory_lock` guards it" was **optimistic** if the lock is never attempted on the CLI path. That measurement assumed the advisory lock was reached; S16 measures that on a database-resolved compile it is not reached at all.
+
 ## Tasks
 
-- [ ] **T1** — candidate custody leads: RED (a row-resolved run must not demand a candidate DIRECTORY) then thread the authority through `candidate-custody.ts` → `candidates.ts` → `review-pipeline.ts` → `compiler/index.ts` · S1,S2,S4,S10,S13 — worker then independent verify — commit: pending — `Risk: item 3` (changes internal function contracts consumed across the compiler)
+- [x] **T1** — candidate custody leads: RED (a row-resolved run must not demand a candidate DIRECTORY) then thread the authority through `candidate-custody.ts` → `candidates.ts` → `review-pipeline.ts` → `compiler/index.ts` · S1,S2,S4,S10,S13 — worker then independent verify — commit: `c6366b95aae2e170a195cbce35359be22626ae6f` — `Risk: item 3` (changes internal function contracts consumed across the compiler)
+- [ ] **T1b** — require the resolved authority at the delete entry points and pin the file branch's acceptance path · S1,S4,S10,S13 — worker — commit: pending — `Risk: item 3`
+  The S13 correction written above is this task's whole content: remove the `UNRESOLVED_AUTHORITY` default from `deleteCandidate` (`candidates.ts:114`) and `deleteCandidateBySlug` (`:154`) so omission is a type error, and add the pin the independent verification found missing — the file branch's **acceptance** path, not only its refusal, so a wrong-polarity branch cannot stay green.
 - [ ] **T2** — pending-embeddings: thread from `finalizeWiki` (`compiler/index.ts:1816`) down through `utils/embeddings-refresh.ts`, `utils/embeddings-retry.ts`, `utils/pending-embeddings.ts` · S1,S4,S10,S13 — worker then independent verify — commit: pending — `Risk: item 3`
-- [ ] **T3** — events: `events/store.ts` append and `events/store-read.ts` read/prepare/verify; update `linter/rules-events.ts`, `profile/block.ts`, `events/store-version.ts` callers · S1,S4,S10,S13 — worker then independent verify — commit: pending — `Risk: item 3`
-- [ ] **T4** — lint cache: `linter/cache.ts` read/write; caller `viewer/health.ts` · S1,S4,S10,S13 — worker then independent verify — commit: pending — `Risk: item 3`
-- [ ] **T5** — the three dead defaults: remove the defaulted `env` on `activity-log-source.ts:25`, `candidate-source.ts:56`, `derived-artifact-source.ts:27` so omission is a type error; one mechanical commit with a test proving the parameter is required · S1,S10 — worker — commit: pending — `Risk: item 3`
-- [ ] **T6** — lock: delete the ambient default on `releaseLock`/`acquireLock`/`acquireLockBlocking` and thread the env each caller already holds, at the six omitting call sites; key derivation unchanged · S1,S13 — worker then independent verify — commit: pending — `Risk: item 4` (concurrency) and `item 3`
+- [ ] **T3** — **DOWNGRADED — verify and document the reachability, fix only if a production path is found.** Neither T3 nor T4 is reachable from the compile path: no compiler module imports the linter, and `appendEvent`/`appendEventLocked` (`events/store.ts:296`, `:242`) have no production caller. **Not to be implemented until the reachability check finds one.** · S5 — worker — commit: pending — `Risk: item 3` (only if the reachability check authorises a fix; the verification itself is read-only)
+- [ ] **T4** — **DOWNGRADED — verify and document the reachability, fix only if a production path is found.** Same measurement as T3: no compiler module imports the linter, so `linter/cache.ts` is not on the compile path. **Not to be implemented until the reachability check finds one.** · S5 — worker — commit: pending — `Risk: item 3` (only if the reachability check authorises a fix; the verification itself is read-only)
+- [ ] **T5** — the three seams whose omission happens at the OUTER boundary: these are **not** latent hazards. The measured fact, quoted: "the compile's env is `options.env ?? process.env` with no resolved id merged in", so `candidate-source.ts:55` (consumed at `:91` by `withCandidateSource`), `activity-log-source.ts:45` and `derived-artifact-source.ts:26` (consumed at `:50`) all take the FILE branch in a database-resolved compile. S10's framing is corrected with this quote: "the default being dead in-file is not evidence the omission cannot happen, because the caller one level out is the caller who omits." · S1,S5 — worker — commit: pending — `Risk: item 3`
+- [ ] **T6** — lock, and it is a concurrency defect measured at its worst severity: `acquireMutationLock` runs at `compiler/index.ts:362` **before** the authority resolves at `:1114`, so the lock key falls back to `realpath(root)` and `databaseUrlFor` (`utils/lock.ts:345`) returns `undefined` — **no advisory lock is attempted on a database-resolved compile.** Quoted: "a lock that silently does not happen reads exactly like a lock held." Fix direction per S16: **resolution must happen before the lock is taken, or the lock must re-key once the authority is known**; the ambient default goes from `releaseLock`/`acquireLock`/`acquireLockBlocking` and the env each caller already holds is threaded at the six omitting call sites · S1,S13,S16 — worker then independent verify — commit: pending — `Risk: item 4` (concurrency) and `item 3`
 - [ ] **T7** — the forked literal at `project-config-seam.ts:37`: produce the missing cycle measurement, then either move the constant to a leaf module both sides import or retain the literal WITH that measurement as evidence · S11 — worker then independent verify — commit: pending — `Risk: item 3`
 - [ ] **T8** — the gate: pre-commit the population, run the gate of record, and write the closing sentence naming every remaining reader · S6,S7,S8,S12 — verify — commit: pending — `Risk: none`
+- [ ] **T9** — publish the resolved authority into the env the downstream seams receive, at the compile boundary — the same mechanism `mcp/tenant-db.ts:157` uses and S3 blesses — so CLI and SDK compiles stop degrading to the file backend · S1,S7,S8 — worker then independent verify — commit: pending — `Risk: item 3`
+  **Location:** `packages/wiki/src/compiler/index.ts`, immediately after the resolution at `:1114` — the resolved id is published into the env handed downstream, instead of each seam learning a new signature.
+  **Ruled (L8): publish at the boundary, NOT S1-literal.** S1 as written is satisfied by this shape: "Transport by env is not derivation: the seam reads the authority's answer instead of asking the variable." Threading the value into six seam signatures would satisfy a stricter reading that was never intended, for the mechanical reason quoted in L8: "MCP, host and job already transport the resolved id through env … Threading the value into six seams would give one fact two transports, chosen by entry point. … One transport, or none."
+  **Consequences to record:** the six seams need no signature change; the SDK (`sdk/core.ts:86,116`) is fixed for free; and the CLI path stops silently running the file backend. Its result must also state whether it fixed S15's split backend (rows in, disk out) or left it open as a named defect.
 
 ### Sequencing
 
 **T1 first.** It proves the shape and needs no database: the custody row branch is a pure early return, so the headline RED is observable without Postgres and the pattern the other seven tasks copy is settled before any of them spends a runner.
 
-**T2–T4 run SEQUENTIALLY, never in parallel.** Each of them touches `packages/wiki/src/compiler/index.ts`, so they are overlapping writers on one file; one writer at a time, in the order listed.
+**T2 runs SEQUENTIALLY with T5, T6 and T9, never in parallel with them.** It touches `packages/wiki/src/compiler/index.ts`, and so do T6 and T9, so they are overlapping writers on one file; one writer at a time, in the order T9 → T2 → T6 → T5. T3 and T4 are out of that queue entirely since the downgrade below: they are read-only reachability checks until a production path is found.
 
-**T6 must follow T3**, because both touch `events/store.ts`, and a lock threaded into an append whose signature is mid-change is a conflict, not a task.
+**T6 no longer follows T3.** That ordering existed because both touched `events/store.ts`; with T3 downgraded to a reachability check, nothing writes that file before T6, and the sequencing constraint it imposed goes with it.
+
+**T1b before T2**, because it is the second half of what T1 opened and leaves the delete entry points in the same shape as the rest of the custody chain before another reader copies the defaulted form.
+
+**T3/T4 are blocked on reachability.** Neither leaves the downgrade until a production path to it is found; a reader nothing calls is documented, not threaded.
+
+**Nothing in T2/T5/T6 starts until T9's ruling lands, because the ruling may subsume them.** The ruling has landed (L8): T9 is unblocked as *publish at the boundary*, and that shape subsumes the three outer-boundary seams T5 names (they stop receiving an env with no id) and silently relieves the SDK path, which is why **T9 runs before T2, T5 and T6 in practice** — those tasks must measure what is still broken *after* the boundary publishes, not before it. S16 remains T6's own defect even so: publishing into the env does not move the lock, which is taken before resolution exists.
+
+**T9 is blocked no longer** (L8 dissolved the ruling gate) and is the last entry in this list only because it is the newest; it is first in execution order.
 
 **T5 and T7 are independent of the rest** and of each other — T5 is a type-level deletion in `dimensions/wiki/`, T7 is a measurement in `dimensions/wiki/` and `project/` — so either may run at any time without waiting on the custody chain.
 
@@ -188,5 +230,58 @@ L4 — The measured evidence, produced on this branch at base `031f84a0` while w
 **Pre-committed gate population at base `031f84a0`: 857 test files** — `git ls-files '*.test.ts'` = 681 under `test/`, 170 under `packages/`, 6 under `scripts/`. (The same grep without the `.ts` restriction returns 858 because it also matches `tsconfig.test.json`, which is a config file and not a test; the population T8 pre-commits is 857.) T8 compares the run's own summary against **857** and reports the failure population with and without T15's five.
 
 **The fork's cycle, measured structurally.** `packages/wiki/src/dimensions/activation.ts:45-49` statically pulls `wiki/database.ts` → `store-dimension` → `source-projection` → `utils/source-writer` → `sources/selection` → `project/config.ts`, and the chain closes at `config.ts:141` with a **call-time** `await import(...)`. No dependency-cruiser or madge configuration exists in the tree, and the only crawl test (`test/module-graph-crawl.test.ts`) measures `vitest run`-related **parity**, not cycles — so the "four cycles" in the seam comment is unmeasured by anything in this repository, and T7 owns producing the number.
+
+L5 — **T1 executed.** The evidence, recorded literally because ODD needs the observation and not a summary of it:
+
+- **RED**, observed before the fix, at `test/candidate-custody-authority.test.ts:60:70`:
+
+  ```text
+  AssertionError: promise rejected "CandidateCustodyUnavailableError: candida…" instead of resolving
+  ```
+
+  caused by `CandidateCustodyUnavailableError: candidate custody is unavailable` thrown from `assertMutationTargetWritable` — a row-resolved run demanding a candidate **DIRECTORY**, which is S2's defect landed where S2 says to assert it.
+- **GREEN**: `2 passed (2)` on the focused file.
+- **File-mode pin**: `13 passed` — file mode still works, with a name.
+- **`tsc`**: clean.
+- **Lint**: "1708 files scanned; 558 baseline violations in 396 files across 423 rule/file entries; no regression".
+- **Related run**: `5 failed | 1255 passed (1260)`, all five being T15 — the named pre-existing red of S6, reported separately and not treated as this branch's work.
+- **Commit**: `c6366b95aae2e170a195cbce35359be22626ae6f` — `fix(custody): branch on the resolved authority, not ambient AKS_STACK_ID`, 5 files, `170 insertions(+), 25 deletions(-)`.
+
+L6 — **Independent verification of T1, and the three findings it produced.** The verdicts, per spec: **S1 VERIFIED · S2 PARTIAL · S4 PARTIAL · S10 VERIFIED · S13 PARTIAL.**
+
+The findings, kept because each one names a defect a green test suite was hiding:
+
+1. **`candidate-source.ts:55/91` still decides from env**, so a database-resolved run never reaches its rows: S2's custody fix does not travel with the candidate *source*, and S2 is therefore half-fixed rather than fixed. This is the finding that produced S14.
+2. **T1's pin proves only the file branch's refusal, never its acceptance**, so a wrong-polarity branch stays green. A pin that only observes one direction of a two-way branch is a pin on prose.
+3. **This feature document recorded no RED literal and no commit at the time of verification** — an ODD tracking failure, and the one this Log entry repairs. The failure is recorded rather than absorbed: the verification caught the tracking gap, not the other way round.
+
+What it also verified, as mitigation rather than as absolution: **no production caller omits the authority.** `deleteCandidate` has **zero** production callers; `deleteCandidateBySlug` has **one**, at `review-pipeline.ts:73`, and it passes `authority`. The 17 test call sites across 9 files that omit it are all file-mode tests. So the defaulted parameter T1b removes is not a live omission today — it is a **shape** that permits one tomorrow, which is exactly the distinction S13's correction records.
+
+L7 — **The env-propagation measurement, and the plan it forced.** Measured on this branch: **`DOES NOT INJECT`.**
+
+- `packages/wiki/src/compiler/index.ts:1109` — `const env = options.env ?? process.env;` — and the authority resolved from that env at `:1114` is **never merged back** into it. Every seam downstream receives the env the caller passed, which knows nothing about a Stack the database resolved.
+- The three entry points that **do** inject, and therefore never see this degradation: `mcp/tools.ts:120` → `tenant-db.ts:157` (`{ ...process.env, [AKS_STACK_ID_ENV_VAR]: stackId }`); `api/host/api.ts:399-411` → `buildIngestEnv`; `services/ingest/jobs/run.ts:260-273` → `buildIngestEnv`.
+- The broken paths are therefore the **CLI** and the **SDK**: `sdk/core.ts:86` (`const env = options.env ?? process.env;`) and `:116` (`compileAndReport(root, { ...opts, env, dimensionsPort: options.dimensionsPort })`) forward an env without injecting the resolved id. A compile reached from either one resolves a Stack from the database and then runs the file backend.
+- `services/ingest/ingest-env.ts:41` — `if (stackId === undefined) return process.env;` — degrades to the ambient environment when no Stack is named, which is why the three injecting entry points are correct only for the entry points that always name one.
+- **The split-backend finding**: `generateIndex`/`generateMOC` scan rows and then write `index.md`/`MOC.md` to disk — one function, two backends, named as S15.
+
+This measurement **contradicts the primary fix shape recorded in S13** (thread a required authority value through each reader's signature): the same end is reached by publishing the authority's answer into the one transport the seams already read. The decision taken from it is L8's, and T9 carries it.
+
+L8 — **The ruling, folded in once.** Recorded here rather than by recasting L7, because L7 is the measurement and this is the decision taken from it. This is the single application of the ruling to this document; it is not to be restated elsewhere.
+
+**Decision: T9 is UNBLOCKED. Publish at the boundary, NOT S1-literal.**
+
+Two reasons, quoted:
+
+- "Transport by env is not derivation: the seam reads the authority's answer instead of asking the variable." S1 as written is **satisfied** by this shape. The record to keep straight: this is **not a reversal of S13 and not a deviation from it** — **S13's provisional framing was superseded by a correct reading of S1.** S1-literal (threading the value into six seam signatures) would satisfy a stricter reading that was never intended, and writing it down that way is what keeps a future reader from "restoring" it.
+- "MCP, host and job already transport the resolved id through env … Threading the value into six seams would give one fact two transports, chosen by entry point. … One transport, or none." The mechanical reason, and the decisive one: a second transport does not add safety, it adds a way for two entry points to disagree about the same fact.
+
+Three corrections carried by the same ruling:
+
+1. **The split backend is named as its own defect (S15).** It is not folded into the env measurement, and T9's result must state whether it fixed it.
+2. **The `candidate-source.ts` correction is accepted** — finding (a) of L6 stands as measured, S2 is half-fixed, and T9 is the shape that closes it rather than a second fix of its own.
+3. **The events/linter downgrade is accepted** — T3 and T4 become reachability verification (S5) and are not implemented unless a production path is found.
+
+The lock correction from the same ruling is recorded in S16 and carried by T6: `acquireMutationLock` at `:362` runs before the authority at `:1114`, so no advisory lock is attempted on a database-resolved compile.
 
 <!-- The three facts this document could not settle from the tree are listed here rather than guessed: the literal text of T15's five failing test TITLES (nothing in `odd/tasks/single-stack-authority.md` records them; measuring them requires running the three named files on the gate of record, which is T8's job); the dependency-cycle COUNT the seam comment asserts as "four" (UNMEASURED — a cycle measurement has to be built, since no cruiser or madge config exists); and the gate's own file/test counts on this base (UNMEASURED until T8 runs the gate of record, and deliberately pre-committed at 857 files rather than guessed). -->
