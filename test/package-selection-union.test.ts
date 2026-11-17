@@ -83,6 +83,14 @@ const UNATTRIBUTABLE: readonly string[] = [];
 const FROZEN_ORPHANS: readonly string[] = [
   "test/apply-schemas-check-flag.test.ts",
   "test/artifact/dist-specifiers.test.ts",
+  // LEGITIMATELY ORPHAN, investigated not pasted: this file must load the package root the
+  // way a CONSUMER loads it — in a plain `process.execPath` child process, deliberately
+  // outside the Vitest resolver, which is precisely the shape that could not see the
+  // defect it guards. It imports no repo module: only `vitest` and `node:child_process`,
+  // `node:fs/promises`, `node:path`, `node:url`. So no `@repo/*` package filter can ever
+  // select it and it runs in the full suite only. There is nothing to fix; a test written
+  // this way lands here by construction, not as debt.
+  "test/artifact/foundation-root-entry.test.ts",
   // LEGITIMATELY ORPHAN, investigated not pasted: this file is a STATIC TEXT GUARD over
   // the image recipe `packages/llmwiki-kg/Dockerfile` and its entry script
   // `packages/llmwiki-kg/docker/entry.sh`, both read as text through `readFile`/`stat`
