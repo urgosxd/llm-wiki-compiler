@@ -148,7 +148,8 @@ describe("an unknown dimension name", () => {
 describe("the Stack pre-check still answers what it answered before", () => {
   it("needs no Stack for a wiki-only switch, and touches no database", async () => {
     // A bare checkout: `wiki` alone is enabled, so nothing the retirement path asks
-    // for is on, and provisioning the default Stack would open a connection for a
+    // for is on, so no Stack is needed at all -- and none is created to find one: the
+    // handle passed in is accepted and never read, so no connection is opened for a
     // dimension nobody uses.
     expect(await resolveStackForDimensions(probeDb(), {}, ["kg"])).toBeUndefined();
   });

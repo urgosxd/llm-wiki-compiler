@@ -456,11 +456,12 @@ async function readCandidatesByIds(
  *   queue length it reports belongs to whichever Stack the process serves.
  * @param authority - The Stack the caller already resolved, when it has one.
  *
- *   A caller that resolved its Stack ONCE — the launcher's boot, which provisions the
- *   default Stack and knows its id — passes it so the queue read here is that Stack's.
- *   Without it this seam re-asks `AKS_STACK_ID`, which names no Stack on exactly the
- *   deployment shape where an authority exists, and the answer would come from a
- *   checkout's `.llmwiki/candidates` instead of the Stack's rows.
+ *   A caller that resolved its Stack ONCE — from the id the request named, because no code
+ *   path creates a Stack and a run that names none while a database is configured is
+ *   refused by name — passes it so the queue read here is that Stack's. Without it this
+ *   seam re-asks `AKS_STACK_ID`, which names no Stack on exactly the deployment shape where
+ *   an authority exists, and the answer would come from a checkout's `.llmwiki/candidates`
+ *   instead of the Stack's rows.
  * @returns All pending review candidates.
  */
 export async function listCandidates(
@@ -561,8 +562,8 @@ export async function listCandidatePage(
  *   Stack's answer does not carry the bound deployment's queue length.
  * @param authority - The Stack the caller already resolved, when it has one.
  *
- *   Threaded rather than re-resolved: the viewer builds its snapshot from an authority
- *   the boot resolved, and a count taken from a different backend than the rest of that
+ *   Threaded rather than re-resolved: the viewer builds its snapshot from the authority its
+ *   own caller resolved, and a count taken from a different backend than the rest of that
  *   snapshot would report a queue the deployment does not have. Omitted, the environment
  *   decides exactly as before, which is what every non-boot caller relies on.
  * @returns The number of pending candidates.

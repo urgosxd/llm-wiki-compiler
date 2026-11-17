@@ -63,10 +63,13 @@ function candidateStackId(env: NodeJS.ProcessEnv = process.env): string | undefi
  * The Stack whose queue this call answers for.
  *
  * A supplied authority WINS over the environment, because that is the entire point of
- * resolving one: a boot that provisioned the default Stack holds a Stack whose id appears
- * in NO environment variable, so re-reading `AKS_STACK_ID` here answered "file mode" and
- * counted `.llmwiki/candidates` instead of the Stack's rows — a second resolution, and a
- * different backend from the one the caller was handed.
+ * resolving one: a caller that resolved a Stack from the id IT was given holds a Stack
+ * whose id appears in NO environment variable, so re-reading `AKS_STACK_ID` here answered
+ * "file mode" and counted `.llmwiki/candidates` instead of the Stack's rows — a second
+ * resolution, and a different backend from the one the caller was handed.
+ *
+ * No code path creates a Stack. The one an authority names exists because its owner created
+ * it over `POST /stacks`, or because an operator seeded it from the boot declaration.
  *
  * With no authority the environment decides, exactly as it always has, so the CLI and
  * every other caller that owns no authority keeps its behaviour byte-identical.
@@ -106,8 +109,8 @@ function candidateRowsSource(db: DatabaseHandle, stackId: string): CandidateRows
  * @param fn - Receives the row source, or `undefined` to keep using `.llmwiki/candidates`.
  * @param authority - The Stack the caller already resolved, when it has one.
  *
- *   Threaded so a caller that resolved ONE authority at boot reads the rows of THAT Stack
- *   instead of asking the environment again: an environment can name no Stack while the
+ *   Threaded so a caller that resolved ONE authority reads the rows of THAT Stack instead
+ *   of asking the environment again: an environment can name no Stack while the
  *   resolved authority names one, and the two answers must not diverge inside one run.
  *   Omitted, the environment decides and every existing file-backed caller is unchanged.
  * @returns Whatever `fn` returns.
