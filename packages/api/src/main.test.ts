@@ -30,7 +30,7 @@
  * bare `ENOENT` from the spawn.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -176,6 +176,44 @@ async function bootAndStop(env: NodeJS.ProcessEnv, label: string): Promise<void>
   }
 }
 
+/**
+ * The environment a host booted with ONE Stack named reads.
+ *
+ * The Stack id is a value an operator copies out of the `POST /stacks` response: this is
+ * what a deployment looks like once its owner has created the Stack, as opposed to the
+ * empty-database shape the refusal case below arranges.
+ *
+ * @param databaseUrl - The throwaway database the boot is pointed at.
+ * @param stackId - The Stack the run names.
+ * @returns The child's environment.
+ */
+function namedStackEnv(databaseUrl: string, stackId: string): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    [AKS_DATABASE_URL_ENV_VAR]: databaseUrl,
+    [AKS_STACK_ID_ENV_VAR]: stackId,
+  };
+}
+
+/**
+ * Create ONE Stack in the throwaway database, the way `POST /stacks` does.
+ *
+ * `domain` is NOT NULL and unique, and this row is the Stack every boot below is asked to
+ * serve. Creating it here rather than letting a boot create it is the whole of S1: a boot
+ * provisions nothing.
+ *
+ * @param dimensions - Handle on the throwaway database.
+ * @param domain - The Stack's domain.
+ * @returns The id of the row it created.
+ */
+async function createStackRow(dimensions: DimensionsDatabase, domain: string): Promise<string> {
+  const id = randomUUID();
+  await dimensions.db.execute(
+    `insert into public.stacks (id, name, domain) values ('${id}', '${domain}', '${domain}')`,
+  );
+  return id;
+}
+
 let root: string;
 
 beforeEach(async () => {
@@ -226,7 +264,7 @@ describe("the container launcher's SIGTERM stop contract", () => {
 });
 
 describe("a deployment whose database holds no Stack yet", () => {
-  it("provisions the default Stack and binds, instead of dying before it listens", async () => {
+  it("refuses by name and provisions nothing, instead of creating a default Stack and binding", async () => {
     const suite = await createSuiteDatabase("boot-precedence");
     const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
     try {
@@ -234,16 +272,23 @@ describe("a deployment whose database holds no Stack yet", () => {
       // prove nothing about the empty-database boot it exists to arrange.
       expect(await countStacks(dimensions), "the throwaway database must start with ZERO Stacks").toBe(0);
       const { running, announced } = await launchDatabaseHost(root, suite.url);
-      try {
-        // The OUTCOME, both halves of it: the Stack the boot provisioned, and a service that
-        // answers. The child's streams go in the MESSAGE only; no error text is asserted.
-        expect(await countStacks(dimensions), `the boot must provision exactly ONE Stack; child stderr: ${running.stderr()}`).toBe(1);
-        expect(announced, `the host must announce the listener it bound; child stderr: ${running.stderr()}`).toMatch(/^http:\/\//);
-        expect(await healthStatus(announced), `GET ${announced}/health must answer; child stderr: ${running.stderr()}`).toBe(200);
-      } finally {
-        running.terminate();
-        await running.exited;
-      }
+      const settled = await running.exited;
+      // The OUTCOME, all three halves of it: a refusal by name, no row written, and no
+      // listener. This case used to assert the OPPOSITE — that the boot provisioned the
+      // default Stack and bound — and the assertion is REVERSED on purpose (S1 and S12 of
+      // `odd/tasks/stack-authority-per-request.md`): no Stack may be created implicitly.
+      expect(settled.code, `a Stack-less database-backed host must exit 1; stderr: ${settled.stderr}`).toBe(1);
+      expect(
+        settled.stderr,
+        "the refusal must name the configuration that made the run impossible",
+      ).toContain(`${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack`);
+      expect(
+        await countStacks(dimensions),
+        `the boot must provision NO Stack; child stderr: ${settled.stderr}`,
+      ).toBe(0);
+      // ABSENT, not merely unreported: a boot that refused and never pretended to serve.
+      expect(announced, `a Stack-less boot must announce no listener; child stderr: ${settled.stderr}`).toBe("");
+      expect(settled.stdout, "a refused run must never announce a listener").not.toContain("Host ready at");
     } finally {
       await dimensions.close();
       await suite.drop();
@@ -251,23 +296,24 @@ describe("a deployment whose database holds no Stack yet", () => {
   });
 });
 
-describe("a second boot against the database the first boot populated", () => {
-  it("provisions no second Stack, and binds again", async () => {
+describe("a second boot against the database the first boot served", () => {
+  it("provisions no Stack at all, and binds again", async () => {
     const suite = await createSuiteDatabase("boot-idempotence");
     const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
-    // The SAME environment for both boots: same database, no Stack named, so the only
-    // thing that can differ between them is what the first one left behind.
-    const env = { ...process.env, [AKS_DATABASE_URL_ENV_VAR]: suite.url, [AKS_STACK_ID_ENV_VAR]: "" };
     try {
-      expect(await countStacks(dimensions), "the throwaway database must start with ZERO Stacks").toBe(0);
+      const stackId = await createStackRow(dimensions, "boot-idempotence");
+      // The SAME environment for both boots: same database, same named Stack, so the only
+      // thing that can differ between them is what the first one left behind.
+      const env = namedStackEnv(suite.url, stackId);
+      expect(await countStacks(dimensions), "the throwaway database must hold the ONE Stack this case created").toBe(1);
       await bootAndStop(env, "the first boot");
       // Measured, not carried forward: two counts in sequence are what a claim about
-      // idempotence needs. One `count = 1` would say nothing about the second boot.
+      // idempotence needs. One count would say nothing about the second boot.
       const afterFirstBoot = await countStacks(dimensions);
       await bootAndStop(env, "the second boot");
       const afterSecondBoot = await countStacks(dimensions);
-      expect(afterFirstBoot, "the first boot must provision exactly ONE Stack").toBe(1);
-      expect(afterSecondBoot, "the second boot must provision NO second Stack").toBe(1);
+      expect(afterFirstBoot, "a boot must write no Stack row of its own").toBe(1);
+      expect(afterSecondBoot, "a second boot must not write one either").toBe(1);
     } finally {
       await dimensions.close();
       await suite.drop();
@@ -280,27 +326,30 @@ describe("a Stack-backed host whose checkout carries a candidate file", () => {
     const suite = await createSuiteDatabase("boot-candidate-drift");
     const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
     try {
+      const stackId = await createStackRow(dimensions, "boot-candidate-drift");
       // A leftover `.llmwiki/candidates` directory is the realistic shape: any checkout
       // that ever ran a file-mode compile carries one. It is also the whole point — the
-      // count must come from the Stack the boot RESOLVED, not from a directory the
+      // count must come from the Stack the run was given, not from a directory the
       // process happens to be sitting in.
       await plantFileCandidate(root);
-      const { running, announced } = await launchDatabaseHost(root, suite.url);
+      const running = launch(["host", "--port", "0"], root, namedStackEnv(suite.url, stackId));
       try {
+        const announced = await announcedOrEmpty(running);
         expect(announced, `the host must announce the listener it bound; child stderr: ${running.stderr()}`).toMatch(/^http:\/\//);
         const pages = await fetch(`${announced}/api/pages`);
         expect(pages.status, `GET ${announced}/api/pages must answer; child stderr: ${running.stderr()}`).toBe(200);
         const body = (await pages.json()) as { counts: { pendingReviews: number } };
-        // The row queue this boot provisioned is EMPTY, so the count is 0. The planted
-        // file is the only thing that could make it anything else.
+        // The named Stack's row queue is EMPTY, so the count is 0. The planted file is the
+        // only thing that could make it anything else.
         expect(
           body.counts.pendingReviews,
           "a Stack-backed host must count its OWN queue, not the checkout's files",
         ).toBe(0);
         // Read after the count it explains: the 0 above means "the queue is empty", not "no Stack
-        // was there to read", so the Stack the boot provisioned is measured last, when the count
-        // it accounts for is already on the record.
-        expect(await countStacks(dimensions), `the boot must provision exactly ONE Stack; child stderr: ${running.stderr()}`).toBe(1);
+        // was there to read", so the Stack row is measured last, when the count it accounts for is
+        // already on the record. It is still exactly the ONE row this case created, because a
+        // boot writes none (S1).
+        expect(await countStacks(dimensions), `the boot must add NO Stack row; child stderr: ${running.stderr()}`).toBe(1);
       } finally {
         running.terminate();
         await running.exited;
@@ -312,21 +361,23 @@ describe("a Stack-backed host whose checkout carries a candidate file", () => {
   });
 });
 
-describe("the Stack row an earlier boot provisioned", () => {
+describe("the Stack row an earlier boot served", () => {
   it("is byte-identical after a second boot against the same database", async () => {
     const suite = await createSuiteDatabase("boot-stack-digest");
     const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
-    const env = { ...process.env, [AKS_DATABASE_URL_ENV_VAR]: suite.url, [AKS_STACK_ID_ENV_VAR]: "" };
     try {
+      const stackId = await createStackRow(dimensions, "boot-stack-digest");
+      const env = namedStackEnv(suite.url, stackId);
       await bootAndStop(env, "the first boot");
       const digestAfterFirstBoot = await stackRowsDigest(dimensions);
       await bootAndStop(env, "the second boot");
       const digestAfterSecondBoot = await stackRowsDigest(dimensions);
       // Stronger than the count beside it: a rewritten row keeps the count at 1 while
-      // changing what it holds, and only the digest can see that.
+      // changing what it holds, and only the digest can see that. A boot now writes nothing
+      // at all, and this is what makes "writes nothing" observable to the byte.
       expect(
         digestAfterSecondBoot,
-        "a second boot must leave the provisioned Stack byte-identical, not merely singular",
+        "a second boot must leave the Stack byte-identical, not merely singular",
       ).toBe(digestAfterFirstBoot);
     } finally {
       await dimensions.close();
