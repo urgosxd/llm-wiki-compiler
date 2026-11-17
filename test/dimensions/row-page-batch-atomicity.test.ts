@@ -34,6 +34,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyApprovedMutationsLocked } from "../../packages/wiki/src/trust/executor.js";
 import { pageStoreOptions, type PageSink } from "../../packages/wiki/src/trust/page-apply.js";
@@ -104,6 +105,20 @@ describe("a row-backed page batch is all-or-nothing", () => {
     return found;
   }
 
+  /**
+   * The epoch the bound Stack reports: `stacks.updated_at`, the column `/api/pages` keys
+   * its per-Stack snapshot cache by (`src/viewer/api-pages.ts`, `PagesSnapshotCache`).
+   *
+   * Read as TEXT for the reason that route reads it that way: the comparison this suite
+   * makes is byte equality of one value against itself, not a date arithmetic.
+   */
+  async function stackEpoch(): Promise<string> {
+    const rows = await harness.db.execute<{ epoch: string }>(
+      sql`select updated_at::text as epoch from stacks where id = ${harness.stackId}`,
+    );
+    return rows[0]?.epoch ?? "";
+  }
+
   /** The resolved row sink, asserted present so a missing Stack fails loudly. */
   function requireSink(): PageSink {
     if (seams.sink === undefined) throw new Error("no row sink resolved — is the Stack bound?");
@@ -119,9 +134,15 @@ describe("a row-backed page batch is all-or-nothing", () => {
     return pageStoreOptions(sink, remover, seams.transaction);
   }
 
-  it("leaves NO page behind when the second write of three throws", async () => {
-    if (!harness.reachable) return;
-
+  /**
+   * Run the three-page batch with its SECOND write throwing, through the real seams.
+   *
+   * Shared because two cases need the same mid-batch failure and the same assertion that it
+   * surfaces: the one that pins no page is left behind, and the one that pins the Stack's epoch
+   * is left where it was. The failure has to arrive AFTER page one committed its own write —
+   * that is the window under test — so it is the sink that throws, not the database.
+   */
+  async function failingBatch(): Promise<void> {
     await expect(
       applyApprovedMutationsLocked(
         root,
@@ -129,6 +150,12 @@ describe("a row-backed page batch is all-or-nothing", () => {
         batchOptions(undefined, failingSink(requireSink(), 2)),
       ),
     ).rejects.toThrow(/synthetic failure on beta/);
+  }
+
+  it("leaves NO page behind when the second write of three throws", async () => {
+    if (!harness.reachable) return;
+
+    await failingBatch();
 
     // The whole batch is undone. Before the fix this was ["alpha"]: page one
     // committed in its own transaction and page two threw.
@@ -143,6 +170,33 @@ describe("a row-backed page batch is all-or-nothing", () => {
     await applyApprovedMutationsLocked(root, BATCH.map((slug) => pageCreate(slug)), batchOptions());
 
     expect(await surviving(BATCH)).toEqual([...BATCH]);
+  });
+
+  it("leaves the Stack's epoch exactly where it was when a batch rolls back", async () => {
+    if (!harness.reachable) return;
+    const before = await stackEpoch();
+
+    // The non-vacuity control, and the reason the assertion below means something: the SAME
+    // store DOES move the epoch when a write commits. Without this half, a store that never
+    // touched `stacks` at all would satisfy "a rollback leaves the epoch unchanged" by never
+    // having advanced it in the first place. Written through the resolved sink, which is the
+    // same `upsertStoredPage` the batch's writes reach.
+    await requireSink()({
+      directory: "concepts",
+      slug: "committed",
+      body: `---\ntitle: committed\n---\n\nbody of committed\n`,
+    });
+    const committed = await stackEpoch();
+    expect(committed, "a committed page write must advance the Stack's epoch").not.toBe(before);
+
+    await failingBatch();
+
+    // The epoch advance runs in the SAME transaction as the page writes (`withTenant` in
+    // `page-store.ts`), so the rollback takes it back with them. An epoch that advanced for
+    // content that never landed would make the viewer rebuild a snapshot to read the corpus
+    // it already had, and — worse in the other direction — could mark a corpus fresh.
+    expect(await stackEpoch(), "a rolled-back batch must not move the epoch").toBe(committed);
+    expect(await surviving(BATCH), "and no page may survive it").toEqual([]);
   });
 
   it("leaves BOTH rows when the second removal of a delete batch throws", async () => {

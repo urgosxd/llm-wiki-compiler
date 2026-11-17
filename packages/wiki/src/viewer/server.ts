@@ -22,7 +22,8 @@ import http from "http";
 import type { IncomingMessage, ServerResponse } from "http";
 import { AddressInfo } from "net";
 import { buildHealthResponse } from "./health.js";
-import { handleApiPage, handleApiPages } from "./api-pages.js";
+import { handleApiPage, handleApiPages, createPagesSnapshotCache } from "./api-pages.js";
+import type { PagesSnapshotCache } from "./api-pages.js";
 import { handleApiSource } from "./api-sources.js";
 import { loadShellTemplate } from "./shell.js";
 import { ASSETS_DIR, handleAsset } from "./static-assets.js";
@@ -95,8 +96,9 @@ export async function startViewerServer(
   deps: ViewerDeps = {},
 ): Promise<ViewerServerHandle> {
   const boundConfig: ViewerServerConfig = { ...config };
+  const state = createRouteState();
   const server = http.createServer((req, res) => {
-    handleRequest(req, res, snapshot, boundConfig, deps).catch((err) => {
+    handleRequest(req, res, snapshot, boundConfig, deps, state).catch((err) => {
       // Per spec: never return raw thrown error text to the client.
       // The per-route handlers catch render/sanitize failures locally
       // and emit `render_failed`; reaching here means a genuinely
@@ -186,7 +188,27 @@ export function createViewerHandler(
   deps: ViewerDeps = {},
 ): ViewerRequestHandler {
   const boundConfig: ViewerServerConfig = { ...config };
-  return (req, res) => handleRequest(req, res, snapshot, boundConfig, deps);
+  // One cache per handler, created HERE and nowhere else: a module-level singleton would serve
+  // one host's Stacks to the next host built in the same process (S11).
+  const state = createRouteState();
+  return (req, res) => handleRequest(req, res, snapshot, boundConfig, deps, state);
+}
+
+/**
+ * State a route may need across requests, owned by the handler that serves them.
+ *
+ * Not a `deps` entry: `deps` is what a HOST injects (a projection provider, an ingest registry),
+ * while this is what the viewer itself keeps between requests, so no host can supply one by
+ * mistake and no two handlers can share one.
+ */
+interface ViewerRouteState {
+  /** One `/api/pages` snapshot per Stack, keyed by the epoch it was built from. */
+  readonly pages: PagesSnapshotCache;
+}
+
+/** The state a fresh handler closure owns. */
+function createRouteState(): ViewerRouteState {
+  return { pages: createPagesSnapshotCache() };
 }
 
 async function handleRequest(
@@ -195,6 +217,7 @@ async function handleRequest(
   snapshot: ViewerSnapshot,
   config: ViewerServerConfig,
   deps: ViewerDeps,
+  state: ViewerRouteState,
 ): Promise<void> {
   applySecurityHeaders(res);
   if (!validateOriginHeaders(req, config)) {
@@ -206,7 +229,7 @@ async function handleRequest(
     writeJsonError(res, 404, "not_found", `${req.method ?? "?"} ${url.pathname}`);
     return;
   }
-  await routeRegistered(req, res, url, snapshot, config, deps);
+  await routeRegistered(req, res, url, snapshot, config, deps, state);
 }
 
 /**
@@ -222,11 +245,12 @@ async function routeRegistered(
   snapshot: ViewerSnapshot,
   config: ViewerServerConfig,
   deps: ViewerDeps,
+  state: ViewerRouteState,
 ): Promise<void> {
   if (parsedUrl.pathname === "/") return handleShell(res);
   if (parsedUrl.pathname.startsWith("/assets/")) return handleAsset(res, parsedUrl.pathname);
   const snapshotOnly = SNAPSHOT_ONLY_HANDLERS.get(parsedUrl.pathname);
-  if (snapshotOnly) return snapshotOnly(res, snapshot, parsedUrl);
+  if (snapshotOnly) return snapshotOnly(res, snapshot, parsedUrl, state);
   return routeLiveResources(res, parsedUrl, snapshot, config, deps);
 }
 
@@ -270,12 +294,23 @@ function workflowJourneysEnabled(config: ViewerServerConfig, deps: ViewerDeps): 
  * names (`?stackId=`), and a handler that needs no query simply declares fewer parameters. It is
  * the request's own URL rather than a resolved dependency: authority is a request input now, so
  * there is no boot value left to pass and nothing here may fall back to one.
+ *
+ * The per-handler state is handed over for the same reason: `/api/pages` keeps one snapshot per
+ * Stack (S11), and a cache the handler's closure owns is the only place it can live without
+ * becoming a module singleton.
  */
-const SNAPSHOT_ONLY_HANDLERS: ReadonlyMap<
+type SnapshotOnlyHandler = (
+  res: ServerResponse,
+  snapshot: ViewerSnapshot,
+  url: URL,
+  state: ViewerRouteState,
+) => void | Promise<void>;
+
+const SNAPSHOT_ONLY_HANDLERS: ReadonlyMap<string, SnapshotOnlyHandler> = new Map<
   string,
-  (res: ServerResponse, snapshot: ViewerSnapshot, url: URL) => void | Promise<void>
-> = new Map<string, (res: ServerResponse, snapshot: ViewerSnapshot, url: URL) => void | Promise<void>>([
-  ["/api/pages", handleApiPages],
+  SnapshotOnlyHandler
+>([
+  ["/api/pages", (res, snapshot, url, state) => handleApiPages(res, snapshot, url, state.pages)],
   ["/api/health", handleApiHealth],
   ["/api/graph", handleApiGraph],
   ["/api/reviews", (res, snapshot, url) => handleApiReviews(res, snapshot.root, url)],

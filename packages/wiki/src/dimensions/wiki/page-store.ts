@@ -363,6 +363,45 @@ export async function getStoredPagesByKey(
 }
 
 /**
+ * Advance the Stack's epoch, in the SAME transaction that commits its pages.
+ *
+ * ## What depends on it
+ *
+ * The viewer caches one `/api/pages` snapshot per Stack and serves it while the `stacks`
+ * row's `updated_at` is unchanged (`src/viewer/api-pages.ts`, `PagesSnapshotCache`). That
+ * epoch already moved on create, `PATCH` and deactivation; without this it did NOT move when
+ * a Stack's CONTENT changed, so `create -> ingest -> look -> ingest more -> look` served the
+ * snapshot the third step froze. `updated_at` is the one column every surface already reads
+ * and no consumer owns, which is why content growth moves it rather than a second marker.
+ *
+ * ## Why here and not in the sink
+ *
+ * `createPageWriteSink` cannot see the transaction: `withTenant` opens (or joins) it below,
+ * so a statement issued from the sink would commit on its own and could survive a batch that
+ * then rolled back — an epoch that moved with no content behind it, or content that landed
+ * with a stale epoch. This runs INSIDE the tenant binding, so the update is subject to the
+ * same row policy as the pages it accompanies (`app.stack_id` is set by `withTenant`, and
+ * the `stacks` policy admits the id) and rolls back with them.
+ *
+ * ## BLAST RADIUS: compile calls this too
+ *
+ * Every page written through `upsertStoredPage` advances it, and that includes
+ * `src/compiler/index.ts` as well as ingest, the OKF import and the store dimension. That is
+ * intended — all of them change a Stack's corpus. What it COSTS depends on who owns the
+ * transaction. When the caller supplies `activePageBatchTransaction()` the update joins that
+ * batch, the shared transaction's `now()` is one value for every page, and a compile of fifty
+ * pages moves the epoch once, to the batch's start time. With no batch each page commits in
+ * its own transaction and issues its own `UPDATE stacks`, so the epoch moves once per page
+ * write rather than once per batch.
+ *
+ * @param tx - The tenant-bound transaction the page write runs in.
+ * @param stackId - The Stack whose epoch moves.
+ */
+async function advanceStackEpoch(tx: DatabaseHandle, stackId: string): Promise<void> {
+  await tx.execute(sql`update stacks set updated_at = now() where id = ${stackId}`);
+}
+
+/**
  * Insert or update one page.
  *
  * `updated_at` is set on conflict because the listing orders by it: a page whose
@@ -417,6 +456,7 @@ export async function upsertStoredPage(
         attribution_gaps = excluded.attribution_gaps,
         updated_at = now()
     `);
+    await advanceStackEpoch(tx as unknown as DatabaseHandle, stackId);
   }, callerTx);
 }
 
@@ -446,5 +486,7 @@ export async function deleteStoredPage(
       where stack_id = ${stackId}
         and page_directory = ${pageDirectory} and slug = ${slug}
     `);
+    // A removal changes the corpus exactly as a write does, so it moves the epoch too.
+    await advanceStackEpoch(tx as unknown as DatabaseHandle, stackId);
   }, callerTx);
 }

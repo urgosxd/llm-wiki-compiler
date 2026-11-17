@@ -98,10 +98,24 @@ const PAGE_HASH_PATTERN = /^#\/([^/]+)\/(.+)$/;
  */
 const bootstrapData = { pages: null, health: null, settled: false };
 
+/**
+ * The envelope endpoint, carrying the query the PAGE was opened with.
+ *
+ * `/api/pages` reads the Stack the request names (`?stackId=`), and the shell is the only
+ * thing that asks it on a human's behalf: an operator who creates a Stack and opens
+ * `http://host/?stackId=<id>` must get THAT Stack's corpus, so the page's own query is
+ * passed through unchanged. Nothing is synthesised: a page opened with no query asks for the
+ * bare endpoint, exactly as before, because that request is what keeps a database-backed
+ * deployment's dashboard loading rather than answering a refusal.
+ */
+function pagesEndpoint() {
+  return `/api/pages${location.search}`;
+}
+
 /** Fetch both bootstrap endpoints in parallel, tolerating either failing. */
 async function loadBootstrapData() {
   const [pages, health] = await Promise.all([
-    fetchJson("/api/pages").catch(() => null),
+    fetchJson(pagesEndpoint()).catch(() => null),
     fetchJson("/api/health").catch(() => null),
   ]);
   bootstrapData.pages = pages;
