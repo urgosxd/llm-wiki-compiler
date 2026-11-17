@@ -32,8 +32,14 @@ import {
   ingestDimensions,
   resolveDimensions,
 } from "../../dimensions/index.js";
-import type { Dimension, DimensionName } from "../../dimensions/index.js";
-import { resolveStackForCommand } from "../stacks/resolve-stack.js";
+import type {
+  Dimension,
+  DimensionName,
+  DimensionsDatabase,
+  IngestOutcome,
+} from "../../dimensions/index.js";
+import { resolveStackAuthority } from "../../dimensions/stack-authority.js";
+import { projectSourceMarkdown } from "../../dimensions/wiki/source-projection.js";
 import { LockBusyError } from "../../utils/lock.js";
 import { appendLog } from "../../utils/activity-log.js";
 import { SOURCES_DIR } from "../../utils/constants.js";
@@ -48,7 +54,7 @@ import ingestTranscript from "../../ingest/transcript.js";
 import { buildDocument, enforceCharLimit, enforceMinContent } from "./document.js";
 import { detectSourceType } from "./source-detection.js";
 import type { IngestJobObserver } from "./jobs/types.js";
-import type { IngestResult, SourceType } from "../../utils/types.js";
+import type { IngestResult, SourceType, WriteStatus } from "../../utils/types.js";
 
 /** Input shape for raw-text ingestion. */
 export interface IngestTextInput { title: string; text: string; source?: string }
@@ -59,6 +65,8 @@ export interface IngestTextInput { title: string; text: string; source?: string 
  * The MCP tools carry the Stack as their own argument, so they must not reach
  * `resolveStackForCommand` — that helper provisions a default Stack when the
  * environment names none, which is exactly the fallback the tool path no longer has.
+ * A named id is precedence 1 of `resolveStackAuthority`, which hands it back without
+ * a lookup, so a tool call never provisions one.
  * Callers that pass nothing here (the CLI, the HTTP host, the SDK) keep the
  * resolution they have always had.
  */
@@ -132,6 +140,37 @@ async function journalIngest(
   });
 }
 
+/** The document one ingest writes: identity, title, its markdown, and its body. */
+interface IngestDocumentInput { title: string; source: string; document: string; body: string }
+
+/**
+ * Write one source into `sources/`, for the named mode where this wiki has no database.
+ *
+ * S2 of `odd/tasks/single-stack-authority.md`: "a wiki with no database at all is a
+ * legitimate mode". This is the whole of what an ingest still does in it, stated
+ * rather than implied: the raw markdown lands at `sources/<slug>.md` and NOTHING else
+ * is written. No `wiki.*` row, no page file under `wiki/`, no `.llmwiki/state.json` --
+ * pages and compile state belong to `compile`, which reads this directory back from
+ * disk, and that is what makes such a wiki file-backed rather than degraded.
+ *
+ * The file it writes is the SAME one the row-backed path projects after its commit,
+ * through the same function: `projectSourceMarkdown` owns the slug-to-filename
+ * resolution, the stable collision suffix, the path confinement and the
+ * self-compensation after a failed write. Calling `saveSource` here would be a second
+ * answer to "where does a source live".
+ *
+ * @param root - Project root; `sources/` is resolved against it.
+ * @param input - Title, full markdown, and source identity.
+ * @returns Where the source landed and whether it changed.
+ */
+async function ingestAsFiles(
+  root: string,
+  input: IngestDocumentInput,
+): Promise<{ artifactPath: string; writeStatus: WriteStatus }> {
+  const projected = await projectSourceMarkdown(root, input);
+  return { artifactPath: projected.artifactPath, writeStatus: projected.writeStatus };
+}
+
 /**
  * Write one document to every enabled dimension, atomically.
  *
@@ -141,12 +180,36 @@ async function journalIngest(
  * wiki only, so this is behaviour-preserving for projects that never asked for a
  * graph.
  *
+ * ## The Stack is decided ONCE, by the authority, and the mode is its answer
+ *
+ * `resolveStackAuthority` owns the precedence: the caller's id wins; otherwise a
+ * configured database supplies one through `resolveStackForCommand`, which honours an
+ * explicitly selected Stack and otherwise provisions the default one; otherwise -- no
+ * database configured at all -- the NAMED `file` mode; and a configured database that
+ * resolves no Stack is a loud, named refusal.
+ *
+ * That is why nothing here reads `AKS_STACK_ID` or asks whether a DSN exists: an empty
+ * id used to decide the mode by itself, and the two situations it conflated -- "this
+ * wiki has no database", a supported wiki, and "a configured database answered no
+ * Stack", an outage -- became one file-backed success. Only the second may fail, and
+ * only the authority can tell them apart.
+ *
+ * The same id reaches the coordinator and the dimensions, so the two can never
+ * disagree -- the job rows and the document CONTENT must land in one Stack. A second
+ * resolution was a second answer: the job landed in the requested Stack while the
+ * document went to the host's bound one, so a caller was told "unchanged, nothing to
+ * do" about a Stack that did not contain the file at all.
+ *
+ * A caller that already knows the Stack (the MCP tool, whose argument is required)
+ * supplies it as precedence 1: there is no default to fall back to there, and asking
+ * for one would provision a Stack nobody named.
+ *
  * @param root - Project root.
  * @param input - Source identity, title, frontmatter document, and body.
  * @param observer - Optional job observer.
  * @param env - Environment the dimensions write with; defaults to `process.env`.
- * @param explicitStackId - A Stack the CALLER named. When absent the Stack is resolved
- *   from `env` exactly as before, default Stack included.
+ * @param explicitStackId - A Stack the CALLER named -- precedence 1 of the authority,
+ *   so a caller that knows its Stack costs no lookup and provisions no default.
  * @param port - The dimensions, injected by the caller that owns them.
  *   OPTIONAL, and its omission is VALID: absent means "resolve the dimensions
  *   internally, exactly as this function always has", never "throw" and never
@@ -156,58 +219,36 @@ async function journalIngest(
  *   that legitimately has no port (the SDK facade, the published surface).
  * @returns The written path and its write status.
  * @throws {LockBusyError} When another mutation holds the project lock.
+ * @throws {StackAuthorityError} When a database is configured and no Stack resolves;
+ *   never a file-backed result in that case.
  */
 async function writeToDimensions(
   root: string,
-  input: { title: string; source: string; document: string; body: string },
+  input: IngestDocumentInput,
   observer?: IngestJobObserver,
   env: NodeJS.ProcessEnv = process.env,
   explicitStackId?: string,
   port?: DimensionsPort<Dimension>,
 ): Promise<{ savedPath: string; writeStatus: NonNullable<IngestResult["writeStatus"]> }> {
-  // Pages are rows in Postgres now, so the dimensions need a handle. It is built
-  // for this operation and released right after, because an unclosed pool keeps
-  // the event loop alive.
+  // Built for this operation and released right after, because an unclosed pool keeps
+  // the event loop alive. Building it in the named file mode is harmless and measured,
+  // not assumed: the pool is LAZY, so a run that never queries opens no socket. The mode
+  // is not decided here -- the authority below decides it -- and this handle is only the
+  // thing precedence 2 needs WHEN a database is configured.
   const dimensionsDb = createDimensionsDatabase(env);
   observer?.ingest.stage("preparing");
   const locked = await tryWithOrdinaryMutationLock(root, async () => {
     try {
-      // The Stack is resolved ONCE and the same value is handed to both the
-      // coordinator and the dimensions, so the two can never disagree -- the job rows
-      // and the document CONTENT must land in one Stack. A second resolution was a
-      // second answer: the job landed in the requested Stack while the document went
-      // to the host's bound one, so a caller was told "unchanged, nothing to do"
-      // about a Stack that did not contain the file at all.
-      //
-      // `resolveStackForCommand` rather than `resolveStackId`: a checkout that
-      // configured no Stack is no longer a refusal here, it is the default Stack. The
-      // strict helper stays as it is, because the surfaces that must refuse -- the MCP
-      // deployment binding -- still need it.
-      //
-      // A caller that already knows the Stack (the MCP tool, whose argument is
-      // required) skips the resolution entirely: there is no default to fall back to
-      // there, and asking for one would provision a Stack nobody named.
-      const stackId = explicitStackId ?? await resolveStackForCommand(dimensionsDb.db, env);
+      const authority = await resolveStackAuthority({
+        stackId: explicitStackId,
+        env,
+        db: dimensionsDb.db,
+      });
+      // NO DATABASE CONFIGURED AT ALL: the source lands on disk and no row-shaped
+      // dimension runs. `ingestDimensions` is keyed by a Stack, so it is not reached.
+      if (authority.kind === "file") return await ingestAsFiles(root, input);
       observer?.ingest.stage("committing");
-      return await ingestDimensions(
-        dimensionsDb.db,
-        stackId,
-        input,
-        // ABSENT PORT MEANS RESOLVE INTERNALLY -- not "throw", not "write to
-        // nothing". The two branches are deliberately the SAME resolution: the port
-        // forwards exactly the root, handle, environment and Stack this function
-        // already holds, so an injected port cannot answer a different question than
-        // the internal one. The refusal for a missing port lives at the API-owned
-        // entry points that require one; here, omission is valid by design.
-        //
-        // `env` still reaches the dimensions because it carries the dimension switch,
-        // the Stack name and the connection string; `stackId` settles the one question
-        // this function already answered.
-        port === undefined
-          ? resolveDimensions({ root, db: dimensionsDb.db, env, stackId })
-          : port.resolve({ only: INGEST_DIMENSIONS, env, root, db: dimensionsDb.db, stackId }),
-        { attempts: observer?.attempts },
-      );
+      return await ingestIntoStack(dimensionsDb, authority.stackId, { root, input, env, observer, port });
     } finally {
       await dimensionsDb.close();
     }
@@ -222,6 +263,51 @@ async function writeToDimensions(
   }
   observer?.ingest.stage("projecting");
   return { savedPath: outcome.artifactPath, writeStatus: outcome.writeStatus ?? "created" };
+}
+
+/**
+ * Write one document to the dimensions of ONE Stack, through the coordinator.
+ *
+ * ABSENT PORT MEANS RESOLVE INTERNALLY -- not "throw", not "write to nothing". The two
+ * branches are deliberately the SAME resolution: the port forwards exactly the root,
+ * handle, environment and Stack this run already holds, so an injected port cannot
+ * answer a different question than the internal one. The refusal for a missing port
+ * lives at the API-owned entry points that require one; here, omission is valid by
+ * design, because the SDK facade and the published surface legitimately have none.
+ *
+ * A separate function because `writeToDimensions` branches on the authority's kind
+ * first: keeping the coordinator call in that body would put the row-backed write and
+ * the file-mode write in one scope, which is how a mode ends up decided twice.
+ *
+ * @param dimensionsDb - The handle the caller opened, and closes.
+ * @param stackId - The Stack the authority resolved.
+ * @param request - Project root, source input, the one environment this run reads, the
+ *   job observer, and the caller's dimensions port when it supplied one.
+ * @returns What the coordinator wrote.
+ */
+async function ingestIntoStack(
+  dimensionsDb: DimensionsDatabase,
+  stackId: string,
+  request: {
+    readonly root: string;
+    readonly input: IngestDocumentInput;
+    readonly env: NodeJS.ProcessEnv;
+    readonly observer: IngestJobObserver | undefined;
+    readonly port: DimensionsPort<Dimension> | undefined;
+  },
+): Promise<IngestOutcome> {
+  const { root, input, env, observer, port } = request;
+  // `env` reaches the dimensions because it carries the dimension switch, the Stack name
+  // and the connection string; `stackId` settles the one question this run answered.
+  return await ingestDimensions(
+    dimensionsDb.db,
+    stackId,
+    input,
+    port === undefined
+      ? resolveDimensions({ root, db: dimensionsDb.db, env, stackId })
+      : port.resolve({ only: INGEST_DIMENSIONS, env, root, db: dimensionsDb.db, stackId }),
+    { attempts: observer?.attempts },
+  );
 }
 
 /**
