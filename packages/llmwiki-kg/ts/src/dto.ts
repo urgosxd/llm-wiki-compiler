@@ -262,6 +262,39 @@ export const StackCreate = z.object({
   ontology: OntologyInput,
 });
 
+/**
+ * The JSON declaration the launcher's `--stacks-declaration` flag names.
+ *
+ * ## Why this wraps the HTTP body instead of restating it
+ *
+ * Provisioning from a file and provisioning from `POST /stacks` are the SAME act, so the
+ * element schema is `StackCreate` itself: one validator, two entry points (S8 of
+ * `odd/tasks/stack-authority-per-request.md`). A second schema would let a declaration name a
+ * Stack the route refuses, and the two would drift the moment either one changed.
+ *
+ * ## Why the document holds an ARRAY
+ *
+ * A multi-tenant deployment declares N Stacks and a single-Stack deployment declares 1, so
+ * `tenant = stack` stays one mechanism rather than two. `{"stacks": []}` is VALID and seeds
+ * nothing: an empty array is a statement, not an error.
+ *
+ * ## Why the wrapper carries no Pydantic primitives
+ *
+ * No FastAPI model produces this document and no request parses it, so there is no oracle to
+ * reproduce: `stacks` is a plain `z.array` with no default. A declaration that does not say which
+ * Stacks it means is a mistake, and `{}` is refused rather than read as "none".
+ *
+ * ## What this schema does NOT say
+ *
+ * Nothing here is a rule about what the boot does with the parsed Stacks. It is a seed, applied
+ * once per boot, and it never updates a row that already exists; the loader is where that lives.
+ */
+// Consumed by `packages/api/src/host/stacks-declaration.ts`, which reaches this file by relative
+// path because `@repo/kg` publishes no `./dto` subpath — so a kg-rooted dead-code audit cannot see
+// the consumer and reports this export as unused.
+// fallow-ignore-next-line unused-export
+export const StacksDeclaration = z.object({ stacks: z.array(StackCreate) });
+
 /** Request body for `PATCH /stacks/{id}`. Every field is optional. */
 export const StackUpdate = z.object({
   // Optional[str] = Field(None, min_length=1, max_length=200): the bounds apply

@@ -79,6 +79,14 @@ const CROSS_SUBCOMMAND_FLAGS: readonly CrossSubcommandCase[] = [
   { title: "host rejects --root, which only serve can honour", args: (root) => ["host", "--port", "0", "--root", root], rejected: "--root" },
   { title: "serve rejects --port, which only host can honour", args: () => ["serve", "--port", "0"], rejected: "--port" },
   { title: "serve rejects --no-graph, which only host can honour", args: () => ["serve", "--no-graph"], rejected: "--no-graph" },
+  // The declaration names Stacks for a LISTENER to serve; `serve` is stdio MCP, which opens no
+  // database of its own. Accepting it here would seed a database as a side effect of a mode nobody
+  // asked to provision anything from.
+  {
+    title: "serve rejects --stacks-declaration, which only host can honour",
+    args: (root) => ["serve", "--stacks-declaration", path.join(root, "stacks.json")],
+    rejected: "--stacks-declaration",
+  },
 ];
 
 /** What one finished invocation left behind. */

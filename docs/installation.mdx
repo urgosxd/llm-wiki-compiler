@@ -57,6 +57,26 @@ docker run --rm --network host -e LLMWIKI_MODE=host -e LLMWIKI_HOST=127.0.0.1 ll
 
 From a source checkout, `pnpm run build` followed by `node dist/api.js serve` (or `node dist/api.js host --port 4173`) runs the same two modes.
 
+### Creating the first Stack
+
+A `host` boot provisions no Stack. The normal path is to create it over HTTP once the listener is up, then name it on every request that needs one:
+
+```bash
+curl -sS -X POST http://127.0.0.1:4173/stacks \
+  -H 'content-type: application/json' \
+  -d '{"name": "My wiki", "domain": "my-wiki"}'
+```
+
+For an **unattended** deploy - a container that has to come up with its Stacks already present and nobody there to send that POST - `host` accepts `--stacks-declaration <file>`, naming a JSON file:
+
+```json
+{ "stacks": [ { "name": "My wiki", "domain": "my-wiki", "description": "Tenant one" } ] }
+```
+
+Each element is validated by the same schema `POST /stacks` uses, so a declaration can carry every field that request accepts. A multi-tenant deployment declares N Stacks, a single-Stack deployment declares one, and `{"stacks": []}` is valid and creates nothing.
+
+The declaration is a **seed**, applied once at boot: a Stack whose `domain` already exists is left exactly as it is, so edits an operator later makes with `PATCH /stacks/:id` survive every restart. It is a provisioning input and never a resolution input - it creates rows, and every request still names the Stack it wants. A missing, unreadable or invalid declaration refuses the boot (exit 1, the reason on stderr) and creates nothing, and a declaration handed to a run with no database configured is refused the same way.
+
 ## Provider Setup
 
 llmwiki calls an LLM during the compile and query phases. It does **not** require credentials for ingest, the viewer, lint, status, or any other read-only operation. Configure your provider by setting the environment variables below - or place them in a `.env` file in your project directory and llmwiki will load them automatically.

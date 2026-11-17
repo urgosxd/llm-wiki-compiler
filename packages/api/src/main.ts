@@ -26,13 +26,30 @@
  *
  * The flags are the ones `docker/entry.sh` passes today — `host --port …`
  * optionally with `--host … --allow-lan`, and `serve` — plus `serve --root` and
- * `host --no-graph`, which those two commands already accept. Nothing is invented.
+ * `host --no-graph`, which those two commands already accept, and
+ * `host --stacks-declaration`, the optional seed described below.
+ *
+ * ## `--stacks-declaration` is a PROVISIONING input, never a RESOLUTION input
+ *
+ * It names a JSON file of Stacks to seed at boot, and it exists for exactly one
+ * deployment shape: an unattended container where nobody is present to send the
+ * first `POST /stacks`. It is not the normal path and the help text does not sell
+ * it as one — a deployment whose operator is awake creates its first Stack over
+ * HTTP.
+ *
+ * What it creates is ordinary rows. It never becomes the answer to "which Stack is
+ * this request for": every request afterwards reads its Stack from the database like
+ * any other, by naming it. A declaration is applied ONCE per boot as a seed, so a
+ * domain an operator has since edited through `PATCH /stacks/:id` keeps the
+ * operator's row and is never reverted. `./host/stacks-declaration.ts` owns those
+ * rules; this module only reads the flag and calls it before anything binds.
  *
  * Each flag is accepted by the ONE subcommand that can honour it: `--port`,
- * `--host`, `--allow-lan` and `--no-graph` shape the listener, and `--root` roots
- * the stdio server. The other subcommand REJECTS it as an unknown option, because
- * a dropped flag is worse than a refused one — `host --root /data` served the
- * process's working directory instead of `/data`, bound its port, and exited 0.
+ * `--host`, `--allow-lan`, `--no-graph` and `--stacks-declaration` shape the
+ * listener, and `--root` roots the stdio server. The other subcommand REJECTS it as
+ * an unknown option, because a dropped flag is worse than a refused one —
+ * `host --root /data` served the process's working directory instead of `/data`,
+ * bound its port, and exited 0.
  *
  * ## The two modes, and why one bundle carries both
  *
@@ -74,6 +91,7 @@ import { createDimensionsPort } from "./dimensions/port.js";
 import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
 import { hasNoResolvableStack } from "@repo/wiki/dimensions-stack-authority";
 import { buildReadyUrl, registerShutdown, resolveBindConfig, type BindOptions } from "./serve-bind.js";
+import { seedDeclaredStacks, STACKS_DECLARATION_FLAG } from "./host/stacks-declaration.js";
 
 /** The subcommand that starts the unified HTTP listener. */
 const HOST_COMMAND = "host";
@@ -82,12 +100,19 @@ const HOST_COMMAND = "host";
 const SERVE_COMMAND = "serve";
 
 /**
+ * The optional Stack declaration, imported rather than spelled twice: the flag's name is also part
+ * of every refusal it can produce, and two copies would drift. Declared before
+ * {@link VALUE_OPTIONS}, which names it, because that table is built at module evaluation time.
+ */
+const STACKS_DECLARATION = STACKS_DECLARATION_FLAG;
+
+/**
  * Options that consume the argument after them, or take one after `=`, ACROSS
  * both subcommands: the union the TOKENIZER needs, not the set anything accepts.
  * It must know that `--root <dir>` is a flag plus its value before the subcommand
  * is known; which subcommand accepts which name is decided afterwards.
  */
-const VALUE_OPTIONS: ReadonlySet<string> = new Set(["--port", "--host", "--root"]);
+const VALUE_OPTIONS: ReadonlySet<string> = new Set(["--port", "--host", "--root", STACKS_DECLARATION]);
 
 /** Boolean options across both subcommands, tokenized by the same union rule as {@link VALUE_OPTIONS}. */
 const BOOLEAN_OPTIONS: ReadonlySet<string> = new Set(["--allow-lan", "--no-graph", "--help", "-h"]);
@@ -117,6 +142,8 @@ host options:
   --host <host>   Host to bind (requires --allow-lan; default 127.0.0.1)
   --allow-lan     Bind beyond loopback (requires --host); off by default for privacy
   --no-graph      Serve without the knowledge-graph sub-app (no database required)
+  --stacks-declaration <file>
+                  Seed missing Stacks from a JSON file (unattended deploys only)
 
 serve options:
   --root <dir>    Project root directory (default: the current directory)
@@ -289,6 +316,11 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
   const root = process.cwd();
   const { host, port } = resolveBindConfig(bindOptions(parsed));
   const version = resolveVersion();
+  // The declaration is applied BEFORE anything binds, and before the snapshot is built, so a boot that
+  // cannot honour it fails with nothing listening and no half-seeded database. Absent the flag, the
+  // boot seeds nothing at all: that is the default and the normal case.
+  const declarationPath = parsed.values.get(STACKS_DECLARATION);
+  if (declarationPath !== undefined) await seedDeclaredStacks(declarationPath);
   // Built before binding so the listener never accepts a request against a
   // half-constructed snapshot. `undefined` as the authority is the point: the boot resolved
   // none, so either the environment names this deployment's Stack or the snapshot is the
@@ -355,7 +387,15 @@ interface CommandSpec {
 }
 
 /** Options `host` accepts. `--root` is absent, because `runHost` serves the process's own directory. */
-const HOST_OPTIONS: ReadonlySet<string> = new Set(["--port", "--host", ALLOW_LAN, NO_GRAPH, HELP, HELP_SHORT]);
+const HOST_OPTIONS: ReadonlySet<string> = new Set([
+  "--port",
+  "--host",
+  ALLOW_LAN,
+  NO_GRAPH,
+  STACKS_DECLARATION,
+  HELP,
+  HELP_SHORT,
+]);
 
 /** Options `serve` accepts. Bind flags are absent, because `serve` opens no listener. */
 const SERVE_OPTIONS: ReadonlySet<string> = new Set(["--root", HELP, HELP_SHORT]);
