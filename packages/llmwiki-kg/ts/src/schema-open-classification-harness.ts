@@ -65,6 +65,20 @@ export const MIGRATION_SQL = await readFile(
   "utf-8",
 );
 
+/**
+ * The OTHER registered migration that changes these tables, read the same way.
+ *
+ * {@link LEGACY_SCHEMA_SQL} is a database as it was BEFORE any of these upgrades, and being
+ * old is the only property a snapshot has: a frozen shape that quietly grows a column a later
+ * migration introduces stops being the database an operator actually has, and the comparison
+ * below then agrees with the fresh install for the wrong reason. So a new migration belongs on
+ * the MIGRATED side, exactly where {@link MIGRATION_SQL} is applied, and never inside the
+ * snapshot. `scripts/apply-schemas.sh` owns the order this list mirrors.
+ */
+const STACK_ACTIVE_MIGRATION_SQL = await readFile(
+  new URL("../../db/migration_stack_active.sql", import.meta.url),
+  "utf-8",
+);
 /** The tables this migration touches: the shape both paths must agree on. */
 export const TOUCHED_TABLES = [
   "stacks",
@@ -243,7 +257,7 @@ export interface LegacyDatabase {
 }
 
 /**
- * Build a pre-migration database, then apply the migration file to it.
+ * Build a pre-migration database, then apply the registered migrations that follow it.
  *
  * @returns The upgraded database and the pre-migration control the suite asserts on.
  */
@@ -261,6 +275,7 @@ export async function openMigratedLegacyDatabase(): Promise<LegacyDatabase> {
       await client.unsafe(LEGACY_SCHEMA_SQL);
       entityColumnsBefore = await columnNames(client, "ontology_entities");
       await client.unsafe(MIGRATION_SQL);
+      await client.unsafe(STACK_ACTIVE_MIGRATION_SQL);
     });
   } catch (error) {
     await dropDatabase(name).catch(() => undefined);

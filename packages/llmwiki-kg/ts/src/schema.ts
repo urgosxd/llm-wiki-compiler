@@ -108,6 +108,11 @@ export const stacks = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
       .notNull()
       .defaultNow(),
+    // Inactivation, not deletion (decision 1.3): nine tables reference `stacks(id)` with
+    // `on delete cascade`, so an inactive Stack keeps its row and its unique `domain`
+    // instead of being deleted. Declared in `db/schema.sql`'s CREATE TABLE and added to a
+    // database that already exists by `db/migration_stack_active.sql`.
+    active: boolean("active").notNull().default(true),
     // Added by a later ALTER TABLE in db/schema.sql, not the CREATE TABLE.
     synthesizeDescriptions: boolean("synthesize_descriptions")
       .notNull()

@@ -20,6 +20,13 @@ create table if not exists stacks (
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
 
+    -- Inactivation, not deletion (decision 1.3). Nine tables reference `stacks(id)` with
+    -- `on delete cascade`, so a physical delete silently destroys them; an inactive Stack
+    -- keeps its row (and its unique `domain`) and every authority resolution refuses it by
+    -- name. Mirrored by `migration_stack_active.sql`, which reaches databases that already
+    -- exist -- this file is the container's init script and is all a fresh volume gets.
+    active boolean not null default true,
+
     constraint valid_scope        check (scope in ('stack', 'workspace', 'domain')),
     constraint valid_strategy     check (compilation_strategy in ('incremental', 'global')),
     constraint valid_domain_slug  check (domain ~ '^[a-z0-9-]+$')

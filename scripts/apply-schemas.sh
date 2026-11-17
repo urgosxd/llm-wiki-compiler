@@ -74,6 +74,11 @@ readonly SCHEMA_FILES=(
   "packages/llmwiki-kg/db/schema.sql"
   "packages/llmwiki-kg/db/migration_stack_ontology.sql"
   "packages/llmwiki-kg/db/migration_synthesize_descriptions.sql"
+  # The inactivation flag for `stacks` (decision 1.3: deactivation is a flag, never a
+  # physical delete). Alters `stacks`, which `schema.sql` above creates, so it must follow
+  # it -- and it is ALSO mirrored into `schema.sql`, because that file is the container's
+  # own init script and a fresh volume never runs this list. Keep both in step.
+  "packages/llmwiki-kg/db/migration_stack_active.sql"
   # The tenancy migration runs HERE, before the wiki schema, because it is the file
   # that creates the `llmwiki_app` role and `wiki/schema.sql` GRANTS to that role.
   # With the two swapped, a fresh database failed on its very first build with

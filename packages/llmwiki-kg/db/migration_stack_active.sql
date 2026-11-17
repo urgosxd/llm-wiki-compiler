@@ -1,0 +1,54 @@
+-- ============================================================
+-- Migration: add `active` to stacks
+-- ============================================================
+-- Run once to upgrade an existing database without losing data:
+--
+--   docker compose exec db psql -U aks -d aks -f /path/to/this/file
+--
+-- Or apply the column directly:
+--
+--   docker compose exec db psql -U aks -d aks -c \
+--     "alter table stacks add column if not exists active boolean not null default true;"
+--
+-- ## Where this column lives, and why it is in TWO files
+--
+-- The statement below is what reaches a database that ALREADY exists: this file is
+-- registered in `scripts/apply-schemas.sh`, which is what `--check`/CI, a hand-migrated
+-- deployment and the per-run test databases (`ts/src/testing/per-run-database.ts`, which
+-- PARSES that list rather than keeping a copy of it) all replay in order.
+--
+-- The same column is declared in `db/schema.sql`'s `create table stacks` block, because
+-- that file is also the container's single init script: a fresh volume is created from
+-- `schema.sql` alone, before any runner touches it. Mirroring is this repository's
+-- documented shape for exactly this case (`docs/turborepo.md`, the
+-- `migration_open_kg_classification.sql` row: "Its content is also MIRRORED into
+-- `db/schema.sql`, which is what makes a clean install carry its effect"). It is not the
+-- shape the OTHER two stacks migrations describe themselves as having — their headers
+-- claim the same duplication and `schema.sql` does not contain them, so that comment is
+-- wrong and this file does not repeat the claim without making it true.
+--
+-- Both statements are idempotent, so the order between them never matters: `create table
+-- if not exists` skips a table that is already there, and `add column if not exists` is a
+-- no-op on a database that already has the column.
+--
+-- ## Why a boolean and not a status enum
+--
+-- The decision is binary: a Stack is either usable or "inactivo". `backfeed_queue.status`
+-- (`schema.sql`) is the precedent for HOW to declare a constrained text column, not an
+-- instruction to add states nobody asked for. A boolean cannot grow a fourth value by
+-- accident, and `default true` makes every existing row usable with no backfill.
+--
+-- ## What this deliberately does NOT add
+--
+-- No index. Every read of this column is a lookup by `stacks` primary key (or by the
+-- already-indexed `domain`), so an index on a two-value column would be maintained on
+-- every write and used by no plan.
+--
+-- No physical delete, no change to any existing column, constraint, default or foreign
+-- key. The nine cascading foreign keys that make the current `DELETE /stacks/:id` a
+-- data-loss path are untouched here: turning the route into an inactivation is a separate
+-- change (`odd/tasks/stack-authority-per-request.md`, T7).
+
+-- Idempotent: a re-run of this file must not fail.
+alter table stacks
+    add column if not exists active boolean not null default true;
