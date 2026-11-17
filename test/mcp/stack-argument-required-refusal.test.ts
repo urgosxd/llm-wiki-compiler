@@ -21,8 +21,11 @@
  * ## Why every tool except `list_stacks` is in the table
  *
  * `list_stacks` is exempt by ruling: a discovery tool cannot require the identifier of
- * the thing it discovers, so an omitted argument there still resolves the bound Stack.
- * It is asserted the opposite way in `tools-list-requires-stack.test.ts`.
+ * the thing it discovers. The exemption is about REQUIRING the argument, not about what
+ * the tool resolves without it — the ambient resolution it used to perform is gone, and
+ * its own description now says so ("this endpoint has no bound Stack, so omitting it
+ * marks no entry current"). It is asserted the opposite way in
+ * `tools-list-requires-stack.test.ts`.
  *
  * ## Why the writes are counted, and on WHICH Stacks
  *

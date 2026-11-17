@@ -8,9 +8,9 @@
  * The other Stack-scoped tools already had a schema argument; these three resolved a
  * backend from the ambient environment and nothing else. `export_okf` read pages
  * through `withRawPageSource(root, process.env, …)` and `ingest_source` called
- * `resolveStackForCommand(db, env)`, which PROVISIONS a default Stack when none is
- * configured. A caller could therefore get one tenant's rows back while believing it
- * had asked about no tenant in particular.
+ * `resolveStackForCommand(db, env)`, which PROVISIONED a default Stack when none was
+ * configured — it refuses by name today. A caller could therefore get one tenant's rows
+ * back while believing it had asked about no tenant in particular.
  *
  * ## Why the calls go over the transport and not through the handler
  *

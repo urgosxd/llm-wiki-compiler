@@ -10,12 +10,16 @@
  * same page would be found either way. An empty root makes the disk path useless,
  * which is what turns "the answer came back" into evidence.
  *
- * ## Why the binding is process-wide
+ * ## Why the environment is still bound while a test runs
  *
- * The tools resolve their default Stack from `process.env`, exactly as a deployed
- * endpoint does. Setting it for the duration of a test is exercising that default,
- * not working around it; `restore()` puts the environment back so no later suite
- * inherits a tenant.
+ * The query tools take `stackId` as a REQUIRED argument, so none of them resolves a
+ * default from here: a call that omits it is refused by the schema before a handler
+ * runs. What the environment still has to carry is the database the rows come from
+ * (`AKS_DATABASE_URL`) and the single-Stack shape a deployment presents
+ * (`AKS_STACK_ID`, which such a deployment exports and each request then names).
+ * Binding both for the duration of a test is exercising that deployment shape, not
+ * working around the argument; the teardown restores the environment so no later
+ * suite inherits a tenant.
  */
 
 import { afterEach, beforeEach } from "vitest";
