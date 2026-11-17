@@ -126,8 +126,8 @@ Evidence: `packages/llmwiki-kg/ts/src/routes/stacks.ts:495-499` (`delete from st
 
 ## Tasks
 
-- [ ] T1 — Record the contract reversal in `odd/tasks/boot-precedence-two.md` (S1 rewritten, S3 line reference fixed) and log it here. S12. route: worker. commit: pending
-- [ ] T2 — Add the `active` column by migration and register it in `scripts/apply-schemas.sh`. S4. Also mirrors `active` into the drizzle table (`ts/src/schema.ts`) and replays `migration_stack_active.sql` in `schema-open-classification-harness.ts`. route: worker. commit: pending
+- [ ] T1 — Record the contract reversal in `odd/tasks/boot-precedence-two.md` (S1 rewritten, S3 line reference fixed) and log it here. S12. route: worker. commit: db374c7b95e1620189030f8aec16048249b19955
+- [ ] T2 — Add the `active` column by migration and register it in `scripts/apply-schemas.sh`. S4. Also mirrors `active` into the drizzle table (`ts/src/schema.ts`) and replays `migration_stack_active.sql` in `schema-open-classification-harness.ts`. route: worker. commit: 2f3f01317d2069dcf38c3a0c16406ec300185f94
 - [ ] T3 — Delete `ensureDefaultStack`, precedence 2 and the default-Stack constants. S1. route: worker. commit: pending
 - [ ] T4 — Replace the process-env fallback on the unnamed path with a refusal by name. S3. route: worker. commit: pending
 - [ ] T5 — Resolve authority per request at the viewer seam and drop `stackAuthority` from `startHost`/`viewerDeps`. S6. route: worker. commit: pending
@@ -170,3 +170,5 @@ L9 — the manager, on the resource decision, verbatim: "The decision was 'do no
 L10 — the manager, on T6, verbatim: "`durableRegistryFor` / `durableJobReadsFor` must REFUSE a job whose `stackId` differs from the Stack they were bound to, by name, instead of accepting it." And the closure sentence that must appear in the document: jobs are the only remaining process-level authority and they refuse rather than mis-serve. Without the guard, deferring leaves a fact whose authority is chosen by entry point alive — the exact defect this feature exists to end.
 
 L11 — the manager, on the delete defect, verbatim: "That is a live data-loss defect in `routes/stacks.ts:495-499`, not a consequence of this feature." Decision 1.3 is the repair of something broken, not a preference; the inactivation change gets its own work-unit commit and its own Risk line naming data loss.
+
+L12 — evidence: T1 is held in db374c7b95e1620189030f8aec16048249b19955; T2 is held in 2f3f01317d2069dcf38c3a0c16406ec300185f94. The gate of record for both was the full CI-shaped suite plus gates:static and build; counts in the assignment report.
