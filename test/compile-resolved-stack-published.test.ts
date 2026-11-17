@@ -56,13 +56,12 @@
  * proves the id is really there rather than merely not empty.
  */
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseHandle } from "@repo/foundation";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
-import { createDimensionsDatabase } from "../packages/wiki/src/dimensions/activation.js";
 import { readJournalEntries } from "../packages/wiki/src/dimensions/wiki/activity-log-store.js";
 import { readDerivedArtifact } from "../packages/wiki/src/dimensions/wiki/derived-artifact-store.js";
 import { saveSourceDocument } from "../packages/wiki/src/dimensions/wiki/source-documents-store.js";
@@ -70,20 +69,13 @@ import { resolveStackForCommand } from "../packages/wiki/src/services/stacks/res
 import { INDEX_FILE, LOG_FILE, MOC_FILE, SOURCES_DIR } from "../packages/wiki/src/utils/constants.js";
 import { extractionAnswer, stubCompileProvider } from "./fixtures/compile-provider.js";
 import { usePerCaseFileMode, withFileMode } from "./fixtures/file-mode.js";
-import { perRunDatabase } from "./fixtures/per-run-database.js";
-import { makeTempRoot } from "./fixtures/temp-root.js";
-import { missingTestDatabase } from "./fixtures/test-database-handoff.js";
+import { useResolvedStackSuite } from "./fixtures/resolved-stack-suite.js";
+import type { SuiteHandle } from "./fixtures/resolved-stack-suite.js";
 
 // This file has BOTH modes — a row-backed case and a file-backed pin — so the mode is
 // declared per case. Without this the file-wide hook would strip the database from the
 // row case as well.
 usePerCaseFileMode();
-
-/** This file's path, so a "no database" failure points here and not at a fixture. */
-const DATABASE_CONTEXT = "test/compile-resolved-stack-published.test.ts";
-
-/** Variable the dimension layer reads its DSN from when it is given no argument. */
-const DATABASE_URL_ENV_VAR = "AKS_DATABASE_URL";
 
 /** The one source the compile extracts into a page. */
 const SOURCE = {
@@ -95,59 +87,21 @@ const SOURCE = {
 /** The page body the stub provider renders for that source. */
 const PAGE_BODY = "Body. ^[topic.md]\n";
 
-/** True when this run has no usable database and the one opt-out authorized a skip. */
-const skipped = await skipReason();
-
 /**
- * This file's per-run database, or the reason every case below can only skip.
+ * The scenario, from the fixture both lock-and-publish suites share: a per-run database,
+ * an environment that NAMES NO STACK, and this file's offline provider.
  *
- * The repository's rule for a database-backed suite: FAIL when none can be obtained,
- * because a skip is reported as a pass while asserting nothing. Only
- * `LLMWIKI_TEST_ALLOW_NO_DATABASE=1` reaches the skip, and it still prints the reason.
- * The database itself is left published into the environment: the row case reads the
- * DSN from it, and the file-mode case reads its rows back from an explicit handle
- * AFTER removing the database, so neither case has to hold a captured URL.
- *
- * @returns `""` when the database is usable, otherwise the reason the skip reports.
+ * The database is left published into the environment: the row case reads the DSN from
+ * it, and the file-mode case reads its rows back from an explicit handle, so neither case
+ * has to hold a captured URL.
  */
-async function skipReason(): Promise<string> {
-  const absent = await perRunDatabase().then(
-    () => undefined,
-    (error: unknown) => missingTestDatabase(DATABASE_CONTEXT, String(error)),
-  );
-  if (absent === undefined) return "";
-  if (absent.error !== undefined) throw absent.error;
-  console.warn(absent.message);
-  return absent.message;
-}
-
-/** Project roots this file created, outside the worktree, removed after each test. */
-const roots: string[] = [];
-
-/** Environment as it was before the test, restored after it. */
-let savedEnv: NodeJS.ProcessEnv;
-
-beforeEach(() => {
-  savedEnv = { ...process.env };
-  // The discriminating property of every case below: nothing names a Stack. Restored
-  // through `savedEnv`, so a sibling suite's value cannot leak in or out.
-  delete process.env.AKS_STACK_ID;
-  process.env.LLMWIKI_PROVIDER = "anthropic";
-  process.env.ANTHROPIC_API_KEY = "offline-key";
+const { skipped, runEnv, suiteHandle, tempRoot } = await useResolvedStackSuite({
+  context: "test/compile-resolved-stack-published.test.ts",
+  beforeEach: () => {
+    process.env.LLMWIKI_PROVIDER = "anthropic";
+    process.env.ANTHROPIC_API_KEY = "offline-key";
+  },
 });
-
-afterEach(async () => {
-  vi.restoreAllMocks();
-  process.env = savedEnv;
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-});
-
-/** A throwaway project root owned by the current test. */
-async function tempRoot(prefix: string): Promise<string> {
-  const root = await makeTempRoot(prefix);
-  roots.push(root);
-  return root;
-}
 
 /**
  * The three files the FILE backend writes for this boundary, as the ones present.
@@ -161,18 +115,6 @@ async function tempRoot(prefix: string): Promise<string> {
  */
 function filesWritten(root: string): string[] {
   return [LOG_FILE, INDEX_FILE, MOC_FILE].filter((file) => existsSync(path.join(root, file)));
-}
-
-/** The run's environment: the database configured, no Stack named. */
-function runEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  delete env.AKS_STACK_ID;
-  return env;
-}
-
-/** An open handle on this file's per-run database, for a test's own reads. */
-function suiteHandle(): ReturnType<typeof createDimensionsDatabase> {
-  return createDimensionsDatabase({ [DATABASE_URL_ENV_VAR]: process.env[DATABASE_URL_ENV_VAR] });
 }
 
 /** Every row one Stack holds in the two tables this boundary writes. */
@@ -231,7 +173,7 @@ async function expectRowBackend(root: string, db: DatabaseHandle, stackId: strin
  */
 async function compileIntoResolvedStack(): Promise<{
   readonly root: string;
-  readonly handle: ReturnType<typeof createDimensionsDatabase>;
+  readonly handle: SuiteHandle;
   readonly stackId: string;
 }> {
   stubCompileProvider({ extraction: () => extractionAnswer(["Published Stack Topic"]), body: () => PAGE_BODY });

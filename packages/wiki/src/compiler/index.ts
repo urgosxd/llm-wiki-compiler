@@ -276,6 +276,20 @@ function emptyCompileResult(): CompileResult {
 }
 
 /**
+ * The ONE Stack resolution a compile performs, made before the lock and threaded in.
+ *
+ * The two fields are the SAME resolution: `stackAuthority` is the value the pipeline
+ * branches on, and `stackEnv` is that value published into the run's environment for the
+ * seams and the lock that decide row-vs-file by reading it. They travel together because a
+ * caller holding one without the other would key the lock on one Stack and read rows from
+ * another — which is exactly the defect this pairing exists to make impossible.
+ */
+interface ResolvedStackRun {
+  readonly stackAuthority: StackAuthority;
+  readonly stackEnv: NodeJS.ProcessEnv;
+}
+
+/**
  * Run the full compilation pipeline with lock protection.
  * Acquires .llmwiki/lock, detects changes, compiles new/changed sources,
  * marks orphaned pages, resolves interlinks, and rebuilds the index.
@@ -352,50 +366,95 @@ export async function compileAndReport(
   // one run out of two deployments — reads and writes through the connection it
   // opened, and Stack resolution through the environment it was given. Omitted stays
   // `process.env`, which is exactly what the CLI does today.
-  const dimensionsDb = createDimensionsDatabase(options.env ?? process.env);
-
-  // The lock's environment is the RUN's too, for the same reason and from the same
-  // value: `acquireLock` keys the advisory lock on the Stack the environment names,
-  // so a lock taken from `process.env` while the rows go to `options.env`'s Stack
-  // gives a per-request host exclusion on the WRONG Stack -- its own requests never
-  // contend for one Stack, and two unrelated Stacks serialise. Omitted stays
-  // `process.env`, which is exactly what the CLI passes.
-  const locked = await acquireMutationLock(root, "ordinary", { env: options.env });
-  if (!locked) {
-    output.status("!", output.error("Could not acquire lock. Try again later."));
-    return {
-      ...emptyCompileResult(),
-      errors: ["Could not acquire .llmwiki/lock — another compile is in progress."],
-      // Machine-readable counterpart to the message above, so transports can
-      // answer 409 without pattern-matching prose.
-      busy: true,
-    };
-  }
+  const env = options.env ?? process.env;
+  const dimensionsDb = createDimensionsDatabase(env);
 
   try {
-    // STRICT replay-before-read: recover any pending journal to its pre-state
-    // BEFORE the pipeline reads state or touches pages. An `unsafe` journal
-    // (escaping/malformed/escaping-target) aborts the compile loudly — no reads,
-    // no writes — rather than compounding a possibly-inconsistent page store.
-    // The `finally` below still releases the lock on this abort path.
-    const recovery = await recoverJournalBeforeCompile(root);
-    if (recovery.status === "unsafe") {
-      throw new JournalUnsafeError("pre-compile journal recovery unsafe");
+    // The ONE Stack resolution this run performs, and it happens BEFORE the lock.
+    //
+    // It used to happen inside the pipeline, i.e. AFTER `acquireMutationLock` had already
+    // taken a lock -- and the lock is keyed on the Stack the environment NAMES, so a run
+    // whose Stack comes from the DATABASE locked under an environment that named none: the
+    // key fell back to `realpath(root)` and `databaseUrlFor` refused a DSN without a Stack,
+    // which made `acquireDatabaseLock` return before attempting `pg_try_advisory_lock` AT
+    // ALL. Two compiles of DIFFERENT roots on ONE Stack then ran concurrently, and a lock
+    // that silently does not happen reads exactly like a lock held.
+    //
+    // Resolving first is what makes the key the Stack's. It stays ONE resolution: the value
+    // below is the value the pipeline consumes, threaded in rather than asked for again.
+    //
+    // The cost, recorded rather than hidden: this now precedes the recovery gate, so a run
+    // with an UNSAFE journal resolves (and may provision the default Stack) before refusing.
+    // The refusal itself is unchanged -- same error, nothing written, no lock left held.
+    const stackAuthority = await resolveStackAuthority({ env, db: dimensionsDb.db });
+    const stackEnv = stackEnvWith(env, stackAuthority);
+    const run: ResolvedStackRun = { stackAuthority, stackEnv };
+
+    // The lock's environment is the RUN's, with the resolved Stack published into it: the
+    // SAME value the pipeline is handed below, so a per-request host serving two Stacks
+    // cannot lock one and write to another. Acquire and release use this one variable --
+    // `releaseLock` finds the held connection in the registry by the key IT derives, so a
+    // release under a different environment would miss the entry this run stored and leave
+    // a session-level advisory lock held until the process died.
+    const locked = await acquireMutationLock(root, "ordinary", { env: stackEnv });
+    if (!locked) {
+      output.status("!", output.error("Could not acquire lock. Try again later."));
+      return {
+        ...emptyCompileResult(),
+        errors: ["Could not acquire .llmwiki/lock — another compile is in progress."],
+        // Machine-readable counterpart to the message above, so transports can
+        // answer 409 without pattern-matching prose.
+        busy: true,
+      };
     }
-    // The policy is established for the WHOLE run, before change detection, so
-    // the modifier digest it contributes is visible to the invalidation check
-    // rather than only to the prompt builders further down.
-    return await withRunSystemPolicy(options.systemPolicy, () =>
-      runCompilePipeline(root, options, dimensionsDb.db),
-    );
+
+    try {
+      // STRICT replay-before-read: recover any pending journal to its pre-state
+      // BEFORE the pipeline reads state or touches pages. An `unsafe` journal
+      // (escaping/malformed/escaping-target) aborts the compile loudly — no reads,
+      // no writes — rather than compounding a possibly-inconsistent page store.
+      // The `finally` below still releases the lock on this abort path.
+      const recovery = await recoverJournalBeforeCompile(root);
+      if (recovery.status === "unsafe") {
+        throw new JournalUnsafeError("pre-compile journal recovery unsafe");
+      }
+      // The policy is established for the WHOLE run, before change detection, so
+      // the modifier digest it contributes is visible to the invalidation check
+      // rather than only to the prompt builders further down.
+      return await withRunSystemPolicy(options.systemPolicy, () =>
+        runCompilePipeline(root, options, dimensionsDb.db, run),
+      );
+    } finally {
+      // Released under the SAME environment the acquire used -- the very object, not a
+      // re-derived copy of it, so the two cannot disagree about the Stack.
+      await releaseLock(root, stackEnv);
+    }
   } finally {
+    // One handle for the whole run, closed on EVERY path -- including a resolution that
+    // refused before any lock existed, which is now a path that can get here.
     await dimensionsDb.close();
-    // Released under the SAME environment: `releaseLock` finds the held connection in
-    // the registry by the key IT derives, so releasing with the ambient environment
-    // would miss the entry this run stored and leave a session-level advisory lock
-    // held on its reserved connection until the process died.
-    await releaseLock(root, options.env);
   }
+}
+
+/**
+ * The run's environment with a resolved Stack published into it, or the env untouched.
+ *
+ * Transport by environment is not derivation: a seam reads the authority's ANSWER instead
+ * of asking the variable, and it is the transport the MCP path, the host API and the
+ * ingest job already use. A FILE authority publishes NOTHING, so file mode stays
+ * bit-identical and there is no blank id for a reader to mistake for a Stack.
+ *
+ * @param env - The one environment this run reads.
+ * @param authority - The Stack authority this run resolved.
+ * @returns The environment every downstream seam AND the lock are handed.
+ */
+function stackEnvWith(
+  env: NodeJS.ProcessEnv,
+  authority: StackAuthority,
+): NodeJS.ProcessEnv {
+  return authority.kind === "stack"
+    ? { ...env, [AKS_STACK_ID_ENV_VAR]: authority.stackId }
+    : env;
 }
 
 /** Sort source changes into the buckets the pipeline acts on. */
@@ -1116,36 +1175,23 @@ async function runCompilePipeline(
   root: string,
   options: CompileOptions,
   db: DimensionsDatabaseHandle,
+  run: ResolvedStackRun,
 ): Promise<CompileResult> {
   const startMs = Date.now();
-  // The ONE environment this run reads. Every seam below is handed this value
-  // instead of the ambient one, so a caller can compile into a chosen Stack and two
-  // concurrent runs cannot see each other's. Omitted means `process.env`, which keeps
-  // every existing caller byte-identical.
+  // The ONE environment this run reads. Every seam below is handed `stackEnv` instead of
+  // the ambient one, so a caller can compile into a chosen Stack and two concurrent runs
+  // cannot see each other's. Omitted means `process.env`, which keeps every existing
+  // caller byte-identical.
   const env = options.env ?? process.env;
-  // The ONE Stack resolution this run performs. Every seam below is handed this value
-  // instead of each re-deciding on an empty `AKS_STACK_ID`: a file-backed wiki is a
-  // NAMED mode here, and a configured database that resolves no Stack fails loudly
-  // instead of quietly writing files next to the rows the run was asked for.
-  const stackAuthority = await resolveStackAuthority({ env, db });
-  // The environment every seam BELOW the resolution is handed: this run's, with the
-  // Stack it just resolved published into it under the canonical variable. Transport
-  // by environment is not derivation -- a seam reads the authority's ANSWER instead of
-  // asking the variable -- and it is the transport the MCP path, the host API and the
-  // ingest job already use, so this gives the fact ONE transport instead of a signature
-  // per seam.
+  // The ONE Stack resolution this run performs — performed by the caller, BEFORE the lock
+  // was taken, and threaded in here as a value.
   //
-  // WITHOUT THIS LINE a database-resolved compile degrades to the FILE backend one seam
-  // at a time: the journal writes `log.md`, the derived artifacts write `wiki/index.md`
-  // and `wiki/MOC.md` to disk, and the source selection reads the checkout's config
-  // instead of the Stack's, because each of those readers decides from
-  // `env[AKS_STACK_ID_ENV_VAR]` and nothing ever put the resolved id there.
-  //
-  // A FILE authority publishes NOTHING. File mode stays bit-identical, and there is no
-  // blank id for a reader to mistake for a Stack.
-  const stackEnv = stackAuthority.kind === "stack"
-    ? { ...env, [AKS_STACK_ID_ENV_VAR]: stackAuthority.stackId }
-    : env;
+  // It is threaded rather than resolved again for the reason the lock makes concrete: a
+  // second resolution would be a second answer to "which Stack am I on", and the lock is
+  // already keyed on the first one. A file-backed wiki is a NAMED mode in this value, and a
+  // configured database that resolves no Stack fails loudly at the caller instead of
+  // quietly writing files next to the rows the run was asked for.
+  const { stackAuthority, stackEnv } = run;
   // The ONE dimensions resolution this run performs, resolved here rather than inside
   // the helper that asks for it: a default built per deleted source would be a second
   // answer to one question, and the caller's port must be the one retirement uses.

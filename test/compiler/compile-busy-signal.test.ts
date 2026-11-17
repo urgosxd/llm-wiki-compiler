@@ -13,6 +13,15 @@
  * The lock is contended here through the real filesystem lock, because that is the
  * only contention that matters: the MCP server is a separate process over the same
  * project, so an in-process counter would prove nothing.
+ *
+ * FILE MODE, DECLARED. `test/fixtures/file-mode.ts`'s import below is the declaration:
+ * this file's subject is the FILESYSTEM lock, and the filesystem lock is what a run with
+ * NO database configured takes. It used to reach that lock by accident — the worker
+ * seeds a database and nothing named a Stack — which stopped being true when the compile
+ * began keying its lock on the Stack it RESOLVED: with a database configured the run now
+ * takes that Stack's advisory lock, and a path lock held elsewhere no longer contends. The
+ * same contention with a database configured is pinned in
+ * `test/compile-advisory-lock-signature.test.ts`, so both lock backends stay covered.
  */
 import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, realpath } from "node:fs/promises";
@@ -20,6 +29,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { acquireLock, releaseLock } from "../../packages/wiki/src/utils/lock.js";
 import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import "../fixtures/file-mode.js";
 
 /** A scratch project root with the sources/ directory compile expects. */
 async function projectRoot(): Promise<string> {
