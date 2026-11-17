@@ -468,3 +468,25 @@ STEP 5, gate, run on exactly this content under Node 24: `pnpm exec tsc --noEmit
 Held in `538dc6c9015feb4c7b330340fa59922860300f29` (6 files: `packages/foundation/src/stack-migration.ts` and its `index.ts` re-export and `./stack-migration` subpath export, `packages/llmwiki-kg/ts/src/routes/stacks.ts`, the new `packages/llmwiki-kg/ts/src/routes/stacks-bootstrap-unmigrated.test.ts`, `packages/wiki/src/services/stacks/stack-store.ts`).
 
 Deviation on the write surface, reported not hidden: `packages/foundation/package.json` gained the `./stack-migration` subpath export (one line). It is outside the handout's listed surfaces, and it is the wiring that makes the shared home reachable at runtime at all; the alternative was a cross-package relative import or a second copy of the sentence.
+
+L34 — evidence, CLOSURE (iv), the LAST task: the two documentation sentences, and the delivery is CLOSED. No task line was opened: this corrects two pages that were accurate but under-describing, exactly as L33 flagged.
+
+WHAT WAS MISSING. Both pages named the migration and quoted the refusal, and both said "every Stack lookup fails". Neither said that the surface an operator actually reaches for — `/stacks` — is one of the failing lookups. That omission sends a reader who is diagnosing a bad upgrade to the one route that should tell them what Stacks exist, where they meet a `503` with no hint that it is the migration.
+
+`docs/installation.mdx` (the `## Upgrading an existing database` Warning, a new paragraph after the `42703`-as-`cause` one):
+
+> **That refusal reaches `/stacks` itself**, which "every Stack lookup" only implies: `GET /stacks`, `GET /stacks/:id` and `POST /stacks` answer `503` with the same sentence rather than a list or a creation, and a refused `POST /stacks` writes nothing — the statement aborts and the transaction rolls back — so a `503` never leaves behind a Stack anyone believes exists. `/stacks` is exactly where an operator looks when an upgrade went wrong, so a refusal there is the migration signal, not a broken route.
+
+`CHANGELOG.md` (the same sentence family appended inside the existing Unreleased upgrade-notes bullet, before the Installation link; no new bullet, no new section):
+
+> The Stacks routes refuse the same way, which "every Stack lookup" only implies: `GET /stacks`, `GET /stacks/:id` and `POST /stacks` answer `503` with that sentence rather than a list or a creation, and a refused `POST /stacks` writes no row (the statement aborts and the transaction rolls back). `/stacks` is where an operator looks after a bad upgrade, so a refusal there is the migration signal, not a broken route.
+
+Both open by naming what the surrounding text ALREADY covers (the named refusal and the file to apply), so the addition carries only the three things it did not: the routes refuse, the refused create writes nothing, and the refusal is the migration signal rather than a broken route.
+
+SAID ACCURATELY, NOT OVERREACHING. The three routes named are the ones the operator reaches for; the guard is mounted on the router, so every route in `packages/llmwiki-kg/ts/src/routes/stacks.ts` answers the same refusal, and the pages say "the Stacks routes" rather than enumerating a list a future route would falsify. The "writes nothing" claim is not inferred: `POST /stacks`'s insert is the statement that selects `active`, it aborts, and the request transaction rolls back — asserted end-to-end by `packages/llmwiki-kg/ts/src/routes/stacks-bootstrap-unmigrated.test.ts`, which drops the column on a real database, posts, and counts `0` rows for that domain.
+
+GATE, run on exactly this content under Node 24, because this is the branch's final delivery commit and a reviewer runs CI against it: `pnpm exec tsc --noEmit` exit 0; `pnpm run gates:static` all 6 passed in 27.4 s (tsc 6.8, typecheck:kg 8.3, typecheck:tests 18.5, fallow:ci 2.5, fallow:kg 1.2, lint 12.3; 1725 files scanned, 558 baseline violations in 396 files, no regression); `corepack pnpm exec turbo run test --filter=//` → `Test Files 866 passed | 5 skipped (871)`, `Tests 6486 passed | 12 skipped (6498)`, `Tasks: 1 successful, 1 total`, 6m17.6s. The population is IDENTICAL to L33's tip — which is what a documentation-only commit must show.
+
+Held in `8c83d5798d58690660c3d1ed7b37e8f9448bc395` (2 files, 14 insertions, 1 deletion: `docs/installation.mdx`, `CHANGELOG.md`).
+
+TREE STATE: `git status --short` empty after this Log commit; nothing pushed; no `--no-verify`; both commits ran the husky hook under Node 24.
