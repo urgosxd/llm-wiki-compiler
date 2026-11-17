@@ -40,7 +40,7 @@
  * `sources/` files and the compile state are the ones a caller actually gets.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
@@ -49,7 +49,12 @@ import type { Page } from "../../packages/wiki/src/pages/list.js";
 import type { SourceRecord } from "../../packages/wiki/src/sources/store.js";
 import type { LintResult, LintSummary } from "../../packages/wiki/src/linter/types.js";
 import type { TieredLintReportV1 } from "../../packages/wiki/src/linter/tiers.js";
-import { AKS_STACK_ID_ENV_VAR, isDatabaseConfigured } from "../../packages/wiki/src/dimensions/activation.js";
+import {
+  AKS_DATABASE_URL_ENV_VAR,
+  AKS_STACK_ID_ENV_VAR,
+  isDatabaseConfigured,
+} from "../../packages/wiki/src/dimensions/activation.js";
+import { StackAuthorityError } from "../../packages/wiki/src/dimensions/stack-authority.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";
 import { seedConceptPage } from "../fixtures/mcp-stack-rows.js";
@@ -317,6 +322,40 @@ describe("SDK facade with no env and no Stack configured", () => {
     expect(tenants.bound.harness.reachable).toBe(true);
     expect(await rowsOf(tenants.bound, "wiki.pages")).toBe(0);
     expect(await rowsOf(tenants.bound, "wiki.source_compile_state")).toBe(0);
+  }, 180_000);
+});
+
+// THE OTHER HALF OF THE SAME DISTINCTION, and the only case that may fail: a database
+// IS configured, so a run that resolves no Stack is an outage rather than a mode. The
+// refusal must be the authority's named one -- not the file backend, and not a
+// connection error read as "no database".
+//
+// PRESERVE, and stated as such: this case failed loudly before the file mode existed
+// too, so it has no RED of its own. What it now pins is that the loud failure comes
+// from the ONE authority, and that it leaves no file behind: the case would go green on
+// a silent `sources/` write only if the mode decision drifted back into the service.
+describe("SDK facade ingest with a database configured and no Stack resolvable", () => {
+  it("refuses by name and writes no source", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "sdk-env-unresolvable-stack-"));
+    try {
+      // CONFIGURED and unreachable, in the request environment: the resolver cannot
+      // provision the default Stack there, so nothing may degrade to files. Port 1 has
+      // no listener, which is what makes a connection attempt impossible to mistake
+      // for a file-backed success.
+      const wiki = createWiki({
+        root,
+        env: { [AKS_DATABASE_URL_ENV_VAR]: "postgres://127.0.0.1:1/unreachable" },
+      });
+
+      await expect(wiki.ingestText({ title: "Refused", text: bodyFor("Refused") }))
+        .rejects.toBeInstanceOf(StackAuthorityError);
+
+      // Rejected input leaves the project untouched: no `sources/` directory exists, so
+      // no source was written on the way to the refusal.
+      await expect(readdir(root)).resolves.not.toContain("sources");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   }, 180_000);
 });
 
