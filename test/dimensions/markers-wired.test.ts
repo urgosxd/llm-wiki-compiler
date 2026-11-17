@@ -21,11 +21,24 @@ import {
 import { readRuleState, updateRuleSourceState } from "../../packages/wiki/src/compiler/rule-state.js";
 import { readLintCache, writeLintCache } from "../../packages/wiki/src/linter/cache.js";
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
-import { testDatabaseUrl } from "../fixtures/test-database.js";
+import { createStackEnvBinding, describeRestoredStackEnv } from "../fixtures/env-stack.js";
 import { createProbeStack } from "./harness-lifecycle.js";
 
 let harness: KgPostgresHarness;
 let root: string;
+
+/**
+ * The apply/restore pair this file wraps around each seam exercise.
+ *
+ * One per file, at module scope, because {@link describeRestoredStackEnv} below has to install
+ * the SAME binding these tests use for its control cases to be about this file's wiring.
+ *
+ * The suite setup publishes this run's database URL into both variables before any test module
+ * loads, so cleanup puts THAT value back: dropping the variable instead makes the next file's
+ * `createDimensionsDatabase(process.env)` fall through to the vendored default on port 5432, and
+ * `""` reads as absent the same way.
+ */
+const stackEnv = createStackEnvBinding();
 
 beforeEach(async () => {
   harness = (await createProbeStack("mk-wired")).harness;
@@ -35,15 +48,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
   await harness.cleanup();
-  delete process.env.AKS_STACK_ID;
-  delete process.env.AKS_DATABASE_URL;
+  stackEnv.clear();
 });
-
-/** Point the seams at this harness's Stack. */
-function applyStackEnv(): void {
-  process.env.AKS_STACK_ID = harness.stackId;
-  process.env.AKS_DATABASE_URL = testDatabaseUrl();
-}
 
 /** True when the project has a `.llmwiki/` directory. */
 async function hasPrivateDir(): Promise<boolean> {
@@ -52,7 +58,7 @@ async function hasPrivateDir(): Promise<boolean> {
 
 describe("markers with a Stack configured", () => {
   it("writes pending embeddings to rows, creating no .llmwiki/", async () => {
-    applyStackEnv();
+    stackEnv.apply(harness.stackId);
     await writePendingEmbeddings(root, [{ pageId: "concepts/alpha", attempts: 1 }]);
 
     const loaded = await loadPendingEmbeddings(root, 10);
@@ -63,7 +69,7 @@ describe("markers with a Stack configured", () => {
   it("clears the ROW when the queue drains, not a file that is not there", async () => {
     // The defect this guards: a clear that only unlinks a file is a complete no-op
     // with rows, leaving every id queued for a retry that already succeeded.
-    applyStackEnv();
+    stackEnv.apply(harness.stackId);
     await writePendingEmbeddings(root, [{ pageId: "concepts/alpha", attempts: 1 }]);
     await clearPendingEmbeddings(root);
 
@@ -71,7 +77,7 @@ describe("markers with a Stack configured", () => {
   });
 
   it("round-trips the rule cursor through rows", async () => {
-    applyStackEnv();
+    stackEnv.apply(harness.stackId);
     await updateRuleSourceState(root, "sources/a.md", {
       hash: "h1", concepts: [], compiledAt: "2026-02-01T10:00:00.000Z", version: 2,
     } as never);
@@ -82,7 +88,7 @@ describe("markers with a Stack configured", () => {
   });
 
   it("round-trips the lint cache through rows", async () => {
-    applyStackEnv();
+    stackEnv.apply(harness.stackId);
     await writeLintCache(root, {
       results: [], warnings: 2, errors: 0,
     } as never);
@@ -92,3 +98,7 @@ describe("markers with a Stack configured", () => {
     expect(await hasPrivateDir()).toBe(false);
   });
 });
+
+// The two control cases that pin the restore semantics. Registered from the shared fixture so this
+// file and `graph-backend-wired.test.ts` run one copy of them, against their OWN binding.
+describeRestoredStackEnv(stackEnv);

@@ -27,11 +27,27 @@ import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readEvents } from "../../packages/wiki/src/events/store-read.js";
 import { appendEventLocked } from "../../packages/wiki/src/events/store.js";
+import {
+  createStackEnvBinding,
+  describeRestoredStackEnv,
+} from "../fixtures/env-stack.js";
 import { createKgPostgresHarness, type KgPostgresHarness } from "../fixtures/kg-postgres.js";
-import { testDatabaseUrl } from "../fixtures/test-database.js";
 
 let harness: KgPostgresHarness;
 let root: string;
+
+/**
+ * The apply/restore pair this file wraps around each seam exercise.
+ *
+ * One per file, at module scope, because {@link describeRestoredStackEnv} below has to install
+ * the SAME binding these tests use for its control cases to be about this file's wiring.
+ *
+ * The suite setup publishes this run's database URL into both variables before any test module
+ * loads, so cleanup puts THAT value back: dropping the variable instead makes the next file's
+ * `createDimensionsDatabase(process.env)` fall through to the vendored default on port 5432, and
+ * `""` reads as absent the same way.
+ */
+const stackEnv = createStackEnvBinding();
 
 beforeEach(async () => {
   harness = await createKgPostgresHarness(`wired-${randomUUID().slice(0, 8)}`);
@@ -43,18 +59,6 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
   await harness.cleanup();
 });
-
-/** Environment naming this harness's Stack. */
-function applyStackEnv(): void {
-  process.env.AKS_STACK_ID = harness.stackId;
-  process.env.AKS_DATABASE_URL = testDatabaseUrl();
-}
-
-/** Restore the environment so other suites are not affected. */
-function clearStackEnv(): void {
-  delete process.env.AKS_STACK_ID;
-  delete process.env.AKS_DATABASE_URL;
-}
 
 /** True when the project has a `wiki/graph/` directory. */
 async function hasGraphDir(): Promise<boolean> {
@@ -72,13 +76,13 @@ async function countEventRows(): Promise<number> {
 
 describe("the event backend when a Stack is configured", () => {
   it("writes events to rows and creates no wiki/graph/ directory", async () => {
-    applyStackEnv();
+    stackEnv.apply(harness.stackId);
     try {
       await appendEventLocked(root, {
         type: "artifact-write" as never, origin: "test", payload: { marker: "x" },
       } as never);
     } finally {
-      clearStackEnv();
+      stackEnv.clear();
     }
 
     expect(await countEventRows()).toBe(1);
@@ -86,7 +90,7 @@ describe("the event backend when a Stack is configured", () => {
   });
 
   it("reads those events back with an intact chain", async () => {
-    applyStackEnv();
+    stackEnv.apply(harness.stackId);
     try {
       await appendEventLocked(root, { type: "a" as never, origin: "t", payload: {} } as never);
       await appendEventLocked(root, { type: "b" as never, origin: "t", payload: {} } as never);
@@ -95,12 +99,12 @@ describe("the event backend when a Stack is configured", () => {
       expect(events).toHaveLength(2);
       expect(problems).toEqual([]);
     } finally {
-      clearStackEnv();
+      stackEnv.clear();
     }
   });
 
   it("reports a tampered row as a problem, not as a healthy chain", async () => {
-    applyStackEnv();
+    stackEnv.apply(harness.stackId);
     try {
       await appendEventLocked(root, { type: "a" as never, origin: "t", payload: { v: 1 } } as never);
       await harness.db.execute(sql`
@@ -111,7 +115,11 @@ describe("the event backend when a Stack is configured", () => {
       const { problems } = await readEvents(root);
       expect(problems.some((p) => p.includes("checksum mismatch"))).toBe(true);
     } finally {
-      clearStackEnv();
+      stackEnv.clear();
     }
   });
 });
+
+// The two control cases that pin the restore semantics. Registered from the shared fixture so this
+// file and `markers-wired.test.ts` run one copy of them, against their OWN binding.
+describeRestoredStackEnv(stackEnv);
