@@ -16,6 +16,17 @@
  * here WARNS LOUDLY and the flag is only false when the database is genuinely
  * unreachable. Callers still decide how to skip; this module refuses to hide why.
  *
+ * ## A failed provision is not a fallback
+ *
+ * This module used to warn when the per-run database could not be created and carry on
+ * against `testDatabaseUrl()` — the run's SHARED server. Every suite that imported
+ * it then ran its assertions against state it did not own and reported green, which is
+ * the same silent success the paragraph above exists to prevent, one layer up: the
+ * suite had a database, so nothing alerted it that the database was not its own. A
+ * failed provision is now the first failure condition below, through
+ * `missingTestDatabase` like every other chokepoint. Where the hoisted call sits is not
+ * the defect; degrading to shared state is.
+ *
  * ## Two failure conditions, and only one of them may skip
  *
  * A `reachable === false` harness is the gate 113 `skipIf` call sites read, so every
@@ -47,7 +58,13 @@ import { randomUUID } from "node:crypto";
 import { createClient, createDatabase } from "@repo/kg";
 import { perRunDatabase } from "./per-run-database.js";
 import { missingTestDatabase } from "./test-database-handoff.js";
-import { testDatabaseUrl } from "./test-database.js";
+
+/**
+ * What needed the database, phrased for whoever reads the failure: this module, not a suite.
+ *
+ * Declared before the provision below, which runs while this module is still evaluating.
+ */
+const PROVISION_CONTEXT = "test/fixtures/kg-postgres.ts: this process's per-run database";
 
 /**
  * This process's private database, or `undefined` when it cannot be provisioned.
@@ -57,23 +74,31 @@ import { testDatabaseUrl } from "./test-database.js";
  * has to be known before any test is collected.
  */
 const SUITE = await perRunDatabase().catch((error: unknown) => {
-  // Not fatal: an absent or unreachable server must still produce the loud
-  // `reachable === false` failure below, not a module-load crash with no context.
-  console.warn(
-    `kg-postgres: per-run database unavailable — ${(error as Error).message}. ` +
-      `Falling back to the shared database ${testDatabaseUrl()}.`,
-  );
+  // Deliberately NOT a fallback to the shared database: a suite that silently degrades to
+  // state it does not own is green for a reason nobody can see. This is the same "no
+  // database" decision every other chokepoint makes, so it throws unless the documented
+  // opt-out turns it into a skip, and it names the failure that was actually observed.
+  unreachableOrThrow(PROVISION_CONTEXT, describe(error));
   return undefined;
 });
 
 /**
+ * The connection string a suite receives when this process's database never materialized.
+ *
+ * NOT `testDatabaseUrl()`: that names the run's shared server, and handing it to a suite
+ * whose provision failed is the silent degradation this fixture no longer performs. Port 1
+ * is the address `no-database-fails-loudly.test.ts` already uses for "nothing can listen
+ * here", so an accidental use fails at a URL that names the problem instead of passing.
+ */
+const UNPROVISIONED_DATABASE_URL = "postgresql://unprovisioned@127.0.0.1:1/unprovisioned";
+
+/**
  * Connection string every fixture connects to: this process's OWN database.
  *
- * Resolved through {@link testDatabaseUrl} when the per-run database cannot be
- * created, so an outage still names the server someone should start rather than
- * silently pointing at the vendored production port.
+ * The sentinel above only ever appears when the opt-out authorized a skip, which is the
+ * one state in which no suite may reach a database at all.
  */
-export const DATABASE_URL = SUITE?.url ?? testDatabaseUrl();
+export const DATABASE_URL = SUITE?.url ?? UNPROVISIONED_DATABASE_URL;
 
 /** One suite's private slice of the database. */
 export interface KgPostgresHarness {
@@ -130,6 +155,73 @@ function unreachableOrThrow(context: string, detail: string): false {
 }
 
 /**
+ * Insert this suite's Stack and report whether the database can hold it.
+ *
+ * @param name - Human-facing label, used verbatim in the failure text.
+ * @param db - Handle bound to this process's database.
+ * @param stackId - Identifier of the row to insert.
+ * @param domain - Domain-safe slug derived from `name`.
+ * @returns True only when the row was inserted.
+ */
+async function provisionStack(
+  name: string,
+  db: KgPostgresHarness["db"],
+  stackId: string,
+  domain: string,
+): Promise<boolean> {
+  try {
+    // The liveness probe is SEPARATE from the provisioning insert on purpose: this one
+    // failing means there is no database, which must never become a skip; the insert
+    // failing means the database is up but the object is missing, which still may.
+    await db.execute("select 1");
+  } catch (error) {
+    return unreachableOrThrow(
+      `${name}: the kg harness`,
+      `select 1 against ${DATABASE_URL} failed — ${describe(error)}`,
+    );
+  }
+  try {
+    await db.execute(
+      `insert into stacks (id, name, domain) values ('${stackId}', '${name}', '${domain}')`,
+    );
+    return true;
+  } catch (error) {
+    // Loud, not silent: a suite that cannot provision must not look like a pass. Still a
+    // skip when the opt-out allows it, because the server itself answered.
+    console.warn(`${name}: no usable Postgres at ${DATABASE_URL} — ${describe(error)}`);
+    return false;
+  }
+}
+
+/**
+ * A harness for a process whose own database never materialized.
+ *
+ * `reachable: false` is the shape every `skipIf` call site reads. Nothing is probed and nothing
+ * is inserted, because the only URL in hand is the deliberately unreachable sentinel: probing it
+ * would report a connection failure against an address nobody was ever meant to reach, and the
+ * real reason is already on stderr from the provision above.
+ *
+ * @param stackId - Identifier this harness would have owned; no row carries it.
+ * @param db - Handle bound to the sentinel URL, never queried.
+ * @param client - Handle to release on cleanup.
+ * @returns The unreachable harness.
+ */
+function unprovisionedHarness(
+  stackId: string,
+  db: KgPostgresHarness["db"],
+  client: ReturnType<typeof createClient>,
+): KgPostgresHarness {
+  return {
+    stackId,
+    url: DATABASE_URL,
+    db,
+    reachable: false,
+    // Nothing was inserted, so there is no row to delete; only the handle is released.
+    cleanup: () => client.end({ timeout: 10 }),
+  };
+}
+
+/**
  * Provision a private stack and hand back a bound database handle.
  *
  * `stacks.domain` is supplied explicitly because it is NOT NULL with no default --
@@ -143,32 +235,9 @@ export async function createKgPostgresHarness(name: string): Promise<KgPostgresH
   const stackId = randomUUID();
   const client = createClient(DATABASE_URL, 10);
   const db = createDatabase(client);
-  const domain = domainFor(name);
+  if (SUITE === undefined) return unprovisionedHarness(stackId, db, client);
 
-  const reachable = await (async (): Promise<boolean> => {
-    try {
-      // The liveness probe is SEPARATE from the provisioning insert on purpose: this one
-      // failing means there is no database, which must never become a skip; the insert
-      // failing means the database is up but the object is missing, which still may.
-      await db.execute("select 1");
-    } catch (error) {
-      return unreachableOrThrow(
-        `${name}: the kg harness`,
-        `select 1 against ${DATABASE_URL} failed — ${describe(error)}`,
-      );
-    }
-    try {
-      await db.execute(
-        `insert into stacks (id, name, domain) values ('${stackId}', '${name}', '${domain}')`,
-      );
-      return true;
-    } catch (error) {
-      // Loud, not silent: a suite that cannot provision must not look like a pass. Still a
-      // skip when the opt-out allows it, because the server itself answered.
-      console.warn(`${name}: no usable Postgres at ${DATABASE_URL} — ${describe(error)}`);
-      return false;
-    }
-  })();
+  const reachable = await provisionStack(name, db, stackId, domainFor(name));
 
   return {
     stackId,
