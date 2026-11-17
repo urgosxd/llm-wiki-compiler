@@ -117,27 +117,138 @@ function toStackSummary(row: StackRow, currentStackId: string): StackSummary {
 export type StackResolution = "active" | "inactive" | "absent";
 
 /**
+ * The migration that adds the one column every lookup here selects.
+ *
+ * Named as an operator meets it — the file inside the repository's `db/` directory —
+ * because a refusal that does not say which file to apply cannot be acted on.
+ */
+export const STACKS_ACTIVE_MIGRATION = "db/migration_stack_active.sql";
+
+/**
+ * THE refusal for a database that never ran {@link STACKS_ACTIVE_MIGRATION}.
+ *
+ * The column is not optional and no code path reads around it, so the only useful thing
+ * to say is which file is missing and that serving traffic cannot continue without it.
+ * Exported, like `missingStackRefusal` in `resolve-stack.ts`, so a surface that wants to
+ * recognise this gap reads one copy of the sentence instead of rewording it.
+ *
+ * @returns The refusal text, without a trailing newline.
+ */
+export function missingActiveColumnRefusal(): string {
+  return (
+    `This database is missing the column stacks.active: it has not run ${STACKS_ACTIVE_MIGRATION}. ` +
+    "Apply it before serving traffic."
+  );
+}
+
+/**
+ * A database whose `stacks` table predates the migration this build requires.
+ *
+ * Deliberately NOT `StackAuthorityError`: that family is about which Stack a request may
+ * act on, and this is about the schema being too old to ask the question at all. Folding
+ * the two would make "the database was never migrated" indistinguishable from "this
+ * request named no Stack", which are refusals an operator fixes in completely different
+ * places.
+ */
+export class MissingStackColumnError extends Error {
+  constructor(message: string, options?: { readonly cause?: unknown }) {
+    super(message, options);
+    this.name = "MissingStackColumnError";
+  }
+}
+
+/** Postgres `undefined_column`, the code an unmigrated database answers with. */
+const UNDEFINED_COLUMN = "42703";
+
+/** How deep a driver error chain is searched for {@link UNDEFINED_COLUMN}. */
+const MAX_CAUSE_DEPTH = 4;
+
+/**
+ * The innermost error in this chain that says Postgres could not read `stacks.active`.
+ *
+ * The chain is walked because the driver error does not arrive unwrapped: drizzle throws
+ * its own `Failed query: select active from stacks …`, which carries the `PostgresError`
+ * as `cause`. Both signals are accepted — the SQLSTATE, and the message — so a driver
+ * that sets only one of them is still recognised; the innermost match is returned so the
+ * `cause` a reader inspects is Postgres's own error rather than drizzle's wrap of it.
+ *
+ * @param error - Whatever the query threw.
+ * @param depth - How many `cause` hops were already followed.
+ * @returns That error, or `undefined` when the gap is something else entirely.
+ */
+function missingActiveColumnCause(error: unknown, depth = 0): unknown {
+  if (typeof error !== "object" || error === null) return undefined;
+  const { code, message, cause } = error as {
+    code?: unknown;
+    message?: unknown;
+    cause?: unknown;
+  };
+  const inner = depth < MAX_CAUSE_DEPTH ? missingActiveColumnCause(cause, depth + 1) : undefined;
+  if (inner !== undefined) return inner;
+  if (code === UNDEFINED_COLUMN) return error;
+  if (typeof message === "string" && message.includes('column "active" does not exist')) {
+    return error;
+  }
+  return undefined;
+}
+
+/**
+ * The `active` flag of one `stacks` row, or `undefined` when no row carries the id.
+ *
+ * The whole of this module's dependence on the migration, in one place: the query is the
+ * ONE read of `stacks.active` here, so the check that the column exists costs no extra
+ * round trip and cannot be missed by a new caller. Anything that reads the column gains
+ * the named refusal by going through this function.
+ *
+ * @param db - Handle from `createDimensionsDatabase`.
+ * @param stackId - A validated Stack id.
+ * @returns The flag, or `undefined` for an absent row.
+ * @throws {MissingStackColumnError} when the database never ran the migration.
+ */
+async function selectActive(db: Database, stackId: string): Promise<boolean | undefined> {
+  try {
+    const rows = await db.execute<{ active: boolean }>(
+      sql`select active from stacks where id = ${stackId}`,
+    );
+    return rows[0]?.active;
+  } catch (error) {
+    const cause = missingActiveColumnCause(error);
+    if (cause === undefined) throw error;
+    // Named, and never swallowed: Postgres's own error stays reachable as `cause`, so a
+    // reader can still see its words and its SQLSTATE.
+    throw new MissingStackColumnError(missingActiveColumnRefusal(), { cause });
+  }
+}
+
+/**
  * Resolve what a Stack id names: an active Stack, an inactive one, or nothing.
  *
  * One query, no cache. Nothing in this module may cache the answer: a Stack created,
  * retired or reactivated by one request has to be visible to the next one, which is the
  * point of per-request authority (S6).
  *
+ * ## Why the missing-migration check lives HERE
+ *
+ * This is the one lookup every Stack-scoped request reaches — `stackExists` wraps it, and
+ * the host, the viewer and the MCP tool path all arrive through one of the two — so the
+ * first request after an un-migrated upgrade meets the file name instead of a column
+ * error three layers down. A boot-time check was considered and rejected: it costs a
+ * connection per start, cannot run on a file-mode run at all, and would still leave the
+ * request path silently wrong if the database were reverted under a running process.
+ *
  * @param db - Handle from `createDimensionsDatabase`.
  * @param stackId - A validated Stack id.
  * @returns `"active"` while the row is usable, `"inactive"` once `DELETE` retired it,
  *   `"absent"` when no row carries the id at all.
+ * @throws {MissingStackColumnError} when the database never ran the migration.
  */
 export async function stackResolution(
   db: Database,
   stackId: string,
 ): Promise<StackResolution> {
-  const rows = await db.execute<{ active: boolean }>(
-    sql`select active from stacks where id = ${stackId}`,
-  );
-  const row = rows[0];
-  if (row === undefined) return "absent";
-  return row.active ? "active" : "inactive";
+  const active = await selectActive(db, stackId);
+  if (active === undefined) return "absent";
+  return active ? "active" : "inactive";
 }
 
 /**

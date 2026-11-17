@@ -83,10 +83,17 @@ The declaration is a **seed**, applied once at boot: a Stack whose `domain` alre
   **Apply the migration before the new build serves traffic.** This build selects
   `stacks.active`, a column that
   `packages/llmwiki-kg/db/migration_stack_active.sql` adds. Against a database that
-  has not applied it, **every Stack lookup fails** with a Postgres `42703`
-  (`undefined_column`) naming that column: there is no graceful degradation and no
-  fallback, because no code path reads around a column the schema selects. The
-  failure is loud on the first request, never a silent partial read.
+  has not applied it, **every Stack lookup fails** with a named refusal instead of a
+  bare driver error, and the refusal names the file to apply:
+
+  > This database is missing the column stacks.active: it has not run
+  > db/migration_stack_active.sql. Apply it before serving traffic.
+
+  There is no graceful degradation and no fallback, because no code path reads around a
+  column the schema selects. The failure is loud on the first Stack read, never a
+  silent partial read, and the Postgres error it replaced — `42703`
+  (`undefined_column`) — stays attached as the error's `cause` for anyone who needs the
+  driver's own words.
 </Warning>
 
 Apply it once, with the same runner that applies every other schema file:

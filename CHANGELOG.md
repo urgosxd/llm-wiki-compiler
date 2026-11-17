@@ -11,9 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Apply `packages/llmwiki-kg/db/migration_stack_active.sql` before this build serves
   traffic.** Stack lookups now select `stacks.active`, so a database that has not
-  applied the migration fails every Stack lookup with a Postgres `42703`
-  (`undefined_column`). There is no graceful degradation: the failure is loud and on
-  the first request. The file is idempotent (`add column if not exists`, default
+  applied the migration fails every Stack lookup with a named refusal that says what is
+  missing: `This database is missing the column stacks.active: it has not run
+  db/migration_stack_active.sql. Apply it before serving traffic.` There is no graceful
+  degradation: the failure is loud on the first Stack read, and the Postgres `42703`
+  (`undefined_column`) it replaced stays attached as the error's `cause`. The file is
+  idempotent (`add column if not exists`, default
   `true`), `./scripts/apply-schemas.sh` applies it along with every other schema file,
   and a fresh install already has the column through `db/schema.sql`. See
   [Installation](https://llmwiki.atomicstrata.ai/installation#upgrading-an-existing-database).
