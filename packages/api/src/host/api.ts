@@ -368,7 +368,9 @@ async function stackRefusalFor(stackId: string | undefined): Promise<StackRefusa
  *
  * @param req - The incoming request, for its query string.
  * @param request - The parsed body, when it parsed.
- * @returns The named Stack, or `undefined` to use the host's binding.
+ * @returns The id the request named, or `undefined` when it named none. `undefined` is
+ *   never "use the host's binding": this host has no binding and no default to fall
+ *   back to, so a request that named no Stack is refused by name at that caller.
  */
 function resolveRequestStack(
   req: IncomingMessage,

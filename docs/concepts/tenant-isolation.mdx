@@ -11,31 +11,34 @@ exists so nobody assumes otherwise.
 ## Choosing which Stack a command uses
 
 A Stack-scoped command (`ingest`, `compile`, `refresh`, `query`, `watch`) resolves
-the Stack it works on in one order, highest precedence first:
+the Stack it works on from one place, and there is nothing behind it:
 
 1. The Stack the caller named: `--stack <id>` on the command line, or
    `AKS_STACK_ID`.
-2. The default Stack: the existing Stack whose `domain` is `default` and whose
-   `name` is `Default`, created the first time it is used and reused from then on.
+2. Nothing else. No Stack is created and no default is reused: a Stack exists because
+   its owner created it over `POST /stacks`, or because an operator seeded one from an
+   explicit boot declaration. A run with a database configured that names none is
+   refused by name.
 
-An explicit selection always wins over the default, and a project that configures
-nothing still resolves a Stack. `AKS_STACK_ID` is an optional override, not a
-requirement: a bare clone runs `ingest` and `compile` successfully with nothing set,
-and `ingest` records its rows into the default Stack.
+`AKS_STACK_ID` is an optional override only in the sense that a file-backed run needs
+no Stack at all; with a database configured, a bare clone that names no Stack is
+refused rather than handed one.
 
 The order ends in one of two named outcomes, and they are deliberately different:
 
-- **A database is configured and no Stack can be resolved.** The run fails and
-  names the Stack that is missing at the default domain, plus the database it asked.
-  It never falls back to the file backend.
+- **A database is configured and no Stack is named.** The run fails, in words that
+  name the situation and both fixes: create the Stack with `POST /stacks` and name its
+  id in `AKS_STACK_ID`, or pass `--stack`. It never falls back to the file backend, and
+  it never creates the Stack it could not find.
 - **No database is configured at all.** The run is explicitly file-backed: pages and
   `state.json` live on disk under the project root. This is a supported mode, and
   nothing about it is an error.
 
 `compile` is not an exception to that order. Its page and source seams resolve the
-same one authority as `ingest`, so a bare `compile` with a database configured works
-on the default Stack's rows, and a `compile` with no database configured is
-file-backed. Neither case requires `AKS_STACK_ID`.
+same one authority as `ingest`, so with a database configured a `compile` that enables
+no dimension needing a Stack has nothing to resolve, while one that enables such a
+dimension is refused by name when nothing named a Stack. A `compile` with no database
+configured is file-backed.
 
 Several Stacks in one database never merge - each run works on exactly the one it
 resolved.
@@ -46,9 +49,15 @@ default Stack: a typed id that redirects itself is the failure the flag exists t
 prevent.
 
 That order is the CLI's alone. The MCP tool surface has no default and no fallback:
-every tool takes a required `stackId` and refuses a call that omits it, with
-`list_stacks` as the one exception. MCP resources are not tools and take no
-arguments, so they keep resolving their Stack from the server environment.
+every tool takes a required `stackId` and refuses a call that omits it. `list_stacks`
+keeps `stackId` optional, because it is how a client discovers an id, but omitting it
+on a run with a database configured is refused by name instead of filled from the
+server's environment. MCP resources are not tools and take no arguments, so a resource
+URI cannot carry a Stack: on a run with a database configured a Stack-scoped resource
+read fails by name, and the caller has to use a tool that takes a `stackId`. Handing
+the resource surface back means putting the Stack in the URI - `llmwiki://pages/foo`
+becoming `llmwiki://<stack>/pages/foo` - which is a breaking change to a published
+surface, not a gap.
 
 ## What a Stack's vocabulary is
 

@@ -77,6 +77,40 @@ Each element is validated by the same schema `POST /stacks` uses, so a declarati
 
 The declaration is a **seed**, applied once at boot: a Stack whose `domain` already exists is left exactly as it is, so edits an operator later makes with `PATCH /stacks/:id` survive every restart. It is a provisioning input and never a resolution input - it creates rows, and every request still names the Stack it wants. A missing, unreadable or invalid declaration refuses the boot (exit 1, the reason on stderr) and creates nothing, and a declaration handed to a run with no database configured is refused the same way.
 
+## Upgrading an existing database
+
+<Warning>
+  **Apply the migration before the new build serves traffic.** This build selects
+  `stacks.active`, a column that
+  `packages/llmwiki-kg/db/migration_stack_active.sql` adds. Against a database that
+  has not applied it, **every Stack lookup fails** with a Postgres `42703`
+  (`undefined_column`) naming that column: there is no graceful degradation and no
+  fallback, because no code path reads around a column the schema selects. The
+  failure is loud on the first request, never a silent partial read.
+</Warning>
+
+Apply it once, with the same runner that applies every other schema file:
+
+```bash
+./scripts/apply-schemas.sh postgresql://aks:aks@localhost:5434/aks
+```
+
+Or apply just this file to a database that is already running:
+
+```bash
+psql postgresql://aks:aks@localhost:5434/aks \
+  -f packages/llmwiki-kg/db/migration_stack_active.sql
+
+docker compose exec -T db psql -U aks -d aks \
+  < packages/llmwiki-kg/db/migration_stack_active.sql
+```
+
+It is idempotent: the file is a single `alter table stacks add column if not exists
+active boolean not null default true`, so a second apply changes nothing and every
+existing row becomes usable with no backfill. A fresh install needs nothing - the
+container's init script, `packages/llmwiki-kg/db/schema.sql`, already carries the
+column.
+
 ## Provider Setup
 
 llmwiki calls an LLM during the compile and query phases. It does **not** require credentials for ingest, the viewer, lint, status, or any other read-only operation. Configure your provider by setting the environment variables below - or place them in a `.env` file in your project directory and llmwiki will load them automatically.
