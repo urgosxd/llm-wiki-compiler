@@ -291,12 +291,16 @@ export interface PendingMarkerRead {
  *  - otherwise (a valid array, possibly empty) → `ok` with the bounded entries.
  *
  * @param root - Absolute project root.
+ * @param markerFile - Which marker to read.
+ * @param env - The run's environment, with its resolved Stack published into it. Omitted by
+ *   callers that resolved no Stack of their own, which read the ambient one.
  */
 export async function readPendingMarker(
   root: string,
   markerFile: EmbeddingMarkerFile = PENDING_EMBEDDINGS_FILE,
+  env?: NodeJS.ProcessEnv,
 ): Promise<PendingMarkerRead> {
-  const viaRows = await readMarkerFromRows(markerFile);
+  const viaRows = await readMarkerFromRows(markerFile, markerEnv(env));
   if (viaRows !== null) return viaRows;
   let privateDir: string | null;
   try {
@@ -324,8 +328,29 @@ export async function readPendingMarker(
  * @param root - Absolute project root.
  * @returns The valid, bounded pending entries; `[]` on absent/escape/oversize/corrupt.
  */
+/**
+ * The environment ONE marker operation reads its Stack identity and its DSN from.
+ *
+ * The compile path threads its OWN environment down here: the one its Stack resolution wrote
+ * the resolved id into. Without it a run whose Stack came from the DATABASE — `AKS_STACK_ID`
+ * absent from the ambient environment, which is the operator's case once the line leaves
+ * `.env` — drained and wrote the FILE marker while every other seam on that path took the row
+ * branch. The value is REQUIRED on every helper below, so an omission further in is a type
+ * error rather than a silent fall back to the ambient environment.
+ *
+ * Callers with no resolved Stack to publish (the trust warnings, the OKF import, the unit
+ * tests) omit it. This is the ONE place in this module that reads `process.env`, so the
+ * omission is named once instead of defaulted into every signature.
+ *
+ * @param env - The run's environment, or `undefined` when the caller has none to publish.
+ * @returns The environment the marker backend is chosen from.
+ */
+function markerEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
+  return env ?? process.env;
+}
+
 /** Stack id this run is bound to, or undefined for the file backend. */
-function markerStackId(env: NodeJS.ProcessEnv = process.env): string | undefined {
+function markerStackId(env: NodeJS.ProcessEnv): string | undefined {
   const stackId = (env[AKS_STACK_ID_ENV_VAR] ?? "").trim();
   return stackId === "" ? undefined : stackId;
 }
@@ -345,12 +370,12 @@ function markerStateOf(markerFile: EmbeddingMarkerFile): "pending" | "quarantine
  * silently stops retrying.
  *
  * @param markerFile - Which marker this is.
- * @param env - Environment to read the Stack from.
+ * @param env - The run's environment: its Stack identity and its DSN.
  * @returns The read outcome, or null when no Stack is configured.
  */
 async function readMarkerFromRows(
   markerFile: EmbeddingMarkerFile,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
 ): Promise<PendingMarkerRead | null> {
   const stackId = markerStackId(env);
   if (stackId === undefined) return null;
@@ -377,13 +402,13 @@ async function readMarkerFromRows(
  *
  * @param entries - The complete set for this marker.
  * @param markerFile - Which marker this is.
- * @param env - Environment to read the Stack from.
+ * @param env - The run's environment: its Stack identity and its DSN.
  * @returns True when the set was written to rows.
  */
 async function writeMarkerToRows(
   entries: PendingEmbedding[],
   markerFile: EmbeddingMarkerFile,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
 ): Promise<boolean> {
   const stackId = markerStackId(env);
   if (stackId === undefined) return false;
@@ -402,8 +427,9 @@ async function writeMarkerToRows(
 export async function loadPendingEmbeddings(
   root: string,
   markerFile: EmbeddingMarkerFile = PENDING_EMBEDDINGS_FILE,
+  env?: NodeJS.ProcessEnv,
 ): Promise<PendingEmbedding[]> {
-  return (await readPendingMarker(root, markerFile)).entries;
+  return (await readPendingMarker(root, markerFile, env)).entries;
 }
 
 /**
@@ -523,12 +549,17 @@ export function warnQuarantined(quarantined: PendingEmbedding[]): void {
  * @param entries - The full pending set to persist.
  */
 /** Persist the operation executor's write-ahead marker, surfacing every write failure. */
-async function writePendingEmbeddingsStrict(root: string, entries: PendingEmbedding[]): Promise<void> {
+async function writePendingEmbeddingsStrict(
+  root: string,
+  entries: PendingEmbedding[],
+  env?: NodeJS.ProcessEnv,
+): Promise<void> {
   const normalized = normalizeMarker(entries);
-  if (await writeMarkerToRows(normalized, PENDING_EMBEDDINGS_FILE)) return;
+  const runEnv = markerEnv(env);
+  if (await writeMarkerToRows(normalized, PENDING_EMBEDDINGS_FILE, runEnv)) return;
   const privateDir = await resolveConfinedPrivateDir(root);
   if (normalized.length === 0) {
-    await clearPendingEmbeddings(root);
+    await clearPendingEmbeddings(root, PENDING_EMBEDDINGS_FILE, runEnv);
     return;
   }
   await atomicWrite(pendingFileIn(privateDir, PENDING_EMBEDDINGS_FILE), JSON.stringify(normalized), { confineRoot: realRootOf(privateDir) });
@@ -539,11 +570,13 @@ export async function writePendingEmbeddings(
   root: string,
   entries: PendingEmbedding[],
   markerFile: EmbeddingMarkerFile = PENDING_EMBEDDINGS_FILE,
+  env?: NodeJS.ProcessEnv,
 ): Promise<void> {
   const normalized = normalizeMarker(entries);
-  if (await writeMarkerToRows(normalized, markerFile)) return;
+  const runEnv = markerEnv(env);
+  if (await writeMarkerToRows(normalized, markerFile, runEnv)) return;
   if (normalized.length === 0) {
-    await clearPendingEmbeddings(root, markerFile);
+    await clearPendingEmbeddings(root, markerFile, runEnv);
     return;
   }
   let privateDir: string;
@@ -604,15 +637,19 @@ function isIoFailure(err: unknown): boolean {
  * so it cannot escape.
  *
  * @param root - Absolute project root.
+ * @param markerFile - Which marker to clear.
+ * @param env - The run's environment, with its resolved Stack published into it. Omitted by
+ *   callers that resolved no Stack of their own, which read the ambient one.
  */
 export async function clearPendingEmbeddings(
   root: string,
   markerFile: EmbeddingMarkerFile = PENDING_EMBEDDINGS_FILE,
+  env?: NodeJS.ProcessEnv,
 ): Promise<void> {
   // Clearing must reach the same backend the read and write use. A clear that only
   // unlinks a file is a COMPLETE NO-OP when the marker is a row, silently leaving
   // every id queued for a retry that already succeeded.
-  if (await writeMarkerToRows([], markerFile)) return;
+  if (await writeMarkerToRows([], markerFile, markerEnv(env))) return;
   let privateDir: string | null;
   try {
     privateDir = await resolveExistingConfinedPrivateDir(root);

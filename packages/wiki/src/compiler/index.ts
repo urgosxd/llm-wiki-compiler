@@ -1998,7 +1998,7 @@ async function finalizeWiki(
   await regenerateIndices(root, env, { authority: stackAuthority });
   if (embeddings) {
     await timeStage("compile.embeddings", () => safelyUpdateEmbeddings(
-      root, allChangedSlugs, embeddingStore, embeddingPageSource, jobObserver?.compile,
+      root, allChangedSlugs, env, embeddingStore, embeddingPageSource, jobObserver?.compile,
     ), () => reportCompileStage(jobObserver?.compile, "compile.embeddings"));
   }
 }
@@ -2203,6 +2203,7 @@ function embeddingStoreLocation(
 async function safelyUpdateEmbeddings(
   root: string,
   changedSlugs: string[],
+  env: NodeJS.ProcessEnv,
   embeddingStore?: EmbeddingStoreLocation,
   pageSource?: EmbeddingPageSource,
   progressReporter?: CompileProgressReporter,
@@ -2210,8 +2211,13 @@ async function safelyUpdateEmbeddings(
   const conceptsNamespace = path.basename(CONCEPTS_DIR);
   const changedPageIds = changedSlugs.map((slug) => qualifiedPageId(conceptsNamespace, slug));
   const onProgress = progressCallbackFor(progressReporter);
+  // The run's environment, with its resolved Stack published into it: the durable marker is
+  // drained from and recorded in THAT Stack's rows. Required rather than defaulted, and taken
+  // from the pipeline's ONE resolution, so a database-resolved compile cannot record its
+  // retry state in `.llmwiki/pending-embeddings.json` because the ambient env names no id.
   await refreshEmbeddingsDrainingPending(
-    root, changedPageIds, embeddingStore, pageSource, onProgress, detailCallbackFor(progressReporter),
+    root, changedPageIds, embeddingStore, pageSource, onProgress,
+    detailCallbackFor(progressReporter), env,
   );
 }
 

@@ -68,6 +68,13 @@ import type { EmbeddingPageSource } from "../dimensions/wiki/page-scan-source.js
  * @param onProgress - Optional page-record progress sink. Forwarded only; the drain
  *   never inspects it, so a caller's progress contract cannot leak into the durable
  *   marker lifecycle. Optional so callers with no progress surface are unaffected.
+ * @param onDetail - Optional chunk/request cardinality sink. Forwarded only, like
+ *   `onProgress`; the drain never inspects it.
+ * @param env - The run's environment, with its resolved Stack published into it, so the
+ *   durable marker is drained and recorded in THAT Stack's rows instead of
+ *   `.llmwiki/pending-embeddings.json`. Omitted by a caller that resolved no Stack of its
+ *   own (`import/okf-refresh.ts`), which reads the ambient environment — the single place
+ *   that fallback exists is `pending-embeddings.ts`, never an inner signature.
  * @precondition The caller MUST hold the project lock across this call.
  */
 export async function refreshEmbeddingsDrainingPending(
@@ -77,12 +84,13 @@ export async function refreshEmbeddingsDrainingPending(
   pageSource?: EmbeddingPageSource,
   onProgress?: EmbeddingProgressCallback,
   onDetail?: EmbeddingDetailCallback,
+  env?: NodeJS.ProcessEnv,
 ): Promise<void> {
   if (embeddingsDisabled()) {
     verbose(`embeddings: skipped because ${ENV_EMBEDDINGS} disables refreshes`);
     return;
   }
-  const retry = await loadEmbeddingRetry(root, changedPageIds);
+  const retry = await loadEmbeddingRetry(root, changedPageIds, env);
   verbose(`embeddings: refreshing ${retry.pageIds.length} page-id(s)`);
   // Write-ahead intent: record BEFORE the attempt so a swallowed failure or crash
   // leaves a durable retry list even though source-state already marks sources current.
