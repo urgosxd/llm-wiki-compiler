@@ -7,6 +7,12 @@
  * connection error. The one database-shaped case at the end proves the OTHER half
  * of the contract — that a caller who already resolved a Stack can hand it over and
  * be answered without the environment being consulted at all.
+ *
+ * The third answer these cases pin is ABSENCE: nothing configured selects NO Stack
+ * (S1 of `odd/tasks/stack-authority-per-request.md` — no Stack may be created
+ * implicitly, so there is no default one to name). This file used to assert the
+ * default domain instead; that expectation was reversed on purpose, not retargeted,
+ * and the refusal the resolver raises from it is pinned where the resolver lives.
  */
 
 import { describe, it, expect } from "vitest";
@@ -18,8 +24,6 @@ import {
   resolveDimensions,
 } from "../../packages/wiki/src/dimensions/activation.js";
 import {
-  DEFAULT_STACK_DOMAIN,
-  DEFAULT_STACK_NAME,
   describeStackSelection,
   selectStack,
 } from "../../packages/wiki/src/dimensions/stack-selection.js";
@@ -51,16 +55,16 @@ describe("selectStack", () => {
     expect(selection).toEqual({ kind: "explicit", source: "env", stackId: ENV_STACK });
   });
 
-  it("falls back to the default Stack when nothing is configured", () => {
+  it("selects NO Stack when nothing is configured", () => {
     const selection = selectStack({ env: {} });
 
-    expect(selection).toEqual({ kind: "default", source: "default", domain: DEFAULT_STACK_DOMAIN });
+    expect(selection).toEqual({ kind: "none" });
   });
 
   it("treats blank values as absent", () => {
     const selection = selectStack({ flag: "   ", env: { [AKS_STACK_ID_ENV_VAR]: "  " } });
 
-    expect(selection).toEqual({ kind: "default", source: "default", domain: DEFAULT_STACK_DOMAIN });
+    expect(selection).toEqual({ kind: "none" });
   });
 
   it("trims the value it selects", () => {
@@ -88,15 +92,10 @@ describe("describeStackSelection", () => {
     expect(text).toBe(`Stack ${ENV_STACK} (from ${AKS_STACK_ID_ENV_VAR})`);
   });
 
-  it("names the default as the origin", () => {
+  it("says no Stack was named, naming both ways to name one", () => {
     const text = describeStackSelection(selectStack({ env: {} }));
 
-    expect(text).toBe(`Stack ${DEFAULT_STACK_DOMAIN} (from the default Stack)`);
-  });
-
-  it("keeps the fixed default identity stable", () => {
-    expect(DEFAULT_STACK_DOMAIN).toBe("default");
-    expect(DEFAULT_STACK_NAME).toBe("Default");
+    expect(text).toBe(`No Stack named (no --stack and no ${AKS_STACK_ID_ENV_VAR})`);
   });
 });
 

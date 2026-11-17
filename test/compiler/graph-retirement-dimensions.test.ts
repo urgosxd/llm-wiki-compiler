@@ -1,8 +1,7 @@
 /**
  * @file test/compiler/graph-retirement-dimensions.test.ts
  * @description WHICH dimensions `compile` retires a deleted source FROM, and
- * whether answering that needs a Stack at all.
- *
+ * whether answering that needs a Stack at all. *
  * ## The decision under test
  *
  * `forgetDeletedSources` retires the graph and nothing else, so `kg` is the only
@@ -24,12 +23,14 @@
  *
  * ## Why the graph-on case needs a real database
  *
- * The other half is the opposite claim: with `kg` enabled and no Stack configured,
- * resolution MUST reach the database, because the default Stack has to exist before
- * anything can be keyed by it. A probe can only prove "something was called", so this
- * half runs against the shared Postgres harness and asserts the provisioned row. The
- * default Stack is one global row (`stacks.domain` is unique), so the case leaves it
- * in place rather than deleting a row another suite may be using.
+ * The other half is the opposite claim: with `kg` enabled and no Stack named,
+ * resolution MUST refuse rather than answer from anywhere else. A probe can only
+ * prove "something was called", so this half runs against the Postgres harness and
+ * counts `public.stacks` around the refusal. That case used to assert the OPPOSITE —
+ * that resolution provisioned the default Stack and returned its id — and the
+ * assertion is REVERSED on purpose (S1 and S12 of
+ * `odd/tasks/stack-authority-per-request.md`): no Stack may be created implicitly, so
+ * a compile that needs one and was named none fails by name instead.
  */
 
 import { afterAll, describe, expect, it } from "vitest";
@@ -37,11 +38,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { sql } from "drizzle-orm";
+import type { DatabaseHandle } from "@repo/foundation";
 
 import { resolveStackForDimensions } from "../../packages/wiki/src/services/stacks/resolve-stack.js";
 import { resolveDimensions } from "../../packages/wiki/src/dimensions/activation.js";
-import { DEFAULT_STACK_DOMAIN } from "../../packages/wiki/src/dimensions/stack-selection.js";
 import { DATABASE_URL, createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 
 /** The dimensions compile retires from — the graph alone. */
@@ -75,6 +75,17 @@ function probeDb(): { db: StackDb; wasReached: () => boolean } {
 
 const harness = await createKgPostgresHarness("graph-retirement");
 
+/**
+ * How many rows `public.stacks` holds right now, read through SQL.
+ *
+ * @param handle - Handle to read through.
+ * @returns The row count of `public.stacks`.
+ */
+async function countStacks(handle: DatabaseHandle): Promise<number> {
+  const rows = await handle.execute<{ n: number }>("select count(*)::int as n from public.stacks");
+  return Number(rows[0]?.n);
+}
+
 /** A scratch project root; resolution reads no file, but its signature takes one. */
 async function scratchRoot(): Promise<string> {
   return await mkdtemp(path.join(tmpdir(), "graph-retirement-"));
@@ -87,8 +98,8 @@ describe("graph retirement resolution with nothing configured", () => {
     const { db, wasReached } = probeDb();
 
     // A bare checkout: no `LLMWIKI_DIMENSIONS` (so `wiki` alone) and no
-    // `AKS_STACK_ID`, which means the selection is the default one and has to be
-    // provisioned before it can be used as an id.
+    // `AKS_STACK_ID`, which means the selection names no Stack — and the switch asks
+    // for nothing, so there is nothing to refuse.
     const stackId = await resolveStackForDimensions(db, {}, RETIREMENT_DIMENSIONS);
 
     // `wiki` is the only enabled dimension, so there is nothing to retire from.
@@ -129,19 +140,27 @@ describe("graph retirement resolution with nothing configured", () => {
 });
 
 describe.skipIf(!harness.reachable)("graph retirement resolution with the graph enabled", () => {
-  it("provisions the default Stack and returns its id", async () => {
-    const stackId = await resolveStackForDimensions(
+  it("refuses by name and creates no Stack", async () => {
+    const before = await countStacks(harness.db);
+
+    const outcome = await resolveStackForDimensions(
       harness.db,
       { AKS_DATABASE_URL: DATABASE_URL, LLMWIKI_DIMENSIONS: "kg" },
       RETIREMENT_DIMENSIONS,
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
     );
 
-    expect(stackId).toEqual(expect.any(String));
-    // Proof the database really was reached: the default Stack now exists, and the
-    // id handed back is that row's.
-    const rows = await harness.db.execute<{ id: string }>(
-      sql`select id from stacks where domain = ${DEFAULT_STACK_DOMAIN}`,
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toContain(
+      "AKS_DATABASE_URL is configured, so this run must have a Stack",
     );
-    expect(rows.map((row) => row.id)).toEqual([stackId]);
+    // Counted AFTER the refusal: a resolution that provisions the Stack it then calls
+    // missing would still satisfy the message above, and that is the deleted defect.
+    expect(
+      await countStacks(harness.db),
+      "a retirement that named no Stack must not create one",
+    ).toBe(before);
   }, 60_000);
 });

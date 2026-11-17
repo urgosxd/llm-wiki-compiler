@@ -1,15 +1,21 @@
 /**
  * @file test/services/ingest/default-stack-ingest.test.ts
- * @description An ingest on a checkout that configured NO Stack reaches its work and
- * writes to the default Stack, instead of refusing before it starts.
+ * @description An ingest on a checkout that configured a database and NAMED no Stack
+ * refuses by name, instead of writing to a Stack nobody created.
  *
- * ## The defect this pins
+ * ## The contract this pins, and the one it reverses
  *
- * `writeToDimensions` called `resolveStackId(env)` unconditionally, and that helper
- * throws when `AKS_STACK_ID` is blank. So the write path was strictly harder to
- * satisfy than every read seam beside it, which already degrade to the file/`undefined`
- * fallback on an empty variable: a bare checkout could compile a page it could never
- * have ingested.
+ * This file used to pin the opposite: that an ingest with no `AKS_STACK_ID` reached
+ * its work and wrote to a default Stack the resolver materialized on the way past.
+ * That is deleted by decision (S1 of `odd/tasks/stack-authority-per-request.md` — no
+ * Stack may be created implicitly, a Stack is created by its owner over HTTP or from
+ * an explicit declaration), so the assertion is REVERSED on purpose and not
+ * retargeted to another Stack: the run must fail, the failure must name what is
+ * missing, and no row may appear.
+ *
+ * Why the count matters as much as the message: a refusal that provisions the Stack
+ * it then reports as missing would satisfy a message-only assertion, and that is
+ * precisely the defect this file exists to catch.
  *
  * ## Why the environment is passed and not exported into `process.env`
  *
@@ -18,34 +24,28 @@
  * restoring it. The smaller blast radius is the point: nothing else in this worker can
  * observe this case.
  *
- * ## Why this case leaves the default Stack in place
+ * ## Teardown
  *
- * `stacks.domain` is unique, so the default Stack is a single global row, and this
- * path COMMITS it (the ingest opens its own connection, so the transaction trick
- * `default-stack.test.ts` uses cannot wrap it). Deleting a row another suite may be
- * writing to at the same time is the more damaging choice, so the case asserts through
- * a unique source identity and leaves the one row behind. `default-stack.test.ts`
- * already tolerates a pre-existing default row: it deletes it inside a transaction it
- * always rolls back.
+ * The source file and its root live in a temp directory outside the worktree, removed
+ * in `finally`. The database is this process's own (`test/fixtures/kg-postgres.ts`),
+ * so nothing here can be another suite's row.
  */
 
 import { afterAll, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { sql } from "drizzle-orm";
 import type { DatabaseHandle } from "@repo/foundation";
 
+import { AKS_DATABASE_URL_ENV_VAR } from "../../../packages/wiki/src/dimensions/activation.js";
 import { DATABASE_URL, createKgPostgresHarness } from "../../fixtures/kg-postgres.js";
-import { DEFAULT_STACK_DOMAIN } from "../../../packages/wiki/src/dimensions/stack-selection.js";
-import { listSourceDocuments } from "../../../packages/wiki/src/dimensions/wiki/source-documents-store.js";
 import { ingestSource } from "../../../packages/wiki/src/services/ingest/service.js";
 
 /** Enough body text to clear the minimum source length the ingest enforces. */
-const BODY = "A short document ingested by a checkout that never configured a Stack.";
+const BODY = "A short document ingested by a checkout that never named a Stack.";
 
-/** The environment a bare checkout has: a connection, and no Stack id. */
-const BARE_ENV: NodeJS.ProcessEnv = { AKS_DATABASE_URL: DATABASE_URL };
+/** The environment a deployment has before it created its first Stack. */
+const BARE_ENV: NodeJS.ProcessEnv = { [AKS_DATABASE_URL_ENV_VAR]: DATABASE_URL };
 
 const harness = await createKgPostgresHarness("ingest-default-stack");
 const { reachable } = harness;
@@ -53,32 +53,40 @@ const { reachable } = harness;
 afterAll(() => harness.cleanup());
 
 /**
- * The id of the Stack owning the default domain, if one exists.
+ * How many rows `public.stacks` holds right now.
  *
- * @param db - Handle to read through.
- * @returns The default Stack's id, or undefined when it was never materialized.
+ * @param handle - Handle to read through.
+ * @returns The row count of `public.stacks`.
  */
-async function defaultStackId(db: DatabaseHandle): Promise<string | undefined> {
-  const rows = await db.execute<{ id: string }>(
-    sql`select id from stacks where domain = ${DEFAULT_STACK_DOMAIN}`,
-  );
-  return rows[0]?.id;
+async function countStacks(handle: DatabaseHandle): Promise<number> {
+  const rows = await handle.execute<{ n: number }>("select count(*)::int as n from public.stacks");
+  return Number(rows[0]?.n);
 }
 
-describe.skipIf(!reachable)("ingest with no Stack configured", () => {
-  it("writes the document to the default Stack instead of refusing", async () => {
+describe.skipIf(!reachable)("ingest with no Stack named", () => {
+  it("refuses by name and creates no Stack, instead of writing to one", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ingest-default-stack-"));
     try {
       const source = path.join(root, "bare-checkout.md");
       await writeFile(source, BODY, "utf-8");
+      const before = await countStacks(harness.db);
 
-      const result = await ingestSource(root, source, undefined, BARE_ENV);
+      const outcome = await ingestSource(root, source, undefined, BARE_ENV).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
 
-      expect(result.writeStatus).toBe("created");
-      const stackId = await defaultStackId(harness.db);
-      expect(stackId).toBeDefined();
-      const documents = await listSourceDocuments(harness.db, stackId as string);
-      expect(documents.map((document) => document.filename)).toContain(result.filename);
+      expect(outcome).toBeInstanceOf(Error);
+      expect((outcome as Error).message).toContain(
+        `${AKS_DATABASE_URL_ENV_VAR} is configured, so this run must have a Stack`,
+      );
+      // Measured after the refusal, never before: provisioning on the way out is the
+      // behaviour this assertion exists to forbid. A count, not an id list, because this
+      // suite's Stack is shared with the fixture that provisioned it.
+      expect(
+        await countStacks(harness.db),
+        "an ingest that named no Stack must not create one",
+      ).toBe(before);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
