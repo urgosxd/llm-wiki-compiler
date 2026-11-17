@@ -119,7 +119,7 @@ async function ingestThroughHost(
     ...(dimensionsPort === undefined ? {} : { dimensionsPort }),
   });
   try {
-    const response = await fetch(`http://${handle.host}:${handle.port}/api/ingest`, {
+    const response = await fetch(`http://${handle.host}:${handle.port}/api/ingest?stackId=${env.stackId}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ source, compile: false }),
@@ -134,7 +134,7 @@ async function ingestThroughHost(
 function postIngestRequest(): IncomingMessage {
   const body = JSON.stringify({ source: "/tmp/never-fetched.md", compile: false, async: true });
   return {
-    url: "/api/ingest",
+    url: `/api/ingest?stackId=${env.stackId}`,
     method: "POST",
     async *[Symbol.asyncIterator]() {
       yield Buffer.from(body);

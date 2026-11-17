@@ -31,13 +31,19 @@ import { listCandidatePage } from "../compiler/candidates.js";
 import { buildReviewsEnvelope, REVIEW_LIST_LIMIT } from "./reviews.js";
 import { handleApiIngestJobs, isIngestJobsPath, INGEST_JOBS_PREFIX, INGEST_JOBS_PATH } from "./api-ingest-jobs.js";
 import { tryRenderBody, writeJson, writeJsonError, writeRenderFailed } from "./respond.js";
+import {
+  namedStackRefusal,
+  stackLookupFailedRefusal,
+  unnamedStackRefusal,
+  writeStackRefusal,
+} from "./respond.js";
 import type { ViewerSnapshot } from "./types.js";
 // Type-only: the viewer must not DEPEND on the dimensions database (see
 // `api-ingest-jobs.ts`), it only carries the authority a host already resolved.
 import type { StackAuthority } from "../dimensions/stack-authority.js";
 import { isDatabaseConfigured } from "../dimensions/activation.js";
 import { createDimensionsDatabase } from "../dimensions/activation.js";
-import { stackExists } from "../services/stacks/stack-store.js";
+import { stackResolution } from "../services/stacks/stack-store.js";
 import { stackIdProblem } from "@repo/foundation";
 import { listenOn } from "../utils/http-listen.js";
 
@@ -511,15 +517,19 @@ type ReviewsStack =
  * The boot no longer resolves a Stack (S6 of `odd/tasks/stack-authority-per-request.md`), so a
  * value captured at startup cannot describe the Stack this request is about — the exact staleness
  * this surface was the evidence for. `?stackId=` names it, and the name is checked against the
- * database on every request (`stackExists` issues one query; nothing is cached), which is what
+ * database on every request (`stackResolution` issues one query; nothing is cached), which is what
  * makes a Stack created by `POST /stacks` usable by the very next request with no restart.
  *
  * A request that names NONE is refused as `stack_unnamed` (409) when a database is configured:
  * falling through would answer from whichever Stack the environment names, or from the checkout's
- * `.llmwiki/candidates`, and both are the silent substitution S3 forbids. The body is the
- * viewer's existing envelope — `{"error":{"code":"stack_unnamed","message":…}}` — and the wording
- * is deliberately minimal, because the unnamed-request contract belongs to the task that owns it
- * (T4); this produces the shape, not a second definition of it.
+ * `.llmwiki/candidates`, and both are the silent substitution S3 forbids. The envelope is
+ * {@link unnamedStackRefusal}'s — the ONE definition of that code, shared with the two ingest
+ * routes rather than restated here, so a client branching on it sees one wording on every
+ * surface.
+ *
+ * A NAMED id is settled by the shared tri-state lookup, which keeps two different answers
+ * separate: absent is `unknown_stack`, retired is `stack_inactive` (S10), and only an active
+ * Stack is read from.
  *
  * With NO database configured the named file backend answers exactly as before, and a `stackId`
  * names nothing there because there is no Stack table to check it against.
@@ -538,7 +548,7 @@ async function handleApiReviews(res: ServerResponse, root: string, url: URL): Pr
 /**
  * Settle, and VALIDATE, the Stack one `/api/reviews` request is about.
  *
- * Validation is the same `stackExists` path the mutation mount uses, deliberately: a Stack id a
+ * Validation is the same shared lookup the mutation mount uses, deliberately: a Stack id a
  * client invents must be refused the same way on every surface, and a Stack that was created (or
  * deactivated) a moment ago must be visible to the next request rather than to the next restart.
  *
@@ -551,12 +561,7 @@ async function reviewsStackFor(res: ServerResponse, named: string): Promise<Revi
     // No database: the file backend is this deployment's backend, not a fallback, and the
     // environment decides exactly as it always has (S7).
     if (!isDatabaseConfigured(process.env)) return { ok: true, authority: undefined };
-    writeJsonError(
-      res,
-      409,
-      "stack_unnamed",
-      "This request named no Stack, and a database is configured: name one with ?stackId=.",
-    );
+    writeStackRefusal(res, unnamedStackRefusal());
     return { ok: false };
   }
   const problem = stackIdProblem(named);
@@ -566,14 +571,14 @@ async function reviewsStackFor(res: ServerResponse, named: string): Promise<Revi
   }
   const dimensionsDb = createDimensionsDatabase(process.env);
   try {
-    if (await stackExists(dimensionsDb.db, named)) {
-      return { ok: true, authority: { kind: "stack", stackId: named } };
+    const refusal = namedStackRefusal(named, await stackResolution(dimensionsDb.db, named));
+    if (refusal !== undefined) {
+      writeStackRefusal(res, refusal);
+      return { ok: false };
     }
-    writeJsonError(res, 404, "unknown_stack", `No Stack '${named}' exists.`);
-    return { ok: false };
+    return { ok: true, authority: { kind: "stack", stackId: named } };
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    writeJsonError(res, 503, "stack_lookup_failed", `Could not verify Stack '${named}': ${detail}`);
+    writeStackRefusal(res, stackLookupFailedRefusal(named, error));
     return { ok: false };
   } finally {
     await dimensionsDb.close();

@@ -26,8 +26,18 @@
 
 import type { ServerResponse } from "node:http";
 import { writeJson, writeJsonError } from "./respond.js";
+import {
+  namedStackRefusal,
+  stackLookupFailedRefusal,
+  unnamedStackRefusal,
+  writeStackRefusal,
+} from "./respond.js";
+import type { StackRefusal } from "./respond.js";
 import type { JobRegistry } from "../services/ingest/jobs/registry.js";
 import { stackIdProblem } from "@repo/foundation";
+import { createDimensionsDatabase, isDatabaseConfigured } from "../dimensions/activation.js";
+import { stackResolution } from "../services/stacks/stack-store.js";
+import { StackAuthorityError } from "../dimensions/stack-authority.js";
 
 /** How many jobs a durable listing returns. Matches the MCP tool default. */
 const DURABLE_LIST_LIMIT = 50;
@@ -78,7 +88,14 @@ export interface DurableJobReads {
   forStack?(stackId: string): {
     list(limit: number): Promise<readonly unknown[]>;
     get(jobId: string): Promise<unknown | undefined>;
-    /** True when the Stack exists, so an unknown id can be 404 rather than empty. */
+    /**
+     * True when the Stack exists, so an unknown id can be 404 rather than empty.
+     *
+     * No longer consulted by the route below: a boolean cannot tell a retired Stack from an
+     * absent one, and S10 of `odd/tasks/stack-authority-per-request.md` requires those two to
+     * stay different answers. The route classifies through the shared tri-state lookup
+     * ({@link resolveNamedStack}) and this member stays as the host's own capability.
+     */
     exists(): Promise<boolean>;
   };
 }
@@ -133,12 +150,41 @@ async function collectionJobs(reads: Reads): Promise<readonly unknown[]> {
 }
 
 /**
+ * Refuse a named Stack this request cannot read, or `undefined` when it may.
+ *
+ * The same tri-state lookup the mutation mount and `/api/reviews` use, deliberately: one id must
+ * get one answer per fact on every surface, and a retired Stack must be told apart from an
+ * absent one so an operator learns the domain is still taken (S10). Skipped with no database
+ * configured, where a `stackId` names nothing because there is no table to check it against.
+ *
+ * @param stackId - The id the request named, already shape-validated.
+ * @returns The refusal to send, or `undefined` when the reads may proceed.
+ */
+async function resolveNamedStack(stackId: string): Promise<StackRefusal | undefined> {
+  if (!isDatabaseConfigured(process.env)) return undefined;
+  const dimensionsDb = createDimensionsDatabase(process.env);
+  try {
+    return namedStackRefusal(stackId, await stackResolution(dimensionsDb.db, stackId));
+  } catch (error) {
+    return stackLookupFailedRefusal(stackId, error);
+  } finally {
+    await dimensionsDb.close();
+  }
+}
+
+/**
  * Answer a job read.
  *
  * Answers 503 rather than 404 when no registry is mounted: "this host does not
  * track jobs" and "this host tracks jobs and has never seen that id" are different
  * facts, and a client that treats the second as the first would stop polling a job
  * that exists.
+ *
+ * A named Stack is settled BEFORE any read, and an unnamed one is served from the host's own
+ * view — which exists only for a host whose process named a Stack. When it does not, the
+ * durable reads reject with a `StackAuthorityError`; that rejection used to escape this module
+ * and become a bodiless 500 through the dispatcher's catch. It is a client mistake with a
+ * remedy, so it now answers the same `stack_unnamed` envelope every other surface does.
  *
  * @param res - Response to write.
  * @param url - Request URL, already known to address a jobs path.
@@ -154,22 +200,47 @@ export async function handleApiIngestJobs(
     writeJsonError(res, 503, "jobs_unavailable", "this host does not track ingest jobs");
     return;
   }
-  const durable = durableFrom(deps);
-  const request = jobRequest(url, durable);
+  const request = jobRequest(url, durableFrom(deps));
   if (request === undefined) {
     writeJsonError(res, 400, "invalid_stack_id", stackIdProblem(namedIdOf(url)) ?? "");
     return;
   }
-  const reads: Reads = { registry, durable, named: request.named };
-  if (request.named !== undefined && !(await request.named.exists())) {
-    writeJsonError(res, 404, "stack_not_found", `no Stack '${request.stackId}'`);
-    return;
+  if (request.named !== undefined) {
+    const refusal = await resolveNamedStack(request.stackId);
+    if (refusal !== undefined) {
+      writeStackRefusal(res, refusal);
+      return;
+    }
   }
-  if (request.jobId === undefined) {
-    writeJson(res, 200, { jobs: await collectionJobs(reads) });
-    return;
+  await answerJobRead(res, request.jobId, { registry, durable: durableFrom(deps), named: request.named });
+}
+
+/**
+ * Answer the read, mapping the host's unnamed-Stack refusal onto the shared envelope.
+ *
+ * Only the host's OWN view can raise it: a named Stack's reads never resolve an authority. So
+ * any other throw keeps travelling, and a genuine fault still reads as a server fault.
+ *
+ * @param res - Response to write.
+ * @param jobId - The job asked for, or `undefined` for the collection.
+ * @param reads - The sources for this request.
+ * @returns Nothing; the response is written here.
+ */
+async function answerJobRead(
+  res: ServerResponse,
+  jobId: string | undefined,
+  reads: Reads,
+): Promise<void> {
+  try {
+    if (jobId === undefined) {
+      writeJson(res, 200, { jobs: await collectionJobs(reads) });
+      return;
+    }
+    await writeOneJob(res, jobId, reads);
+  } catch (error) {
+    if (reads.named !== undefined || !(error instanceof StackAuthorityError)) throw error;
+    writeStackRefusal(res, unnamedStackRefusal());
   }
-  await writeOneJob(res, request.jobId, reads);
 }
 
 /** The two read sources a request works from, resolved once. */

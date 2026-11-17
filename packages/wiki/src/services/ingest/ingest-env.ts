@@ -26,15 +26,33 @@
  * to the pipelines that read it, and the ambient environment is never written. Two
  * requests naming different Stacks can therefore be in flight at once.
  *
- * When no Stack is named the process environment is returned as-is, so a single-Stack
- * deployment keeps the exact behaviour it had.
+ * ## Where `undefined` is still legitimate, and where it is not
+ *
+ * An absent Stack used to mean "whatever the process environment says", and on the HTTP surface
+ * that was silent authority: a `POST /api/ingest` with no `stackId` ran under whichever Stack
+ * the server had been started with, so a client wrote into a tenant it never named. The request
+ * path no longer reaches this function without a Stack — `host/api.ts` refuses an unnamed
+ * request by name (`stack_unnamed`, 409) before any work starts — which makes the `undefined`
+ * branch unreachable FROM A REQUEST rather than dead:
+ *
+ *  - A CLI RUN (the command line's own ingest, and the SDK facade) legitimately reads its OWN
+ *    configured Stack from the environment. `AKS_STACK_ID` there is the operator's explicit
+ *    choice for that command, not ambient authority borrowed by a third party's request, and
+ *    S3 forbids the second, not the first.
+ *
+ * So the branch stays, and the distinction lives in its caller: a request must name its Stack;
+ * a command may read its own configuration.
  */
 import { AKS_STACK_ID_ENV_VAR } from "../../dimensions/activation.js";
 
 /**
  * The environment an ingest should resolve its Stack from.
  *
- * @param stackId - A Stack the caller named, or absent to use the bound one.
+ * The `undefined` branch is the CLI-shaped one described in this file's header: a command
+ * reading its own configured Stack. Every HTTP route refuses an unnamed request before calling
+ * this, so on that path the argument is always present.
+ *
+ * @param stackId - A Stack the caller named, or absent for a run that reads its own environment.
  * @returns A copy carrying that Stack, or the process environment untouched.
  */
 export function buildIngestEnv(stackId: string | undefined): NodeJS.ProcessEnv {

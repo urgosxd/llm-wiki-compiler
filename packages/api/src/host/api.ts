@@ -44,6 +44,13 @@
 
 import type { IncomingMessage, ServerResponse } from "http";
 import { writeJson, writeJsonError } from "@repo/wiki/viewer-respond";
+import {
+  namedStackRefusal,
+  stackLookupFailedRefusal,
+  unnamedStackRefusal,
+  writeStackRefusal,
+} from "@repo/wiki/viewer-respond";
+import type { StackRefusal } from "@repo/wiki/viewer-respond";
 import { INGEST_DIMENSIONS, ingestSource } from "@repo/wiki/ingest-service";
 import { compileAndReport } from "@repo/wiki/compiler";
 import { LockBusyError } from "@repo/wiki/utils-lock";
@@ -56,7 +63,7 @@ import type { CompileResult, IngestResult } from "@repo/wiki/utils-types";
 import { requireDimensionsPort, stackIdProblem } from "@repo/foundation";
 import { buildIngestEnv } from "@repo/wiki/ingest-env";
 import { createDimensionsDatabase, isDatabaseConfigured } from "@repo/wiki/dimensions-activation";
-import { stackExists } from "@repo/wiki/stack-store";
+import { stackResolution } from "@repo/wiki/stack-store";
 import type { createDimensionsPort } from "../dimensions/port.js";
 
 /**
@@ -299,51 +306,46 @@ async function readIngestRequest(
       writeJsonError(res, 400, "invalid_request", problem);
       return undefined;
     }
-    // Shape is not enough. A well-formed id naming no Stack used to be accepted with
-    // a 202 and a job id, and the durable mirror then failed on a foreign key while the
-    // HTTP caller was told the work had started. Answering 202 for work that cannot be
-    // recorded is the same class as answering 200 for a Stack that does not exist.
-    const absent = await unknownStackRefusal(stackId);
-    if (absent !== undefined) {
-      writeJsonError(res, absent.status, absent.code, absent.message);
-      return undefined;
-    }
+  }
+  // The Stack is settled for EVERY request, not only for one that named an id. A well-formed
+  // id naming no Stack is refused before any work starts (a 202 for work that cannot be
+  // recorded was b202e249's bug), and a request that names NONE is refused by name too: the
+  // alternative is `buildIngestEnv(undefined)`, which hands the pipelines `process.env` and
+  // silently runs the work under whichever Stack the HOST was started with. That inheritance
+  // is the ambient authority S3 forbids, and it is exactly why the refusal comes first.
+  const refusal = await stackRefusalFor(stackId);
+  if (refusal !== undefined) {
+    writeStackRefusal(res, refusal);
+    return undefined;
   }
   return { ...request, source, ...(stackId === undefined ? {} : { stackId }) };
 }
 
-/** The HTTP answer for a Stack this deployment cannot serve, or `undefined`. */
-interface StackRefusal {
-  readonly status: number;
-  readonly code: string;
-  readonly message: string;
-}
-
 /**
- * Refuse a `stackId` that names no Stack, before any work is accepted.
+ * Settle, and VALIDATE, the Stack this request is about.
  *
- * Skipped when no database is configured: a file-backed project has no Stacks to look
- * up, and refusing there would break a supported deployment. A FAILED lookup is still a
- * refusal, because an unreachable database must not read as a valid Stack.
+ * Two questions, one answer, and the file-backed deployment is deliberately not asked either:
+ * with no database configured there are no Stacks to look up, and refusing there would break a
+ * supported deployment (S7). "Is a database configured" is asked through
+ * {@link isDatabaseConfigured}, which is the ONE answer to that question — the Stack authority
+ * reads the same predicate, so "is this run file-backed" has one derivation instead of a copy
+ * here and another there.
  *
- * "Is a database configured" is asked through {@link isDatabaseConfigured}, which is the
- * ONE answer to that question: the Stack authority reads the same predicate, so "is this run
- * file-backed" has one derivation instead of a copy here and another there. This function
- * used to carry its own `(process.env[…] ?? "").trim() === ""`, which is the same test with
- * a second place to change it.
+ * A FAILED lookup is still a refusal, because an unreachable database must not read as a valid
+ * Stack, and it is a DIFFERENT refusal (503) from "you named nothing" (409) and "that id is
+ * not there" (404) — three facts a client acts on differently.
  *
- * @param stackId - The Stack id taken from the request.
- * @returns The refusal to send, or `undefined` when the Stack may be used.
+ * @param stackId - The Stack the request named, or `undefined` when it named none.
+ * @returns The refusal to send, or `undefined` when this request may proceed.
  */
-async function unknownStackRefusal(stackId: string): Promise<StackRefusal | undefined> {
+async function stackRefusalFor(stackId: string | undefined): Promise<StackRefusal | undefined> {
   if (!isDatabaseConfigured()) return undefined;
+  if (stackId === undefined) return unnamedStackRefusal();
   const dimensionsDb = createDimensionsDatabase();
   try {
-    if (await stackExists(dimensionsDb.db, stackId)) return undefined;
-    return { status: 404, code: "unknown_stack", message: `No Stack '${stackId}' exists.` };
+    return namedStackRefusal(stackId, await stackResolution(dimensionsDb.db, stackId));
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { status: 503, code: "stack_lookup_failed", message: `Could not verify Stack '${stackId}': ${detail}` };
+    return stackLookupFailedRefusal(stackId, error);
   } finally {
     await dimensionsDb.close();
   }

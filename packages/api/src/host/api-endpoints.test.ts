@@ -82,8 +82,10 @@ describe("the mutation endpoints", () => {
     const { handle, post } = await startFor(root);
     expect(await acquireLock(root, { quiet: true })).toBe(true);
     try {
-      // Both mutation routes must be retryable conflicts, not failures.
-      expect((await post("/api/ingest", { source })).status).toBe(409);
+      // Both mutation routes must be retryable conflicts, not failures. The Stack is NAMED so
+      // the 409 below is the lock's: an unnamed ingest on a database-configured host is refused
+      // with 409 `stack_unnamed` before the lock is ever tried (S3).
+      expect((await post(`/api/ingest?stackId=${process.env.AKS_STACK_ID ?? ""}`, { source })).status).toBe(409);
       expect((await post("/api/compile")).status).toBe(409);
     } finally {
       await releaseLock(root);

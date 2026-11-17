@@ -22,6 +22,17 @@ import { useStackEnv } from "../../../../test/fixtures/stack-env.js";
 /** A scratch project with the sources/ directory the services expect. */
 const projectRoot = () => scratchProjectRoot("host-jobs-");
 
+/**
+ * The Stack every write below NAMES.
+ *
+ * `POST /api/ingest` refuses an unnamed request on a host with a database configured (S3), so a
+ * write that means to be accepted must say where it goes. The READS stay unnamed on purpose:
+ * they then measure the host's own merged view, which is the contract this file is about.
+ */
+function stackId(): string {
+  return process.env.AKS_STACK_ID ?? "";
+}
+
 /** Start a host with an explicit registry, plus fetchers bound to its port. */
 async function startFor(root: string) {
   const snapshot = await buildViewerSnapshot(root);
@@ -47,7 +58,7 @@ describe("the async ingest contract", () => {
     const root = await projectRoot();
     const { handle, post } = await startFor(root);
     try {
-      const res = await post("/api/ingest", { source: "not-a-real-source", async: true });
+      const res = await post(`/api/ingest?stackId=${stackId()}`, { source: "not-a-real-source", async: true });
       // 202 is the whole point: the contract is "accepted", not "done".
       expect(res.status).toBe(202);
       const body = await res.json();
@@ -78,7 +89,7 @@ describe("the async ingest contract", () => {
     const root = await projectRoot();
     const { handle, request, post, ingestJobs } = await startFor(root);
     try {
-      const accepted = await (await post("/api/ingest", { source: "x", async: true })).json();
+      const accepted = await (await post(`/api/ingest?stackId=${stackId()}`, { source: "x", async: true })).json();
       const res = await request(`/api/ingest/jobs/${accepted.jobId}`);
       expect(res.status).toBe(200);
       const job = await res.json();
@@ -94,8 +105,8 @@ describe("the async ingest contract", () => {
     const root = await projectRoot();
     const { handle, request, post } = await startFor(root);
     try {
-      await post("/api/ingest", { source: "first", async: true });
-      await post("/api/ingest", { source: "second", async: true });
+      await post(`/api/ingest?stackId=${stackId()}`, { source: "first", async: true });
+      await post(`/api/ingest?stackId=${stackId()}`, { source: "second", async: true });
       const list = await (await request("/api/ingest/jobs")).json();
       expect(list.jobs.length).toBeGreaterThanOrEqual(2);
       // Newest first, so a polling UI paints recent work at the top.
@@ -111,7 +122,7 @@ describe("the async ingest contract", () => {
     const root = await projectRoot();
     const { handle, request, post } = await startFor(root);
     try {
-      const accepted = await (await post("/api/ingest", { source: "x", async: true })).json();
+      const accepted = await (await post(`/api/ingest?stackId=${stackId()}`, { source: "x", async: true })).json();
       const res = await request(`/api/ingest/jobs/${accepted.jobId}`, {
         headers: { "sec-fetch-site": "cross-site" },
       });
