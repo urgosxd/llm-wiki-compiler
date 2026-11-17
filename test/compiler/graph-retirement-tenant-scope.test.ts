@@ -53,11 +53,11 @@ import path from "node:path";
 import { sql } from "drizzle-orm";
 
 import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
-import { DEFAULT_STACK_DOMAIN } from "../../packages/wiki/src/dimensions/stack-selection.js";
+import { resolveStackForCommand } from "../../packages/wiki/src/services/stacks/resolve-stack.js";
 import type { CompileOptions } from "../../packages/wiki/src/utils/types.js";
 import { DATABASE_URL, createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
-import { seedDeletedSourceProject } from "./retirement-port-project.js";
+import { seedDeletedSourceRows } from "./retirement-port-project.js";
 
 /** Identity the seed records, and the `storage_path` the graph keys it under. */
 const DELETED_SOURCE_IDENTITY = "https://example.test/deleted-source";
@@ -74,21 +74,6 @@ const COMPILE_OPTIONS: Partial<CompileOptions> = { env: RETIREMENT_ENV, embeddin
 const harness = await createKgPostgresHarness("graph-retirement-tenant-scope");
 
 afterAll(() => harness.cleanup());
-
-/**
- * The Stack a compile provisions and therefore retires from.
- *
- * @returns The id of the row carrying {@link DEFAULT_STACK_DOMAIN}.
- * @throws When the provisioning compile left no such row behind.
- */
-async function defaultStackId(): Promise<string> {
-  const rows = await harness.db.execute<{ id: string }>(
-    sql`select id from stacks where domain = ${DEFAULT_STACK_DOMAIN}`,
-  );
-  const [id] = rows.map((row) => row.id);
-  if (id === undefined) throw new Error("the provisioning compile created no default Stack");
-  return id;
-}
 
 /**
  * Register the deleted source's document, and one chunk of it, under one Stack.
@@ -150,15 +135,15 @@ describe("graph retirement tenant scope", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "retirement-tenant-"));
     try {
       captureProcessIo();
-      // A compile provisions the default Stack AND consumes the deletion, so the
-      // measured run below needs its own deletion stated again.
-      await seedDeletedSourceProject(dir);
-      await compileAndReport(dir, COMPILE_OPTIONS);
-      await seedDocumentWithChunk(await defaultStackId());
+      // The Stack this run will resolve, provisioned through the SAME resolver the run
+      // uses. The deletion has to belong to the tenant the compile reads, or the run
+      // has nothing to retire and the boundary below would prove nothing.
+      const owningStack = await resolveStackForCommand(harness.db, RETIREMENT_ENV);
+      await seedDeletedSourceRows(harness.db, owningStack);
+      await seedDocumentWithChunk(owningStack);
       await seedDocumentWithChunk(harness.stackId);
       const totalBefore = await documentRows();
 
-      await seedDeletedSourceProject(dir);
       const result = await compileAndReport(dir, COMPILE_OPTIONS);
 
       // The run really processed the deletion and succeeded, so what follows is an

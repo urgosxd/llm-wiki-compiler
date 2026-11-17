@@ -352,11 +352,15 @@ create table if not exists wiki.source_compile_state (
     -- without this nothing could tell the graph which document to retire.
     source_ref text,
 
-    primary key (stack_id, source_identity),
-    constraint source_compile_state_document_fkey
-        foreign key (stack_id, source_identity)
-        references wiki.source_documents (stack_id, source_identity)
-        on delete cascade
+    -- Deliberately NO foreign key to `wiki.source_documents (stack_id, source_identity)`.
+    -- This row must OUTLIVE its document, because it IS the deletion record: it is the
+    -- only thing left that can still name a source whose document is gone. The
+    -- `on delete cascade` that used to sit here deleted the compile record in the same
+    -- instant as the document it describes, so a removed source left no trace at all:
+    -- `findDeletedDocuments` compared against nothing, `buckets.deleted` stayed empty,
+    -- and the graph was never retired. `stack_id` still cascades from `stacks`, so
+    -- dropping a whole Stack takes its compile records with it.
+    primary key (stack_id, source_identity)
 );
 
 -- ============================================================

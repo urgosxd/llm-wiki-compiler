@@ -65,24 +65,28 @@
  * retired array as an exact ordered value, so a double retire, a missed source, and a
  * source retired under its neighbour's identity each fail it.
  *
- * ## Why these cases need a database, and why AKS_STACK_ID is deliberately absent
+ * ## Why these cases need a database, and why the deletion is staged in ROWS
  *
  * Retirement is only reached with the graph enabled, and the graph's Stack has to
  * exist before anything can be keyed by it. With no Stack named, that is the
  * default-Stack provisioning query — so these cases run against the shared Postgres
  * harness, exactly as `graph-retirement-port-invocation.test.ts` does.
  *
- * `AKS_STACK_ID` is absent ON PURPOSE, and that absence is load-bearing:
+ * The deletion is staged in `wiki.source_compile_state`, because that is the backend
+ * this run reads. What decides the backend is the PRESENCE OF A DATABASE, not the
+ * absence of `AKS_STACK_ID`: `resolveStackAuthority`
+ * (`packages/wiki/src/dimensions/stack-authority.ts`) answers the named `file` mode
+ * only when nothing configured a database, and `wikiStateRowsBackend`,
+ * `sourceChangeDetection`, `sourceContentReading` and `resolvePageSeams` all gate on
+ * that one authority. An earlier version of this file claimed the opposite — that
+ * absence of the Stack id kept the seams file-backed — and every case here measured
+ * `deleted: 0` while the seeded `.llmwiki/state.json` was never read. `AKS_STACK_ID`
+ * still stays absent, but only so the Stack is resolved (and provisioned) at the
+ * default domain through the same resolver the run uses.
  *
- *   - it is what keeps the compile's state, change detection and page seams
- *     FILE-backed (`wikiStateRowsBackend`, `sourceChangeDetection`,
- *     `sourceContentReading` and `resolvePageSeams` all gate on that one variable),
- *     so the seeded `.llmwiki/state.json` really is the state this run reads — with
- *     the variable set, the draft would read `source_compile_state` rows instead and
- *     the seed would be invisible;
- *   - it is what keeps the run's mutation lock off Postgres (`lock.ts`
- *     `databaseUrlFor` returns `undefined` for the file-backed path), so a database
- *     problem cannot masquerade as a retirement result.
+ * The staged row has NO `wiki.source_documents` row behind it: that absence IS the
+ * deletion, and the compile record that outlives the document — the tombstone — is the
+ * only thing left that can name the source to the graph.
  *
  * There is no `describe.skipIf` here. The harness in `test/fixtures/kg-postgres.ts`
  * throws loudly when no database can be obtained, which is the behaviour these cases
@@ -90,27 +94,25 @@
  */
 
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { DatabaseHandle } from "@repo/foundation";
 import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
-import type { DimensionsPort } from "../../packages/wiki/src/sdk/core-types.js";
-import type { Dimension, DimensionName } from "../../packages/wiki/src/dimensions/types.js";
-import { STATE_FILE } from "../../packages/wiki/src/utils/constants.js";
-import type {
-  CompileResult, SourceState, WikiState,
-} from "../../packages/wiki/src/utils/types.js";
+import { resolveStackForCommand } from "../../packages/wiki/src/services/stacks/resolve-stack.js";
+import type { CompileResult } from "../../packages/wiki/src/utils/types.js";
 import { DATABASE_URL, createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
-import { seedDeletedSourceProject } from "./retirement-port-project.js";
+import {
+  DELETED_SOURCE_IDENTITY,
+  TWO_DELETED_IDENTITIES,
+  recordingPort,
+  seedDeletedSourceRows,
+  seedIdentitylessSourceRows,
+  seedTwoDeletedSourceRows,
+} from "./retirement-port-project.js";
 
-/** Identity the seed records for the missing source. */
-const DELETED_SOURCE_IDENTITY = "https://example.test/deleted-source";
-
-/** Identities the two-source seed records, in the order the state holds them. */
-const TWO_DELETED_IDENTITIES = ["https://example.test/a", "https://example.test/b"] as const;
-
-/** Graph enabled, no Stack named: file-backed seams, default Stack provisioned. */
+/** Graph enabled, no Stack named: row-backed seams, default Stack provisioned. */
 const RETIREMENT_ENV: NodeJS.ProcessEnv = {
   AKS_DATABASE_URL: DATABASE_URL,
   LLMWIKI_DIMENSIONS: "kg",
@@ -120,99 +122,6 @@ const harness = await createKgPostgresHarness("graph-retirement-retires-source")
 
 afterAll(() => harness.cleanup());
 
-/**
- * One graph dimension that records every retirement and refuses every write phase.
- *
- * Retirement is the only thing this run may ask a dimension for, so a call into
- * `prepare`, `commit` or `discard` has to surface as a failure rather than pass
- * quietly as an unobserved no-op.
- *
- * @param name - Dimension name the retirement helper receives.
- * @param retired - Sink each retired source identity is pushed into, in call order.
- * @returns A dimension whose only reachable capability is `forget`.
- */
-function recordingDimension(name: DimensionName, retired: string[]): Dimension {
-  const neverCalledByRetirement = async (): Promise<never> => {
-    throw new Error("compile retirement must never call a write phase");
-  };
-  return {
-    name,
-    prepare: neverCalledByRetirement,
-    commit: neverCalledByRetirement,
-    discard: neverCalledByRetirement,
-    forget: async (source: string) => {
-      retired.push(source);
-    },
-  };
-}
-
-/**
- * A port answering with one recording graph dimension.
- *
- * @param retired - Sink the retired identities are pushed into, in call order.
- * @returns A port typed against the published shape.
- */
-function recordingPort(retired: string[]): DimensionsPort<Dimension> {
-  return { resolve: () => [recordingDimension("kg", retired)] };
-}
-
-/**
- * Write a project whose recorded state holds exactly the entries `record` returns.
- *
- * The project SHAPE stays the shared seed's — a `sources/` directory the disk no
- * longer fills and a `state.json` naming files that are gone — so a case states only
- * the recorded entries it wants observed instead of duplicating the seed.
- *
- * @param root - Empty project root to populate.
- * @param record - Derives the entries to record, keyed by source file.
- */
-async function seedRecordedSources(
-  root: string,
-  record: (sources: Record<string, SourceState>) => Record<string, SourceState>,
-): Promise<void> {
-  await seedDeletedSourceProject(root);
-  const stateFile = path.join(root, STATE_FILE);
-  const state = JSON.parse(await readFile(stateFile, "utf-8")) as WikiState;
-  state.sources = record(state.sources);
-  await writeFile(stateFile, JSON.stringify(state), "utf-8");
-}
-
-/**
- * Write a project whose one recorded source has NO `source` identity.
- *
- * Built by stripping the identity from the shared seed's state instead of duplicating
- * the seed, which is the shape `SourceState.source` genuinely has for state written
- * before v2 and for sources whose frontmatter carried none.
- *
- * @param root - Empty project root to populate.
- */
-async function seedIdentitylessSourceProject(root: string): Promise<void> {
-  await seedRecordedSources(root, (sources) => {
-    for (const entry of Object.values(sources)) delete entry.source;
-    return sources;
-  });
-}
-
-/**
- * Write a project whose state records TWO deleted sources, each with its own identity.
- *
- * Two sources are what a single-source case cannot express: the sink is asserted as an
- * exact ordered array, which is the only shape that separates one retirement per
- * source from a doubled, a missed, or a misnamed one.
- *
- * @param root - Empty project root to populate.
- */
-async function seedTwoDeletedSourcesProject(root: string): Promise<void> {
-  await seedRecordedSources(root, (sources) => {
-    const [template] = Object.values(sources);
-    const [first, second] = TWO_DELETED_IDENTITIES;
-    return {
-      "a.md": { ...template, hash: `${template.hash}-a`, source: first },
-      "b.md": { ...template, hash: `${template.hash}-b`, source: second },
-    };
-  });
-}
-
 /** One run's outcome: the compile's report and the identities it retired. */
 interface RetirementRun {
   readonly result: CompileResult;
@@ -220,21 +129,24 @@ interface RetirementRun {
 }
 
 /**
- * Compile a seeded deletion project through the real path with the recording port.
+ * Compile a staged deletion through the real path with the recording port.
  *
- * The project root lives in a fresh directory outside the repository and is removed
- * before this returns, so each case observes its own run and leaves nothing behind.
+ * The deletion is written into the Stack the run itself will resolve — through the
+ * same resolver, at the default domain — so the state this run reads is the state the
+ * case staged. The project root lives in a fresh directory outside the repository and
+ * is removed before this returns, so each case observes its own run and leaves nothing
+ * behind but the Stack's own rows.
  *
- * @param seed - Writes the project's recorded state.
+ * @param seed - Writes the deletion into the Stack the run will read.
  * @returns The compile's result and the identities the graph was asked to forget.
  */
 async function runRetirementCompile(
-  seed: (dir: string) => Promise<void>,
+  seed: (db: DatabaseHandle, stackId: string) => Promise<void>,
 ): Promise<RetirementRun> {
   const dir = await mkdtemp(path.join(tmpdir(), "retirement-retires-"));
   const retired: string[] = [];
   try {
-    await seed(dir);
+    await seed(harness.db, await resolveStackForCommand(harness.db, RETIREMENT_ENV));
     captureProcessIo();
     const result = await compileAndReport(dir, {
       env: RETIREMENT_ENV,
@@ -250,7 +162,7 @@ async function runRetirementCompile(
 
 describe("graph retirement through compile", () => {
   it("retires a deleted source from the graph exactly once", async () => {
-    const { result, retired } = await runRetirementCompile(seedDeletedSourceProject);
+    const { result, retired } = await runRetirementCompile(seedDeletedSourceRows);
 
     // The deletion really was processed and the run succeeded, so what follows is
     // observed retirement rather than a run that never got that far.
@@ -261,7 +173,7 @@ describe("graph retirement through compile", () => {
   }, 60_000);
 
   it("retires nothing for a deleted source with no recorded identity", async () => {
-    const { result, retired } = await runRetirementCompile(seedIdentitylessSourceProject);
+    const { result, retired } = await runRetirementCompile(seedIdentitylessSourceRows);
 
     // The deletion was processed and no identity exists to name to the graph, so
     // nothing is retired and nothing throws.
@@ -271,7 +183,7 @@ describe("graph retirement through compile", () => {
   }, 60_000);
 
   it("retires each of two deleted sources once, under its own identity", async () => {
-    const { result, retired } = await runRetirementCompile(seedTwoDeletedSourcesProject);
+    const { result, retired } = await runRetirementCompile(seedTwoDeletedSourceRows);
 
     // Both deletions really were processed and the run succeeded, so the exact array
     // below is observed retirement rather than a run that never got that far.

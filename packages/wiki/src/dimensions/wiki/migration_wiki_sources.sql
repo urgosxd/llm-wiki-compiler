@@ -130,12 +130,29 @@ create table if not exists wiki.source_compile_state (
     -- without this nothing could tell the graph which document to retire.
     source_ref text,
 
-    primary key (stack_id, source_identity),
-    constraint source_compile_state_document_fkey
-        foreign key (stack_id, source_identity)
-        references wiki.source_documents (stack_id, source_identity)
-        on delete cascade
+    primary key (stack_id, source_identity)
 );
+
+-- ============================================================
+-- Retire the document foreign key this table used to carry
+-- ============================================================
+-- Every database built before this change has `source_compile_state_document_fkey`
+-- pinning each compile record to a `wiki.source_documents` row with `on delete
+-- cascade`, so a deleted source took its compile record with it and nothing was left
+-- to report the deletion: `findDeletedDocuments` came out empty, `buckets.deleted`
+-- stayed 0, and `compile` returned before `forgetDeletedSources`. The record must
+-- outlive its document -- it is the only thing that can still name a source whose
+-- document is gone -- so the constraint goes and nothing replaces it. `stack_id`
+-- still references `stacks(id)` with `on delete cascade`, so the tenant boundary is
+-- unchanged. No row is added, rewritten or removed here, which is what makes this
+-- safe to re-run and a no-op on a database whose table never carried the constraint.
+--
+-- What this does NOT do: a source deleted while the cascade was live already lost its
+-- compile record, and no backfill can reconstruct it -- the delete that removed the
+-- document removed the only record it had ever been compiled. Such a source stays
+-- invisible to retirement for good; the change governs deletions from here on.
+alter table wiki.source_compile_state
+    drop constraint if exists source_compile_state_document_fkey;
 
 -- ============================================================
 -- Row-level security

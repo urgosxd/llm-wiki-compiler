@@ -29,13 +29,22 @@
  * what IS proven here is that the run composes or accepts a port and calls it with the
  * request it resolved.
  *
- * ## Why the first case needs a database
+ * ## Why the first case needs a database, and why it stages the deletion in ROWS
  *
  * Retirement is only reached with the graph enabled, and with the graph enabled the
  * Stack pre-check provisions the default Stack when the environment names none. That
  * provisioning is a real query, so the case runs against the shared harness database,
- * and the default Stack row it leaves behind is the same one other suites leave. Every
- * other seam stays file-backed because no Stack id is configured.
+ * and the default Stack row it leaves behind is the same one other suites leave.
+ *
+ * The port is asked by the retirement helper, so the run has to REACH retirement: it
+ * needs a deletion. What decides the backend of the state, change detection and content
+ * seams is the PRESENCE OF A DATABASE, not the absence of `AKS_STACK_ID` —
+ * `resolveStackAuthority` (`packages/wiki/src/dimensions/stack-authority.ts`) answers
+ * the named `file` mode only when nothing configured a database — so with
+ * `AKS_DATABASE_URL` set the deletion has to be staged as a ROW: a compile record in
+ * `wiki.source_compile_state` whose `wiki.source_documents` row is gone. An earlier
+ * version of this comment claimed the absence of the Stack id kept those seams
+ * file-backed and seeded a file instead, which is what measured an empty request list.
  *
  * ## The second case is the FILE mode, and it needs no database at all
  *
@@ -55,12 +64,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { compileAndReport } from "../../packages/wiki/src/compiler/index.js";
+import { resolveStackForCommand } from "../../packages/wiki/src/services/stacks/resolve-stack.js";
 import type { DimensionsPort, DimensionsRequest } from "../../packages/wiki/src/sdk/core-types.js";
 import type { Dimension, DimensionName } from "../../packages/wiki/src/dimensions/types.js";
 import type { CompileResult } from "../../packages/wiki/src/utils/types.js";
 import { DATABASE_URL, createKgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { captureProcessIo } from "../fixtures/process-io.js";
-import { seedDeletedSourceProject } from "./retirement-port-project.js";
+import { seedDeletedSourceProject, seedDeletedSourceRows } from "./retirement-port-project.js";
 
 /** The environment that enables the graph without naming a Stack. */
 const GRAPH_ENV: NodeJS.ProcessEnv = { AKS_DATABASE_URL: DATABASE_URL, LLMWIKI_DIMENSIONS: "kg" };
@@ -126,7 +136,11 @@ describe.skipIf(!harness.reachable)("a supplied port on the compile path", () =>
 
   it("is called once with the request the run resolved", async () => {
     root = await mkdtemp(path.join(tmpdir(), "compile-port-invocation-"));
-    await seedDeletedSourceProject(root);
+    // The Stack the run will resolve, and the tenant the deletion is staged in: the
+    // deletion must live in the backend the run reads, and the id is reused below to
+    // state exactly what the published environment must carry.
+    const stackId = await resolveStackForCommand(harness.db, GRAPH_ENV);
+    await seedDeletedSourceRows(harness.db, stackId);
     captureProcessIo();
     const received: DimensionsRequest[] = [];
 
@@ -139,7 +153,15 @@ describe.skipIf(!harness.reachable)("a supplied port on the compile path", () =>
     expect(received).toHaveLength(1);
     expect(received[0].only).toEqual(["kg"]);
     expect(received[0].root).toBe(root);
-    expect(received[0].env).toBe(GRAPH_ENV);
+    // The port is handed the environment the run PUBLISHED, not the caller's object:
+    // every `kind: "stack"` authority publishes the resolved Stack into a copy
+    // (`stackEnvWith`, compiler/index.ts:451), because the seams downstream must see the
+    // Stack the run resolved. So this is exact equality on the published env, resolved id
+    // included — stronger than matching a subset, and it is what the request must carry.
+    expect(received[0].env).toEqual({ ...GRAPH_ENV, AKS_STACK_ID: stackId });
+    // And publishing did not MUTATE the caller's object: the env this case passed in is
+    // still exactly the env it declared, so a run cannot leak its Stack into its caller.
+    expect(GRAPH_ENV).toEqual({ AKS_DATABASE_URL: DATABASE_URL, LLMWIKI_DIMENSIONS: "kg" });
     expect(received[0].stackId).toEqual(expect.any(String));
     expect(typeof received[0].db).toBe("object");
     expect(result.errors).toEqual([]);
