@@ -30,32 +30,37 @@
  * bare `ENOENT` from the spawn.
  */
 
-import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
-import type { Readable, Writable } from "node:stream";
-import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AKS_DATABASE_URL_ENV_VAR, AKS_STACK_ID_ENV_VAR } from "../../../packages/wiki/src/dimensions/activation.js";
+import {
+  AKS_DATABASE_URL_ENV_VAR,
+  AKS_STACK_ID_ENV_VAR,
+  createDimensionsDatabase,
+  type DimensionsDatabase,
+} from "../../../packages/wiki/src/dimensions/activation.js";
+// The launcher scaffolding both spawning suites share: the bundle path, the readiness wait and the
+// exit deadline live in one place, so `boot-review-surfaces.test.ts` cannot drift from this file.
+import {
+  announcedOrEmpty,
+  healthStatus,
+  launch,
+  launchDatabaseHost,
+  plantFileCandidate,
+  REPO_ROOT,
+  runToExit,
+  spawnHostToExit,
+  waitForReady,
+  type Running,
+} from "../../../test/fixtures/launcher-harness.js";
+import { createSuiteDatabase } from "../../../test/fixtures/per-run-database.js";
 // The launcher cases below measure a FILE-BACKED wiki, so this file declares that mode the way
 // `test/fixtures/file-mode.ts` documents: no database configured. Without it the child inherits the
 // database URL the runner seeds into every worker and refuses to start, because a database with no
 // Stack named is a failure and not a mode (spec S2 of `odd/tasks/single-stack-authority.md`).
 import "../../../test/fixtures/file-mode.js";
-
-/** Repository root, from this file's own location rather than the worker's cwd. */
-const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
-
-/** The artifact `docker/entry.sh` execs: the launcher's own bundle. */
-const LAUNCHER = path.join(REPO_ROOT, "dist", "api.js");
-
-/** The command that produces the artifact, quoted by the precondition failure. */
-const BUILD_COMMAND = "corepack pnpm run build";
-
-/** The line `host` mode prints once its listener has bound, captured to reach it. */
-const READY_LINE = /^Host ready at (http:\/\/\S+)$/m;
 
 /**
  * Preload that raises SIGTERM against the child itself at the readiness write, so
@@ -64,170 +69,60 @@ const READY_LINE = /^Host ready at (http:\/\/\S+)$/m;
  */
 const SIGTERM_AT_READY = path.join(REPO_ROOT, "test", "fixtures", "sigterm-at-ready.cjs");
 
-/** Bound on the wait for a stopped child to be gone; a bound, never the wait itself. */
-const HOST_EXIT_DEADLINE_MS = 30_000;
-
 /**
- * The part of a live child {@link waitForStdout} needs: its output so far and the
- * promise that settles when it is gone. Narrower than {@link Running} so a child
- * spawned for a signal contract can share the same readiness wait.
- */
-interface Observable {
-  /** Raw bytes the process has written to stdout so far. */
-  readonly stdout: () => string;
-  /** Raw bytes the process has written to stderr so far. */
-  readonly stderr: () => string;
-  /** Settles once the process is gone. */
-  readonly exited: Promise<unknown>;
-}
-
-/** One launched child process, with everything it has said so far. */
-interface Running extends Observable {
-  /** Raw bytes the process wrote to stdout. */
-  readonly stdout: () => string;
-  /** Raw bytes the process wrote to stderr. */
-  readonly stderr: () => string;
-  /** Resolves with the settled stdout/stderr once the process exits. */
-  readonly exited: Promise<{ code: number | null; stdout: string; stderr: string }>;
-  /** Write one line to the process's stdin. */
-  readonly send: (line: string) => void;
-  /** Close stdin, which is how a stdio MCP client asks the server to stop. */
-  readonly closeStdin: () => void;
-  /** Signal the process the way `docker stop` does. */
-  readonly terminate: () => void;
-}
-
-/**
- * The child {@link spawnCaptured} returns. All three stdio slots are pipes, so the
- * stdin `Running.send` writes to is never null — the narrowing the local `spawn`
- * used to give `launch` for free.
- */
-type PipedChild = ChildProcessByStdio<Writable, Readable, Readable>;
-
-/** A spawned launcher child with its two output streams captured as they arrive. */
-interface Captured {
-  /** The child process itself. */
-  readonly child: PipedChild;
-  /** Everything the child has written to stdout so far. */
-  readonly stdout: () => string;
-  /** Everything the child has written to stderr so far. */
-  readonly stderr: () => string;
-}
-
-/**
- * Spawn the launcher bundle with `args` and capture both streams. This is the one
- * place that decides how a launcher child is started, so the readiness cases and
- * the stop-path cases cannot drift on the build precondition or the stream wiring.
+ * The line a file-mode child writes to stderr the moment it opens an outbound socket.
  *
- * @param args - argv after the launcher's own path.
- * @param cwd - The working directory the child runs in.
- * @param env - The child's environment; defaults to this process's own.
- * @returns The child and its captured streams.
+ * A marker rather than the bare throw below, because a caller that catches the error
+ * would otherwise hide the very attempt this file needs to see.
  */
-function spawnCaptured(args: readonly string[], cwd: string, env: NodeJS.ProcessEnv = process.env): Captured {
-  if (!existsSync(LAUNCHER)) {
-    throw new Error(`${LAUNCHER} is missing, so the build has not run; run \`${BUILD_COMMAND}\``);
-  }
-  const child = spawn(process.execPath, [LAUNCHER, ...args], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
-  child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
-  return { child, stdout: () => stdout, stderr: () => stderr };
-}
-
-/** Start the launcher bundle with `args`, rooted at `cwd`. */
-function launch(args: readonly string[], cwd: string, env: NodeJS.ProcessEnv = process.env): Running {
-  const captured = spawnCaptured(args, cwd, env);
-  const exited = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
-    captured.child.on("close", (code) => resolve({ code, stdout: captured.stdout(), stderr: captured.stderr() }));
-  });
-  return {
-    stdout: captured.stdout,
-    stderr: captured.stderr,
-    exited,
-    send: (line) => void captured.child.stdin.write(`${line}\n`),
-    closeStdin: () => captured.child.stdin.end(),
-    terminate: () => void captured.child.kill("SIGTERM"),
-  };
-}
-
-/** Run the launcher to completion, for the cases that only assert on the exit. */
-async function runToExit(
-  args: readonly string[],
-  cwd: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return launch(args, cwd, env).exited;
-}
+const OUTBOUND_SOCKET_MARKER = "BOOT-OPENED-AN-OUTBOUND-SOCKET";
 
 /**
- * Wait for `running.stdout()` to match `pattern`, or reject when it exits first.
+ * Preload that turns ANY outbound socket connection into a loud failure.
  *
- * A fixed sleep would be a race in both directions: too short flakes on a loaded
- * machine, too long costs every run. The process's own output is the signal.
+ * A boot with no database configured must not open a database connection at all — not
+ * merely fail to reach one — and a lazily pooled client makes "no connection" invisible
+ * from the outside: the process can exit 0 while having dialled a server it inherited
+ * from the environment. This makes the dial itself observable, and it names neither the
+ * target nor its credentials, so it cannot leak what it refuses to reach.
  */
-async function waitForStdout(running: Observable, pattern: RegExp): Promise<RegExpMatchArray> {
-  const deadline = Date.now() + 30_000;
-  for (;;) {
-    const matched = running.stdout().match(pattern);
-    if (matched !== null) return matched;
-    const settled = await Promise.race([running.exited, new Promise((resolve) => setTimeout(resolve, 50))]);
-    if (settled !== undefined && typeof settled === "object") {
-      throw new Error(`the process exited before printing ${pattern}; stderr: ${running.stderr()}`);
-    }
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${pattern}; stdout so far: ${running.stdout()}`);
-  }
-}
+const NO_OUTBOUND_CONNECT_PRELOAD = `// Preload: no boot here may open an outbound connection.
+const net = require("node:net");
+net.Socket.prototype.connect = function connect() {
+  process.stderr.write(${JSON.stringify(`${OUTBOUND_SOCKET_MARKER}\n`)});
+  throw new Error("a boot with no database configured must not open an outbound connection");
+};
+`;
 
 /**
- * How a `host` child ended. The signal is the discriminator these cases need: a
- * child the kernel stopped for us reports `code === null` and a signal, and a child
- * that took the graceful path reports a code and no signal.
- */
-interface StopOutcome {
-  /** Exit code, or `null` when a signal terminated the process. */
-  readonly code: number | null;
-  /** The signal that terminated the process, or `null` when it exited on its own. */
-  readonly signal: NodeJS.Signals | null;
-  /** Everything the child wrote to stdout. */
-  readonly stdout: string;
-  /** Everything the child wrote to stderr. */
-  readonly stderr: string;
-}
-
-/** A spawned `host` child and the single promise that settles once it is gone. */
-interface HostChild extends Observable {
-  /** The child process, for delivering the signals a stop path must survive. */
-  readonly child: ChildProcess;
-  /** Resolves once the child is gone, after both streams closed. */
-  readonly exited: Promise<StopOutcome>;
-}
-
-/**
- * Spawn `<launcher> host --no-graph --port 0` and wait for ONE event — `close`,
- * the same event {@link launch} awaits, so stdout is complete when it is read —
- * bounded by {@link HOST_EXIT_DEADLINE_MS}. `close` also carries the signal, which
- * is what tells a graceful stop apart from a death by default disposition.
+ * How many rows `public.stacks` holds in `dimensions` right now.
  *
- * @param cwd - The working directory the child runs in.
- * @param env - The child's environment; defaults to this process's own.
- * @returns The child and its exit promise.
+ * Counted through SQL against the throwaway database, never through the code under
+ * test: the question is what the boot WROTE, and asking the product would let a bug
+ * answer for itself.
+ *
+ * @param dimensions - Handle on the database the boot was pointed at.
+ * @returns The row count of `public.stacks`.
  */
-function spawnHostToExit(cwd: string, env: NodeJS.ProcessEnv = process.env): HostChild {
-  const captured = spawnCaptured(["host", "--no-graph", "--port", "0"], cwd, env);
-  const exited = new Promise<StopOutcome>((resolve, reject) => {
-    const deadline = setTimeout(() => {
-      captured.child.kill("SIGKILL");
-      const seen = `stdout: ${captured.stdout()}; stderr: ${captured.stderr()}`;
-      reject(new Error(`host did not exit within ${HOST_EXIT_DEADLINE_MS}ms; ${seen}`));
-    }, HOST_EXIT_DEADLINE_MS);
-    captured.child.once("close", (code, signal) => {
-      clearTimeout(deadline);
-      resolve({ code, signal, stdout: captured.stdout(), stderr: captured.stderr() });
-    });
-  });
-  return { ...captured, exited };
+async function countStacks(dimensions: DimensionsDatabase): Promise<number> {
+  const [row] = await dimensions.db.execute<{ n: number }>("select count(*)::int as n from public.stacks");
+  return Number(row?.n);
+}
+
+/**
+ * SHA-256 over every `public.stacks` row, in id order.
+ *
+ * A COUNT proves "no second Stack"; it cannot see the first one being rewritten. This
+ * digest covers every column of every row — id, domain, scope, strategy and both
+ * timestamps — so an upsert that recreated or touched the same Stack changes it. Read
+ * through SQL, so the product cannot answer for itself.
+ *
+ * @param dimensions - Handle on the database the boots were pointed at.
+ * @returns The hex digest of the ordered row set.
+ */
+async function stackRowsDigest(dimensions: DimensionsDatabase): Promise<string> {
+  const rows: unknown = await dimensions.db.execute("select * from public.stacks order by id");
+  return createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 }
 
 /** The JSON-RPC `initialize` request every MCP client opens a session with. */
@@ -260,6 +155,27 @@ async function waitForJsonRpc(running: Running): Promise<JsonRpcResponse> {
   }
 }
 
+/**
+ * Boot the launcher once against `env`, require a listener that answers, then stop it.
+ *
+ * `label` distinguishes the two boots of the idempotence case, whose whole claim is that
+ * the SECOND one behaves like the first; a shared message would report the wrong one.
+ *
+ * @param env - The child's environment.
+ * @param label - Which boot this is, for the failure messages.
+ */
+async function bootAndStop(env: NodeJS.ProcessEnv, label: string): Promise<void> {
+  const running = launch(["host", "--port", "0"], root, env);
+  try {
+    const announced = await announcedOrEmpty(running);
+    expect(announced, `${label} must announce the listener it bound; child stderr: ${running.stderr()}`).toMatch(/^http:\/\//);
+    expect(await healthStatus(announced), `${label} must answer /health; child stderr: ${running.stderr()}`).toBe(200);
+  } finally {
+    running.terminate();
+    await running.exited;
+  }
+}
+
 let root: string;
 
 beforeEach(async () => {
@@ -284,8 +200,7 @@ describe("the container launcher, in both modes the container starts", () => {
 
   it("binds a port, answers /health, and stops cleanly on SIGTERM in host mode", async () => {
     const running = launch(["host", "--port", "0"], root);
-    const matched = await waitForStdout(running, READY_LINE);
-    const base = matched[1] as string;
+    const base = await waitForReady(running);
     const response = await fetch(`${base}/health`);
     expect(response.status, `GET ${base}/health must answer while the listener is up`).toBe(200);
     running.terminate();
@@ -307,6 +222,144 @@ describe("the container launcher's SIGTERM stop contract", () => {
     expect(settled.stdout, "the child must reach readiness, or it never met the stop path this case measures").toContain("Host ready at");
     expect(settled.signal, "the child died FROM the signal: readiness must imply the stop path is already armed").toBeNull();
     expect(settled.code, "host must still exit 0 on SIGTERM, as the container's stop path requires").toBe(0);
+  });
+});
+
+describe("a deployment whose database holds no Stack yet", () => {
+  it("provisions the default Stack and binds, instead of dying before it listens", async () => {
+    const suite = await createSuiteDatabase("boot-precedence");
+    const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
+    try {
+      // Measured, never assumed: a case that started from a populated database would
+      // prove nothing about the empty-database boot it exists to arrange.
+      expect(await countStacks(dimensions), "the throwaway database must start with ZERO Stacks").toBe(0);
+      const { running, announced } = await launchDatabaseHost(root, suite.url);
+      try {
+        // The OUTCOME, both halves of it: the Stack the boot provisioned, and a service that
+        // answers. The child's streams go in the MESSAGE only; no error text is asserted.
+        expect(await countStacks(dimensions), `the boot must provision exactly ONE Stack; child stderr: ${running.stderr()}`).toBe(1);
+        expect(announced, `the host must announce the listener it bound; child stderr: ${running.stderr()}`).toMatch(/^http:\/\//);
+        expect(await healthStatus(announced), `GET ${announced}/health must answer; child stderr: ${running.stderr()}`).toBe(200);
+      } finally {
+        running.terminate();
+        await running.exited;
+      }
+    } finally {
+      await dimensions.close();
+      await suite.drop();
+    }
+  });
+});
+
+describe("a second boot against the database the first boot populated", () => {
+  it("provisions no second Stack, and binds again", async () => {
+    const suite = await createSuiteDatabase("boot-idempotence");
+    const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
+    // The SAME environment for both boots: same database, no Stack named, so the only
+    // thing that can differ between them is what the first one left behind.
+    const env = { ...process.env, [AKS_DATABASE_URL_ENV_VAR]: suite.url, [AKS_STACK_ID_ENV_VAR]: "" };
+    try {
+      expect(await countStacks(dimensions), "the throwaway database must start with ZERO Stacks").toBe(0);
+      await bootAndStop(env, "the first boot");
+      // Measured, not carried forward: two counts in sequence are what a claim about
+      // idempotence needs. One `count = 1` would say nothing about the second boot.
+      const afterFirstBoot = await countStacks(dimensions);
+      await bootAndStop(env, "the second boot");
+      const afterSecondBoot = await countStacks(dimensions);
+      expect(afterFirstBoot, "the first boot must provision exactly ONE Stack").toBe(1);
+      expect(afterSecondBoot, "the second boot must provision NO second Stack").toBe(1);
+    } finally {
+      await dimensions.close();
+      await suite.drop();
+    }
+  });
+});
+
+describe("a Stack-backed host whose checkout carries a candidate file", () => {
+  it("counts its OWN queue, not the checkout's files", async () => {
+    const suite = await createSuiteDatabase("boot-candidate-drift");
+    const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
+    try {
+      // A leftover `.llmwiki/candidates` directory is the realistic shape: any checkout
+      // that ever ran a file-mode compile carries one. It is also the whole point — the
+      // count must come from the Stack the boot RESOLVED, not from a directory the
+      // process happens to be sitting in.
+      await plantFileCandidate(root);
+      const { running, announced } = await launchDatabaseHost(root, suite.url);
+      try {
+        expect(announced, `the host must announce the listener it bound; child stderr: ${running.stderr()}`).toMatch(/^http:\/\//);
+        const pages = await fetch(`${announced}/api/pages`);
+        expect(pages.status, `GET ${announced}/api/pages must answer; child stderr: ${running.stderr()}`).toBe(200);
+        const body = (await pages.json()) as { counts: { pendingReviews: number } };
+        // The row queue this boot provisioned is EMPTY, so the count is 0. The planted
+        // file is the only thing that could make it anything else.
+        expect(
+          body.counts.pendingReviews,
+          "a Stack-backed host must count its OWN queue, not the checkout's files",
+        ).toBe(0);
+        // Read after the count it explains: the 0 above means "the queue is empty", not "no Stack
+        // was there to read", so the Stack the boot provisioned is measured last, when the count
+        // it accounts for is already on the record.
+        expect(await countStacks(dimensions), `the boot must provision exactly ONE Stack; child stderr: ${running.stderr()}`).toBe(1);
+      } finally {
+        running.terminate();
+        await running.exited;
+      }
+    } finally {
+      await dimensions.close();
+      await suite.drop();
+    }
+  });
+});
+
+describe("the Stack row an earlier boot provisioned", () => {
+  it("is byte-identical after a second boot against the same database", async () => {
+    const suite = await createSuiteDatabase("boot-stack-digest");
+    const dimensions = createDimensionsDatabase({ [AKS_DATABASE_URL_ENV_VAR]: suite.url });
+    const env = { ...process.env, [AKS_DATABASE_URL_ENV_VAR]: suite.url, [AKS_STACK_ID_ENV_VAR]: "" };
+    try {
+      await bootAndStop(env, "the first boot");
+      const digestAfterFirstBoot = await stackRowsDigest(dimensions);
+      await bootAndStop(env, "the second boot");
+      const digestAfterSecondBoot = await stackRowsDigest(dimensions);
+      // Stronger than the count beside it: a rewritten row keeps the count at 1 while
+      // changing what it holds, and only the digest can see that.
+      expect(
+        digestAfterSecondBoot,
+        "a second boot must leave the provisioned Stack byte-identical, not merely singular",
+      ).toBe(digestAfterFirstBoot);
+    } finally {
+      await dimensions.close();
+      await suite.drop();
+    }
+  });
+});
+
+describe("a deployment with no database configured", () => {
+  it("binds the file backend and opens no outbound connection", async () => {
+    // "No database configured" stated the way production reads it — PRESENT and blank,
+    // which no loader can refill (see `test/fixtures/file-mode.ts`). The socket guard is
+    // what makes "no provisioning attempted" observable: reaching a database would mean
+    // dialling one, and this boot may not dial anything at all.
+    const preload = path.join(root, "no-outbound-connect.cjs");
+    await writeFile(preload, NO_OUTBOUND_CONNECT_PRELOAD);
+    const running = launch(["host", "--port", "0"], root, {
+      ...process.env,
+      [AKS_DATABASE_URL_ENV_VAR]: "",
+      [AKS_STACK_ID_ENV_VAR]: "",
+      NODE_OPTIONS: `--require ${preload}`,
+    });
+    try {
+      const announced = await announcedOrEmpty(running);
+      expect(announced, `a file-backed host must announce its listener; child stderr: ${running.stderr()}`).toMatch(/^http:\/\//);
+      expect(await healthStatus(announced), `GET ${announced}/health must answer; child stderr: ${running.stderr()}`).toBe(200);
+      expect(running.stderr(), "a file-mode boot must open NO outbound connection").not.toContain(
+        OUTBOUND_SOCKET_MARKER,
+      );
+    } finally {
+      running.terminate();
+      await running.exited;
+    }
   });
 });
 
