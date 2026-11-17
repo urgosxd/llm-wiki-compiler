@@ -42,6 +42,7 @@ import { readFile } from "fs/promises";
 import type { StrictIoOptions } from "../utils/path-confine.js";
 import { assertAnswerCandidateMetadata, InvalidCandidateMetadataError } from "../citations/answer-manifest.js";
 import { withCandidateSource } from "../dimensions/wiki/candidate-source.js";
+import type { StackAuthority } from "../dimensions/stack-authority.js";
 
 /** Targeted review reads report invalid metadata; collection reads warn and skip. */
 interface CandidateReadOptions extends StrictIoOptions { rejectInvalidMetadata?: boolean }
@@ -453,15 +454,25 @@ async function readCandidatesByIds(
  *   omitted, so the CLI keeps answering about the deployment it was started in. A
  *   caller answering about a NAMED Stack must pass its own environment here, or the
  *   queue length it reports belongs to whichever Stack the process serves.
+ * @param authority - The Stack the caller already resolved, when it has one.
+ *
+ *   A caller that resolved its Stack ONCE — the launcher's boot, which provisions the
+ *   default Stack and knows its id — passes it so the queue read here is that Stack's.
+ *   Without it this seam re-asks `AKS_STACK_ID`, which names no Stack on exactly the
+ *   deployment shape where an authority exists, and the answer would come from a
+ *   checkout's `.llmwiki/candidates` instead of the Stack's rows.
  * @returns All pending review candidates.
  */
 export async function listCandidates(
   root: string,
   opts: StrictIoOptions = {},
   env: NodeJS.ProcessEnv = process.env,
+  authority?: StackAuthority,
 ): Promise<ReviewCandidate[]> {
-  const fromRows = await withCandidateSource(env, async (source) =>
-    source === undefined ? undefined : await source.list(),
+  const fromRows = await withCandidateSource(
+    env,
+    async (source) => (source === undefined ? undefined : await source.list()),
+    authority,
   );
   const candidates = fromRows ?? await readCandidatesByIds(root, env, await pendingCandidateFileIds(root), opts);
   // Plain sort on the timestamp string: the file path sorted the same way, so the
@@ -503,12 +514,22 @@ export interface CandidatePage {
  * @param env - Environment naming the Stack whose queue is read. REQUIRED: a page of a
  *   NAMED Stack's queue must not be answered from the bound deployment's.
  * @param limit - Maximum candidates to read and return.
+ * @param authority - The Stack the caller already resolved, when it has one.
+ *
+ *   Threaded rather than re-resolved, exactly as {@link listCandidates} and
+ *   {@link countCandidates} beside it do: the viewer serves this page next to the
+ *   `pendingReviews` count its snapshot took from ONE authority, and a list that asked
+ *   `AKS_STACK_ID` again would answer from `.llmwiki/candidates` on the deployment shape
+ *   where that authority exists while the variable names nothing — leaving the count and
+ *   the list contradicting each other on one screen. Omitted, the environment decides
+ *   exactly as before, so every non-boot caller keeps its behaviour.
  * @returns The bounded slice and the true pending total.
  */
 export async function listCandidatePage(
   root: string,
   env: NodeJS.ProcessEnv,
   limit: number,
+  authority?: StackAuthority,
 ): Promise<CandidatePage> {
   // Rows answer the whole page in one query, so there is no slice to reconcile and
   // no malformed leaf to inflate the total: a row either parses or was never stored.
@@ -516,7 +537,7 @@ export async function listCandidatePage(
     if (source === undefined) return undefined;
     const all = await source.list();
     return { candidates: all.slice(0, limit), total: all.length };
-  });
+  }, authority);
   if (fromRows !== undefined) return fromRows;
 
   // Plain sort: lexicographic by UTF-16 code unit, so the slice is identical on
@@ -538,12 +559,19 @@ export async function listCandidatePage(
  * @param env - Environment naming the Stack whose queue is counted; `process.env`
  *   when omitted. `wiki_status` passes the per-request environment so a named
  *   Stack's answer does not carry the bound deployment's queue length.
+ * @param authority - The Stack the caller already resolved, when it has one.
+ *
+ *   Threaded rather than re-resolved: the viewer builds its snapshot from an authority
+ *   the boot resolved, and a count taken from a different backend than the rest of that
+ *   snapshot would report a queue the deployment does not have. Omitted, the environment
+ *   decides exactly as before, which is what every non-boot caller relies on.
  * @returns The number of pending candidates.
  */
 export async function countCandidates(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
+  authority?: StackAuthority,
 ): Promise<number> {
-  const candidates = await listCandidates(root, {}, env);
+  const candidates = await listCandidates(root, {}, env, authority);
   return candidates.length;
 }

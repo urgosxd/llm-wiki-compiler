@@ -32,6 +32,9 @@ import { buildReviewsEnvelope, REVIEW_LIST_LIMIT } from "./reviews.js";
 import { handleApiIngestJobs, isIngestJobsPath, INGEST_JOBS_PREFIX, INGEST_JOBS_PATH } from "./api-ingest-jobs.js";
 import { tryRenderBody, writeJson, writeJsonError, writeRenderFailed } from "./respond.js";
 import type { ViewerSnapshot } from "./types.js";
+// Type-only: the viewer must not DEPEND on the dimensions database (see
+// `api-ingest-jobs.ts`), it only carries the authority a host already resolved.
+import type { StackAuthority } from "../dimensions/stack-authority.js";
 import { listenOn } from "../utils/http-listen.js";
 
 /** Host-supplied viewer dependencies. */
@@ -213,7 +216,7 @@ async function routeRegistered(
   if (parsedUrl.pathname === "/") return handleShell(res);
   if (parsedUrl.pathname.startsWith("/assets/")) return handleAsset(res, parsedUrl.pathname);
   const snapshotOnly = SNAPSHOT_ONLY_HANDLERS.get(parsedUrl.pathname);
-  if (snapshotOnly) return snapshotOnly(res, snapshot);
+  if (snapshotOnly) return snapshotOnly(res, snapshot, deps);
   return routeLiveResources(res, parsedUrl, snapshot, config, deps);
 }
 
@@ -246,21 +249,24 @@ function workflowJourneysEnabled(config: ViewerServerConfig, deps: ViewerDeps): 
 
 
 /**
- * Exact-path API routes whose handler needs only `(res, snapshot)` — collapsed
- * into one lookup table so adding such a route is a single map entry rather than
- * another `if` in `routeRegistered` (which keeps that dispatcher's branching, and
- * thus its complexity, flat). `/api/workflow-runs` and `/api/reviews` both read
- * from `snapshot.root` at request time. Routes with extra params (`/api/index`,
+ * Exact-path API routes that need only `(res, snapshot)` — collapsed into one
+ * lookup table so adding such a route is a single map entry rather than another
+ * `if` in `routeRegistered` (which keeps that dispatcher's branching, and thus its
+ * complexity, flat). `/api/workflow-runs` and `/api/reviews` both read from
+ * `snapshot.root` at request time. Routes with extra params (`/api/index`,
  * `/api/search`) and the prefix routes stay as explicit branches.
+ *
+ * `deps` is handed to every entry because `/api/reviews` needs the Stack authority a
+ * host resolved at boot; a handler that ignores it simply declares fewer parameters.
  */
 const SNAPSHOT_ONLY_HANDLERS: ReadonlyMap<
   string,
-  (res: ServerResponse, snapshot: ViewerSnapshot) => void | Promise<void>
-> = new Map([
+  (res: ServerResponse, snapshot: ViewerSnapshot, deps: ViewerDeps) => void | Promise<void>
+> = new Map<string, (res: ServerResponse, snapshot: ViewerSnapshot, deps: ViewerDeps) => void | Promise<void>>([
   ["/api/pages", handleApiPages],
   ["/api/health", handleApiHealth],
   ["/api/graph", handleApiGraph],
-  ["/api/reviews", (res, snapshot) => handleApiReviews(res, snapshot.root)],
+  ["/api/reviews", (res, snapshot, deps) => handleApiReviews(res, snapshot.root, authorityFrom(deps))],
 ]);
 
 /**
@@ -481,9 +487,33 @@ function handleApiGraph(res: ServerResponse, snapshot: ViewerSnapshot): void {
  * is fetched by every route at bootstrap and must stay cheap. Strictly
  * read-only — no approve/reject, and the projection drops the candidate `body`
  * and every absolute path (see `buildReviewsEnvelope`).
+ *
+ * @param authority - The Stack the host resolved at boot, so this page reads the same
+ *   backend as the `pendingReviews` count taken from that ONE resolution. Omitted, the
+ *   environment decides, which is the file-backed viewer's answer.
  */
-async function handleApiReviews(res: ServerResponse, root: string): Promise<void> {
-  writeJson(res, 200, buildReviewsEnvelope(await listCandidatePage(root, process.env, REVIEW_LIST_LIMIT)));
+async function handleApiReviews(
+  res: ServerResponse,
+  root: string,
+  authority?: StackAuthority,
+): Promise<void> {
+  const page = await listCandidatePage(root, process.env, REVIEW_LIST_LIMIT, authority);
+  writeJson(res, 200, buildReviewsEnvelope(page));
+}
+
+/**
+ * The Stack authority the host resolved at boot, when it supplied one.
+ *
+ * A dependency rather than a second resolution: the boot opened the database handle and
+ * answered precedence 2 ONCE, and the review list must read the backend that answer
+ * named. Absent, `listCandidatePage` consults the environment exactly as it always has,
+ * so a viewer built by the pure `startViewer` entry keeps its file-backed answer.
+ *
+ * @param deps - The viewer's dependency bag, as the host filled it.
+ * @returns The host's resolved authority, or `undefined` when it supplied none.
+ */
+function authorityFrom(deps: ViewerDeps): StackAuthority | undefined {
+  return deps.stackAuthority as StackAuthority | undefined;
 }
 
 /** `/api/health` — cheap status summary. */

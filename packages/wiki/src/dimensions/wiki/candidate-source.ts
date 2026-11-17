@@ -25,6 +25,8 @@
  */
 
 import { createDimensionsDatabase, AKS_STACK_ID_ENV_VAR } from "../activation.js";
+import { stackIdOf } from "../stack-authority.js";
+import type { StackAuthority } from "../stack-authority.js";
 import type { DatabaseHandle } from "@repo/foundation";
 import {
   deleteStoredCandidate,
@@ -58,6 +60,26 @@ function candidateStackId(env: NodeJS.ProcessEnv = process.env): string | undefi
 }
 
 /**
+ * The Stack whose queue this call answers for.
+ *
+ * A supplied authority WINS over the environment, because that is the entire point of
+ * resolving one: a boot that provisioned the default Stack holds a Stack whose id appears
+ * in NO environment variable, so re-reading `AKS_STACK_ID` here answered "file mode" and
+ * counted `.llmwiki/candidates` instead of the Stack's rows — a second resolution, and a
+ * different backend from the one the caller was handed.
+ *
+ * With no authority the environment decides, exactly as it always has, so the CLI and
+ * every other caller that owns no authority keeps its behaviour byte-identical.
+ *
+ * @param env - Environment read only when the caller supplied no authority.
+ * @param authority - The Stack the caller already resolved, when it has one.
+ * @returns The Stack id, or `undefined` to keep using `.llmwiki/candidates`.
+ */
+function resolvedStackId(env: NodeJS.ProcessEnv, authority?: StackAuthority): string | undefined {
+  return authority === undefined ? candidateStackId(env) : stackIdOf(authority);
+}
+
+/**
  * Build the row source for an open handle.
  *
  * @param db - The database handle, already scoped by the caller.
@@ -80,15 +102,22 @@ function candidateRowsSource(db: DatabaseHandle, stackId: string): CandidateRows
  * existing file-backed caller byte-identical. The handle is closed before returning,
  * whatever `fn` does.
  *
- * @param env - Environment to read the Stack from.
+ * @param env - Environment to read the Stack from when no authority is supplied.
  * @param fn - Receives the row source, or `undefined` to keep using `.llmwiki/candidates`.
+ * @param authority - The Stack the caller already resolved, when it has one.
+ *
+ *   Threaded so a caller that resolved ONE authority at boot reads the rows of THAT Stack
+ *   instead of asking the environment again: an environment can name no Stack while the
+ *   resolved authority names one, and the two answers must not diverge inside one run.
+ *   Omitted, the environment decides and every existing file-backed caller is unchanged.
  * @returns Whatever `fn` returns.
  */
 export async function withCandidateSource<T>(
   env: NodeJS.ProcessEnv,
   fn: (source: CandidateRowsSource | undefined) => Promise<T>,
+  authority?: StackAuthority,
 ): Promise<T> {
-  const stackId = candidateStackId(env);
+  const stackId = resolvedStackId(env, authority);
   if (stackId === undefined) return fn(undefined);
   const dimensionsDb = createDimensionsDatabase(env);
   try {

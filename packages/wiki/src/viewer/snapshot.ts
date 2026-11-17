@@ -49,6 +49,7 @@ import type {
   ViewerWarning,
 } from "./types.js";
 import { withRawPageSource } from "../dimensions/wiki/page-source-seam.js";
+import type { StackAuthority } from "../dimensions/stack-authority.js";
 
 const RECENT_PAGES_LIMIT = 8;
 const INDEX_HREF = "/#/index";
@@ -65,21 +66,35 @@ const INDEX_HREF = "/#/index";
  *   do today. The page corpus, the compile state, the freshness snapshot and the
  *   review-queue count are all Stack-scoped: with no environment they describe the
  *   deployment the PROCESS serves, not a Stack a caller named.
+ * @param authority - The Stack the caller already resolved; omitted, each Stack-scoped
+ *   read below resolves one from `env`.
+ *
+ *   A caller that resolved an authority -- the launcher's boot, which resolves it ONCE
+ *   with a database handle before this snapshot exists -- passes it, so the four reads
+ *   that branch on a backend (pages, compile state, freshness corpus, review queue)
+ *   branch on the same answer instead of each asking the environment again with no handle
+ *   in hand. That second question is the refusal, and it fires before the listener binds;
+ *   for the review queue it is worse than a refusal -- `AKS_STACK_ID` names nothing there,
+ *   so the count would come from the checkout's `.llmwiki/candidates` while every other
+ *   read came from the Stack's rows.
  * @returns The frozen startup snapshot.
  */
 export async function buildViewerSnapshot(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
+  authority?: StackAuthority,
 ): Promise<ViewerSnapshot> {
   const [defaultPages, classified, pendingReviews, sourceFilenames, index] =
     await Promise.all([
-      withRawPageSource(root, env, (source) => collectViewerPages(root, source)),
-      readStateClassifiedFor(root, env),
-      countCandidates(root, env),
+      withRawPageSource(root, env, (source) => collectViewerPages(root, source), authority),
+      readStateClassifiedFor(root, env, authority),
+      countCandidates(root, env, authority),
       listSelectedSourceEntries(root),
       readIndexFile(root),
     ]);
-  const freshnessSnapshot = await buildProjectFreshnessSnapshot(root, classified, undefined, env);
+  const freshnessSnapshot = await buildProjectFreshnessSnapshot(
+    root, classified, undefined, env, authority,
+  );
   const decorate = buildPageDecorator(sourceFilenames, freshnessSnapshot);
   const annotatedDefault = defaultPages.map(decorate);
   // Typed entity pages came from a non-default profile, which no longer exists:

@@ -11,6 +11,7 @@ import { existsSync } from "fs";
 import { realpath } from "fs/promises";
 import path from "path";
 import { readStateClassifiedFor, withSourceDocuments } from "../dimensions/wiki/page-source-seam.js";
+import type { StackAuthority } from "../dimensions/stack-authority.js";
 
 /** The Stack's documents in the shape the snapshot consumes. */
 export type StackDocuments = ReadonlyArray<{ sourceIdentity: string; contentHash: string }>;
@@ -158,11 +159,22 @@ export async function buildFreshnessSnapshot(
  * Both reads are handed the SAME `env` now, so the one authority decides the backend for
  * both halves of one snapshot from the environment the caller actually supplied.
  *
+ * ## The authority a boot already resolved is consumed here, not asked for again
+ *
+ * Both reads above branch on a Stack authority, and resolving one needs a database handle
+ * for precedence 2 -- the provisioning of the default Stack. A caller that holds an
+ * authority (the launcher's boot, which resolved it once with a handle) passes it, so its
+ * snapshot describes the Stack that boot provisioned instead of asking the environment a
+ * second time. With no database configured there is nothing to pass and nothing to look
+ * up: the caller-supplied `env` alone settles the named file mode.
+ *
  * @param root - Project root, used by the state read and the on-disk hash pass.
  * @param classified - Optional pre-read classified state, to avoid a redundant read.
  * @param documents - A corpus the caller already resolved; omitted means "resolve it".
  * @param env - Environment naming the Stack, for BOTH the corpus and the state read;
  *   `process.env` when omitted.
+ * @param authority - The Stack the caller already resolved; omitted, each read resolves
+ *   one from `env`.
  * @returns The snapshot for whichever corpus this project has.
  */
 export async function buildProjectFreshnessSnapshot(
@@ -170,10 +182,11 @@ export async function buildProjectFreshnessSnapshot(
   classified?: ClassifiedState,
   documents?: StackDocuments,
   env: NodeJS.ProcessEnv = process.env,
+  authority?: StackAuthority,
 ): Promise<FreshnessSnapshot> {
   const corpus = documents ?? await withSourceDocuments(env, async (listing) =>
-    listing === undefined ? undefined : await listing.list());
-  const state = classified ?? await readStateClassifiedFor(root, env);
+    listing === undefined ? undefined : await listing.list(), authority);
+  const state = classified ?? await readStateClassifiedFor(root, env, authority);
   return await buildFreshnessSnapshot(root, state, corpus);
 }
 
