@@ -94,6 +94,14 @@ The declaration is a **seed**, applied once at boot: a Stack whose `domain` alre
   silent partial read, and the Postgres error it replaced — `42703`
   (`undefined_column`) — stays attached as the error's `cause` for anyone who needs the
   driver's own words.
+
+  **That refusal reaches `/stacks` itself**, which "every Stack lookup" only implies:
+  `GET /stacks`, `GET /stacks/:id` and `POST /stacks` answer `503` with the same
+  sentence rather than a list or a creation, and a refused `POST /stacks` writes
+  nothing — the statement aborts and the transaction rolls back — so a `503` never
+  leaves behind a Stack anyone believes exists. `/stacks` is exactly where an operator
+  looks when an upgrade went wrong, so a refusal there is the migration signal, not a
+  broken route.
 </Warning>
 
 Apply it once, with the same runner that applies every other schema file:

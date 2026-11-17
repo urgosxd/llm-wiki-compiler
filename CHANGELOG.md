@@ -18,7 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`undefined_column`) it replaced stays attached as the error's `cause`. The file is
   idempotent (`add column if not exists`, default
   `true`), `./scripts/apply-schemas.sh` applies it along with every other schema file,
-  and a fresh install already has the column through `db/schema.sql`. See
+  and a fresh install already has the column through `db/schema.sql`. The Stacks routes
+  refuse the same way, which "every Stack lookup" only implies: `GET /stacks`,
+  `GET /stacks/:id` and `POST /stacks` answer `503` with that sentence rather than a
+  list or a creation, and a refused `POST /stacks` writes no row (the statement aborts
+  and the transaction rolls back). `/stacks` is where an operator looks after a bad
+  upgrade, so a refusal there is the migration signal, not a broken route. See
   [Installation](https://llmwiki.atomicstrata.ai/installation#upgrading-an-existing-database).
 
 ### Changed
