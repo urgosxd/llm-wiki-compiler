@@ -147,6 +147,7 @@ import type { StackAuthority } from "../dimensions/stack-authority.js";
 import type { Dimension, DimensionName } from "../dimensions/index.js";
 import {
   AKS_DATABASE_URL_ENV_VAR,
+  AKS_STACK_ID_ENV_VAR,
   createDefaultDimensionsPort,
   enabledDimensionNames,
 } from "../dimensions/activation.js";
@@ -795,6 +796,12 @@ async function maybeSeedPages(
  * no-source-changes early-return path. Extracting it prevents the early branch
  * from drifting back to a direct write. Pass `draft = null` for the early branch
  * (no state mutations to flush).
+ *
+ * @param env - The environment every downstream seam is handed: the run's with the
+ *   Stack it resolved published into it. Threaded from the resolver's ONE boundary
+ *   rather than re-derived from `options.env` here, because this is where the derived
+ *   artifacts and the link resolution are reached, and both decide their backend from
+ *   that variable.
  */
 async function seedThenFinalize(
   root: string,
@@ -802,6 +809,7 @@ async function seedThenFinalize(
   generation: PageGenerationResult,
   options: CompileOptions,
   draft: CompileStateDraft | null,
+  env: NodeJS.ProcessEnv,
   embeddingStore?: EmbeddingStoreLocation,
   resolverSource?: ResolverPageSource,
   embeddingPageSource?: EmbeddingPageSource,
@@ -816,12 +824,11 @@ async function seedThenFinalize(
   // `finalizeWiki`) and must not run the stages that edit other pages.
   const regenerating = recompileRequest() !== undefined;
   await finalizeWiki(root, draft, generation.writtenPages, generation.seedSlugs, {
-    // The run's environment, taken from the options THIS run was given and resolved
-    // ONCE, here: it is the same value the pipeline derives for every other seam, and
-    // `finalizeWiki`'s derived-artifact write must land in that Stack rather than in
-    // whatever `process.env` happens to name. Omitted stays `process.env`, which is
-    // exactly what the CLI passes.
-    env: options.env ?? process.env,
+    // The environment the caller resolved for this run — the run's own, with its Stack
+    // published into it. Already derived once, at the boundary that resolved the Stack,
+    // so `finalizeWiki`'s derived-artifact write and its link resolution land in that
+    // Stack rather than in a file or in whatever `process.env` happens to name.
+    env,
     scoped: options.changeFilter !== undefined || regenerating,
     regenerateOnly: regenerating,
     embeddings: options.embeddings !== false,
@@ -1020,6 +1027,13 @@ interface NothingToCompileInput {
   readonly options: CompileOptions;
   readonly db: DimensionsDatabaseHandle;
   readonly stackAuthority: StackAuthority;
+  /**
+   * The environment every seam below the resolution is handed: the run's with the
+   * resolved Stack id published into it. Threaded rather than re-derived here, so the
+   * seed-page regeneration this branch runs stores its derived artifacts in the Stack
+   * the run resolved instead of in a file.
+   */
+  readonly env: NodeJS.ProcessEnv;
   readonly schema: Awaited<ReturnType<typeof loadSchema>>;
   readonly draft: CompileStateDraft;
   readonly seams: ReturnType<typeof resolvePageSeams>;
@@ -1042,7 +1056,7 @@ interface NothingToCompileInput {
 async function finalizeNothingToCompile(
   input: NothingToCompileInput,
 ): Promise<CompileResult> {
-  const { root, options, db, stackAuthority, schema, draft, seams, stateRows, reconciliationSlugs } = input;
+  const { root, options, db, stackAuthority, env, schema, draft, seams, stateRows, reconciliationSlugs } = input;
   output.status("✓", output.success("Nothing to compile — all sources up to date."));
   // Seed pages are cheap deterministic writes — always run them even when no source
   // files changed, so adding a seed page to schema.json takes effect on the next
@@ -1063,7 +1077,9 @@ async function finalizeNothingToCompile(
     schema,
     emptyGeneration,
     options,
-    hasOwnerlessFrozen ? draft : null,
+    // The draft, and the environment this run resolved its Stack into: threaded
+    // through this branch too, so its seed-page artifacts are stored in that Stack.
+    hasOwnerlessFrozen ? draft : null, env,
     embeddingStoreLocation(db, stackAuthority),
     resolverSourceReading(db, stackAuthority),
     embeddingPageReading(db, stackAuthority),
@@ -1112,6 +1128,24 @@ async function runCompilePipeline(
   // NAMED mode here, and a configured database that resolves no Stack fails loudly
   // instead of quietly writing files next to the rows the run was asked for.
   const stackAuthority = await resolveStackAuthority({ env, db });
+  // The environment every seam BELOW the resolution is handed: this run's, with the
+  // Stack it just resolved published into it under the canonical variable. Transport
+  // by environment is not derivation -- a seam reads the authority's ANSWER instead of
+  // asking the variable -- and it is the transport the MCP path, the host API and the
+  // ingest job already use, so this gives the fact ONE transport instead of a signature
+  // per seam.
+  //
+  // WITHOUT THIS LINE a database-resolved compile degrades to the FILE backend one seam
+  // at a time: the journal writes `log.md`, the derived artifacts write `wiki/index.md`
+  // and `wiki/MOC.md` to disk, and the source selection reads the checkout's config
+  // instead of the Stack's, because each of those readers decides from
+  // `env[AKS_STACK_ID_ENV_VAR]` and nothing ever put the resolved id there.
+  //
+  // A FILE authority publishes NOTHING. File mode stays bit-identical, and there is no
+  // blank id for a reader to mistake for a Stack.
+  const stackEnv = stackAuthority.kind === "stack"
+    ? { ...env, [AKS_STACK_ID_ENV_VAR]: stackAuthority.stackId }
+    : env;
   // The ONE dimensions resolution this run performs, resolved here rather than inside
   // the helper that asks for it: a default built per deleted source would be a second
   // answer to one question, and the caller's port must be the one retirement uses.
@@ -1130,10 +1164,10 @@ async function runCompilePipeline(
   // Resolve every page seam ONCE, from one variable: a run that stores rows while
   // repairing files -- or reads rows while writing `wiki/` -- would split the
   // corpus in half and is the defect this migration kept re-introducing.
-  const seams = resolvePageSeams(db, env, stackAuthority);
+  const seams = resolvePageSeams(db, stackEnv, stackAuthority);
   const compileReporter = options.jobObserver?.compile;
   const detected = await timeStage("compile.detect-changes", () =>
-    detectChanges(root, state, sourceChangeDetection(db, stackAuthority), env),
+    detectChanges(root, state, sourceChangeDetection(db, stackAuthority), stackEnv),
     () => reportCompileStage(compileReporter, "compile.detect-changes"));
   // A `--recompile` request is resolved and VALIDATED before any work, so an unusable
   // one is a refusal that wrote nothing rather than a run that silently did nothing.
@@ -1148,7 +1182,7 @@ async function runCompilePipeline(
   const buckets = bucketChanges(changes);
   if (buckets.toCompile.length === 0 && buckets.deleted.length === 0) {
     return await finalizeNothingToCompile({
-      root, options, db, stackAuthority, schema, draft, seams, stateRows,
+      root, options, db, stackAuthority, env: stackEnv, schema, draft, seams, stateRows,
       reconciliationSlugs, unchangedCount: buckets.unchanged.length,
     });
   }
@@ -1165,7 +1199,7 @@ async function runCompilePipeline(
   // state the orphaning just deleted them from.
   forgetErrors.push(
     ...(await forgetDeletedSources(
-      root, retiredIdentities, db, env, dimensionsPort, stackAuthority,
+      root, retiredIdentities, db, stackEnv, dimensionsPort, stackAuthority,
     )),
   );
 
@@ -1224,7 +1258,8 @@ async function runCompilePipeline(
   // single durable state write, done inside finalizeWiki after resolution
   // commits.
   await timeStage("compile.finalize", () => seedThenFinalize(
-    root, schema, generation, options, draft, embeddingStoreLocation(db, stackAuthority),
+    root, schema, generation, options, draft, stackEnv,
+    embeddingStoreLocation(db, stackAuthority),
     resolverSourceReading(db, stackAuthority),
     embeddingPageReading(db, stackAuthority),
     seams,
@@ -1242,7 +1277,7 @@ async function runCompilePipeline(
     // now has rather than the one the run found.
     versionSplit: await readVersionSplit(root, seams.content),
   };
-  await logCompile(root, buckets, reportGeneration, existingIds, env);
+  await logCompile(root, buckets, reportGeneration, existingIds, stackEnv);
   verbose(`compile finished in ${Date.now() - startMs} ms`);
   return summarizeCompile(buckets, reportGeneration, canonicalExtractions, options, forgetErrors);
 }
