@@ -17,6 +17,7 @@ import type { PageContentSource } from "../dimensions/wiki/page-scan-source.js";
 import { deleteCandidateBySlug } from "./candidates.js";
 import * as output from "../utils/output.js";
 import type { SchemaConfig } from "../schema/index.js";
+import type { StackAuthority } from "../dimensions/stack-authority.js";
 import type { CompileOptions } from "../utils/types.js";
 import type { MergedConcept, MergedPageOutcome } from "./types.js";
 
@@ -33,19 +34,35 @@ import type { MergedConcept, MergedPageOutcome } from "./types.js";
  * nothing, and every re-render silently dropped the aliases the previous run had
  * already decided (S2). Absent keeps the on-disk read, so a file-backed run is
  * unchanged.
+ *
+ * @param root - Project root directory.
+ * @param entry - The merged concept this page renders.
+ * @param schema - The run's schema, used by the renderer and the prefilter.
+ * @param options - The compile options; `options.env` is the request's environment.
+ * @param contentSource - The run's page reader, or `undefined` to read `wiki/concepts`.
+ * @param authority - The Stack this run RESOLVED, handed down as a value. The candidate
+ *   custody seam branches on it rather than on the ambient `AKS_STACK_ID`, so a
+ *   row-backed run no longer demands a candidate DIRECTORY of its own queue.
+ * @returns The page outcome: a deferred live write, or the validation error.
  */
 export async function generateMergedPage(
   root: string,
   entry: MergedConcept,
   schema: SchemaConfig,
   options: CompileOptions,
-  contentSource?: PageContentSource,
+  contentSource: PageContentSource | undefined,
+  authority: StackAuthority,
 ): Promise<MergedPageOutcome> {
   // THE BOUNDARY. `generateMergedPage` is where the request enters the page pipeline:
   // `CompileOptions` carries the caller's `env`, and this is the ONE place it is
   // resolved. Every seam below is handed the result, so a run answering for a NAMED
   // Stack clears its duplicate in THAT Stack instead of in whichever tenant the
   // process happens to be bound to.
+  //
+  // The Stack's identity arrives as `authority` and is NOT re-derived from `env` here:
+  // the compile resolved it once, and a second reading of the environment is exactly
+  // the ambient answer this chain exists to replace. `env` stays for the seams that
+  // open a connection with it.
   const env = options.env ?? process.env;
   const fullPage = await renderMergedPageContent(root, entry, schema, contentSource);
 
@@ -53,6 +70,6 @@ export async function generateMergedPage(
     output.status("!", output.warn(`Invalid page for "${entry.concept.concept}" — skipped.`));
     return { error: `Invalid page for "${entry.concept.concept}" — failed validation` };
   }
-  await deleteCandidateBySlug(root, env, entry.slug);
+  await deleteCandidateBySlug(root, env, entry.slug, {}, authority);
   return { liveWrite: { namespace: "concepts", slug: entry.slug, body: fullPage } };
 }

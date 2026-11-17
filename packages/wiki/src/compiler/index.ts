@@ -426,6 +426,7 @@ async function generatePagesPhase(
   transaction: PageBatchTransaction | undefined,
   contentSource: PageContentSource | undefined,
   curatedStore: CuratedLinkStorePort | undefined,
+  stackAuthority: StackAuthority,
   progressSink?: CompileProgressReporter,
 ): Promise<PageGenerationResult> {
   // Publish the denominator as soon as the stage owns it. Announcing the stage
@@ -453,7 +454,7 @@ async function generatePagesPhase(
     renderable.map((entry) => limit(async () => {
       try {
         const result = await generateMergedPage(
-          root, entry, schema, options, contentSource,
+          root, entry, schema, options, contentSource, stackAuthority,
         );
         return { entry, result };
       } finally {
@@ -913,6 +914,15 @@ interface GenerationStageInput {
   readonly seams: PageSeams;
   readonly compileReporter: CompileProgressReporter | undefined;
   /**
+   * The Stack this run RESOLVED, threaded to the page seams.
+   *
+   * One value for the whole run: the candidate custody branch reads it instead of the
+   * ambient `AKS_STACK_ID`, so a run whose Stack came from the database cannot be told
+   * it is file-backed. Resolving it a second time here would be a second answer to a
+   * question `runCompilePipeline` already settled.
+   */
+  readonly stackAuthority: StackAuthority;
+  /**
    * The pages a SCOPED regeneration was asked for, when the run has one.
    *
    * The merge produces every concept the re-extracted sources answer for, because that is
@@ -992,6 +1002,7 @@ async function runGenerationStage(
     input.seams.transaction,
     input.seams.content,
     input.seams.curatedLinks,
+    input.stackAuthority,
     input.compileReporter,
   ), () => reportCompileStage(input.compileReporter, "compile.page-generation"));
   reportCompileProgress(
@@ -1182,7 +1193,7 @@ async function runCompilePipeline(
 
   const { identity, canonicalExtractions, generation, existingIds } = await runGenerationStage({
     root, extractions, frozenSlugs, reconciliationSlugs, schema, options,
-    concurrency, seams, compileReporter,
+    concurrency, seams, compileReporter, stackAuthority,
     regenerateOnly: slugsToRegenerate(scope.recompilePlan),
   });
 

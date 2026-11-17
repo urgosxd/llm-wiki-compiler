@@ -16,7 +16,7 @@ import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { archivePath, assertCandidateId, candidatePath } from "./candidate-paths.js";
 import { CANDIDATES_ARCHIVE_DIR, CANDIDATES_DIR } from "../utils/constants.js";
-import { AKS_STACK_ID_ENV_VAR } from "../dimensions/activation.js";
+import type { StackAuthority } from "../dimensions/stack-authority.js";
 import { openConfinedLeaf } from "../utils/confined-read.js";
 import { candidateByteLimit, type CandidateCustodyPolicy } from "./candidate-custody-limits.js";
 import {
@@ -189,8 +189,7 @@ async function assertDirectoryReadable(
 }
 
 /**
- * True when this project's candidate queue lives in ROWS, so filesystem custody is
- * vacuous rather than merely unproven.
+ * ## Why these guards branch on the AUTHORITY and never on the environment
  *
  * THE DISTINCTION MATTERS. A missing `.llmwiki/candidates` directory is a CUSTODY
  * FAILURE on a file-backed project — the store should be there and its absence means
@@ -202,19 +201,24 @@ async function assertDirectoryReadable(
  * Without this, a candidate read on a Stack refused with "candidate store unavailable"
  * before reaching any page read — the fault the retired review-approval flow hit first.
  *
- * The decision is read from the environment, mirroring `withCandidateSource`, so this
- * module answers the same question the read/write/delete paths already answer.
+ * THE ANSWER IS THE VALUE THE RUN RESOLVED, handed down. These guards used to read
+ * `AKS_STACK_ID` from the ambient environment, which asked a question the run had
+ * ALREADY answered: the id it resolved from the database was cached in one place and
+ * then ignored here, so a row-backed run was told it was file-backed and demanded a
+ * candidate DIRECTORY of a queue that keeps no files at all. A resolved authority is
+ * the only input these guards accept now — there is no default to fall back to, so a
+ * caller cannot omit it and silently re-open the same question.
  */
-function candidateQueueIsRows(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env[AKS_STACK_ID_ENV_VAR] ?? "").trim() !== "";
-}
 
 /** Validate both owned namespaces and reject any shared filesystem identity. */
-export async function assertCandidateNamespacesHealthy(root: string): Promise<void> {
+export async function assertCandidateNamespacesHealthy(
+  root: string,
+  authority: StackAuthority,
+): Promise<void> {
   // Vacuous on a row-backed queue: there is no inode to bind, no directory to search,
   // and no shared-identity collision to detect. Returning early rather than treating
   // the absence as healthy keeps the failure path intact for the file backend.
-  if (candidateQueueIsRows()) return;
+  if (authority.kind === "stack") return;
   const pending = await captureDirectory(root, candidateDir(root, "pending"));
   if (pending) await assertDirectoryReadable(root, pending);
   const archive = await captureDirectory(root, candidateDir(root, "archive"));
@@ -225,10 +229,14 @@ export async function assertCandidateNamespacesHealthy(root: string): Promise<vo
 }
 
 /** Prove one existing namespace or its literal creation parent can be mutated. */
-async function assertMutationTargetWritable(root: string, target: string): Promise<void> {
+async function assertMutationTargetWritable(
+  root: string,
+  target: string,
+  authority: StackAuthority,
+): Promise<void> {
   // A row-backed queue has no target directory to prove writable; the row write
   // either commits or the database refuses it.
-  if (candidateQueueIsRows()) return;
+  if (authority.kind === "stack") return;
   const existing = await captureDirectory(root, target);
   const binding = existing ?? await captureDirectory(root, path.dirname(target));
   if (binding === null) throw new CandidateCustodyUnavailableError();
@@ -239,11 +247,12 @@ async function assertMutationTargetWritable(root: string, target: string): Promi
 export async function assertCandidateMutationAccess(
   root: string,
   requiresArchiveInsert: boolean,
+  authority: StackAuthority,
 ): Promise<void> {
-  await assertCandidateNamespacesHealthy(root);
-  await assertMutationTargetWritable(root, candidateDir(root, "pending"));
+  await assertCandidateNamespacesHealthy(root, authority);
+  await assertMutationTargetWritable(root, candidateDir(root, "pending"), authority);
   if (requiresArchiveInsert) {
-    await assertMutationTargetWritable(root, candidateDir(root, "archive"));
+    await assertMutationTargetWritable(root, candidateDir(root, "archive"), authority);
   }
 }
 
