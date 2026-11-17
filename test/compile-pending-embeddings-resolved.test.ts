@@ -42,7 +42,6 @@ import {
   replaceRefreshMarkers,
 } from "../packages/wiki/src/dimensions/wiki/marker-store.js";
 import { saveSourceDocument } from "../packages/wiki/src/dimensions/wiki/source-documents-store.js";
-import { resolveStackForCommand } from "../packages/wiki/src/services/stacks/resolve-stack.js";
 import { PENDING_EMBEDDINGS_FILE, SOURCES_DIR } from "../packages/wiki/src/utils/constants.js";
 import * as embeddings from "../packages/wiki/src/utils/embeddings.js";
 import { extractionAnswer, stubCompileProvider } from "./fixtures/compile-provider.js";
@@ -74,7 +73,7 @@ const SEEDED_ID = "concepts/earlier-run";
  * The scenario, from the fixture the resolved-Stack suites share: a per-run database, an
  * environment that NAMES NO STACK, and this file's offline provider.
  */
-const { skipped, runEnv, suiteHandle, tempRoot } = await useResolvedStackSuite({
+const { skipped, runEnv, suiteHandle, tempRoot, stackId } = await useResolvedStackSuite({
   context: "test/compile-pending-embeddings-resolved.test.ts",
   beforeEach: () => {
     process.env.LLMWIKI_PROVIDER = "anthropic";
@@ -138,13 +137,12 @@ async function queueSeedRow(db: DatabaseHandle, stackId: string): Promise<void> 
   await replaceRefreshMarkers(db, stackId, "pending", [{ pageId: SEEDED_ID, attempts: 0 }]);
 }
 
-describe.skipIf(skipped !== "")("a compile that resolved its Stack from the database", () => {
+describe.skipIf(skipped !== "")("a compile whose Stack the run names", () => {
   it("drains the Stack's row marker and writes no pending-embeddings file", async () => {
     const root = await prepareRun("pending-emb-rows-");
     const run = runEnv();
     const handle: SuiteHandle = suiteHandle();
     try {
-      const stackId = await resolveStackForCommand(handle.db, run);
       await queueSeedRow(handle.db, stackId);
       const core = failRefreshCore();
 

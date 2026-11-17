@@ -45,7 +45,6 @@ import {
   saveStoredCandidate,
 } from "../packages/wiki/src/dimensions/wiki/candidate-store.js";
 import { saveSourceDocument } from "../packages/wiki/src/dimensions/wiki/source-documents-store.js";
-import { resolveStackForCommand } from "../packages/wiki/src/services/stacks/resolve-stack.js";
 import { SOURCES_DIR } from "../packages/wiki/src/utils/constants.js";
 import { seedPendingCandidate, snapshotCandidateQueue } from "./fixtures/candidate-queue.js";
 import { extractionAnswer, stubCompileProvider } from "./fixtures/compile-provider.js";
@@ -74,7 +73,7 @@ const DUPLICATE_ID = `${SLUG}-row`;
  * The scenario, from the fixture the resolved-Stack suites share: a per-run database, an
  * environment that NAMES NO STACK, and this file's offline provider.
  */
-const { skipped, runEnv, suiteHandle, tempRoot } = await useResolvedStackSuite({
+const { skipped, runEnv, suiteHandle, tempRoot, stackId } = await useResolvedStackSuite({
   context: "test/compile-candidate-seam-resolved.test.ts",
   beforeEach: () => {
     process.env.LLMWIKI_PROVIDER = "anthropic";
@@ -130,12 +129,11 @@ async function rowScenarioWithDuplicate(): Promise<RowScenario> {
   const root = await prepareRun("candidate-seam-rows-");
   const run = runEnv();
   const handle: SuiteHandle = suiteHandle();
-  const stackId = await resolveStackForCommand(handle.db, run);
   await plantRowDuplicate(handle.db, stackId);
   return { root, run, handle, stackId };
 }
 
-describe.skipIf(skipped !== "")("a compile that resolved its Stack from the database", () => {
+describe.skipIf(skipped !== "")("a compile whose Stack the run names", () => {
   it("clears the duplicate in the Stack's row queue and writes no candidate file", async () => {
     const { root, run, handle, stackId } = await rowScenarioWithDuplicate();
     try {
@@ -162,7 +160,6 @@ describe.skipIf(skipped !== "")("a compile with no database configured", () => {
     // see no database, and the assertion must still be able to look at one.
     const handle: SuiteHandle = suiteHandle();
     try {
-      const stackId = await resolveStackForCommand(handle.db, {});
       await mkdir(path.join(root, SOURCES_DIR), { recursive: true });
       await writeFile(
         path.join(root, SOURCES_DIR, "topic.md"),

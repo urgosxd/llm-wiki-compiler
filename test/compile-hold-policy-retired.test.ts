@@ -88,14 +88,21 @@ describe("a review.hold policy refuses the compile at config load", () => {
   });
 
   it("promises no review split and no candidate ids on the compile result", async () => {
-    stubOneLowConfidencePage();
+    // FILE MODE by name, like its sibling: this case reads the checkout's own
+    // `.llmwiki/config.json`, which is the config only for a run with no Stack (once one
+    // resolves, `wiki.project_config` is the config). Inheriting the runner's database
+    // made the run refuse for want of a Stack — S1 deleted the one it used to create —
+    // which is a different failure from the one this case is about.
+    await withFileMode(async () => {
+      stubOneLowConfidencePage();
 
-    const result = await compileAndReport(project.dir);
+      const result = await compileAndReport(project.dir);
 
-    // @ts-expect-error the review split is retired: with no stager every arm is permanently empty.
-    expect(result.review).toBeUndefined();
-    // @ts-expect-error candidate ids are retired with the stager that produced them.
-    expect(result.candidates).toBeUndefined();
+      // @ts-expect-error the review split is retired: with no stager every arm is permanently empty.
+      expect(result.review).toBeUndefined();
+      // @ts-expect-error candidate ids are retired with the stager that produced them.
+      expect(result.candidates).toBeUndefined();
+    });
   });
 });
 

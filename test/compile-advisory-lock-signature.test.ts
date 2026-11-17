@@ -44,7 +44,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
-import { resolveStackForCommand } from "../packages/wiki/src/services/stacks/resolve-stack.js";
 import { LOCK_FILE } from "../packages/wiki/src/utils/constants.js";
 import { acquireLock, releaseLock } from "../packages/wiki/src/utils/lock.js";
 import { extractionAnswer, stubCompileProvider } from "./fixtures/compile-provider.js";
@@ -66,7 +65,7 @@ const TITLE = "Locked Stack Topic";
  * row case (a database is published there) and the file-mode pins (it is blanked inside
  * `withFileMode`).
  */
-const { skipped, runEnv, suiteHandle, tempRoot } = await useResolvedStackSuite({
+const { skipped, runEnv, suiteHandle, tempRoot, stackId } = await useResolvedStackSuite({
   context: "test/compile-advisory-lock-signature.test.ts",
   beforeEach: () => {
     stubCompileProvider({ extraction: () => extractionAnswer([TITLE]), body: () => "Body.\n" });
@@ -86,12 +85,12 @@ function holderEnv(stackId: string): NodeJS.ProcessEnv {
   return { ...process.env, AKS_STACK_ID: stackId };
 }
 
-describe.skipIf(skipped !== "")("a compile whose Stack the DATABASE resolved", () => {
+describe.skipIf(skipped !== "")("a compile whose Stack the run names", () => {
   it("is refused while another host holds that Stack's advisory lock, and names no Stack itself", async () => {
     const handle = suiteHandle();
     const holderRoot = await tempRoot("advisory-holder-");
     const runnerRoot = await tempRoot("advisory-runner-");
-    const held = holderEnv(await resolveStackForCommand(handle.db, {}));
+    const held = holderEnv(stackId);
     try {
       // Held for the WHOLE case: nothing releases it before the compile below tries.
       expect(await acquireLock(holderRoot, { quiet: true, env: held })).toBe(true);

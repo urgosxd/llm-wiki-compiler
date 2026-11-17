@@ -1,27 +1,37 @@
 /**
  * @file test/fixtures/resolved-stack-suite.ts
  * @description The scenario harness shared by the suites that compile against a database
- * which NAMES NO STACK.
+ * and ONE Stack they created for themselves.
  *
  * ## The scenario, and why it is a fixture
  *
  * Two suites pin two different defects — the mutation lock's key (S16) and the
  * environment the downstream seams read (S14) — and both need the SAME premise: a
- * database is configured, NOTHING names a Stack, and the Stack the run works on is the
- * one the resolver the code under test calls answers. That premise is what makes the two
- * answers differ, so it has to be identical in both files rather than merely similar.
- * Written in each file it was identical in behaviour and drifting in prose; `fallow`
- * counted the pair as two clone groups (39 and 29 lines).
+ * database is configured, ONE Stack is named, and every seam of the run works on that one
+ * Stack. That premise is what makes the two answers differ, so it has to be identical in
+ * both files rather than merely similar. Written in each file it was identical in
+ * behaviour and drifting in prose; `fallow` counted the pair as two clone groups (39 and
+ * 29 lines).
  *
  * What this module owns is the plumbing that decides NOTHING about an outcome:
  *
  *  - the per-run database and the ONE repository rule for a run that cannot obtain one
  *    (fail, or skip explicitly under `LLMWIKI_TEST_ALLOW_NO_DATABASE=1`);
- *  - the run's environment builder, {@link ResolvedStackSuite.runEnv} — a database
- *    configured and no Stack named, which is the discriminating property of both files;
+ *  - the Stack the suite works on, created EXPLICITLY here and named by
+ *    {@link ResolvedStackSuite.runEnv} — see below;
  *  - the temp-root tracking and the handle helper, which are bookkeeping;
- *  - the save/restore env hooks, so the `beforeEach` that blanks the Stack id cannot be
+ *  - the save/restore env hooks, so the `beforeEach` that names the Stack id cannot be
  *    remembered by one file and forgotten by the other.
+ *
+ * ## Why the suite creates its own Stack
+ *
+ * It used to name NO Stack and let the resolver under test MATERIALIZE a default one: the
+ * provisioning was the premise, so the id the run worked on was whatever the code under
+ * test happened to create. S1 of `odd/tasks/stack-authority-per-request.md` deletes that —
+ * no Stack is created implicitly, anywhere — so the premise is now the one a deployment
+ * actually has: a Stack exists because its owner created it, and the run names it. Sharing
+ * the created row through this fixture is what keeps the four suites that need it from
+ * each hand-copying the insert, which is the duplication this module exists to prevent.
  *
  * ## What is deliberately NOT here
  *
@@ -32,16 +42,13 @@
  * mode folded into a fixture is a mode decided implicitly — the drift both suites exist
  * to end. A suite's contenders (another host's env, a holder's lock, a source document)
  * stay with the suite that contends.
- *
- * The id named here is never the run's: `runEnv` DELETES it. The Stack is provisioned by
- * the resolver the code under test calls, exactly as a first-time deployment provisions
- * it, so neither file has to write the id into the environment of the run it measures.
  */
 
+import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { afterEach, beforeEach, vi } from "vitest";
 
-import { createDimensionsDatabase } from "../../packages/wiki/src/dimensions/activation.js";
+import { createDimensionsDatabase, isDatabaseConfigured } from "../../packages/wiki/src/dimensions/activation.js";
 import { perRunDatabase } from "./per-run-database.js";
 import { makeTempRoot } from "./temp-root.js";
 import { missingTestDatabase } from "./test-database-handoff.js";
@@ -64,10 +71,12 @@ export interface ResolvedStackSuite {
   readonly skipped: string;
   /** A throwaway project root owned by the current test, removed after it. */
   readonly tempRoot: (prefix: string) => Promise<string>;
-  /** The environment the RUN gets: the database configured, no Stack named. */
+  /** The environment the RUN gets: the database configured, and THIS suite's Stack named. */
   readonly runEnv: () => NodeJS.ProcessEnv;
   /** An open handle on this file's per-run database, for the test's own reads. */
   readonly suiteHandle: () => SuiteHandle;
+  /** The Stack this suite created for itself and names in {@link runEnv}. */
+  readonly stackId: string;
 }
 
 /** What the calling suite supplies; both fields are things only that suite knows. */
@@ -75,7 +84,7 @@ export interface ResolvedStackSuiteOptions {
   /** The calling suite's own path, so a "no database" failure points at it. */
   readonly context: string;
   /**
-   * This suite's own `beforeEach` body, run after the Stack id is blanked.
+   * This suite's own `beforeEach` body, run after the Stack id is named.
    *
    * A callback rather than a hook the caller registers, so one file cannot run its setup
    * with a Stack id still in the environment while the other one does not.
@@ -109,6 +118,30 @@ async function skipReason(context: string): Promise<string> {
 }
 
 /**
+ * Create the Stack this suite works on, in the per-run database.
+ *
+ * An insert and nothing else — the row `POST /stacks` writes, minus the transport —
+ * because the point of S1 is that a Stack exists only because someone created it. The
+ * domain carries a random suffix so two suites sharing one per-run database cannot collide
+ * on `stacks.domain`, which is unique.
+ *
+ * @returns The id of the row it created.
+ */
+async function createSuiteStack(): Promise<string> {
+  const id = randomUUID();
+  const domain = `resolved-stack-${randomUUID().slice(0, 8)}`;
+  const handle = createDimensionsDatabase({ [DATABASE_URL_ENV_VAR]: process.env[DATABASE_URL_ENV_VAR] });
+  try {
+    await handle.db.execute(
+      `insert into stacks (id, name, domain) values ('${id}', '${domain}', '${domain}')`,
+    );
+  } finally {
+    await handle.close();
+  }
+  return id;
+}
+
+/**
  * Register the calling suite's hooks and hand back its scenario.
  *
  * Called at the CALLING suite's module top level with a top-level `await`, because the
@@ -117,19 +150,23 @@ async function skipReason(context: string): Promise<string> {
  * then failed.
  *
  * @param options - The suite's own path and its own `beforeEach` body.
- * @returns The skip decision, the temp-root factory, the env builder and the handle.
+ * @returns The skip decision, the temp-root factory, the env builder, the handle and the Stack.
  */
 export async function useResolvedStackSuite(
   options: ResolvedStackSuiteOptions,
 ): Promise<ResolvedStackSuite> {
   const skipped = await skipReason(options.context);
+  // Created BEFORE any case runs, so the id is known synchronously at every call site.
+  const stackId = skipped === "" ? await createSuiteStack() : "";
   const roots: string[] = [];
   let savedEnv: NodeJS.ProcessEnv = {};
 
   beforeEach(() => {
     savedEnv = { ...process.env };
-    // The discriminating property of every case in the calling file: nothing NAMES a
-    // Stack. Restored through `savedEnv`, so a sibling suite's value cannot leak in or out.
+    // Nothing NAMES a Stack in the process environment: a file-mode case must keep the
+    // file mode's premise intact, and the Stack is named by `runEnv` for the runs that
+    // have a database to key it on. Restored through `savedEnv`, so a sibling suite's value
+    // cannot leak in or out.
     delete process.env.AKS_STACK_ID;
     options.beforeEach?.();
   });
@@ -142,6 +179,7 @@ export async function useResolvedStackSuite(
 
   return {
     skipped,
+    stackId,
     tempRoot: async (prefix: string) => {
       const root = await makeTempRoot(prefix);
       roots.push(root);
@@ -149,7 +187,13 @@ export async function useResolvedStackSuite(
     },
     runEnv: (): NodeJS.ProcessEnv => {
       const env: NodeJS.ProcessEnv = { ...process.env };
-      delete env.AKS_STACK_ID;
+      // THIS suite's Stack, by name — but ONLY where the run has a database to key it on.
+      // Inside `withFileMode` the database is blank, and a Stack id beside it is a
+      // contradiction the config read takes literally: it would look this Stack's config
+      // up in a database it cannot reach. The file mode's premise is no Stack, so it gets
+      // none.
+      if (isDatabaseConfigured(env)) env.AKS_STACK_ID = stackId;
+      else delete env.AKS_STACK_ID;
       return env;
     },
     suiteHandle: (): ReturnType<typeof createDimensionsDatabase> =>

@@ -24,6 +24,11 @@ import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
 import { LOCK_FILE } from "../packages/wiki/src/utils/constants.js";
 import * as executor from "../packages/wiki/src/trust/executor.js";
 import { useCompileProject } from "./fixtures/compile-project.js";
+// FILE MODE by name: the journal and the project lock are checkout-local artifacts, so the
+// backend this file measures is the file one. It used to inherit the runner's database and
+// let the run MATERIALIZE a Stack; S1 deletes that, so inheriting one now makes every compile
+// below refuse instead of measuring the journal at all.
+import "./fixtures/file-mode.js";
 import {
   journalFileCount,
   stubExtractionAndBody,

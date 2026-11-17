@@ -65,7 +65,6 @@ import { compileAndReport } from "../packages/wiki/src/compiler/index.js";
 import { readJournalEntries } from "../packages/wiki/src/dimensions/wiki/activity-log-store.js";
 import { readDerivedArtifact } from "../packages/wiki/src/dimensions/wiki/derived-artifact-store.js";
 import { saveSourceDocument } from "../packages/wiki/src/dimensions/wiki/source-documents-store.js";
-import { resolveStackForCommand } from "../packages/wiki/src/services/stacks/resolve-stack.js";
 import { INDEX_FILE, LOG_FILE, MOC_FILE, SOURCES_DIR } from "../packages/wiki/src/utils/constants.js";
 import { extractionAnswer, stubCompileProvider } from "./fixtures/compile-provider.js";
 import { usePerCaseFileMode, withFileMode } from "./fixtures/file-mode.js";
@@ -95,7 +94,7 @@ const PAGE_BODY = "Body. ^[topic.md]\n";
  * it, and the file-mode case reads its rows back from an explicit handle, so neither case
  * has to hold a captured URL.
  */
-const { skipped, runEnv, suiteHandle, tempRoot } = await useResolvedStackSuite({
+const { skipped, runEnv, suiteHandle, tempRoot, stackId } = await useResolvedStackSuite({
   context: "test/compile-resolved-stack-published.test.ts",
   beforeEach: () => {
     process.env.LLMWIKI_PROVIDER = "anthropic";
@@ -180,9 +179,7 @@ async function compileIntoResolvedStack(): Promise<{
   const root = await tempRoot("stack-published-rows-");
   const run = runEnv();
   const handle = suiteHandle();
-  // The Stack the resolver will answer, provisioned the way a first-time deployment
-  // provisions it. Nothing in this file ever names it.
-  const stackId = await resolveStackForCommand(handle.db, run);
+  // The Stack this suite created and names, not one the resolver would have provisioned.
   await saveSourceDocument(handle.db, stackId, SOURCE);
   expect(await stackRows(handle.db, stackId)).toEqual(
     { journal: [], derived: { index: undefined, moc: undefined } },
@@ -191,7 +188,7 @@ async function compileIntoResolvedStack(): Promise<{
   return { root, handle, stackId };
 }
 
-describe.skipIf(skipped !== "")("a compile that resolved its Stack from the database", () => {
+describe.skipIf(skipped !== "")("a compile whose Stack the run names", () => {
   it("publishes the resolved id to the journal and the derived artifacts, and writes neither file", async () => {
     const { root, handle, stackId } = await compileIntoResolvedStack();
     try {
@@ -208,7 +205,6 @@ describe.skipIf(skipped !== "")("a compile that resolved its Stack from the data
     // see no database, and the assertion must still be able to look at one.
     const handle = suiteHandle();
     try {
-      const stackId = await resolveStackForCommand(handle.db, {});
       const before = await stackRows(handle.db, stackId);
 
       await withFileMode(async () => {
