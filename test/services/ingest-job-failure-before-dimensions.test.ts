@@ -106,6 +106,24 @@ describe("a job whose source cannot be read", () => {
   }, 30_000);
 });
 
+describe("a run that dies before dispatch while the switch excludes a dimension", () => {
+  it("keeps the switch's own reason instead of relabelling every dimension", async () => {
+    // `LLMWIKI_DIMENSIONS=wiki` excludes `kg`, and that is a statement about the
+    // CONFIGURATION, which no failure makes false. A pre-dispatch death reports the
+    // dimensions the run never reached as `not-attempted`, but must not absorb `kg` into
+    // that label: an operator reading `not attempted` for a dimension the switch excludes
+    // would investigate a failure that has nothing to do with why `kg` did not run.
+    vi.stubEnv("LLMWIKI_DIMENSIONS", "wiki");
+    const settled = await runMissingSourceJob();
+    // The same upstream failure as every other case here, purely through the public path.
+    expect(settled?.ingest.status).toBe("failed");
+    expect(reportOf(settled)).toEqual([
+      { name: "wiki", status: "skipped", reason: "not-attempted" },
+      { name: "kg", status: "skipped", reason: "disabled" },
+    ]);
+  }, 30_000);
+});
+
 describe("a configuration that cannot be parsed at all", () => {
   it("still settles the job instead of wedging it in running", async () => {
     // The reporting path parses the switch to name the reason behind a skip, and that parse

@@ -38,14 +38,21 @@ S9. The one shape, a discriminated union:
 export type DimensionOutcome =
   | { readonly name: DimensionName; readonly status: "succeeded"; readonly summary: string }
   | { readonly name: DimensionName; readonly status: "failed"; readonly error: string }
-  | { readonly name: DimensionName; readonly status: "skipped"; readonly reason: "not-in-route" | "disabled" | "declined" };
+  | {
+      readonly name: DimensionName;
+      readonly status: "skipped";
+      readonly reason: DimensionSkipReason;
+    };
 ```
+
+`DimensionSkipReason` is declared beside it in `packages/wiki/src/dimensions/outcome.ts` as `"not-in-route" | "disabled" | "declined" | "not-attempted"` — four reasons, not three, because S12 needs the fourth.
 
   - `succeeded` — the dimension committed; `summary` is the string it returned, the bare-value side of `ReadonlyMap<string, string>`.
   - `failed` — the dimension ran and threw; `error` carries the failure text.
   - `skipped` + `not-in-route` — this route does not compose the dimension (S4a).
   - `skipped` + `disabled` — the route composes it but `LLMWIKI_DIMENSIONS` excludes it.
   - `skipped` + `declined` — it ran `prepare` and returned `null` (`coordinator.ts:186`), so it had nothing to commit.
+  - `skipped` + `not-attempted` — the run failed before this dimension was reached (S12), so the failure is upstream of it.
 
 Every known dimension (`KNOWN_DIMENSIONS`, `activation.ts:67`) appears on every settling path; a missing entry is a bug. `IngestJob` (`packages/wiki/src/services/ingest/jobs/types.ts:226-282`) gains `readonly dimensions?: readonly DimensionOutcome[]`, optional because `job-store.ts:103` persists the whole record as JSON in `payload jsonb` and payloads written before this change lack the key.
 
@@ -61,7 +68,9 @@ S11. Adding a field to the exported `IngestJob` type is a wire-contract change a
 
 S12. The coordinator records, per dimension and per run, one of: attempted, skipped with a reason, failed with an error, or committed with a summary. The report derives from that state. Five labelled non-success reasons stay distinct because an operator would act differently on each: `not-in-route` (this route does not compose the dimension), `disabled` (the route composes it but `LLMWIKI_DIMENSIONS` excludes it), `declined` (it ran `prepare` and returned `null`, `coordinator.ts:186` — nothing to commit), `not-attempted` (the run failed before this dimension was reached; the failure is upstream of it), and failure (it ran and threw, error carried).
 
-A settling path that never reaches the coordinator — an unreadable source, a `LockBusyError` — reports every composed and enabled dimension as `not-attempted`, because the union has no truthful arm for a run that died before any dimension was resolved: `not-in-route`, `disabled` and `declined` would each be a false claim about it, and an operator's conclusion differs from all three. Route and switch are read from the configuration on that path, not from run records — there are none. The compile line renders the fifth reason as `not attempted`, in the same `<name>: <text>.` shape, so such a run with both dimensions enabled reads exactly `Nothing compiled. wiki: not attempted. kg: not attempted.`
+A settling path that never reaches the coordinator — an unreadable source, a `LockBusyError` — reports every composed and enabled dimension as `not-attempted`, because the union has no truthful arm for a run that died before any dimension was resolved: `not-in-route`, `disabled` and `declined` would each be a false claim about it, and an operator's conclusion differs from all three. Route and switch are read from the configuration on that path, not from run records — there are none.
+
+Where that fifth reason is rendered, stated precisely because the difference is easy to get wrong. `describeDimensionMessage` renders it as `not attempted` in the same `<name>: <text>.` shape, so a report of such a run with both dimensions enabled renders exactly `Nothing compiled. wiki: not attempted. kg: not attempted.` That rendering is used when the COMPILE SETTLES: `compiledMessageOf` (`run.ts:238`) is called from one place only, the compile-success settle at `run.ts:376`, over the report the ingest half produced. A run that dies before dispatch never reaches the compile half at all, so it reports `not-attempted` per dimension in the REPORT while its compile line keeps the pre-existing message `Compile never started: the ingest failed, so there was nothing to compile.` — byte-identical to `main`. That message is deliberately unchanged: rewriting it would be an unrequested behaviour change, so the reporting fix carries the per-dimension answer and the compile line stays as it was on that path.
 
 S13. Compatibility is a claim that must be observed: `test/services/ingest-job-status-old-shape.test.ts:91` and `:108` deep-equal a legacy stored payload against `OLD_SHAPE` and must stay green UNCHANGED, and that green must be cited as observed evidence in the task that changes the job record.
 
@@ -102,3 +111,5 @@ Retired with the feature, the six measured facts that would have shaped it, kept
 L8 — independent verification found S9 unmet on a settling path that never reaches the coordinator: an ingest whose source cannot be read settled `failed` with no `dimensions` key, the very silence S4 and S9 forbid (reproduced: `ingest.error` `ENOENT ... '/nonexistent/source.txt'`, `dimensions` absent). The union had no truthful arm for "the run died before any dimension was resolved", so it gained a fifth labelled reason, `not-attempted`, rather than relabelling the case as `not-in-route`, `disabled` or `declined`, each of which would have been a false claim. Nothing about which dimensions run changed. Everything else in the verification was green: all gates on Node 24, the gate of record 905 files / 6683 tests / 1 successful / not cached, and the 20-file pre-committed population all PASS.
 
 L9 — independent verification, twice, in its own lane with no writer in the tree. All six static gates green, `build` green, `test:affected` green at 407 files / 2451 tests, and the gate of record on Node 24 with `TESTCONTAINERS_REUSE_ENABLE=false` at 908 files / 6693 tests / 1 successful / not cached, against a 23-file population pre-committed before the run. The first pass found S9 unmet on a path that had never been exercised: a job whose source could not be read settled `failed` with no `dimensions` key at all. That was fixed by adding the fifth label, `not-attempted`, and by making the job runner's remaining failure path record a report; the second pass proved it closed, proved a malformed `LLMWIKI_DIMENSIONS` settles the job instead of wedging it in `running`, and proved every pre-existing message rendering byte-identical across 112 differential cases. The work is committed as five slices: 4e57085 (this document), 43cdf77 (the dimensions layer and the ordering guarantee), 09231e3 (the ingest service, the job record and the derived message), df39b7a (the compile response key), c0f151a (the docs). Nothing is pushed: the branch has no upstream, and publishing stays the human's decision.
+
+L10 — the gate on the rebased tree found two documentation inconsistencies and one coverage gap, none of them behavioural. S9's literal union listed three skip reasons while the code carries four, `not-attempted` included; S12 gave a compile-line example that only a compile that settles can produce, because a run dying before dispatch keeps the pre-existing "compile never started" message and reports `not-attempted` in the report instead. Both are corrected here, and two tests were added so the precedence is pinned through the public path rather than only at unit level.
