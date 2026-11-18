@@ -72,7 +72,73 @@ porque lo ejecuta el daemon.
 
 ## Evidence
 
-### Publicación vigente — 2026-11-17, sobre HEAD `d2ddb5f5` (sin smoke tests, por pedido)
+### Publicación vigente — 2026-11-18, sobre HEAD `c7b90a41` (sin smoke tests, por pedido)
+
+Repetida a pedido del humano, con el mismo alcance explícito que la corrida anterior: **build
+multi-arch + push, sin smoke tests**. La verificación se limita al manifest list leído de vuelta del
+registry; **no se ejecutó ningún contenedor** de ninguna de las dos arquitecturas, así que esta
+corrida no re-verifica que la imagen arranque, que el binario nativo `skia` resuelva por plataforma
+ni que el MCP responda `initialize`. Esa evidencia sigue siendo la de las corridas fechadas más
+abajo.
+
+Entorno confirmado antes de construir: builder `multibuilder` (driver `docker-container`, BuildKit
+v0.31.2) reporta `linux/amd64`, `linux/arm64` y `linux/386`; `qemu-aarch64` registrado en
+`/proc/sys/fs/binfmt_misc/`; `docker info` autentica como `urgosxd7`. Árbol de trabajo limpio sobre
+`main`.
+
+**Esta corrida NO publica el mismo contenido que la anterior.** Entre `d2ddb5f5` y `c7b90a41` hay
+**32 commits**, y el diff sí entra al contexto de build: 57 archivos, `+6095 / −928` en
+`packages/`, `scripts/`, `Dockerfile`, `package.json` y `pnpm-lock.yaml`. Lo que más importa para un
+despliegue es una migración nueva:
+
+- `packages/wiki/src/dimensions/wiki/migration_wiki_kg_extracted_chunks.sql` — el ledger de hashes de
+  chunks que lee el skip de re-extracción del lado kg.
+- `scripts/apply-schemas.sh` la agrega a `SCHEMA_FILES` (última, porque depende de `public.stacks` y
+  de `llmwiki_app`) y a `REQUIRED_TENANT_TABLES` como `wiki.kg_extracted_chunks`.
+
+Los dos archivos **están dentro de la imagen** (`/app/scripts` y `/app/packages/wiki/src/dimensions`
+son COPY del stage `runtime`), así que un despliegue existente que haga pull tiene que volver a
+correr el runner de esquemas: el servicio `migrate` de `docker-compose.hub.yml` lo hace en cada
+`up`, y `--check` falla nombrando `wiki.kg_extracted_chunks` si se lo saltea.
+
+```
+docker buildx build --builder multibuilder \
+  --platform linux/amd64,linux/arm64 \
+  --tag docker.io/urgosxd7/llmwiki:latest --push .
+```
+
+Resultado: exit `0` en **4 m 19.8 s**, con `pushing layers 15.1s` y `pushing manifest 4.2s`. El
+manifest list publicado, leído de vuelta con `docker buildx imagetools inspect`, que resuelve contra
+`registry-1.docker.io` y no contra el cache local:
+
+```
+docker.io/urgosxd7/llmwiki:latest
+MediaType: application/vnd.oci.image.index.v1+json
+Digest:    sha256:da240cfaf084b1b2266f4bcab9a156eb9ab8e2868d3daf0004abaf7c2951458c
+  linux/amd64   sha256:a9dcb1f7dfbd90909c677d6e7f8a80471a5c91cc7d6809cda184509c29879fb4  (created 17:07:10Z)
+  linux/arm64   sha256:efbbf37bdffcbabdd969fae595ac7fd02d792dc74a5947c328940d9d2063a29e  (created 17:10:12Z)
+  unknown/unknown  sha256:bfb3a697458cfa458f2ba1e7a4f4c30bd6ffa9d744b5bfd04a0d93a0c6991c11  (attestation amd64)
+  unknown/unknown  sha256:dec94598b9913eb1db805100f656802f3a6981868ce7988137bf9f9827a41491  (attestation arm64)
+```
+
+Cada entrada de plataforma es un `application/vnd.oci.image.manifest.v1+json` real, y su config
+publicada declara la arquitectura que le corresponde — leída del registry, no del builder:
+amd64 → `architecture: amd64, os: linux`; arm64 → `architecture: arm64, os: linux`. Los dos `created`
+separados por 3 minutos son la firma de que el stage de arm64 se construyó aparte (bajo emulación) y
+no se copió del de amd64. Consumo por digest: `urgosxd7/llmwiki@sha256:da240cfa…`.
+
+Dos límites de esta evidencia, anotados para que nadie los lea como más de lo que son:
+
+- El build se lanzó con `| tail -60`, así que del log quedaron sólo las últimas 60 líneas: las de
+  export/push. Las líneas por stage (`[linux/arm64 build …]`) no están retenidas. Lo que sí es
+  concluyente es el manifest del registry, que prueba que hay dos imágenes reales, una por
+  arquitectura, con sus configs.
+- La verificación es **estructural**, no funcional. Un `latest` con las dos plataformas correctas no
+dice nada sobre si el proceso arranca; eso lo cubre el smoke test que esta corrida omitió por
+  pedido, y el único registro vigente de esa conducta sigue siendo la tabla de la corrida
+  `ed226a2e`.
+
+### Publicación anterior — 2026-11-17, sobre HEAD `d2ddb5f5` (sin smoke tests, por pedido)
 
 Repetida a pedido del humano. Alcance pedido explícitamente: **build multi-arch + push, sin smoke
 tests**. La verificación se limita al manifest list leído de vuelta del registry; no se ejecutó
