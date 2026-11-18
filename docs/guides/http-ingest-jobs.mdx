@@ -91,6 +91,105 @@ A job in flight:
 
 ---
 
+## Why a job is where it is
+
+A status read also answers the third complaint, *"la informacion que da es muy pobre"*: every row that needs explaining carries the reason, and nothing is written back to the row to say it.
+
+```json
+{
+  "id": "ing_01J8Z4Q7X3",
+  "updatedAt": "2026-01-01T00:14:40.000Z",
+  "ingest": { "status": "failed", "error": "ENOENT: no such file or directory, open 'notes/a.md'" },
+  "compile": { "status": "queued", "progress": null },
+  "statusReason": { "reason": "ENOENT: no such file or directory, open 'notes/a.md'", "kind": "observed" },
+  "stalledSince": "2026-01-01T00:14:40.000Z"
+}
+```
+
+| Field | Present when | Meaning |
+| --- | --- | --- |
+| `statusReason` | there is something to explain | `{ reason, kind }`. `kind: "observed"` is a fact the pipeline itself recorded; `kind: "derived"` is an inference from a stale timestamp, and the two must never be rendered the same way |
+| `stalledSince` | the row is non-terminal AND has been silent past the stuck bound | when it last moved. It rides in its own field even when `statusReason` reports an observed failure, because "it failed" and "nothing has touched it since" are two different facts |
+| `abandonedAt` | a reap settled this row (see the boot-time reaper under `LLMWIKI_INGEST_JOB_STUCK_AFTER_MS`) | when that happened. It is why `statusReason` says `kind: "derived"` for such a row: the failure text in the row was written by the reaper's inference, not reported by the pipeline. Read the marker, never the wording |
+| `compile.retryable` | `compile.status` is `busy` | `true`: the compile never ran because another mutation held the project lock, and a retry is the next step |
+
+An observed failure outranks a derived stall in `statusReason`: when a job both failed and stopped moving, the recorded error is the headline and `stalledSince` keeps the inference beside it. A **reaped** row is the one exception to that, and it is the other way round on purpose: its `error` reads `abandoned: no update since <timestamp>; the process that owned it stopped` and it reports `kind: "derived"`, because nobody observed that failure — a reaper inferred it hours later. A row that really failed carries no `abandonedAt` and keeps `kind: "observed"`.
+
+`compile.status: "busy"` is **settled**, not pending. Nothing transitions it onward in the background, so it satisfies the same terminality test as `succeeded`/`failed`/`skipped`; the transition out of it is the explicit retry below.
+
+---
+
+## Recover a job that will not settle
+
+A job that settles in memory is mirrored into `wiki.ingest_job`, and that stored row is what these two routes act on. Both are mutations, so both sit in the mutation mount behind the same origin policy as `POST /api/ingest`.
+
+| Route | Effect |
+| --- | --- |
+| `DELETE /api/ingest/jobs/:jobId?stackId=<id>` | remove the stored job |
+| `POST /api/ingest/jobs/:jobId/retry?stackId=<id>` | run the same source again, as a NEW job |
+
+### When a delete — and a retry — is allowed
+
+One policy, asked of the same predicate the status route uses, so the two cannot disagree:
+
+- **settled** — `isSettled` says both dimensions are terminal-or-absent (`succeeded`/`unchanged`/`failed` and `succeeded`/`failed`/`skipped`/`busy`) — allowed;
+- **stalled** — non-terminal AND silent for longer than `LLMWIKI_INGEST_JOB_STUCK_AFTER_MS` (two hours by default) — allowed. This is the row the operator could not clear;
+- **still working** — non-terminal and inside that bound — refused. It may be running right now, and removing it would orphan real work from its own status surface.
+
+A retry is offered for exactly the rows a delete is offered for. Re-running a resource while its first attempt may still be running is how the reported hang was produced in the first place.
+
+### Delete
+
+```bash
+curl -sS -X DELETE 'http://127.0.0.1:4173/api/ingest/jobs/ing_01J8Z4Q7X3?stackId=<id>'
+```
+
+```json
+{ "deleted": true, "jobId": "ing_01J8Z4Q7X3" }
+```
+
+The delete is conditioned on the `updated_at` it decided on, so a job that resumed in the meantime is left alone instead of being removed mid-flight. It also waits for that job's own pending mirror write, bounded by `LLMWIKI_INGEST_JOB_FLUSH_TIMEOUT_MS`: a mirror write landing after the delete would re-insert the row, which is how a deleted job comes back.
+
+### Retry
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:4173/api/ingest/jobs/ing_01J8Z4Q7X3/retry?stackId=<id>'
+```
+
+```json
+{
+  "jobId": "ing_01J8Z4R2B6",
+  "status": "queued",
+  "stage": "queued",
+  "ingest": { "status": "queued", "attempts": [] },
+  "compile": { "status": "queued", "progress": null }
+}
+```
+
+`202 Accepted` with a **new** job id, byte for byte what `{"async": true}` answers: a retry enqueues a fresh ingest of the same source rather than resetting the old row.
+
+**The original row is never written.** No status changes and no counter moves, so the job that failed keeps saying what actually happened and the new job reports what happens next. A retry that marked the old row retried would erase the record and make the reporting complaint permanent.
+
+### Status codes
+
+| Route | Status | Meaning |
+| --- | --- | --- |
+| `DELETE` | `200` | removed |
+| `DELETE` | `404` `job_not_found` | this Stack has never had that id |
+| `DELETE` | `409` `job_still_working` | non-terminal and inside the stuck bound, so it was not removed |
+| `DELETE` | `409` `job_changed` | the row moved between the decision and the delete; retry the delete |
+| `DELETE` | `409` `mirror_pending` | a mirror write for that job is still landing; retry the delete |
+| `POST …/retry` | `202` | accepted; the body names the NEW job |
+| `POST …/retry` | `404` `job_not_found` | this Stack has never had that id |
+| `POST …/retry` | `409` `job_still_working` | non-terminal and inside the stuck bound, so nothing was enqueued |
+| both | `400` `invalid_request` | malformed `stackId` |
+| both | `404` / `409` / `503` | the shared Stack envelopes: unknown, inactive, unnamed, or the lookup failed |
+| both | `503` `jobs_unavailable` | this host keeps jobs in memory only; no database is configured, so there is no stored job to recover |
+
+A refusal writes nothing: the stored row is byte-identical afterwards, and a refused retry enqueues no job at all. If you are testing that, compare the whole row and the row count — never one column, because a rewrite that moves `updated_at` leaves any counter unchanged.
+
+---
+
 ## Progress is never invented
 
 There is **no percentage field**. `progress` is either `null` or an exact pair:
@@ -227,5 +326,5 @@ Poll a job's snapshot if you need to keep a record beyond that window; the failu
 ## Limits worth knowing
 
 - **One ingest at a time.** Ingestion takes the project mutation lock and fails fast rather than queueing, so a second `POST /api/ingest` while one is running answers `409 busy`. That is a retry signal, not a failure.
-- **`compile: busy` is not a failure.** The source is on disk; only the compile needs a retry.
-- **No cancellation.** A running job is a process inside a transaction; cancelling it would mean killing a half-applied write. A retry is a new `POST`.
+- **`compile: busy` is not a failure.** The source is on disk; only the compile needs a retry — `compile.retryable` is `true`, and `POST /api/ingest/jobs/:jobId/retry` is the retry.
+- **No cancellation.** A running job is a process inside a transaction; cancelling it would mean killing a half-applied write. Removing or re-running a job that has finished — or that has been silent past the stuck bound — is `DELETE` and `POST …/retry` above.

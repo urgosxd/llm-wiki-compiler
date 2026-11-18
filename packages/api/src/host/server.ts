@@ -72,9 +72,20 @@ import { createViewerHandler, type ViewerRequestHandler } from "@repo/wiki/viewe
 import { handleApiRequest, type ApiDeps, type IngestDimensionsPort } from "./api.js";
 import { createDimensionsPort } from "../dimensions/port.js";
 import { handleMcpHttp, isMcpHttpPath } from "./mcp-http.js";
-import { createJobRegistry, type JobRegistry } from "@repo/wiki/job-registry";
-import { createDurableJobRegistry, createIngestJobMirrorQueue, resolveMirrorFlushTimeoutMs, type IngestJobMirrorQueue } from "@repo/wiki/job-durable-registry";
+import {
+  createJobRegistry,
+  type JobRegistry,
+  type RecoverableJobRegistry,
+} from "@repo/wiki/job-registry";
+import { createDurableJobRegistry, createIngestJobMirrorQueue, resolveMirrorFlushTimeoutMs, type DurableJobRegistry, type IngestJobMirrorQueue } from "@repo/wiki/job-durable-registry";
 import { listIngestJobs, readIngestJob } from "@repo/wiki/job-store";
+import {
+  listStackIds,
+  settleAbandonedJobs,
+  type ReapOptions,
+  type ReapOutcome,
+} from "@repo/wiki/job-reaper";
+import { resolveIngestJobStuckAfterMs } from "@repo/wiki/job-status";
 import { stackExists } from "@repo/wiki/stack-store";
 import type { DurableJobReads } from "@repo/wiki/viewer-api-ingest-jobs";
 import {
@@ -218,6 +229,16 @@ function boundJobStackId(env: NodeJS.ProcessEnv): string | undefined {
   return named === "" ? undefined : named;
 }
 
+/** The message an unexpected value carries, for a line an operator has to read. */
+function detailOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Write one line to the sink every ingest-job report uses. */
+function writeIngestJobLine(line: string): void {
+  process.stderr.write(`[ingest-job] ${line}\n`);
+}
+
 /**
  * Report a mirror write failure without failing the job it describes.
  *
@@ -227,8 +248,116 @@ function boundJobStackId(env: NodeJS.ProcessEnv): string | undefined {
  * @param error - What the mirror write threw.
  */
 function reportMirrorFailure(error: unknown): void {
-  const detail = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`[ingest-job] durable mirror failed: ${detail}\n`);
+  writeIngestJobLine(`durable mirror failed: ${detailOf(error)}`);
+}
+
+/** Longest delay a platform timer accepts; anything above it fires immediately. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
+/**
+ * Await `work`, and stop waiting for it after `timeoutMs`.
+ *
+ * `undefined` is the answer for "still running when the bound expired", which a caller reports
+ * and then moves past. Without it the boot would inherit the lifespan of a database round trip
+ * it cannot control.
+ *
+ * @param work - What to wait for.
+ * @param timeoutMs - How long the caller is willing to wait.
+ * @returns The value, or `undefined` when the bound expired first.
+ */
+function waitAtMost<T>(work: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  return new Promise<T | undefined>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(undefined), Math.min(timeoutMs, MAX_TIMER_DELAY_MS));
+    // Unreferenced: a bound that has not expired is never a reason to keep a process alive.
+    timer.unref();
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
+/**
+ * Report what a boot reap did.
+ *
+ * Named ids, not a count: an operator who saw a row stop saying `running` needs to be able to
+ * find WHICH rows this process settled. Silent when there was nothing to say, so an ordinary
+ * boot stays quiet.
+ *
+ * @param outcome - What the reap settled and skipped.
+ */
+function reportBootReap(outcome: ReapOutcome): void {
+  if (outcome.settled.length === 0 && outcome.skipped === 0) return;
+  const ids = outcome.settled.map((row) => row.jobId).join(", ");
+  const left = outcome.skipped === 0 ? "" : `; left ${outcome.skipped} live job(s) alone`;
+  writeIngestJobLine(`boot reaper settled ${outcome.settled.length} abandoned job(s): ${ids}${left}`);
+}
+
+/**
+ * Settle the `wiki.ingest_job` rows a previous process left behind, once, at boot.
+ *
+ * THE case the reaper exists for: a restart kills the process that owned a job, and its row
+ * would otherwise say `running` forever. It runs here rather than on a read because a status
+ * read must never mutate a row, and rather than on a route because a `DELETE` is what an
+ * operator already has for a row they can see.
+ *
+ * Three properties this function owes its caller, in order of importance:
+ *
+ *  - it can never prevent the host from starting. Every failure — a database that is gone, a
+ *    schema that is not applied yet, a bound that expires — is REPORTED and swallowed, because
+ *    a reaper that blocks boot is a worse outage than the stale row it was clearing;
+ *  - it can never HANG the host from starting, which is what the bound is for: it waits at most
+ *    `LLMWIKI_INGEST_JOB_FLUSH_TIMEOUT_MS`, the same "how long we wait on a database that may be
+ *    gone" number a shutdown uses;
+ *  - it names what it settled, on the sink every ingest-job report uses.
+ *
+ * @param env - Environment this host was started with; defaults to `process.env`.
+ * @param registry - This host's live registry, so a job this process is still running is never
+ *   settled. Absent only for a caller that holds no live jobs.
+ * @returns What was settled, or `undefined` when there is no database or the bound expired.
+ */
+export async function reapAbandonedJobsAtBoot(
+  env: NodeJS.ProcessEnv = process.env,
+  registry?: Pick<JobRegistry, "get">,
+): Promise<ReapOutcome | undefined> {
+  // The explicit file mode: no database, so there is nowhere durable to reap from.
+  if (!isDatabaseConfigured(env)) return undefined;
+  const dimensionsDb = createDimensionsDatabase(env);
+  // `now` is taken BEFORE the scan, so every transition that lands afterwards carries a later
+  // stamp and the store's `updated_at` guard refuses THIS run instead of the other way round.
+  const options: ReapOptions = {
+    now: new Date(),
+    stuckAfterMs: resolveIngestJobStuckAfterMs(env),
+    ...(registry === undefined ? {} : { registry }),
+  };
+  try {
+    const outcome = await waitAtMost(
+      listStackIds(dimensionsDb.db).then((stackIds) =>
+        settleAbandonedJobs(dimensionsDb.db, stackIds, options),
+      ),
+      resolveMirrorFlushTimeoutMs(env),
+    );
+    if (outcome === undefined) {
+      writeIngestJobLine("boot reaper did not finish inside its bound; the next boot retries");
+      return undefined;
+    }
+    reportBootReap(outcome);
+    return outcome;
+  } catch (error) {
+    // Deliberate: see this function's header. A stale row is reported, never fatal to boot.
+    writeIngestJobLine(`boot reaper failed: ${detailOf(error)}`);
+    return undefined;
+  } finally {
+    // The pool is this call's own and nothing waits for it again: ending it is best-effort, and
+    // awaiting it here would hand the boot back the unbounded wait the bound just removed.
+    void dimensionsDb.close().catch(() => undefined);
+  }
 }
 
 /**
@@ -292,7 +421,7 @@ function stackBoundRegistry(
   env: NodeJS.ProcessEnv,
   stackId: string,
   queue: IngestJobMirrorQueue | undefined,
-): JobRegistry {
+): DurableJobRegistry {
   const dimensionsDb = createDimensionsDatabase(env);
   return createDurableJobRegistry(createJobRegistry(), {
     db: dimensionsDb.db,
@@ -323,7 +452,7 @@ function stackBoundRegistry(
  */
 function createNamedJob(
   live: JobRegistry,
-  owners: Map<string, JobRegistry>,
+  owners: Map<string, RecoverableJobRegistry>,
   db: DimensionsHandle,
   source: string,
   now: Date,
@@ -354,12 +483,15 @@ function createNamedJob(
  * @param queue - Write queue every per-job wrapper shares, and the one close flushes.
  * @returns The per-job registry.
  */
-function unboundStackRegistry(env: NodeJS.ProcessEnv, queue: IngestJobMirrorQueue | undefined): JobRegistry {
+function unboundStackRegistry(
+  env: NodeJS.ProcessEnv,
+  queue: IngestJobMirrorQueue | undefined,
+): RecoverableJobRegistry {
   const dimensionsDb = createDimensionsDatabase(env);
   const live = createJobRegistry();
-  const owners = new Map<string, JobRegistry>();
+  const owners = new Map<string, RecoverableJobRegistry>();
   /** The wrapper that owns `id`, falling back to the live store for a job nothing created here. */
-  const ownerOf = (id: string): JobRegistry => owners.get(id) ?? live;
+  const ownerOf = (id: string): RecoverableJobRegistry => owners.get(id) ?? live;
   return {
     create: (source, now, stackId) =>
       createNamedJob(live, owners, dimensionsDb.db, source, now, stackId, queue),
@@ -368,6 +500,18 @@ function unboundStackRegistry(env: NodeJS.ProcessEnv, queue: IngestJobMirrorQueu
     patchIngest: (id, patch, now) => ownerOf(id).patchIngest(id, patch, now),
     patchCompile: (id, patch, now) => ownerOf(id).patchCompile(id, patch, now),
     patchAttempts: (id, attempts, now) => ownerOf(id).patchAttempts(id, attempts, now),
+    /**
+     * Drop the live entry, through the wrapper that owns it.
+     *
+     * This literal DELEGATES, so a missing `delete` was not a missing behaviour but a missing
+     * contract: the recovery path in `api.ts` would have removed the durable row and left the
+     * live entry behind, which is the status route answering for a job that no longer exists.
+     * The entry is dropped from the index too, so a deleted job cannot keep its wrapper alive.
+     */
+    delete: (id) => {
+      ownerOf(id).delete(id);
+      owners.delete(id);
+    },
     clear: () => {
       live.clear();
       owners.clear();
@@ -394,7 +538,7 @@ function unboundStackRegistry(env: NodeJS.ProcessEnv, queue: IngestJobMirrorQueu
 export function durableRegistryFor(
   env: NodeJS.ProcessEnv = process.env,
   queue?: IngestJobMirrorQueue,
-): JobRegistry {
+): RecoverableJobRegistry {
   if (!isDatabaseConfigured(env)) return createJobRegistry();
   const bound = boundJobStackId(env);
   return bound === undefined ? unboundStackRegistry(env, queue) : stackBoundRegistry(env, bound, queue);
@@ -644,8 +788,12 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
     ingestJobs?: JobRegistry;
     viewerConfig?: ApiDeps["viewerConfig"];
     dimensionsPort: IngestDimensionsPort;
+    jobMirrorQueue: ApiDeps["jobMirrorQueue"];
   } = {
     ingestJobs,
+    // The SAME queue the registry mirrors through, so a delete waits for that job's own
+    // pending write. A route draining a different queue would order nothing at all.
+    jobMirrorQueue,
     // Composed, never omitted: see `HostOptions.dimensionsPort`. A host always holds
     // a real port, so the mutation mount's required-port refusal is unreachable from
     // here and the container cannot ship dimension-less.
@@ -674,6 +822,12 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
     );
     dispatch(req, res);
   });
+
+  // The rows a previous process left behind are settled HERE: after the registry exists (so a
+  // job this process already holds is never settled) and before the listener accepts work, so a
+  // restart cannot leave a row that every surface reads as work in progress. Bounded and
+  // non-fatal by construction: see `reapAbandonedJobsAtBoot`.
+  await reapAbandonedJobsAtBoot(process.env, ingestJobs);
 
   await listenOn(server, port, host);
   const address = server.address() as AddressInfo | null;

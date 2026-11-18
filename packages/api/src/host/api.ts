@@ -1,7 +1,8 @@
 /**
  * @file src/host/api.ts
- * @description The official mutation endpoints: `POST /api/ingest` and
- * `POST /api/compile`.
+ * @description The official mutation endpoints: `POST /api/ingest`,
+ * `POST /api/compile`, and the two job-recovery routes `DELETE /api/ingest/jobs/:jobId`
+ * and `POST /api/ingest/jobs/:jobId/retry`.
  *
  * ## Why these are the official surface
  *
@@ -41,6 +42,19 @@
  * open still gets progress. The synchronous contract is untouched for every
  * existing client.
  *
+ * ## And a job that will never move again can be cleared or re-run
+ *
+ * The reporter's second complaint was "no hay manera de eliminarlo o que reintente": a
+ * tracked job that never settles stayed in the table forever, and the only surface that
+ * mentioned it was a read. Both verbs live HERE because both MUTATE — `GET` on the same
+ * prefix stays on the viewer, where its origin policy and security headers already run.
+ *
+ * Neither route invents a policy: `@repo/wiki/job-delete` owns which rows may be cleared,
+ * and the retry gate asks that same question, so a job that may not be deleted may not be
+ * re-run either. A retry never writes the row it was asked about — it starts a NEW job
+ * through the accepted-ingest path, because marking the old row retried would erase what
+ * actually happened and make the reporting complaint permanent.
+ *
  * ## Every request names its own Stack
  *
  * Both routes settle the Stack the REQUEST names and refuse by name when it names none
@@ -63,9 +77,16 @@ import { compileAndReport } from "@repo/wiki/compiler";
 import { LockBusyError } from "@repo/wiki/utils-lock";
 import { applySecurityHeaders, validateOriginHeaders } from "@repo/wiki/viewer-server";
 import type { ViewerServerConfig } from "@repo/wiki/viewer-server";
-import type { JobRegistry } from "@repo/wiki/job-registry";
+import type { JobRegistry, RecoverableJobRegistry } from "@repo/wiki/job-registry";
 import { runIngestJob } from "@repo/wiki/job-run";
-import type { IngestJobAccepted } from "@repo/wiki/job-types";
+import { deletabilityOf, deleteRecoverableJob } from "@repo/wiki/job-delete";
+import type { DeleteRefusalReason } from "@repo/wiki/job-delete";
+import { readIngestJob } from "@repo/wiki/job-store";
+import { resolveIngestJobStuckAfterMs } from "@repo/wiki/job-status";
+import type { JobStatusOptions } from "@repo/wiki/job-status";
+import { resolveMirrorFlushTimeoutMs } from "@repo/wiki/job-durable-registry";
+import type { IngestJobMirrorQueue } from "@repo/wiki/job-durable-registry";
+import type { IngestJob, IngestJobAccepted } from "@repo/wiki/job-types";
 import type { CompileResult, IngestResult } from "@repo/wiki/utils-types";
 import { requireDimensionsPort, stackIdProblem } from "@repo/foundation";
 import { buildIngestEnv } from "@repo/wiki/ingest-env";
@@ -190,6 +211,23 @@ export interface ApiDeps {
    * guessed, because a wrong config would reject every legitimate request.
    */
   readonly viewerConfig?: ViewerServerConfig;
+  /**
+   * Mirror write queue the delete route drains before it touches a row.
+   *
+   * The host passes the SAME queue its registry mirrors through. This is not an optimisation:
+   * `saveIngestJob` is an upsert, so a write still queued for a job commits after that job's
+   * row is removed and re-inserts it. Absent means no ordering is enforced, which is only
+   * honest for a mount whose jobs are written directly.
+   */
+  readonly jobMirrorQueue?: IngestJobMirrorQueue;
+  /**
+   * Clock the recovery routes measure the stuck bound against.
+   *
+   * Injected so a case can pin the instant, exactly as the viewer's status route does: a
+   * deletability decision is a comparison against a bound, and a case that reads the wall
+   * clock is a case that changes its answer at midnight.
+   */
+  readonly now?: () => Date;
 }
 
 /**
@@ -306,14 +344,9 @@ async function readIngestRequest(
     writeJsonError(res, 400, "invalid_request", "body must be {\"source\": \"<url-or-path>\"}");
     return undefined;
   }
-  const stackId = resolveRequestStack(req, request);
-  if (stackId !== undefined) {
-    const problem = stackIdProblem(stackId);
-    if (problem !== undefined) {
-      writeJsonError(res, 400, "invalid_request", problem);
-      return undefined;
-    }
-  }
+  const named = namedStackOf(req, request, res);
+  if (named === undefined) return undefined;
+  const stackId = named.value;
   // The Stack is settled for EVERY request, not only for one that named an id. A well-formed
   // id naming no Stack is refused before any work starts (a 202 for work that cannot be
   // recorded was b202e249's bug), and a request that names NONE is refused by name too: the
@@ -326,6 +359,30 @@ async function readIngestRequest(
     return undefined;
   }
   return { ...request, source, ...(stackId === undefined ? {} : { stackId }) };
+}
+
+/**
+ * The Stack a request names, shape-validated, with the 400 already written when it is malformed.
+ *
+ * One function because THREE routes settle the same request fact and must not each spell it
+ * differently: a 400 for a malformed id, from one place, on every mutation the mount serves.
+ *
+ * @param req - Incoming request, for its query string.
+ * @param body - Parsed ingest body, when the route carries one.
+ * @param res - Response a malformed id is reported on.
+ * @returns The id the request named (possibly `undefined`), or `undefined` when a 400 was sent.
+ */
+function namedStackOf(
+  req: IncomingMessage,
+  body: IngestRequest | undefined,
+  res: ServerResponse,
+): { value: string | undefined } | undefined {
+  const stackId = resolveRequestStack(req, body);
+  if (stackId === undefined) return { value: undefined };
+  const problem = stackIdProblem(stackId);
+  if (problem === undefined) return { value: stackId };
+  writeJsonError(res, 400, "invalid_request", problem);
+  return undefined;
 }
 
 /**
@@ -519,6 +576,270 @@ async function handleCompile(
 }
 
 /**
+ * Prefix under which this mount addresses ONE job.
+ *
+ * `GET` on it is a read and belongs to the viewer's route table; removing and re-running are
+ * mutations and belong beside the mount that already checks the origin policy per request.
+ */
+const JOB_PATH_PREFIX = "/api/ingest/jobs/";
+
+/** Suffix the retry route appends to a job id. */
+const RETRY_PATH_SUFFIX = "/retry";
+
+/** Status and error code each delete refusal answers with. */
+const DELETE_REFUSAL_HTTP: Record<DeleteRefusalReason, { status: number; code: string }> = {
+  "unknown-job": { status: 404, code: "job_not_found" },
+  "still-live": { status: 409, code: "job_still_working" },
+  changed: { status: 409, code: "job_changed" },
+};
+
+/**
+ * The job id a recovery path addresses, or `undefined` when the path is not ours.
+ *
+ * @param pathname - Request path, already parsed.
+ * @param suffix - Sub-path the route requires after the id; `""` for the job itself.
+ * @returns The id, or `undefined` for a path this mount does not serve.
+ */
+function jobIdFromPath(pathname: string, suffix: string = ""): string | undefined {
+  if (!pathname.startsWith(JOB_PATH_PREFIX) || !pathname.endsWith(suffix)) return undefined;
+  const raw = pathname.slice(JOB_PATH_PREFIX.length, pathname.length - suffix.length);
+  // A job id is `ing_<ULID>`: no separator and nothing to decode. Anything else — a nested
+  // path, an empty id, a percent-escape — is another mount's request, not a job this serves.
+  if (raw === "" || raw.includes("/") || raw.includes("%")) return undefined;
+  return raw;
+}
+
+/** The database and Stack a recovery request works against. */
+interface RecoveryTarget {
+  /** Opened for this request; the handler closes it. */
+  readonly dimensionsDb: ReturnType<typeof createDimensionsDatabase>;
+  /** The Stack the request named, already confirmed to exist and be active. */
+  readonly stackId: string;
+}
+
+/** What a host with no database answers: there is no stored job to recover. */
+const NO_STORE_MESSAGE =
+  "this host tracks ingest jobs in memory only, so there is no stored job to recover";
+
+/**
+ * Settle what a recovery request needs, answering the refusal itself.
+ *
+ * The order is this mount's existing order — shape (400), then the shared tri-state Stack
+ * lookup (404/409/503) — behind one addition: a host with NO database keeps its jobs in
+ * process memory only, so there is no durable row to remove or re-run and recovery answers
+ * 503 rather than inventing a file-mode policy of its own.
+ *
+ * @param req - Incoming request, for the Stack it names.
+ * @param res - Response a refusal is written to.
+ * @returns The target, or `undefined` when a response was already sent.
+ */
+async function recoveryTarget(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<RecoveryTarget | undefined> {
+  if (!isDatabaseConfigured()) {
+    writeJsonError(res, 503, "jobs_unavailable", NO_STORE_MESSAGE);
+    return undefined;
+  }
+  const named = namedStackOf(req, undefined, res);
+  if (named === undefined) return undefined;
+  const stackId = named.value;
+  const refusal = await stackRefusalFor(stackId);
+  if (refusal !== undefined) {
+    writeStackRefusal(res, refusal);
+    return undefined;
+  }
+  // With a database configured `stackRefusalFor` refuses an unnamed Stack, so this branch
+  // cannot answer anything else; it keeps the narrowing explicit instead of asserted away.
+  if (stackId === undefined) {
+    writeStackRefusal(res, unnamedStackRefusal());
+    return undefined;
+  }
+  return { dimensionsDb: createDimensionsDatabase(), stackId };
+}
+
+/**
+ * The clock and the stuck bound a recovery decision is taken against.
+ *
+ * @param deps - Mount dependencies, carrying an injected clock when a case pinned one.
+ * @returns The options the delete policy reads.
+ */
+function recoveryStatusOptions(deps: ApiDeps): JobStatusOptions {
+  return { now: (deps.now ?? (() => new Date()))(), stuckAfterMs: resolveIngestJobStuckAfterMs() };
+}
+
+/**
+ * The live-drop capability of the mounted registry, when it offers one.
+ *
+ * Checked rather than assumed because the capability is separate from `JobRegistry` on purpose
+ * (see `registry.ts`): a host may build its registry as a delegating object, and a delete must
+ * know the answer BEFORE it removes the durable row — otherwise it leaves the live entry behind
+ * and the status route keeps answering for a job that no longer exists.
+ *
+ * @param registry - The mounted registry, when one is mounted.
+ * @returns The capability, or `undefined` when this registry cannot drop a job.
+ */
+function liveDropOf(registry: JobRegistry | undefined): RecoverableJobRegistry | undefined {
+  if (registry === undefined) return undefined;
+  if (typeof (registry as { delete?: unknown }).delete !== "function") return undefined;
+  return registry as RecoverableJobRegistry;
+}
+
+/**
+ * Wait for the mirror writes queued for ONE job, bounded, before its row is touched.
+ *
+ * The bound is the shutdown-flush bound (`resolveMirrorFlushTimeoutMs`), which is this
+ * codebase's one answer to "how long may a caller wait for the mirror". A second number here
+ * would answer the same question twice and have to be documented in step with the first.
+ *
+ * @param queue - The mirror queue, when the mount was given one.
+ * @param jobId - The job whose queued writes must land first.
+ * @returns True when everything queued for that job had landed.
+ */
+function drainJobMirror(queue: IngestJobMirrorQueue | undefined, jobId: string): Promise<boolean> {
+  if (queue === undefined) return Promise.resolve(true);
+  return queue.drainJob(jobId, resolveMirrorFlushTimeoutMs());
+}
+
+/**
+ * What a caller is told when a retry was refused because the job may be running.
+ *
+ * @param job - The stored snapshot, named so the caller can look it up.
+ * @returns The refusal message.
+ */
+function retryRefusalMessage(job: IngestJob): string {
+  return (
+    `Ingest job '${job.id}' is still working (ingest '${job.ingest.status}', ` +
+    `compile '${job.compile.status}'), so it was not retried. A job that has made no ` +
+    "progress for longer than the stuck bound can be retried."
+  );
+}
+
+/**
+ * `DELETE /api/ingest/jobs/:jobId` — clear one job row.
+ *
+ * The policy is NOT reimplemented here: `deleteRecoverableJob` decides what may be removed and
+ * deletes at the version it decided on, so a job that resumed in between is left alone. This
+ * handler adds transport and one thing the policy cannot see — the mirror write queue, whose
+ * pending write for THIS job would otherwise re-insert the row after it was removed.
+ *
+ * @param root - Project root, for the mount's error envelope.
+ * @param jobId - The job the request addresses.
+ * @param req - Incoming request, for the Stack it names.
+ * @param res - Response to write.
+ * @param deps - Mount dependencies.
+ */
+async function handleJobDelete(
+  root: string,
+  jobId: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ApiDeps,
+): Promise<void> {
+  const target = await recoveryTarget(req, res);
+  if (target === undefined) return;
+  try {
+    const live = liveDropOf(deps.ingestJobs);
+    // Refused BEFORE any write: a registry that cannot drop the live entry would have the row
+    // removed and the status route still serving the job, which is a worse state than refusing.
+    if (deps.ingestJobs !== undefined && live === undefined) {
+      throw new Error("this host's job registry cannot drop a live job, so it was not deleted");
+    }
+    if (!(await drainJobMirror(deps.jobMirrorQueue, jobId))) {
+      const message = `a write for ingest job '${jobId}' is still landing, so it was not deleted. Retry the delete.`;
+      writeJsonError(res, 409, "mirror_pending", message);
+      return;
+    }
+    const outcome = await deleteRecoverableJob(target.dimensionsDb.db, target.stackId, jobId, {
+      ...recoveryStatusOptions(deps),
+      ...(live === undefined ? {} : { registry: live }),
+    });
+    if (outcome.deleted) {
+      writeJson(res, 200, { deleted: true, jobId });
+      return;
+    }
+    const http = DELETE_REFUSAL_HTTP[outcome.reason];
+    writeJsonError(res, http.status, http.code, outcome.message);
+  } catch (error) {
+    respondToThrow(res, root, error);
+  } finally {
+    await target.dimensionsDb.close();
+  }
+}
+
+/**
+ * `POST /api/ingest/jobs/:jobId/retry` — run the same source again, as a NEW job.
+ *
+ * The row this request names is READ and never written: no status is rewritten and no counter
+ * is bumped, because a retry that marked the old row retried would erase what happened. The
+ * work goes through {@link acceptAsyncIngest}, so a retry answers exactly what starting an
+ * ingest answers — 202 with the new job id — and inherits that path's refusals.
+ *
+ * @param root - Project root the new job mutates.
+ * @param jobId - The job the request addresses.
+ * @param req - Incoming request, for the Stack it names.
+ * @param res - Response to write.
+ * @param deps - Mount dependencies.
+ */
+async function handleJobRetry(
+  root: string,
+  jobId: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ApiDeps,
+): Promise<void> {
+  const target = await recoveryTarget(req, res);
+  if (target === undefined) return;
+  try {
+    const job = await readIngestJob(target.dimensionsDb.db, target.stackId, jobId);
+    if (job === undefined) {
+      writeJsonError(res, 404, "job_not_found", `No ingest job '${jobId}' for this Stack.`);
+      return;
+    }
+    // The SAME policy the delete asks: a row may be re-run exactly when it may be cleared. A
+    // job inside the bound may be running right now, and a second ingest of it is how the
+    // reported hang was produced in the first place.
+    if (deletabilityOf(job, recoveryStatusOptions(deps)) === "working") {
+      writeJsonError(res, 409, "job_still_working", retryRefusalMessage(job));
+      return;
+    }
+    acceptAsyncIngest(root, { source: job.source, stackId: target.stackId }, res, deps);
+  } catch (error) {
+    respondToThrow(res, root, error);
+  } finally {
+    await target.dimensionsDb.close();
+  }
+}
+
+/**
+ * Route a job-recovery request, or report that this method and path are not ours.
+ *
+ * `DELETE` addresses the job itself and `POST` its `/retry` sub-path. A `GET` on the same
+ * prefix stays the viewer's read, which is why nothing here claims any other method.
+ *
+ * @param root - Project root the mutations apply to.
+ * @param req - Incoming request.
+ * @param res - Response to write when handled.
+ * @param pathname - Request path, already parsed.
+ * @param deps - Mount dependencies.
+ * @returns True when this module owned the request.
+ */
+async function handleRecoveryRoute(
+  root: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string,
+  deps: ApiDeps,
+): Promise<boolean> {
+  const jobId = req.method === "DELETE" ? jobIdFromPath(pathname) : req.method === "POST" ? jobIdFromPath(pathname, RETRY_PATH_SUFFIX) : undefined;
+  if (jobId === undefined) return false;
+  if (!passesOriginPolicy(req, res, deps)) return true;
+  if (req.method === "DELETE") await handleJobDelete(root, jobId, req, res, deps);
+  else await handleJobRetry(root, jobId, req, res, deps);
+  return true;
+}
+
+/**
  * Route an API request, or report that this path is not ours.
  *
  * Returning `false` lets the caller fall through to the viewer, so the two mounts
@@ -546,5 +867,5 @@ export async function handleApiRequest(
     await handleCompile(root, req, res);
     return true;
   }
-  return false;
+  return handleRecoveryRoute(root, req, res, pathname, deps);
 }

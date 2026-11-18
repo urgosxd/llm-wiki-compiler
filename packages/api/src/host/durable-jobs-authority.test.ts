@@ -28,6 +28,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { durableJobReadsFor, durableRegistryFor } from "./server.js";
+import type { RecoverableJobRegistry } from "@repo/wiki/job-registry";
 
 /** The two variables whose combination this suite varies. */
 const STACK_ENV_VAR = "AKS_STACK_ID";
@@ -48,6 +49,21 @@ const SOME_STACK_ID = "0b6d1f2e-3c4a-4b5c-8d9e-0f1a2b3c4d5e";
 /** A database configured, and no Stack bound by the process: S6's fresh-deployment shape. */
 const UNBOUND_ENV = { [DATABASE_ENV_VAR]: UNREACHABLE_DSN };
 
+/**
+ * Create one job that NAMES a Stack, in the registry `env` produces.
+ *
+ * Three cases need the same two lines, and the delegating literal is the surface under test in
+ * more than one of them: one copy keeps "a named job is accepted" meaning the same thing
+ * everywhere it is asserted.
+ *
+ * @param env - Environment the registry is built from.
+ * @returns The registry, and the id of the job it now holds.
+ */
+function namedJob(env: NodeJS.ProcessEnv): { registry: RecoverableJobRegistry; jobId: string } {
+  const registry = durableRegistryFor(env);
+  return { registry, jobId: registry.create("notes/a.md", new Date(), SOME_STACK_ID).id };
+}
+
 describe("job durability follows the Stack the job names", () => {
   it("builds a registry on a database with no bound Stack, instead of refusing to build one", () => {
     // THE REVERSAL: to-day this threw, and that throw is what stopped the host from binding.
@@ -67,10 +83,9 @@ describe("job durability follows the Stack the job names", () => {
   it("serves a job that names a Stack, so a named request is never refused", () => {
     // The other half of the same rule: the refusal is about a job with NO Stack, never about
     // having no bound one. A request that names its Stack is attributable and must run.
-    const registry = durableRegistryFor(UNBOUND_ENV);
-    const job = registry.create("notes/a.md", new Date(), SOME_STACK_ID);
-    expect(registry.get(job.id)?.id).toBe(job.id);
-    expect(registry.list().map((retained) => retained.id)).toContain(job.id);
+    const { registry, jobId } = namedJob(UNBOUND_ENV);
+    expect(registry.get(jobId)?.id).toBe(jobId);
+    expect(registry.list().map((retained) => retained.id)).toContain(jobId);
   });
 
   it("refuses the host's own job view while the per-Stack view stays open", async () => {
@@ -100,5 +115,29 @@ describe("job durability follows the Stack the job names", () => {
     expect(typeof reads?.list).toBe("function");
     expect(typeof reads?.get).toBe("function");
     expect(typeof reads?.forStack).toBe("function");
+  });
+});
+
+/**
+ * The recovery capability of the DELEGATING registry a database-with-no-bound-Stack host serves.
+ *
+ * Its own group because it is a different claim about a different surface: the group above pins
+ * what durability FOLLOWS, this one pins that a delete can clear what a read reports.
+ */
+describe("the live drop a recovery path needs", () => {
+  it("drops a live job on request, so a delete cannot leave the entry behind", () => {
+    // `durableRegistryFor` returns a DELEGATING literal in this shape. It used to offer every
+    // `JobRegistry` member and no recovery one, so an HTTP delete removed the durable row and
+    // left the live entry: the status route still answering for a job that no longer existed,
+    // which is the hazard a delete over a delegating registry has to close, not document.
+    const { registry, jobId } = namedJob(UNBOUND_ENV);
+    expect(registry.get(jobId)?.id).toBe(jobId);
+    // The capability exists at all, which is what an HTTP delete needs before it removes a row.
+    expect(typeof registry.delete).toBe("function");
+
+    registry.delete(jobId);
+
+    expect(registry.get(jobId)).toBeUndefined();
+    expect(registry.list()).toEqual([]);
   });
 });
