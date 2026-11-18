@@ -22,7 +22,27 @@
 # A stdio server exits as soon as stdin closes. Under `docker compose up -d` there is
 # no stdin, so the container would start and stop instantly and read as a crash. The
 # compose file therefore keeps `stdin_open: true` and asks for `host` explicitly.
+#
+# ## Why the database DSN is bridged here, and why it comes first
+#
+# The operator is told to publish `AKS_DATABASE_URL`, while the graph routes read
+# `DATABASE_URL` and so does `scripts/apply-schemas.sh`. Nothing else in this image
+# joined the two names, so a run that set only the documented one had a reachable
+# `/health`, a 500 on every graph route, and a schema runner that exited 2 with
+# `error: no target. Pass a connection string or set DATABASE_URL.` Measured on the
+# built image, not inferred.
+#
+# The bridge is PRESERVING and stands before any dispatch below: a caller's own
+# `DATABASE_URL` always wins, a blank or unset one falls back to the published name,
+# and a blank pair stays empty rather than inventing a connection string — the DSN
+# arrives from the caller and is never baked into the image. It has to precede the
+# explicit-command branch because that branch is how the image runs its own schema
+# runner (`docker run <image> sh -c 'scripts/apply-schemas.sh'`), which is one of the
+# two commands the missing bridge broke.
 set -eu
+
+# The published DSN name, bridged to the name the server actually reads.
+export DATABASE_URL="${DATABASE_URL:-${AKS_DATABASE_URL:-}}"
 
 # The address the container will be reached on: the IPv4 address of the interface
 # that carries the default route.

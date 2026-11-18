@@ -16,18 +16,31 @@ lines, three stages — `FROM … AS build` at `:47`, `prod-deps` at `:113`, `ru
 `:148`). It documents one port, `EXPOSE 4173` (`Dockerfile:214`), and one entrypoint,
 `ENTRYPOINT ["/usr/local/bin/entry.sh"]` (`Dockerfile:226`).
 
-`docker/entry.sh:71-84` turns that entrypoint into two modes and nothing else:
+`docker/entry.sh:91-104` turns that entrypoint into two modes and nothing else:
 
 | How it is started             | What runs                                                              | What is served                                    |
 | ----------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------- |
-| `docker run <tag>` (default)  | `node /app/dist/api.js serve` (`docker/entry.sh:84`)                    | MCP over **stdio** — the union of all 17 tools    |
-| `LLMWIKI_MODE=host`           | `node /app/dist/api.js host --port $LLMWIKI_PORT` (`:64`, `:66`)        | viewer + graph + MCP at `/mcp`, default `4173` (`:61`) |
-| an explicit command           | run verbatim (`docker/entry.sh:71-74`)                                  | whatever that command serves                      |
+| `docker run <tag>` (default)  | `node /app/dist/api.js serve` (`docker/entry.sh:104`)                   | MCP over **stdio** — the union of all 17 tools    |
+| `LLMWIKI_MODE=host`           | `node /app/dist/api.js host --port $LLMWIKI_PORT` (`:84`, `:86`)        | viewer + graph + MCP at `/mcp`, default `4173` (`:81`) |
+| an explicit command           | run verbatim (`docker/entry.sh:91-95`)                                  | whatever that command serves                      |
 
 Both modes start from one function, `createUnionMcpServer`
 (`packages/api/src/host/mcp-union.ts:93`): the wiki's own server plus
 `registerKgToolsOn`. An image that advertises one tool set over stdio and another over
 HTTP is the defect this shape exists to close, one transport at a time.
+
+**How each mode finds its database, and which name wins.** The operator is told to publish
+`AKS_DATABASE_URL`, while the graph routes read `DATABASE_URL`
+(`packages/llmwiki-kg/ts/src/config.ts:74`) and so does `scripts/apply-schemas.sh:60`. Nothing
+joined the two names, and the consequence was measured on the built image with only
+`AKS_DATABASE_URL` set: `/health` 200, `GET /stacks` 500, and the schema runner exiting 2 with
+`error: no target. Pass a connection string or set DATABASE_URL.` `docker/entry.sh:45` now carries
+`export DATABASE_URL="${DATABASE_URL:-${AKS_DATABASE_URL:-}}"` — the same preserving bridge the
+reference recipe has. **An explicit `DATABASE_URL` always wins**; a blank or unset one falls back
+to `AKS_DATABASE_URL`; a blank pair stays blank (the reference recipe's own decision) rather than
+inventing a DSN, so no connection string is baked into the image. It stands above the explicit
+command branch (`:94`) and above the mode dispatch (`:98`) because the image runs its own schema
+runner through that branch.
 
 **The second Dockerfile is not a deliverable.** `packages/llmwiki-kg/Dockerfile` and
 `packages/llmwiki-kg/docker/` remain in the tree as a reference build that ships nowhere;
