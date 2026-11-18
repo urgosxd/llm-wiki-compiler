@@ -64,6 +64,7 @@ import {
   deleteFixtureRows,
   ingestUrl,
   skipReason,
+  stackSnapshot,
   useDomainPrefix,
 } from "../ingest-harness.js";
 
@@ -111,16 +112,6 @@ function compileUrl(stackId: string, documentId: string): string {
  */
 const NOT_INGESTED_FACTS = ["has not been ingested", "stored chunks"] as const;
 
-/** What one Stack holds, so a refusal can be proved to have written nothing. */
-interface StackSnapshot {
-  readonly chunks: number;
-  readonly entities: number;
-  readonly relationships: number;
-  readonly evidence: number;
-  readonly log: number;
-  readonly documents: readonly { readonly id: string; readonly audit: unknown }[];
-}
-
 /** Builds an app with the production transaction shape and no classifier. */
 function buildApp(): Express {
   const wrap = createRequestTransactionWrapper(database());
@@ -139,46 +130,6 @@ function buildApp(): Express {
     res.status(404).json({ detail: "Not Found" });
   });
   return app;
-}
-
-/** Every row one Stack holds, counted, plus each document's audit blob. */
-async function stackSnapshot(stackId: string): Promise<StackSnapshot> {
-  return withFixtureTenant(database(), { stackId }, async (tx) => {
-    const counts = await tx.execute<Record<Counted, number>>(sql`
-      select
-        (select count(*)::int from document_chunks where stack_id = ${stackId}) as chunks,
-        (select count(*)::int from ontology_entities where stack_id = ${stackId}) as entities,
-        (select count(*)::int from ontology_relationships where stack_id = ${stackId}) as relationships,
-        (select count(*)::int from kg_evidence where stack_id = ${stackId}) as evidence,
-        (select count(*)::int from kg_classification_log where stack_id = ${stackId}) as log
-    `);
-    const documents = await tx.execute<{ id: string; audit: unknown }>(sql`
-      select id, audit from stack_documents where stack_id = ${stackId} order by id
-    `);
-    const row = counts[0];
-    return { ...counted(row), documents };
-  });
-}
-
-/** The counters `stackSnapshot` reads, so the fallback below stays exhaustive. */
-type Counted = "chunks" | "entities" | "relationships" | "evidence" | "log";
-
-/**
- * Reads the counters defensively: a missing row is a failed read, not a zero.
- *
- * The read above always returns exactly one row — every field is a scalar subquery — so
- * an absent row means the read itself failed. Throwing keeps that a loud failure instead
- * of a snapshot of `-1`s that would compare equal to another failed read.
- */
-function counted(row: Record<Counted, number> | undefined): Record<Counted, number> {
-  if (row === undefined) throw new Error("the stack snapshot read returned no row");
-  return {
-    chunks: row.chunks,
-    entities: row.entities,
-    relationships: row.relationships,
-    evidence: row.evidence,
-    log: row.log,
-  };
 }
 
 /**

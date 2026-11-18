@@ -53,7 +53,31 @@
  *   whitespace-only text and a document never ingested are byte-identical in storage.
  *   `404` would conflate "has no chunks" with "not stored", which S10 forbids; and a 200
  *   with zero counts would be indistinguishable from a document that simply had nothing
- *   in it.
+ *   in it;
+ * - a run whose planned extraction requests exceed the cap — `413`, carrying the cap
+ *   module's own sentence verbatim. This is the one status in the list chosen by
+ *   meaning rather than by convention, so the reasoning is written down:
+ *   `413 Payload Too Large` is the status for a request larger than the limit the server
+ *   will process, and the remedy the sentence names is exactly "raise the cap or ingest a
+ *   smaller document". `404` and `409` above are STATE refusals about rows, and `422` is
+ *   request validation; a cap breach is neither — the row exists, the chunks exist and
+ *   the request is well-formed. Borrowing any of those would name the wrong problem, and
+ *   a `500` would blame the server for a bound the caller can raise;
+ * - a cap variable that cannot be resolved at all (non-numeric, zero, negative) — `500`,
+ *   naming the variable. That one IS the deployment's fault and the caller cannot fix it,
+ *   so it must not be reported as a request problem.
+ *
+ * ## The spend brake (S1, S2)
+ *
+ * Extraction sends one chat request per chunk, so the planned request count is already in
+ * hand when the read stage returns: it is `read.chunks.length`, the number of
+ * `document_chunks` rows this run would extract from. Nothing is tokenised or modelled to
+ * obtain it, and no second estimate of cost is invented.
+ *
+ * The brake therefore runs between the read and {@link compileChunks}: over the cap the
+ * request is REFUSED, never truncated. Extracting a prefix of the chunks and reporting
+ * success is the silent partial result this repository keeps finding, and a graph built
+ * from part of a document reads exactly like a graph built from all of it.
  *
  * ## Compiling twice is safe (S4)
  *
@@ -64,6 +88,12 @@
 
 import { sql } from "drizzle-orm";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
+
+import {
+  ExtractionRequestCapError,
+  assertWithinExtractionRequestCap,
+  resolveExtractionRequestCap,
+} from "@repo/foundation/extraction-request-cap";
 
 import { loadStackCatalog } from "../../core/catalog/stack-catalog.js";
 import { bindCallerStack } from "../../core/stack_resolver.js";
@@ -95,6 +125,22 @@ import { IngestWiringError } from "./wiring.js";
 
 /** The status a document with no stored chunks is refused with. */
 const NO_STORED_CHUNKS_STATUS = 409;
+
+/**
+ * The status a run that would exceed the extraction request cap is refused with.
+ *
+ * `413 Payload Too Large` — see the module comment for why this is the honest status and
+ * why `404`, `409`, `422` and `500` are all worse answers to the same situation.
+ */
+const OVER_CAP_STATUS = 413;
+
+/**
+ * The status an unresolvable cap VARIABLE is answered with.
+ *
+ * A cap that cannot be parsed is a deployment defect, not a property of this request: the
+ * caller can neither see nor fix it, so it is not reported as a client error.
+ */
+const INVALID_CAP_STATUS = 500;
 
 /**
  * The refusal a document with no stored chunks earns, spelled once so a caller (and a
@@ -292,6 +338,23 @@ async function compileDocument(
   }
   const read = await run((tx) => loadCompileRead(tx, params, res));
   if (read === undefined) return;
+  // The brake (S1, S2): `read.chunks.length` IS the planned extraction request count,
+  // because extraction sends one chat request per chunk and these chunks are already in
+  // hand. Both refusals below answer before any provider is called and write nothing.
+  const capRun = resolveExtractionRequestCap();
+  if (capRun.kind === "invalid") {
+    sendApiError(res, apiError(INVALID_CAP_STATUS, capRun.problem));
+    return;
+  }
+  try {
+    assertWithinExtractionRequestCap(read.chunks.length, capRun.cap);
+  } catch (error) {
+    // Only the cap's own refusal is answered here; anything else is a real failure and
+    // still reaches the harness's 500 handler.
+    if (!(error instanceof ExtractionRequestCapError)) throw error;
+    sendApiError(res, apiError(OVER_CAP_STATUS, error.message));
+    return;
+  }
   const compiled = await compileChunks({
     chunks: read.chunks,
     input: read.input,

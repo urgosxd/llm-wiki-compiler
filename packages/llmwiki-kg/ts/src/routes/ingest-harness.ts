@@ -35,6 +35,7 @@ import { noDatabase } from "../testing/no-database.js";
 import { perRunDatabase } from "../testing/per-run-database.js";
 import { createIngestRouter } from "./ingest.js";
 import type { IngestRouterDependencies } from "./ingest.js";
+import { withFixtureTenant } from "./fixture-tenant.js";
 
 /**
  * The SERVER this process's own database is provisioned on.
@@ -198,6 +199,64 @@ export async function countFixtureRows(): Promise<number> {
     });
   }
   return total;
+}
+
+/** What one Stack holds, so a refusal can be proved to have written nothing. */
+export interface StackSnapshot {
+  readonly chunks: number;
+  readonly entities: number;
+  readonly relationships: number;
+  readonly evidence: number;
+  readonly log: number;
+  readonly documents: readonly { readonly id: string; readonly audit: unknown }[];
+}
+
+/** The counters {@link stackSnapshot} reads, so {@link counted} stays exhaustive. */
+type Counted = "chunks" | "entities" | "relationships" | "evidence" | "log";
+
+/**
+ * Reads the counters defensively: a missing row is a failed read, not a zero.
+ *
+ * Every field is a scalar subquery, so the read always returns exactly one row; an
+ * absent row therefore means the read itself failed. Throwing keeps that a loud failure
+ * instead of a snapshot of `-1`s that would compare equal to another failed read.
+ */
+function counted(row: Record<Counted, number> | undefined): Record<Counted, number> {
+  if (row === undefined) throw new Error("the stack snapshot read returned no row");
+  return {
+    chunks: row.chunks,
+    entities: row.entities,
+    relationships: row.relationships,
+    evidence: row.evidence,
+    log: row.log,
+  };
+}
+
+/**
+ * Every row one Stack holds, counted, plus each document's audit blob.
+ *
+ * A refusal is proved to have written nothing by comparing this before and after: the
+ * five counters cover the entity, relationship, chunk, evidence and classification-log
+ * tables, and `documents` carries the `audit` blob a run would rewrite.
+ *
+ * Shared by every `ingest-*` suite that asserts a refusal left storage alone, so the
+ * five counters are counted in exactly one place.
+ */
+export async function stackSnapshot(stackId: string): Promise<StackSnapshot> {
+  return withFixtureTenant(database(), { stackId }, async (tx) => {
+    const counts = await tx.execute<Record<Counted, number>>(sql`
+      select
+        (select count(*)::int from document_chunks where stack_id = ${stackId}) as chunks,
+        (select count(*)::int from ontology_entities where stack_id = ${stackId}) as entities,
+        (select count(*)::int from ontology_relationships where stack_id = ${stackId}) as relationships,
+        (select count(*)::int from kg_evidence where stack_id = ${stackId}) as evidence,
+        (select count(*)::int from kg_classification_log where stack_id = ${stackId}) as log
+    `);
+    const documents = await tx.execute<{ id: string; audit: unknown }>(sql`
+      select id, audit from stack_documents where stack_id = ${stackId} order by id
+    `);
+    return { ...counted(counts[0]), documents };
+  });
 }
 
 export function createTestApp(): Express {
