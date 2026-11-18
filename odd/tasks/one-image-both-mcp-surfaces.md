@@ -21,9 +21,9 @@ the KG `/mcp` app.
 
 ## Tasks
 
-- **T1** (S1) — Prepare checkout and commit this document. Commit: filled when made.
-- **T2** (S2, S3) — RED: a test against the built `dist/api.js` asserting the 17-name union set, failing because the three KG names are absent. Commit: pending.
-- **T3** (S2, S3, S4, S7, S8, S10) — Compose the union in `packages/api` and make T2 green. Commit: pending.
+- **T1** (S1) — Prepare checkout and commit this document. Commit: `b11b52c05ffbb2c6f0301805c839d5a1698c618a`.
+- **T2** (S2, S3) — RED: a test against the built `dist/api.js` asserting the 17-name union set, failing because the three KG names are absent. Done: `test/mcp/one-image-both-mcp-surfaces.test.ts` shipped in T3's commit, `c753989a712f786642ab79413b349e4e3cbd204a`, so no commit of its own.
+- **T3** (S2, S3, S4, S7, S8, S10) — Compose the union in `packages/api` and make T2 green. Done. Commit: `c753989a712f786642ab79413b349e4e3cbd204a`.
 - **T4** (S5, S6, S7) — Auth slice on `/mcp`, both directions asserted. Own commit, `Risk: item 2`. Commit: pending.
 - **T5** (S11) — Retire the second image from Dockerfile, CI and docs. Commit: pending.
 - **T6** (S9, S10, S12) — Independent verification and local image build evidence. Commit: pending.
@@ -47,3 +47,11 @@ the KG `/mcp` app.
   - `dist/` and `node_modules/` are absent in a fresh checkout of this branch; every claim about `dist/api.js` must be re-measured after a build, never inherited.
   - `scripts/apply-schemas.sh` already applies `packages/llmwiki-kg/db/schema.sql` (`:74`) and already lists `public.stacks` (`:129`) and `wiki.kg_extracted_chunks` (`:147`), so S9 is a regression check.
   - The wiki host `/mcp` is currently unauthenticated (`isMcpHttpPath`, `packages/api/src/host/mcp-http.ts:97`). S5 states the resulting single policy.
+- **L4** — T3 composition, as measured in `c753989a712f786642ab79413b349e4e3cbd204a`:
+  - The union lives in `packages/api/src/host/mcp-union.ts` and both transports start from `createUnionMcpServer`: `serve` (stdio) via `startUnionMcpServer`, `host` via the existing `mcpServerFactory` seam. `packages/wiki/**` is untouched, so the wiki package still knows nothing about the graph.
+  - The graph package exposes a REGISTRATION SEAM (`packages/llmwiki-kg/ts/src/mcp/union.ts`, exported from `@repo/kg/mcp`) instead of a second server: `registerKgToolsOn` registers `MCP_TOOLS` minus `UNION_YIELDS_TO_WIKI` on a high-level SDK `McpServer`, converting each tool's own `inputSchema` with `zod`'s `fromJSONSchema`, so the graph contract stays declared once. Measured on the union surface: `required` and every property description survive the conversion (`query_stack` -> `["query","stackId"]`, `traverse_stack` -> `["start","stackId"]`, `get_entities` -> `["stackId"]`).
+  - S4 is enforced by name, not by ordering: `UNION_YIELDS_TO_WIKI = "list_stacks"`. The graph `list_stacks` stays in `MCP_TOOLS` and stays served by the standalone graph server; the union advertises 17 names.
+  - One decision beyond registration, recorded here because it is not in the Specs: the graph tools are HTTP clients of a graph API, so in `host` mode `selfServedKgBaseUrl` points them at the listener this process bound when `AKS_BASE_URL` is unset. Without it the image would advertise three tools that dial a port the image does not run. `AKS_BASE_URL`, when set, always wins. In `serve` (stdio) mode there is no listener to point at, so those three tools need a reachable graph API — named as remaining work, not silently claimed.
+  - `HostOptions.mcpServerFactory` now receives the bound address (`McpBoundAddress`), because `--port 0` only becomes a number after `listen`. A zero-argument factory remains assignable, so existing callers were unaffected.
+  - S10 measured BOTH ways: a real `get_entities` call over the stdio client succeeded end to end against a per-run database and a Stack created over the host's own `POST /stacks` (the answer was the graph surface's own `(No entities matched the filter)`), and the isolation case pointed the graph surface at a closed loopback port with a real database in reach and saw the graph call answer an error result while `lint_wiki` still answered JSON in the same session. `search_pages` was rejected for that case because it needs an LLM provider, which would have failed for a reason unrelated to isolation.
+  - Not done here, by design: auth (T4, `Risk: item 2`), retiring the second image (T5), and the image build evidence (T6).
