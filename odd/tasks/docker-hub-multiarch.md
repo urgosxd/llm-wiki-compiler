@@ -72,7 +72,48 @@ porque lo ejecuta el daemon.
 
 ## Evidence
 
-### Publicación vigente — 2026-11-17, sobre HEAD `ed226a2e`
+### Publicación vigente — 2026-11-17, sobre HEAD `d2ddb5f5` (sin smoke tests, por pedido)
+
+Repetida a pedido del humano. Alcance pedido explícitamente: **build multi-arch + push, sin smoke
+tests**. La verificación se limita al manifest list leído de vuelta del registry; no se ejecutó
+ningún contenedor de ninguna de las dos arquitecturas, así que esta corrida **no** re-verifica que la
+imagen arranque ni que el binario nativo `skia` resuelva por plataforma. Esa evidencia sigue siendo
+la de las dos corridas anteriores, y está fechada.
+
+Entorno confirmado antes de construir: builder `multibuilder` (driver `docker-container`) reporta
+`linux/amd64`, `linux/arm64` y `linux/386`; `qemu-aarch64` registrado en
+`/proc/sys/fs/binfmt_misc/`; `docker info` autentica como `urgosxd7`.
+
+Diff del árbol respecto de la publicación anterior: **sólo** `odd/tasks/docker-hub-multiarch.md`
+(commit `d2ddb5f5`, docs). `.dockerignore` excluye `odd/` y `*.md`, así que ese cambio no entra al
+contexto de build: el contenido de la imagen es el mismo que el de `ed226a2e`.
+
+```
+docker buildx build --builder multibuilder \
+  --platform linux/amd64,linux/arm64 \
+  --tag docker.io/urgosxd7/llmwiki:latest --push .
+```
+
+Resultado: exit `0` en **7 m 32 s**, con `pushing layers 213.0s` y `pushing manifest 4.3s`. Los
+stages `linux/arm64` (`pnpm install --frozen-lockfile`, `pnpm run build`, el `runtime` completo) se
+ejecutaron bajo emulación, no se copiaron desde el host.
+
+```
+docker.io/urgosxd7/llmwiki:latest
+MediaType: application/vnd.oci.image.index.v1+json
+Digest:    sha256:37863d0dc29fc90e86d5ef64f3af829491a296c48d5da103467eafdd77ae85c6
+  linux/amd64   sha256:7650e3395642865aad1381f189102872a3800d99741c21eba8b184ba65278915
+  linux/arm64   sha256:e7b8a8c910b160270a8da15b11629bb297d70db7765837f6118b88298be63730
+  unknown/unknown  sha256:5cdaba2e81be2a6c0c3fa23b57269d07813aff00129b68c5359aa0084ee307ee  (attestation amd64)
+  unknown/unknown  sha256:bb25fed06e8b44808cc8777fd50d160ffde9dbb41abadb340f6e54786f004c92  (attestation arm64)
+```
+
+Leído con `docker buildx imagetools inspect docker.io/urgosxd7/llmwiki:latest`, que resuelve contra
+`registry-1.docker.io` en vez de contra el cache local. Las dos entradas de plataforma son
+`application/vnd.oci.image.manifest.v1+json` reales, con sus digests de config y attestation
+provenance. Consumo por digest: `urgosxd7/llmwiki@sha256:37863d0d…`.
+
+### Publicación anterior — 2026-11-17, sobre HEAD `ed226a2e`
 
 Repetida a pedido del humano sobre el árbol limpio de `main` (`ed226a2e`, "test(package-selection):
 freeze the foundation artifact test as an orphan"), con la emulación `qemu-aarch64` ya registrada en
