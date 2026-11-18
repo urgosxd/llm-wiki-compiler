@@ -167,7 +167,7 @@ describe("control gates — CI wiring", () => {
       ["pnpm install --frozen-lockfile", "Type-check the root project"],
       ["Type-check the root project", TURBO_BUILD_LABEL],
       ["Lint the house rules against their frozen baseline", TURBO_BUILD_LABEL],
-      [TURBO_BUILD_LABEL, "Build and smoke-test both container images"],
+      [TURBO_BUILD_LABEL, "Build and smoke-test the published image and the KG reference recipe"],
       ["Verify tenant isolation is enforced", TURBO_TEST_LABEL],
     ];
     for (const [before, after] of order) {
