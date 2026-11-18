@@ -50,7 +50,7 @@ Every test asserts every observable effect of the rule it covers — exit or sta
 ## Tasks
 
 - T1 | S5 | feature document | commit: pending
-- T2 | S5 | relocate `request-cap.ts` from `packages/wiki/src/dimensions/kg/` to `@repo/foundation`, repoint every caller and delete the old file; leave no shim (S10) — a move, not a rewrite; published-package contract change (`Risk: item 3`), own commit | commit: pending
+- T2 | S5 | relocate `request-cap.ts` from `packages/wiki/src/dimensions/kg/` to `@repo/foundation`, repoint every caller and delete the old file; leave no shim (S10) — a move, not a rewrite; published-package contract change (`Risk: item 3`), own commit | commit: 49b279ae984917431f3c5e6efd916498cbd4313a
 - T3 | S1, S2, S6, S9 | request cap and refusal on the `@repo/kg` compile route, test-first, exact status and message pinned | commit: pending
 - T4 | S3 | `dryRun` on the `@repo/kg` compile route reporting its computed plan, zero calls proven by the recording double, test-first | commit: pending
 - T5 | S4 | differential check of the wiki dimension cap against `877e792a` in a `mktemp -d` scratch tree; scratch script only, never committed | commit: pending
