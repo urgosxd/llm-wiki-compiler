@@ -99,7 +99,6 @@
     "packages/llmwiki-kg/ts/src/routes/ingest/classification.test.ts max-lines-per-function": 4,
     "packages/llmwiki-kg/ts/src/routes/ingest/contract-mode.test.ts max-lines-per-function": 1,
     "packages/llmwiki-kg/ts/src/routes/ingest/ingest-response-boundary.test.ts max-lines-per-function": 1,
-    "packages/llmwiki-kg/ts/src/routes/ingest/pipeline.ts max-lines-per-function": 1,
     "packages/llmwiki-kg/ts/src/routes/ingest/stack-catalog.test.ts max-lines-per-function": 1,
     "packages/llmwiki-kg/ts/src/routes/ingest/support-wiring.test.ts max-lines-per-function": 1,
     "packages/llmwiki-kg/ts/src/routes/pages-archive.test.ts max-lines-per-function": 2,
