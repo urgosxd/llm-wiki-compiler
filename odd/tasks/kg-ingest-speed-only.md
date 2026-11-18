@@ -20,9 +20,9 @@ Performance-only branch. Speed is the sole variable this branch is allowed to mo
 
 ## Tasks
 
-- [ ] T1 — Build the measurement harness (wall clock, provider request count, chunk count, graph hash, lock hold duration) and record the baseline for the current code | S7, S2 | route: worker | commit: pending
-- [ ] T2 — Make `dryRun` short-circuit in `prepare` before the embedding and extraction calls, and report would-be chunk and request counts | S4, S10 | route: worker | commit: pending
-- [ ] T3 — Add the spend cap with a `readTimeoutEnv`-style parser, named default constant, documented resolution chain, and a refusal error; pin empty, non-numeric, zero and negative | S4 | route: worker | commit: pending
+- [x] T1 — Build the measurement harness (wall clock, provider request count, chunk count, graph hash, lock hold duration) and record the baseline for the current code | S7, S2 | route: worker | commit: 29b2f3a47bb8c5f09f463238c5f07b3c7525e96c
+- [x] T2 — Make `dryRun` short-circuit in `prepare` before the embedding and extraction calls, and report would-be chunk and request counts | S4, S10 | route: worker | commit: 29b2f3a47bb8c5f09f463238c5f07b3c7525e96c
+- [x] T3 — Add the spend cap with a `readTimeoutEnv`-style parser, named default constant, documented resolution chain, and a refusal error; pin empty, non-numeric, zero and negative | S4 | route: worker | commit: 29b2f3a47bb8c5f09f463238c5f07b3c7525e96c
 - [ ] T4 — Skip chunks whose content hash was already extracted for that source, reusing `document_chunks.content_hash`, with no migration unless one is proven necessary | S5, S2 | route: worker | commit: pending
 - [ ] T5 — Report reused-versus-extracted chunk counts in the per-dimension outcome so a skip is never indistinguishable from a failure | S5 | route: worker | commit: pending
 - [ ] T6 — Narrow the mutation lock to wiki's prepare plus both commits via a dimension contract flag asserting a lock-free `prepare` allocates nothing that `commit` writes | S6, S11 | route: worker | commit: pending
@@ -60,3 +60,15 @@ Three items, in this order: (1) wire `dryRun` and add a spend cap, before any sp
 **L7** — evidence: the kg commit path is additive on re-ingest, so a chunk skip can leave the graph byte-identical. Relationships upsert with `greatest(confidence, excluded.confidence)` (`packages/llmwiki-kg/ts/src/core/document-consolidation.ts:440-450`), `entity_source_documents` is `on conflict … do nothing` (`:210-211`), and the only `delete from stack_documents` (`:569`) is reached through `forget`, not `commit`. No pass prunes entities against the current chunk set. `document_chunks.content_hash` is declared at `packages/llmwiki-kg/db/schema.sql:97-105` and written at `packages/llmwiki-kg/ts/src/routes/ingest/pipeline.ts:638-643`, and is never read to drive a skip. The only existing skip is document-level on `source_hash` in the HTTP upload route (`packages/llmwiki-kg/ts/src/routes/documents/upload.ts:130-141`), a different entry point from the dimension coordinator.
 
 **L8** — constraint recorded: `packages/foundation/src/dimensions-port.ts:69` documents that `kgDryRun` is deliberately absent from the dimensions port, which constrains where the dry-run work can be wired.
+
+**L9** — item 1 landed in `29b2f3a47bb8c5f09f463238c5f07b3c7525e96c` (T1, T2, T3).
+
+Measured baseline on the pre-change code, same fixture document, same provider, same config: chunkCount 4, chatRequests 4, embeddingRequests 1, wallClockMs 132.8, lockHeldMs 99.74 of 132.82 = 75%, graphHash `99cbdad5faa2b45cd90a9ddebab289dbdc5bf5e90f447dbfb99ed3575f46d30c`.
+
+The dry run now reports `kg:dry-run(4 chunks, 0 entities, would send 4 chat requests, 1 embedding request, within the 1000 request cap)` at zero provider calls, and real extraction still produces the same graph hash — so the 4 chat requests and the 1 embedding batch it describes are exactly the calls it no longer makes.
+
+`test/dimensions/kg-request-cap.test.ts` is the cap's coverage and was included in the same commit as `packages/wiki/src/dimensions/kg/request-cap.ts`.
+
+`lint-ratchet.ts` makes `lint:update` REDUCTION-ONLY, so the new test-side boundary reaches could not be recorded in the baseline and were REMOVED instead, by moving the request counting to a `vi.stubGlobal("fetch")` capture in `test/fixtures/kg-provider-fetch.ts`. The ratchet therefore stays at its recorded count rather than absorbing a new allowance.
+
+`gates:static` is 6/6 with `fallow:ci` at 0 duplication.
