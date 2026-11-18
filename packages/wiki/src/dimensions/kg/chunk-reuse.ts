@@ -8,7 +8,7 @@
  *
  * `public.document_chunks` carries a `content_hash` column documented for exactly this skip,
  * but the compiler's ingest path never writes that table: only the vendored HTTP route calls
- * `persistChunks` (`packages/llmwiki-kg/ts/src/routes/ingest/pipeline.ts:442`), and the kg
+ * `persistChunks` (`packages/llmwiki-kg/ts/src/routes/ingest/pipeline.ts:128`), and the kg
  * dimension's `commit` registers a document, consolidates entities and consolidates
  * relationships and nothing else. A reader over `document_chunks` would therefore answer
  * "nothing reused" on every run of the only path there is.
