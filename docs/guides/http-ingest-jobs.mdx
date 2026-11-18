@@ -23,6 +23,12 @@ So a job carries two independent state machines rather than one `status`. A job 
 
 `ingest: unchanged` is NOT the same as `succeeded`: it means identical content was re-ingested, so nothing was written and nothing was journalled.
 
+### What each dimension did
+
+`ingest` and `compile` are the two HALVES of a run. The record also carries `dimensions`, which is a different axis: one entry per known dimension — `wiki` and `kg` — saying whether it ran and succeeded (with the summary it returned), failed (with its error), or was skipped and why. A skip reason is `not-in-route` (this route does not compose that dimension), `disabled` (`LLMWIKI_DIMENSIONS` excludes it), `declined` (nothing to commit) or `not-attempted` (the run failed before that dimension was reached, so the failure is upstream of it). `POST /api/compile` answers with the same array as an additive key beside its compile result.
+
+Every settled job carries both entries **when the run resolved dimensions** — that is, on a stack-backed host, where the dimension commits happen and there is run state to report. On a wiki with no database the ingest writes `sources/<slug>.md` and performs no dimension commit at all, so its settled job carries **no `dimensions` key**: nothing was resolved, and inventing a reason per dimension would be a claim about work that never ran. Where the key is present, `compile: succeeded` and `dimensions: [{ "name": "kg", "status": "skipped", "reason": "not-in-route" }]` can describe the same run without contradicting each other: the compile half ran, and the graph dimension was not part of the route that produced it. The design note behind the field is `docs/ingest-dimension-observability.md`.
+
 ---
 
 ## Start a job
