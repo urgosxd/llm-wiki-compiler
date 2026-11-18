@@ -13,7 +13,11 @@
  * `stack_documents` are three tables of one database reached through one pooled
  * client.
  *
- * Inside one transaction order is free. What the coordinator owns instead:
+ * Inside one transaction atomicity is the transaction's guarantee, so order is free
+ * in that respect. It is NOT free as an observable property: the required flow is
+ * `ingest -> compile wiki -> compile kg`, so the coordinator puts the dimensions in
+ * canonical order before it touches any of them instead of trusting the caller's
+ * array (see {@link orderCanonically}). What the coordinator owns instead:
  *
  *   1. **The transaction.** It opens it, binds the Stack on it, and hands it to
  *      every dimension through `CommitScope`. A dimension that opens its own
@@ -72,6 +76,8 @@
 import { sql } from "drizzle-orm";
 import type { DatabaseHandle } from "@repo/foundation";
 import type { AfterCommitEffect, CommittedWrite, Dimension, DimensionInput, PreparedWrite } from "./types.js";
+import { KNOWN_DIMENSIONS } from "./activation.js";
+import type { DimensionRunReport } from "./report.js";
 import type { AttemptReporter } from "../services/ingest/jobs/types.js";
 
 /** How many times the transaction body is attempted before the ingest fails. */
@@ -90,6 +96,14 @@ interface DimensionRun {
   readonly dimension: Dimension;
   prepared: PreparedWrite | null;
   committed: CommittedWrite | null;
+  /**
+   * Message of the error this dimension threw, once it threw one.
+   *
+   * Recorded so the report can name the dimension that ACTUALLY failed instead of
+   * blaming every dimension the rollback touched, and cleared at the start of each
+   * transaction attempt so a retry that succeeds leaves no stale failure behind.
+   */
+  failure: string | undefined;
 }
 
 /**
@@ -125,6 +139,34 @@ export interface IngestOutcome {
   readonly writeStatus?: "created" | "updated" | "unchanged";
   /** Path the file-backed dimension wrote, when one did. */
   readonly artifactPath?: string;
+  /**
+   * Per-dimension state for this run, one record per dimension it touched.
+   *
+   * This is the fact the report is derived from, and the reason it exists: a
+   * summary can only say "committed", so `summaries` alone cannot tell a dimension
+   * that never ran from one that threw. `summaries` stays beside it unchanged for
+   * the callers that already read it.
+   */
+  readonly dimensionRuns: readonly DimensionRunReport[];
+}
+
+/**
+ * A failed ingest that carries the per-dimension state it recorded.
+ *
+ * After the rollback the rows are gone, so the only thing left to hand an operator
+ * is WHICH dimension threw and what it said. The message and the `cause` are
+ * unchanged from the bare `Error` this replaces, so a caller that reads either keeps
+ * working; {@link dimensionRuns} is the addition.
+ */
+export class IngestDimensionFailure extends Error {
+  constructor(
+    message: string,
+    options: { cause?: unknown },
+    readonly dimensionRuns: readonly DimensionRunReport[],
+  ) {
+    super(message, options);
+    this.name = "IngestDimensionFailure";
+  }
 }
 
 /**
@@ -184,7 +226,14 @@ async function commitInOneTransaction(
     for (const run of runs) {
       // `prepare` assigns before this loop, so the guard is defensive.
       if (run.prepared === null) continue;
-      run.committed = await run.dimension.commit(run.prepared, scope);
+      try {
+        run.committed = await run.dimension.commit(run.prepared, scope);
+      } catch (error) {
+        // Recorded and rethrown immediately: control flow, retry count and which
+        // dimensions run are unchanged, only the post-mortem gains a fact.
+        run.failure = errorMessageOf(error);
+        throw error;
+      }
     }
   });
 }
@@ -212,8 +261,13 @@ async function attemptWithRetry(
   let lastError: unknown;
   for (let attempt = 1; attempt <= MAX_TX_ATTEMPTS; attempt += 1) {
     // A failed attempt leaves partial `committed` values behind; clearing them
-    // keeps the post-mortem honest about what actually landed (nothing).
-    for (const run of runs) run.committed = null;
+    // keeps the post-mortem honest about what actually landed (nothing). The
+    // failure message is cleared with them: an attempt that threw followed by a
+    // retry that succeeds must report the SECOND outcome, not the first.
+    for (const run of runs) {
+      run.committed = null;
+      run.failure = undefined;
+    }
     attempts?.attemptStarted(attempt, now());
     try {
       await commitInOneTransaction(db, stackId, runs);
@@ -320,11 +374,15 @@ async function prepareEveryDimension(
   runs: readonly DimensionRun[],
   input: DimensionInput,
 ): Promise<void> {
+  let preparing: DimensionRun | undefined;
   try {
     for (const run of runs) {
+      preparing = run;
       run.prepared = await run.dimension.prepare(input);
     }
   } catch (error) {
+    // The dimension that threw is the one to name; the others were only prepared.
+    if (preparing !== undefined) preparing.failure = errorMessageOf(error);
     await discardPreparedWrites(runs);
     throw error;
   }
@@ -358,9 +416,11 @@ async function commitOrReport(
     const reason = error instanceof Error ? error.message : String(error);
     reportIngestFailure(input, runs, reason);
     const names = unresolved.length === 0 ? "" : ` (unresolved: ${unresolved.join(", ")})`;
-    throw new Error(`ingest failed after ${MAX_TX_ATTEMPTS} attempts: ${reason}${names}`, {
-      cause: error,
-    });
+    throw new IngestDimensionFailure(
+      `ingest failed after ${MAX_TX_ATTEMPTS} attempts: ${reason}${names}`,
+      { cause: error },
+      runReportsOf(runs),
+    );
   }
 }
 
@@ -369,6 +429,10 @@ async function commitOrReport(
  *
  * A dimension whose commit never returned has nothing to report, and is skipped
  * rather than given an empty summary: an entry here means work landed.
+ *
+ * Kept exactly as it was after the per-run record arrived: it is one field of the
+ * outcome beside {@link IngestOutcome.dimensionRuns}, not a thing the report is
+ * derived from, and its readers keep their shape.
  *
  * @param runs - Dimensions this ingest attempted.
  * @returns Summaries keyed by dimension name.
@@ -383,14 +447,75 @@ function summariesOf(runs: readonly DimensionRun[]): Map<string, string> {
 }
 
 /**
- * Run one ingest across the supplied dimensions, atomically.
+ * Canonical position of one dimension.
+ *
+ * A name this build does not know sorts last, which keeps the order total without
+ * starting to throw from a sort: the environment switch is where an unknown name is
+ * refused, and it refuses before any dimension is built.
+ *
+ * @param dimension - Dimension to rank.
+ * @returns Its index in {@link KNOWN_DIMENSIONS}, or one past the end.
+ */
+function rankOf(dimension: Dimension): number {
+  const rank = KNOWN_DIMENSIONS.indexOf(dimension.name);
+  return rank === -1 ? KNOWN_DIMENSIONS.length : rank;
+}
+
+/**
+ * Put the dimensions in canonical run order: `wiki` before `kg`, always.
+ *
+ * The sequence `ingest -> compile wiki -> compile kg` is a REQUIREMENT, not an
+ * observation. It used to hold only because `resolveDimensions` happens to compose
+ * the dimensions in {@link KNOWN_DIMENSIONS} order, so a caller that assembled its
+ * own array could invert the flow and nothing would say so. Ordering here makes the
+ * guarantee the coordinator's, so no route re-decides it.
+ *
+ * The sort is stable, so dimensions ranking equally keep their relative order
+ * instead of shuffling between runs.
+ *
+ * @param dimensions - Dimensions in whatever order the caller passed them.
+ * @returns The same dimensions, canonically ordered.
+ */
+function orderCanonically(dimensions: readonly Dimension[]): Dimension[] {
+  return [...dimensions].sort((left, right) => rankOf(left) - rankOf(right));
+}
+
+/**
+ * Reduce one run's mutable progress to the record the report consumes.
+ *
+ * Order matters: a thrown error is the sharpest fact, then a committed summary, and
+ * otherwise no write landed (`declined`).
+ *
+ * @param run - One dimension's progress.
+ * @returns Its per-run record.
+ */
+function reportOf(run: DimensionRun): DimensionRunReport {
+  const name = run.dimension.name;
+  if (run.failure !== undefined) return { name, state: "failed", error: run.failure };
+  if (run.committed !== null) return { name, state: "committed", summary: run.committed.summary };
+  return { name, state: "declined" };
+}
+
+/**
+ * Collect the per-dimension records for one run, in canonical run order.
+ *
+ * @param runs - Dimensions this ingest touched, already in canonical order.
+ * @returns One record per dimension.
+ */
+function runReportsOf(runs: readonly DimensionRun[]): DimensionRunReport[] {
+  return runs.map((run) => reportOf(run));
+}
+
+/**
+ * Run one ingest across the supplied dimensions, atomically and in canonical order.
  *
  * @param db - Tenant-bound database handle; RLS decides which rows are visible.
  * @param stackId - Stack this ingest belongs to, bound on the transaction.
  * @param input - Source identity, title, and document.
- * @param dimensions - Dimensions to write, in commit order.
+ * @param dimensions - Dimensions to write; the coordinator orders them itself.
  * @returns What each dimension reported, plus any projection outcome.
- * @throws When any dimension fails; the transaction rolls back as a unit.
+ * @throws {IngestDimensionFailure} when any dimension fails; carries the per-run
+ *   state it recorded, and the transaction rolls back as a unit.
  *
  * The coordinator takes a Stack rather than a project root because an ingest
  * belongs to a Stack: both dimensions are bound to it, and the tenant binding is
@@ -404,10 +529,11 @@ export async function ingestDimensions(
   dimensions: readonly Dimension[],
   options: IngestDimensionsOptions = {},
 ): Promise<IngestOutcome> {
-  const runs: DimensionRun[] = dimensions.map((dimension) => ({
+  const runs: DimensionRun[] = orderCanonically(dimensions).map((dimension) => ({
     dimension,
     prepared: null,
     committed: null,
+    failure: undefined,
   }));
   const now = options.now ?? (() => new Date().toISOString());
 
@@ -417,6 +543,7 @@ export async function ingestDimensions(
   const projected = await runProjections(runs);
   return {
     summaries: summariesOf(runs),
+    dimensionRuns: runReportsOf(runs),
     ...(projected.writeStatus === undefined ? {} : { writeStatus: projected.writeStatus }),
     ...(projected.artifactPath === undefined ? {} : { artifactPath: projected.artifactPath }),
   };

@@ -63,8 +63,8 @@ export const AKS_DATABASE_URL_ENV_VAR = "AKS_DATABASE_URL";
 /** The dimension enabled when the switch is absent. */
 const DEFAULT_DIMENSION: DimensionName = "wiki";
 
-/** Every dimension this build knows how to write. */
-const KNOWN_DIMENSIONS: readonly DimensionName[] = ["wiki", "kg"];
+/** Every dimension this build knows how to write, in canonical run order. */
+export const KNOWN_DIMENSIONS: readonly DimensionName[] = ["wiki", "kg"];
 
 /** A request for a dimension this build cannot write, or a malformed switch. */
 export class DimensionActivationError extends Error {

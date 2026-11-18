@@ -50,13 +50,22 @@ export type { KgDimensionOptions } from "./kg/index.js";
 export { createKgReader } from "./kg/reader.js";
 export type { KgReaderOptions } from "./kg/reader.js";
 
-export { ingestDimensions } from "./coordinator.js";
+export { ingestDimensions, IngestDimensionFailure } from "./coordinator.js";
 export type { IngestDimensionsOptions, IngestOutcome } from "./coordinator.js";
+
+export { describeDimensionMessage, describeDimensionOutcomes } from "./report.js";
+export type {
+  DimensionOutcome,
+  DimensionOutcomeInput,
+  DimensionRunReport,
+  DimensionSkipReason,
+} from "./report.js";
 
 export {
   AKS_STACK_ID_ENV_VAR,
   DIMENSIONS_ENV_VAR,
   DimensionActivationError,
+  KNOWN_DIMENSIONS,
   createDimensionsDatabase,
   enabledDimensionNames,
   resolveDimensions,
