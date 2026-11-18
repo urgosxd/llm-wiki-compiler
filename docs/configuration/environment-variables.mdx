@@ -312,6 +312,28 @@ from that `ontology`, otherwise the documented default. The contract, the payloa
 and copyable examples are in [Stack Ontology](/configuration/stack-ontology); the
 classification vocabulary is in [KG type catalog](/configuration/kg-type-catalog).
 
+### Extraction request cap
+
+Extraction sends one chat request per chunk, sequentially, and the `kg` dimension sets no
+per-run limit of its own: a document that chunks into many pieces costs many completions.
+`LLMWIKI_KG_MAX_EXTRACTION_REQUESTS` is the bound on how many of those one document's
+extraction may send. It counts **chat extraction requests only** — chunk embedding is one
+batched request per document and is not counted against it.
+
+| Variable | Default | Description |
+|---|---|---|
+| `LLMWIKI_KG_MAX_EXTRACTION_REQUESTS` | `1000` | Maximum chat requests one document's extraction may send. A positive whole number. Empty means unset, so the default applies. Non-numeric, zero, and negative values are configuration errors that name the variable and stop the run before it starts |
+
+Resolution chain: `LLMWIKI_KG_MAX_EXTRACTION_REQUESTS` → the 1000-request default. A run
+whose chunk count would exceed the cap is **refused, never truncated**: nothing is sent,
+no chunk is skipped, and the error names the variable, the configured cap and the
+document's actual chunk count. Extracting part of a document and reporting success would
+be indistinguishable from a complete run. Raise the cap, or ingest a smaller document.
+
+A detect-only run reports the same numbers without sending anything, including whether
+they fit the cap: `kg:dry-run(4 chunks, 0 entities, would send 4 chat requests, 1 embedding
+request, within the 1000 request cap)`.
+
 ### KG classification (JEV)
 
 Classification is optional. These variables configure the System One classifier

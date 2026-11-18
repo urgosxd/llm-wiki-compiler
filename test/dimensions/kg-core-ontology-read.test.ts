@@ -102,12 +102,20 @@ function stubCore(): void {
   });
 }
 
-/** Build a dimension whose stored-ontology read is stubbed. */
+/**
+ * Build a dimension whose stored-ontology read is stubbed.
+ *
+ * Deliberately NOT in detect-only mode. Every case below asserts what reaches
+ * `extractGraphFromChunks`, and a detect-only run now reaches it with no extraction at
+ * all — so `dryRun: true` here would make those assertions vacuous rather than cheap.
+ * The real path costs nothing either: the vendored core is replaced wholesale, so both
+ * `chunkAndEmbed` and `extractGraphFromChunks` are stubs, and this suite never calls
+ * `commit`, so no database is touched.
+ */
 function build(loadOntology: () => Promise<unknown>) {
   return createKgDimension({
     stackId: "s",
     stackName: "demo",
-    dryRun: true,
     loadOntology,
     // This suite replaces the provider layer, so it reports no embedding
     // backend: the default resolver would consult the machine's own provider
@@ -193,7 +201,6 @@ describe("kg dimension ontology wiring", () => {
     await createKgDimension({
       stackId: "s",
       stackName: "demo",
-      dryRun: true,
       ontology: explicit,
       loadOntology,
       describeEmbeddingBackend: () => undefined,
@@ -217,7 +224,9 @@ describe("kg dimension default ontology source", () => {
     storedOntologyStub.current = loadStoredOntology;
     stubCore();
 
-    await createKgDimension({ stackId: "s", stackName: "demo", dryRun: true }).prepare(INPUT);
+    // Real path on purpose: this asserts what extraction RECEIVES, and a detect-only
+    // run no longer extracts. The core is stubbed, so the assertion still costs nothing.
+    await createKgDimension({ stackId: "s", stackName: "demo" }).prepare(INPUT);
 
     expect(loadStoredOntology).toHaveBeenCalledWith("s", undefined);
     expect(extractGraphFromChunks).toHaveBeenCalledWith(

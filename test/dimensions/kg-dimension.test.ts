@@ -244,12 +244,20 @@ describe("the kg dimension adapter", () => {
     expect(end).toHaveBeenCalled();
   });
 
-  it("writes nothing in dry run but still reports what it would have written", async () => {
+  it("writes nothing in dry run but still reports what it would have sent", async () => {
     const prepared = await dimension({ dryRun: true }).prepare(INPUT);
     const committed = await dimension({ dryRun: true }).commit(prepared);
 
     expect(createClient).not.toHaveBeenCalled();
-    expect(committed.summary).toBe("kg:dry-run(1 chunks, 1 entities)");
+    // `0 entities` is the honest count: a detect-only run does not extract, so it has
+    // no entities to report and says so instead of borrowing the number an extraction
+    // would have produced. What it WOULD have sent is the report fragment, which is the
+    // whole point of the mode: chunk count, one chat request per chunk, one batched
+    // embedding request, and the cap the count was judged against.
+    expect(committed.summary).toBe(
+      "kg:dry-run(1 chunks, 0 entities, would send 1 chat request, 1 embedding request, " +
+        "within the 1000 request cap)",
+    );
   });
 
   it("discards without touching the graph, since prepare writes no rows", async () => {

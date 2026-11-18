@@ -100,11 +100,12 @@ describe("kg dimension with a declared ontology", () => {
       pipeline: "p",
     });
 
+    // Real path on purpose: this asserts what extraction RECEIVES, and a detect-only
+    // run no longer extracts. The core is a stub, so the assertion costs nothing.
     await createKgDimension({
       stackId: "s",
       stackName: "demo",
       ontology: ONTOLOGY,
-      dryRun: true,
       describeEmbeddingBackend: () => undefined,
     }).prepare(INPUT);
 
@@ -144,10 +145,11 @@ describe("kg dimension without an ontology", () => {
       pipeline: "p",
     });
 
+    // Real path on purpose: same reason as the case above — a detect-only run reports
+    // counts instead of calling extraction, so it cannot show which ontology was passed.
     await createKgDimension({
       stackId: "s",
       stackName: "demo",
-      dryRun: true,
       loadOntology: async () => undefined,
       describeEmbeddingBackend: () => undefined,
     }).prepare(INPUT);

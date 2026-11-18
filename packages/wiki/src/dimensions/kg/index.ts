@@ -19,6 +19,24 @@
  * visible. A prepared-but-uncommitted graph has nothing to undo, so `discard`
  * is a no-op and the outbox covers a `commit` that fails partway.
  *
+ * ## Detect-only runs, and the two doors before the spend
+ *
+ * `prepare` is the only place where a run that must not cost money can still be stopped
+ * for free, so BOTH doors are there and both are before the first request:
+ *
+ * - a detect-only run (`KgDimensionOptions.dryRun`) computes the chunk count with the
+ *   chunker ALONE — the same `splitText` call `chunkAndEmbed` makes internally — and
+ *   returns a handle carrying what it WOULD have sent. It never reaches `embedTexts` and
+ *   never reaches the extraction model. `commit` needs no knowledge of it: the handle
+ *   holds no chunks, so its existing empty-write branch is the right outcome, and the
+ *   summary it renders carries the report.
+ * - a run whose chunk count exceeds the configured cap is REFUSED by name rather than
+ *   truncated (`./request-cap.ts`). Extracting half a document and reporting success
+ *   would read exactly like a complete run.
+ *
+ * Neither door changes the chunk boundaries a real run produces: both count with the same
+ * chunker, the same default size and the same overlap.
+ *
  * ## Credentials and database
  *
  * The vendored core reads provider credentials and `DATABASE_URL` from the
@@ -66,6 +84,7 @@ import {
   prepareChatBackend,
   prepareEmbeddingBackend,
   readStackOntology,
+  splitText,
   withChatBackend,
   withEmbeddingBackend,
   type ChunkResult,
@@ -79,6 +98,11 @@ import {
 import { defaultOntology, loadStoredOntology } from "@repo/kg";
 import type { DatabaseHandle } from "@repo/foundation";
 import type { ExtractionResult, Ontology } from "@repo/kg";
+
+import {
+  assertWithinExtractionRequestCap,
+  resolveExtractionRequestCap,
+} from "./request-cap.js";
 
 import { getEmbeddingProvider } from "../../utils/embedding-provider.js";
 import { getProvider } from "../../utils/provider.js";
@@ -100,6 +124,15 @@ const DB_CONNECT_TIMEOUT_SECONDS = 10;
 const SOURCE_LABEL_CHARS = 32;
 
 /**
+ * Embedding requests one document costs, however many chunks it has.
+ *
+ * `embedTexts` sends the whole chunk list in ONE HTTP round trip, so the per-document
+ * count is always this — never one per chunk. The measured baseline states the same fact
+ * from the other side: four chunks, one embedding request.
+ */
+const EMBEDDING_REQUESTS_PER_BATCH = 1;
+
+/**
  * Stable per-source label for in-memory chunk metadata.
  *
  * Deliberately independent of the body: editing a source must not change which
@@ -111,6 +144,25 @@ const SOURCE_LABEL_CHARS = 32;
  */
 function sourceLabel(source: string): string {
   return createHash("sha256").update(source).digest("hex").slice(0, SOURCE_LABEL_CHARS);
+}
+
+/**
+ * What a detect-only run would have sent, all of it derived without a provider call.
+ *
+ * S10 is the reason this exists: a dry run whose answer is only "ok" has learned nothing,
+ * and the numbers an operator needs before approving a real run are exactly these — how
+ * many requests the document costs and whether that fits the cap. Every count here comes
+ * from the chunker's output, so reporting them costs a tokenisation pass and no network.
+ */
+interface DryRunReport {
+  /** Chunks the real path would produce, and therefore the unit requests are counted in. */
+  readonly chunks: number;
+  /** Chat requests extraction would send: one per chunk, sequentially. */
+  readonly chatRequests: number;
+  /** Embedding requests chunking would send: the whole chunk list in one batch. */
+  readonly embeddingRequests: number;
+  /** The cap the would-be request count was judged against. */
+  readonly cap: number;
 }
 
 /** Handle carried between `prepare` and `commit` for the graph dimension. */
@@ -159,6 +211,14 @@ interface KgHandle {
    * difference between "fix the prompt" and "this gateway ignores `strict`".
    */
   readonly schemaViolations: number;
+  /**
+   * What a detect-only run would have sent; absent for a run that extracted for real.
+   *
+   * Present only on the handle a dry run returns, which holds no chunks and no entities.
+   * `commit` renders it through {@link summaryFor} without asking whether the run was a
+   * dry one, so the mode stays a property of `prepare` alone.
+   */
+  readonly dryRunReport?: DryRunReport;
 }
 
 /** How this dimension is bound to one knowledge stack. */
@@ -170,9 +230,14 @@ export interface KgDimensionOptions {
   /** Postgres connection string; defaults to the vendored core's own config. */
   readonly databaseUrl?: string;
   /**
-   * Detect-only mode: run chunking, embedding, and extraction, then report what
-   * *would* be written without opening a database connection. Used by status
-   * and by tests that must not require Postgres.
+   * Detect-only mode: report what extraction WOULD send, and send none of it.
+   *
+   * A dry run makes zero provider requests — no embedding batch and no completion — and
+   * still answers with the chunk count, the chat requests and the embedding batch the
+   * real run would cost, judged against the configured request cap. It opens no database
+   * connection for the write and holds no entities. Counted, not guessed: every number
+   * comes from the chunker the real path uses, so the report describes the real run's
+   * boundaries exactly.
    */
   readonly dryRun?: boolean;
   /**
@@ -327,6 +392,139 @@ function schemaViolationNote(schemaViolations: number): string {
 type SummaryKind = "dry-run" | "commit";
 
 /**
+ * How many chunks the chunker would produce for `body`, without embedding anything.
+ *
+ * The SAME three steps `chunkAndEmbed` takes before it calls `embedTexts`: a blank body
+ * yields nothing, the text is split with `splitText` at the chunker's default size and
+ * overlap, and the empty piece a blank split can leave is dropped. Boundaries are
+ * therefore byte-identical to the paid path's, which S2 requires, and the cost is a
+ * tokenisation pass instead of a provider request.
+ *
+ * On the real path this runs IN ADDITION to `chunkAndEmbed`'s own split. That second pass
+ * is the price of refusing a cap breach before the embedding batch has been paid for, and
+ * it is CPU only: it performs no network call and reads no credential.
+ *
+ * @param body - Document body, exactly as `chunkAndEmbed` receives it.
+ * @returns The number of chunks `chunkAndEmbed` would return rows for; `0` for a blank body.
+ */
+function chunkCountFor(body: string): number {
+  if (body.trim() === "") return 0;
+  return splitText(body).filter((chunk) => chunk !== "").length;
+}
+
+/**
+ * The report a detect-only run carries, from counts that cost nothing.
+ *
+ * @param chunks - Chunks the real path would produce.
+ * @param cap - The resolved request cap this run was judged against.
+ * @returns The would-be request counts and the cap.
+ */
+function dryRunReportFor(chunks: number, cap: number): DryRunReport {
+  return {
+    chunks,
+    // Extraction is one chat request per chunk, sequentially: the count is the chunk count.
+    chatRequests: chunks,
+    // The whole chunk list goes to the provider in ONE batch, so this is not per chunk.
+    embeddingRequests: chunks === 0 ? 0 : EMBEDDING_REQUESTS_PER_BATCH,
+    cap,
+  };
+}
+
+/**
+ * Renders what a detect-only run would have sent, or nothing when no report is carried.
+ *
+ * The empty answer matters as much as the filled one: `commit` routes a real run whose
+ * body chunked to nothing through the same `dry-run` head, and that summary must read
+ * exactly as it did before this report existed.
+ *
+ * @param report - The would-be request counts, or `undefined` for a run without one.
+ * @returns A leading-comma fragment, or an empty string when there is no report.
+ */
+function dryRunNote(report: DryRunReport | undefined): string {
+  if (report === undefined) return "";
+  const chatRequests = pluralize(report.chatRequests, "chat request");
+  const embeddingRequests = pluralize(report.embeddingRequests, "embedding request");
+  return (
+    `, would send ${chatRequests}, ${embeddingRequests}` +
+    `, within the ${report.cap} request cap`
+  );
+}
+
+/**
+ * A count with its noun, pluralised, so a one-request run does not read `1 requests`.
+ *
+ * @param count - How many of the thing there are.
+ * @param noun - The singular name of the thing.
+ * @returns e.g. `1 chat request` or `4 chat requests`.
+ */
+function pluralize(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * The two doors that must close before any provider is paid, in one place.
+ *
+ * Both are decided from {@link chunkCountFor}, which counts with the chunker alone, so
+ * neither costs a request and neither can change the boundaries a real run would produce.
+ *
+ * @param options - Stack binding, carrying the detect-only flag.
+ * @param input - The document about to be extracted.
+ * @param chunkLabel - Placeholder document id for a detect-only handle.
+ * @returns The prepared write a detect-only run must return, or `undefined` to extract for real.
+ * @throws {ConfigValidationError} When the configured cap is not a positive whole number.
+ * @throws {ExtractionRequestCapError} When the document needs more chat requests than the cap.
+ */
+function beforeProviderSpend(
+  options: KgDimensionOptions,
+  input: DimensionInput,
+  chunkLabel: string,
+): PreparedWrite | undefined {
+  const capRun = resolveExtractionRequestCap(process.env);
+  // The class is thrown HERE, not in `request-cap.ts`: the boundary rule counts every file
+  // that reaches for the KG core, and this adapter already holds that edge's allowance.
+  if (capRun.kind === "invalid") throw new ConfigValidationError(capRun.problem);
+  const plannedChunks = chunkCountFor(input.body);
+  assertWithinExtractionRequestCap(plannedChunks, capRun.cap);
+  if (options.dryRun !== true) return undefined;
+  return {
+    unchanged: plannedChunks === 0,
+    handle: detectOnlyHandle(chunkLabel, input, dryRunReportFor(plannedChunks, capRun.cap)),
+  };
+}
+
+/**
+ * The handle a detect-only run returns: coherent, and deliberately empty.
+ *
+ * No chunks means no embeddings and no entities, which is what makes `commit`'s existing
+ * empty-write branch the correct outcome for a dry run without `commit` having to know
+ * the run was one. The report rides on the handle because the summary is the only
+ * per-document signal a caller sees, and `commit` renders it from the handle alone.
+ *
+ * @param chunkLabel - Placeholder document id, the same one the real path carries.
+ * @param input - The document, kept for the same reason the real path keeps it.
+ * @param dryRunReport - What this run would have sent.
+ * @returns A handle `commit` can render and `discard` can ignore.
+ */
+function detectOnlyHandle(
+  chunkLabel: string,
+  input: DimensionInput,
+  dryRunReport: DryRunReport,
+): KgHandle {
+  return {
+    documentId: chunkLabel,
+    registration: { source: input.source, body: input.body, title: input.title },
+    chunks: [],
+    entities: [],
+    relationships: [],
+    rejected: [],
+    failedChunks: 0,
+    mangledChunks: 0,
+    schemaViolations: 0,
+    dryRunReport,
+  };
+}
+
+/**
  * Renders one document's summary: the head counts, then every degraded-run note.
  *
  * ## Why the fragments are composed here and nowhere else
@@ -351,8 +549,13 @@ type SummaryKind = "dry-run" | "commit";
  * @returns The summary string for this document.
  */
 function summaryFor(kind: SummaryKind, handle: KgHandle): string {
-  const counts = `${handle.chunks.length} chunks, ${handle.entities.length} entities`;
-  const head = kind === "dry-run" ? `kg:dry-run(${counts})` : `kg:${counts}`;
+  // A detect-only handle holds no chunks: what it would have produced lives in its
+  // report. Every other handle counts its own chunks, so a real run whose body chunked
+  // to nothing reports `0 chunks` exactly as it did before the report existed.
+  const chunkCount = handle.dryRunReport?.chunks ?? handle.chunks.length;
+  const counts = `${chunkCount} chunks, ${handle.entities.length} entities`;
+  const head =
+    kind === "dry-run" ? `kg:dry-run(${counts}${dryRunNote(handle.dryRunReport)})` : `kg:${counts}`;
   return `${head}${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}${mangledNote(handle.mangledChunks)}${schemaViolationNote(handle.schemaViolations)}`;
 }
 
@@ -632,6 +835,30 @@ function resolveChatBackendRun(options: KgDimensionOptions): ChatBackendRun {
 }
 
 /**
+ * The two backend runs this `prepare` may install, or a refusal naming what to set.
+ *
+ * Judged FIRST, before the ontology read and before any provider call: a missing or partial
+ * embedding credential must fail closed with the variable to set, never surface as a
+ * provider 401 or a stack trace. The extraction side is judged here too, and still before
+ * any request, because a missing chat credential discovered after the embedding calls have
+ * been paid for is the same defect in a more expensive place.
+ *
+ * @param options - Stack binding carrying the injected resolvers, if any.
+ * @returns Each half separately, because each is installed around its own call alone.
+ * @throws {ConfigValidationError} When either half cannot be resolved.
+ */
+function resolveBackendRuns(options: KgDimensionOptions): {
+  readonly embedding: EmbeddingBackendRun;
+  readonly chat: ChatBackendRun;
+} {
+  const embedding = resolveEmbeddingBackendRun(options);
+  if (embedding.problem !== null) throw new ConfigValidationError(embedding.problem);
+  const chat = resolveChatBackendRun(options);
+  if (chat.problem !== null) throw new ConfigValidationError(chat.problem);
+  return { embedding, chat };
+}
+
+/**
  * Build the graph dimension.
  *
  * @param options - Stack binding and an optional database override.
@@ -641,16 +868,7 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
     name: "kg",
 
     async prepare(input: DimensionInput): Promise<PreparedWrite> {
-      // FIRST, before the ontology read and before any provider call. A missing
-      // or partial embedding credential must fail closed with the variable to
-      // set, never surface as a provider 401 or a stack trace.
-      const backendRun = resolveEmbeddingBackendRun(options);
-      if (backendRun.problem !== null) throw new ConfigValidationError(backendRun.problem);
-      // The extraction side is judged here too, and still before any request: a
-      // missing chat credential discovered after the embedding calls have been
-      // paid for is the same defect in a more expensive place.
-      const chatRun = resolveChatBackendRun(options);
-      if (chatRun.problem !== null) throw new ConfigValidationError(chatRun.problem);
+      const backends = resolveBackendRuns(options);
       // Chunk labels carry the source identity only. The authoritative document
       // id does not exist yet — Postgres assigns it during `commit` — and chunks
       // stay in memory, so nothing depends on this placeholder matching a row.
@@ -659,21 +877,25 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       // before the expensive half spends a provider call, and it must fail rather
       // than degrade to permissive extraction.
       const ontology = await resolveOntology(options);
+      // THE MONEY DOOR, and the only place where "refused" is still free: the cap and
+      // the detect-only answer are both decided here, before a single request leaves the
+      // process. See {@link beforeProviderSpend}.
+      const detectOnly = beforeProviderSpend(options, input, chunkLabel);
+      if (detectOnly !== undefined) return detectOnly;
       // Installed around this call alone: the override decides the endpoint,
       // credential and model of the requests chunking makes, and is cleared
       // again even when embedding fails.
-      const chunks = await withEmbeddingBackend(backendRun.backend, () =>
+      const chunks = await withEmbeddingBackend(backends.embedding.backend, () =>
         chunkAndEmbed(input.body, options.stackId, chunkLabel),
       );
-      // The ontology is spread rather than passed as `undefined`, so a run
-      // without one calls extraction with exactly the two arguments it always
-      // did. Call arity is observable to spies and mocks, and "no ontology
-      // changes nothing" has to hold at the call boundary, not just in the
-      // result.
-      // Installed around this call alone, exactly like the embedding backend
-      // and independently of it: the override decides the extraction endpoint,
-      // credential and model, and is cleared again even when extraction throws.
-      const extraction = await withChatBackend(chatRun.backend, () =>
+      // The ontology is spread rather than passed as `undefined`, so a run without one
+      // calls extraction with exactly the two arguments it always did. Call arity is
+      // observable to spies and mocks, and "no ontology changes nothing" has to hold at
+      // the call boundary, not just in the result. Installed around this call alone,
+      // exactly like the embedding backend and independently of it: the override decides
+      // the extraction endpoint, credential and model, and is cleared again even when
+      // extraction throws.
+      const extraction = await withChatBackend(backends.chat.backend, () =>
         extractGraphFromChunks(chunks, options.stackName, ...ontologyArgs(ontology)),
       );
       const handle: KgHandle = {

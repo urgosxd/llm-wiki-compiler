@@ -60,5 +60,11 @@ export function prepareCoreExports(core: CoreModule, databaseUrl: string) {
     findExtractionCredentialProblem: core.findExtractionCredentialProblem,
     prepareChatBackend: core.prepareChatBackend,
     withChatBackend: core.withChatBackend,
+    // The CHUNKER, forwarded REAL for a reason of its own: `prepare` counts chunks with
+    // it before any provider call — the request cap and the detect-only report both read
+    // that count — so a stub here would let a suite's count disagree with the paid path's
+    // boundaries. Re-exporting it here repairs every factory that spreads this helper at
+    // once, instead of four copies of the same line drifting apart.
+    splitText: core.splitText,
   };
 }
