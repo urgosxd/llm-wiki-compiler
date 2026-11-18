@@ -3,6 +3,11 @@
  * @description The ingestion router construction, and the transaction contract it
  * gives the pipeline.
  *
+ * It declares two pipeline routes: `POST .../ingest` (phase one, which stores a
+ * document's chunks) and `POST .../compile` (phase two, which reads those chunks and runs
+ * the LLM pipeline over them). Both are built from the same dependencies — one auth
+ * surface, one transaction runner, one decision runtime — and neither calls the other.
+ *
  * Split out of `routes/ingest.ts` as its own unit because the mount point, the
  * route path and the bounded-transaction decision are what callers observe.
  *
@@ -39,6 +44,7 @@ import { withRequestTransaction, withTransaction } from "../../db.js";
 import type { Database, TransactionalHandler, TransactionRunner } from "../../db.js";
 import { classificationRuntime } from "./classify-stage.js";
 import type { ClassificationRuntime } from "./classify-stage.js";
+import { createCompileHandler } from "./compile.js";
 import { ingestDocument } from "./pipeline.js";
 import { createClassificationLogRouter } from "../classification-log/router.js";
 import { createReclassifyRouter } from "../reclassify/router.js";
@@ -115,8 +121,7 @@ function createIngestHandler(deps: IngestRouterDependencies): RequestHandler {
  * no prefix). Auth is mounted here, as `dependencies=[Depends(require_api_key)]`
  * is in Python.
  *
- * ## Reclassification rides on the same router, on purpose
- *
+ * ## Reclassification rides on the same router, on purpose *
  * `POST /stacks/:stackId/reclassify` re-decides rows this pipeline already wrote, so it
  * needs exactly the same two collaborators: the Stack's auth and a bounded transaction
  * runner. Mounting it here is what makes it reachable from the running application
@@ -131,7 +136,7 @@ function createIngestHandler(deps: IngestRouterDependencies): RequestHandler {
  * it, and mounting it beside its sibling is what keeps one auth surface instead of two.
  *
  * @param deps - Injected collaborators; defaults to the process-wide ones.
- * @returns The router carrying the ingest, reclassification and retention routes.
+ * @returns The router carrying the ingest, compile, reclassification and retention routes.
  */
 export function createIngestRouter(
   deps: IngestRouterDependencies = DEFAULT_DEPENDENCIES,
@@ -141,6 +146,10 @@ export function createIngestRouter(
   router.use(deps.apiKey);
 
   router.post("/stacks/:stackId/documents/:doc_id/ingest", createIngestHandler(deps));
+  // Phase two, beside phase one and sharing its dependencies: the same auth surface, the
+  // same transaction runner and the same decision runtime. It is never called by this
+  // router, by the ingest handler or by anything automatic (S3).
+  router.post("/stacks/:stackId/documents/:doc_id/compile", createCompileHandler(deps));
   router.use(
     createReclassifyRouter({
       apiKey: deps.apiKey,

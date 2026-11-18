@@ -21,14 +21,18 @@
  *
  * ## What this module may read from a chunk
  *
- * Only what a stored `document_chunks` row carries. Extraction reads `content` and
- * `chunkIndex` and nothing else (`core/graph-extraction.ts`), and evidence is located
- * in `chunk.content` with offsets into that string (`candidates.ts`). The fields a
- * chunk carries only because it came from memory — `embedding`, `tokenCount`,
- * `contentHash`, `chunkerStrategy` — are read by exactly one place here:
- * {@link persistChunks}, which writes the rows this pipeline was handed. That is the
- * in-memory path measurably unchanged; a caller feeding stored rows must supply those
- * columns for the write or skip it, and that decision belongs to the compile phase.
+ * Only what a stored `document_chunks` row carries: {@link CompileChunk} is
+ * `document_id`, `stack_id`, `chunk_index` and `content`, and that is the type the
+ * request takes. Extraction reads `content` and `chunkIndex` and nothing else
+ * (`core/graph-extraction.ts`), and evidence is located in `chunk.content` with
+ * offsets into that string (`candidates.ts`).
+ *
+ * The fields a chunk carries only because it came from memory — `embedding`,
+ * `tokenCount`, `contentHash`, `chunkerStrategy` — are read by exactly one place
+ * here: {@link persistChunks}, which writes the rows a run was handed. Whether that
+ * write happens at all is the caller's explicit decision, `writeChunkRows`: the ingest
+ * phase has just produced those columns and passes `true`, while a run over stored
+ * chunks passes `false` because it has no such values and must not invent them.
  *
  * ## The stages that live here, and the transactions around them
  *
@@ -89,7 +93,28 @@ import type {
 } from "../../core/document-consolidation.js";
 import type { Database } from "../../db.js";
 import { loadKnownIdentities, toVectorLiteral } from "./request.js";
-import type { DocumentRow, IngestParams, LoadedText } from "./request.js";
+import type { DocumentRow, IngestParams } from "./request.js";
+
+/**
+ * Presents stored chunks as the `ChunkResult` shape the core extractor declares.
+ *
+ * The core functions take `ChunkResult` because ingest is their original caller and
+ * really holds every column, but they READ only `content` and `chunkIndex`
+ * (`core/graph-extraction.ts`, `core/description-synthesis.ts`, and the evidence
+ * locator in `candidates.ts`). A compile holds exactly those two columns, so the type
+ * is widened here — once, in one place — instead of fabricating an embedding, a token
+ * count or a hash to satisfy a signature.
+ *
+ * The invariant this narrowing rests on: nothing downstream may read a column a stored
+ * chunk does not have. If the core ever starts reading one, it has to narrow its own
+ * parameter type first, which is exactly the check this cast defers to.
+ *
+ * @param chunks - The document's chunks, in order.
+ * @returns The same chunks, typed for the core extractor.
+ */
+function extractionChunks(chunks: readonly CompileChunk[]): readonly ChunkResult[] {
+  return chunks as readonly ChunkResult[];
+}
 
 /**
  * Runs one unit of work inside one short transaction.
@@ -104,17 +129,43 @@ export type TransactionRunner = <T>(work: (tx: Database) => Promise<T>) => Promi
 /** The state the candidate rows record, before any classifier has been asked anything. */
 const PENDING_STATE = "pending";
 
-/** What the read stage loaded before a single provider call was made. */
-export interface IngestInput {
+/**
+ * The fields of a chunk one run actually reads.
+ *
+ * Exactly the columns a `document_chunks` row carries that this seam consumes:
+ * extraction walks `content` per `chunkIndex`, and evidence is located as offsets into
+ * `content`. Nothing here is an embedding, a token count or a hash, which is what lets
+ * the compile phase feed stored rows without fabricating columns it never loaded.
+ */
+export interface CompileChunk {
+  readonly documentId: string;
+  readonly stackId: string;
+  readonly chunkIndex: number;
+  readonly content: string;
+}
+
+/**
+ * What a run needs to know about the document it is compiling, before any provider
+ * call is made.
+ *
+ * Deliberately WITHOUT the document body. A compile never reads the file: its input is
+ * the chunks the ingest phase stored, so a body here would be a field one caller could
+ * fill and the other could only fake. The three facts that do travel are the `stacks`
+ * columns extraction and synthesis read (inside {@link DocumentRow}), the resolved
+ * catalog the classifier is asked against, and whether the read stage truncated the
+ * text — a read-stage fact ingest reports and compile never observes.
+ */
+export interface CompileInput {
   readonly document: DocumentRow;
-  readonly loaded: LoadedText;
   /** The Stack's resolved vocabulary: catalog, version and which column it came from. */
   readonly catalog: StackCatalogResolution;
+  /** Whether the text ingest read from disk was truncated. Compile never observes it. */
+  readonly truncated: boolean;
 }
 
 /** What the provider stage produced, plus the audit sections built from it. */
 export interface ProcessedIngest {
-  readonly chunks: readonly ChunkResult[];
+  readonly chunks: readonly CompileChunk[];
   readonly extraction: ExtractionResult;
   readonly shouldSynthesize: boolean;
   readonly ontologyAudit: OntologyAudit;
@@ -142,16 +193,16 @@ export interface PreparedIngest {
 }
 
 /**
- * Everything one compile run is given.
+ * Everything every compile run is given, whichever phase is calling it.
  *
  * The chunks arrive as an argument — that is the whole point of the seam — and the
  * rest is the context a run needs to persist, classify and report.
  */
-export interface CompileChunksRequest<TCommitted> {
+interface CompileRequestBase<TCommitted> {
   /** The document's chunks, in order: in memory today, read back from storage later. */
-  readonly chunks: readonly ChunkResult[];
-  /** What the read stage loaded: the document, its text metadata and the catalog. */
-  readonly input: IngestInput;
+  readonly chunks: readonly CompileChunk[];
+  /** What the read stage resolved: the document row, the catalog and the truncation fact. */
+  readonly input: CompileInput;
   /** The validated request, which carries the stack, the document and the options. */
   readonly params: IngestParams;
   /** How this deployment opens a short transaction. */
@@ -172,6 +223,40 @@ export interface CompileChunksRequest<TCommitted> {
     classification: ClassificationAudit,
   ) => Promise<TCommitted>;
 }
+
+/**
+ * A run that WRITES the chunk rows it was handed: the ingest phase.
+ *
+ * `chunks` is narrowed to the full {@link ChunkResult} here because ingest has just
+ * produced those columns from the body — the embedding included — so the write needs
+ * nothing it does not already hold.
+ */
+export interface ChunkWritingCompileRequest<TCommitted>
+  extends CompileRequestBase<TCommitted> {
+  /** Stated, never defaulted: this run persists the chunk rows it is given. */
+  readonly writeChunkRows: true;
+  /** The chunks ingest just produced, embedding and all. */
+  readonly chunks: readonly ChunkResult[];
+}
+
+/**
+ * A run over chunks that are ALREADY stored: the compile phase.
+ *
+ * It declares `writeChunkRows: false` because it read `document_id, stack_id,
+ * chunk_index, content` back from `document_chunks` and holds no embedding, token count
+ * or hash for them. Rewriting those columns with placeholders would corrupt stored
+ * rows, so the write is skipped rather than faked.
+ */
+export interface StoredChunksCompileRequest<TCommitted>
+  extends CompileRequestBase<TCommitted> {
+  /** Stated, never defaulted: this run persists no chunk row at all. */
+  readonly writeChunkRows: false;
+}
+
+/** Everything one compile run is given, discriminated by whether it writes chunk rows. */
+export type CompileChunksRequest<TCommitted> =
+  | ChunkWritingCompileRequest<TCommitted>
+  | StoredChunksCompileRequest<TCommitted>;
 
 /** What one compile run produced, including whatever the caller's last step returned. */
 export interface CompiledChunks<TCommitted> {
@@ -198,19 +283,27 @@ export interface CompiledChunks<TCommitted> {
  * entities and relationships with their consolidation), classification when a runtime
  * is configured, and the classification persistence.
  *
- * @param request - The chunks, the loaded context, the request, the runner and the
- *   caller's last step.
+ * @param request - The chunks, the resolved context, the request, the runner and the
+ *   caller's last step, discriminated by whether this run writes chunk rows.
  * @returns The prepared run, its audit section, and what `commitWith` returned.
  */
 export async function compileChunks<TCommitted>(
   request: CompileChunksRequest<TCommitted>,
 ): Promise<CompiledChunks<TCommitted>> {
   const { chunks, input, params, run, classification, commitWith } = request;
+  // Read ONCE, before any transaction opens: the only caller that has full rows is the
+  // one that declared it writes them, and this is the guard that proves it to the
+  // writer. `undefined` means "these chunks are already stored".
+  const chunkRows: readonly ChunkResult[] | undefined = request.writeChunkRows
+    ? request.chunks
+    : undefined;
   // Provider stage: extraction, and the synthesis when it is asked for. No
   // transaction is open here, and none is opened until the extraction succeeded.
   const processed = await extractAndSynthesize(params, chunks, input.document);
   // Candidate write, committed BEFORE the first classifier call.
-  const prepared = await run((tx) => prepareIngest(tx, params, input, processed));
+  const prepared = await run((tx) =>
+    prepareIngest(tx, { params, input, chunkRows }, processed),
+  );
   // Decision stage: the support questions, then the classification questions.
   const outcome =
     classification === undefined ? undefined : await classifyDocument(prepared, classification);
@@ -250,18 +343,18 @@ export async function compileChunks<TCommitted>(
  */
 async function extractAndSynthesize(
   params: IngestParams,
-  chunks: readonly ChunkResult[],
+  chunks: readonly CompileChunk[],
   document: DocumentRow,
 ): Promise<ProcessedIngest> {
   const extraction = await extractGraphFromChunks(
-    chunks,
+    extractionChunks(chunks),
     document.stack_name,
     ontologyArgument(document.stack_ontology),
     extractionOptions(params),
   );
   const shouldSynthesize = params.synthesizeDescriptions ?? document.stack_synthesize_default;
   if (shouldSynthesize) {
-    await synthesizeEntityDescriptions(extraction, chunks);
+    await synthesizeEntityDescriptions(extraction, extractionChunks(chunks));
   }
   const declared = document.stack_ontology !== null && document.stack_ontology !== undefined;
   const extractionAudit = buildExtractionAudit(extraction);
@@ -455,27 +548,46 @@ function consolidationRelationships(
   }));
 }
 
+/** What the candidate write is given, besides the transaction and the extraction. */
+interface PrepareRequest {
+  /** The validated request. */
+  readonly params: IngestParams;
+  /** What the read stage resolved. */
+  readonly input: CompileInput;
+  /**
+   * The full chunk rows to persist, or `undefined` when they are already stored.
+   *
+   * This is {@link ChunkWritingCompileRequest.writeChunkRows} after the discriminant
+   * has been read: a value here means the caller declared it writes chunk rows and
+   * holds the columns that write needs.
+   */
+  readonly chunkRows: readonly ChunkResult[] | undefined;
+}
+
 /**
  * The evidence stage plus the `pending` rows, in one short write transaction.
  *
- * The chunks are written HERE rather than beside the extraction that produced them,
- * because that extraction ran with no transaction open: writing them afterwards is
- * what keeps the provider call out of the transaction (S44). The candidate rows are
- * written as `pending`, committed, and only then is a classifier asked anything.
+ * The chunk rows are written HERE, and only when the run declared it writes them,
+ * rather than beside the extraction that produced them: that extraction ran with no
+ * transaction open, and writing afterwards is what keeps the provider call out of the
+ * transaction (S44). The candidate rows are written as `pending`, committed, and only
+ * then is a classifier asked anything.
  *
  * @param tx - The transaction the runner opened.
- * @param params - The validated ingest request.
- * @param input - What the read stage loaded.
+ * @param request - The validated request, what the read stage resolved, and the rows to write.
  * @param processed - What the provider stage produced.
  * @returns Everything the classification stages need.
  */
 async function prepareIngest(
   tx: Database,
-  params: IngestParams,
-  input: IngestInput,
+  request: PrepareRequest,
   processed: ProcessedIngest,
 ): Promise<PreparedIngest> {
-  await persistChunks(tx, processed.chunks);
+  const { params, input, chunkRows } = request;
+  // A run over stored chunks holds no embedding, token count or hash, so it writes no
+  // chunk row: `document_chunks` already has them, and re-inserting placeholders would
+  // destroy stored data.
+  if (chunkRows !== undefined) await persistChunks(tx, chunkRows);
   const identityKeys = resolveIdentityKeys(
     processed.extraction,
     await loadKnownIdentities(tx, params.stackId),
@@ -485,7 +597,7 @@ async function prepareIngest(
   const spans = buildCandidateSpans({
     documentId: params.docId,
     extraction: processed.extraction,
-    chunks: processed.chunks,
+    chunks: extractionChunks(processed.chunks),
     identityKeys,
     catalogVersion: input.catalog.version,
   });
@@ -504,7 +616,7 @@ async function prepareIngest(
     catalog: input.catalog.catalog,
     entityIds,
     writtenRelationships,
-    truncated: input.loaded.truncated,
+    truncated: input.truncated,
   };
 }
 

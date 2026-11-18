@@ -68,21 +68,22 @@
  * exactly as before, because that path is untouched by this pipeline.
  */
 
-import { sql } from "drizzle-orm";
 import type { Request, Response } from "express";
 
 import { chunkAndEmbed } from "../../core/extraction.js";
 import { loadStackCatalog } from "../../core/catalog/stack-catalog.js";
+import type { StackCatalogResolution } from "../../core/catalog/stack-catalog.js";
 import { writeIngestAudit } from "./audit.js";
 import type { ClassificationAudit } from "./audit.js";
 import { compileChunks } from "./compile-chunks.js";
 import type {
-  IngestInput,
+  CompileChunk,
+  CompileInput,
   PreparedIngest,
   TransactionRunner,
 } from "./compile-chunks.js";
 import type { ClassificationRuntime } from "./classify-stage.js";
-import type { ChunkResult, ExtractionResult } from "../../core/extraction-types.js";
+import type { ExtractionResult } from "../../core/extraction-types.js";
 import { bindCallerStack } from "../../core/stack_resolver.js";
 import type { Database } from "../../db.js";
 import { IngestionResult } from "./models.js";
@@ -93,10 +94,43 @@ import {
   readDocumentText,
   sendDocumentNotFound,
 } from "./request.js";
-import type { IngestParams } from "./request.js";
+import type { DocumentRow, IngestParams, LoadedText } from "./request.js";
 import { sendValidationFailure } from "./response.js";
+import { stackTotals } from "./stack-totals.js";
 
 export type { TransactionRunner } from "./compile-chunks.js";
+
+/**
+ * What ingest's read stage loaded: the document row, its text, and the vocabulary.
+ *
+ * The text lives HERE and not on the seam's {@link CompileInput}, because reading the
+ * body is what only ingest does. {@link toCompileInput} hands the seam the three facts
+ * a run needs and nothing else.
+ */
+interface IngestRead {
+  readonly document: DocumentRow;
+  readonly loaded: LoadedText;
+  /** The Stack's resolved vocabulary: catalog, version and which column it came from. */
+  readonly catalog: StackCatalogResolution;
+}
+
+/**
+ * Narrows the read stage's result to what the compile seam consumes.
+ *
+ * The body stays behind: a compile reads stored chunks and never the document, so the
+ * seam's input type has no field a compile could fill and no field it could invent.
+ * `truncated` is a read-stage fact and travels because the ingest response reports it.
+ *
+ * @param read - What {@link loadIngestInput} loaded.
+ * @returns The seam's input.
+ */
+function toCompileInput(read: IngestRead): CompileInput {
+  return {
+    document: read.document,
+    catalog: read.catalog,
+    truncated: read.loaded.truncated,
+  };
+}
 
 /**
  * The read stage: the document, its text, and the Stack's vocabulary.
@@ -113,7 +147,7 @@ async function loadIngestInput(
   tx: Database,
   params: IngestParams,
   res: Response,
-): Promise<IngestInput | undefined> {
+): Promise<IngestRead | undefined> {
   const document = await findDocument(tx, params.stackId, params.docId);
   if (document === undefined) {
     sendDocumentNotFound(res, params);
@@ -197,9 +231,12 @@ export async function ingestDocument(
   //      audit shares its transaction with the decisions it describes.
   const compiled = await compileChunks({
     chunks,
-    input,
+    input: toCompileInput(input),
     params,
     run,
+    // Ingest has just produced the chunks, embedding included, so it is the phase that
+    // writes the chunk rows. A compile states the opposite, explicitly.
+    writeChunkRows: true,
     ...(classification === undefined ? {} : { classification }),
     commitWith: (tx, prepared, report) => finishIngest(tx, prepared, report),
   });
@@ -210,7 +247,8 @@ export async function ingestDocument(
 /** Everything the response payload is assembled from. */
 export interface IngestionFacts {
   readonly params: IngestParams;
-  readonly chunks: readonly ChunkResult[];
+  /** Only the count is read: `chunks_created` is how many chunks this run stored. */
+  readonly chunks: readonly CompileChunk[];
   readonly extraction: ExtractionResult;
   readonly written: number;
   readonly truncated: boolean;
@@ -227,22 +265,15 @@ export async function buildIngestionResult(
   tx: Database,
   facts: IngestionFacts,
 ): Promise<IngestionResultDto> {
-  const stackId = facts.params.stackId;
-  const entityTotals = await tx.execute<{ n: number }>(sql`
-    select count(*)::int as n from ontology_entities where stack_id = ${stackId}
-  `);
-  const relationshipTotals = await tx.execute<{ n: number }>(sql`
-    select count(*)::int as n from ontology_relationships where stack_id = ${stackId}
-  `);
-
+  const totals = await stackTotals(tx, facts.params.stackId);
   return {
     document_id: facts.params.docId,
     chunks_created: facts.chunks.length,
     entities_extracted: facts.extraction.entities.length,
-    entities_in_stack: entityTotals[0]?.n ?? 0,
+    entities_in_stack: totals.entities,
     relationships_extracted: facts.extraction.relationships.length,
     relationships_written: facts.written,
-    relationships_in_stack: relationshipTotals[0]?.n ?? 0,
+    relationships_in_stack: totals.relationships,
     truncated: facts.truncated,
     descriptions_synthesized: facts.descriptionsSynthesized,
   };

@@ -44,6 +44,40 @@ export const IngestionResult = z.object({
 /** The response payload, derived from {@link IngestionResult} so they cannot drift. */
 export type IngestionResultDto = z.infer<typeof IngestionResult>;
 
+/**
+ * `CompileResult` — the response body of `POST .../compile`, in declaration order.
+ *
+ * ## Why it is NOT `IngestionResult`
+ *
+ * A compile and an ingest report different work, and two of the ingest keys would have
+ * to lie to fit:
+ *
+ * - there is no `chunks_created`, because a compile creates no chunk. `chunks_read`
+ *   replaces it and counts the stored `document_chunks` rows the run extracted from,
+ *   which is the number a reader actually wants after phase two.
+ * - there is no `truncated`, because truncation is a READ-STAGE fact: it is measured
+ *   when the document body is loaded and cut to the extraction limit. A compile never
+ *   loads the body, so it could only report a constant, and a constant on a wire shape
+ *   is worse than an absent key.
+ *
+ * The remaining seven keys keep the meaning they have on the ingest response, and
+ * `entities_in_stack` / `relationships_in_stack` are counted after consolidation, so
+ * they include this run.
+ */
+export const CompileResult = z.object({
+  document_id: pydanticUuid(),
+  chunks_read: z.number().int(),
+  entities_extracted: z.number().int(),
+  entities_in_stack: z.number().int(),
+  relationships_extracted: z.number().int(),
+  relationships_written: z.number().int(),
+  relationships_in_stack: z.number().int(),
+  descriptions_synthesized: z.boolean(),
+});
+
+/** The compile response payload, derived from {@link CompileResult} so they cannot drift. */
+export type CompileResultDto = z.infer<typeof CompileResult>;
+
 /** Path-parameter validator for `:stackId`, keyed by the parameter name. */
 export const StackIdParams = z.object({ stackId: pydanticUuid() });
 
