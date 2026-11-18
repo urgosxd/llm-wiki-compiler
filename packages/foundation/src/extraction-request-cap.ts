@@ -1,5 +1,5 @@
 /**
- * @file packages/wiki/src/dimensions/kg/request-cap.ts
+ * @file packages/foundation/src/extraction-request-cap.ts
  * @description The spend cap that bounds one extraction job's chat requests.
  *
  * ## Why this exists
@@ -39,10 +39,14 @@
  * ## Why this module imports NOTHING
  *
  * The configuration error is raised by the caller, not here, because `ConfigValidationError`
- * lives in the KG core and the `wiki → kg` boundary rule counts every file that reaches for
- * it. The kg dimension's adapter already holds the one frozen allowance for that edge, so
- * the class is thrown THERE (the same way `prepare` raises every other resolver's
- * `problem`) and this module stays a pure, dependency-free decision about a number.
+ * lives in the KG core and this package is the bottom of the topology: `@repo/foundation`
+ * may import neither `@repo/wiki` nor `@repo/kg` (nor `@repo/api`), so the class could not
+ * be named here even if this module wanted to. That makes the reason stronger than it was
+ * while the file sat inside the wiki dimension, and it is a different reason: there the
+ * constraint was a boundary allowance that had to be spent in exactly one place, and here
+ * there is no allowance at all. So the caller throws the class (the same way `prepare`
+ * raises every other resolver's `problem`) and this module stays a pure,
+ * dependency-free decision about a number.
  */
 
 /**

@@ -12,7 +12,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./stack-id": "./src/stack-id.ts",
-    "./stack-migration": "./src/stack-migration.ts"
+    "./stack-migration": "./src/stack-migration.ts",
+    "./extraction-request-cap": "./src/extraction-request-cap.ts"
   },
   "imports": {
     "#stack-id": "./src/stack-id.ts",

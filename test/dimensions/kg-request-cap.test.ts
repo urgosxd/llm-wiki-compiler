@@ -48,7 +48,7 @@ import {
   KG_EXTRACTION_REQUEST_CAP_DEFAULT,
   KG_EXTRACTION_REQUEST_CAP_ENV_VAR,
   resolveExtractionRequestCap,
-} from "../../packages/wiki/src/dimensions/kg/request-cap.js";
+} from "@repo/foundation/extraction-request-cap";
 import type { Dimension } from "../../packages/wiki/src/dimensions/types.js";
 import {
   chatRequestCount,

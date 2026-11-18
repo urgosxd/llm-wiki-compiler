@@ -31,8 +31,8 @@
  *   holds no chunks, so its existing empty-write branch is the right outcome, and the
  *   summary it renders carries the report.
  * - a run whose chunk count exceeds the configured cap is REFUSED by name rather than
- *   truncated (`./request-cap.ts`). Extracting half a document and reporting success
- *   would read exactly like a complete run.
+ *   truncated (`@repo/foundation/extraction-request-cap`). Extracting half a document and
+ *   reporting success would read exactly like a complete run.
  *
  * Neither door changes the chunk boundaries a real run produces: both count with the same
  * chunker, the same default size and the same overlap.
@@ -107,12 +107,11 @@ import {
 } from "@repo/kg";
 import { defaultOntology, loadStoredOntology } from "@repo/kg";
 import type { DatabaseHandle } from "@repo/foundation";
-import type { ExtractionOutcome, ExtractionResult, Ontology } from "@repo/kg";
-
 import {
   assertWithinExtractionRequestCap,
   resolveExtractionRequestCap,
-} from "./request-cap.js";
+} from "@repo/foundation/extraction-request-cap";
+import type { ExtractionOutcome, ExtractionResult, Ontology } from "@repo/kg";
 
 import { createLedgerReader, recordExtractedChunkHashes } from "./chunk-reuse.js";
 import type { ExtractedChunkHashesReader } from "./chunk-reuse.js";
@@ -551,8 +550,9 @@ function beforeProviderSpend(
   chunkLabel: string,
 ): PreparedWrite | undefined {
   const capRun = resolveExtractionRequestCap(process.env);
-  // The class is thrown HERE, not in `request-cap.ts`: the boundary rule counts every file
-  // that reaches for the KG core, and this adapter already holds that edge's allowance.
+  // The class is thrown HERE, not in the cap module: that module now lives in
+  // `@repo/foundation`, the bottom layer, which may not name the KG core this class comes
+  // from — so the adapter that already knows the class raises it.
   if (capRun.kind === "invalid") throw new ConfigValidationError(capRun.problem);
   const plannedChunks = chunkCountFor(input.body);
   assertWithinExtractionRequestCap(plannedChunks, capRun.cap);
