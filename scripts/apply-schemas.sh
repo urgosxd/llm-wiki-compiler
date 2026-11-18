@@ -109,6 +109,11 @@ readonly SCHEMA_FILES=(
   # statements make the mirror in `wiki/schema.sql` a no-op on a fresh database instead
   # of a conflict.
   "packages/wiki/src/dimensions/wiki/migration_wiki_db_parity.sql"
+  # The chunk-hash ledger the kg dimension's re-ingest skip reads. It references
+  # `public.stacks` (created by the KG schema, first above) and grants to
+  # `llmwiki_app` (created by the tenancy migration, earlier), so it needs both and
+  # depends on nothing, which is why it is last.
+  "packages/wiki/src/dimensions/wiki/migration_wiki_kg_extracted_chunks.sql"
 )
 
 # Tenant-isolated relations a complete database must expose. Used by --check to
@@ -139,6 +144,7 @@ readonly REQUIRED_TENANT_TABLES=(
   "wiki.embedding_refresh_marker"
   "wiki.lint_cache"
   "wiki.rule_extractor_state"
+  "wiki.kg_extracted_chunks"
 )
 
 # Fail before doing anything when no target was supplied, unless `PSQL` is set (that wrapper
