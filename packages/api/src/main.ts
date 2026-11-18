@@ -347,6 +347,9 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
   // dimensions -- and this is the line that makes the container's launcher possess a
   // port at all.
   const dimensionsPort = createDimensionsPort();
+  // `--no-graph` switches the graph SURFACE off, so it has to switch the graph TOOLS off with it.
+  // Read once here: the flag decides both what `startHost` mounts and what the union advertises.
+  const graphDisabled = parsed.flags.has(NO_GRAPH);
   const handle = await startHost({
     viewerSnapshot,
     host,
@@ -359,11 +362,17 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
     // UNION — the wiki tools plus the graph tools — because one image that advertised
     // different tool sets over its two transports would be the defect this feature closes.
     mcpServerFactory: (bound: McpBoundAddress) => {
-      // In this mode the graph API the graph tools call IS the listener `startHost` is about
-      // to bind, so with no `AKS_BASE_URL` configured they are pointed at it. `--no-graph`
-      // mounts no graph surface, so there is nothing to point at and the configured value
-      // (or its loopback default) stands.
-      const kgBaseUrl = parsed.flags.has(NO_GRAPH) ? undefined : selfServedKgBaseUrl(bound);
+      // With the graph surface off there is nothing a graph tool could call, and `GET /stacks`
+      // answers 404 in this mode — so the union is built WITHOUT the graph tools. Advertising
+      // them here was the defect: three dead tools a client has no way to tell from three broken
+      // ones. Absent, never present and failing.
+      if (graphDisabled) {
+        return createUnionMcpServer({ root, version, dimensionsPort, includeGraph: false });
+      }
+      // Otherwise the graph API the graph tools call IS the listener `startHost` is about to
+      // bind, so with no `AKS_BASE_URL` configured they are pointed at it. A configured value
+      // always wins, and `selfServedKgBaseUrl` is the one reader of that rule.
+      const kgBaseUrl = selfServedKgBaseUrl(bound);
       return createUnionMcpServer({
         root,
         version,
@@ -371,7 +380,7 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
         ...(kgBaseUrl === undefined ? {} : { kgBaseUrl }),
       });
     },
-    ...(parsed.flags.has(NO_GRAPH) ? { includeGraph: false } : {}),
+    ...(graphDisabled ? { includeGraph: false } : {}),
   });
   // The stop path is armed BEFORE the readiness line is written. "Ready" has to
   // mean "a SIGTERM here is answered with exit 0", because that is exactly what

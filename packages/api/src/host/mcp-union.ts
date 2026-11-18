@@ -49,12 +49,31 @@
  * call also provides one there: {@link startGraphListener}, a loopback ephemeral listener
  * serving the graph sub-app inside the same process. Without it the container's DEFAULT mode
  * advertised three graph tools that answered `fetch failed`.
+ *
+ * ## The graph tools exist only where the graph surface does
+ *
+ * `host --no-graph` mounts no graph surface at all — its REST routes answer 404 — so an inventory
+ * that still listed `query_stack`, `traverse_stack` and `get_entities` would advertise three dead
+ * tools. A client reads `tools/list` as a contract and cannot tell a dead tool from a broken one,
+ * so the flag is honoured HERE, in the one function that decides which tools exist
+ * ({@link UnionServerOptions.includeGraph}): switched off means ABSENT, never present and failing.
+ *
+ * ## Why the stdio session's listener outlives its stdin
+ *
+ * A piped client writes a whole session — handshake, `tools/call` — and closes stdin in one burst.
+ * JSON-RPC dispatch is asynchronous and `end` is not, so the call handler reaches the self-served
+ * listener AFTER stdin has already ended. Retiring the listener on `end` tore it down under the
+ * in-flight call and the tool answered `fetch failed`. {@link startUnionMcpServer} therefore waits
+ * for the requests the session already ACCEPTED to be answered before it closes the listener, and
+ * closes the MCP transport only after that — `Protocol.close()` aborts in-flight handlers, so
+ * closing it first would cancel the very call the teardown is protecting.
  */
 
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { requireDimensionsPort } from "@repo/foundation";
 import { createApp } from "@repo/kg/server";
 import { registerKgToolsOn } from "@repo/kg/mcp";
@@ -79,6 +98,15 @@ const KG_BASE_URL_ENV_VAR = "AKS_BASE_URL";
 export interface UnionServerOptions extends ServerOptions {
   /** Base URL the graph tools call; absent leaves the graph MCP config's own resolution. */
   readonly kgBaseUrl?: string;
+  /**
+   * Whether the graph tools are part of the inventory. Absent means YES, the union.
+   *
+   * `false` is how `host --no-graph` says "this deployment has no graph surface": the three graph
+   * tools are then NOT registered, so they cannot be advertised, and no caller can reach a tool
+   * whose only route this process does not mount. The default is the union, so a caller that says
+   * nothing keeps the 17-name surface this feature exists to serve.
+   */
+  readonly includeGraph?: boolean;
 }
 
 /**
@@ -92,6 +120,7 @@ export interface UnionServerOptions extends ServerOptions {
  */
 export function createUnionMcpServer(options: UnionServerOptions): McpServer {
   const server = createWikiMcpServer(options);
+  if (options.includeGraph === false) return server;
   // The graph registration is LAST and additive: it cannot remove, rename or shadow a wiki
   // tool, and the one name both dimensions declare is excluded at the source.
   registerKgToolsOn(server, options.kgBaseUrl === undefined ? {} : { baseUrl: options.kgBaseUrl });
@@ -104,13 +133,81 @@ export function createUnionMcpServer(options: UnionServerOptions): McpServer {
  */
 export interface UnionStdioOptions extends UnionServerOptions {
   /**
-   * Closed once the stdio session ends, BEFORE the server's own close runs.
+   * Closed once the session's own in-flight requests are answered, and only then.
    *
    * A listener this process bound exists to answer THIS session's graph tools and nothing else, so
    * it must not outlive it: an open server handle keeps the event loop alive, and `serve` is
-   * documented to exit 0 when its client closes stdin.
+   * documented to exit 0 when its client closes stdin. It must not DIE before it either — a piped
+   * client's last request is still dispatching when its stdin ends.
    */
   readonly onSessionEnd?: () => Promise<void> | void;
+}
+
+/** How long the teardown waits for the requests the session already accepted to be answered. */
+const DRAIN_DEADLINE_MS = 5_000;
+
+/** The two members of a JSON-RPC frame the drain follows: an id, and whether it is a request. */
+interface DrainFrame {
+  readonly id?: string | number;
+  readonly method?: string;
+}
+
+/**
+ * Follow the requests this session accepted and has not answered yet.
+ *
+ * WHY the transport and not the tool handlers: the union joins registrations owned by two packages
+ * and must not reach into either of them to wrap a handler. Every request the session accepts
+ * arrives through `transport.onmessage` and every answer leaves through `transport.send`, so one
+ * mechanism covers the wiki tools and the graph tools, and it covers a request DESPATCHED but not
+ * yet at its HTTP call — which is exactly the window the defect lived in. A handler-level counter
+ * would start too late, because the dispatch itself is what the `end` event beats.
+ *
+ * `server.connect` CHAINS any `onmessage` already present, so assigning here keeps the protocol's
+ * own dispatch intact. The answer is counted only once the write has FLUSHED, so the listener is
+ * retired after the reply is out, never before.
+ *
+ * @param transport - The transport the session will use, BEFORE `connect` installs its handler.
+ * @returns The wait the session's end hook uses.
+ */
+function trackInFlightRequests(transport: StdioServerTransport): { whenDrained(): Promise<void> } {
+  const unanswered = new Set<string>();
+  let resolveDrained: (() => void) | undefined;
+  const noteAnswered = (id: string): void => {
+    unanswered.delete(id);
+    if (unanswered.size > 0) return;
+    resolveDrained?.();
+    resolveDrained = undefined;
+  };
+  const chained = transport.onmessage;
+  transport.onmessage = (message: JSONRPCMessage): void => {
+    const frame = message as DrainFrame;
+    if (frame.method !== undefined && frame.id !== undefined) unanswered.add(String(frame.id));
+    chained?.(message);
+  };
+  const send = transport.send.bind(transport);
+  transport.send = (message: JSONRPCMessage): Promise<void> => {
+    const frame = message as DrainFrame;
+    return send(message).then(() => {
+      if (frame.id !== undefined) noteAnswered(String(frame.id));
+    });
+  };
+  return {
+    whenDrained: () =>
+      new Promise<void>((resolve) => {
+        if (unanswered.size === 0) {
+          resolve();
+          return;
+        }
+        const timer = setTimeout(resolve, DRAIN_DEADLINE_MS);
+        // A teardown timer must never be the reason `serve` outlives its client: it BOUNDS the wait
+        // for a call nobody will finish, it does not extend it for a call that will.
+        timer.unref();
+        resolveDrained = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      }),
+  };
 }
 
 /**
@@ -133,10 +230,13 @@ export async function startUnionMcpServer(options: UnionStdioOptions): Promise<v
   if (onSessionEnd !== undefined) {
     // `end`, NOT `transport.onclose`: the SDK's stdio transport notifies `onclose` from its own
     // `close()`, and it listens for `data` and `error` only — an ended stdin never reaches it.
-    // Today `serve` exits because an ended stdin leaves the process with no handles, so a listener
-    // bound for this session would keep it alive forever without this line.
+    // `serve` exits because an ended stdin leaves the process with no handles, so a listener bound
+    // for this session would keep it alive forever without this line — and would die too early,
+    // under an in-flight graph call, without the wait. The MCP server is deliberately NOT closed
+    // first: `Protocol.close()` aborts in-flight request handlers, which is the call being drained.
+    const drain = trackInFlightRequests(transport);
     process.stdin.once("end", () => {
-      void onSessionEnd();
+      void drain.whenDrained().then(onSessionEnd);
     });
   }
   await server.connect(transport);

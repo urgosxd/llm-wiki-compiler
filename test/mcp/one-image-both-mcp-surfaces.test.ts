@@ -65,12 +65,8 @@ import { launch, waitForReady, type Running } from "../fixtures/launcher-harness
 import { connectMcpClient, useMcpRoot } from "../fixtures/mcp-test-env.js";
 import { createSuiteDatabase, type SuiteDatabase } from "../fixtures/per-run-database.js";
 import { testDotenvEnv } from "../fixtures/test-dotenv.js";
-// The inventory lives in one module because the auth suite asserts the SAME surface an
-// authenticated request reaches: two copies of this array would drift on the next tool.
 import { EXPECTED_UNION_TOOLS as EXPECTED_TOOLS } from "./union-inventory.js";
-
-/** The published MCP path (`MCP_HTTP_PATH`), spelled here so a source edit cannot hide a drift. */
-const MCP_PATH = "/mcp";
+import { postMcpRpc, type McpHttpReply } from "./mcp-http-probe.js";
 
 /**
  * The two variables that declare "no database configured" to a spawned child, pinned BLANK so the
@@ -89,12 +85,6 @@ const TEARDOWN_BUDGET_MS = 10_000;
  */
 const CLOSED_BASE_URL = "http://127.0.0.1:1";
 
-/** Headers a streamable-HTTP MCP client must send. */
-const MCP_HEADERS = {
-  "Content-Type": "application/json",
-  Accept: "application/json, text/event-stream",
-} as const;
-
 /** The `initialize` request every MCP client opens with. */
 const INITIALIZE_REQUEST = {
   jsonrpc: "2.0",
@@ -110,38 +100,13 @@ const INITIALIZE_REQUEST = {
 /** The request whose reply is the contract under assertion. */
 const TOOLS_LIST_REQUEST = { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} } as const;
 
-/** The two members of a JSON-RPC reply this file reads. */
-interface RpcReply {
-  readonly result?: {
-    readonly serverInfo?: { readonly name?: string; readonly version?: string };
-    readonly tools?: readonly { readonly name: string }[];
-  };
-}
-
 /** The `host` child's environment: the committed corpus, then the file-mode declaration. */
 function hostEnvironment(): NodeJS.ProcessEnv {
   return { ...process.env, ...testDotenvEnv(), ...FILE_MODE };
 }
 
-/** Pull the JSON-RPC payload out of an SSE-framed or plain JSON response. */
-function rpcPayload(raw: string): RpcReply {
-  const framed = raw.match(/^data: (.+)$/m);
-  return JSON.parse(framed?.[1] ?? raw) as RpcReply;
-}
-
-/** Post one JSON-RPC message to `/mcp` and decode its reply. */
-async function rpc(base: string, body: unknown): Promise<RpcReply> {
-  const response = await fetch(`${base}${MCP_PATH}`, {
-    method: "POST",
-    headers: MCP_HEADERS,
-    body: JSON.stringify(body),
-  });
-  expect(response.status).toBe(200);
-  return rpcPayload(await response.text());
-}
-
 /** The tool names a `tools/list` reply advertises, sorted. */
-function sortedToolNames(reply: RpcReply): string[] {
+function sortedToolNames(reply: McpHttpReply): string[] {
   return (reply.result?.tools ?? []).map((tool) => tool.name).sort();
 }
 
@@ -251,9 +216,9 @@ describe("the built distribution serves both MCP tool sets", () => {
     const child = launch(["host", "--port", "0"], root.value, hostEnvironment());
     try {
       const base = await waitForReady(child);
-      const handshake = await rpc(base, INITIALIZE_REQUEST);
+      const handshake = await postMcpRpc(base, INITIALIZE_REQUEST);
       expect(handshake.result?.serverInfo?.name).toBeTruthy();
-      const names = sortedToolNames(await rpc(base, TOOLS_LIST_REQUEST));
+      const names = sortedToolNames(await postMcpRpc(base, TOOLS_LIST_REQUEST));
       expect(names).toEqual(EXPECTED_TOOLS);
       expect(names).toHaveLength(EXPECTED_TOOLS.length);
     } finally {
