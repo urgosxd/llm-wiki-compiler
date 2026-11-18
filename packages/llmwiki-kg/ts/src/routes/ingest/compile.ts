@@ -79,6 +79,23 @@
  * success is the silent partial result this repository keeps finding, and a graph built
  * from part of a document reads exactly like a graph built from all of it.
  *
+ * ## The dry run (S3)
+ *
+ * `?dry_run=true` answers `200` with a {@link CompilePlan} and stops: no chat request, no
+ * embedding request, no stored row. It is the same per-request override family as
+ * `synthesize_descriptions` and `ontology_contract`, read by the same parser.
+ *
+ * Two things about it are deliberate and would be wrong the other way round:
+ *
+ * 1. **A dry run is never refused for cost.** The flag exists to answer "what would this
+ *    cost, and would it be allowed". Answering `413` to that question would deny the
+ *    operator the only information the flag provides, so an over-cap dry run answers 200
+ *    with `would_refuse: true` and the numbers that led there. The REAL run on the same
+ *    document still refuses.
+ * 2. **A dry run cannot plan a misconfiguration.** An unresolvable cap is answered `500`
+ *    before the dry run is considered, because there is no cap to report and a plan
+ *    around a broken variable would be a guess dressed as a measurement.
+ *
  * ## Compiling twice is safe (S4)
  *
  * The seam is repeatable: consolidation inserts a contribution with
@@ -110,7 +127,7 @@ import type {
   PreparedIngest,
   TransactionRunner,
 } from "./compile-chunks.js";
-import { CompileResult } from "./models.js";
+import { CompilePlan, CompileResult } from "./models.js";
 import type { CompileResultDto } from "./models.js";
 import {
   findDocument,
@@ -330,7 +347,8 @@ async function compileDocument(
   classification?: ClassificationRuntime,
 ): Promise<void> {
   // The same validator as ingest: the same two path parameters, and the same per-request
-  // `synthesize_descriptions` / `ontology_contract` overrides, reported in the same 422.
+  // `synthesize_descriptions` / `ontology_contract` overrides plus this route's own
+  // `dry_run`, reported in the same 422.
   const params = parseIngestRequest(req);
   if (!params.ok) {
     sendValidationFailure(res, params.detail);
@@ -344,6 +362,23 @@ async function compileDocument(
   const capRun = resolveExtractionRequestCap();
   if (capRun.kind === "invalid") {
     sendApiError(res, apiError(INVALID_CAP_STATUS, capRun.problem));
+    return;
+  }
+  // A dry run reports the plan and stops. It answers 200 even over the cap on purpose:
+  // the flag exists to answer "would this be refused", and refusing the question is the
+  // one answer that carries no information. `planned_chat_requests` equals
+  // `planned_chunks` because extraction sends one chat request per chunk.
+  if (params.dryRun === true) {
+    const planned = read.chunks.length;
+    res.status(200).json(
+      CompilePlan.parse({
+        dry_run: true,
+        planned_chunks: planned,
+        planned_chat_requests: planned,
+        cap: capRun.cap,
+        would_refuse: planned > capRun.cap,
+      }),
+    );
     return;
   }
   try {

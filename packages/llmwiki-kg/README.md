@@ -223,7 +223,7 @@ Practical recommendation: start with one Stack. If retrieval quality drops as yo
 | Create and manage Stacks | `/stacks` (CRUD) | Each Stack is one compiled knowledge domain |
 | Upload documents | `POST /stacks/{id}/documents` | Hash-deduplicated; same content uploaded twice returns the same record |
 | Store a document's text for retrieval | `POST /stacks/{id}/documents/{doc_id}/ingest` | Chunks and embeds only: no LLM call, no graph rows; idempotent on re-ingestion |
-| Compile documents into knowledge | `POST /stacks/{id}/documents/{doc_id}/compile` | Runs the LLM pipeline over the stored chunks; per document, explicit and on demand — nothing calls it automatically, and repeat compiles of an unchanged document do not change the graph |
+| Compile documents into knowledge | `POST /stacks/{id}/documents/{doc_id}/compile` | Runs the LLM pipeline over the stored chunks; per document, explicit and on demand — nothing calls it automatically, and repeat compiles of an unchanged document do not change the graph. Bounded by `LLMWIKI_KG_MAX_EXTRACTION_REQUESTS`: over the cap it answers `413` without spending anything. `?dry_run=true` returns the plan instead of running it |
 | Optionally synthesize rich descriptions | Stack setting or `?synthesize_descriptions=true` | One LLM call per entity. Off by default. |
 | List or filter compiled entities | `GET /aks/v1/entities` | Filter by type, confidence, scope |
 | Traverse the knowledge graph | `GET /aks/v1/traverse` | BFS from a starting entity, follows typed relationships |
@@ -276,6 +276,51 @@ and no chunk row, and changes no stored graph value (it does append to the class
 log when a classifier is configured). A document whose source changed must be re-ingested
 before it is compiled again — nothing stored records which version of the text a chunk
 set was built from.
+
+#### The extraction request cap
+
+Extraction sends **one chat request per stored chunk**, so a compile's cost is decided by
+the number of chunks the document yielded. That count is bounded per run by
+`LLMWIKI_KG_MAX_EXTRACTION_REQUESTS` (a positive whole number, default `1000`).
+
+A compile whose chunk count exceeds the cap is **refused** with `413 Payload Too Large`,
+before any chat or embedding request is sent, and it writes nothing: no entity, no
+relationship, no chunk mutation, no evidence row, no classification-log entry and no
+audit change. The refusal names the variable, the cap and the actual chunk count, and its
+remedy is to raise the cap or ingest a smaller document. Nothing is truncated: a partial
+extraction reported as a success would read exactly like a complete one.
+
+A chunk count **equal** to the cap is admitted — the cap is a maximum, not a strict bound.
+A value that cannot be parsed (non-numeric, zero, negative) answers `500` and names the
+variable, because that is a deployment misconfiguration rather than a problem with the
+request. An empty value counts as unset, never as "unlimited".
+
+#### `?dry_run=` — plan a compile without paying for it
+
+Add `?dry_run=true` (also `1`) to the compile URL to get the plan instead of the run. It
+accepts the same values as `synthesize_descriptions` and answers the same `422` for
+anything else. A dry run sends no chat request and no embedding request, and writes
+nothing.
+
+The payload is a **plan**, not a compile result, and the two are deliberately different
+shapes so a plan can never be mistaken for a completion:
+
+```json
+{
+  "dry_run": true,
+  "planned_chunks": 3,
+  "planned_chat_requests": 3,
+  "cap": 2,
+  "would_refuse": true
+}
+```
+
+`would_refuse` compares `planned_chunks` against the `cap` in force, so the same request
+answers "what would this cost" and "would it be allowed" at once. A dry run is **never
+refused for cost** — an over-cap document still answers `200` with `would_refuse: true`,
+because refusing the question would deny the only information the flag provides. The real
+run on that document still answers `413`. An unusable cap value answers `500` for a dry
+run too: a misconfiguration is not a plan.
 
 ### AKS query interface (the spec-conformant surface)
 

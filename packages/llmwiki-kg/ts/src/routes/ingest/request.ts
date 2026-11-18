@@ -144,6 +144,14 @@ export interface IngestParams {
    * ONE place and the pipeline can never run an ambiguous contract.
    */
   readonly ontologyContract: ExtractionContract;
+  /**
+   * Whether this request asked for a plan instead of a run, or `null` when it did not say.
+   *
+   * `null` rather than `false` because "absent" and "explicitly false" are different
+   * requests and only the compile route cares; a boolean default would decide that
+   * question here, for a route that does not consume it.
+   */
+  readonly dryRun: boolean | null;
 }
 
 /** Why the request was refused, as the entries FastAPI would report. */
@@ -156,8 +164,8 @@ export interface IngestRefusal {
  * Validates both path parameters and both query flags, reported together.
  *
  * Order is `stackId`, `doc_id`, then the query entries in declaration order
- * (`synthesize_descriptions`, `ontology_contract`), which is the order FastAPI reports
- * them in.
+ * (`synthesize_descriptions`, `ontology_contract`, `dry_run`), which is the order FastAPI
+ * reports them in.
  */
 export function parseIngestRequest(req: Request): IngestParams | IngestRefusal {
   const stackId = parseStackId(req.params["stackId"]);
@@ -165,6 +173,7 @@ export function parseIngestRequest(req: Request): IngestParams | IngestRefusal {
   const rawQuery = {
     synthesize_descriptions: queryValue(req, "synthesize_descriptions"),
     ontology_contract: queryValue(req, "ontology_contract"),
+    dry_run: queryValue(req, "dry_run"),
   };
   const query = IngestQuery.safeParse(rawQuery);
 
@@ -175,6 +184,7 @@ export function parseIngestRequest(req: Request): IngestParams | IngestRefusal {
       docId: docId.value,
       synthesizeDescriptions: query.data.synthesize_descriptions ?? null,
       ontologyContract: query.data.ontology_contract ?? "open",
+      dryRun: query.data.dry_run ?? null,
     };
   }
 

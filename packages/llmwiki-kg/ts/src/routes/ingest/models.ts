@@ -78,6 +78,42 @@ export const CompileResult = z.object({
 /** The compile response payload, derived from {@link CompileResult} so they cannot drift. */
 export type CompileResultDto = z.infer<typeof CompileResult>;
 
+/**
+ * `CompilePlan` — the response body of a `dry_run` compile, in declaration order.
+ *
+ * ## Why it is NOT `CompileResult`
+ *
+ * A plan describes work that has NOT happened. Reusing the compile result shape would
+ * have forced five fields to lie: `chunks_read` would report chunks nobody extracted,
+ * and `entities_extracted`, `entities_in_stack`, `relationships_*` and
+ * `descriptions_synthesized` would all be zeroes that read like a run which found
+ * nothing. A caller could not tell a cheap plan from an empty compile, which is exactly
+ * the confusion this repository keeps finding.
+ *
+ * So the plan is its own shape and carries only what it can honestly report:
+ *
+ * - `dry_run` — always `true`. A literal rather than a boolean, because a payload that
+ *   can say `false` can be mistaken for a completion.
+ * - `planned_chunks` — the stored `document_chunks` rows this run would extract from.
+ * - `planned_chat_requests` — the paid requests that implies. Extraction sends one chat
+ *   request per chunk, so it equals `planned_chunks`; it is reported separately because
+ *   the equal sign is a property of the extraction step, not of the chunk count, and a
+ *   future change to how chunks are batched has exactly one place to show up.
+ * - `cap` — the bound in force for this deployment, so the comparison is auditable
+ *   without knowing how the environment is configured.
+ * - `would_refuse` — what the real run would do, computed from the two numbers beside it.
+ */
+export const CompilePlan = z.object({
+  dry_run: z.literal(true),
+  planned_chunks: z.number().int(),
+  planned_chat_requests: z.number().int(),
+  cap: z.number().int(),
+  would_refuse: z.boolean(),
+});
+
+/** The dry-run payload, derived from {@link CompilePlan} so they cannot drift. */
+export type CompilePlanDto = z.infer<typeof CompilePlan>;
+
 /** Path-parameter validator for `:stackId`, keyed by the parameter name. */
 export const StackIdParams = z.object({ stackId: pydanticUuid() });
 
@@ -129,4 +165,16 @@ export const OntologyContractQuery = z.enum(INGEST_CONTRACTS);
 export const IngestQuery = z.object({
   synthesize_descriptions: pydanticBoolean().optional(),
   ontology_contract: OntologyContractQuery.optional(),
+  /**
+   * `?dry_run=` — plan this compile instead of running it.
+   *
+   * Read by the SAME parser as the two flags above, so it accepts exactly what they
+   * accept (`1`/`true`/`0`/`false`) and refuses anything else in the same query section
+   * of the same 422. Declared last so the reported order of query failures stays
+   * `synthesize_descriptions`, `ontology_contract`, `dry_run`.
+   *
+   * The ingest route shares this parser and ignores the flag: it is a compile override.
+   * The compile route answers a dry run with a {@link CompilePlan} and spends nothing.
+   */
+  dry_run: pydanticBoolean().optional(),
 });
