@@ -68,6 +68,7 @@ const NAMED_BY_INSTRUCTIONS = [
   "read_page",
   "lint_wiki",
   "wiki_status",
+  "ingest_job_delete",
   "ingest_job_status",
   "ingest_jobs_list",
 ] as const;

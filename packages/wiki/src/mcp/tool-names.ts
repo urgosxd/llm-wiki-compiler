@@ -15,7 +15,7 @@
  * ## Why the registration sites are NOT rewired to read it
  *
  * It is tempting to make this module the only place a tool name is written, by
- * importing it at all fourteen `registerTool(` call sites. That would make the list
+ * importing it at all fifteen `registerTool(` call sites. That would make the list
  * true by construction and therefore blind: a name deleted from here would delete the
  * tool instead of failing a test. Kept as an independent DECLARATION, the two sides
  * drift only on purpose, and `test/mcp/advertised-tools-are-registered.test.ts` walks
@@ -40,6 +40,7 @@ export const WIKI_MCP_TOOL_NAMES = [
   "compile_wiki",
   "export_okf",
   "get_context_pack",
+  "ingest_job_delete",
   "ingest_job_status",
   "ingest_jobs_list",
   "ingest_source",

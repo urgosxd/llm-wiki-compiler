@@ -90,6 +90,7 @@ const MISSING_STACK_CALLS: ReadonlyArray<{ name: string; args: Record<string, un
   { name: "lint_wiki", args: {} },
   { name: "wiki_status", args: {} },
   { name: "get_context_pack", args: { prompt: "row only" } },
+  { name: "ingest_job_delete", args: { jobId: "ing_01ARYZ6S41TSV4RRFFQ69G5FAV" } },
   { name: "ingest_job_status", args: { jobId: "ing_01ARYZ6S41TSV4RRFFQ69G5FAV" } },
   { name: "ingest_jobs_list", args: {} },
 ];

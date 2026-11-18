@@ -105,6 +105,7 @@ The server exposes fourteen tools. Every tool takes a required `stackId` naming 
 | `wiki_status` | Page and source counts, stale/orphaned pages, `stateStatus`, `pendingCandidates` | No |
 | `ingest_job_status` | Read one async ingest job by id from the durable record the host writes: both dimensions, their stages, and the transaction attempts so far | No |
 | `ingest_jobs_list` | List this Stack's recent async ingest jobs, newest transition first, with each job's ingest and compile status | No |
+| `ingest_job_delete` | Remove one async ingest job record from the Stack named by `stackId`, so a job that can never finish stops appearing in the listing. Allowed while the job has settled, or once it has made no progress for longer than the stuck bound; a job that is still working is refused and its stored record is left exactly as it was | No |
 | `get_context_pack` | Build a token-budgeted evidence pack (primary pages, chunks, graph neighbors, citations, freshness, warnings, suggested actions) | No |
 | `run_eval` | Score wiki quality - fast suite is credential-free; full suite LLM-judges citation samples | Fast: No / Full: Yes |
 | `export_okf` | Export the wiki as an Open Knowledge Format bundle under a project-confined output path | No |

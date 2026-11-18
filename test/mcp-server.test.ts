@@ -84,7 +84,7 @@ function getRegisteredResourceTemplates(server: McpServer): Record<string, unkno
 }
 
 describe("MCP server tool registration", () => {
-  it("registers all 13 expected tools", () => {
+  it("registers all 14 expected tools", () => {
     const server = buildServer();
     const names = Object.keys(getRegisteredTools(server)).sort();
     // The shared fixture registers the OKF export tool too, so this is the whole
@@ -94,6 +94,7 @@ describe("MCP server tool registration", () => {
       "compile_wiki",
       "export_okf",
       "get_context_pack",
+      "ingest_job_delete",
       "ingest_job_status",
       "ingest_jobs_list",
       "ingest_source",

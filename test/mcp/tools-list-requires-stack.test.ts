@@ -43,7 +43,7 @@ import { buildServer } from "../fixtures/mcp-test-env.js";
 import { createWikiMcpServer } from "../../packages/wiki/src/mcp/server.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 
-/** The ten tools that must carry a REQUIRED Stack: the whole Stack-scoped surface. */
+/** The eleven tools that must carry a REQUIRED Stack: the whole Stack-scoped surface. */
 const STACK_SCOPED_TOOLS = [
   "compile_wiki",
   "run_eval",
@@ -53,6 +53,7 @@ const STACK_SCOPED_TOOLS = [
   "lint_wiki",
   "wiki_status",
   "get_context_pack",
+  "ingest_job_delete",
   "ingest_job_status",
   "ingest_jobs_list",
 ] as const;

@@ -39,9 +39,25 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // resolves the package fine, so reaching the source directly keeps both builds green
 // without widening the core's surface.
 import { listIngestJobs, readIngestJob } from "../services/ingest/jobs/job-store.js";
+import { deleteRecoverableJob } from "../services/ingest/jobs/delete.js";
+import { resolveIngestJobStuckAfterMs, withStatusReason } from "../services/ingest/jobs/status.js";
+import type { JobStatusOptions } from "../services/ingest/jobs/status.js";
 import { jsonResult, errorResult } from "./result.js";
 import { STACK_ARG_REQUIRED_NOTE, STACK_ID_SCHEMA } from "./stack-arg.js";
 import { isRefusal, refusalResult, withTenantDatabase } from "./tenant-db.js";
+
+/**
+ * The clock and the stuck bound a tool answer is described with.
+ *
+ * Resolved per call rather than at module load: a long-lived server would otherwise keep
+ * describing rows against the bound it started with, and an operator who tuned the env
+ * var would see no change without a restart. `new Date()` is the real instant for a
+ * tool call — unlike the viewer route there is no host seam to pin, and the derivation
+ * itself takes its clock as an argument.
+ */
+function statusOptions(): JobStatusOptions {
+  return { now: new Date(), stuckAfterMs: resolveIngestJobStuckAfterMs() };
+}
 
 /** Register the durable job read tools. */
 export function registerJobTools(server: McpServer): void {
@@ -53,7 +69,9 @@ export function registerJobTools(server: McpServer): void {
         "Read one async ingest job by id, including both dimensions (ingest and " +
         "compile), their stages, and the transaction attempts so far. Reads the " +
         "durable record the host writes, so it works even when the host is in " +
-        "another process. Read-only. " +
+        "another process. `statusReason` says WHY it is in that state and whether " +
+        "the claim was observed or derived; `compile.retryable` is true when a " +
+        "retry is the next step. Read-only. " +
         STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         jobId: z.string().describe("Job id, of the form ing_<ULID>."),
@@ -67,7 +85,7 @@ export function registerJobTools(server: McpServer): void {
       );
       if (isRefusal(result)) return refusalResult(result);
       if (result === undefined) return errorResult(`No ingest job '${jobId}' for this Stack.`);
-      return jsonResult(result);
+      return jsonResult(withStatusReason(result, statusOptions()));
     },
   );
 
@@ -77,8 +95,9 @@ export function registerJobTools(server: McpServer): void {
       title: "List Ingest Jobs",
       description:
         "List this Stack's recent async ingest jobs, newest transition first, with " +
-        "each job's ingest and compile status. Use it to find a job id or to see " +
-        "what is still running. Read-only. " +
+        "each job's ingest and compile status, the reason it is in that state " +
+        "(`statusReason`), and whether a retry is offered (`compile.retryable`). " +
+        "Use it to find a job id or to see what is still running. Read-only. " +
         STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
         limit: z
@@ -97,7 +116,40 @@ export function registerJobTools(server: McpServer): void {
         stackId,
       );
       if (isRefusal(result)) return refusalResult(result);
-      return jsonResult({ jobs: result, count: result.length });
+      // One instant and one bound for the whole answer: two rows of the same listing must
+      // not disagree about whether the same silence counts as stuck.
+      const options = statusOptions();
+      const jobs = result.map((job) => withStatusReason(job, options));
+      return jsonResult({ jobs, count: jobs.length });
+    },
+  );
+
+  server.registerTool(
+    "ingest_job_delete",
+    {
+      title: "Delete Ingest Job",
+      description:
+        "Remove one async ingest job record from this Stack, so a job that can never " +
+        "finish stops appearing in the listing. Allowed when the job has settled, or when " +
+        "it has made no progress for longer than the stuck bound. REFUSED, with the stored " +
+        "record left exactly as it was, when the job is still working or when this Stack " +
+        "never had that id. Returns the record it removed. " +
+        STACK_ARG_REQUIRED_NOTE,
+      inputSchema: {
+        jobId: z.string().describe("Job id, of the form ing_<ULID>."),
+        stackId: STACK_ID_SCHEMA,
+      },
+    },
+    async ({ jobId, stackId }) => {
+      const result = await withTenantDatabase(
+        (db, resolved) => deleteRecoverableJob(db, resolved, jobId, statusOptions()),
+        stackId,
+      );
+      if (isRefusal(result)) return refusalResult(result);
+      // A refusal is reported as one, never as an empty success: a caller that read
+      // "nothing happened" as "deleted" would retry against a job that is still running.
+      if (!result.deleted) return errorResult(result.message);
+      return jsonResult({ deleted: true, job: result.job });
     },
   );
 }

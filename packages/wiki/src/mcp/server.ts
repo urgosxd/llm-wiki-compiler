@@ -68,7 +68,8 @@ export function createWikiMcpServer(options: ServerOptions): McpServer {
       "read_page, lint_wiki, wiki_status, and run_eval (fast suite, record: false) work without an API key " +
       "and do not mutate state. " +
       "ingest_job_status and ingest_jobs_list read durable async-ingest job records, so they answer " +
-      "across a host restart.",
+      "across a host restart. ingest_job_delete removes a job record that has settled or stopped " +
+      "making progress, so a job that can never finish can be cleared.",
   });
 
   registerWikiTools(server, root, dimensionsPort);
