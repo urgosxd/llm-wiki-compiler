@@ -62,7 +62,7 @@ import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import path from "path";
 import { LOCK_FILE, MAX_LOCK_FILE_BYTES } from "./constants.js";
-import { resolveConfinedPrivateDir, resolveExistingConfinedPrivateDir } from "./private-dir.js";
+import { resolveConfinedPrivateDir, resolveExistingConfinedPrivateDir, PrivateDirConfinementError } from "./private-dir.js";
 import { serializeOwner, parseOwner, isLockRecordStale } from "./lock-owner.js";
 import { publishLockRecord, type LockPublicationHooks } from "./lock-publication.js";
 import { acquireKeyedFifo } from "./keyed-fifo.js";
@@ -368,6 +368,30 @@ export interface AcquireLockOptions {
 }
 
 /**
+ * The ONE line a caller sees when the private dir could not be resolved.
+ *
+ * A REFUSAL and its REASON are two different facts, and this used to report only the
+ * first: every failure of the resolver was worded "escapes project root", so an
+ * unreadable `.llmwiki` (EACCES, wrong owner, read-only mount) was reported as a
+ * planted symlink. Those need opposite responses — one is a permission fix, the other
+ * is tampering — so the escape keeps its wording and anything else names its own error
+ * code instead of borrowing it. The return contract is unchanged: both refuse.
+ *
+ * @param error - Whatever the confined resolver threw.
+ */
+function privateDirFailureLine(error: unknown): string {
+  if (error instanceof PrivateDirConfinementError) {
+    return "Lock directory escapes project root — refusing to lock.";
+  }
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  const detail = error instanceof Error ? error.message : String(error);
+  if (typeof code === "string" && code !== "") {
+    return `Lock directory unavailable (${code}): ${detail}`;
+  }
+  return `Lock directory unavailable: ${detail}`;
+}
+
+/**
  * Acquire the compilation lock. Returns true if acquired, false if busy.
  *
  * Retries up to MAX_ACQUIRE_ATTEMPTS times to handle the case where the
@@ -395,8 +419,10 @@ export async function acquireLock(root: string, options: AcquireLockOptions = {}
   let privateDir: string;
   try {
     privateDir = await resolveConfinedPrivateDir(root);
-  } catch {
-    if (!options.quiet) output.status("!", output.warn("Lock directory escapes project root — refusing to lock."));
+  } catch (error) {
+    // Discriminated, not flattened: a genuine escape and a filesystem fault both
+    // refuse the lock, but only the escape is worded as tampering.
+    if (!options.quiet) output.status("!", output.warn(privateDirFailureLine(error)));
     return false;
   }
   const lockPath = lockFileIn(privateDir);

@@ -18,6 +18,12 @@
  * Both share the same confinement primitive (`confineUnderRoot`) to avoid
  * duplicating the escape-check logic.
  *
+ * Error identity is part of the contract: a resolved ESCAPE throws
+ * {@link PrivateDirConfinementError}, while a filesystem FAULT (`EACCES`, `EIO`, …)
+ * is thrown as itself, with its own `code`, by whichever call hit it — `mkdir` or
+ * the strict realpath in the post-mkdir re-check. Collapsing the second kind into
+ * the first is what once reported an unreadable `.llmwiki` as a planted symlink.
+ *
  * The lock writer (`acquireLock`/`tryCreateLock`) and the page intent journal
  * (`openBatch`) both create files under `<root>/.llmwiki`. Without confinement a
  * planted `root/.llmwiki -> <out-of-tree>` symlink lets `mkdir(..,{recursive})`
@@ -39,10 +45,17 @@ import { confineUnderRoot, safeRealpath, isInsideDir } from "./path-confine.js";
  * (not a generic `Error`) so event read surfaces can CATCH it and map it to a
  * fail-closed finding instead of crashing. Mirrors the shape of
  * `GraphDirConfinementError` in `jsonl-store.ts`.
+ *
+ * `cause` carries the error the confinement primitive raised, which is the resolved
+ * "path escapes project root" verdict this class names. It exists so the class means ONE
+ * thing — this path escapes the root — and so nothing else is ever wrapped into it: a
+ * filesystem fault (`EACCES` and friends) thrown while resolving is passed through AS
+ * ITSELF by {@link recheckRealpath} / `mkdir`, with its code intact, so a caller such as
+ * `acquireLock` can tell "denied" from "tampering".
  */
 export class PrivateDirConfinementError extends Error {
-  constructor(message: string) {
-    super(`private dir rejected: ${message}`);
+  constructor(message: string, cause?: unknown) {
+    super(`private dir rejected: ${message}`, cause === undefined ? undefined : { cause });
     this.name = "PrivateDirConfinementError";
   }
 }
@@ -62,7 +75,13 @@ async function confineLlmwikiDir(root: string): Promise<string> {
   try {
     return await confineUnderRoot(LLMWIKI_DIR, root, { mustExist: false });
   } catch (err) {
-    throw new PrivateDirConfinementError((err as Error).message);
+    // ONE verdict lives here. `confineUnderRoot` probes with the NON-strict realpath, so
+    // it swallows filesystem faults and can only throw its own "path escapes project
+    // root" decision — the wrap below therefore never relabels an I/O fault, and no
+    // fault-classification branch belongs at this site. Faults surface one frame away, at
+    // {@link recheckRealpath} (strict I/O) and at the `mkdir` above, uncaught and with
+    // their own code. The verdict's underlying error is kept as `cause`.
+    throw new PrivateDirConfinementError((err as Error).message, err);
   }
 }
 
@@ -72,7 +91,11 @@ async function confineLlmwikiDir(root: string): Promise<string> {
  * the lstat/mkdir and this check would escape — fail closed.
  */
 async function recheckRealpath(confined: string, realRoot: string): Promise<string> {
-  const realDir = await safeRealpath(confined);
+  // STRICT I/O on purpose: the non-strict `safeRealpath` maps ANY failure to `null`,
+  // and `null` here means "escapes the root" — which would report an unreadable dir
+  // as a confinement violation. Absent/broken paths still resolve to `null` (they are
+  // genuinely "not a confined dir"); permission and I/O faults surface with their code.
+  const realDir = await safeRealpath(confined, { strictIo: true });
   if (realDir === null || !isInsideDir(realDir, realRoot)) {
     throw new PrivateDirConfinementError(`path escapes project root: ${LLMWIKI_DIR}`);
   }
@@ -90,11 +113,21 @@ async function recheckRealpath(confined: string, realRoot: string): Promise<stri
  * @param root - Absolute project root the private dir hangs off.
  * @returns The confined absolute realpath of `<root>/.llmwiki`.
  * @throws {PrivateDirConfinementError} When `.llmwiki` (or an ancestor) escapes the project root.
+ * @throws {NodeJS.ErrnoException} The filesystem fault that prevented resolution
+ *   (`EACCES` and friends) — raised by `mkdir` or by the strict re-check, never wrapped.
+ *
+ * Classification, so a reader knows which site decides what: the escape VERDICT is
+ * produced by {@link confineLlmwikiDir} (lexical/ancestor) and {@link recheckRealpath}
+ * (post-mkdir TOCTOU); every I/O FAULT comes from `mkdir` or from the strict realpath in
+ * {@link recheckRealpath} and reaches the caller as its own error.
  */
 export async function resolveConfinedPrivateDir(root: string): Promise<string> {
   const confined = await confineLlmwikiDir(root);
   await mkdir(confined, { recursive: true });
-  const realRoot = (await safeRealpath(root)) ?? path.resolve(root);
+  // Strict for the same reason as {@link recheckRealpath}: an unreadable root must not
+  // be silently replaced by its lexical form, which would be judged against the wrong
+  // baseline and could read as an escape.
+  const realRoot = (await safeRealpath(root, { strictIo: true })) ?? path.resolve(root);
   return recheckRealpath(confined, realRoot);
 }
 
@@ -115,6 +148,8 @@ export async function resolveConfinedPrivateDir(root: string): Promise<string> {
  * @param root - Absolute project root.
  * @returns The confined absolute realpath, or `null` when the dir is absent.
  * @throws {PrivateDirConfinementError} When `.llmwiki` (or an ancestor) escapes the project root.
+ * @throws {NodeJS.ErrnoException} The filesystem fault that prevented the read
+ *   (`EACCES` and friends) — raised by the strict re-check, never wrapped.
  */
 export async function resolveExistingConfinedPrivateDir(root: string): Promise<string | null> {
   const confined = await confineLlmwikiDir(root);
@@ -124,6 +159,6 @@ export async function resolveExistingConfinedPrivateDir(root: string): Promise<s
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
-  const realRoot = (await safeRealpath(root)) ?? path.resolve(root);
+  const realRoot = (await safeRealpath(root, { strictIo: true })) ?? path.resolve(root);
   return recheckRealpath(confined, realRoot);
 }
